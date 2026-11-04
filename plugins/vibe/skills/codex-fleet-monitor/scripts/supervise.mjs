@@ -14,6 +14,7 @@ import {
 } from './recover.mjs';
 import { isEntryPoint } from './liveness.mjs';
 import { resolveWorkDir } from './work-dir.mjs';
+import { hasPendingOwnedCleanups, sweepOwnedCleanups } from '../../vibe/scripts/e2e-lock.mjs';
 
 export const DEFAULT_INTERVAL_SECONDS = 60;
 export const SUMMARY_INTERVAL_MS = 3_600_000;
@@ -114,6 +115,16 @@ async function main() {
   for (;;) {
     const started = Date.now();
     const { lines, error } = await tick(workDir, stateDir, config);
+    const repairPending = stats.passes % 30 === 0;
+    if (repairPending || hasPendingOwnedCleanups()) {
+      try {
+        const cleanup = await sweepOwnedCleanups({ forceDiscovery: repairPending });
+        for (const line of cleanup.leftover) log(line);
+        if (cleanup.removed.length) log(`cleanup: reconciled ${cleanup.removed.length} owned targets`);
+      } catch (cleanupError) {
+        log(`cleanup: ${oneLine(cleanupError.message)}`);
+      }
+    }
     const lastPassMs = Date.now() - started;
     for (const line of lines) log(line);
     stats.passes += 1;

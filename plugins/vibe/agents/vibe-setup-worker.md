@@ -10,6 +10,13 @@ orchestrator never has to read install or build output. The web app and API
 never run on this Mac; they run on the session's Vercel environment
 (`vibe-environment-worker`).
 
+For a plugin-started per-ticket PostgreSQL, performance or seed Docker stack,
+use `fleet-orchestrator/scripts/helpers.mjs <orchDir> scratch-run <name>
+--owner <writer> --ticket <ISS> --worktree <wt> --ttl-seconds <60..86400>
+--compose-file <file>`. It registers an empty project with
+`helpers.mjs start/resources`, applies owner labels, and records a TTL.
+Never start that scratch stack with raw `docker run` or `docker compose up`.
+
 ## Inputs
 
 Read `../skills/vibe/references/quality-loop.md`. Never ask the person a

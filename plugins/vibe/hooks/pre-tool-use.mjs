@@ -8,7 +8,7 @@
 
 import { agentGuard } from "./agent-guard.mjs";
 import { foregroundGuard } from "./foreground-guard.mjs";
-import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { deny, isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
 import { killGuard } from "./kill-guard.mjs";
 import { mergeGuard } from "./merge-guard.mjs";
 import { pauseGuard } from "./pause-guard.mjs";
@@ -16,6 +16,9 @@ import { pluginVersionGuard, pluginVersionSkillStart } from "./plugin-version-gu
 import { prCreateGuard } from "./pr-create-guard.mjs";
 import { QUESTION_TOOLS, questionGuard } from "./question-guard.mjs";
 import { shellSafetyGuard } from "./shell-safety-guard.mjs";
+import { conversationSkill } from "./hook-session-scope.mjs";
+import { commandSegments } from "./command-segments.mjs";
+import path from "node:path";
 
 /** The guards each tool runs, in order; hooks.json's PreToolUse matcher names exactly these tools. */
 export const PRE_TOOL_USE_ROUTES = Object.freeze({
@@ -25,6 +28,7 @@ export const PRE_TOOL_USE_ROUTES = Object.freeze({
     { name: "merge-guard", run: mergeGuard },
     { name: "pr-create-guard", run: prCreateGuard },
     { name: "shell-safety-guard", run: shellSafetyGuard },
+    { name: "scratch-creation-guard", run: scratchCreationGuard },
     { name: "plugin-version-guard", run: pluginVersionGuard },
   ]),
   Agent: Object.freeze([
@@ -44,3 +48,24 @@ export function preToolUse(event, report) {
 }
 
 if (isMain(import.meta.url)) runHookScript("pre-tool-use", preToolUse);
+
+/** Recognize a raw per-ticket PostgreSQL/perf/seed launch, never a Docker read. */
+export function scratchCreationProblem(command, scope) {
+  if (!['vibe', 'fleet-orchestrator'].includes(scope) || typeof command !== 'string') return null;
+  const scratch = /\b(?:iss[-_]?\d+|scratch|postgres|postgresql|perf|seed|minio|ca-store)\b/i;
+  for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
+    if (path.basename(words[0] ?? '') !== 'docker') continue;
+    const raw = words.join(' ');
+    if (words[1] === 'run' && scratch.test(raw)
+      || words[1] === 'compose' && words.includes('up') && scratch.test(raw)) {
+      return 'registered scratch stack required: use helpers.mjs scratch-run with owner, ticket, worktree and TTL before Docker creation';
+    }
+  }
+  return null;
+}
+
+/** PreToolUse refusal for recognizable raw scratch starts in this conversation. */
+export function scratchCreationGuard(event) {
+  const problem = scratchCreationProblem(event?.tool_input?.command, conversationSkill(event));
+  return problem ? deny(problem) : null;
+}

@@ -50,15 +50,17 @@
 // and exits 1 when any helper should be stopped or left processes running.
 
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources } from "../../vibe/scripts/e2e-lock.mjs";
+import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources, sameWorktreeEntry } from "../../vibe/scripts/e2e-lock.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
+import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
 import { graphAliases } from "../../handoff/scripts/mcp-tool-names.mjs";
 import { promptProblems } from "./skill-freshness.mjs";
@@ -72,6 +74,7 @@ const POLL_MS = 200;
 const ENDINGS = new Set(["pr-terminal"]);
 const FINAL_KINDS = new Set(["reviewer", "verifier", "critic"]);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** The helper writes this exact last line only after its deliverable is complete. */
 export function finalMarker(helper, completion) {
@@ -152,6 +155,7 @@ export function pendingE2eCleanups(lockDir = defaultLockDir(),
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("not a regular record");
       record = JSON.parse(readFileSync(file, "utf8"));
     } catch { record = {}; }
+    if (record.state === "complete") return null;
     const owner = record.owner ?? {};
     const holder = holderOf(lockDir);
     const isCurrentRun = Number.isSafeInteger(owner.pid) && typeof owner.token === "string"
@@ -266,6 +270,10 @@ export async function reconcileTerminalHelpers(ledger, { prState = currentPrStat
   for (const [name, helper] of helperEntries(ledger)) {
     if (helper.stoppedAt || helper.ending !== "pr-terminal") continue;
     const label = `${name} owner ${helper.owner ?? "unknown"} ticket ${helper.ticket ?? "unknown"}`;
+    if (helper.kind === 'scratch') {
+      findings.push(`LEFTOVER ${label}: scratch cannot use pr-terminal cleanup`);
+      continue;
+    }
     if (!helper.owner || !helper.ticket || !helper.repo || !helper.pr) {
       findings.push(`LEFTOVER ${label}: missing ending or ownership record`);
       continue;
@@ -296,15 +304,176 @@ export async function reconcileTerminalHelpers(ledger, { prState = currentPrStat
   return { ledger, findings, changed };
 }
 
+/** Reconcile expired, creation-labelled scratch stacks without touching active leases. */
+function captureScratchLease(orchDir, owner, worktree) {
+  let session;
+  try { session = readSessionRecord(worktree); } catch { /* Fleet state is checked below. */ }
+  if (session?.createdAt && session.status === 'active') return { kind: 'vibe', createdAt: session.createdAt };
+  const file = path.join(process.env.LOCAL_STATE_DIR || path.join(orchDir, 'sessions'), owner + '.json');
+  let state;
+  try { state = JSON.parse(readFileSync(file, 'utf8')); } catch { /* Missing proof refuses registration. */ }
+  if (state?.cwd === path.resolve(worktree) && state.threadId && !state.ended) {
+    return { kind: 'fleet', stateDir: path.dirname(file), name: owner, threadId: state.threadId };
+  }
+  throw new Error('scratch start requires a live recorded vibe or fleet writer lease');
+}
+
+function scratchLeaseTerminal(helper) {
+  const lease = helper.writerLease;
+  if (lease?.kind === 'vibe') {
+    try {
+      const current = readSessionRecord(helper.worktree);
+      return current?.createdAt === lease.createdAt && current.status === 'handed-off';
+    } catch { return false; }
+  }
+  if (lease?.kind === 'fleet') {
+    try {
+      const current = JSON.parse(readFileSync(path.join(lease.stateDir, lease.name + '.json'), 'utf8'));
+      return current.cwd === helper.worktree && current.threadId === lease.threadId
+        && Boolean(current.ended && current.archivedAt);
+    } catch { return false; }
+  }
+  return false;
+}
+
+export function reconcileExpiredScratchHelpers(ledger, now, { capture = captureOwnedDockerResources,
+  cleanup = removeOwnedDockerResources, alive = isAlive, identityOf = readIdentity,
+  leaseTerminal = scratchLeaseTerminal,
+  lockHeld = (worktree) => Boolean(sameWorktreeEntry(defaultLockDir(), worktree)) } = {}) {
+  const findings = [];
+  let changed = false;
+  for (const [name, helper] of helperEntries(ledger)) {
+    if (helper.kind !== "scratch" || helper.stoppedAt || now < Date.parse(helper.expiresAt ?? "")) continue;
+    const label = `${name} owner ${helper.owner ?? "unknown"} ticket ${helper.ticket ?? "unknown"}`;
+    try {
+      if (!helper.owner || !helper.ticket || !helper.worktree || !helper.project || !helper.ownerToken
+        || !helper.writerLease || !Number.isFinite(Date.parse(helper.startedAt)) || !Number.isFinite(Date.parse(helper.expiresAt))) {
+        throw new Error("scratch ownership or TTL is incomplete");
+      }
+      if (!leaseTerminal(helper)) throw new Error('scratch writer lease remains active');
+      if ((helper.pids ?? []).some((pid) => pendingRecordedProcess({ pid, identity: helper.identities?.[pid] }, alive, identityOf))
+        || lockHeld(helper.worktree)) throw new Error("scratch process or lock remains active");
+      const current = capture({ project: helper.project });
+      for (const kind of ["containers", "volumes", "networks"]) {
+        const saved = new Map((helper.dockerResources?.[kind] ?? []).map((witness) => [witness.id, witness]));
+        for (const witness of current[kind]) {
+          if (witness.project !== helper.project || witness.ownerToken !== helper.ownerToken
+            || Date.parse(witness.created) <= Date.parse(helper.startedAt)) throw new Error("scratch resource lacks exact owner and creation proof");
+          if (helper.dockerResources) {
+            const previous = saved.get(witness.id);
+            if (!previous || previous.created !== witness.created || previous.ownerToken !== witness.ownerToken) {
+              throw new Error("scratch resource changed or was not recorded");
+            }
+          }
+        }
+      }
+      const target = helper.dockerResources ?? current;
+      cleanup(target);
+      helper.dockerResources = target;
+      helper.stoppedAt = new Date(now).toISOString();
+      helper.cleanupError = undefined;
+      changed = true;
+    } catch (error) {
+      helper.cleanupError = error instanceof Error ? error.message : String(error);
+      findings.push(`LEFTOVER ${label}: ${helper.cleanupError}`);
+      changed = true;
+    }
+  }
+  return { findings, changed };
+}
+
 function read(orchDir) {
   const file = path.join(orchDir, LEDGER);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
 }
 
+async function acquireLedgerLock(orchDir) {
+  const dir = path.join(orchDir, 'helpers.lock');
+  const owner = { pid: process.pid, identity: readIdentity(process.pid), token: randomUUID() };
+  if (!owner.identity) throw new Error('helper ledger process identity is unreadable');
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(dir);
+      writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(owner), { mode: 0o600 });
+      return () => {
+        try {
+          const saved = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8'));
+          if (saved.token === owner.token) rmSync(dir, { recursive: true });
+        } catch { /* Another owner keeps its lock. */ }
+      };
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      let saved;
+      try { saved = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { saved = null; }
+      if (saved?.identity && readIdentity(saved.pid) === saved.identity
+        || !saved && Date.now() - statSync(dir).mtimeMs < 60_000) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        continue;
+      }
+      let current;
+      try { current = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { current = null; }
+      if (current?.token !== saved?.token) continue;
+      rmSync(dir, { recursive: true });
+    }
+  }
+  throw new Error('helper ledger lock remained active; ownership record was not overwritten');
+}
+
 function write(orchDir, ledger) {
   const file = path.join(orchDir, LEDGER);
-  writeFileSync(`${file}.tmp`, `${JSON.stringify(ledger, null, 2)}\n`);
-  renameSync(`${file}.tmp`, file);
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(ledger, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+  renameSync(temp, file);
+}
+
+function scratchProgramFile(orchDir, home = os.homedir()) {
+  const digest = createHash('sha256').update(path.resolve(orchDir)).digest('hex');
+  return path.join(home, '.codex', 'vibe', 'cleanup', 'scratch-programs', digest + '.json');
+}
+
+function registerScratchProgram(orchDir, home = os.homedir()) {
+  const file = scratchProgramFile(orchDir, home);
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const marker = path.join(home, '.codex', 'vibe', 'cleanup', 'pending');
+  writeFileSync(marker, JSON.stringify({ pending: true }), { mode: 0o600 });
+  const temp = file + '.' + process.pid + '.' + randomUUID() + '.tmp';
+  writeFileSync(temp, JSON.stringify({ orchDir: path.resolve(orchDir) }), { mode: 0o600, flag: 'wx' });
+  renameSync(temp, file);
+}
+
+/** One bounded scratch pass under the helper ledger lock; TTL never replaces terminal writer proof. */
+export async function sweepScratchHelpers(orchDir, { now = Date.now(), deadline = Date.now() + 30_000,
+  clock = Date.now, maxRecords = 20, home = os.homedir(), ...checks } = {}) {
+  if (clock() >= deadline || maxRecords <= 0) return { removed: [], leftover: [], visited: 0 };
+  const release = await acquireLedgerLock(orchDir);
+  try {
+    const ledger = read(orchDir);
+    const names = helperEntries(ledger).filter(([, helper]) => helper.kind === 'scratch').map(([name]) => name).sort();
+    const cursorFile = path.join(orchDir, 'scratch.cursor');
+    let offset = 0;
+    try { offset = Number(JSON.parse(readFileSync(cursorFile, 'utf8')).next) || 0; } catch { /* First pass. */ }
+    let visited = 0;
+    const removed = [];
+    const leftover = [];
+    for (let index = 0; index < Math.min(maxRecords, names.length); index += 1) {
+      if (clock() >= deadline) break;
+      const name = names[(offset + index) % names.length];
+      visited += 1;
+      const wasStopped = Boolean(ledger[name].stoppedAt);
+      const result = reconcileExpiredScratchHelpers({ [name]: ledger[name] }, now, checks);
+      leftover.push(...result.findings);
+      if (!wasStopped && ledger[name].stoppedAt) removed.push(name);
+    }
+    if (names.length) {
+      const temp = cursorFile + '.' + process.pid + '.' + randomUUID() + '.tmp';
+      writeFileSync(temp, JSON.stringify({ next: (offset + visited) % names.length }), { mode: 0o600, flag: 'wx' });
+      renameSync(temp, cursorFile);
+    }
+    write(orchDir, ledger);
+    if (names.every((name) => ledger[name].stoppedAt)) rmSync(scratchProgramFile(orchDir, home), { force: true });
+    return { removed, leftover, visited };
+  } finally { release(); }
 }
 
 /** Standing duties on the fleet board (board.json) that `name` owns. */
@@ -339,6 +508,8 @@ async function main(argv) {
       now: { type: "string" },
       owner: { type: "string" }, ticket: { type: "string" }, repo: { type: "string" }, pr: { type: "string" },
       ending: { type: "string" }, project: { type: "string" },
+      "ttl-seconds": { type: "string" },
+      "compose-file": { type: "string" },
       "e2e-lock-dir": { type: "string" },
       worktree: { type: "string" }, report: { type: "string" },
       kind: { type: "string" },
@@ -349,10 +520,22 @@ async function main(argv) {
       container: { type: "string", multiple: true }, volume: { type: "string", multiple: true }, network: { type: "string", multiple: true },
     },
   });
-  if (!workDir || !["start", "pid", "resources", "final", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
+  if (!workDir || !["start", "pid", "resources", "final", "accepted", "stopped", "hand", "unhand", "status", "scratch-run"].includes(action)) {
     throw new Error("Usage: helpers.mjs <orchDir> start <name> [--kind reviewer|verifier|critic --brief <file> --worktree <dir> --worker-id <thread> --role <name> --agent-definition <file> --capabilities <file> [--runtime claude|codex]] | final|accepted|stopped|pid|resources|hand|unhand <name> | status");
   }
   const orchDir = resolveWorkDir(workDir).dir;
+  if (action === 'scratch-run') {
+    const name = positionals[0];
+    if (!name || !values.owner || !values.ticket || !values.worktree || !values["compose-file"]) {
+      throw new Error('scratch-run needs name, owner, ticket, worktree, TTL and Compose file');
+    }
+    const result = runScratchStack({ orchDir, name, owner: values.owner, ticket: values.ticket,
+      worktree: values.worktree, ttlSeconds: Number(values["ttl-seconds"]), composeFile: values["compose-file"] });
+    process.stdout.write(JSON.stringify(result) + '\n');
+    return 0;
+  }
+  const releaseLedger = await acquireLedgerLock(orchDir);
+  try {
   const ledger = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();
@@ -360,6 +543,9 @@ async function main(argv) {
     const reconciled = await reconcileTerminalHelpers(ledger);
     if (reconciled.changed) write(orchDir, ledger);
     for (const finding of reconciled.findings) process.stdout.write(`${finding}\n`);
+    const dueScratch = helperEntries(ledger).filter(([, helper]) => helper.kind === 'scratch' && !helper.stoppedAt
+      && now >= Date.parse(helper.expiresAt ?? ''));
+    for (const [name, helper] of dueScratch) process.stdout.write(`SCRATCH-DUE ${name} owner ${helper.owner} ticket ${helper.ticket}\n`);
     const stop = stopCandidates(ledger, now, values["idle-minutes"] === undefined ? DEFAULT_IDLE_MINUTES : Number(values["idle-minutes"]));
     for (const helper of stop) {
       const meta = ledger[helper.name];
@@ -374,7 +560,7 @@ async function main(argv) {
     const pending = pendingE2eCleanups(values["e2e-lock-dir"] ?? defaultLockDir());
     for (const finding of pending) process.stdout.write(`${finding}\n`);
     process.stdout.write(`helpers: ${active} active, ${stop.length} to stop, ${left.length} orphaned\n`);
-    return stop.length + left.length + reconciled.findings.length + pending.length === 0 ? 0 : 1;
+    return stop.length + left.length + reconciled.findings.length + dueScratch.length + pending.length === 0 ? 0 : 1;
   }
   const name = requireName(action, positionals[0]);
   const stacks = ledger[STACKS] ?? {};
@@ -393,7 +579,15 @@ async function main(argv) {
   }
   if (action === "start") {
     const kind = values.kind ?? "other";
-    if (![...FINAL_KINDS, "other"].includes(kind)) throw new Error("helper kind must be reviewer, verifier, critic or other");
+    if (ledger[name] && !ledger[name].stoppedAt) throw new Error('An active helper already owns this name; keep its project record');
+    if (![...FINAL_KINDS, "other", "scratch"].includes(kind)) throw new Error("helper kind must be reviewer, verifier, critic, scratch or other");
+    const ttlSeconds = Number(values["ttl-seconds"]);
+    if (kind === "scratch" && (!values.owner || !values.ticket || !values.worktree || !values.project
+      || !Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > 86_400)) {
+      throw new Error("Scratch helper needs owner, ticket, worktree, empty project and TTL of 60 to 86400 seconds.");
+    }
+    if (kind !== "scratch" && values["ttl-seconds"] !== undefined) throw new Error("--ttl-seconds applies only to scratch helpers.");
+    if (kind === 'scratch' && values.ending) throw new Error('Scratch helpers use TTL and terminal writer lease, not pr-terminal');
     if (FINAL_KINDS.has(kind) && (!values.brief || !values.worktree || !values["worker-id"] || !values.capabilities
       || !values.role || !values["agent-definition"])) throw new Error("reviewer, verifier and critic helpers need brief, worktree, worker ID, role, agent definition and capability record");
     if (FINAL_KINDS.has(kind) && helperEntries(ledger).some(([, other]) => other.requiresFinal && other.workerId === values["worker-id"])) {
@@ -432,7 +626,10 @@ async function main(argv) {
         throw new Error("The requested Docker project has existing resources; it is not this helper's.");
       }
     }
+    if (kind === 'scratch') registerScratchProgram(orchDir);
     ledger[name] = { name, kind, requiresFinal: FINAL_KINDS.has(kind), finalToken: randomUUID(), startedAt: at,
+      ...(kind === "scratch" ? { ownerToken: randomUUID(), expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
+        writerLease: captureScratchLease(orchDir, values.owner, values.worktree) } : {}),
       ...(capabilityRecord ? { workerId: values["worker-id"], role: values.role, agentDefinition, capabilities: capabilityRecord,
         loadedSkill: spawnLoad } : {}),
       ...(values.brief ? { brief: values.brief } : {}), ...(values.worktree ? { worktree: path.resolve(values.worktree), source: sourceIdentity(values.worktree) } : {}), ...(values.stack ? { stack: values.stack } : {}),
@@ -454,6 +651,9 @@ async function main(argv) {
       for (const witness of captured[kind]) {
         if (!Number.isFinite(Date.parse(witness.created)) || Date.parse(witness.created) < Date.parse(entry.startedAt)) {
           throw new Error("Docker resource predates this helper; it was not started here.");
+        }
+        if (entry.kind === "scratch" && witness.ownerToken !== entry.ownerToken) {
+          throw new Error("Scratch Docker resource lacks its creation-time owner token label.");
         }
       }
     }
@@ -502,6 +702,15 @@ async function main(argv) {
     ledger[name] = { ...entry, acceptedAt: at, report: evidenceFingerprint(values.report) };
   } else {
     const entry = ledger[name] ?? {};
+    if (entry.kind === 'scratch') {
+      if (now < Date.parse(entry.expiresAt ?? '') || !scratchLeaseTerminal(entry)) {
+        throw new Error('Scratch stop requires elapsed TTL and terminal writer lease');
+      }
+      const settled = reconcileExpiredScratchHelpers({ [name]: entry }, now);
+      if (!entry.stoppedAt) throw new Error(settled.findings.join('; ') || 'Scratch ownership could not be reconciled');
+      write(orchDir, ledger);
+      return 0;
+    }
     if (entry.requiresFinal && !entry.acceptedAt) throw new Error("review helper has no accepted final deliverable");
     if (entry.acceptedAt) {
       if (!entry.report || JSON.stringify(evidenceFingerprint(entry.report.path)) !== JSON.stringify(entry.report)) throw new Error("helper final report changed after acceptance");
@@ -532,6 +741,7 @@ async function main(argv) {
   }
   write(orchDir, ledger);
   return 0;
+  } finally { releaseLedger(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -542,4 +752,71 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.exit(2);
     }
   );
+}
+
+function command(bin, args) {
+  const result = spawnSync(bin, args, { encoding: 'utf8', timeout: 120_000 });
+  if (result.error || result.status !== 0) throw new Error(`Scratch command failed: ${bin} ${args.slice(0, 3).join(' ')}: ${String(result.stderr ?? result.error ?? '').trim()}`);
+  return String(result.stdout ?? '').trim();
+}
+
+/** Label every service, named volume and network so exact helper witnesses can verify ownership. */
+export function scratchOverlay(config, ownerToken) {
+  if (!config?.services || Object.keys(config.services).length === 0) throw new Error('Scratch Compose file has no services.');
+  const volumes = config.volumes ?? {};
+  for (const service of Object.values(config.services)) {
+    if (service.build) throw new Error('Scratch wrapper does not own locally built service images.');
+    if (service.privileged || service.network_mode || service.pid || service.ipc || service.userns_mode
+      || service.uts || service.devices?.length || service.cap_add?.length || service.security_opt?.length
+      || service.volumes_from?.length || service.secrets?.length || service.configs?.length) {
+      throw new Error('Scratch service requests privileged or host resources.');
+    }
+    for (const mount of service.volumes ?? []) {
+      if (!mount || mount.type !== 'volume' || !mount.source || !Object.hasOwn(volumes, mount.source)) {
+        throw new Error('Scratch wrapper requires project-owned named volumes and refuses host binds.');
+      }
+    }
+  }
+  if (Object.values(volumes).some((volume) => volume.external || volume.name || volume.driver_opts
+    || volume.driver && volume.driver !== 'local')
+    || Object.values(config.networks ?? {}).some((network) => network.external || network.name || network.driver_opts
+      || network.driver && network.driver !== 'bridge')) {
+    throw new Error('Scratch wrapper cannot claim explicit, shared or host-backed Docker resources.');
+  }
+  const labels = { 'vibe.owner-token': ownerToken };
+  return {
+    services: Object.fromEntries(Object.keys(config.services).map((name) => [name, { labels }])),
+    volumes: Object.fromEntries(Object.keys(config.volumes ?? {}).map((name) => [name, { labels }])),
+    networks: Object.fromEntries(Object.keys(config.networks ?? {}).map((name) => [name, { labels }])),
+  };
+}
+
+/** Reserve, label, launch and capture one PostgreSQL/perf/seed scratch Compose project. */
+export function runScratchStack({ orchDir, name, owner, ticket, worktree, ttlSeconds, composeFile },
+  { run = command, docker = process.env.VIBE_E2E_DOCKER || 'docker' } = {}) {
+  if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > 86_400 || !existsSync(composeFile)) {
+    throw new Error('Scratch stack needs an existing Compose file and TTL of 60 to 86400 seconds.');
+  }
+  const token = randomUUID().replace(/-/g, '');
+  const project = `vibe-scratch-${token}`;
+  const helper = path.join(HERE, 'helpers.mjs');
+  run(process.execPath, [helper, orchDir, 'start', name, '--kind', 'scratch', '--owner', owner, '--ticket', ticket,
+    '--worktree', worktree, '--project', project, '--ttl-seconds', String(ttlSeconds)]);
+  const ledger = JSON.parse(readFileSync(path.join(orchDir, 'helpers.json'), 'utf8'));
+  const ownerToken = ledger[name]?.ownerToken;
+  if (!ownerToken || ledger[name]?.project !== project) throw new Error('Scratch owner was not recorded before Docker launch.');
+  const config = JSON.parse(run(docker, ['compose', '-f', composeFile, 'config', '--format', 'json']));
+  const overlay = scratchOverlay(config, ownerToken);
+  const overlayDir = path.join(orchDir, 'scratch-overlays');
+  mkdirSync(overlayDir, { recursive: true, mode: 0o700 });
+  const overlayFile = path.join(overlayDir, `${token}.json`);
+  const snapshotFile = path.join(overlayDir, `${token}-checked.json`);
+  // Compose must read the private bytes that passed isolation, not the caller's mutable path.
+  writeFileSync(snapshotFile, JSON.stringify(config), { mode: 0o600, flag: 'wx' });
+  writeFileSync(overlayFile, JSON.stringify(overlay), { mode: 0o600, flag: 'wx' });
+  try {
+    run(docker, ['compose', '--project-name', project, '-f', snapshotFile, '-f', overlayFile, 'up', '-d']);
+    run(process.execPath, [helper, orchDir, 'resources', name, '--project', project]);
+  } finally { rmSync(overlayFile, { force: true }); rmSync(snapshotFile, { force: true }); }
+  return { name, project, ownerToken, expiresAt: ledger[name].expiresAt };
 }

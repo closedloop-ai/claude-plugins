@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +10,8 @@ import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
-import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
+import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileExpiredScratchHelpers,
+  reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -179,6 +180,125 @@ test('idle notice cannot accept or stop a reviewer without its source-bound FINA
   assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'runtime completion evidence is rechecked');
   writeFileSync(completionEvent, JSON.stringify(event('completed')));
   assert.equal(run([dir, 'stopped', 'reviewer']).status, 0);
+});
+
+test('scratch helper start requires owner, exact project, finite TTL and label proof', (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'scratch-worktree');
+  mkdirSync(worktree);
+  execFileSync('git', ['init', '-q', '-b', 'main', worktree]);
+  writeFileSync(path.join(worktree, 'README.md'), 'scratch\n');
+  execFileSync('git', ['-C', worktree, 'add', '.']);
+  execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(gitDir, 'vibe-session.json'), JSON.stringify({ createdAt: '2026-11-03T00:00:00Z', status: 'active' }));
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\ncase "$1 $2" in "container ls"|"volume ls"|"network ls") exit 0;; esac\nexit 2\n', { mode: 0o755 });
+  const result = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'scratch-pg',
+    '--kind', 'scratch', '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree,
+    '--project', 'iss42-scratch-pg', '--ttl-seconds', '600'],
+  { encoding: 'utf8', env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: docker } });
+  assert.equal(result.status, 0, result.stderr);
+  const saved = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['scratch-pg'];
+  assert.equal(saved.kind, 'scratch');
+  assert.ok(Date.parse(saved.expiresAt) > Date.parse(saved.startedAt), 'finite TTL is recorded');
+  assert.ok(saved.ownerToken, 'creation-time owner label token is recorded');
+  const repeated = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'scratch-pg',
+    '--kind', 'scratch', '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree,
+    '--project', 'other-scratch-pg', '--ttl-seconds', '600'],
+  { encoding: 'utf8', env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: docker } });
+  assert.notEqual(repeated.status, 0, 'an active same-name stack cannot be overwritten');
+  assert.match(repeated.stderr, /active helper already owns this name/);
+  const kept = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['scratch-pg'];
+  assert.equal(kept.project, saved.project);
+  assert.equal(kept.ownerToken, saved.ownerToken);
+});
+
+test('generic stopped and pr-terminal paths cannot bypass scratch TTL and writer lease', async (t) => {
+  const dir = tempDir(t);
+  const ledgerFile = path.join(dir, 'helpers.json');
+  const scratch = { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'token',
+    project: 'scratch-one', worktree: '/owned', startedAt: '2026-11-03T00:00:00Z',
+    expiresAt: '2099-11-03T00:00:00Z', writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' },
+    dockerResources: { project: 'scratch-one', containers: [], volumes: [], networks: [] } };
+  writeFileSync(ledgerFile, JSON.stringify({ scratch }));
+  const stopped = run([dir, 'stopped', 'scratch']);
+  assert.notEqual(stopped.status, 0);
+  assert.match(stopped.stderr, /Scratch stop requires elapsed TTL and terminal writer lease/);
+  assert.equal(JSON.parse(readFileSync(ledgerFile, 'utf8')).scratch.stoppedAt, undefined);
+  let removed = false;
+  const legacy = { scratch: { ...scratch, ending: 'pr-terminal', repo: 'acme/repo', pr: '42' } };
+  const result = await reconcileTerminalHelpers(legacy, { prState: async () => 'terminal',
+    end: async () => [], cleanup: () => { removed = true; }, alive: () => false });
+  assert.equal(removed, false);
+  assert.match(result.findings.join(' '), /scratch cannot use pr-terminal/);
+});
+
+test('concurrent scratch reservations keep both helper ledger entries', async (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'concurrent-worktree');
+  mkdirSync(worktree);
+  execFileSync('git', ['init', '-q', '-b', 'main', worktree]);
+  writeFileSync(path.join(worktree, 'README.md'), 'scratch\n');
+  execFileSync('git', ['-C', worktree, 'add', '.']);
+  execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(gitDir, 'vibe-session.json'), JSON.stringify({ createdAt: '2026-11-03T00:00:00Z', status: 'active' }));
+  const docker = path.join(dir, 'slow-docker');
+  writeFileSync(docker, '#!/bin/sh\nsleep 0.2\nexit 0\n', { mode: 0o755 });
+  const start = (name) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', name, '--kind', 'scratch',
+      '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree, '--project', name,
+      '--ttl-seconds', '600'], { env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: docker } });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code) => resolve({ code, stderr }));
+  });
+  const results = await Promise.all([start('scratch-a'), start('scratch-b')]);
+  for (const result of results) assert.equal(result.code, 0, result.stderr);
+  const ledger = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'));
+  assert.deepEqual(Object.keys(ledger).sort(), ['scratch-a', 'scratch-b']);
+  assert.notEqual(ledger['scratch-a'].ownerToken, ledger['scratch-b'].ownerToken);
+});
+
+test('expired scratch PostgreSQL/perf/seed stacks reconcile only exact owner-labelled resources', () => {
+  const witness = { id: 'scratch-data', created: '2026-11-03T00:00:01Z', project: 'scratch-one', ownerToken: 'owner-one' };
+  for (const category of ['postgres', 'perf', 'seed']) {
+    const ledger = { [category]: { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'owner-one',
+      project: 'scratch-one', worktree: '/owned', startedAt: '2026-11-03T00:00:00Z',
+      expiresAt: '2026-11-03T00:10:00Z', writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' }, pids: [] } };
+    const removed = [];
+    const resources = { project: 'scratch-one', containers: [], volumes: [witness], networks: [] };
+    const result = reconcileExpiredScratchHelpers(ledger, Date.parse('2026-11-03T00:11:00Z'), {
+      capture: () => resources, cleanup: (record) => removed.push(record), alive: () => false,
+      lockHeld: () => false, leaseTerminal: () => true,
+    });
+    assert.equal(result.changed, true, category);
+    assert.equal(removed.length, 1, category);
+    assert.ok(ledger[category].stoppedAt, category);
+  }
+});
+
+test('scratch TTL cannot remove a live lease, foreign label or changed witness', () => {
+  const base = { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'owner-one', project: 'scratch-one',
+    worktree: '/owned', startedAt: '2026-11-03T00:00:00Z', expiresAt: '2026-11-03T00:10:00Z',
+    writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' },
+    pids: [345], identities: { 345: 'birth' }, dockerResources: { project: 'scratch-one',
+      containers: [], volumes: [{ id: 'data', created: '2026-11-03T00:00:01Z', project: 'scratch-one', ownerToken: 'owner-one' }], networks: [] } };
+  for (const change of ['lease', 'live', 'lock', 'foreign', 'changed']) {
+    const ledger = { scratch: structuredClone(base) };
+    let removed = false;
+    const resources = structuredClone(base.dockerResources);
+    if (change === 'foreign') resources.volumes[0].ownerToken = 'other';
+    if (change === 'changed') resources.volumes[0].created = '2026-11-03T00:00:02Z';
+    reconcileExpiredScratchHelpers(ledger, Date.parse('2026-11-03T00:11:00Z'), {
+      capture: () => resources, cleanup: () => { removed = true; },
+      alive: () => change === 'live', identityOf: () => 'birth', lockHeld: () => change === 'lock',
+      leaseTerminal: () => change !== 'lease',
+    });
+    assert.equal(removed, false, change);
+    assert.equal(ledger.scratch.stoppedAt, undefined, change);
+  }
 });
 
 test('a terminal PR reconciles only its recorded helper and reports a refused cleanup with owner and ticket', async () => {

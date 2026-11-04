@@ -902,11 +902,21 @@ the ticket is still assigned to the session's operator, the person who ran it
 that branch is theirs now), assigns it and its PLN to the next owner, and
 leaves the ticket status In Progress.
 
-Then mark the session handed off:
-`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`,
+Then mark the session handed off. For a requested PR, parse the returned URL
+for its repository and number, use the already verified pushed commit as its
+head, and record all three through the root-owned transition:
+`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off --pr-repo <owner/repo> --pr-number <n> --pr-head <full pushed sha>`.
+The command reads the live PR and refuses a different repository, branch or
+head. For an owner-assignment handoff without a PR, use
+`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`.
+The PR worker never writes session state.
+Then
 and stop local Storybook and Desktop with
 `node ../vibe/scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals
 only a recorded process it proves is still the session's own (ISS-13321).
+Run `node ../vibe/scripts/e2e-lock.mjs cleanup-sweep sweep` from a retained checkout
+after the stop; a live PR leaves its retirement record pending for the
+machine-local supervisor. The sweep never removes the executing checkout.
 
 Tell them, in a few lines, each as a link that opens it
 (`../vibe/references/plain-words.md`, "Links to what the person should look
@@ -980,7 +990,9 @@ resumes and every fix goes through this path, never around it:
    every thread through the REST review-comment reply endpoint, a fixed one
    with the fixing commit SHA. Only `scripts/review-threads.mjs resolve`
    resolves, after its check passes in the same run.
-8. `touch --status handed-off` again, stop local Storybook and Desktop with
+8. Run the same root-owned `touch --status handed-off --pr-repo <owner/repo>
+   --pr-number <n> --pr-head <full pushed sha>` transition again for the updated
+   PR head, stop local Storybook and Desktop with
    `vibe-sessions.mjs stop`, and tell the person in a line or two what changed and that the
    pull request is updated, with its link. Never a branch to merge.
 

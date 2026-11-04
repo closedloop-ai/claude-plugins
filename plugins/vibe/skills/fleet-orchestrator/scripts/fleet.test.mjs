@@ -28,7 +28,7 @@ function fixture(config) {
   if (config !== undefined) writeFileSync(join(orch, 'config.env'), config);
   writeFileSync(join(orch, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: loadEvidence(), harnesses: [] }));
   // work-dir.mjs resolves the orchestration dir with the real node; every other node call is recorded.
-  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   writeFileSync(join(bin, 'ssh'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${root}/ssh-args\nexec bash -c "\${@: -1}"\n`);
   writeRemoteCodexStub(bin, PLUGIN_ROOT);
   chmodSync(join(bin, 'node'), 0o755);
@@ -111,6 +111,22 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), '$vibe ISS-1\n');
   assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /^-o\nConnectTimeout=10\n-o\nServerAliveInterval=15\nbox\n/);
+});
+
+test('remote cleanup ships the exact board and runs on the owning host with its session state', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  writeFileSync(join(f.orch, 'board.json'), JSON.stringify({ writers: { w1: { where: 'remote', pr: '42' } } }));
+  const remoteRoot = join(f.root, 'remote-vibe-cleanup');
+  const version = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.codex-plugin', 'plugin.json'))).version;
+  remotePlugin(remoteRoot, version, true);
+  const result = f.run(['remote', 'cleanup'], { FAKE_REMOTE_PLUGIN_ROOT: remoteRoot });
+  assert.equal(result.status, 0, result.stderr);
+  const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
+  assert.deepEqual(JSON.parse(readFileSync(join(shipped, 'board.json'), 'utf8')),
+    { writers: { w1: { where: 'remote', pr: '42' } } });
+  assert.deepEqual(f.argv(result), [join(remoteRoot, 'skills', 'vibe', 'scripts', 'e2e-lock.mjs'),
+    'cleanup-sweep', 'sweep', '--orch-dir', shipped, '--where', 'remote', '--state-dir', join(f.root, 'remote', 'sessions')]);
 });
 
 test('remote preflight uses the target host plugin and target actor state', TIMEOUT, () => {
@@ -223,6 +239,51 @@ test('a remote slot uses REMOTE_HEAVY_SLOTS and the remote dir', TIMEOUT, () => 
   const result = f.run(['remote', 'slot', 'heavy', 'w2', dir, 'bash', '-c', 'pwd; ls "$SLOT_LOCK_DIR"']);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, `${dir}\nheavy-1.lock\nheavy-2.lock\n`);
+});
+
+test('typed local and remote E2E build slots route a post-acquisition disk preflight', TIMEOUT, () => {
+  const f = fixture();
+  const local = f.run(['local', 'slot', 'heavy', 'writer', f.root, '--containerized-e2e-build',
+    'node', 'e2e/run-containerized.sh']);
+  assert.equal(local.status, 0, local.stderr);
+  assert.ok(f.argv(local).some((arg) => arg.endsWith('e2e-lock.mjs')), 'local slot has disk preflight');
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const remote = f.run(['remote', 'slot', 'heavy', 'writer', f.root, '--containerized-e2e-build',
+    'node', 'e2e/run-containerized.sh']);
+  assert.equal(remote.status, 0, remote.stderr);
+  const installed = join(PLUGIN_ROOT, 'skills', 'vibe', 'scripts', 'e2e-lock.mjs');
+  assert.ok(f.argv(remote).includes(installed), 'remote slot invokes the version-checked installed helper');
+});
+
+test('deterministic runner and Dagger e-2-e build shapes get preflight; --no-build skips it', TIMEOUT, () => {
+  const f = fixture();
+  const runner = f.run(['local', 'slot', 'heavy', 'writer', f.root, 'node', 'e2e/run-containerized.sh']);
+  assert.equal(runner.status, 0, runner.stderr);
+  assert.ok(f.argv(runner).some((arg) => arg.endsWith('e2e-lock.mjs')));
+  const dagger = join(f.root, 'bin', 'dagger');
+  writeFileSync(dagger, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const built = f.run(['local', 'slot', 'heavy', 'writer', f.root, 'dagger', 'call', 'e-2-e']);
+  assert.equal(built.status, 0, built.stderr);
+  assert.ok(f.argv(built).some((arg) => arg.endsWith('e2e-lock.mjs')));
+  const reused = f.run(['local', 'slot', 'heavy', 'writer', f.root, 'node', 'e2e/run-containerized.sh', '--no-build']);
+  assert.equal(reused.status, 0, reused.stderr);
+  assert.equal(f.argv(reused).some((arg) => arg.endsWith('e2e-lock.mjs')), false);
+});
+
+test('ordinary heavy checks have no Docker admission preflight', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.root, 'bin', 'df'), "#!/bin/sh\nprintf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' '/dev/disk 100000000 1 62499999 1% /'\n", { mode: 0o755 });
+  for (const command of ['lint', 'typecheck', 'test', 'storybook']) {
+    const result = f.run(['local', 'slot', 'heavy', 'writer', f.root, 'node', command],
+      { VIBE_E2E_DOCKER: join(f.root, 'missing-docker') });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(f.argv(result).some((arg) => arg.endsWith('e2e-lock.mjs')), false, command);
+  }
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const remote = f.run(['remote', 'slot', 'heavy', 'writer', f.root, 'node', 'typecheck'],
+    { VIBE_E2E_DOCKER: join(f.root, 'missing-docker') });
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.equal(f.argv(remote).some((arg) => arg.endsWith('e2e-lock.mjs')), false);
 });
 
 test('rejects unknown machines and actions with usage', TIMEOUT, () => {
