@@ -85,6 +85,8 @@ test('registered terminal PR retires only its exact published worktree and prese
 
 test('bootstrapped symphony outputs are regenerable while unknown ignored content still blocks retirement', async (t) => {
   const f = fixture(t);
+  writeFileSync(f.sessionFile, JSON.stringify({ status: 'handed-off', pullRequest: { repo: f.pr.repo, number: f.pr.number, head: f.pr.head },
+    livePlan: 'PLN-1', livePlanStatus: 'APPROVED' }));
   for (const file of ['.husky/_/pre-commit', 'apps/app/.env.local', '.closedloop-ai/.env.setup',
     '.closedloop-ai/vibe-plans/session.md', '.biome-noscan.jsonc', 'tsconfig.tsbuildinfo',
     'containers/claude-runner/node_modules/package']) {
@@ -96,6 +98,13 @@ test('bootstrapped symphony outputs are regenerable while unknown ignored conten
   assert.ok(f.register());
   const retired = await f.sweep();
   assert.deepEqual(retired.removed, [f.worktree], JSON.stringify(retired));
+
+  const unpublished = fixture(t);
+  mkdirSync(path.join(unpublished.worktree, '.closedloop-ai', 'vibe-plans'), { recursive: true });
+  writeFileSync(path.join(unpublished.worktree, '.closedloop-ai', 'vibe-plans', 'private.md'), 'private plan');
+  assert.ok(unpublished.register());
+  assert.deepEqual((await unpublished.sweep()).removed, []);
+  assert.equal(existsSync(unpublished.worktree), true, 'unpublished session plans keep their worktree');
 
   const g = fixture(t);
   writeFileSync(path.join(g.repo, '.git', 'info', 'exclude'), 'private-cache/\n');
@@ -316,15 +325,27 @@ test('live process or lock, missing remote, foreign worktree and PID reuse leave
     pullRequest: { repo: f.pr.repo, number: f.pr.number, head: f.pr.head }, stack: { storybookPid: 2147480000 } }));
   await sweepOwnedCleanups({ home: f.home, readPr: async () => ({ ...f.pr, state: 'MERGED' }), processAlive: () => true, lockHeld: () => false });
   assert.equal(existsSync(f.worktree), true, 'live session stays');
-  await sweepOwnedCleanups({ home: f.home, readPr: async () => ({ ...f.pr, state: 'MERGED' }), processAlive: () => false, lockHeld: () => true });
-  assert.equal(existsSync(f.worktree), true, 'live lock stays');
-  await sweepOwnedCleanups({ home: f.home, readPr: async () => ({ ...f.pr, state: 'MERGED' }), processAlive: () => true,
+
+  const g = fixture(t);
+  assert.ok(g.register());
+  await sweepOwnedCleanups({ home: g.home, readPr: async () => ({ ...g.pr, state: 'MERGED' }), processAlive: () => false, lockHeld: () => true });
+  assert.equal(existsSync(g.worktree), true, 'live lock stays');
+
+  const h = fixture(t);
+  assert.ok(h.register());
+  const hGitDir = git(h.worktree, 'rev-parse', '--absolute-git-dir');
+  writeFileSync(path.join(hGitDir, 'vibe-session.json'), JSON.stringify({ status: 'handed-off',
+    pullRequest: { repo: h.pr.repo, number: h.pr.number, head: h.pr.head }, stack: { storybookPid: 2147480000 } }));
+  await sweepOwnedCleanups({ home: h.home, readPr: async () => ({ ...h.pr, state: 'MERGED' }), processAlive: () => true,
     processIdentity: () => 'reused-pid', lockHeld: () => false });
-  assert.equal(existsSync(f.worktree), true, 'reused PID is not a cleanup warrant');
-  git(f.repo, 'remote', 'remove', 'origin');
-  await f.sweep();
-  assert.equal(existsSync(f.worktree), true, 'missing remote stays');
-  const foreign = path.join(f.home, 'foreign');
+  assert.equal(existsSync(h.worktree), true, 'reused PID is not a cleanup warrant');
+
+  const missing = fixture(t);
+  assert.ok(missing.register());
+  git(missing.repo, 'remote', 'remove', 'origin');
+  await missing.sweep();
+  assert.equal(existsSync(missing.worktree), true, 'missing remote stays');
+  const foreign = path.join(missing.home, 'foreign');
   mkdirSync(foreign);
   assert.equal(existsSync(foreign), true);
 });
@@ -452,7 +473,7 @@ test('exhausted first scratch program leaves the second next in the cursor', asy
   assert.equal(calls[1][0], second);
 });
 
-test('timed-out PR read backs off so scratch and E2E progress on the next tick', async (t) => {
+test('a shared-deadline hit stays immediately retryable while scratch and E2E still progress', async (t) => {
   const f = fixture(t);
   f.register();
   const root = path.join(f.home, '.codex', 'vibe', 'cleanup');
@@ -469,9 +490,11 @@ test('timed-out PR read backs off so scratch and E2E progress on the next tick',
   await sweepOwnedCleanups({ home: f.home, readPr, now: 0, deadline: 100,
     clock: () => timedOut ? 101 : 0 });
   let scratchVisits = 0;
-  const second = await sweepOwnedCleanups({ home: f.home, readPr: async () => { throw new Error('read retried too early'); },
+  let retries = 0;
+  const second = await sweepOwnedCleanups({ home: f.home, readPr: async () => { retries += 1; return { ...f.pr, state: 'OPEN' }; },
     now: 1000, deadline: Date.now() + 30_000,
     scratchSweep: async () => { scratchVisits += 1; return { visited: 1, removed: [], leftover: [] }; } });
+  assert.equal(retries, 1, 'deadline exhaustion does not create a 30-minute backoff');
   assert.equal(scratchVisits, 1);
   assert.ok(second.leftover.some((line) => line.includes('Legacy E2E reservation')));
   const third = await sweepOwnedCleanups({ home: f.home, now: 2_000, deadline: Date.now() + 30_000,

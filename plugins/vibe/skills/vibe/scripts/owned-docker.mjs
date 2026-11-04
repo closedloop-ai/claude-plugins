@@ -140,6 +140,15 @@ function imageWitness(tag, run) {
   return { tag, id: image.Id, created: image.Created, tags: image.RepoTags };
 }
 
+function projectImageTags(project, run) {
+  const raw = dockerResult(['image', 'ls', '--filter', `reference=${project}-*`, '--format', '{{.Repository}}:{{.Tag}}'], run);
+  const listed = [...new Set(raw.split('\n').filter(Boolean))];
+  if (listed.some((tag) => !tag.startsWith(project + '-') || !tag.endsWith(':latest'))) {
+    throw new Error('Docker returned an image outside the recorded project tag namespace');
+  }
+  return listed.map((tag) => tag.slice(0, -':latest'.length));
+}
+
 function projectResources(project, run) {
   return captureOwnedDockerResources({ project }, { run });
 }
@@ -158,7 +167,7 @@ function resourceCount(resources) {
 }
 
 /** Reserve an empty full-token Compose project and absent exact local tags before launching a creator. */
-export function reserveGeneratedE2E({ token, project, owner, startedAt, plannedTags = [], file },
+export function reserveGeneratedE2E({ token, project, owner, startedAt, plannedTags = [], discoverImages = false, file },
   { run = dockerRun, home } = {}) {
   if (!/^[a-f0-9]{32}$/i.test(token ?? '') || project !== `vibe-e2e-${token}`
     || !Number.isFinite(Date.parse(startedAt ?? '')) || !owner?.identity
@@ -172,7 +181,7 @@ export function reserveGeneratedE2E({ token, project, owner, startedAt, plannedT
   if (resourceCount(projectResources(project, run))) throw new Error('Generated Compose project is not empty before launch');
   for (const tag of plannedTags) if (imageWitness(tag, run)) throw new Error(`Planned image tag already exists: ${tag}`);
   const record = { version: VERSION, kind: 'e2e', state: 'reserved', token, project, owner, startedAt,
-    plannedTags, absentAtReservation: true, launchPending: false, images: [], file };
+    plannedTags, discoverImages, absentAtReservation: true, launchPending: false, images: [], file };
   if (home) markPending(home);
   writeAtomic(file, record);
   if (home) refreshMarker(home);
@@ -230,7 +239,8 @@ export function reconcileGeneratedE2E(record, { run = dockerRun, ownerAlive = ()
   if (record?.version !== VERSION || record.kind !== 'e2e' || !/^[a-f0-9]{32}$/i.test(record.token ?? '')
     || record.project !== `vibe-e2e-${record.token}` || record.absentAtReservation !== true
     || !Number.isFinite(Date.parse(record.startedAt ?? '')) || !record.owner?.identity
-    || !Array.isArray(record.plannedTags) || typeof record.launchPending !== 'boolean') {
+    || !Array.isArray(record.plannedTags) || typeof record.launchPending !== 'boolean'
+    || ![true, false, undefined].includes(record.discoverImages)) {
     throw new Error('Legacy E2E reservation has no exact ownership proof');
   }
   if (record.state === 'complete') return { removed: [] };
@@ -265,7 +275,9 @@ export function reconcileGeneratedE2E(record, { run = dockerRun, ownerAlive = ()
   if (record.builder?.builtTagsFile) recordBuiltTags(record);
   const isPrivateTag = (tag) => typeof tag === 'string' && tag.startsWith(record.project + '-')
     && /^[a-z0-9][a-z0-9_-]*$/.test(tag.slice(record.project.length + 1));
-  for (const tag of record.plannedTags) {
+  const candidateTags = [...new Set([...record.plannedTags,
+    ...(record.discoverImages ? projectImageTags(record.project, run) : [])])];
+  for (const tag of candidateTags) {
     const currentImage = imageWitness(tag, run);
     if (!currentImage) continue;
     // Compose up can implicitly build a reserved project-private service tag.
@@ -282,7 +294,7 @@ export function reconcileGeneratedE2E(record, { run = dockerRun, ownerAlive = ()
       throw new Error('Built image tag changed its wave witness');
     }
     for (const other of currentImage.tags) {
-      const owned = record.plannedTags.find((candidate) => sameImageTag(candidate, other));
+      const owned = candidateTags.find((candidate) => sameImageTag(candidate, other));
       if (!owned || !isPrivateTag(owned)) throw new Error('Image is retagged or shared');
       const peer = imageWitness(owned, run);
       if (!peer || peer.id !== currentImage.id || peer.created !== currentImage.created) {

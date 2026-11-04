@@ -27,6 +27,11 @@ function fixture(t) {
     const [kind, action, ...rest] = args;
     const id = rest.at(-1);
     if (action === 'ls') {
+      if (kind === 'image') {
+        const reference = rest[rest.indexOf('--filter') + 1]?.replace('reference=', '').replace('*', '');
+        return { status: 0, stdout: [...images.keys()].filter((tag) => !reference || tag.startsWith(reference))
+          .map((tag) => tag + ':latest').join('\n') };
+      }
       const prefix = `${kind}:`;
       const filterAt = rest.indexOf('--filter');
       const filter = filterAt >= 0 ? rest[filterAt + 1] : null;
@@ -253,6 +258,18 @@ test('implicit Compose up can retire only a reserved private project tag', (t) =
   other.images.set(fixed, { Id: other.imageId, Created: CREATED, RepoTags: [fixed] });
   assert.throws(() => other.reconcile(unsafe), /outside the reserved private project/);
   assert.equal(other.images.has(fixed), true);
+});
+
+test('wrapped containerized runs discover and retire random-project images created after reservation', (t) => {
+  const f = fixture(t);
+  const record = reserveGeneratedE2E({ token: f.token, project: f.project,
+    owner: { token: f.token, identity: 'dead', pid: 99_999_999 }, startedAt: STARTED,
+    plannedTags: [], discoverImages: true, file: path.join(f.dir, 'wrapped.json') }, { run: f.run });
+  const tag = f.project + '-wrapped';
+  f.images.set(tag, { Id: `sha256:${'e'.repeat(64)}`, Created: CREATED, RepoTags: [tag + ':latest'] });
+  const result = f.reconcile(record);
+  assert.ok(result.removed.some((entry) => entry.kind === 'image-tag' && entry.id === tag));
+  assert.equal(f.images.has(tag), false);
 });
 
 test('partial failed wave can retire its selected private tag after reservation', (t) => {

@@ -7,7 +7,7 @@ const BUILDER_NAME = 'vibe-build';
 const BUILDER_VERSION = 1;
 export const BUILDER_CACHE_CAP = '28GB';
 
-function inspectBuilderPart(kind, name, run, builderName = BUILDER_NAME) {
+function inspectBuilderPart(kind, name, run) {
   const result = run([kind, 'inspect', name]);
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -20,8 +20,8 @@ function inspectBuilderPart(kind, name, run, builderName = BUILDER_NAME) {
   const value = JSON.parse(String(result.stdout ?? ''))[0];
   const id = kind === 'container' ? value?.Id : value?.Name;
   const created = kind === 'container' ? value?.Created : value?.CreatedAt;
-  if ((kind === 'container' && (!/^[a-f0-9]{64}$/i.test(id ?? '')
-      || value?.Config?.Labels?.['com.docker.buildx.builder'] !== builderName)) || kind === 'volume' && id !== name
+  if ((kind === 'container' && (!/^[a-f0-9]{64}$/i.test(id ?? '') || value?.Name !== '/' + name))
+    || kind === 'volume' && id !== name
     || !Number.isFinite(Date.parse(created ?? ''))) throw new Error('Builder part has no exact identity witness');
   return { name, id, created };
 }
@@ -96,6 +96,26 @@ export function prepareRunOwnedBuild(record, { run = dockerRun, home, buildInten
         || Date.parse(volume.created) + 1_000 < Date.parse(owned.createdAt)) throw new Error('Incomplete persistent builder creation is not owned');
       owned = { ...owned, state: 'ready', container, volume };
       writeAtomic(builderFile, owned);
+    }
+    if (owned.state === 'ready') {
+      let container = inspectBuilderPart('container', containerName, run);
+      let volume = inspectBuilderPart('volume', volumeName, run);
+      if (!container && !volume) {
+        owned = { ...owned, state: 'creating', createdAt: new Date().toISOString(), container: undefined, volume: undefined };
+        writeAtomic(builderFile, owned);
+        const created = dockerResult(['buildx', 'create', '--driver', 'docker-container', '--driver-opt',
+          'default-load=true', '--name', name, '--bootstrap'], run);
+        if (created !== name) throw new Error('Buildx returned a different builder name');
+        container = inspectBuilderPart('container', containerName, run);
+        volume = inspectBuilderPart('volume', volumeName, run);
+        if (!container || !volume || Date.parse(container.created) + 1_000 < Date.parse(owned.createdAt)
+          || Date.parse(volume.created) + 1_000 < Date.parse(owned.createdAt)) throw new Error('Recreated builder lacks exact post-reservation state');
+        owned = { ...owned, state: 'ready', container, volume };
+        writeAtomic(builderFile, owned);
+      } else if (!container || !volume || container.id !== owned.container?.id || container.created !== owned.container?.created
+        || volume.id !== owned.volume?.id || volume.created !== owned.volume?.created) {
+        throw new Error('Persistent builder identity witness changed');
+      }
     }
     if (owned.state !== 'ready') throw new Error('Persistent builder is not ready');
   }

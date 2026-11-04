@@ -52,6 +52,7 @@ export function scratchCreationProblem(command, scope) {
   if (!['vibe', 'fleet-orchestrator'].includes(scope) || typeof command !== 'string') return null;
   const scratch = /\b(?:iss[-_]?\d+|scratch|postgres|postgresql|perf|seed|minio|ca-store)\b/i;
   for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
+    if (allowedSharedOrEphemeralRun(words)) continue;
     if (scratchDockerCreation(words).some((identity) => scratch.test(identity))) {
       return 'registered scratch stack required: use helpers.mjs scratch-run with owner, ticket, worktree and TTL before Docker creation';
     }
@@ -60,7 +61,7 @@ export function scratchCreationProblem(command, scope) {
 }
 
 const RUN_VALUE_OPTIONS = new Set(['--name', '--env', '-e', '--volume', '-v', '--mount', '--network', '--label', '-l',
-  '--publish', '-p', '--workdir', '-w', '--user', '-u', '--entrypoint', '--hostname', '-h', '--platform']);
+  '--publish', '-p', '--workdir', '-w', '--user', '-u', '--entrypoint', '--hostname', '-h', '--platform', '--env-file']);
 const COMPOSE_VALUE_OPTIONS = new Set(['--project-name', '-p', '--file', '-f', '--profile', '--env-file', '--project-directory']);
 
 function optionValue(words, index, options) {
@@ -82,6 +83,21 @@ function runIdentities(words, actionAt) {
     break;
   }
   return identities;
+}
+
+function dockerRunAction(words) {
+  if (path.basename(words[0] ?? '') !== 'docker') return -1;
+  if (words[1] === 'run') return 1;
+  if (words[1] === 'container' && words[2] === 'run') return 2;
+  return -1;
+}
+
+function allowedSharedOrEphemeralRun(words) {
+  const actionAt = dockerRunAction(words);
+  if (actionAt < 0) return false;
+  if (words.slice(actionAt + 1).some((word) => word === '--rm' || word === '--rm=true')) return true;
+  const identities = runIdentities(words, actionAt);
+  return words.includes('-d') && identities.includes('postgres16') && identities.includes('postgres:16');
 }
 
 function composeIdentities(words, composeAt) {

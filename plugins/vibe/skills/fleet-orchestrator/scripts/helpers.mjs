@@ -17,7 +17,7 @@
 //        [--completion-event <saved thread/read JSON>]; deliverable ends with
 //        FINAL <one-time token> <start tree> <worker ID> <session ID> <turn ID> completed
 //        helpers.mjs <orchDir> accepted <name> --report <helper-final.json>
-//        helpers.mjs <orchDir> stopped <name> [--grace-seconds <n, default 10>]
+//        helpers.mjs <orchDir> stopped <name> [--grace-seconds <n, default 10>] [--owner <writer> --owner-token <token>]
 //        helpers.mjs <orchDir> hand <stack> --to <guide>
 //        helpers.mjs <orchDir> unhand <stack>
 //        helpers.mjs <orchDir> status [--idle-minutes <n, default 5>] [--now <iso>] [--e2e-lock-dir <dir>]
@@ -387,6 +387,7 @@ async function main(argv) {
       group: { type: "boolean" },
       now: { type: "string" },
       owner: { type: "string" }, ticket: { type: "string" }, repo: { type: "string" }, pr: { type: "string" },
+      "owner-token": { type: "string" },
       ending: { type: "string" }, project: { type: "string" },
       "ttl-seconds": { type: "string" },
       "compose-file": { type: "string" },
@@ -588,6 +589,9 @@ async function main(argv) {
       }
       if (values.owner) {
         if (values.owner !== entry.owner) throw new Error('scratch stop owner differs from its recorded owner');
+        if (!values["owner-token"] || values["owner-token"] !== entry.ownerToken) {
+          throw new Error('scratch stop needs its recorded owner token');
+        }
         const grace = values["grace-seconds"] === undefined ? DEFAULT_GRACE_SECONDS : Number(values["grace-seconds"]);
         const groups = new Set(entry.groups ?? []);
         const targets = (entry.pids ?? []).map((pid) => ({ pid, group: groups.has(pid), identity: entry.identities?.[pid] }));
@@ -598,7 +602,7 @@ async function main(argv) {
         }
       }
       const settled = reconcileExpiredScratchHelpers({ [name]: entry }, now,
-        values.owner ? { explicitOwner: values.owner } : {});
+        values.owner ? { explicit: true } : {});
       if (!entry.stoppedAt) throw new Error(settled.findings.join('; ') || 'Scratch ownership could not be reconciled');
       write(orchDir, ledger);
       return 0;

@@ -40,8 +40,14 @@ function gitBytes(cwd, args, { timeoutMs = 20_000 } = {}) {
 
 function remainingTimeout(deadline, clock, maximum = 20_000) {
   const remaining = deadline - clock();
-  if (remaining <= 0) throw new Error('cleanup deadline reached before command');
+  if (remaining <= 0) throw cleanupDeadline('cleanup deadline reached before command');
   return Math.min(maximum, remaining);
+}
+
+function cleanupDeadline(message) {
+  const error = new Error(message);
+  error.code = 'CLEANUP_DEADLINE';
+  return error;
 }
 
 function acquireSweepLock(home, { waitMs = 2_000, clock = Date.now } = {}) {
@@ -211,29 +217,30 @@ function setupEnvTargets(worktree) {
   } catch { return new Set(); }
 }
 
-function generatedIgnored(relative, worktree, envTargets = setupEnvTargets(worktree)) {
+function generatedIgnored(relative, worktree, envTargets = setupEnvTargets(worktree), publishedPlans = false) {
   const clean = relative.replace(/\/$/, '');
   if (envTargets.has(clean)) return true;
+  if (publishedPlans && /^\.closedloop-ai\/(?:vibe-plans|plans)(?:\/.*)?$/.test(clean)) return true;
   return /^(?:coverage|\.perf|tsconfig\.tsbuildinfo)$/.test(clean)
     || /(?:^|\/)(?:node_modules|\.turbo|\.next|\.cache)$/.test(clean)
     || /^(?:\.husky\/_)(?:\/.*)?$/.test(clean)
-    || /^(?:\.closedloop-ai\/(?:\.env\.setup|vibe-plans|plans|decision-tables)(?:\/.*)?|\.biome-noscan\.jsonc)$/.test(clean)
+    || /^(?:\.closedloop-ai\/\.env\.setup|\.biome-noscan\.jsonc)$/.test(clean)
     || /^(?:apps|packages)\/[^/]+\/(?:node_modules|\.turbo|\.next|\.cache|dist|generated)$/.test(clean)
     || /^(?:apps|packages)\/[^/]+\/(?:tsconfig(?:\.[^/]+)?\.tsbuildinfo|next-env\.d\.ts)$/.test(clean)
     || /^apps\/desktop\/src\/(?:main\/database\/(?:generated|migration\/migrations-manifest\.ts)|main\/docs-help\/docs-bundle-manifest\.ts|shared\/(?:auth-handoff-assets\.generated\.ts|build-info\.ts))$/.test(clean)
     || /^apps\/web\/\.source$/.test(clean);
 }
 
-function generatedIgnoredTree(relative, worktree, envTargets) {
-  if (generatedIgnored(relative, worktree, envTargets)) return true;
+function generatedIgnoredTree(relative, worktree, envTargets, publishedPlans) {
+  if (generatedIgnored(relative, worktree, envTargets, publishedPlans)) return true;
   const absolute = path.join(worktree, relative);
   let entries;
   try { entries = readdirSync(absolute, { withFileTypes: true }); } catch { return false; }
   return entries.length > 0 && entries.every((entry) => {
     const child = path.relative(worktree, path.join(absolute, entry.name));
     if (entry.isSymbolicLink()) return envTargets.has(child);
-    return entry.isDirectory() ? generatedIgnoredTree(child, worktree, envTargets)
-      : generatedIgnored(child, worktree, envTargets);
+    return entry.isDirectory() ? generatedIgnoredTree(child, worktree, envTargets, publishedPlans)
+      : generatedIgnored(child, worktree, envTargets, publishedPlans);
   });
 }
 
@@ -246,7 +253,7 @@ function cleanGit(worktree, options) {
   return gitBytes(worktree, ['status', '--porcelain=v1', '-z'], options).length === 0;
 }
 
-function defaultProcessCwds(worktree) {
+function defaultProcessCwds(worktree, { deadline = Infinity, clock = Date.now } = {}) {
   const owned = [];
   if (existsSync('/proc')) {
     for (const name of readdirSync('/proc').filter((value) => /^\d+$/.test(value))) {
@@ -257,7 +264,9 @@ function defaultProcessCwds(worktree) {
     }
     return owned;
   }
-  const listed = spawnSync('lsof', ['-n', '-a', '-d', 'cwd', '-Fpn'], { encoding: 'utf8', timeout: 5_000 });
+  const listed = spawnSync('lsof', ['-n', '-a', '-d', 'cwd', '-Fpn'],
+    { encoding: 'utf8', timeout: remainingTimeout(deadline, clock, 5_000) });
+  if (listed.error?.code === 'ETIMEDOUT') throw cleanupDeadline('cleanup deadline reached during process cwd inventory');
   if (listed.error || listed.status !== 0) throw new Error('process cwd inventory is unreadable');
   let pid = null;
   for (const line of listed.stdout.split('\n')) {
@@ -345,14 +354,17 @@ function verifyWorktree(record, processAlive, lockHeld, home, { processCwds = de
     || git(root, ['rev-parse', 'HEAD'], commandOptions()) !== record.head) throw new Error('Git worktree branch, head or common dir changed');
   const listed = git(record.repo, ['worktree', 'list', '--porcelain'], commandOptions());
   if (!listed.split('\n').includes(`worktree ${root}`)) throw new Error('worktree is not registered with retained clone');
-  if (!savedSessionSafe(record, processAlive) || lockHeld(root) || processCwds(root).length || slotHeld(root, home)) {
+  if (!savedSessionSafe(record, processAlive) || lockHeld(root)
+    || processCwds(root, { deadline, clock }).length || slotHeld(root, home)) {
     throw new Error('session, process or lock remains active');
   }
   if (pendingScratchForWorktree(record, home)) throw new Error('registered scratch stack must retire before its worktree');
   if (!cleanGit(root, commandOptions())) throw new Error('worktree has dirty or untracked files');
   const ignored = ignoredPaths(root, commandOptions());
   const envTargets = setupEnvTargets(root);
-  const unknown = ignored.filter((relative) => !generatedIgnoredTree(relative, root, envTargets));
+  const session = readSessionRecord(root);
+  const publishedPlans = Boolean(session?.livePlan && ['APPROVED', 'EXECUTED'].includes(session.livePlanStatus));
+  const unknown = ignored.filter((relative) => !generatedIgnoredTree(relative, root, envTargets, publishedPlans));
   if (unknown.length) throw new Error('worktree has unknown ignored data: ' + unknown.slice(0, 3).join(', '));
   for (const relative of ignored) {
     const absolute = path.resolve(root, relative);
@@ -439,7 +451,7 @@ export async function sweepOwnedCleanups({ home = os.homedir(), readPr = current
       verifyWorktree(record, processAlive, lockHeld, home, { processCwds, slotHeld, deadline, clock });
       await beforeRemove(record);
       verifyWorktree(record, processAlive, lockHeld, home, { processCwds, slotHeld, deadline, clock });
-      if (clock() >= deadline) throw new Error('cleanup deadline reached before final PR read');
+      if (clock() >= deadline) throw cleanupDeadline('cleanup deadline reached before final PR read');
       const latest = await readPr(record.pr.repo, record.pr.number, { timeoutMs: deadline - clock() });
       if (!matchPr(record.pr, latest) || !['MERGED', 'CLOSED'].includes(latest.state)) throw new Error('PR changed before removal');
       verifyOrigin(record, latest.state, { timeoutMs: remainingTimeout(deadline, clock) });
@@ -451,9 +463,11 @@ export async function sweepOwnedCleanups({ home = os.homedir(), readPr = current
     } catch (error) {
       record.state = 'leftover';
       record.lastError = String(error instanceof Error ? error.message : error).slice(0, 200);
-      record.nextCheckAt = new Date(now + OPEN_PR_BACKOFF_MS).toISOString();
+      const deadlineHit = error?.code === 'CLEANUP_DEADLINE' || error?.code === 'ETIMEDOUT' || clock() >= deadline;
+      record.nextCheckAt = deadlineHit ? null : new Date(now + OPEN_PR_BACKOFF_MS).toISOString();
       writeAtomic(file, record);
       result.leftover.push(`LEFTOVER ${name}: ${record.lastError}`);
+      if (deadlineHit) break;
     }
   }
   if (names.length) writeAtomic(cursorFile(home), { next: (offset + worktreeVisits) % names.length });

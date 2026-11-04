@@ -235,11 +235,15 @@ test('generic stopped and pr-terminal paths cannot bypass scratch TTL and writer
   assert.equal(JSON.parse(readFileSync(ledgerFile, 'utf8')).scratch.stoppedAt, undefined);
   const docker = path.join(dir, 'docker');
   writeFileSync(docker, '#!/bin/sh\ncase "$1 $2" in "container ls"|"volume ls"|"network ls") exit 0;; esac\nexit 2\n', { mode: 0o755 });
-  const explicit = (owner) => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'stopped', 'scratch', '--owner', owner],
+  const explicit = (owner, token = 'token') => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'stopped', 'scratch',
+    '--owner', owner, '--owner-token', token],
     { encoding: 'utf8', env: { ...process.env, VIBE_E2E_DOCKER: docker } });
   const wrong = explicit('other-writer');
   assert.notEqual(wrong.status, 0);
   assert.match(wrong.stderr, /owner differs/);
+  const wrongToken = explicit('writer', 'other-token');
+  assert.notEqual(wrongToken.status, 0);
+  assert.match(wrongToken.stderr, /recorded owner token/);
   const owned = explicit('writer');
   assert.equal(owned.status, 0, owned.stderr);
   assert.ok(JSON.parse(readFileSync(ledgerFile, 'utf8')).scratch.stoppedAt, 'recorded owner can retire before TTL');

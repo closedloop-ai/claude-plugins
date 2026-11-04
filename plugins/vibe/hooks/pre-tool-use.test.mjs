@@ -33,6 +33,9 @@ test('raw recognizable scratch Docker creation is refused while reads and wrappe
   for (const command of ['docker ps', 'docker volume inspect data', 'node helpers.mjs scratch-run --ticket ticket-one',
     'node e2e-lock.mjs run --head abc e2e/run-containerized.sh',
     'docker run --rm alpine /tmp/iss-42/postgres --version',
+    'docker run --rm postgres:16 psql --version',
+    'docker run -d --name postgres16 -e POSTGRES_USER=postgres -p 5432:5432 postgres:16',
+    'docker run --env-file .env.seed --rm node:24 true',
     'docker compose -f /tmp/iss-42/postgres.yml up -d app']) {
     assert.equal(scratchCreationProblem(command, 'vibe'), null, command);
   }

@@ -47,21 +47,20 @@ export function scratchLeaseTerminal(helper) {
 /** Reconcile expired, creation-labelled scratch stacks without touching active leases. */
 export function reconcileExpiredScratchHelpers(ledger, now, { capture = captureOwnedDockerResources,
   cleanup = removeOwnedDockerResources, alive = isAlive, identityOf = readIdentity,
-  leaseTerminal = scratchLeaseTerminal, explicitOwner = null,
+  leaseTerminal = scratchLeaseTerminal, explicit = false,
   lockHeld = (worktree) => Boolean(sameWorktreeEntry(defaultLockDir(), worktree)) } = {}) {
   const findings = [];
   let changed = false;
   for (const [name, helper] of helperEntries(ledger)) {
     if (helper.kind !== "scratch" || helper.stoppedAt
-      || explicitOwner === null && now < Date.parse(helper.expiresAt ?? "")) continue;
+      || !explicit && now < Date.parse(helper.expiresAt ?? "")) continue;
     const label = `${name} owner ${helper.owner ?? "unknown"} ticket ${helper.ticket ?? "unknown"}`;
     try {
       if (!helper.owner || !helper.ticket || !helper.worktree || !helper.project || !helper.ownerToken
         || !helper.writerLease || !Number.isFinite(Date.parse(helper.startedAt)) || !Number.isFinite(Date.parse(helper.expiresAt))) {
         throw new Error("scratch ownership or TTL is incomplete");
       }
-      if (explicitOwner !== null && explicitOwner !== helper.owner) throw new Error('scratch stop owner differs from its recorded owner');
-      if (explicitOwner === null && !leaseTerminal(helper)) throw new Error('scratch writer lease remains active');
+      if (!explicit && !leaseTerminal(helper)) throw new Error('scratch writer lease remains active');
       if ((helper.pids ?? []).some((pid) => pendingRecordedProcess({ pid, identity: helper.identities?.[pid] }, alive, identityOf))
         || lockHeld(helper.worktree)) throw new Error("scratch process or lock remains active");
       const current = capture({ project: helper.project });

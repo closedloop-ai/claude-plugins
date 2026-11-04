@@ -80,7 +80,6 @@ const DEFAULT_WAIT_SECONDS = 3600;
 const POLL_MS = 5_000;
 const OWNER_FILE = "owner.json";
 const OWNERLESS_GRACE_MS = 60_000;
-const SIGNAL_DRAIN_MS = 10_000;
 const COMPOSE_PREFIX = "vibe-e2e-";
 
 /** The machine-wide lock folder, shared by every worktree and both harnesses. */
@@ -291,16 +290,16 @@ function runCommand(command, args, env, record) {
       child.once("close", () => reject(error));
       return;
     }
-    let drainTimer;
+    let signalForwarded = false;
     const forward = (signal) => {
+      if (signalForwarded) {
+        if (record && child.pid > 1) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Group already drained. */ } }
+        else child.kill('SIGKILL');
+        return;
+      }
+      signalForwarded = true;
       if (record && child.pid > 1) { try { process.kill(-child.pid, signal); } catch { /* Group exited. */ } }
       else child.kill(signal);
-      if (!drainTimer && record && child.pid > 1) {
-        drainTimer = setTimeout(() => {
-          try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Group drained within the bound. */ }
-        }, SIGNAL_DRAIN_MS);
-        drainTimer.unref();
-      }
     };
     process.on("SIGINT", forward);
     process.on("SIGTERM", forward);
@@ -310,7 +309,6 @@ function runCommand(command, args, env, record) {
       process.off("SIGINT", forward);
       process.off("SIGTERM", forward);
       process.off("SIGHUP", forward);
-      if (drainTimer) clearTimeout(drainTimer);
       resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
     });
   });
@@ -410,6 +408,7 @@ async function main(argv) {
   const generatedProject = !process.env.COMPOSE_PROJECT_NAME;
   const containerizedBuild = generatedProject && isContainerizedBuild(command, args)
     && [command, ...args].some((word) => /(?:^|\/)run-containerized\.sh$/.test(word));
+  const wrappedContainerizedBuild = generatedProject && ['bash', 'sh', 'zsh'].includes(path.basename(command));
   const dockerReady = generatedProject && spawnSync(process.env.VIBE_E2E_DOCKER || "docker", ["version"],
     { encoding: "utf8", timeout: 10_000 }).status === 0;
   if (containerizedBuild && !dockerReady) { release(lockDir, owner); throw new Error("Owned E2E build needs Docker."); }
@@ -420,7 +419,8 @@ async function main(argv) {
     try {
       const docker = process.env.VIBE_E2E_DOCKER || "docker";
       cleanupRecord = reserveGeneratedE2E({ token: owner.token.replace(/-/g, ""), project: composeProject, owner,
-        startedAt: new Date().toISOString(), plannedTags: plannedLocalTags(docker, composeProject, worktree, command, args), file: cleanupFile },
+        startedAt: new Date().toISOString(), plannedTags: plannedLocalTags(docker, composeProject, worktree, command, args),
+        discoverImages: !args.includes('--no-build') && (containerizedBuild || wrappedContainerizedBuild), file: cleanupFile },
       { home: managedHome });
       if (containerizedBuild) cleanupRecord.requiredBuiltTags = [];
     } catch (error) {
@@ -502,19 +502,11 @@ async function runChildGate([gate, command, ...args]) {
       if (/^[a-f0-9]{32}$/i.test(token) && gate.endsWith(`e2e-gate-${token}.ready`)) {
         return new Promise((resolve, reject) => {
           const child = spawn(command, args, { stdio: 'inherit', env: process.env });
-          let drainTimer;
-          const forward = (signal) => {
-            try { child.kill(signal); } catch { /* Child already exited. */ }
-            if (!drainTimer) {
-              drainTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, SIGNAL_DRAIN_MS);
-              drainTimer.unref();
-            }
-          };
-          for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, forward);
+          const waitForGroupSignal = () => {};
+          for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, waitForGroupSignal);
           child.once('error', reject);
           child.once('close', (code, signal) => {
-            for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(name, forward);
-            if (drainTimer) clearTimeout(drainTimer);
+            for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(name, waitForGroupSignal);
             resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
           });
         });

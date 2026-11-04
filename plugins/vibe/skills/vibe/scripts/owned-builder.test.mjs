@@ -27,8 +27,8 @@ function fixture(t) {
     if (args[0] === 'buildx' && args[1] === 'version') return { status: 0, stdout: 'github.com/docker/buildx v0.14.1' };
     if (args[0] === 'compose' && args[1] === 'build' && args[2] === '--help') return { status: 0, stdout: '--builder Set builder to use' };
     if (args[0] === 'buildx' && args[1] === 'create') {
-      docker.set('container:' + builderContainer, { Id: CONTAINER, Created: CREATED,
-        Config: { Labels: { 'com.docker.buildx.builder': builder } } });
+      docker.set('container:' + builderContainer, { Name: '/' + builderContainer, Id: CONTAINER, Created: CREATED,
+        Config: { Labels: {} } });
       docker.set('volume:' + stateVolume, { Name: stateVolume, CreatedAt: CREATED, Labels: {} });
       return { status: 0, stdout: builder };
     }
@@ -94,10 +94,22 @@ test('a crash after the absent-builder reservation resumes creation without adop
   assert.equal(f.calls.filter((args) => args[0] === 'buildx' && args[1] === 'create').length, 1);
 });
 
+test('a ready ownership record recreates its builder only when both exact parts are absent', (t) => {
+  const f = fixture(t);
+  prepareRunOwnedBuild(f.reserve(), { run: f.run, home: f.home });
+  f.docker.delete('container:' + f.builderContainer);
+  f.docker.delete('volume:' + f.stateVolume);
+  const next = f.reserve(path.join(f.home, 'next.json'));
+  prepareRunOwnedBuild(next, { run: f.run, home: f.home });
+  assert.equal(f.calls.filter((args) => args[0] === 'buildx' && args[1] === 'create').length, 2);
+  assert.ok(f.docker.has('container:' + f.builderContainer));
+  assert.ok(f.docker.has('volume:' + f.stateVolume));
+});
+
 test('a same-named foreign builder without the vibe ownership record is never adopted', (t) => {
   const f = fixture(t);
-  f.docker.set('container:' + f.builderContainer, { Id: CONTAINER, Created: CREATED,
-    Config: { Labels: { 'com.docker.buildx.builder': f.builder } } });
+  f.docker.set('container:' + f.builderContainer, { Name: '/' + f.builderContainer, Id: CONTAINER, Created: CREATED,
+    Config: { Labels: {} } });
   f.docker.set('volume:' + f.stateVolume, { Name: f.stateVolume, CreatedAt: CREATED, Labels: {} });
   assert.throws(() => prepareRunOwnedBuild(f.reserve(), { run: f.run, home: f.home }), /without a vibe ownership record/);
   assert.equal(f.calls.some((args) => args[0] === 'buildx' && args[1] === 'prune'), false);

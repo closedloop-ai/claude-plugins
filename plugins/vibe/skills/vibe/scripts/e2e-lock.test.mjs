@@ -286,7 +286,7 @@ test('SIGINT waits for a bounded command-group drain and preserves exit 130', as
   const marker = path.join(dir, 'int');
   const ready = path.join(dir, 'ready');
   const lock = path.join(dir, 'lock');
-  const program = `const fs=require('node:fs');let done=false;process.on('SIGINT',()=>{if(done)return;done=true;setTimeout(()=>{fs.writeFileSync(${JSON.stringify(marker)},'int');process.exit(130)},300)});fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`;
+  const program = `const fs=require('node:fs');let count=0;process.on('SIGINT',()=>{count+=1;setTimeout(()=>{fs.writeFileSync(${JSON.stringify(marker)},String(count));process.exit(130)},300)});fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`;
   const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', lock, process.execPath, '-e', program],
   { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
   await waitUntil(() => existsSync(ready));
@@ -295,8 +295,51 @@ test('SIGINT waits for a bounded command-group drain and preserves exit 130', as
   const code = await new Promise((resolve) => child.once('close', resolve));
   assert.equal(code, 130);
   assert.ok(Date.now() - signalledAt >= 250, 'wrapper waits for the child trap');
-  assert.equal(readFileSync(marker, 'utf8').trim(), 'int');
+  assert.equal(readFileSync(marker, 'utf8').trim(), '1', 'the child gate does not re-forward the group signal');
   assert.equal(existsSync(lock), false);
+});
+
+test('one SIGINT allows the repository teardown budget to finish without forced escalation', async () => {
+  const dir = path.join(root, 'sigint-slow-drain');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\n[ "$1" = version ] && exit 0\ncase "$2" in ls) exit 0;; esac\nexit 9\n', { mode: 0o700 });
+  const marker = path.join(dir, 'slow-int');
+  const ready = path.join(dir, 'ready');
+  const lock = path.join(dir, 'lock');
+  const program = `const fs=require('node:fs');process.on('SIGINT',()=>setTimeout(()=>{fs.writeFileSync(${JSON.stringify(marker)},'finished');process.exit(130)},15000));fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`;
+  const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', lock, process.execPath, '-e', program],
+    { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
+  await waitUntil(() => existsSync(ready));
+  const signalledAt = Date.now();
+  child.kill('SIGINT');
+  const code = await new Promise((resolve) => child.once('close', resolve));
+  assert.equal(code, 130);
+  assert.ok(Date.now() - signalledAt >= 14_500, 'single signal does not force-kill teardown at ten seconds');
+  assert.equal(readFileSync(marker, 'utf8'), 'finished');
+});
+
+test('a second signal explicitly escalates a stuck command group', async () => {
+  const dir = path.join(root, 'sigint-second-signal');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\n[ "$1" = version ] && exit 0\ncase "$2" in ls) exit 0;; esac\nexit 9\n', { mode: 0o700 });
+  const ready = path.join(dir, 'ready');
+  const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', path.join(dir, 'lock'),
+    process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(ready)},'ready');process.on('SIGINT',()=>{});setInterval(()=>{},1000)`],
+  { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
+  await waitUntil(() => existsSync(ready));
+  const started = Date.now();
+  child.kill('SIGINT');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  child.kill('SIGINT');
+  const code = await new Promise((resolve) => child.once('close', resolve));
+  assert.equal(code, 137);
+  assert.ok(Date.now() - started < 2_000, 'second signal escalates immediately');
 });
 
 test("generated runner removes its locally built Compose tag after a successful command", () => {
@@ -331,12 +374,13 @@ if(kind==='compose' && args.includes('config')) {
    prototypes:{build:{context:'.'},profiles:['prototypes']},
    'e2e-runner':{build:{context:'.'},profiles:['runner']}}})); process.exit(0);
 }
+if(kind==='image' && action==='ls') { if(fs.existsSync(file))process.stdout.write(fs.readFileSync(file,'utf8')+':latest\\n'); process.exit(0); }
 if(['container','volume','network'].includes(kind) && action==='ls') process.exit(0);
 if(['container','volume'].includes(kind) && action==='inspect') {
   const name=args.at(-1); const builder=fs.existsSync(builderFile)?fs.readFileSync(builderFile,'utf8'):null;
   const expected=builder?'buildx_buildkit_'+builder+'0':null;
   if(expected && name===(kind==='container'?expected:expected+'_state')) {
-    const value=kind==='container'?{Id:'e'.repeat(64),Created:'2099-11-03T00:00:00Z',Config:{Labels:{'com.docker.buildx.builder':builder}}}:{Name:name,CreatedAt:'2099-11-03T00:00:00Z'};
+    const value=kind==='container'?{Name:'/'+expected,Id:'e'.repeat(64),Created:'2099-11-03T00:00:00Z',Config:{Labels:{}}}:{Name:name,CreatedAt:'2099-11-03T00:00:00Z'};
     process.stdout.write(JSON.stringify([value])); process.exit(0);
   }
   process.stderr.write(kind==='container'?'Error response from daemon: No such container: '+name+'\\n'
@@ -431,6 +475,10 @@ if(kind==='compose' && args.includes('config')){
   image:process.env.E2E_CONTENT_IMAGE_API||'cl-e2e-api-local'},
   realtime:{build:{context:'.'}},app:{image:'ghcr.io/shared/app:sha'}}}));process.exit(0)
 }
+if(kind==='image' && action==='ls'){
+ if(fs.existsSync(fallbackFile))process.stdout.write(fs.readFileSync(fallbackFile,'utf8')+':latest\\n');
+ process.exit(0)
+}
 if(kind==='buildx' && action==='create'){const builder=args[args.indexOf('--name')+1];fs.writeFileSync(builderFile,builder);process.stdout.write(builder);process.exit(0)}
 if(kind==='buildx' && action==='prune')process.exit(0)
 if(['container','volume','network'].includes(kind) && action==='ls')process.exit(0);
@@ -438,7 +486,7 @@ if(['container','volume'].includes(kind) && action==='inspect'){
  const builder=fs.existsSync(builderFile)?fs.readFileSync(builderFile,'utf8'):null;
  const expected=builder?'buildx_buildkit_'+builder+'0':null;
  if(expected && name===(kind==='container'?expected:expected+'_state')){
-  process.stdout.write(JSON.stringify([kind==='container'?{Id:'e'.repeat(64),Created:'2099-11-03T00:00:00Z',Config:{Labels:{'com.docker.buildx.builder':builder}}}:
+  process.stdout.write(JSON.stringify([kind==='container'?{Name:'/'+expected,Id:'e'.repeat(64),Created:'2099-11-03T00:00:00Z',Config:{Labels:{}}}:
    {Name:name,CreatedAt:'2099-11-03T00:00:00Z'}]));process.exit(0)
  }
  process.stderr.write(kind==='container'?'Error response from daemon: No such container: '+name+'\\n':
