@@ -629,12 +629,16 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    actual transcript path>"`. The command verifies the transcript's own
    session ID. Never invent an ID or record the implementation writer as the
    orchestrator.
-6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
-   `vibe-ticket-worker` in create mode with the worktree, the
-   requirements worker's brief, the originating ticket if any, and the mode.
-   It records the ticket's slug on the session itself and links the
-   originating document (a PRD, an ISS or another document) to the ticket
-   (source PRODUCES ticket).
+6. Dispatch `vibe-setup-worker` to bootstrap the new worktree. Read the
+   `session` returned by `vibe-sessions.mjs new`. When the returned
+   `session.liveTicket` is the originating issue, do not dispatch
+   `vibe-ticket-worker` and never queue `create` mode: the session record is
+   already bound to that issue, preserving its current owner and status.
+   Otherwise dispatch the
+   ticket worker in create mode with the worktree, the requirements worker's
+   brief, the originating document if any, and the mode. Create mode records
+   the new issue's slug on the session and links the originating document (a
+   PRD, an ISS or another document) to the ticket (source PRODUCES ticket).
    Keep the ticket link in the session record for completion and handoff.
 7. Stand up the environment (section 3).
 
@@ -913,7 +917,10 @@ evidence, never by replacing the writer.
    PLN's status. Its `NEEDS_CHANGE` (a plan line
    that would publish a local path, a username, a secret or a private input)
    goes to the SAME writer to fix its local plan, then plan mode runs again.
-   None of it waits on or reaches the person, and it never delays the deploy.
+   A repair only to vibe's private plan or records, with no scope, code, test
+   or HEAD change, is `self-bookkeeping`: the writer makes it automatically,
+   it is never `NEEDS_PERSON`, and Root reports it in one line. None of it
+   waits on or reaches the person, and it never delays the deploy.
    A plan's body never goes into the ticket. Operational bootstrap/build/deploy helpers
    execute no implementation edits, and sharing waits for the writer's quick
    checks. The orchestrator alone commits through its owned script.

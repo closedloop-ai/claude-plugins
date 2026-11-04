@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.40
+
+#### Added
+- A pre-build scope-intake command checks every planned file against the same immutable repository-owned path declaration that handoff inventory validates. It preserves owned prototype paths and pull-request root tests, routes mixed outside paths to engineering, and stops an all-outside plan before source changes.
+- Fleet sequencing rulings derive blocker-to-blocked edges, resolve pull requests through ticket mappings, and use one receipt-gated recording command that refuses unresolved references or missing confirmed `BLOCKS` links. Status audit reports later sequencing-link drift.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 723 words longer than in 1.1.39.
+
+#### Fixed
+- Protected native writes admit only the current linked worktree's exact private `vibe-changes.md`; sibling Git metadata and symlink escapes remain denied.
+- Sessions started from an existing issue bind that issue as their live ticket without creating another ticket or mutating its current owner and status.
+- Rulings checks distinguish quoted citations and test titles from operative quoted scope exclusions, and one human-source citation covers every semicolon clause on its plan line.
+- Citation-only and other self-bookkeeping repairs to vibe's private plans or records are made automatically and reported without asking the person for permission.
+- Forced heavy slots require an operator reason recorded on the slot, refuse loads above four times the core count, and always read the target machine's load instead of accepting a caller-supplied reading.
+
 ### vibe v1.1.39
 
 #### Changed

@@ -491,6 +491,11 @@ to this same writer to fix in its local plan. The live ticket still records
 scope, delivered changes and truthful outcomes, not technical plans or
 approval milestones.
 
+A repair only to vibe's private plan or records, with no scope, code, test or
+HEAD change, is `self-bookkeeping`. The SAME writer makes it automatically,
+it is never `NEEDS_PERSON`, and Root reports the completed repair in one
+line before rerunning the record step.
+
 The commit script excludes this exact folder and refuses a plan already in
 HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`
 and publishes nothing on failure. Do not hide a leak by rewriting history or
@@ -504,6 +509,13 @@ continues building; plan mode publishes `built: false` without a person wait,
 second PLN or build/deploy pause. Later changes return to that writer.
 
 ## Implementation and corrections
+
+After the local plan identifies every planned file, the SAME writer runs
+`dist/scope-intake.mjs` against that complete list before implementation. The
+command uses handoff inventory's validated repository declaration. If no
+planned file is allowed, the writer makes no source edit and routes the whole
+request to engineering with the returned reason. With a mixed plan it builds
+only allowed files and records every excluded path for engineering.
 
 The same writer implements frontend, backend, primitives, canonical prototype
 code and metadata, and Storybook work in dependency order. It may read a named

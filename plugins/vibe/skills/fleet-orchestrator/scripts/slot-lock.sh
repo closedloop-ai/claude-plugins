@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: slot-lock.sh [--slots N] [--preflight-node <file>] <lockName> <ownerLabel> <command...>
+# Usage: slot-lock.sh [--slots N] [--preflight-node <file>] [--admission-note <text>] <lockName> <ownerLabel> <command...>
 #        slot-lock.sh --status <lockName>
 # Runs <command> once one of N slots named <lockName> is free on this machine (default 1), and frees the
 # slot when the command exits or this script is interrupted. A slot whose holder pid is dead is reclaimed.
@@ -16,6 +16,7 @@ lock_root=${SLOT_LOCK_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/fleet-orchestra
 poll=${SLOT_LOCK_POLL_SECONDS:-20}
 slots=1
 preflight_node=
+admission_note=
 
 holders() {
   cat "$lock_root/$1"-*.lock/owner 2>/dev/null | paste -sd ';' -
@@ -30,6 +31,7 @@ while :; do
   case "${1:-}" in
     --slots) slots=${2:-}; shift 2 2>/dev/null || usage ;;
     --preflight-node) preflight_node=${2:-}; [ -n "$preflight_node" ] || usage; shift 2 2>/dev/null || usage ;;
+    --admission-note) admission_note=${2:-}; [ -n "$admission_note" ] || usage; shift 2 2>/dev/null || usage ;;
     *) break ;;
   esac
 done
@@ -38,6 +40,7 @@ case "$slots" in '' | *[!0-9]* | 0) usage ;; esac
 name=$1 owner=$2
 shift 2
 case "$name" in '' | *[!A-Za-z0-9._-]*) usage ;; esac
+case "$admission_note" in *$'\n'*) usage ;; esac
 
 mkdir -p "$lock_root"
 lock=
@@ -49,7 +52,7 @@ acquire() {
     if mkdir "$candidate" 2>/dev/null; then
       echo $$ >"$candidate/pid"
       pwd -P >"$candidate/cwd"
-      printf '%s pid %s since %s\n' "$owner" $$ "$(date '+%Y-%m-%d %H:%M')" >"$candidate/owner"
+      printf '%s pid %s since %s%s\n' "$owner" $$ "$(date '+%Y-%m-%d %H:%M')" "${admission_note:+; $admission_note}" >"$candidate/owner"
       lock=$candidate
       return 0
     fi

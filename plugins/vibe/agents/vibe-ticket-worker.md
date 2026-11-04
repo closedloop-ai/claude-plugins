@@ -121,6 +121,10 @@ B. Render the plan:
    file, line and kind only, for the SAME writer to fix its local plan. Never
    repeat the refused line or value anywhere (your result, a ticket, a
    message), edit the plan yourself or publish part of it.
+   A repair only to vibe's private plan or records, with no scope, code, test
+   or HEAD change, is `self-bookkeeping`: return `NEEDS_CHANGE` to the SAME
+   writer with that label. It is never `NEEDS_PERSON`; after the repair Root
+   reports it in one line and reruns plan mode.
 C. Find or create the PLN. `get-document` the live ticket for its
    `projectId`, `assigneeId` and title. With no `livePlan` on the record,
    first `list-artifact-links` with `artifactId: <live ticket>`,

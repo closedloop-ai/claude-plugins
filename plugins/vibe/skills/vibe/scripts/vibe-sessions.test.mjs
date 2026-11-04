@@ -203,6 +203,34 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
   assert.equal(listed.json.sessions[0].liveTicket, null);
 });
 
+test("a session started from ISS-12820 binds that issue as its live ticket", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const existing = runNode(
+    SCRIPT,
+    ["new", "--slug", "destructive-gate", "--summary", "Destructive gate", "--mode", "seeded", "--ticket", "ISS-12820", ...OPERATOR_ARGS],
+    home
+  );
+  assert.equal(existing.status, 0, existing.stderr);
+  assert.equal(existing.json.session.ticket, "ISS-12820");
+  assert.equal(existing.json.session.liveTicket, "ISS-12820");
+
+  const prd = runNode(
+    SCRIPT,
+    ["new", "--slug", "prd-source", "--summary", "PRD source", "--mode", "seeded", "--ticket", "PRD-729", ...OPERATOR_ARGS],
+    home
+  );
+  assert.equal(prd.status, 0, prd.stderr);
+  assert.equal(prd.json.session.ticket, "PRD-729");
+  assert.equal(prd.json.session.liveTicket, null);
+
+  const skill = readFileSync(path.join(path.dirname(SCRIPT), "..", "SKILL.md"), "utf8");
+  const ticketWorker = readFileSync(path.join(path.dirname(SCRIPT), "..", "..", "..", "agents", "vibe-ticket-worker.md"), "utf8");
+  assert.match(skill, /When the returned\s+`session\.liveTicket` is the originating issue,[\s\S]*do not dispatch\s+`vibe-ticket-worker`[\s\S]*never queue `create` mode/);
+  assert.doesNotMatch(skill, /`vibe-ticket-worker` in `bind` mode/);
+  assert.doesNotMatch(ticketWorker, /## Bind mode/);
+});
+
 test("new records the person running the session and refuses to start without them", (t) => {
   const { home, checkout } = setup(t);
   rememberRepo(home, checkout);

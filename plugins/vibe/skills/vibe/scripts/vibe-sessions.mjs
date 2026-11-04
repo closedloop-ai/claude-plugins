@@ -142,6 +142,7 @@ const MAX_SLUG_LENGTH = 40;
 // Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
 const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
+const ISSUE_PATTERN = /^(?:ISS|FEA)-\d+$/;
 const PLAN_PATTERN = /^PLN-\d+$/;
 // The PLN's status follows the work (operator ruling, 2026-10-19): DRAFT while
 // its plan is not built yet, APPROVED once the session wrote and checked the
@@ -435,7 +436,7 @@ function newSession({ prototype = false } = {}) {
     status: SessionStatus.Active,
     mode,
     operator,
-    liveTicket: null,
+    liveTicket: ISSUE_PATTERN.test(values.ticket ?? "") ? values.ticket : null,
     livePlan: null,
     livePlanStatus: null,
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),

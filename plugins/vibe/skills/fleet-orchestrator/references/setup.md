@@ -37,6 +37,11 @@ REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 REMOTE_MAX_LOAD_PER_CORE=1.5
 ```
 
+`FLEET_FORCE_HERE=1` and `FLEET_FORCE_REASON=<operator reason>` are per-command
+inputs read by `fleet.sh` and `load-check.sh`; only the operator sets them, and
+they are never stored in `config.env`. With either absent, heavy work uses the
+normal load routing and a busy machine is refused.
+
 Session, request and remote state dirs are derived per program. `fleet.sh` uses `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot and load keys, and the `REMOTE_*` keys. Vibe's worker-model policy owns sub-agent models. `MOVE_AT_PERCENT` is yours to compare with each `codex-usage` line.
 
 ## First-run interview

@@ -4,6 +4,7 @@
 // command-segments.mjs drops words containing < or >, which erases heredoc
 // markers needed here; this narrow splitter retains them without importing the dispatcher.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,6 +49,20 @@ function targetPaths(root, cwd, raw) {
   return { lexical, effective, admitted };
 }
 
+/** Match the one private change log owned by this exact linked worktree. */
+function isOwnChangeLog(root, target) {
+  try {
+    const gitDir = path.resolve(execFileSync("git", ["-C", root, "rev-parse", "--absolute-git-dir"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim());
+    const lexical = path.join(gitDir, "vibe-changes.md");
+    const effective = path.join(realpathSync(gitDir), "vibe-changes.md");
+    return target.lexical === lexical && target.effective === effective;
+  } catch {
+    return false;
+  }
+}
+
 function protectedPath(root, target) {
   // A vibe worktree itself may live below a parent checkout's .claude/worktrees.
   // Strip that trusted prefix for local targets, but still recognize protected
@@ -59,6 +74,7 @@ function protectedPath(root, target) {
 
 function protectedWrite(root, cwd, raw) {
   const target = targetPaths(root, cwd, raw);
+  if (isOwnChangeLog(root, target)) return false;
   return protectedPath(root, target.lexical) || protectedPath(realpathSync(root), target.effective);
 }
 
@@ -178,7 +194,7 @@ export function protectedWriteDecision(event, root) {
   const cwd = path.resolve(event.cwd);
   if (tool === "Edit" || tool === "Write") {
     const target = targetPaths(root, cwd, event.tool_input?.file_path);
-    if (target.admitted) {
+    if (target.admitted || isOwnChangeLog(root, target)) {
       return eventName === "PermissionRequest"
         ? { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } }
         : null;

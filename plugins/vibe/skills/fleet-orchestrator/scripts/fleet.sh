@@ -128,16 +128,22 @@ slot() {
     if [ "$where" = local ]; then slots=${HEAVY_SLOTS:-1}; else slots=${REMOTE_HEAVY_SLOTS:-1}; fi
     check=1
   fi
+  local admission_note=
+  if [ "${FLEET_FORCE_HERE:-}" = 1 ]; then
+    admission_note="force reason: ${FLEET_FORCE_REASON:-}"
+  fi
   if [ "$where" = local ]; then
     cd "$dir"
     if [ -n "$check" ]; then MAX_LOAD_PER_CORE=${MAX_LOAD_PER_CORE:-1.5} bash "$here/load-check.sh"; fi
     local slot_args=(--slots "$slots")
+    if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
     if [ -n "$preflight" ]; then slot_args+=(--preflight-node "$skills/vibe/scripts/e2e-lock.mjs"); fi
     exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@"
   fi
   local gate=
-  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") bash $(printf %q "$remote_dir/fleet-orchestrator/scripts/load-check.sh") && "; fi
+  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/fleet-orchestrator/scripts/load-check.sh") && "; fi
   local slot_args=(--slots "$slots")
+  if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
   if [ -n "$preflight" ]; then
     local expected_version remote_root remote_gate
     expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
