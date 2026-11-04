@@ -74,6 +74,18 @@ test("e2e-slot.sh uses the deployed wrapper's --head, owner, command interface",
   assert.match(e2eSlotProblem(`~/vibe-remote/e2e-slot.sh --head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`) ?? '', /does not accept --source-hash/);
   assert.ok(e2eSlotProblem(`e2e-slot.sh ISS-1 run --head 0123abc`), 'identity flags passed to the child command do not bind the wrapper');
   assert.equal(e2eSlotProblem('cat ~/vibe-remote/e2e-slot.sh'), null);
+  assert.equal(e2eSlotProblem("cat <<'EOF'\ne2e-slot.sh ISS-1 run\nEOF"), null,
+    'heredoc body is not an E2E slot invocation');
+  assert.match(e2eSlotProblem("cat <<EOF\n$(e2e-slot.sh ISS-1 run)\nEOF") ?? '', /--head/,
+    'an unquoted heredoc still executes command substitutions');
+  for (const command of ["# <<EOF\ne2e-slot.sh ISS-1 run",
+    "echo $((1 << 2)); e2e-slot.sh ISS-1 run", "e2e-slot.sh</dev/null ISS-1 run"]) {
+    assert.match(e2eSlotProblem(command) ?? '', /--head/, command);
+  }
+  for (const command of ["cat <<\\EOF\ne2e-slot.sh ISS-1 run\nEOF",
+    "cat <<E\"OF\"\ne2e-slot.sh ISS-1 run\nEOF"]) {
+    assert.equal(e2eSlotProblem(command), null, command);
+  }
   const message = e2eSlotProblem('e2e-slot.sh ISS-1 run');
   assert.doesNotMatch(message, /pushed|before the push/);
 });

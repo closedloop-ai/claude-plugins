@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - Handoff inventory reads allowed and forbidden paths from a declaration committed by the target repository. It rejects missing, invalid, duplicate and session-edited declarations instead of applying a Symphony-specific path list to other repositories.
 - For sessions whose captured base predates the declaration, inventory verifies the remote's advertised default branch and fetched commit, then uses that commit for comparison and policy reads. A locally repointed tracking ref cannot select a different policy.
+- PR creation checks keep substitutions, child shells, SSH calls and pipelines in their own cwd and variable scope, so a later local PR uses the right worktree. They recognize bounded literal eval and shell payloads, including supported printf string flags, width, precision, repeated formats, unused arguments, stopping escapes and known prefixes before unsupported directives, without executing unknown payloads. Attached redirections, line continuations, SSH options and GitHub CLI repo options remain visible. Literal shell function bodies are inspected when called, not when defined.
+- Heredoc bodies, comments, arithmetic and quoted file text no longer trigger the PR guard or hide a later real call. Concrete non-Vibe worktrees in fleet conversations can open PRs; Vibe targets still require the handoff gate.
+- Scratch Docker, E2E slot and kill guards ignore heredoc or quoted data while continuing to inspect executable substitutions.
 
 ### vibe v1.1.34
 
