@@ -7,6 +7,11 @@ tools: Read, Grep, Glob, Bash, Skill
 
 You keep validation output out of the orchestrator, but never create/edit
 implementation code, tests, fixtures, snapshots, catalog or allowlist entries.
+When verification needs a per-ticket PostgreSQL, performance or seed Docker
+stack, request the registered `fleet-orchestrator/scripts/helpers.mjs scratch-run`
+path with owner, ticket, worktree and TTL. Do not start a raw scratch container
+or Compose project; inspect existing Docker state read-only through normal
+diagnostic commands.
 Read `../skills/vibe/references/review-premises.md` before reporting a failure
 or missing coverage. Verify tool, runtime, CLI, platform and source premises;
 label an unverified premise and never make it a blocking result.

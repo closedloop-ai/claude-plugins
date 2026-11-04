@@ -16,6 +16,7 @@ import { isEntryPoint } from './liveness.mjs';
 import { rateLimitReading, readRateLimits } from './ratelimit.mjs';
 import { recordUsageReading } from './usage-state.mjs';
 import { resolveWorkDir } from './work-dir.mjs';
+import { hasPendingOwnedCleanups, sweepOwnedCleanups } from '../../vibe/scripts/owned-cleanup.mjs';
 
 export const DEFAULT_INTERVAL_SECONDS = 60;
 export const SUMMARY_INTERVAL_MS = 3_600_000;
@@ -129,6 +130,16 @@ async function main() {
   for (;;) {
     const started = Date.now();
     const { lines, error } = await tick(workDir, stateDir, config);
+    const repairPending = stats.passes % 30 === 0;
+    if (repairPending || hasPendingOwnedCleanups()) {
+      try {
+        const cleanup = await sweepOwnedCleanups({ forceDiscovery: repairPending });
+        for (const line of cleanup.leftover) log(line);
+        if (cleanup.removed.length) log(`cleanup: reconciled ${cleanup.removed.length} owned targets`);
+      } catch (cleanupError) {
+        log(`cleanup: ${oneLine(cleanupError.message)}`);
+      }
+    }
     // A failed or timed-out recovery pass already proves the daemon is not healthy enough for another bounded read.
     // Keep the last good usage time intact; the watcher will flag it stale if recovery does not resume.
     if (!error) await recordSupervisorUsage(workDir);

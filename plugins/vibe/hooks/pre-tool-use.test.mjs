@@ -10,8 +10,9 @@ import { AWAY_CHECKLIST } from "./away-protocol.mjs";
 import { mergeResults } from "./hook-dispatch.mjs";
 import { killProblems } from "./kill-guard.mjs";
 import { TASKSTOP_REMINDER } from "./pause-guard.mjs";
-import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
+import { PRE_TOOL_USE_ROUTES, scratchCreationProblem } from "./pre-tool-use.mjs";
 import { forcePushProblem } from "./shell-safety-guard.mjs";
+import { recordHookSkill } from "./hook-session-scope.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PRE_TOOL_USE = path.join(HERE, "pre-tool-use.mjs");
@@ -20,6 +21,41 @@ const USER_PROMPT_SUBMIT = path.join(HERE, "user-prompt-submit.mjs");
 const sh = (...words) => words.join(" ");
 const BY_NAME_KILL = sh("p" + "kill", "-f", "vitest");
 const FORCE_PUSH = sh("git push", "-f", "origin fix/x");
+
+test('raw recognizable scratch Docker creation is refused while reads and wrapped E2E remain available', () => {
+  for (const command of ['docker run --name iss-42-postgres postgres:16', 'docker compose -p iss-42-perf up -d',
+    'docker run -d --rm --name iss-42-postgres postgres:16',
+    'docker run --rm -itd --name iss-42-postgres postgres:16',
+    'docker run -dit --rm --name iss-42-postgres postgres:16',
+    'docker run --detach --rm --name scratch-db postgres:16',
+    'docker container run -d postgres:16', 'docker create --name scratch-db alpine',
+    'docker compose run postgres', 'docker compose create seed', 'docker-compose -p iss-7 up -d']) {
+    assert.match(scratchCreationProblem(command, 'vibe') ?? '', /registered scratch/i, command);
+  }
+  assert.match(scratchCreationProblem('node helpers.mjs scratch-run; docker run --name iss-42-postgres postgres:16', 'vibe') ?? '',
+    /registered scratch/, 'a wrapper name elsewhere in the command cannot bypass the raw start');
+  for (const command of ['docker ps', 'docker volume inspect data', 'node helpers.mjs scratch-run --ticket ticket-one',
+    'node e2e-lock.mjs run --head abc e2e/run-containerized.sh',
+    'docker run --rm alpine /tmp/iss-42/postgres --version',
+    'docker run --rm postgres:16 psql --version',
+    'docker run -d --name postgres16 -e POSTGRES_USER=postgres -p 5432:5432 postgres:16',
+    'docker run --env-file .env.seed --rm node:24 true',
+    'docker compose -f /tmp/iss-42/postgres.yml up -d app']) {
+    assert.equal(scratchCreationProblem(command, 'vibe'), null, command);
+  }
+  assert.equal(scratchCreationProblem('docker run --name iss-42-postgres postgres:16', null), null);
+});
+
+test('the routed Bash hook denies scratch creation only in an active vibe conversation', (t) => {
+  const { dir, run } = sandbox(t);
+  recordHookSkill('scratch-session', 'vibe:vibe', dir);
+  const event = (session_id) => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id,
+    tool_input: { command: 'docker run --name iss-42-postgres postgres:16' } });
+  const scoped = run(PRE_TOOL_USE, event('scratch-session'));
+  assert.equal(JSON.parse(scoped.stdout).hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(scoped.stdout, /registered scratch stack/);
+  assert.equal(run(PRE_TOOL_USE, event('unrelated-session')).stdout, '');
+});
 
 /** The exact line one old guard script printed for a decision. */
 const line = (hookSpecificOutput) => `${JSON.stringify({ hookSpecificOutput })}\n`;

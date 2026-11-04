@@ -34,9 +34,11 @@
 // A `--no-build` run also needs its compose project's images recorded as built
 // from that HEAD in that worktree (image-head.mjs, beside the lock folder), and a
 // passing build records them.
-// Generated Compose projects start empty. After a run, exact container,
-// volume and network witnesses are removed before the lock is released; a
-// refusal retains a private pending record. Caller and foreign projects stay.
+// Generated Compose projects start empty. A verified containerized build checks
+// the Docker backing disk after lock acquisition, then uses a run-owned Buildx
+// builder and Turbo cache. Exact Docker resources, local image tags, builder
+// and cache are reconciled in that order; a refusal retains a private pending
+// record. Caller and foreign projects stay.
 //
 // `run` exits with the command's own code. When the stack stays busy past
 // `--wait-seconds` (default 3600) it runs nothing, prints
@@ -44,15 +46,33 @@
 // {"status":"free"} or {"status":"held","holder":{...}}.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
+  readdirSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 import { imageProblem, recordImages } from "./image-head.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { testedSource, sameSource, withStableSource } from "./tested-head.mjs";
+
+import { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
+import { installOwnedBuildShim, ownedBuildEnvironment, prepareRunOwnedBuild, recordBuiltTags } from './owned-builder.mjs';
+import { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetirements,
+  registerWorktreeRetirement, remainingCleanupBudget, sweepOwnedCleanups } from './owned-cleanup.mjs';
+import { captureOwnedDockerResources, plannedLocalTags, reconcileGeneratedE2E, recordE2EChild,
+  removeOwnedDockerResources, reserveGeneratedE2E } from './owned-docker.mjs';
+import { writeAtomic } from './owned-state.mjs';
+
+export { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
+export { installOwnedBuildShim, ownedBuildEnvironment, prepareRunOwnedBuild, recordBuiltTags } from './owned-builder.mjs';
+export { cleanupDir } from './owned-state.mjs';
+export { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetirements,
+  registerWorktreeRetirement, remainingCleanupBudget, sweepOwnedCleanups } from './owned-cleanup.mjs';
+export { captureOwnedDockerResources, plannedLocalTags, reconcileGeneratedE2E, recordE2EChild,
+  removeOwnedDockerResources, reserveGeneratedE2E } from './owned-docker.mjs';
 
 export const BUSY_EXIT = 75;
 export const DUPLICATE_EXIT = 76;
@@ -74,7 +94,7 @@ export function tryAcquire(lockDir, owner) {
     return { acquired: true, holder: owner };
   }
   const holder = readHolder(lockDir);
-  if (holder ? isAlive(holder.pid) : isRecent(lockDir)) {
+  if (holder ? isAlive(holder.pid) || pendingChildGroupAlive(lockDir, holder) : isRecent(lockDir)) {
     return { acquired: false, holder };
   }
   // Remove only the stale lock that was just read, never one a peer took in the meantime.
@@ -84,6 +104,18 @@ export function tryAcquire(lockDir, owner) {
   return createLock(lockDir, owner)
     ? { acquired: true, holder: owner }
     : { acquired: false, holder: readHolder(lockDir) };
+}
+
+/** A dead wrapper cannot release its lock while its recorded detached command group is still alive. */
+function pendingChildGroupAlive(lockDir, holder) {
+  try {
+    const record = JSON.parse(readFileSync(path.join(path.dirname(lockDir), `e2e-cleanup-${holder.token}.json`), 'utf8'));
+    if (record.owner?.token !== holder.token || !Number.isSafeInteger(record.child?.pgid) || record.child.pgid <= 1) return false;
+    process.kill(-record.child.pgid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
 }
 
 /** Releases the lock only when this owner still holds it. */
@@ -206,102 +238,7 @@ export function runningForeignCompose(projects, docker = process.env.VIBE_E2E_DO
 
 /** The compose project a run's command gets: the caller's own, or one named for this run. */
 export function composeProjectFor(env, token) {
-  return env.COMPOSE_PROJECT_NAME || `${COMPOSE_PREFIX}${token.replace(/-/g, "").slice(0, 8)}`;
-}
-
-const DOCKER_KINDS = Object.freeze([
-  { key: "containers", noun: "container", list: ["container", "ls", "-aq", "--no-trunc"], remove: ["container", "rm", "-f"] },
-  { key: "volumes", noun: "volume", list: ["volume", "ls", "-q"], remove: ["volume", "rm"] },
-  { key: "networks", noun: "network", list: ["network", "ls", "--no-trunc", "-q"], remove: ["network", "rm"] },
-]);
-
-function dockerRunner(args) {
-  return spawnSync(process.env.VIBE_E2E_DOCKER || "docker", args, { encoding: "utf8", timeout: 30_000 });
-}
-
-function dockerOutput(args, run, { missing = false } = {}) {
-  const result = run(args);
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const message = String(result.stderr ?? "").trim();
-    const id = args.at(-1);
-    const notFound = {
-      container: `Error response from daemon: No such container: ${id}`,
-      volume: `Error response from daemon: get ${id}: no such volume`,
-      network: `Error response from daemon: network ${id} not found`,
-    }[args[0]];
-    if (missing && result.status === 1 && message === notFound) return null;
-    throw new Error(`Docker ${args[0]} ${args[1]} failed: ${String(result.stderr ?? "").trim()}`);
-  }
-  return String(result.stdout ?? "").trim();
-}
-
-function resourceWitness(kind, id, run) {
-  if (kind.key === "containers" && !/^[a-f0-9]{64}$/.test(id)) throw new Error("Docker container needs a full container ID.");
-  const raw = dockerOutput([kind.noun, "inspect", id], run, { missing: true });
-  if (raw === null) return null;
-  const parsed = JSON.parse(raw);
-  const value = Array.isArray(parsed) ? parsed[0] : null;
-  const labels = kind.key === "containers" ? value?.Config?.Labels : value?.Labels;
-  const created = value?.Created ?? value?.CreatedAt;
-  const identity = kind.key === "volumes" ? value?.Name : value?.Id;
-  if (identity !== id) throw new Error(`Docker ${kind.noun} ${id} resolved ID changed identity.`);
-  if (typeof created !== "string" || !Number.isFinite(Date.parse(created))) {
-    throw new Error(`Docker ${kind.noun} ${id} has no parseable creation witness.`);
-  }
-  const project = labels?.["com.docker.compose.project"];
-  if (typeof project !== "string" || !project) throw new Error(`Docker ${kind.noun} ${id} has no project ownership label.`);
-  return { id: identity, created, project };
-}
-
-/** Capture exact Docker identities, including stopped containers, before later cleanup. */
-export function captureOwnedDockerResources({ project = null, containers, volumes, networks }, { run = dockerRunner } = {}) {
-  if (project !== null && !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(project)) throw new Error("Invalid recorded Compose project.");
-  const record = { project, containers: [], volumes: [], networks: [] };
-  for (const kind of DOCKER_KINDS) {
-    const ids = { containers, volumes, networks }[kind.key] ?? (project
-      ? dockerOutput([...kind.list, "--filter", `label=com.docker.compose.project=${project}`], run).split("\n").filter(Boolean)
-      : []);
-    for (const id of ids) {
-      const witness = resourceWitness(kind, id, run);
-      if (!witness || (project && witness.project !== project)) throw new Error(`Docker ${kind.noun} ${id} is not in the recorded project.`);
-      record[kind.key].push(witness);
-    }
-  }
-  return record;
-}
-
-/** Remove only resources whose exact ID, creation witness and project still match the record. */
-export function removeOwnedDockerResources(record, { run = dockerRunner } = {}) {
-  const targets = [];
-  if (record?.project) {
-    const currentProject = captureOwnedDockerResources({ project: record.project }, { run });
-    for (const kind of DOCKER_KINDS) {
-      const recorded = new Set((record[kind.key] ?? []).map((entry) => entry.id));
-      if (currentProject[kind.key].some((entry) => !recorded.has(entry.id))) {
-        throw new Error(`Docker ${kind.noun} in the project was not recorded; cleanup refused.`);
-      }
-    }
-  }
-  for (const kind of DOCKER_KINDS) {
-    for (const saved of record?.[kind.key] ?? []) {
-      if (!saved?.id || typeof saved?.created !== "string" || !Number.isFinite(Date.parse(saved.created))
-        || typeof saved?.project !== "string" || !saved.project) {
-        throw new Error(`Unrecorded Docker ${kind.noun} has no exact creation witness and project ownership.`);
-      }
-      const current = resourceWitness(kind, saved.id, run);
-      if (current && (current.id !== saved.id || current.created !== saved.created || current.project !== saved.project
-        || (record.project && current.project !== record.project))) {
-        throw new Error(`Docker ${kind.noun} ${saved.id} changed identity; left alone.`);
-      }
-      if (current) targets.push({ kind, saved });
-    }
-  }
-  for (const { kind, saved } of targets) {
-    dockerOutput([...kind.remove, saved.id], run);
-    if (resourceWitness(kind, saved.id, run)) throw new Error(`Docker ${kind.noun} ${saved.id} remains after cleanup.`);
-  }
-  return { removed: targets.map(({ kind, saved }) => ({ kind: kind.noun, id: saved.id })) };
+  return env.COMPOSE_PROJECT_NAME || `${COMPOSE_PREFIX}${token.replace(/-/g, "")}`;
 }
 
 // The action, then the lock's own `--option value` pairs, then the command and its arguments untouched.
@@ -325,16 +262,53 @@ function parseCommandLine(argv) {
   return { action, values, command, args };
 }
 
-function runCommand(command, args, env) {
+function runCommand(command, args, env, record) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: "inherit", env });
-    const forward = (signal) => child.kill(signal);
+    // The child gate cannot execute the command until its process group has a
+    // durable birth witness. A crash before the release file leaves only a
+    // gate that times out; no untracked Docker command can begin.
+    const gate = record && path.join(path.dirname(record.file), `e2e-gate-${record.token}.ready`);
+    if (record) {
+      record.launchPending = true;
+      writeAtomic(record.file, record);
+    }
+    const child = record
+      ? spawn(process.execPath, [path.resolve(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), 'e2e-lock.mjs'),
+        'child-gate', gate, command, ...args], { stdio: 'inherit', env, detached: true })
+      : spawn(command, args, { stdio: 'inherit', env });
+    try {
+      if (record) {
+        recordE2EChild(record, child.pid);
+        writeFileSync(gate, record.token, { mode: 0o600, flag: 'wx' });
+        record.launchPending = false;
+        writeAtomic(record.file, record);
+      }
+    }
+    catch (error) {
+      if (record && child.pid > 1) process.kill(-child.pid, 'SIGTERM');
+      else child.kill('SIGTERM');
+      child.once("close", () => reject(error));
+      return;
+    }
+    let signalForwarded = false;
+    const forward = (signal) => {
+      if (signalForwarded) {
+        if (record && child.pid > 1) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Group already drained. */ } }
+        else child.kill('SIGKILL');
+        return;
+      }
+      signalForwarded = true;
+      if (record && child.pid > 1) { try { process.kill(-child.pid, signal); } catch { /* Group exited. */ } }
+      else child.kill(signal);
+    };
     process.on("SIGINT", forward);
     process.on("SIGTERM", forward);
+    process.on("SIGHUP", forward);
     child.once("error", reject);
     child.once("close", (code, signal) => {
       process.off("SIGINT", forward);
       process.off("SIGTERM", forward);
+      process.off("SIGHUP", forward);
       resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
     });
   });
@@ -352,7 +326,7 @@ async function main(argv) {
   const lockDir = path.resolve(values["lock-dir"] ?? defaultLockDir());
   if (action === "status") {
     const holder = readHolder(lockDir);
-    const held = holder && isAlive(holder.pid);
+    const held = holder && (isAlive(holder.pid) || pendingChildGroupAlive(lockDir, holder));
     process.stdout.write(`${JSON.stringify(held ? { status: "held", holder } : { status: "free" })}\n`);
     return 0;
   }
@@ -414,6 +388,12 @@ async function main(argv) {
     process.stdout.write(`${JSON.stringify({ status: "busy", holder: attempt.holder })}\n`);
     return BUSY_EXIT;
   }
+  // Admission follows the queue: another build can consume space while this
+  // run waits. Caller-owned projects and verified --no-build runs are exempt.
+  if (!process.env.COMPOSE_PROJECT_NAME && isContainerizedBuild(command, args)) {
+    try { requireDockerDisk(); }
+    catch (error) { release(lockDir, owner); throw error; }
+  }
   // Fingerprint after waiting: queued edits must not be reported as the command's inputs.
   let source;
   try {
@@ -426,20 +406,26 @@ async function main(argv) {
   catch (error) { release(lockDir, owner); throw error; }
   const composeProject = composeProjectFor(process.env, owner.token);
   const generatedProject = !process.env.COMPOSE_PROJECT_NAME;
+  const containerizedBuild = generatedProject && isContainerizedBuild(command, args)
+    && [command, ...args].some((word) => /(?:^|\/)run-containerized\.sh$/.test(word));
   const dockerReady = generatedProject && spawnSync(process.env.VIBE_E2E_DOCKER || "docker", ["version"],
     { encoding: "utf8", timeout: 10_000 }).status === 0;
+  if (containerizedBuild && !dockerReady) { release(lockDir, owner); throw new Error("Owned E2E build needs Docker."); }
   const cleanupFile = path.join(path.dirname(lockDir), `e2e-cleanup-${owner.token}.json`);
+  let cleanupRecord;
+  const managedHome = lockDir === defaultLockDir() ? os.homedir() : undefined;
   if (dockerReady) {
     try {
-      const existing = captureOwnedDockerResources({ project: composeProject });
-      if (DOCKER_KINDS.some((kind) => existing[kind.key].length > 0)) {
-        throw new Error("The generated Compose project already has resources; it is not this run's.");
-      }
+      const docker = process.env.VIBE_E2E_DOCKER || "docker";
+      cleanupRecord = reserveGeneratedE2E({ token: owner.token.replace(/-/g, ""), project: composeProject, owner,
+        startedAt: new Date().toISOString(), plannedTags: plannedLocalTags(docker, composeProject, worktree, command, args),
+        discoverImages: generatedProject, file: cleanupFile },
+      { home: managedHome });
+      if (containerizedBuild) cleanupRecord.requiredBuiltTags = [];
     } catch (error) {
       release(lockDir, owner);
       throw error;
     }
-    writeFileSync(cleanupFile, JSON.stringify({ project: composeProject, owner }), { mode: 0o600 });
   }
   process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\ne2e-lock: source ${JSON.stringify(source)}\n`);
   const images = { project: composeProject, worktree: owner.worktree, head: tested, source, command: [command, ...args].join(" "),
@@ -453,8 +439,21 @@ async function main(argv) {
         process.stderr.write(`${stale}\n`);
         return { exitCode: 1, executed: false };
       }
-      return { exitCode: await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject }), executed: true };
+      let childEnv = { ...process.env, COMPOSE_PROJECT_NAME: composeProject };
+      if (containerizedBuild) {
+        prepareRunOwnedBuild(cleanupRecord, { home: managedHome });
+        const docker = process.env.VIBE_E2E_DOCKER || "docker";
+        const dockerBinary = path.isAbsolute(docker) ? docker
+          : execFileSync("which", [docker], { encoding: "utf8", timeout: 10_000 }).trim();
+        installOwnedBuildShim(cleanupRecord, dockerBinary);
+        childEnv = ownedBuildEnvironment(cleanupRecord, childEnv);
+      }
+      return { exitCode: await runCommand(command, args, childEnv, cleanupRecord), executed: true };
     }, { head: tested });
+    if (cleanupRecord) cleanupRecord.buildFinished = outcome.executed && outcome.exitCode === 0;
+    if (containerizedBuild && outcome.executed) {
+      recordBuiltTags(cleanupRecord);
+    }
     if (outcome.executed && outcome.exitCode === 0) recordImagesOrSay(images);
     return outcome.exitCode;
   } catch (error) {
@@ -467,10 +466,10 @@ async function main(argv) {
   } finally {
     try {
       if (dockerReady) {
-        const resources = captureOwnedDockerResources({ project: composeProject });
-        writeFileSync(cleanupFile, JSON.stringify({ project: composeProject, owner, resources }), { mode: 0o600 });
-        removeOwnedDockerResources(resources);
-        rmSync(cleanupFile, { force: true });
+        try { reconcileGeneratedE2E(cleanupRecord, { allowCurrentOwner: true, home: managedHome }); }
+        catch (error) {
+          process.stderr.write(`LEFTOVER ${composeProject}: ${String(error instanceof Error ? error.message : error)}\n`);
+        }
       }
       if (outcome) {
         const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
@@ -494,9 +493,64 @@ function recordImagesOrSay(images) {
 
 export const ESCALATION_JUSTIFICATION = "Reserve the shared setup for the automatic checks";
 
+async function runChildGate([gate, command, ...args]) {
+  const until = Date.now() + 60_000;
+  while (Date.now() < until) {
+    try {
+      const token = readFileSync(gate, 'utf8');
+      if (/^[a-f0-9]{32}$/i.test(token) && gate.endsWith(`e2e-gate-${token}.ready`)) {
+        return new Promise((resolve, reject) => {
+          const child = spawn(command, args, { stdio: 'inherit', env: process.env });
+          const waitForGroupSignal = () => {};
+          for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, waitForGroupSignal);
+          child.once('error', reject);
+          child.once('close', (code, signal) => {
+            for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(name, waitForGroupSignal);
+            resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
+          });
+        });
+      }
+    } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('E2E child launch was never acknowledged');
+}
+
+/** Bounded cleanup CLI entry shared by root handoff and fleet terminal events. */
+async function runCleanupSweep(argv) {
+  const { positionals, values } = parseArgs({ args: argv, allowPositionals: true,
+    options: { 'orch-dir': { type: 'string' }, where: { type: 'string' }, 'state-dir': { type: 'string' } } });
+  const [action] = positionals;
+  if (action === 'status') return { pending: pendingOwnedCleanups() };
+  if (action !== 'sweep') throw new Error('Usage: e2e-lock.mjs cleanup-sweep status|sweep [--orch-dir <fleet directory>]');
+  if (values.where && !['local', 'remote'].includes(values.where)) throw new Error('--where must be local or remote');
+  const deadline = Date.now() + 30_000;
+  const fleet = values['orch-dir'] ? await registerFleetWriterRetirements(values['orch-dir'],
+    { deadline, where: values.where ?? 'local', ...(values['state-dir'] ? { stateDir: values['state-dir'] } : {}) })
+    : { registered: [], leftover: [], visited: 0 };
+  const result = await sweepOwnedCleanups({ forceDiscovery: true, deadline, maxRecords: remainingCleanupBudget(fleet.visited) });
+  return { ...result, registered: fleet.registered, leftover: [...fleet.leftover, ...result.leftover] };
+}
+
+async function diskCommand([action, command, ...args]) {
+  if (action === 'intent') return isContainerizedBuild(command, args) ? 0 : 1;
+  if (action !== 'check') throw new Error('Unknown disk admission action');
+  process.stdout.write(JSON.stringify(requireDockerDisk()) + '\n');
+  return 0;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+  const task = process.argv[2] === 'child-gate'
+    ? runChildGate(process.argv.slice(3))
+    : process.argv[2] === 'cleanup-sweep'
+      ? runCleanupSweep(process.argv.slice(3))
+      : ['check', 'intent'].includes(process.argv[2])
+        ? diskCommand(process.argv.slice(2)) : main(process.argv.slice(2));
+  task.then(
+    (code) => {
+      if (typeof code === 'number') process.exit(code);
+      process.stdout.write(JSON.stringify(code) + '\n');
+    },
     (error) => {
       if (isSandboxRefusal(error)) process.stdout.write(`${JSON.stringify(escalation(error, ESCALATION_JUSTIFICATION))}\n`);
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

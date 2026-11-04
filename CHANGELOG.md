@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.34
+
+#### Added
+- Registered scratch Compose stacks carry an owner token and finite TTL, label their services and named Docker resources, and refuse recognizable raw per-ticket Docker starts.
+- Containerized E2E builds check the Docker backing filesystem after taking the E2E lock or fleet slot and refuse a build below 64 GB decimal free; `--no-build` and ordinary heavy checks continue without the Docker disk gate.
+
+#### Changed
+- Handoff and fleet records bind a published pull request to its exact worktree. Terminal cleanup removes only a clean, inactive checkout after rechecking its branch, head, remote and session state; it clears known generated directories and retains unknown local work.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 574 words longer than in 1.1.33.
+
+#### Fixed
+- Generated E2E runs reconcile exact project containers, volumes, networks and locally built image tags after normal exit or interruption. Builds reuse an identity-recorded vibe Buildx builder at default parallelism and prune only its cache to a 28 GB retained-size cap while retaining foreign and shared resources.
+- Handoff source gates keep internal helpers private and give cleanup candidates an explicit deterministic tie-break.
+- Scratch wrappers accept only Compose-generated project-qualified volume and network names, and detached combined Docker flags remain subject to scratch registration.
+
 ### vibe v1.1.33
 
 #### Changed

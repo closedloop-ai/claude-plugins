@@ -12,6 +12,12 @@ another feature worktree/branch or spawn another implementation/test writer.
 The orchestrator queues requests serially. Agent may spawn read-only helpers,
 never writers. Use SendMessage for parent progress.
 
+Per-ticket PostgreSQL, performance and seed Docker scratch stacks start only
+through `fleet-orchestrator/scripts/helpers.mjs scratch-run` with owner, ticket,
+worktree, Compose file and finite TTL. Its helper record and owner labels
+authorize later exact cleanup; raw scratch Docker starts are refused by the
+vibe PreToolUse Bash guard.
+
 ## Inputs and continuations
 
 The owned worktree/branch, session summary, live ticket, request ID and the

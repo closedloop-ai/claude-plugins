@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end> <name> [codex-session.mjs options]
 #        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> <command...>
+#        fleet.sh <orchDir> <local|remote> cleanup
 # A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE.
 # <orchDir> is a fleet home (its active program) or a program dir; codex-fleet-monitor/scripts/work-dir.mjs
 # resolves it and loads config.env (references/setup.md); without the REMOTE_* keys only `local` works.
@@ -9,7 +10,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,3p' "$0" | sed 's/^# //' >&2
+  sed -n '2,4p' "$0" | sed 's/^# //' >&2
   exit 2
 }
 
@@ -118,8 +119,11 @@ session() {
 
 slot() {
   [ $# -ge 4 ] || usage
-  local name=$1 owner=$2 dir=$3 slots=1 check=
+  local name=$1 owner=$2 dir=$3 slots=1 check= typed= preflight=
   shift 3
+  if [ "${1:-}" = "--containerized-e2e-build" ]; then typed=1; shift; fi
+  [ $# -ge 1 ] || usage
+  if [ -n "$typed" ] || node "$skills/vibe/scripts/e2e-lock.mjs" intent "$@" >/dev/null; then preflight=1; fi
   if [ "$name" = heavy ]; then
     if [ "$where" = local ]; then slots=${HEAVY_SLOTS:-1}; else slots=${REMOTE_HEAVY_SLOTS:-1}; fi
     check=1
@@ -127,15 +131,40 @@ slot() {
   if [ "$where" = local ]; then
     cd "$dir"
     if [ -n "$check" ]; then MAX_LOAD_PER_CORE=${MAX_LOAD_PER_CORE:-1.5} bash "$here/load-check.sh"; fi
-    exec bash "$here/slot-lock.sh" --slots "$slots" "$name" "$owner" "$@"
+    local slot_args=(--slots "$slots")
+    if [ -n "$preflight" ]; then slot_args+=(--preflight-node "$skills/vibe/scripts/e2e-lock.mjs"); fi
+    exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@"
   fi
   local gate=
   if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") bash $(printf %q "$remote_dir/fleet-orchestrator/scripts/load-check.sh") && "; fi
-  run_remote "cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/fleet-orchestrator/scripts/slot-lock.sh" --slots "$slots" "$name" "$owner" "$@")"
+  local slot_args=(--slots "$slots")
+  if [ -n "$preflight" ]; then
+    local expected_version remote_root remote_gate
+    expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
+    remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
+    remote_gate="command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") || { printf 'fleet: remote vibe plugin is missing or not version %s; heavy build not started\\n' $(printf %q "$expected_version") >&2; exit 78; }; "
+    run_remote "${remote_gate}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
+  else
+    run_remote "cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
+  fi
+}
+
+cleanup() {
+  [ $# -eq 0 ] || usage
+  [ -f "$orch/board.json" ] || { echo "fleet: no board.json in $orch" >&2; exit 2; }
+  if [ "$where" = local ]; then
+    exec node "$skills/vibe/scripts/e2e-lock.mjs" cleanup-sweep sweep --orch-dir "$orch" --where local --state-dir "${LOCAL_STATE_DIR:-$orch/sessions}"
+  fi
+  extra+=("-C" "$orch" "board.json")
+  local expected_version remote_root
+  expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
+  remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
+  run_remote "command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") && node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" cleanup-sweep sweep --orch-dir $(printf %q "$remote_dir") --where remote --state-dir $(printf %q "$REMOTE_STATE_DIR")"
 }
 
 case "$action" in
   session) session "$@" ;;
   slot) slot "$@" ;;
+  cleanup) cleanup "$@" ;;
   *) usage ;;
 esac
