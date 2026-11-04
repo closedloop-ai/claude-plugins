@@ -134,8 +134,12 @@ test("a pre-declaration session reads the fetched default branch policy after it
   assert.equal(result.json.pathPolicySource.commit, git(worktree, ["rev-parse", "origin/main"], home));
   git(worktree, ["update-ref", "refs/remotes/origin/main", result.json.baseCommit], home);
   const staleTrackingRef = runNode(INVENTORY, ["--worktree", worktree], home);
-  assert.equal(staleTrackingRef.json.blocking.forbiddenPaths, false);
-  assert.match(staleTrackingRef.json.pathPolicyProblem, /does not match the remote's advertised HEAD/);
+  assert.equal(staleTrackingRef.status, 1);
+  assert.match(staleTrackingRef.json.error, /fetched origin\/main does not match the remote's advertised HEAD/);
+  git(worktree, ["config", "vibe.baseRef", "main"], home);
+  const staleFallback = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(staleFallback.json.blocking.forbiddenPaths, false);
+  assert.match(staleFallback.json.pathPolicyProblem, /does not match the remote's advertised HEAD/);
 });
 
 test("a nondefault comparison base cannot supply fallback policy", (t) => {

@@ -95,9 +95,13 @@ test('nested remote shell options cannot bypass E2E identity', () => {
   assert.match(e2eSlotProblem(`${prefix} ISS-1 run\"'`) ?? '', /--head/);
   const flags = `--head 0123abc`;
   for (const command of [`${prefix} ${flags} ISS-1 run\"'`,
-    `ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic ~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run"'`]) {
+    String.raw`ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic \"~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run\""'`]) {
     assert.equal(e2eSlotProblem(command), null, command);
   }
+  // ISS-13701 AC-4: zsh -c executes one command-string argument. A later --head becomes $0,
+  // not the slot's flag (https://zsh.sourceforge.io/Doc/Release/Invocation.html).
+  const unquoted = `ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic ~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run"'`;
+  assert.match(e2eSlotProblem(unquoted) ?? '', /--head <sha>/);
   assert.equal(e2eSlotProblem("printf '%s\\n' 'zsh -lic e2e-slot.sh ISS-1 run'"), null, 'quoted data is not an invocation');
   assert.equal(watcherLaunchProblem({ command: "ssh host 'zsh -lic \"scripts/watch.sh orch\"'" }), null, 'only the e2e identity guard expands remote shell payloads');
 });
