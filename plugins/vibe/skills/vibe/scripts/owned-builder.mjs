@@ -26,6 +26,14 @@ function inspectBuilderPart(kind, name, run) {
   return { name, id, created };
 }
 
+function removeStaleBuilderInstance(name, run) {
+  const result = run(['buildx', 'rm', name]);
+  if (result.error) throw result.error;
+  if (result.status !== 0 && !/no builder .*found|not found/i.test(String(result.stderr ?? ''))) {
+    throw new Error('Stale persistent builder instance removal failed: ' + String(result.stderr ?? '').trim());
+  }
+}
+
 export function verifiedBuilder(record, run) {
   const builder = record.builder;
   if (!builder?.shared || builder.name !== BUILDER_NAME || !builder.recordFile) {
@@ -84,6 +92,7 @@ export function prepareRunOwnedBuild(record, { run = dockerRun, home, buildInten
       let container = inspectBuilderPart('container', containerName, run);
       let volume = inspectBuilderPart('volume', volumeName, run);
       if (!container && !volume) {
+        removeStaleBuilderInstance(name, run);
         owned.createdAt = new Date().toISOString();
         writeAtomic(builderFile, owned);
         const created = dockerResult(['buildx', 'create', '--driver', 'docker-container', '--driver-opt',
@@ -101,6 +110,7 @@ export function prepareRunOwnedBuild(record, { run = dockerRun, home, buildInten
       let container = inspectBuilderPart('container', containerName, run);
       let volume = inspectBuilderPart('volume', volumeName, run);
       if (!container && !volume) {
+        removeStaleBuilderInstance(name, run);
         owned = { ...owned, state: 'creating', createdAt: new Date().toISOString(), container: undefined, volume: undefined };
         writeAtomic(builderFile, owned);
         const created = dockerResult(['buildx', 'create', '--driver', 'docker-container', '--driver-opt',

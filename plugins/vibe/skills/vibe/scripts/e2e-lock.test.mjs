@@ -206,6 +206,7 @@ case "$1 $2" in
   "container ls") [ -f "$dir/container" ] && echo ${FULL_CONTAINER_ID}; exit 0 ;;
   "volume ls") [ -f "$dir/volume" ] && echo v1; exit 0 ;;
   "network ls") [ -f "$dir/network" ] && echo ${FULL_NETWORK_ID}; exit 0 ;;
+  "image ls") exit 0 ;;
   "container inspect") [ -f "$dir/container" ] || { printf 'Error response from daemon: No such container: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_CONTAINER_ID}","Created":"2099-10-29T00:00:00Z","State":{"Running":false},"Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
   "volume inspect") [ -f "$dir/volume" ] || { printf 'Error response from daemon: get %s: no such volume\n' "$last" >&2; exit 1; }; printf '[{"Name":"v1","CreatedAt":"2099-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
   "network inspect") [ -f "$dir/network" ] || { printf 'Error response from daemon: network %s not found\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_NETWORK_ID}","Created":"2099-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
@@ -408,6 +409,33 @@ if(result.status!==0) process.exit(result.status||6);
     { encoding: "utf8", env });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(imageFile), false, "the exact generated tag is removed");
+});
+
+test('generated projects discover images from direct scripts, pnpm wrappers, and node wrappers', () => {
+  const dir = path.join(root, 'all-wrapper-image-discovery');
+  mkdirSync(dir);
+  const imageFile = path.join(dir, 'image');
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, `#!${process.execPath}
+const fs=require('node:fs'),args=process.argv.slice(2),kind=args[0],action=args[1],file=${JSON.stringify(imageFile)};
+if(kind==='version')process.exit(0);
+if(kind==='image'&&action==='ls'){if(fs.existsSync(file))process.stdout.write(fs.readFileSync(file,'utf8')+':latest\\n');process.exit(0)}
+if(kind==='image'&&action==='inspect'){const tag=args.at(-1);if(!fs.existsSync(file)||fs.readFileSync(file,'utf8')!==tag){process.stderr.write('Error response from daemon: No such image: '+tag+'\\n');process.exit(1)}process.stdout.write(JSON.stringify([{Id:'sha256:'+'a'.repeat(64),Created:'2099-01-01T00:00:00Z',RepoTags:[tag+':latest']}]));process.exit(0)}
+if(kind==='image'&&action==='rm'){fs.rmSync(file);process.exit(0)}
+if(['container','volume','network'].includes(kind)&&action==='ls')process.exit(0);
+process.stderr.write('unexpected '+args.join(' '));process.exit(9);
+`, { mode: 0o700 });
+  const writer = `require('node:fs').writeFileSync(${JSON.stringify(imageFile)},process.env.COMPOSE_PROJECT_NAME+'-wrapped')`;
+  const script = path.join(dir, 'script.sh');
+  const pnpm = path.join(dir, 'pnpm');
+  for (const executable of [script, pnpm]) writeFileSync(executable, `#!${process.execPath}\n${writer}\n`, { mode: 0o700 });
+  const commands = [[script], [pnpm, 'wrapped'], [process.execPath, '-e', writer]];
+  for (const [index, command] of commands.entries()) {
+    const result = spawnSync(process.execPath, [SCRIPT, 'run', '--head', SHA, '--lock-dir', path.join(dir, `lock-${index}`), ...command],
+      { encoding: 'utf8', env: { ...process.env, VIBE_E2E_DOCKER: docker } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(imageFile), false, command[0]);
+  }
 });
 
 test("E2E lock refuses a Dagger e-2-e build below 64 GB after taking its lock", () => {

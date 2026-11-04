@@ -408,7 +408,6 @@ async function main(argv) {
   const generatedProject = !process.env.COMPOSE_PROJECT_NAME;
   const containerizedBuild = generatedProject && isContainerizedBuild(command, args)
     && [command, ...args].some((word) => /(?:^|\/)run-containerized\.sh$/.test(word));
-  const wrappedContainerizedBuild = generatedProject && ['bash', 'sh', 'zsh'].includes(path.basename(command));
   const dockerReady = generatedProject && spawnSync(process.env.VIBE_E2E_DOCKER || "docker", ["version"],
     { encoding: "utf8", timeout: 10_000 }).status === 0;
   if (containerizedBuild && !dockerReady) { release(lockDir, owner); throw new Error("Owned E2E build needs Docker."); }
@@ -420,7 +419,7 @@ async function main(argv) {
       const docker = process.env.VIBE_E2E_DOCKER || "docker";
       cleanupRecord = reserveGeneratedE2E({ token: owner.token.replace(/-/g, ""), project: composeProject, owner,
         startedAt: new Date().toISOString(), plannedTags: plannedLocalTags(docker, composeProject, worktree, command, args),
-        discoverImages: !args.includes('--no-build') && (containerizedBuild || wrappedContainerizedBuild), file: cleanupFile },
+        discoverImages: generatedProject, file: cleanupFile },
       { home: managedHome });
       if (containerizedBuild) cleanupRecord.requiredBuiltTags = [];
     } catch (error) {

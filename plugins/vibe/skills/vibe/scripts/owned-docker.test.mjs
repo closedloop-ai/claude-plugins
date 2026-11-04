@@ -272,6 +272,46 @@ test('wrapped containerized runs discover and retire random-project images creat
   assert.equal(f.images.has(tag), false);
 });
 
+test('discovery leaves predating, other-token, and shared images untouched', (t) => {
+  const predating = fixture(t);
+  const oldRecord = reserveGeneratedE2E({ token: predating.token, project: predating.project,
+    owner: { token: predating.token, identity: 'dead', pid: 99_999_999 }, startedAt: STARTED,
+    plannedTags: [], discoverImages: true, file: path.join(predating.dir, 'predating.json') }, { run: predating.run });
+  const oldTag = predating.project + '-old';
+  predating.images.set(oldTag, { Id: `sha256:${'1'.repeat(64)}`, Created: '2026-10-01T00:00:00Z', RepoTags: [oldTag + ':latest'] });
+  assert.throws(() => predating.reconcile(oldRecord), /predates the reservation/);
+  assert.equal(predating.images.has(oldTag), true);
+
+  const other = fixture(t);
+  const otherRecord = reserveGeneratedE2E({ token: other.token, project: other.project,
+    owner: { token: other.token, identity: 'dead', pid: 99_999_999 }, startedAt: STARTED,
+    plannedTags: [], discoverImages: true, file: path.join(other.dir, 'other.json') }, { run: other.run });
+  const otherTag = 'vibe-e2e-' + 'f'.repeat(32) + '-api';
+  other.images.set(otherTag, { Id: `sha256:${'2'.repeat(64)}`, Created: CREATED, RepoTags: [otherTag + ':latest'] });
+  other.reconcile(otherRecord);
+  assert.equal(other.images.has(otherTag), true);
+
+  const shared = fixture(t);
+  const sharedRecord = reserveGeneratedE2E({ token: shared.token, project: shared.project,
+    owner: { token: shared.token, identity: 'dead', pid: 99_999_999 }, startedAt: STARTED,
+    plannedTags: [], discoverImages: true, file: path.join(shared.dir, 'shared.json') }, { run: shared.run });
+  const sharedTag = shared.project + '-shared';
+  shared.images.set(sharedTag, { Id: `sha256:${'3'.repeat(64)}`, Created: CREATED,
+    RepoTags: [sharedTag + ':latest', 'human/shared:latest'] });
+  assert.throws(() => shared.reconcile(sharedRecord), /retagged or shared/);
+  assert.equal(shared.images.has(sharedTag), true);
+});
+
+test('discovery refuses a Docker namespace result outside the random project before inspecting it', (t) => {
+  const f = fixture(t);
+  const record = reserveGeneratedE2E({ token: f.token, project: f.project,
+    owner: { token: f.token, identity: 'dead', pid: 99_999_999 }, startedAt: STARTED,
+    plannedTags: [], discoverImages: true, file: path.join(f.dir, 'namespace.json') }, { run: f.run });
+  const run = (args, options) => args[0] === 'image' && args[1] === 'ls'
+    ? { status: 0, stdout: `vibe-e2e-${'f'.repeat(32)}-api:latest\n` } : f.run(args, options);
+  assert.throws(() => f.reconcile(record, { run }), /outside the recorded project tag namespace/);
+});
+
 test('partial failed wave can retire its selected private tag after reservation', (t) => {
   const f = fixture(t);
   const pair = f.project + '-api-local';

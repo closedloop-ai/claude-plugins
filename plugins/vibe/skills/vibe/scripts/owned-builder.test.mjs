@@ -22,16 +22,20 @@ function fixture(t) {
   const stateVolume = builderContainer + '_state';
   const calls = [];
   const docker = new Map();
+  let instance = false;
   const run = (args) => {
     calls.push(args);
     if (args[0] === 'buildx' && args[1] === 'version') return { status: 0, stdout: 'github.com/docker/buildx v0.14.1' };
     if (args[0] === 'compose' && args[1] === 'build' && args[2] === '--help') return { status: 0, stdout: '--builder Set builder to use' };
     if (args[0] === 'buildx' && args[1] === 'create') {
+      if (instance) return { status: 1, stderr: 'ERROR: existing instance for "vibe-build" but no append mode' };
+      instance = true;
       docker.set('container:' + builderContainer, { Name: '/' + builderContainer, Id: CONTAINER, Created: CREATED,
         Config: { Labels: {} } });
       docker.set('volume:' + stateVolume, { Name: stateVolume, CreatedAt: CREATED, Labels: {} });
       return { status: 0, stdout: builder };
     }
+    if (args[0] === 'buildx' && args[1] === 'rm') { instance = false; return { status: 0, stdout: '' }; }
     if (args[0] === 'buildx' && args[1] === 'prune') return { status: 0, stdout: 'reclaimed' };
     const [kind, action, ...rest] = args;
     if (action === 'ls') return { status: 0, stdout: '' };
@@ -85,13 +89,17 @@ test('unsupported Buildx or Compose refuses before persistent builder creation',
 
 test('a crash after the absent-builder reservation resumes creation without adopting foreign state', (t) => {
   const f = fixture(t);
+  f.run(['buildx', 'create', '--name', 'vibe-build']);
+  f.docker.delete('container:' + f.builderContainer);
+  f.docker.delete('volume:' + f.stateVolume);
   const cleanup = path.join(f.home, '.codex', 'vibe', 'cleanup');
   mkdirSync(cleanup, { recursive: true });
   writeFileSync(path.join(cleanup, 'vibe-builder.json'), JSON.stringify({ version: 1, kind: 'vibe-builder',
     state: 'creating', name: 'vibe-build', containerName: f.builderContainer, volumeName: f.stateVolume,
     absentAtReservation: true, createdAt: new Date().toISOString() }));
   prepareRunOwnedBuild(f.reserve(), { run: f.run, home: f.home });
-  assert.equal(f.calls.filter((args) => args[0] === 'buildx' && args[1] === 'create').length, 1);
+  assert.equal(f.calls.filter((args) => args[0] === 'buildx' && args[1] === 'create').length, 2);
+  assert.ok(f.calls.some((args) => args[0] === 'buildx' && args[1] === 'rm'));
 });
 
 test('a ready ownership record recreates its builder only when both exact parts are absent', (t) => {
@@ -102,6 +110,9 @@ test('a ready ownership record recreates its builder only when both exact parts 
   const next = f.reserve(path.join(f.home, 'next.json'));
   prepareRunOwnedBuild(next, { run: f.run, home: f.home });
   assert.equal(f.calls.filter((args) => args[0] === 'buildx' && args[1] === 'create').length, 2);
+  const recreateAt = f.calls.findLastIndex((args) => args[0] === 'buildx' && args[1] === 'create');
+  const staleRmAt = f.calls.findLastIndex((args) => args[0] === 'buildx' && args[1] === 'rm');
+  assert.ok(staleRmAt >= 0 && staleRmAt < recreateAt, 'stale buildx instance is removed before exact recreation');
   assert.ok(f.docker.has('container:' + f.builderContainer));
   assert.ok(f.docker.has('volume:' + f.stateVolume));
 });

@@ -24,6 +24,8 @@ const FORCE_PUSH = sh("git push", "-f", "origin fix/x");
 
 test('raw recognizable scratch Docker creation is refused while reads and wrapped E2E remain available', () => {
   for (const command of ['docker run --name iss-42-postgres postgres:16', 'docker compose -p iss-42-perf up -d',
+    'docker run -d --rm --name iss-42-postgres postgres:16',
+    'docker run --detach --rm --name scratch-db postgres:16',
     'docker container run -d postgres:16', 'docker create --name scratch-db alpine',
     'docker compose run postgres', 'docker compose create seed', 'docker-compose -p iss-7 up -d']) {
     assert.match(scratchCreationProblem(command, 'vibe') ?? '', /registered scratch/i, command);
