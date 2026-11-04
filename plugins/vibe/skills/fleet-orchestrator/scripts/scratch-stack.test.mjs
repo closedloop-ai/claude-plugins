@@ -6,25 +6,26 @@ import { test } from 'node:test';
 import { runScratchStack, scratchOverlay } from './scratch-cleanup.mjs';
 
 test('scratch overlay labels services, named volumes and networks and refuses local image builds', () => {
+  const project = 'vibe-scratch-test';
   const config = { services: { postgres: { image: 'postgres:16' }, seed: { image: 'seed:1' } },
-    volumes: { data: {} }, networks: { private: {} } };
-  const overlay = scratchOverlay(config, 'token-one');
+    volumes: { data: { name: project + '_data' } }, networks: { private: { name: project + '_private' } } };
+  const overlay = scratchOverlay(config, 'token-one', project);
   assert.equal(overlay.services.postgres.labels['vibe.owner-token'], 'token-one');
   assert.equal(overlay.services.seed.labels['vibe.owner-token'], 'token-one');
   assert.equal(overlay.volumes.data.labels['vibe.owner-token'], 'token-one');
   assert.equal(overlay.networks.private.labels['vibe.owner-token'], 'token-one');
-  assert.throws(() => scratchOverlay({ services: { app: { build: '.' } } }, 'token'), /locally built/);
-  assert.throws(() => scratchOverlay({ services: { postgres: { volumes: [{ type: 'volume', target: '/data' }] } } }, 'token'),
+  assert.throws(() => scratchOverlay({ services: { app: { build: '.' } } }, 'token', project), /locally built/);
+  assert.throws(() => scratchOverlay({ services: { postgres: { volumes: [{ type: 'volume', target: '/data' }] } } }, 'token', project),
     /named volumes/);
-  assert.throws(() => scratchOverlay({ services: { postgres: {} }, volumes: { shared: { external: true } } }, 'token'),
+  assert.throws(() => scratchOverlay({ services: { postgres: {} }, volumes: { shared: { external: true } } }, 'token', project),
     /shared/);
   for (const volumes of [{ data: { name: 'production_data' } }, { data: { driver_opts: { type: 'none', device: '/host', o: 'bind' } } }]) {
-    assert.throws(() => scratchOverlay({ services: { postgres: {} }, volumes }, 'token'), /explicit|host-backed/);
+    assert.throws(() => scratchOverlay({ services: { postgres: {} }, volumes }, 'token', project), /explicit|host-backed/);
   }
-  assert.throws(() => scratchOverlay({ services: { postgres: {} }, networks: { default: { name: 'foreign-net' } } }, 'token'),
+  assert.throws(() => scratchOverlay({ services: { postgres: {} }, networks: { default: { name: 'foreign-net' } } }, 'token', project),
     /explicit/);
   for (const service of [{ privileged: true }, { network_mode: 'host' }, { volumes: [{ type: 'bind', source: '/host', target: '/data' }] }]) {
-    assert.throws(() => scratchOverlay({ services: { postgres: service } }, 'token'), /host|privileged/);
+    assert.throws(() => scratchOverlay({ services: { postgres: service } }, 'token', project), /host|privileged/);
   }
 });
 
@@ -42,7 +43,11 @@ test('scratch wrapper registers before Docker up and captures exact resources af
       writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ [name]: { project, ownerToken: 'owner-token', expiresAt: '2026-11-04T00:00:00Z' } }));
       return '';
     }
-    if (args.includes('config')) return JSON.stringify({ services: { postgres: { image: 'postgres:16' } }, volumes: { data: {} } });
+    if (args.includes('config')) {
+      const project = args[args.indexOf('--project-name') + 1];
+      return JSON.stringify({ services: { postgres: { image: 'postgres:16' } },
+        volumes: { data: { name: project + '_data' } }, networks: { default: { name: project + '_default' } } });
+    }
     return '';
   };
   const result = runScratchStack({ orchDir: dir, name: 'pg', owner: 'writer', ticket: 'ticket-one',

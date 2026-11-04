@@ -95,7 +95,8 @@ function dockerRunAction(words) {
 function allowedSharedOrEphemeralRun(words) {
   const actionAt = dockerRunAction(words);
   if (actionAt < 0) return false;
-  const detached = words.slice(actionAt + 1).some((word) => word === '-d' || word === '--detach' || word === '--detach=true');
+  const detached = words.slice(actionAt + 1).some((word) => word === '--detach' || word === '--detach=true'
+    || /^-[A-Za-z]*d[A-Za-z]*$/.test(word));
   if (!detached && words.slice(actionAt + 1).some((word) => word === '--rm' || word === '--rm=true')) return true;
   const identities = runIdentities(words, actionAt);
   return words.includes('-d') && identities.includes('postgres16') && identities.includes('postgres:16');

@@ -165,7 +165,8 @@ function command(bin, args) {
 }
 
 /** Label every service, named volume and network so exact helper witnesses can verify ownership. */
-export function scratchOverlay(config, ownerToken) {
+export function scratchOverlay(config, ownerToken, project) {
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(project ?? '')) throw new Error('Scratch overlay needs its exact Compose project.');
   if (!config?.services || Object.keys(config.services).length === 0) throw new Error('Scratch Compose file has no services.');
   const volumes = config.volumes ?? {};
   for (const service of Object.values(config.services)) {
@@ -181,10 +182,13 @@ export function scratchOverlay(config, ownerToken) {
       }
     }
   }
-  if (Object.values(volumes).some((volume) => volume.external || volume.name || volume.driver_opts
-    || volume.driver && volume.driver !== 'local')
-    || Object.values(config.networks ?? {}).some((network) => network.external || network.name || network.driver_opts
-      || network.driver && network.driver !== 'bridge')) {
+  const volumeProblem = Object.entries(volumes).some(([key, volume]) => volume.external
+    || volume.name && volume.name !== `${project}_${key}` || volume.driver_opts
+    || volume.driver && volume.driver !== 'local');
+  const networkProblem = Object.entries(config.networks ?? {}).some(([key, network]) => network.external
+    || network.name && network.name !== `${project}_${key}` || network.driver_opts
+    || network.driver && network.driver !== 'bridge');
+  if (volumeProblem || networkProblem) {
     throw new Error('Scratch wrapper cannot claim explicit, shared or host-backed Docker resources.');
   }
   const labels = { 'vibe.owner-token': ownerToken };
@@ -209,8 +213,8 @@ export function runScratchStack({ orchDir, name, owner, ticket, worktree, ttlSec
   const ledger = JSON.parse(readFileSync(path.join(orchDir, 'helpers.json'), 'utf8'));
   const ownerToken = ledger[name]?.ownerToken;
   if (!ownerToken || ledger[name]?.project !== project) throw new Error('Scratch owner was not recorded before Docker launch.');
-  const config = JSON.parse(run(docker, ['compose', '-f', composeFile, 'config', '--format', 'json']));
-  const overlay = scratchOverlay(config, ownerToken);
+  const config = JSON.parse(run(docker, ['compose', '--project-name', project, '-f', composeFile, 'config', '--format', 'json']));
+  const overlay = scratchOverlay(config, ownerToken, project);
   const overlayDir = path.join(orchDir, 'scratch-overlays');
   mkdirSync(overlayDir, { recursive: true, mode: 0o700 });
   const overlayFile = path.join(overlayDir, `${token}.json`);
