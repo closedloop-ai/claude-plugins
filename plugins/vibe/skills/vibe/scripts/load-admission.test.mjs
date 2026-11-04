@@ -151,14 +151,14 @@ test("a second failure is final: the exit is the retry's own non-zero code, neve
   assert.equal(result.attempts.length, 2);
 });
 
-test("the switches restore the old behavior: no retry with VIBE_HEAVY_RETRY=off, no wait with VIBE_HEAVY_WAIT=off", async () => {
+test("the settings restore the old behavior: no retry with VIBE_HEAVY_RETRIES=0, no wait with VIBE_HEAVY_MAX_WAIT_SECONDS=0", async () => {
   const noRetry = machine();
   let calls = 0;
-  const first = await runAdmitted("pnpm", ["test"], { seconds: 60, env: { [ENV.retry]: "off" }, budget: noRetry.budget, settings, sleep: noRetry.sleep, now: noRetry.now, loadAverage: () => 20, run: async () => { calls += 1; return { code: 137, output: "" }; } });
+  const first = await runAdmitted("pnpm", ["test"], { seconds: 60, env: {}, budget: noRetry.budget, settings: resolveSettings({ [ENV.retries]: "0" }), sleep: noRetry.sleep, now: noRetry.now, loadAverage: () => 20, run: async () => { calls += 1; return { code: 137, output: "" }; } });
   assert.equal(calls, 1);
   assert.equal(first.exitCode, 137);
   const noWait = machine({ busy: () => 9 });
-  const second = await runAdmitted("pnpm", ["test"], { seconds: 60, env: { [ENV.wait]: "off" }, budget: noWait.budget, settings, sleep: noWait.sleep, now: noWait.now, loadAverage: () => 20, run: async () => ok });
+  const second = await runAdmitted("pnpm", ["test"], { seconds: 60, env: {}, budget: noWait.budget, settings: resolveSettings({ [ENV.maxWaitSeconds]: "0" }), sleep: noWait.sleep, now: noWait.now, loadAverage: () => 20, run: async () => ok });
   assert.deepEqual(noWait.sleeps, []);
   assert.equal(second.exitCode, 0);
 });

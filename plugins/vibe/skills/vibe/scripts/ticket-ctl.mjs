@@ -37,7 +37,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { parseSections, TICKET_SECTIONS } from "../../handoff/scripts/live-ticket-check.mjs";
-import { execCommand, parseJson } from "./ws3-exec.mjs";
+import { execCommand, parseJson, printedStdout } from "./ws3-exec.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE = path.join(here, "..", "references", "ticket-template.md");
@@ -179,7 +179,7 @@ export function recordSectionsFrom(markdown) {
 /** The controller over an optional transport; with none, only the offline methods exist. */
 export function createTicketCtl({ transport = null, run = execCommand } = {}) {
   function applyRecord({ worktree, body }) {
-    const printed = parseJson(run(process.execPath, [path.join(here, "vibe-sessions.mjs"), "ticket-sections", "--worktree", worktree]).stdout, {});
+    const printed = parseJson(printedStdout(run(process.execPath, [path.join(here, "vibe-sessions.mjs"), "ticket-sections", "--worktree", worktree]), "vibe-sessions ticket-sections"), {});
     if (printed.ok === false || typeof printed.markdown !== "string") throw new Error(printed.error ?? "ticket-sections printed no markdown.");
     return replaceSections(body, recordSectionsFrom(printed.markdown), "record");
   }

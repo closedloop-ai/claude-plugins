@@ -391,8 +391,7 @@ test("a timed out or unstartable pooled lane is blocked, never passed; skipped a
   assert.equal(find(evidence, "selected-tests").status, Status.NotRun);
 });
 
-test("VIBE_VERIFY_POOL=serial and a switched-off budget select the strictly serial path", () => {
-  assert.equal(strictlySerial({ VIBE_VERIFY_POOL: "serial" }), true);
+test("a budget that is not switched on selects the strictly serial path", () => {
   assert.equal(strictlySerial({ VIBE_HEAVY_BUDGET: "off" }), true);
   assert.equal(strictlySerial({}), true, "the budget is opt-in, so the pool is too");
   assert.equal(strictlySerial({ VIBE_HEAVY_BUDGET: "on" }), false);

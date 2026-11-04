@@ -53,18 +53,13 @@ export const ENV = Object.freeze({
   targetUtilisation: "VIBE_HEAVY_TARGET",
   minWorkers: "VIBE_HEAVY_MIN_WORKERS",
   leaseDir: "VIBE_HEAVY_LEASE_DIR",
-  wait: "VIBE_HEAVY_WAIT",
   maxWaitSeconds: "VIBE_HEAVY_MAX_WAIT_SECONDS",
-  retry: "VIBE_HEAVY_RETRY",
   retries: "VIBE_HEAVY_RETRIES",
   highLoadPerCore: "VIBE_HEAVY_HIGH_LOAD_PER_CORE",
-  pool: "VIBE_VERIFY_POOL",
   poolSize: "VIBE_VERIFY_POOL_SIZE",
   poolable: "VIBE_VERIFY_POOLABLE",
 });
 
-const OFF_VALUES = new Set(["off", "0", "false", "no"]);
-const ON_VALUES = new Set(["on", "1", "true", "yes"]);
 const HEAVY_TOOLS = new Set(["vitest", "jest", "playwright", "turbo", "tsc", "dagger"]);
 const PACKAGE_RUNNERS = new Set(["pnpm", "npm", "npx", "yarn"]);
 const HEAVY_SCRIPT = /^(?:test|typecheck|lint|build|verify|check)(?::|$)/;
@@ -91,14 +86,9 @@ export function resolveSettings(env = process.env) {
   });
 }
 
-/** Whether waiting for capacity (`VIBE_HEAVY_WAIT=off`) or the load-failure retry (`VIBE_HEAVY_RETRY=off`) is switched off. */
-export function featureDisabled(env, name) {
-  return OFF_VALUES.has(String(env[name] ?? "").trim().toLowerCase());
-}
-
 /** Whether the budget is off: it is opt-in, so anything but `VIBE_HEAVY_BUDGET=on` leaves the previous behavior. */
 export function budgetDisabled(env = process.env) {
-  return !ON_VALUES.has(String(env[ENV.off] ?? "").trim().toLowerCase());
+  return !(env[ENV.off] === "on");
 }
 
 /** Whether a command is CPU-heavy: a known heavy tool, or a package runner invoked with a test, typecheck, lint, build, verify or check script. */

@@ -21,7 +21,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = PLUGIN_ROOT / "skills" / "vibe" / "scripts"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 NEW_SCRIPTS = ("heavy-budget.mjs", "load-admission.mjs", "lane-pool.mjs", "verify-background.mjs")
-SWITCHES = ("VIBE_HEAVY_BUDGET", "VIBE_HEAVY_WAIT", "VIBE_HEAVY_RETRY", "VIBE_VERIFY_POOL")
+SWITCHES = ("VIBE_HEAVY_BUDGET", "VIBE_HEAVY_MAX_WAIT_SECONDS", "VIBE_HEAVY_RETRIES", "VIBE_VERIFY_POOL_SIZE")
 DEFAULT_KEYS = ("targetUtilisation", "minWorkers", "maxWaitSeconds", "pollSeconds", "retries", "retryWorkerDivisor", "poolSize", "highLoadPerCore")
 
 

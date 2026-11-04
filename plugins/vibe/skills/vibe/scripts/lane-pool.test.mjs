@@ -31,13 +31,16 @@ test("the poolable list is extendable by the environment, and the shipped list n
 
 test("pool size comes from the budget, capped by the default of 2, and 1 when strictly serial or the budget is off", () => {
   const settings = resolveSettings({});
+  const on = { [ENV.off]: "on" };
   assert.equal(DEFAULTS.poolSize, 2);
-  assert.equal(poolSizeFor({ env: {}, settings, snapshot: { available: 8 } }), 2);
-  assert.equal(poolSizeFor({ env: {}, settings, snapshot: { available: 3 } }), 1);
-  assert.equal(poolSizeFor({ env: {}, settings, snapshot: { available: 0 } }), 1);
-  assert.equal(poolSizeFor({ env: { [ENV.poolSize]: "4" }, settings: resolveSettings({ [ENV.poolSize]: "4" }), snapshot: { available: 20 } }), 4);
-  assert.equal(poolSizeFor({ env: { [ENV.pool]: "serial" }, settings, snapshot: { available: 8 } }), 1);
+  assert.equal(poolSizeFor({ env: on, settings, snapshot: { available: 8 } }), 2);
+  assert.equal(poolSizeFor({ env: on, settings, snapshot: { available: 3 } }), 1);
+  assert.equal(poolSizeFor({ env: on, settings, snapshot: { available: 0 } }), 1);
+  assert.equal(poolSizeFor({ env: { ...on, [ENV.poolSize]: "4" }, settings: resolveSettings({ [ENV.poolSize]: "4" }), snapshot: { available: 20 } }), 4);
+  assert.equal(poolSizeFor({ env: { [ENV.off]: "on", [ENV.poolSize]: "1" }, settings: resolveSettings({ [ENV.poolSize]: "1" }), snapshot: { available: 8 } }), 1);
   assert.equal(poolSizeFor({ env: { [ENV.off]: "off" }, settings, snapshot: { available: 8 } }), 1);
+  assert.equal(poolSizeFor({ env: {}, settings, snapshot: { available: 8 } }), 1, "the budget is opt-in, so the pool is too");
+  assert.equal(poolSizeFor({ env: { [ENV.off]: "on" }, settings, snapshot: { available: 8 } }), 2);
 });
 
 test("the scheduler never exceeds the pool size, never overlaps two serial items, and returns results in item order", async () => {

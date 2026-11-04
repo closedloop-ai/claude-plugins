@@ -14,11 +14,11 @@
 // Waiting, every attempt and the retry share the caller's `seconds`: the whole call never outlasts it,
 // so a caller's outer limit of `seconds` plus a margin cannot fire on a wait or a retry.
 //
-// Switches: VIBE_HEAVY_WAIT=off skips the wait, VIBE_HEAVY_RETRY=off skips the retry,
-// Without VIBE_HEAVY_BUDGET=on none of this runs (run-bounded.mjs). Defaults: heavy-budget.mjs.
+// Without VIBE_HEAVY_BUDGET=on none of this runs (run-bounded.mjs). VIBE_HEAVY_MAX_WAIT_SECONDS=0 skips the wait
+// and VIBE_HEAVY_RETRIES=0 skips the retry. Defaults: heavy-budget.mjs.
 
 import os from "node:os";
-import { ENV, featureDisabled, resolveSettings } from "./heavy-budget.mjs";
+import { resolveSettings } from "./heavy-budget.mjs";
 
 export const Signature = Object.freeze({
   Assertion: "assertion-failure",
@@ -83,8 +83,8 @@ export async function runAdmitted(command, args, {
   const deadline = now() + seconds * 1000;
   const remainingSeconds = () => (deadline - now()) / 1000;
   const waitSettings = () => ({ ...settings, maxWaitSeconds: Math.max(0, Math.min(settings.maxWaitSeconds, remainingSeconds())) });
-  const waiting = !featureDisabled(env, ENV.wait);
-  const retrying = !featureDisabled(env, ENV.retry) && settings.retries > 0;
+  const waiting = settings.maxWaitSeconds > 0;
+  const retrying = settings.retries > 0;
   const first = await waitForAdmission({ budget, settings: waitSettings(), sleep, now, wait: waiting, log });
   const load1 = loadAverage();
   const loadAtStart = { load1, cores: first.snapshot.cores, perCore: load1 / first.snapshot.cores, belowMinimum: first.snapshot.belowMinimum };
