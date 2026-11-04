@@ -25,6 +25,7 @@ import { runOwnedProcess } from "./owned-process.ts";
 import { mergeEvalSuiteResults, statefulInfrastructureInvalidReason,
   SystemUpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 import type { UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
+import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
 
 /** Explicit inputs for a local-only dual-runtime model eval. */
 export interface LocalEvalOptions {
@@ -250,6 +251,8 @@ export async function runLocalEvals(options: LocalEvalOptions,
     ? await version(commands, options.claudeExecutable, options.runRoot, "claude", deadline, options.signal) : null;
   const claudeVersion = claudeVersionFull?.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
   if (runtimes.includes("claude") && !claudeVersion) throw new Error("eval-claude-version-invalid");
+  const isolatedClaude = runtimes.includes("claude")
+    ? createClaudeEvalIsolation(options.runRoot, options.claudeExecutable, []) : null;
   const codexVersion = runtimes.includes("codex")
     ? await version(commands, options.codexExecutable, options.runRoot, "codex", deadline, options.signal) : null;
   const claudeOutput = join(options.runRoot, "claude");
@@ -290,7 +293,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
   try {
     const launches = [
       runtimes.includes("claude") && partition.ordinary.length
-        ? commands.run(options.claudeExecutable, claudeArgs, options.runRoot,
+        ? commands.run(isolatedClaude!.executable, claudeArgs, options.runRoot,
           { deadline, signal: siblings.signal }) : Promise.resolve(null),
       runtimes.includes("codex") && partition.ordinary.length
         ? commands.run(options.uvExecutable, codexArgs, options.runRoot,
@@ -343,7 +346,11 @@ export async function runLocalEvals(options: LocalEvalOptions,
     const stateful = statefulSuites[runtime] ?? null;
     if (stateful) {
       const invalidReason = statefulInfrastructureInvalidReason(stateful);
-      if (invalidReason) return { runtime, exitCode: 1, result: null, invalidReason };
+      if (invalidReason) {
+        const merged = mergeEvalSuiteResults(ordinary?.result ?? null, stateful, selected);
+        if (!merged) return { runtime, exitCode: 1, result: null, invalidReason };
+        return { runtime, exitCode: 1, result: merged, invalidReason };
+      }
     }
     const merged = mergeEvalSuiteResults(ordinary?.result ?? null, stateful, selected);
     if (!merged) return { runtime, exitCode: 1, result: null,
