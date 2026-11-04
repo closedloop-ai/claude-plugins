@@ -34,8 +34,9 @@ test("the defaults are one frozen object and every one is overridable by the env
   assert.equal(settings.minWorkers, 3);
   assert.equal(resolveSettings({ [ENV.targetUtilisation]: "banana", [ENV.minWorkers]: "0" }).targetUtilisation, DEFAULTS.targetUtilisation);
   assert.equal(resolveSettings({ [ENV.minWorkers]: "0" }).minWorkers, DEFAULTS.minWorkers);
+  assert.equal(budgetDisabled({}), true, "opt-in: unset leaves the previous behavior");
   assert.equal(budgetDisabled({ [ENV.off]: "off" }), true);
-  assert.equal(budgetDisabled({}), false);
+  assert.equal(budgetDisabled({ [ENV.off]: "on" }), false);
 });
 
 test("only CPU-heavy commands are heavy: test, typecheck, lint and build runs and the heavy tools; git, node scripts and echo are not", () => {

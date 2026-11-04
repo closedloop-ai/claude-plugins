@@ -5,7 +5,7 @@
 // flag-off path with the base, and the audit against the criteria ran only
 // after merge.
 //
-// Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>
+// Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--at head]
 //
 // The criteria are the ticket's `- Acceptance criteria:` checklist, numbered
 // AC-1, AC-2, ... in order.
@@ -13,10 +13,10 @@
 // the diff: one `| AC-n | MET|PARTIAL|MISSED | <type> | <ref> |` row per
 // criterion, so the verdict, its evidence type and its ref live in one place
 // (vibe/references/spec-card.md, "Audit rows"). Every criterion needs a MET row
-// whose type is test, script, screenshot or api-read and whose ref names the
+// whose type is test, script, screenshot, api-read or source-trace and whose ref names the
 // evidence; a criterion with no such row blocks "done", and so does any
-// PARTIAL or MISSED row. A test ref must name a file that exists at the
-// worktree's HEAD. Later work is classified by qa-impact.mjs, which reruns this
+// PARTIAL or MISSED row. A test ref must name a file that exists: in the worktree
+// for a candidate audit (the writer's new tests are not committed yet), at HEAD with `--at head`, which handoff-gate.mjs passes. Later work is classified by qa-impact.mjs, which reruns this
 // audit only when its affected scope changed.
 // The matrix: {"surfaces": [...], "inputs": [...], "flags": ["on", "off"] or [],
 // "rows": [{"criterion", "surface", "input", "flag", "evidence"}]}. Every
@@ -27,10 +27,13 @@
 // source). Prints {"ok","problems"}; exits 1 on any problem.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
+
+export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
 
 const CRITERIA_START = /^\s*-\s*Acceptance criteria:\s*$/;
 const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
@@ -78,7 +81,7 @@ export function criteriaStates(ticket) {
 }
 
 /** Criteria with no valid MET row, rows that are not MET or are unproven, and rows for criteria the ticket does not list. */
-export function auditProblems(audit, criteria, worktree = null) {
+export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree) {
   const rows = [...audit.matchAll(AUDIT_ROW)].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
   const problems = [];
   for (const { id } of criteria) {
@@ -87,7 +90,7 @@ export function auditProblems(audit, criteria, worktree = null) {
       problems.push(`${id}: not audited`);
       continue;
     }
-    const rowProblems = entries.flatMap((row) => auditRowProblems(id, row, worktree));
+    const rowProblems = entries.flatMap((row) => auditRowProblems(id, row, worktree, at));
     problems.push(...rowProblems);
     if (rowProblems.length === 0 && !entries.some((row) => row.verdict === "MET")) problems.push(`${id}: no MET audit row`);
   }
@@ -130,15 +133,28 @@ export function matrixProblems(matrix, criteria) {
   return problems;
 }
 
-function auditRowProblems(id, row, worktree) {
+function auditRowProblems(id, row, worktree, at) {
   if (row.verdict !== "MET") return [`${id}: ${row.verdict}${row.ref ? ` (${row.ref})` : ""}`];
   if (!EVIDENCE_TYPES.includes(row.type)) return [`${id}: evidence type must be one of ${EVIDENCE_TYPES.join(", ")}`];
   if (row.ref.trim() === "") return [`${id}: MET needs a ref naming the ${row.type}`];
   if (row.type === "test" && worktree !== null) {
     const file = row.ref.split(/::|#/)[0].trim();
-    if (!existsAtHead(worktree, file)) return [`${id}: the test ${file} does not exist at HEAD; a planned test is not evidence`];
+    if (!testFileExists(worktree, file, at)) return [`${id}: the test ${file} does not exist ${at === EvidenceAt.Head ? "at HEAD" : "in the worktree"}; a planned test is not evidence`];
   }
   return [];
+}
+
+function testFileExists(worktree, file, at) {
+  return at === EvidenceAt.Head ? existsAtHead(worktree, file) : existsSync(path.join(worktree, file)) || existsInIndex(worktree, file);
+}
+
+function existsInIndex(worktree, file) {
+  try {
+    execFileSync("git", ["-C", worktree, "cat-file", "-e", `:${file}`], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function existsAtHead(worktree, file) {
@@ -151,14 +167,14 @@ function existsAtHead(worktree, file) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, at: { type: "string" } } });
   if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
     throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>");
   }
   const criteria = ticketCriteria(readFileSync(values.ticket, "utf8"));
   const problems = [
     ...(criteria.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
-    ...auditProblems(readFileSync(values.audit, "utf8"), criteria, values.worktree),
+    ...auditProblems(readFileSync(values.audit, "utf8"), criteria, values.worktree, values.at === EvidenceAt.Head ? EvidenceAt.Head : EvidenceAt.Worktree),
     ...matrixProblems(JSON.parse(readFileSync(values.matrix, "utf8")), criteria),
   ];
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, criteria: criteria.map(({ id }) => id), problems }, null, 2)}\n`);

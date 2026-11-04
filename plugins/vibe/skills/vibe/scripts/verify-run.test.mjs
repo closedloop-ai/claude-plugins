@@ -34,7 +34,7 @@ function harness({ installed = true, extra = [], files = { "package.json": PACKA
     ["run-bounded.mjs 600 pnpm check:source-gates", ok()],
     ["run-bounded.mjs 900 pnpm typecheck:affected", ok()],
     ["run-bounded.mjs 300 pnpm test:lanes", ok(REPORT)],
-    ["pre-pr-lanes.mjs check", ok(`MISSING-LANE ${LANE}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${LANE}"\n`)],
+    ["pre-pr-lanes.mjs check", ok(`MISSING-LANE ${LANE}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${LANE}"\npre-pr lanes: 1 lanes, 1 missing\n`)],
     ["pre-pr-lanes.mjs run", ok("recorded pass")],
   ];
   const controller = createVerifyRun({
@@ -72,11 +72,13 @@ test("a skipped check is never a pass: a repository with no source-gates script 
   assert.equal(evidence.ok, false);
 });
 
-test("a diff with no file Biome checks is no-op with its reason, and that never satisfies the required check", () => {
+// Review of PR 383: a docs-only diff has nothing for Biome to check, so a no-op that says why must not block Aligned.
+test("a diff with no file Biome checks is no-op with its reason, and that reason satisfies the required check", () => {
   const { controller } = harness({ extra: [["diff --name-only", ok("README.md\n")]], files: { "/wt/package.json": PACKAGE } });
   const evidence = controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
   assert.equal(find(evidence, "biome").status, Status.NoOp);
-  assert.equal(evidence.ok, false);
+  assert.match(find(evidence, "biome").reason, /no changed file/);
+  assert.equal(evidence.ok, true);
 });
 
 test("a failing check carries its output tail, a timed-out check is blocked rather than failed", () => {
@@ -142,6 +144,7 @@ test("lanes: a lane this machine cannot run is not-run with its reason, a main f
     `NOT-RUN-LANE ${lanes[1]} (no staging e2e identities)`,
     `MAIN-PREEXISTING-LANE ${lanes[2]} (fails on captured main ${"d".repeat(40)} too; list it)`,
     `MISSING-LANE ${lanes[3]}: run it, with pre-pr-lanes.mjs run`,
+    "pre-pr lanes: 4 lanes, 1 missing",
   ].join("\n");
   const { controller } = harness({
     files,
@@ -207,7 +210,9 @@ test("summary counts every status separately and ok needs a required check", () 
   assert.equal(counts["no-op"], 1);
   assert.equal(evidenceOk(checks), true);
   assert.equal(evidenceOk([]), false);
-  assert.equal(evidenceOk([{ status: Status.NoOp, required: true }]), false);
+  assert.equal(evidenceOk([{ status: Status.NoOp, required: true }]), false, "a no-op with no reason proves nothing");
+  assert.equal(evidenceOk([{ status: Status.NoOp, required: true, reason: "no changed file is one Biome checks" }, { status: Status.Passed, required: true }]), true);
+  assert.equal(evidenceOk([{ status: Status.Blocked, required: true, reason: "x" }]), false);
 });
 
 test("the lane check output is read back into missing, not-run, main-preexisting and skipped", () => {
@@ -222,6 +227,17 @@ test("the lane check output is read back into missing, not-run, main-preexisting
     missing: ["pnpm a"], notRun: [{ lane: "pnpm b", reason: "reason b" }], mainPreexisting: ["pnpm c"], skipped: [{ lane: "pnpm d", reason: "ruling" }],
   });
   assert.equal(TIME_LIMITS.lane, 1800);
+});
+
+test("a lane check that crashes, times out or prints nothing blocks every lane; it never reads as all lanes recorded", () => {
+  const files = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
+  for (const checkResult of [{ status: 124, stdout: "", stderr: "" }, { status: 1, stdout: "", stderr: "SOURCE-MOVED" }, ok("")]) {
+    const evidence = harness({ files, extra: [["pre-pr-lanes.mjs check", checkResult]] }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+    const lane = find(evidence, LANE);
+    assert.equal(lane.status, Status.Blocked);
+    assert.match(lane.reason, /no summary/);
+    assert.equal(evidence.ok, false);
+  }
 });
 
 test("a turbo run that replayed every task from its cache is cached with its provenance, never passed", () => {
@@ -315,7 +331,7 @@ test("a run that was neither retried nor waited carries no load block, and a fai
 // ISS-13587: independent lanes run in a bounded pool; the evidence contract is unchanged.
 const POOL_LANES = ["pnpm test:lint", "pnpm --filter app test", "pnpm test:ci", "pnpm test:e2e"];
 const POOL_REPORT = `Lanes:\n${POOL_LANES.map((lane) => `    ${lane}`).join("\n")}\n`;
-const POOL_CHECK = POOL_LANES.map((lane) => `MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}"\n`).join("");
+const POOL_CHECK = POOL_LANES.map((lane) => `MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}"\n`).join("") + "pre-pr lanes: 4 lanes, 4 missing\n";
 const POOL_FILES = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
 
 function pooledHarness({ results = {}, delays = {}, env = {} } = {}) {
@@ -378,7 +394,8 @@ test("a timed out or unstartable pooled lane is blocked, never passed; skipped a
 test("VIBE_VERIFY_POOL=serial and a switched-off budget select the strictly serial path", () => {
   assert.equal(strictlySerial({ VIBE_VERIFY_POOL: "serial" }), true);
   assert.equal(strictlySerial({ VIBE_HEAVY_BUDGET: "off" }), true);
-  assert.equal(strictlySerial({}), false);
+  assert.equal(strictlySerial({}), true, "the budget is opt-in, so the pool is too");
+  assert.equal(strictlySerial({ VIBE_HEAVY_BUDGET: "on" }), false);
 });
 
 test("an unreadable lane report is blocked on the pooled path just as on the serial one", async () => {

@@ -94,7 +94,7 @@ was seeded.
 - `criteria` are the criteria `quality-loop.md`, "Acceptance criteria before
   ready" defines: quoted exactly, never invented, narrowed or strengthened,
   with the same `AC-n` ids the table uses. `evidence` is the intended evidence
-  type: `test`, `script`, `screenshot` or `api-read`. An empty `criteria` list is
+  type: `test`, `script`, `screenshot`, `api-read` or `source-trace`. An empty `criteria` list is
   valid, at draft and locked: a session started from a plain description has
   none until the person's requests add them, and the card never carries an
   invented one. `criteria-audit.mjs` numbers the ticket's checklist by
@@ -210,12 +210,13 @@ and its ref in one place: `| AC-n | MET | <type> | <ref> |`. There is no
 separate evidence file. `spec-card.mjs audit-skeleton <card>` prints the table
 with one row per criterion, numbered by position in card order (the audit's
 numbering) and the intended type, for the fresh-context reviewer to fill in.
-`type` is `test`, `script`, `screenshot` or `api-read`; `ref` names the test
-file, the script run, the capture or the read; the verdict is `MET`, `PARTIAL`
+`type` is `test`, `script`, `screenshot`, `api-read` or `source-trace`; `ref` names the test
+file, the script run, the capture, the read or the file and line the trace ends at; the verdict is `MET`, `PARTIAL`
 or `MISSED` (no other status words). A criterion with no `MET` row of a known
 type and a `ref`, or with any `PARTIAL` or `MISSED` row, blocks done; on a
 `PARTIAL` or `MISSED` row the last column says what is missing. A `test` ref
-must name a file that exists at HEAD: a planned test is not evidence, and the
+must name a file that exists (in the worktree at a candidate audit, at HEAD at
+handoff-gate): a planned test is not evidence, and the
 session writes tests only when the person asked for a pull request, so a
-criterion whose intended test does not exist is met by a script, screenshot or
-API read, or stays unmet and blocks.
+criterion whose intended test does not exist is met by a script, screenshot, API
+read or source trace, or stays unmet and blocks.

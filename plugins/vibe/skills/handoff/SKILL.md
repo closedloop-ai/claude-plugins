@@ -552,7 +552,7 @@ before anything is called ready, join the run from step 1:
 Only `state: passed` (exit 0) joins. `running` (4) means keep waiting;
 `failed` (1) goes to the SAME writer; `orphaned` (3) and `head-moved` (5) mean
 start a new run at the current head. None of these is a pass, and the result's
-head must be the head under review. Nothing here is counted as aligned, approved or ready
+head must be the head under review. A required check that was a no-op with its reason (no file Biome checks, nothing for the lane report to cover) counts toward `passed`. Nothing here is counted as aligned, approved or ready
 while the lanes are pending, running or failed.
 
 ### Browser E2E and the repository's QA passes
@@ -651,7 +651,7 @@ Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
 `scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
 (every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
-`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists at HEAD)
+`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
 Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific

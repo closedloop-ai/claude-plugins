@@ -36,7 +36,7 @@
 // a pool sized from the worker budget (at most 2 by default), every other lane, and any lane the
 // pool list does not name, runs serially, and e2e lanes run under e2e-lock.mjs. The records come
 // back in lane-report order whatever finished first. `scheduling` in the evidence is additive.
-// VIBE_VERIFY_POOL=serial (or VIBE_HEAVY_BUDGET=off) restores the previous strictly serial path.
+// VIBE_VERIFY_POOL=serial, or leaving VIBE_HEAVY_BUDGET unset (the default), is the previous strictly serial path.
 //
 // Background (ISS-13586, verify-background.mjs): `--background` starts the same run detached and prints a
 // run id at once; `--status <id>` and `--wait <id>` (both need --worktree) read its record under
@@ -64,10 +64,11 @@ export const Status = Object.freeze({
   NoOp: "no-op", Skipped: "skipped", NotRun: "not-run",
 });
 // Fixed per-check limits: a check that outruns its limit is `blocked` on this machine, not failed and not passed.
-export const TIME_LIMITS = Object.freeze({ biome: 300, sourceGates: 600, typecheck: 900, lane: 1800, tests: 900, report: 300 });
+export const TIME_LIMITS = Object.freeze({ biome: 300, sourceGates: 600, typecheck: 900, lane: 1800, tests: 900, report: 300, laneCheck: 600 });
 const TIMED_OUT = 124;
 const BIOME_FILE = /\.(?:tsx?|jsx?|mjs|cjs|json|jsonc|css)$/;
 const BIOME_CHUNK = 200;
+const LANE_CHECK_SUMMARY = /^pre-pr lanes: /m;
 export const LEFT_TO_WORKER = Object.freeze([
   { name: "e2e-specs", reason: "E2E specs run through the tier the capability probe selects, under the repository's lock" },
   { name: "story-plays", reason: "story plays run in a real browser and are judged by story-play-verdict.mjs" },
@@ -121,10 +122,11 @@ export function turboReplay(output) {
   return /FULL TURBO/.test(output) ? "FULL TURBO" : null;
 }
 
-/** Whether every required check is satisfied: a pass at this head or a cached pass. Nothing skipped, no-op, not run or failed counts. */
+/** Whether every required check is satisfied: a pass at this head, a cached pass, or a no-op that says why there was nothing to run. Nothing skipped, not run, blocked or failed counts. */
 export function evidenceOk(checks) {
   const requiredChecks = checks.filter((check) => check.required);
-  return requiredChecks.length > 0 && requiredChecks.every((check) => check.status === Status.Passed || check.status === Status.Cached);
+  const satisfied = (check) => check.status === Status.Passed || check.status === Status.Cached || (check.status === Status.NoOp && String(check.reason ?? "").trim() !== "");
+  return requiredChecks.length > 0 && requiredChecks.every(satisfied);
 }
 
 /** The counts per status, so a reader sees skipped and cached next to passed. */
@@ -222,7 +224,14 @@ export function createVerifyRun({
     if (lanes.length === 0) return { done: [required("lanes", "pnpm test:lanes", Status.NoOp, { reason: "the lane report says there is nothing to cover on this diff" })] };
     const reportFile = path.join(gitDir, "vibe-verify-lane-report.txt");
     write(reportFile, reportRun.stdout);
-    const checked = parseLaneCheck(run(process.execPath, [PRE_PR_LANES, "check", "--worktree", worktree, "--report", reportFile]).stdout);
+    const checkRun = run(process.execPath, [PRE_PR_LANES, "check", "--worktree", worktree, "--report", reportFile], { timeoutMs: TIME_LIMITS.laneCheck * 1000 });
+    // A check that crashed, timed out or printed nothing names no missing lane; reading that as "every lane has a record" would pass lanes that never ran.
+    if (!LANE_CHECK_SUMMARY.test(checkRun.stdout)) {
+      const reason = "the lane check printed no summary, so no lane's record could be read";
+      const evidenceTail = tailLines(`${checkRun.stdout}\n${checkRun.stderr}`);
+      return { done: lanes.map((lane) => required(`lane: ${lane}`, lane, Status.Blocked, { reason, exitCode: checkRun.status, evidenceTail })) };
+    }
+    const checked = parseLaneCheck(checkRun.stdout);
     const entries = lanes.map((lane) => {
       const name = `lane: ${lane}`;
       const notRun = checked.notRun.find((item) => item.lane === lane);

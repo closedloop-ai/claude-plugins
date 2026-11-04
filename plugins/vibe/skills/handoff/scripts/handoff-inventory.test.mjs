@@ -415,6 +415,14 @@ test("a migration outside the backend packages and a local-fix backend file coun
   assert.deepEqual(result.json.outsideAllowed, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
 });
 
+test("a desktop prisma file that is not .sql still counts as backend", (t) => {
+  const { home, worktree } = setup(t, "desktop-prisma-non-sql");
+  write(worktree, "apps/desktop/prisma/migrations/migration_lock.toml", 'provider = "sqlite"\n');
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.backendChanged, true);
+  assert.deepEqual(result.json.backendFiles, [{ path: "apps/desktop/prisma/migrations/migration_lock.toml", status: "A" }]);
+});
+
 // The story cases below run on a base with no story-group-order.ts, so the
 // version scheme (pre-#8867) applies; handoff-inventory-storybook-scheme.test.mjs
 // covers the lifecycle scheme and the move between them.

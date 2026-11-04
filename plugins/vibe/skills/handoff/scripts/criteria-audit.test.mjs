@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { auditProblems, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
+import { auditProblems, EvidenceAt, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
 
 const TICKET = `## Scope and acceptance criteria
 
@@ -57,6 +57,7 @@ test("every criterion needs a MET audit row of a known type with a ref; anything
   const row = (id, verdict, type, ref) => `| ${id} | ${verdict} | ${type} | ${ref} |\n`;
   const met = (id, type, ref) => row(id, "MET", type, ref);
   assert.deepEqual(auditProblems(met("AC-1", "script", "pnpm test:lanes") + met("AC-2", "screenshot", "capture-2.png"), criteria), []);
+  assert.deepEqual(auditProblems(met("AC-1", "source-trace", "apps/app/a.tsx:12") + met("AC-2", "source-trace", ""), criteria), ["AC-2: MET needs a ref naming the source-trace"]);
   assert.deepEqual(auditProblems(met("AC-1", "api-read", "GET /x"), criteria), ["AC-2: not audited"]);
   assert.deepEqual(auditProblems(met("AC-1", "script", "run") + row("AC-2", "PARTIAL", "screenshot", "shot.png"), criteria), ["AC-2: PARTIAL (shot.png)"]);
   assert.deepEqual(auditProblems(met("AC-1", "script", "run") + row("AC-2", "MISSED", "screenshot", ""), criteria), ["AC-2: MISSED"]);
@@ -67,7 +68,7 @@ test("every criterion needs a MET audit row of a known type with a ref; anything
   assert.deepEqual(auditProblems("", criteria).length, 2);
 });
 
-test("a test ref must name a file that exists at HEAD", () => {
+test("a test ref must name a file that exists: in the worktree at a candidate audit, at HEAD at the gate", () => {
   const criteria = ticketCriteria(TICKET).slice(0, 1);
   const dir = mkdtempSync(path.join(tmpdir(), "criteria-evidence-"));
   try {
@@ -78,9 +79,12 @@ test("a test ref must name a file that exists at HEAD", () => {
     git("commit", "-qm", "test");
     writeFileSync(path.join(dir, "untracked.spec.ts"), "");
     const rows = (ref) => `| AC-1 | MET | test | ${ref} |\n`;
-    assert.deepEqual(auditProblems(rows("drag.spec.ts::drags a row"), criteria, dir), []);
-    assert.deepEqual(auditProblems(rows("untracked.spec.ts"), criteria, dir), ["AC-1: the test untracked.spec.ts does not exist at HEAD; a planned test is not evidence"]);
-    assert.deepEqual(auditProblems(rows("missing.spec.ts"), criteria, dir), ["AC-1: the test missing.spec.ts does not exist at HEAD; a planned test is not evidence"]);
+    assert.deepEqual(auditProblems(rows("drag.spec.ts::drags a row"), criteria, dir, EvidenceAt.Head), []);
+    assert.deepEqual(auditProblems(rows("untracked.spec.ts"), criteria, dir, EvidenceAt.Head), ["AC-1: the test untracked.spec.ts does not exist at HEAD; a planned test is not evidence"]);
+    assert.deepEqual(auditProblems(rows("missing.spec.ts"), criteria, dir, EvidenceAt.Head), ["AC-1: the test missing.spec.ts does not exist at HEAD; a planned test is not evidence"]);
+    // The candidate audit runs before the first commit, so an uncommitted test the writer just wrote is real evidence.
+    assert.deepEqual(auditProblems(rows("untracked.spec.ts"), criteria, dir), []);
+    assert.deepEqual(auditProblems(rows("missing.spec.ts"), criteria, dir), ["AC-1: the test missing.spec.ts does not exist in the worktree; a planned test is not evidence"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

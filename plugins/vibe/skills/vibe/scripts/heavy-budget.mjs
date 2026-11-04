@@ -20,8 +20,8 @@
 // Usage: heavy-budget.mjs status      prints the current budget snapshot as JSON
 //
 // Every default is in DEFAULTS, one frozen object, and every one is overridable by
-// an environment variable named in ENV. VIBE_HEAVY_BUDGET=off restores the previous
-// behavior (no budget, no lease, the command's own concurrency).
+// an environment variable named in ENV. The budget is opt-in: VIBE_HEAVY_BUDGET=on enables it, and without that
+// the previous behavior holds (no budget, no lease, the command's own concurrency).
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -64,6 +64,7 @@ export const ENV = Object.freeze({
 });
 
 const OFF_VALUES = new Set(["off", "0", "false", "no"]);
+const ON_VALUES = new Set(["on", "1", "true", "yes"]);
 const HEAVY_TOOLS = new Set(["vitest", "jest", "playwright", "turbo", "tsc", "dagger"]);
 const PACKAGE_RUNNERS = new Set(["pnpm", "npm", "npx", "yarn"]);
 const HEAVY_SCRIPT = /^(?:test|typecheck|lint|build|verify|check)(?::|$)/;
@@ -95,9 +96,9 @@ export function featureDisabled(env, name) {
   return OFF_VALUES.has(String(env[name] ?? "").trim().toLowerCase());
 }
 
-/** Whether the budget is switched off (`VIBE_HEAVY_BUDGET=off`). */
+/** Whether the budget is off: it is opt-in, so anything but `VIBE_HEAVY_BUDGET=on` leaves the previous behavior. */
 export function budgetDisabled(env = process.env) {
-  return OFF_VALUES.has(String(env[ENV.off] ?? "").trim().toLowerCase());
+  return !ON_VALUES.has(String(env[ENV.off] ?? "").trim().toLowerCase());
 }
 
 /** Whether a command is CPU-heavy: a known heavy tool, or a package runner invoked with a test, typecheck, lint, build, verify or check script. */

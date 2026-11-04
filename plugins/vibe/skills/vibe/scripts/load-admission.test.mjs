@@ -55,7 +55,7 @@ test("below the minimum, admission waits with backoff (bounded sleeps, no busy l
 
 test("past the maximum wait it proceeds at the minimum worker count instead of failing", async () => {
   const m = machine({ busy: () => 9 });
-  const result = await runAdmitted("pnpm", ["test"], { seconds: 60, budget: m.budget, settings, sleep: m.sleep, now: m.now, loadAverage: () => 30, run: async (_c, _a, options) => ({ code: Number(options.env.VITEST_MAX_WORKERS) === 2 ? 0 : 1, output: "" }) });
+  const result = await runAdmitted("pnpm", ["test"], { seconds: 600, budget: m.budget, settings, sleep: m.sleep, now: m.now, loadAverage: () => 30, run: async (_c, _a, options) => ({ code: Number(options.env.VITEST_MAX_WORKERS) === 2 ? 0 : 1, output: "" }) });
   assert.equal(result.exitCode, 0);
   assert.equal(result.attempts[0].workers, DEFAULTS.minWorkers);
   assert.equal(result.admission, "waited-timed-out");
@@ -94,7 +94,7 @@ test("three concurrent runs under a fake load wait for capacity and each is admi
   let running = 0;
   let maxRunning = 0;
   const starts = [];
-  const run = (name) => runAdmitted("pnpm", ["test"], { seconds: 60, budget: m.budget, settings, sleep: time.sleep, now: time.now, loadAverage: () => 12,
+  const run = (name) => runAdmitted("pnpm", ["test"], { seconds: 600, budget: m.budget, settings, sleep: time.sleep, now: time.now, loadAverage: () => 12,
     run: async () => { running += 1; maxRunning = Math.max(maxRunning, running); starts.push([name, time.now()]); await time.sleep(20_000); running -= 1; return ok; } });
   const results = await time.drive([run("a"), run("b"), run("c")]);
   assert.deepEqual(results.map((r) => r.exitCode), [0, 0, 0]);
@@ -104,6 +104,17 @@ test("three concurrent runs under a fake load wait for capacity and each is admi
   assert.equal(maxRunning, 1, "each run waited until the one ahead released its 8 workers");
   assert.ok(starts.every(([, at]) => at >= 60_000), "none started while the other tool held the machine");
   assert.equal(m.files.size, 0, "every lease is released");
+});
+
+test("waiting and the retry count inside the caller's seconds: the call never outlasts them and a spent budget is not retried", async () => {
+  const m = machine({ busy: () => 9 });
+  const times = [];
+  const result = await runAdmitted("pnpm", ["test"], { seconds: 30, budget: m.budget, settings, sleep: m.sleep, now: m.now, loadAverage: () => 30,
+    run: async (_c, _a, options) => { times.push(options.seconds); return { code: 137, output: "Killed: 9" }; } });
+  assert.ok(result.waitedMs <= 30_000, "the wait stopped at the caller's limit");
+  assert.ok(times.every((seconds) => seconds <= 30), "no attempt is given more than what is left");
+  assert.equal(result.retried, false, "nothing is left for a retry");
+  assert.equal(result.exitCode, 137);
 });
 
 test("a retry fixes a 137: one retry at half the workers after waiting, and the result keeps the first failure's provenance", async () => {
@@ -161,7 +172,7 @@ test("run-bounded keeps streaming output while capturing its tail, and reports t
 
 test("the CLI prints the attempts line for a heavy command and leaves a non-heavy one alone", () => {
   const script = path.join(HERE, "run-bounded.mjs");
-  const env = { ...process.env, [ENV.leaseDir]: path.join(process.env.TMPDIR ?? "/tmp", `vibe-heavy-cli-${process.pid}`) };
+  const env = { ...process.env, [ENV.off]: "on", [ENV.leaseDir]: path.join(process.env.TMPDIR ?? "/tmp", `vibe-heavy-cli-${process.pid}`) };
   const heavy = spawnSync(process.execPath, [script, "20", process.execPath, "-e", "process.exit(0)", "vitest"], { encoding: "utf8", timeout: 40_000, env });
   assert.equal(heavy.status, 0, heavy.stderr);
   assert.match(heavy.stderr, /run-bounded-result: \{.*"attempts":\[\{"attempt":1/);
