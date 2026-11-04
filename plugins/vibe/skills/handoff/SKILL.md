@@ -914,8 +914,8 @@ The PR worker never writes session state. Then stop local Storybook and Desktop 
 only a recorded process it proves is still the session's own (ISS-13321).
 Run `node ../vibe/scripts/e2e-lock.mjs cleanup-sweep sweep` from a retained checkout
 after the stop; a live PR leaves its retirement record pending for a fleet
-supervisor or the next explicit vibe cleanup sweep. The sweep never removes
-the executing checkout.
+supervisor or the next vibe session-entry sweep. The sweep never removes the
+executing checkout.
 
 Tell them, in a few lines, each as a link that opens it
 (`../vibe/references/plain-words.md`, "Links to what the person should look

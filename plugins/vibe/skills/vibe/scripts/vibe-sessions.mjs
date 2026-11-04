@@ -112,7 +112,7 @@ import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublicat
 import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
-import { registerWorktreeRetirement } from "./owned-cleanup.mjs";
+import { registerWorktreeRetirement, sweepOwnedCleanups } from "./owned-cleanup.mjs";
 import {
   buildDispatchInputs,
   DISPATCH_WORKFLOW,
@@ -235,6 +235,10 @@ try {
 }
 
 async function run(command) {
+  if (["repo", "list", "new", "new-prototype"].includes(command)) {
+    try { await sweepOwnedCleanups({ deadline: Date.now() + 2_000, maxRecords: 2 }); }
+    catch { /* Session entry never fails because an unrelated deferred cleanup did. */ }
+  }
   switch (command) {
     case "repo":
       return { repo: resolveRepo() };
