@@ -47,7 +47,7 @@ Read it top to bottom after any restart or compaction before acting.
 
 ## Rulings
 
-`standing-rulings.md` holds operator rulings for every program (models, review rounds, test lanes); the program's `rulings.md` holds the rest, separate from the resume log. Each entry is `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`. `fleet.sh` mirrors both to every worker host; point every worker and QA-prep prompt at them. Per-ticket rulings still go through handoff's `rulings-check.mjs`.
+`standing-rulings.md` holds operator rulings for every program (models, review rounds, test lanes); the program's `rulings.md` holds the rest, separate from the resume log. Each entry is `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`. `fleet.sh` mirrors both to every worker host; point every worker and QA-prep prompt at them. Per-ticket rulings still go through handoff's `rulings-check.mjs`. A sequencing ruling is written only by that checker's `--record-sequencing` operation after it verifies the live blocker-to-blocked `BLOCKS` receipt; unresolved references and missing links refuse the write, and the status sweep flags later drift. Orchestrator-authored directions remain `(orchestrator)` operational notes, not entries in this file.
 
 ## Lessons ledger
 

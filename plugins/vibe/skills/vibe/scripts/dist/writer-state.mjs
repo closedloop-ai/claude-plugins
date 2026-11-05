@@ -12304,6 +12304,7 @@ var recordContextSchema = external_exports.object({
     confirmed: external_exports.literal(true),
     branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
     liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/).optional(),
+    liveTicketCreatedBySession: external_exports.boolean(),
     operatorId: external_exports.string().min(1),
     operatorEmail: external_exports.string().email()
   }).strict().optional(),
@@ -12313,6 +12314,7 @@ var recordContextSchema = external_exports.object({
       discarded: external_exports.literal(true),
       branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
       liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/),
+      liveTicketCreatedBySession: external_exports.literal(true),
       operatorId: external_exports.string().min(1),
       operatorEmail: external_exports.string().email()
     }).strict() }).strict()
@@ -12357,15 +12359,18 @@ function discardLocation(input, stable) {
     branch: external_exports.string(),
     status: external_exports.literal("active"),
     liveTicket: external_exports.string().nullable().optional(),
+    liveTicketCreatedBySession: external_exports.boolean().optional(),
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
     JSON.parse(readFileSync5(join5(target.dir, "vibe-session.json"), "utf8"))
   );
+  const recordedTicket = sessionLiveTicket(record);
+  const recordedCreated = record.liveTicketCreatedBySession ?? recordedTicket !== null;
   if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync4(join5(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
   const common = readFileSync5(join5(target.dir, "commondir"), "utf8").trim();
   const stableCommon = existsSync4(join5(stable.dir, "commondir")) ? realpathSync5(join5(stable.dir, readFileSync5(join5(stable.dir, "commondir"), "utf8").trim())) : realpathSync5(stable.dir);
-  if (realpathSync5(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
+  if (realpathSync5(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (recordedTicket ?? void 0) !== evidence.liveTicket || recordedCreated !== evidence.liveTicketCreatedBySession) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;

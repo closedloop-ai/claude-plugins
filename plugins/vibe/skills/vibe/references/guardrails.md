@@ -208,6 +208,11 @@ question for the person, and never stops the session; the ticket worker
 carries each one to the live ticket's Engineering checklist
 (`ticket-template.md`, "Engineering needed"). The same holds for a path
 outside the allowed table: the writer does not edit it in the loop either.
+A pre-build intake whose complete planned file list is outside these paths has
+no allowed session work to continue: record every item with the canonical
+`Engineering needed (forbidden path)` line, make no source edit, and return
+`BLOCKED` so Root can route the untouched request to engineering. A mixed plan
+still builds all allowed work and does not block on its engineering entries.
 A visible part of the request that needs such a path keeps its acceptance
 criterion `not met yet` with the reason that engineering must make it, and
 the ready message tells the person so in plain words, so they never accept a

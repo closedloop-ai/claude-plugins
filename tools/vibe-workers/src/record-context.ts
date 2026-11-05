@@ -37,12 +37,14 @@ export const recordContextSchema = z.object({
   mainSyncValidation: validationWitnessSchema.optional(),
   discardTarget: z.object({ worktree: z.string().min(1), confirmed: z.literal(true),
     branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: z.string().regex(/^[A-Z]+-\d+$/).optional(),
+    liveTicketCreatedBySession: z.boolean(),
     operatorId: z.string().min(1), operatorEmail: z.string().email(),
   }).strict().optional(),
   sessionless: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("startup") }).strict(),
     z.object({ kind: z.literal("discarded"), evidence: z.object({ discarded: z.literal(true),
       branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: z.string().regex(/^[A-Z]+-\d+$/),
+      liveTicketCreatedBySession: z.literal(true),
       operatorId: z.string().min(1), operatorEmail: z.string().email(),
     }).strict() }).strict(),
   ]).optional(),
@@ -114,9 +116,12 @@ function discardLocation(input: RecordContext, stable: ReturnType<typeof checkou
   const evidence = input.discardTarget;
   const target = location(evidence.worktree);
   const record = z.object({ branch: z.string(), status: z.literal("active"), liveTicket: z.string().nullable().optional(),
+    liveTicketCreatedBySession: z.boolean().optional(),
     handoffTicket: z.string().nullable().optional(),
     operator: z.object({ id: z.string().min(1), email: z.string().email() }).passthrough() }).passthrough().parse(
       JSON.parse(readFileSync(join(target.dir, "vibe-session.json"), "utf8")));
+  const recordedTicket = sessionLiveTicket(record);
+  const recordedCreated = record.liveTicketCreatedBySession ?? (recordedTicket !== null);
   if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`)
     || !existsSync(join(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
   const common = readFileSync(join(target.dir, "commondir"), "utf8").trim();
@@ -124,7 +129,8 @@ function discardLocation(input: RecordContext, stable: ReturnType<typeof checkou
     ? realpathSync(join(stable.dir, readFileSync(join(stable.dir, "commondir"), "utf8").trim())) : realpathSync(stable.dir);
   if (realpathSync(join(target.dir, common)) !== stableCommon
     || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId
-    || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? undefined) !== evidence.liveTicket) {
+    || record.operator.email !== evidence.operatorEmail || (recordedTicket ?? undefined) !== evidence.liveTicket
+    || recordedCreated !== evidence.liveTicketCreatedBySession) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;

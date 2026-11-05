@@ -32,6 +32,7 @@ GUARDRAILS = REFERENCES / "guardrails.md"
 DESIGN_PASS = REFERENCES / "design-pass.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
+PATH_CLASSIFIER = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "path-classifier.mjs"
 WORKERS_SRC = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src"
 LAUNCHER_BUNDLE = VIBE / "scripts" / "dist" / "claude-worker.mjs"
 NO_ENGINEERING_QUESTIONS = "Never ask the person about tests or any other engineering choice"
@@ -94,10 +95,13 @@ def test_the_writer_repairs_in_loop_and_handoff_turns_and_records_each_repair() 
 
 def test_the_inventory_lists_repairs_and_rejects_authored_test_files() -> None:
     inventory = INVENTORY.read_text()
+    classifier = PATH_CLASSIFIER.read_text()
     assert "testRepairs," in inventory
-    assert 'file.status === "M" && isTestFile(file.path) && !isSnapshot(file.path)' in inventory
-    assert "isTestRepair(file) || isRetiredDeletion(file) ||" in inventory
-    assert '(values.phase === "pull-request" && isPullRequestTest(file))' in inventory
+    assert 'import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs"' in inventory
+    assert 'classifications.get(file.path)?.reason === "test-repair"' in inventory
+    assert 'file.status === "M" && !isSnapshot(file.path) && testLocationAllowed' in classifier
+    assert 'phase === "pull-request" && pullRequestTest' in classifier
+    assert 'reason: "test-not-admitted"' in classifier
 
 
 def test_the_launcher_grants_repair_authority_separately_from_test_authoring() -> None:
