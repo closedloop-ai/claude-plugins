@@ -15,6 +15,7 @@ import sys
 import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import TextContent
 
 
 async def main() -> None:
@@ -33,7 +34,12 @@ async def main() -> None:
                 result = await session.call_tool(request["operation"], request["args"])
                 if result.is_error:
                     raise RuntimeError("eval-publish-closedloop-tool-failed")
-                content = next((item.text for item in result.content if hasattr(item, "text")), "")
+                content: str | None = None
+                for item in result.content:
+                    if not isinstance(item, TextContent):
+                        raise RuntimeError("eval-publish-closedloop-non-text-response")
+                    if content is None:
+                        content = item.text
                 if not content:
                     raise RuntimeError("eval-publish-closedloop-empty-response")
                 parsed = json.loads(content)
