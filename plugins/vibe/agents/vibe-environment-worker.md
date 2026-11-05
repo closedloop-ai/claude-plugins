@@ -81,6 +81,21 @@ Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
 then plain search.
 
+## The script for the mechanical steps
+
+When `../skills/vibe/scripts/env-ctl.mjs` exists, run
+`node ../skills/vibe/scripts/env-ctl.mjs flags|request|publish|redeploy|desktop|pr|pr-update --worktree "<wt>" ...`
+(usage in its header) for the flag snapshot, the publish checks and push, the
+request, the run polling and the recording below, so no model reads `gh`
+output every 15 seconds. It wraps the same scripts this file names and returns
+one JSON `status`. `NEEDS_AGENT` carries the run's org or identity evidence;
+steps 5 to 7 and every sentence for the person stay yours, and the ticket
+update after a `DONE` stays yours too. A `redeploy` result with `skippedRedeploy`
+(only when `VIBE_REDEPLOY_UI_ONLY=1`) pushed the commit and requested no new
+environment: record the push, and the last deployed commit stays the earlier one.
+Without the script, or for a case it
+returns `BLOCKED` on that you can fix, follow the steps below unchanged.
+
 ## Flag snapshot (create and flags modes)
 
 1. Identity: ClosedLoop `get-me`. The PostHog distinct id is its `clerkId`
@@ -454,11 +469,8 @@ changes and gates fields.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
    tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`
-   must pass. The current source's `node ../skills/vibe/scripts/pre-pr-lanes.mjs check`
-   must pass: `--phase first-candidate --report <the repo's lane report output>`
-   initially, or the matching `--phase followup --impact <qa-impact JSON>` /
-   `--code-tests <normalized evidence>` after a later change (each selected test lane has a passing run recorded at
-   HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). On a machine
+   must pass. Require `pre-pr-lanes.mjs check` with the matching source-bound
+   phase and selection receipt; `BLOCKED` with its `MISSING-LANE` lines otherwise. On a machine
    without the staging e2e identities it records the local web e2e lane not
    run (`NOT-RUN-LANE`) instead; the body's Test plan says that lane was not
    run locally and relies on the containerized or CI run. On a machine

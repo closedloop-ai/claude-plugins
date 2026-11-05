@@ -46,6 +46,20 @@ one element), at least:
 | `vibe-primitive-worker` | `code_symbols` and `search_nodes` for an existing component under another name |
 | `vibe-prototype-worker` | `code_symbols` and `code_importers` on each shared component it builds on, and `blast_radius_tickets` on each file it edits |
 
+## The context pack
+
+`../scripts/graph-pack.mjs --worktree "<wt>" --paths <a,b,...> [--terms <t1,t2,...>]`
+prints one pack for the files a request will touch: each file's owner
+(nearest `AGENTS.md`, package, CODEOWNERS), the hosts that import it, its tests
+and stories, the FEATURE_MAP entries that name it, and the files that already
+use each term. Read it before the first search, so the advisors and the writer
+do not each search for the same things. It is worktree evidence (`git grep`,
+`CODEOWNERS`, `FEATURE_MAP.md`), the same search the unreachable-server fallback
+below describes. It is not graph evidence: the calls in `graphCallsStillOwed`
+(`code_tests_for`, `blast_radius_tickets`, `query_collisions` and the rest of
+the table above) are still owed, and the Graph block below is not satisfied by
+the pack.
+
 ## The Graph block
 
 Each of those workers ends its result with this block, one line per call,

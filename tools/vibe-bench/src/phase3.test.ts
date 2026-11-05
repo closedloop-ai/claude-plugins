@@ -55,6 +55,9 @@ test("vibe-bench skill copies share the Slack MCP relay contract", () => {
 test("model evals are local-only and use two failure retries", () => {
   assert.equal(EVAL_POLICY.claudeModel, "claude-sonnet-5-5");
   assert.equal(EVAL_POLICY.claudeJudgeModel, "claude-opus-5-5");
+  assert.equal(EVAL_POLICY.codexModel,
+    (JSON.parse(readFileSync(join(REPO_ROOT, "plugins/vibe/evals/codex/model-policy.json"), "utf8")) as
+      { codexModel: string }).codexModel);
   assert.equal(EVAL_POLICY.failureReruns, 2);
   assert.throws(() => requireDeveloperMachine({ GITHUB_ACTIONS: "true" }), /forbidden-in-ci/);
   assert.doesNotThrow(() => requireDeveloperMachine({ CI: "false" }));
@@ -78,6 +81,8 @@ function comparisonEval(sha: string, states: Record<string, boolean>,
       failedGraders: outcomes[id] ? [] : [`${name}-route`], skippedGraders: [] }));
     const passed = cases.filter((item) => item.passed).length;
     return { runtime: name, cliVersion: name === "claude" ? "2.1.311" : "codex-cli 0.163.0",
+      model: name === "codex" ? EVAL_POLICY.codexModel : EVAL_POLICY.claudeModel,
+      ...(name === "codex" ? { judgeModel: EVAL_POLICY.codexJudgeModel } : {}),
       cases, passed, failed: cases.length - passed, wallMs: 10,
       agentCostUsd: name === "claude" ? 0.08 : null,
       judgeCostUsd: name === "claude" ? 0.02 : null,
@@ -93,6 +98,8 @@ function comparisonEval(sha: string, states: Record<string, boolean>,
 
 function unavailableEval(sha: string, id: string, reason: string): LocalEvalResult {
   const runtime = (name: EvalRuntime): EvalSuiteResult => ({ runtime: name,
+    model: name === "codex" ? EVAL_POLICY.codexModel : EVAL_POLICY.claudeModel,
+    ...(name === "codex" ? { judgeModel: EVAL_POLICY.codexJudgeModel } : {}),
     cliVersion: name === "claude" ? "2.1.311" : "codex-cli 0.163.0",
     cases: [{ id, passed: false, failedGraders: [], skippedGraders: [],
       unavailableReason: reason }], passed: 0, failed: 0, unavailable: 1, wallMs: 0,
@@ -108,6 +115,12 @@ function unavailableEval(sha: string, id: string, reason: string): LocalEvalResu
 function withJudgeModel(artifact: EvalBaselineArtifact, judge: string): EvalBaselineArtifact {
   const { resultHash: _priorHash, ...prior } = artifact;
   const payload = { ...prior, models: { ...prior.models, claudeJudge: judge } };
+  return { ...payload, resultHash: createHash("sha256").update(JSON.stringify(payload)).digest("hex") };
+}
+
+function withCodexModel(artifact: EvalBaselineArtifact, model: string): EvalBaselineArtifact {
+  const { resultHash: _priorHash, ...prior } = artifact;
+  const payload = { ...prior, models: { ...prior.models, codex: model } };
   return { ...payload, resultHash: createHash("sha256").update(JSON.stringify(payload)).digest("hex") };
 }
 
@@ -986,7 +999,7 @@ function codexNative(vibePath = "/snapshot/vibe", passed = true, deterministicOn
   skipWording = false, caseIds: string[] = [CASE]) {
   return { run: { source_sha: "a".repeat(40), skill_sha256: "b".repeat(64), version: "1.2.3",
     cli_version: "codex-cli 0.163.0", plugin: vibePath, deterministic_only: deterministicOnly,
-    model: "gpt-6-sol", grader_model: "gpt-6-luna", elapsed_seconds: 10,
+    model: EVAL_POLICY.codexModel, grader_model: "gpt-6-luna", elapsed_seconds: 10,
     usage: { input_tokens: 12 } }, cases: caseIds.map((id) => ({ case: codexCaseId(id),
       passed, checks: [{ grader: "route", passed }], skipped_graders: deterministicOnly && skipWording ?
         [{ grader: "plain-language", reason: "deterministic-only" }] : [] })) };
@@ -1000,19 +1013,24 @@ test("native collectors preserve a wrong route as red on both runtimes", () => {
   const codex = collectCodexEval(codexNative(undefined, false), [CASE], {
     sourceSha: "a".repeat(40), skillSha: "b".repeat(64), version: "1.2.3",
     cliVersion: "codex-cli 0.163.0", vibePath: "/snapshot/vibe", deterministicOnly: true,
-    model: "gpt-6-sol", graderModel: "gpt-6-luna", wordingCases: [],
+    model: EVAL_POLICY.codexModel, graderModel: "gpt-6-luna", wordingCases: [],
   });
   assert.deepEqual(claude.cases[0].failedGraders, ["route"]);
   assert.equal(claude.agentCostUsd, 0.1);
   assert.equal(claude.judgeCostUsd, 0.02);
   assert.ok(Math.abs((claude.costUsd ?? 0) - 0.12) < 0.000001);
   assert.deepEqual(codex.cases[0].failedGraders, ["route"]);
+  assert.equal(codex.model, EVAL_POLICY.codexModel);
   const combined = finalizeLocalEval({ pluginSha: "a".repeat(40), createdAt: "2026-10-29T00:00:00Z",
     wallMs: 20_000, deterministicOnly: true, selectedCases: [CASE], runtimes: [
       { runtime: "claude", exitCode: 1, result: claude, invalidReason: null },
       { runtime: "codex", exitCode: 1, result: codex, invalidReason: null },
     ] });
   assert.equal(combined.success, false);
+  assert.equal(combined.runtimes.find((item) => item.runtime === "codex")?.result?.model,
+    EVAL_POLICY.codexModel);
+  assert.match(buildLocalEvalReport(combined),
+    new RegExp(`\\| codex \\| ${EVAL_POLICY.codexModel.replaceAll(".", "\\.")} \\|`));
   assert.match(combined.resultHash, /^[a-f0-9]{64}$/);
 });
 
@@ -1036,7 +1054,7 @@ test("collectors reject partial, duplicate, identity-drifted and dishonest artif
   assert.throws(() => collectCodexEval(codexNative(), [CASE], {
     sourceSha: "a".repeat(40), skillSha: "b".repeat(64), version: "1.2.3",
     cliVersion: "codex-cli 0.163.0", vibePath: "/wrong", deterministicOnly: true,
-    model: "gpt-6-sol", graderModel: "gpt-6-luna", wordingCases: [],
+    model: EVAL_POLICY.codexModel, graderModel: "gpt-6-luna", wordingCases: [],
   }), /identity-mismatch/);
   const conflict = codexNative();
   conflict.cases[0].passed = true;
@@ -1044,15 +1062,22 @@ test("collectors reject partial, duplicate, identity-drifted and dishonest artif
   assert.throws(() => collectCodexEval(conflict, [CASE], {
     sourceSha: "a".repeat(40), skillSha: "b".repeat(64), version: "1.2.3",
     cliVersion: "codex-cli 0.163.0", vibePath: "/snapshot/vibe", deterministicOnly: true,
-    model: "gpt-6-sol", graderModel: "gpt-6-luna", wordingCases: [],
+    model: EVAL_POLICY.codexModel, graderModel: "gpt-6-luna", wordingCases: [],
   }), /check-conflict/);
+  const modelDrift = codexNative();
+  modelDrift.run.model = "different-codex-model";
+  assert.throws(() => collectCodexEval(modelDrift, [CASE], {
+    sourceSha: "a".repeat(40), skillSha: "b".repeat(64), version: "1.2.3",
+    cliVersion: "codex-cli 0.163.0", vibePath: "/snapshot/vibe", deterministicOnly: true,
+    model: EVAL_POLICY.codexModel, graderModel: EVAL_POLICY.codexJudgeModel, wordingCases: [],
+  }), /identity-mismatch/);
 });
 
 test("Codex deterministic-only artifacts record exactly the expected wording skips", () => {
   const expected = {
     sourceSha: "a".repeat(40), skillSha: "b".repeat(64), version: "1.2.3",
     cliVersion: "codex-cli 0.163.0", vibePath: "/snapshot/vibe", deterministicOnly: true,
-    model: "gpt-6-sol", graderModel: "gpt-6-luna", wordingCases: [CASE],
+    model: EVAL_POLICY.codexModel, graderModel: "gpt-6-luna", wordingCases: [CASE],
   };
   const collected = collectCodexEval(codexNative(undefined, true, true, true), [CASE], expected);
   assert.deepEqual(collected.cases[0].skippedGraders, ["plain-language"]);
@@ -1311,6 +1336,8 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
       codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
       deterministicOnly: true, statefulRunner }, commands);
     assert.equal(output.result.success, true);
+    assert.equal(output.result.runtimes.find((item) => item.runtime === "codex")?.result?.model,
+      EVAL_POLICY.codexModel);
     assert.deepEqual(output.result.runtimes.map((item) => item.runtime), ["claude", "codex"]);
     assert.match(output.result.resultHash, /^[a-f0-9]{64}$/);
     assert.doesNotMatch(readFileSync(output.reportFile, "utf8"), /\/Users\/|\/private\/tmp|laptop/);
@@ -1368,6 +1395,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const acceptedHash = resolveLatestEvalBaseline(store).artifact.resultHash;
     assert.equal(nightly.result.costs?.claude?.agentUsd, 0.1);
     assert.equal(nightly.result.costs?.claude?.judgeUsd, 0.02);
+    assert.equal(nightly.result.models.codex, EVAL_POLICY.codexModel);
     const flakyStateful = new FakeStatefulRunner(true);
     const retryCommands = new FakeCommands();
     const retryNightly = await runT2Evals({ repo, pluginSha: sha,
@@ -1405,6 +1433,23 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const lineageClaude = lineageCommands.calls.find((call) => call.args.includes("--judge-model"));
     assert.equal(lineageClaude?.args[lineageClaude.args.indexOf("--judge-model") + 1],
       "claude-opus-5-5");
+    const oldCodexStore = join(root, "t2-old-codex-model-store");
+    mkdirSync(oldCodexStore);
+    publishEvalBaseline(oldCodexStore, withCodexModel(nightly.result, "previous-codex-model"));
+    const modelNotices: unknown[] = [];
+    const modelLineage = await runT2Evals({ repo, pluginSha: sha,
+      runRoot: join(root, "t2-new-codex-model-lineage"), outputDir: oldCodexStore,
+      claudeExecutable: "fixture-claude", codexExecutable: "fixture-codex",
+      uvExecutable: "fixture-uv", ghExecutable: "fixture-gh",
+      statefulRunner: new FakeStatefulRunner() }, new FakeCommands(),
+    { report: async (notice) => { modelNotices.push(notice); } });
+    assert.equal(modelLineage.lineageReset, true);
+    assert.match(modelLineage.lineageReason ?? "",
+      new RegExp(`codex=previous-codex-model/${EVAL_POLICY.codexModel.replaceAll(".", "\\.")}`));
+    assert.equal(modelLineage.result.models.codex, EVAL_POLICY.codexModel);
+    assert.equal(modelLineage.result.historyResultHashes.length, 0);
+    assert.equal(modelLineage.regressionReportFile, null);
+    assert.deepEqual(modelNotices, []);
     const pendingFile = join(store, `eval-t2-regression-${sha.slice(0, 12)}.json`);
     const pendingNotice: NightlyRegressionNotice = { baselineSha: sha, currentSha: sha,
       cases: [{ runtime: "claude", case: CASE }], mergedPullRequests: [], directCommits: [],

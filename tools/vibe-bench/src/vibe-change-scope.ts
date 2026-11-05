@@ -110,6 +110,9 @@ function referencedByRuntime(vibeDir: string, changedPath: string): boolean {
  * component type cannot silently evade the gate.
  */
 export function classifyVibePath(path: string, vibeDir: string): VibePathDecision {
+  if (path === "plugins/vibe/evals/codex/model-policy.json") {
+    return { path, kind: "behavior", reason: "eval-model-policy" };
+  }
   if (BENCHMARK_INFRASTRUCTURE.some((pattern) => pattern.test(path))) {
     return { path, kind: "non-behavior", reason: "benchmark-infrastructure" };
   }

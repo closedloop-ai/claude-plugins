@@ -36,7 +36,8 @@ retries, baseline arms, or automatic review triggers. Lower the time cap with
 IDs with `--list`, or select a plugin checkout with `--plugin`. `--output` must
 be empty and should be outside the repository.
 
-`gpt-6-sol` runs the cases at low reasoning effort. Regex must-say,
+`gpt-5.6-sol` runs the cases at low reasoning effort. Its default comes from
+`model-policy.json` beside this runner, shared with the nightly policy. Regex must-say,
 must-not-say, route, CSS file, and tool-use checks run first. Deterministic
 behavior checks cover the remaining non-wording Claude graders, including
 reference criteria mapped to tokens and render/view ordering after the final

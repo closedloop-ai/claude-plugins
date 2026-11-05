@@ -23,6 +23,15 @@ runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
 
 
+def test_default_model_uses_shared_policy_at_low_effort(tmp_path: Path) -> None:
+    """Direct runner invocations agree with the nightly without copying its ID."""
+    policy = json.loads(Path(__file__).with_name("model-policy.json").read_text())
+    assert runner.default_codex_model() == policy["codexModel"]
+    args = runner.exec_args(runner.default_codex_model(), tmp_path, tmp_path / "reply.txt")
+    assert args[args.index("-m") + 1] == policy["codexModel"]
+    assert 'model_reasoning_effort="low"' in args
+
+
 def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None:
     """An outer interrupt can stop a model process started by a worker thread."""
     marker = tmp_path / "grandchild.pid"

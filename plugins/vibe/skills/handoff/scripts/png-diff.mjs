@@ -60,6 +60,11 @@ export function encodePng({ width, height, data }) {
   return Buffer.concat([SIGNATURE, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
+/** SHA-256 of the encoded PNG bytes, used to avoid decoding byte-identical screenshots. */
+export function pngHash(file) {
+  return createHash("sha256").update(file).digest("hex");
+}
+
 /** SHA-256 of the size and decoded pixels, so equal hashes mean every pixel matches. */
 export function pixelHash(image) {
   const size = Buffer.alloc(8);

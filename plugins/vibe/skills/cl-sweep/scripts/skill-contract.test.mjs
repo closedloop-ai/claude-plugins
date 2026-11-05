@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import test from 'node:test';
+import { readAssembled } from '../../vibe/scripts/skill-split.mjs';
 
 const skills = resolve(import.meta.dirname, '../..');
-const read = (path) => readFileSync(resolve(skills, path), 'utf8');
+const read = (path) => readAssembled(resolve(skills, path));
 const readExecuteContract = () => [
   'cl-execute/SKILL.md',
   'cl-execute/references/planning-and-gates.md',

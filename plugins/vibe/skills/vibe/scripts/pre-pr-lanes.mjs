@@ -10,7 +10,7 @@
 //   pre-pr-lanes.mjs check  --phase first-candidate|followup --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON> | --code-tests <normalized evidence>) [--skip <regex> --skip-ruling "<who, when, where>"]
 //
 // The report's lane commands are its 4-space-indented lines that start with a
-// package runner (pnpm, npm, npx, yarn, node), after any `KEY='value'`
+// package runner (pnpm, npm, npx, yarn, node, uv or Python), after any `KEY='value'`
 // assignments the lane's CI step binds; a trailing ` (<detail>)` is not part of
 // the command. A report that says nothing changed needs no lane. `check`
 // prints `MISSING-LANE <command>` for each lane with no passing record for that scope
@@ -19,6 +19,22 @@
 // no local lane merely because another commit exists. Records live in the session's
 // git dir (`vibe-lane-results.json`); a successful check writes the canonical
 // source-bound selection receipt beside it (`vibe-lane-selection.json`).
+//
+// `check --reuse-cache [--base <sha>] [--config <text>]...` (off by default,
+// ISS-13354) also accepts a lane with no passing record for the scope when an
+// earlier FRESH pass has the same cache key (lane-cache.mjs: command, tree,
+// base, config and changed-file scope). It records the lane `cached` and prints
+// `CACHED-LANE <command> (reused from <sha>: not a fresh run)`; a cached record
+// is never a `pass`, and without the flag it counts as missing.
+//
+// `check --reuse-unaffected <qa-impact request JSON>` (off by default, PRD-823 WS7 F2) also
+// accepts a lane with no passing record for the scope when an earlier FRESH pass recorded at
+// the request's `lastQa.boundary` commit (committed inputs only) is untouched by what changed
+// since: qa-impact.mjs is recomputed in this worktree, and a lane counts as untouched when
+// the outcome is None, or when every changed file names its lanes in `laneSelections` and
+// this lane is not among them. A changed file with no lane entry, or a lane that is not
+// named, is never reused. It records the lane `cached` and prints `CACHED-LANE <command>
+// (reused from <sha>: ...; not a fresh run)`; a cached record is never a `pass`.
 //
 // Every lane the report names is required, e2e lanes included: a pull request
 // once merged with two Desktop E2E reds because this check skipped e2e lanes
@@ -54,15 +70,16 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
 import { git } from "./session-record.mjs";
 import { testedHead, testedSource, sourceIdentity, sameSource, validSourceIdentity, withStableSource } from "./tested-head.mjs";
 
-const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
+const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node|uv|python3|python)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;
 // The repo's web Playwright lanes (`pnpm test:e2e`, `pnpm test:web-smoke`); a lane naming desktop is the Electron one.
 const WEB_E2E = /\b(?:test:e2e|test:web-smoke)\b/;
@@ -79,11 +96,41 @@ const PHASES = new Set(["first-candidate", "followup"]);
 
 /** The lane commands a lane report names, or null when it names none and does not say nothing changed. */
 export function reportLanes(report) {
-  const all = [...new Set(report.split("\n").map((line) => LANE_LINE.exec(line)?.[1]).filter(Boolean))];
-  if (all.length === 0) return NOTHING.test(report) ? [] : null;
-  const declared = [...report.matchAll(/\b(\d+) lane\(s\)/g)].map((match) => Number(match[1]));
-  if (declared.some((count) => count > all.length)) return null;
-  return all;
+  const sections = [];
+  let current = null;
+  for (const line of report.split("\n")) {
+    const heading = line.startsWith("OUTSIDE THE TURBO GRAPH, BY REFERENCE")
+      ? /^OUTSIDE THE TURBO GRAPH, BY REFERENCE\s*[—:]\s*(\d+)\s+lane\(s\)/.exec(line)
+      : line.startsWith("OUTSIDE THE TURBO GRAPH")
+        ? /^OUTSIDE THE TURBO GRAPH\s*[—:]\s*(?:(\d+)\s+lane\(s\)|none affected\.)/.exec(line)
+        : line.startsWith("IN THE TURBO GRAPH")
+          ? /^IN THE TURBO GRAPH\s*[—:]\s*(?:(\d+)\s+packages?\b|none\.)/.exec(line)
+          : undefined;
+    if (heading !== undefined) {
+      if (!heading) return null;
+      current = { declared: Number(heading[1] ?? 0), commands: [] };
+      sections.push(current);
+      continue;
+    }
+    if (/^(?:COVERED BY NO LANE|THIS ANSWERS COVERAGE|Test lanes covering)/.test(line)) current = null;
+    const lane = LANE_LINE.exec(line)?.[1];
+    if (lane) {
+      if (!current) return null;
+      current.commands.push(lane);
+    }
+  }
+  if (NOTHING.test(report)) return sections.length === 0 ? [] : null;
+  if (sections.length === 0 || sections.some((section) => section.declared !== section.commands.length)) return null;
+  return [...new Set(sections.flatMap((section) => section.commands))];
+}
+
+/** Recompute the repository-owned CI lane selection before accepting a first-candidate receipt. */
+function repositoryCiLanes(worktree) {
+  const run = spawnSync("pnpm", ["test:lanes"], { cwd: worktree, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 120_000 });
+  if (run.status !== 0) throw new Error(`pnpm test:lanes could not verify the first-candidate report: ${run.error?.message ?? run.stderr?.trim() ?? "failed"}`);
+  const lanes = reportLanes(run.stdout);
+  if (lanes === null) throw new Error("pnpm test:lanes returned an unreadable CI-equivalent report");
+  return lanes;
 }
 
 /** Whether a lane is the repo's local web e2e lane. */
@@ -144,9 +191,112 @@ function recordsFile(worktree) {
   return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-lane-results.json");
 }
 
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 60_000;
+
+/** Writes the records through a temp file and a rename, so a reader never sees half a file. */
+function writeRecords(worktree, records) {
+  const file = recordsFile(worktree);
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(records, null, 2)}\n`);
+  renameSync(temp, file);
+}
+
+/** Runs `change` holding the records lock (an atomic mkdir beside the file); a lock older than LOCK_STALE_MS is a dead holder's and is taken over. */
+function withRecordsLock(worktree, change) {
+  const lock = `${recordsFile(worktree)}.lock`;
+  const started = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { recursive: true, force: true });
+      } catch {
+        // The holder released it between the two calls.
+      }
+      if (Date.now() - started > LOCK_WAIT_MS) throw new Error(`the lane records lock ${lock} stayed held for ${LOCK_WAIT_MS / 1000}s`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+  try {
+    return change();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
+
 function readRecords(worktree) {
   const file = recordsFile(worktree);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
+}
+
+/** The lanes a cached result covers for the selection, with the head each was reused from; a new match is recorded and a cached record whose key no longer matches is replaced or dropped. */
+function reuseCachedLanes(values, lanes, records, selected) {
+  const covered = [];
+  const written = [];
+  const head = selected.source.head;
+  for (const lane of missingLanes(lanes, records, selected)) {
+    const key = laneKeyFor(values.worktree, { command: lane, base: values.base, config: values.config });
+    const existing = records.find((record) => record.command === lane && sameSelection(record, selected) && record.result === CACHED_RESULT);
+    const earlier = findReusable(records, key);
+    if (existing && earlier && key && existing.cacheKey === key && existing.reusedFrom?.head === earlier.head) {
+      covered.push({ lane, from: existing.reusedFrom.head });
+    } else if (earlier) {
+      written.push({ ...cachedRecord({ command: lane, head, key, source: earlier }), source: selected.source, laneKey: selected.laneKey });
+      covered.push({ lane, from: earlier.head });
+    }
+  }
+  const isCached = (record) => record.result === CACHED_RESULT && !record.unaffectedSince && lanes.includes(record.command) && sameSelection(record, selected);
+  const stale = (record) => isCached(record) && !covered.some((item) => item.lane === record.command && item.from === record.reusedFrom?.head);
+  if (written.length || records.some(stale)) {
+    const kept = records.filter((record) => !stale(record));
+    writeRecords(values.worktree, [...kept, ...written]);
+  }
+  return covered;
+}
+
+const NO_DIFF = createHash("sha256").digest("hex");
+
+/** The lanes the changes since `request.lastQa.boundary` can touch, or null when that cannot be proven. */
+export function lanesTouchedSince(request, impact) {
+  if (impact.outcome === "None") return new Set();
+  const map = request.laneSelections?.files ?? request.laneSelections;
+  const touched = new Set();
+  for (const file of impact.changedFiles ?? []) {
+    const lanes = map?.[file];
+    if (!Array.isArray(lanes) || lanes.length === 0) return null;
+    for (const lane of lanes) touched.add(lane);
+  }
+  return touched;
+}
+
+/** The lanes an earlier fresh pass covers because nothing since touched them; new matches are recorded and cached records that no longer hold are dropped. */
+function reuseUnaffectedLanes(values, lanes, records, selected, already) {
+  const request = JSON.parse(readFileSync(values["reuse-unaffected"], "utf8"));
+  const impact = qaImpactRequest(values.worktree, request);
+  const touched = lanesTouchedSince(request, impact);
+  const boundary = git(values.worktree, ["rev-parse", "--verify", `${request.lastQa.boundary}^{commit}`]);
+  const covered = [];
+  const written = [];
+  for (const lane of missingLanes(lanes, records, selected).filter((name) => !already.some((item) => item.lane === name))) {
+    const earlier = touched && !touched.has(lane)
+      ? records.find((record) => record.command === lane && record.result === "pass" && record.provenance !== Provenance.Cached && record.head === boundary && record.source?.diffSha256 === NO_DIFF)
+      : undefined;
+    if (!earlier) continue;
+    const key = createHash("sha256").update(JSON.stringify({ unaffectedSince: boundary, impact: impact.laneKey ?? null, command: lane })).digest("hex");
+    const existing = records.find((record) => record.command === lane && sameSelection(record, selected) && record.cacheKey === key);
+    if (!existing) written.push({ ...cachedRecord({ command: lane, head: selected.source.head, key, source: earlier }), unaffectedSince: boundary, source: selected.source, laneKey: selected.laneKey });
+    covered.push({ lane, from: earlier.head });
+  }
+  const holds = (record) => covered.some((item) => item.lane === record.command && item.from === record.reusedFrom?.head);
+  const stale = (record) => record.unaffectedSince && record.result === CACHED_RESULT && lanes.includes(record.command) && sameSelection(record, selected) && !holds(record);
+  if (written.length || records.some(stale)) {
+    writeRecords(values.worktree, [...records.filter((record) => !stale(record)), ...written]);
+  }
+  return covered;
 }
 
 /** Absolute canonical source-bound lane-selection receipt path for a worktree. */
@@ -203,7 +353,10 @@ function writeLaneSelectionReceipt(worktree, source, phase, selected) {
   };
   const problems = laneSelectionReceiptProblems(receipt, source);
   if (problems.length) throw new Error(problems.join("; "));
-  writeFileSync(laneSelectionReceiptFile(worktree), `${JSON.stringify(receipt, null, 2)}\n`);
+  const file = laneSelectionReceiptFile(worktree);
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(receipt, null, 2)}\n`);
+  renameSync(temp, file);
   return receipt;
 }
 
@@ -267,6 +420,7 @@ function main(argv) {
   const { values } = parseArgs({ args: rest, options: {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, phase: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, "code-tests": { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
+    "reuse-cache": { type: "boolean" }, "reuse-unaffected": { type: "string" }, base: { type: "string" }, config: { type: "string", multiple: true },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
@@ -313,11 +467,17 @@ function main(argv) {
         mainSha = mainTested;
       }
     }
-    const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey,
-      selection: { ...selected.selection, reason: selected.reasons[values.command.trim()] }, result,
-      ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
-    writeFileSync(recordsFile(values.worktree), `${JSON.stringify(records, null, 2)}\n`);
+    const cacheKey = source.diffSha256 === createHash("sha256").digest("hex")
+      ? laneKeyFor(values.worktree, { command: values.command, base: values.base, config: values.config }) : null;
+    // A lane result retains both the exact selection and main's fresh/cache provenance.
+    withRecordsLock(values.worktree, () => {
+      const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
+      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey,
+        selection: { ...selected.selection, reason: selected.reasons[values.command.trim()] },
+        result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}),
+        ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
+      writeRecords(values.worktree, records);
+    });
     process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
   }
@@ -326,11 +486,18 @@ function main(argv) {
       const head = source.head;
       if (values.skip && !values["skip-ruling"]?.trim()) throw new Error("--skip needs --skip-ruling naming the operator ruling that waives those lanes");
       const selected = { ...selectedScope(values, undefined, source), source };
+      if (values.phase === "first-candidate") {
+        const canonical = repositoryCiLanes(values.worktree);
+        if (canonical.length !== selected.lanes.length || canonical.some((lane) => !selected.lanes.includes(lane))) {
+          throw new Error("first-candidate --report does not match current pnpm test:lanes selection");
+        }
+      }
+      return withRecordsLock(values.worktree, () => {
       const named = selected.lanes;
       const impact = selected.impact;
       if (impact && !["None", "Lanes only", "Visual QA"].includes(impact.outcome)) throw new Error("the impact file has no valid qa-impact outcome");
       const skip = values.skip ? new RegExp(values.skip, "i") : null;
-      const records = readRecords(values.worktree);
+      let records = readRecords(values.worktree);
       const left = notRunLanes(named.filter((lane) => !skip?.test(lane)), records, selected,
         { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness() });
       const notRun = left.map((item) => item.lane);
@@ -339,20 +506,28 @@ function main(argv) {
       if (notRun.length) {
         const kept = records.filter((record) => !(notRun.includes(record.command) && sameSelection(record, selected)));
         const at = new Date().toISOString();
-        writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey,
-          selection: { ...selected.selection, reason: selected.reasons[lane] }, result: "not-run", reason, at }))], null, 2)}\n`);
+        writeRecords(values.worktree, [...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey,
+          selection: { ...selected.selection, reason: selected.reasons[lane] }, result: "not-run", reason, at }))]);
+        records = readRecords(values.worktree);
         for (const { lane, reason } of left) process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
       }
       for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
         process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);
       }
-      const missing = missingLanes(lanes, records, selected);
+      const covered = values["reuse-cache"] ? reuseCachedLanes(values, lanes, records, selected) : [];
+      for (const { lane, from } of covered) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: same tree, base, config and scope; not a fresh run)\n`);
+      records = readRecords(values.worktree);
+      const unaffected = values["reuse-unaffected"] ? reuseUnaffectedLanes(values, lanes, records, selected, covered) : [];
+      for (const { lane, from } of unaffected) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: nothing changed since touches this lane; not a fresh run)\n`);
+      records = readRecords(values.worktree);
+      const missing = missingLanes(lanes, records, selected).filter((lane) => ![...covered, ...unaffected].some((item) => item.lane === lane));
       const selector = selected.selection.kind === "qa-impact" ? "--impact <qa-impact JSON>"
         : selected.selection.kind === "code-tests" ? "--code-tests <normalized evidence>" : "--report <lane report>";
       for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --phase ${values.phase} --head <HEAD> --command "${lane}" ${selector}\n`);
-      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
+      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] || values["reuse-unaffected"] ? `, ${covered.length + unaffected.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
       if (missing.length === 0) writeLaneSelectionReceipt(values.worktree, source, values.phase, selected);
       return { exitCode: missing.length === 0 ? 0 : 1 };
+      });
     }).exitCode;
   }
   throw new Error("Usage: pre-pr-lanes.mjs run|record|check --phase first-candidate|followup ...");

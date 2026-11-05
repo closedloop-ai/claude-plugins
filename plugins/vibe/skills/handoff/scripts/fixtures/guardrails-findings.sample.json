@@ -1,0 +1,27 @@
+{
+  "schema": "vibe.guardrails-findings/1",
+  "head": "1111111111111111111111111111111111111111",
+  "base": "2222222222222222222222222222222222222222",
+  "findings": [
+    {
+      "id": "tokens-0001",
+      "check": "tokens",
+      "file": "packages/app/example/example-card.tsx",
+      "line": 42,
+      "severity": "high",
+      "message": "hardcoded color where a bundled token exists",
+      "evidence": "className=\"text-[#ff0000]\""
+    },
+    {
+      "id": "leftovers-0002",
+      "check": "leftovers",
+      "file": "packages/app/example/helpers.ts",
+      "line": null,
+      "severity": "low",
+      "message": "export has no remaining importer after the extraction",
+      "evidence": "formatExample"
+    }
+  ],
+  "checks_run": ["tokens", "leftovers", "owner-duplicates"],
+  "checks_skipped": []
+}

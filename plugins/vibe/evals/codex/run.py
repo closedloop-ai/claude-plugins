@@ -30,6 +30,15 @@ ACTIVE_PROCESSES: set[subprocess.Popen[str]] = set()
 ACTIVE_PROCESSES_LOCK = threading.Lock()
 
 
+def default_codex_model() -> str:
+    """Read the same ordinary-agent model policy used by the nightly driver."""
+    policy = Path(__file__).with_name("model-policy.json")
+    model = json.loads(policy.read_text())["codexModel"]
+    if not isinstance(model, str) or not re.fullmatch(r"gpt-[a-z0-9.-]+", model):
+        raise ValueError("eval-codex-model-policy-invalid")
+    return model
+
+
 def snapshot_metadata(output: Path) -> dict[str, Any]:
     """Identify actual copied payloads through the shared Claude/Codex identity helper."""
     script = output / "receipt-helper/tested-head.mjs"
@@ -856,7 +865,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--list", action="store_true")
-    parser.add_argument("--model", default="gpt-6-sol")
+    parser.add_argument("--model", default=default_codex_model())
     parser.add_argument("--grader-model", default="gpt-6-luna")
     parser.add_argument(
         "--deterministic-only", action="store_true",

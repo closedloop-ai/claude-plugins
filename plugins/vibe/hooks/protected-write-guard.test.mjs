@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { readAssembled } from "../skills/vibe/scripts/skill-split.mjs";
 
 const hook = path.join(path.dirname(fileURLToPath(import.meta.url)), "protected-write-guard.mjs");
 
@@ -206,7 +207,7 @@ test("malformed protected-write event fails rather than allowing the tool call",
 test("writer refusal and internal preflight routing name the protected-write policy", () => {
   const plugin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const writer = readFileSync(path.join(plugin, "agents", "vibe-change-worker.md"), "utf8");
-  const skill = readFileSync(path.join(plugin, "skills", "vibe", "SKILL.md"), "utf8");
+  const skill = readAssembled(path.join(plugin, "skills", "vibe", "SKILL.md"));
   const preflight = readFileSync(path.join(plugin, "skills", "vibe", "references", "preflight.md"), "utf8");
   assert.match(writer, /After any native edit refusal,[\s\S]*return `BLOCKED`/);
   assert.match(writer, /Never retry the[\s\S]*through Bash, Python, Node, tee, redirection/);

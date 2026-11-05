@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, readLaneSelectionReceipt, reportLanes } from "./pre-pr-lanes.mjs";
-import { git, makeHome } from "./test-fixtures.mjs";
+import { git, makeHome, mockLaneReporter } from "./test-fixtures.mjs";
 import { sourceIdentity } from "./tested-head.mjs";
 import { spawnSync } from "node:child_process";
 
@@ -28,6 +28,15 @@ test("every lane the report names is required, e2e lanes and lanes with the step
   assert.deepEqual(reportLanes(REPORT), ["pnpm --filter @repo/app test", "pnpm test:desktop-renderer", DESKTOP_E2E]);
   assert.deepEqual(reportLanes("No paths changed against origin/main; there is nothing to cover.\n"), []);
   assert.equal(reportLanes("something went wrong\n"), null, "an unreadable report is never read as no lanes");
+  assert.equal(reportLanes("    pnpm test:unit\n"), null, "a lane list without a declared count is incomplete");
+  assert.equal(reportLanes("OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    pnpm test:unit\n    pnpm test:lint\n"), null,
+    "a count smaller than the commands is incomplete");
+  assert.equal(reportLanes("OUTSIDE THE TURBO GRAPH: 2 lane(s).\n    pnpm test:unit\n"), null,
+    "a count larger than the commands is incomplete");
+  assert.deepEqual(reportLanes("OUTSIDE THE TURBO GRAPH: 3 lane(s).\n    uv run pytest\n    python3 -m pytest\n    node --test x.test.mjs\n"),
+    ["uv run pytest", "python3 -m pytest", "node --test x.test.mjs"], "plugin CI commands remain reportable");
+  assert.deepEqual(reportLanes("IN THE TURBO GRAPH — 1 package, dependents included:\n    pnpm --filter @repo/app test\nOUTSIDE THE TURBO GRAPH — 1 lane(s). `turbo test` cannot see\n    pnpm test:lint\nOUTSIDE THE TURBO GRAPH, BY REFERENCE — 1 lane(s) whose suites\n    pnpm test:lint\n"),
+    ["pnpm --filter @repo/app test", "pnpm test:lint"], "the repository's em-dash sections count rows before deduplicating commands");
 });
 
 test("a selected lane needs a passing record at the source it exercises", () => {
@@ -50,10 +59,11 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   const second = 'node -e "process.exit(0)"';
   const report = path.join(root, "report.txt");
   writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 2 lane(s).\n    ${first}\n    ${second}\n`);
+  const reporter = mockLaneReporter(root, readFileSync(report, "utf8"));
   const incomplete = path.join(root, "incomplete.txt");
   writeFileSync(incomplete, `OUTSIDE THE TURBO GRAPH: 2 lane(s).\n    ${first}\n`);
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], {
-    encoding: "utf8", env: { ...process.env, HOME: home },
+    encoding: "utf8", env: { ...process.env, HOME: home, PATH: reporter.path },
   });
   assert.equal(run("check", "--worktree", worktree, "--report", report).status, 2, "phase is explicit");
   const broadFollowup = run("check", "--worktree", worktree, "--phase", "followup", "--report", report);
@@ -62,6 +72,11 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   const incompleteFirst = run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", incomplete);
   assert.equal(incompleteFirst.status, 2, "the first candidate cannot omit a declared CI-equivalent lane");
   assert.match(incompleteFirst.stderr, /--report must name this lane or explicitly say nothing changed/);
+  const forged = path.join(root, "forged.txt");
+  writeFileSync(forged, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${first}\n`);
+  const forgedFirst = run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", forged);
+  assert.equal(forgedFirst.status, 2, "a self-consistent short report cannot omit a canonical lane");
+  assert.match(forgedFirst.stderr, /does not match current pnpm test:lanes selection/);
   const premature = path.join(root, "premature-code-tests.json");
   writeFileSync(premature, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
     lanes: [{ command: first, reason: "changed unit maps to this lane" }] }));
@@ -135,7 +150,8 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   git(worktree, ["commit", "--quiet", "-m", "base"], home);
   const report = path.join(root, "lanes.txt");
   writeFileSync(report, REPORT);
-  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", args.includes("--impact") ? "followup" : "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const reporter = mockLaneReporter(root, REPORT);
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", args.includes("--impact") ? "followup" : "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home, PATH: reporter.path } });
   const refused = run("check", "--worktree", worktree, "--report", report);
   assert.equal(refused.status, 1);
   assert.match(refused.stdout, /^MISSING-LANE pnpm test:desktop-renderer:/m);
@@ -190,11 +206,12 @@ test("a result names the commit it ran: a run refuses another HEAD or a modified
   const old = git(worktree, ["rev-parse", "HEAD"], home).trim();
   git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "the PR head"], home);
   const intended = git(worktree, ["rev-parse", "HEAD"], home).trim();
-  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home, PATH: reporter.path } });
   const pass = 'node -e "process.exit(0)"';
   const movedCommand = `node -e "require('node:child_process').execFileSync('git',['checkout','--quiet','${old}'])"`;
   const report = path.join(root, "lanes.txt");
-  writeFileSync(report, `    ${pass}\n    ${movedCommand}\n    pnpm test\n`);
+  writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 3 lane(s).\n    ${pass}\n    ${movedCommand}\n    pnpm test\n`);
+  const reporter = mockLaneReporter(root, readFileSync(report, "utf8"));
   git(worktree, ["checkout", "--quiet", old], home);
   const stale = run("run", "--worktree", worktree, "--head", intended, "--command", pass, "--report", report);
   assert.equal(stale.status, 2);
@@ -233,8 +250,9 @@ test('a lane detects uncommitted edits during a run and invalidates stale eviden
   const pass = 'node -e "0"';
   const mutation = `node -e "require('fs').writeFileSync('a.txt','changed')"`;
   const report = path.join(root, 'lanes.txt');
-  writeFileSync(report, `    ${pass}\n    ${mutation}\n`);
-  const run = (action, ...args) => spawnSync(process.execPath, [SCRIPT, action, '--worktree', wt, '--report', report, '--phase', 'first-candidate', ...args], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 2 lane(s).\n    ${pass}\n    ${mutation}\n`);
+  const reporter = mockLaneReporter(root, readFileSync(report, "utf8"));
+  const run = (action, ...args) => spawnSync(process.execPath, [SCRIPT, action, '--worktree', wt, '--report', report, '--phase', 'first-candidate', ...args], { encoding: 'utf8', env: { ...process.env, HOME: home, PATH: reporter.path } });
   assert.equal(run('run', '--head', head, '--command', pass).status, 0);
   const changed = run('run', '--head', head, '--command', mutation);
   assert.equal(changed.status, 1, changed.stdout);
@@ -252,7 +270,8 @@ test("without the staging e2e identities the local web e2e lane is recorded not 
   const web = "pnpm test:e2e";
   const report = path.join(root, "lanes.txt");
   writeFileSync(report, ["OUTSIDE THE TURBO GRAPH: 2 lane(s).", `    ${web}      (2 changed path(s) under e2e/)`, `    ${DESKTOP_E2E} (1 changed path(s))`, ""].join("\n"));
-  const env = { ...process.env, HOME: home };
+  const reporter = mockLaneReporter(root, readFileSync(report, "utf8"));
+  const env = { ...process.env, HOME: home, PATH: reporter.path };
   delete env[STAGING_IDENTITY_KEY];
   const run = (extra = {}) => spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report, "--phase", "first-candidate"], { encoding: "utf8", env: { ...env, ...extra } });
   assert.equal(run().status, HARNESS ? 1 : 0, "the Desktop e2e lane is required only where the displayless harness exists");
@@ -321,7 +340,8 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${lane}      (1 changed path(s))\n`);
   const sessionReport = path.join(root, "session-lane.txt");
   writeFileSync(sessionReport, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${sessionCommand}\n`);
-  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const reporter = mockLaneReporter(root, readFileSync(report, "utf8"));
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home, PATH: reporter.path } });
   assert.deepEqual(missingLanes([lane], [{ command: lane, head, laneKey: "scope1", result: "main-preexisting", mainSha }], { laneKey: "scope1" }), []);
   assert.deepEqual(missingLanes([lane], [{ command: lane, head, laneKey: "scope1", result: "main-preexisting" }], { laneKey: "scope1" }), [lane], "it names the main it failed on");
   const records = path.join(worktree, ".git", "vibe-lane-results.json");
@@ -343,4 +363,26 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   const dirtyMain = run('run', '--worktree', worktree, '--head', head, '--command', lane, '--report', report, '--main-worktree', mainCheckout, '--main-sha', mainSha);
   assert.equal(dirtyMain.status, 2, 'a dirty baseline cannot establish a failure on captured main');
   assert.match(dirtyMain.stderr, /captured main must be clean/);
+});
+
+test("lanes of one pool finishing together all keep their records", async (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-pool-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  writeFileSync(path.join(worktree, "a.txt"), "one\n");
+  git(worktree, ["add", "a.txt"], home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const lanes = ["a", "b", "c", "d", "e", "f"].map((name) => `node -e "process.exit(0)" ${name}`);
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `OUTSIDE THE TURBO GRAPH: ${lanes.length} lane(s).\n${lanes.map((lane) => `    ${lane}`).join("\n")}\n`);
+  const { spawn } = await import("node:child_process");
+  const runs = lanes.map((lane) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [SCRIPT, "run", "--phase", "first-candidate", "--worktree", worktree, "--head", head, "--command", lane, "--report", report], { env: { ...process.env, HOME: home }, stdio: "ignore" });
+    child.on("close", resolve);
+  }));
+  assert.deepEqual(await Promise.all(runs), lanes.map(() => 0));
+  const recorded = JSON.parse(readFileSync(path.join(worktree, ".git/vibe-lane-results.json"), "utf8")).map((row) => row.command).sort();
+  assert.deepEqual(recorded, [...lanes].sort());
 });

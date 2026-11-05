@@ -40,6 +40,21 @@ every material premise and include its evidence in `data.findings[].premises`.
 
 closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): make its required calls for your role (`code_symbols` and `search_nodes` to find an existing component a hand-rolled one duplicates, `code_callers` and `code_importers` to see which screens render a changed shared component and whether two of them share a parent), and end your result with the Graph block.
 
+## The findings file
+
+When `../skills/handoff/scripts/guardrails-gate.mjs` exists, run
+`node ../skills/handoff/scripts/guardrails-gate.mjs --worktree "<wt>" [--base <captured main sha>]`
+first and read its findings file (`../skills/vibe/references/guardrails-findings.md`
+holds the shape). It wraps the repository's Biome and `pnpm check:source-gates`
+and `diff-rules.mjs`, and scans added lines for tokens, conventions, changed
+assertions in repaired tests and new exports another file already owns. Report
+each finding it lists, confirmed by reading the line. The findings file adds
+findings and replaces none of the numbered checks below: run every one of them
+whether or not the script ran, and treat a check the file does not name as not
+checked; an empty `findings` list proves nothing about a check that did not run,
+and `checks_skipped` only names the ones it knows it skipped. Without the
+script, run the checks below unchanged.
+
 ## Check, for added or changed lines only
 
 Before the numbered review, require the inventory's `forbiddenPaths` gate to
@@ -62,7 +77,7 @@ path merely because another rule describes how its content should look.
    color, shadow or dark override, read which tokens the touched surface
    actually bundles: each stylesheet it loads or inlines and, in each, its
    `:root` and `.dark` (or `prefers-color-scheme: dark`) blocks
-   (`guardrails.md`, "Check the bundled tokens first"). A raw value, a page-local custom property re-declaring a
+   (`guardrails-ui.md`, "Check the bundled tokens first"). A raw value, a page-local custom property re-declaring a
    bundled token's value, or a dark override of a value the token's `.dark`
    block already defines, where that bundled token exists, is blocking, never
    advisory; quote the token's `:root` and `.dark` lines as evidence. Check
@@ -145,11 +160,8 @@ path merely because another rule describes how its content should look.
      of a shared helper). Each is blocking. For a `duplicate-helper` diff
      finding, cite both the added function and the identical function in
      another changed file or the base tree; the added copy is the finding.
-     Apply the same ownership check to policy and classification logic, not
-     only identical helper bodies. When two intake, validation, handoff or
-     lifecycle surfaces classify the same input, enumerate their cases and
-     require one shared lower-level owner; a second classifier is blocking
-     even when its current happy path agrees.
+     When two classifiers cover the same input, name the first divergent case;
+     require one shared lower-level owner and parity coverage, not separate fixes.
    - Leftovers (`design-pass.md`, "Red flags"): list every file the diff
      deleted, renamed or extracted from with
      `git -C <wt> diff --name-status -M <base>`, and every export it removed.
@@ -163,6 +175,9 @@ path merely because another rule describes how its content should look.
    - Adjacent comments: for each edited function, prop or callsite, read its
      nearby comments and JSDoc against the new behavior. A comment describing
      a retired path, old owner or impossible state is a blocking stale comment.
+     For each CHANGELOG claim, quote the claim and actual code/test scope
+     (line versus clause; denied symlink versus allowed assertion). Require
+     production correction and adversarial proof before retaining a false claim.
 9. Tests and checks: an added or deleted test file (`*.test.*`, `*.spec.*`,
    `__tests__/`, `e2e/`, or a snapshot or fixture a test reads), a changed
    snapshot, or a changed test that is not a pure repair is blocking in the
@@ -177,10 +192,8 @@ path merely because another rule describes how its content should look.
      follow an import, a renamed or retired symbol, setup or a type; any changed
      assertion, expected value, matcher, case, skip, tolerance or timeout is
      blocking, and so is a repair the change log does not record as one.
-     Deleted named expectations, fixture members and expected collection
-     entries are weakened assertions too, even when an aggregate expectation
-     still passes. They stay unless a cited human behavior ruling makes that
-     exact expectation obsolete.
+     For each deleted named assertion or fixture member, demand the exact
+     cited human behavior ruling; otherwise restore it despite an aggregate pass.
    - A retired-only deletion (the inventory's
      `retiredTests`) is allowed: read each deleted file or case at its base and
      confirm everything it exercised is code this session removed and the cited
@@ -233,7 +246,7 @@ path merely because another rule describes how its content should look.
      renumbered criterion or test name that drops the recorded source
      provenance is blocking; preserve the source's existing identifier instead
      of creating one for the test.
-10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
+10. Storybook taxonomy (`guardrails-ui.md`, "Storybook taxonomy"): read the
     repo's `apps/storybook/TAXONOMY.md` as the session's base has it; the
     inventory's `storybookScheme` names that base's scheme. A new story file
     titled under or tagged for a frozen v1.0 root (a `<Level> v1.0/` root or
@@ -260,7 +273,7 @@ path merely because another rule describes how its content should look.
     route-level page component, or several page sections composed into one
     flow) titled under `Composites/` instead of named `Surfaces/` stories per
     the doc is blocking.
-    Version History (`guardrails.md`, "Storybook taxonomy"): diff
+    Version History (`guardrails-ui.md`, "Storybook taxonomy"): diff
     `apps/storybook/stories/start-here-version-history.stories.tsx` and
     `apps/storybook/package.json` against the base. More than one new entry,
     an entry whose version is not the next after the base's `version`, a
@@ -361,11 +374,6 @@ path merely because another rule describes how its content should look.
     lacks, a key the rule does not support, split keys, a gate on a change
     the rule ships directly, or a new key where one already gates the surface
     is blocking. A cited source is not approval.
-17. Release claims: map each added CHANGELOG statement to the changed source
-    and the tests that prove its full scope. A claim that narrows broader code,
-    promises a denied edge case without its adversarial proof, or otherwise
-    overstates or understates the diff is blocking; quote the claim and the
-    contradicting source or test.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 after the committed merge. Canonical private diagnostics

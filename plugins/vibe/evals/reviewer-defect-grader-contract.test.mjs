@@ -95,19 +95,13 @@ test("ISS-13727 prompts carry evidence without giving away findings or remedies"
   }
 });
 
-test("ISS-13727 reviewer rules own all seven prevention classes", () => {
+test("ISS-13727 semantic prevention stays in nightly graders without duplicate reviewer prose", () => {
   const compact = (file) => readFileSync(path.join(root, "../agents", file), "utf8")
     .split(/\s+/).join(" ");
   const guardrails = compact("vibe-guardrails-reviewer.md");
   const adversarial = compact("vibe-adversarial-reviewer.md");
-  for (const phrase of ["Deleted named expectations, fixture members", "policy and classification logic",
-    "map each added CHANGELOG statement"]) assert.match(guardrails, new RegExp(phrase));
-  for (const phrase of ["A security exception needs adversarial cases", "production-wiring test may not be replaced",
-    "trace every producer", "ordinary prose and near-miss inputs", "Severity floor",
-    "security-exception gap", "lost production-boundary wiring check",
-    "destructive-consumer ownership or provenance gap", "gate false positive is `high`",
-    "both the production correction and the boundary, adversarial or negative",
-    "regression test that would fail without it"]) {
-    assert.match(adversarial, new RegExp(phrase));
-  }
+  assert.equal(iss13727Graders.length, 8);
+  for (const phrase of ["Deleted named expectations, fixture members", "map each added CHANGELOG statement",
+    "A security exception needs adversarial cases", "ordinary prose and near-miss inputs"])
+    assert.doesNotMatch(`${guardrails} ${adversarial}`, new RegExp(phrase));
 });

@@ -11,11 +11,11 @@ import { classifyUpgradeCaseAvailability, runUpgradeResumeCases } from "./upgrad
 
 const REPO = realpathSync(join(import.meta.dirname, "../../.."));
 
-test("ISS-13720 unchanged case uses the released 1.1.41 writer offline", () => {
+test("ISS-13720 unchanged case classifies the current writer offline", () => {
   const item = evalCaseCatalog(join(REPO, "plugins/vibe"))
     .find((candidate) => candidate.id === "upgrade-resume-unchanged-definition");
   assert.ok(item?.nightlyPrior);
-  assert.equal(item.nightlyPrior.version, "1.1.41");
+  assert.equal(item.nightlyPrior.version, "1.1.38");
   const current = readFileSync(join(REPO, "plugins/vibe/agents/vibe-change-worker.md"));
   const targetDigest = createHash("sha256").update(current).digest("hex");
   const availability = classifyUpgradeCaseAvailability({ item,
@@ -26,7 +26,8 @@ test("ISS-13720 unchanged case uses the released 1.1.41 writer offline", () => {
   const writer397 = classifyUpgradeCaseAvailability({ item,
     priorDigest: item.nightlyPrior.writerDigestSha256,
     targetDigest: "5ac2801b399bbd39edd971ba6fca01f9c206bdbf7fd8c9aabbc4fd4f03e06e76" });
-  assert.equal(writer397.available, true);
+  assert.equal(writer397.available, false);
+  assert.match(writer397.reason ?? "", /NO_VALID_PRIOR.*upgrade-resume-unchanged-definition/);
   assert.throws(() => classifyUpgradeCaseAvailability({ item,
     priorDigest: "f".repeat(64), targetDigest }),
   /nightly-prior-digest-mismatch:upgrade-resume-unchanged-definition/);

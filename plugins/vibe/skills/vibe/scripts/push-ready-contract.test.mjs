@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { readAssembled } from './skill-split.mjs';
 
-const read = relative => readFileSync(new URL(relative, import.meta.url), 'utf8');
+const read = relative => readAssembled(fileURLToPath(new URL(relative, import.meta.url)));
 
 test('writer and fleet extend the existing ready rule and cite the human source once', () => {
   const writer = read('../../../agents/vibe-change-worker.md');
@@ -44,10 +46,9 @@ test('criteria audit, rulings, rollout, independent review and verification prec
   }
   assert.doesNotMatch(handoff, /After step 7 verifies the final publication, dispatch read-only/);
   const beforeCommit = handoff.slice(0, commit);
-  assert.ok(beforeCommit.includes('Before the first push-ready candidate'));
-  assert.ok(beforeCommit.includes('**all CI lanes** locally in their exact job shapes'));
-  assert.ok(beforeCommit.includes('After a later source change, use the source-bound'));
-  assert.ok(beforeCommit.includes('`qa-impact.mjs` or `code_tests_for_changes` selection and run only the lanes it'));
+  assert.ok(beforeCommit.includes('`pre-pr-lanes.mjs check` is the source-bound push-ready receipt gate'));
+  assert.ok(beforeCommit.includes('full CI-equivalent `--phase first-candidate --report`'));
+  assert.ok(beforeCommit.includes('`--phase followup --impact` or `--code-tests` selection'));
   assert.match(handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.')), /discovered after publication[\s\S]*new-commit[\s\S]*never amend a pushed/i);
   const monitor = read('../../codex-fleet-monitor/SKILL.md');
   assert.doesNotMatch(monitor, /add the new PR to `prs.txt` and start its review/);

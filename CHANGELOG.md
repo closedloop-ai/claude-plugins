@@ -4,17 +4,59 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.46
+
+#### Added
+- Nightly review cases cover the seven semantic defect classes found after PR 397: weakened behavioral expectations, incomplete security-exception cases, duplicated policy logic, helper-only replacement of production-wiring coverage, untraced destructive consumers of a new binding, over-broad gating patterns, and release claims that disagree with the diff. Each case has a red proof.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 1,177 words longer than in 1.1.45 (origin/main at the merge). Nightly eval fixtures account for the growth; loaded instruction text is unchanged in total.
+
+#### Fixed
+- Pre-PR lane runs declare first-candidate or follow-up phase and persist one source-bound selection receipt. First candidates require every CI-equivalent report lane; follow-ups require QA-impact or code-test provenance and record why each selected lane ran. Fleet ready and push checks reject missing or stale receipts and show those reasons.
+
+### vibe v1.1.45
+
+#### Changed
+- Frozen-render results record per-render phase timings. The gate hashes raw PNG bytes before decoding, skips decode for byte-identical screenshots, and preserves decoded-pixel comparison for differently encoded screenshots.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.44 (origin/main at the merge).
+
+### vibe v1.1.44
+
+#### Changed
+- The nightly's ordinary and stateful Codex eval cells now use `gpt-5.6-sol` from one shared model value for the TypeScript policy, Python runner default, and stateful App Server requests. Ordinary cases retain low effort; stateful cells retain their existing effort behavior. The wording grader remains `gpt-6-luna`. The new agent model starts a fresh baseline lineage, reported as a model-policy change rather than a regression.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 13 words longer than in 1.1.43 (origin/main at the merge).
+
+### vibe v1.1.43
+
+#### Added
+- Prompt split (`references/handoff-ui.md`, `handoff-pr.md`, `vibe-harness-codex.md`, `vibe-harness-claude.md`, `vibe-mockup.md`, `quality-loop-recovery.md`, `quality-loop-visual-qa.md`, `guardrails-ui.md`, and the fleet-orchestrator `fleet-qa-gate.md`, `fleet-recovery.md`, `fleet-codex-sessions.md`). Each block is the original text moved unchanged, replaced in its skill or reference by one stub line that names the file, the block and the condition (the inventory's `serverOnly`, the triage class, the runtime, a requested pull request). `scripts/skill-split.mjs` and `tools/python/skill_split.py` read a file with its stubs put back for the contract tests.
+- `fleet-orchestrator/scripts/dispatch-route.mjs` (`FLEET_CLASS_ROUTING=1`) names a writer runtime from the triage class and the `codex-usage` and `claude-usage` lines and says whether a pull request gets a QA-guide session (skipped only for `docs-config`; `trivial-ui` keeps its guide). A line is used only with a read time no older than 30 minutes (`--codex-read-at`, `--claude-read-at`) and never when it reports an unknown reading (`?%`, an `unknown` band); `dispatch-budget.mjs` (`FLEET_BUDGET_GUIDANCE=1`) reads how many heavy runs the shared worker budget has room for. Both are off by default.
+- `pre-pr-lanes.mjs check --reuse-unaffected <qa-impact request JSON>` accepts a lane whose earlier fresh pass at the request's boundary commit nothing changed since touches, recorded as `cached`. Off by default.
+- `env-ctl.mjs redeploy` skips the environment request, with `VIBE_REDEPLOY_UI_ONLY=1`, only when every path changed since the last deployed commit cannot change a build (`NON_BUILD_PATH`: root docs, root Markdown, `.claude/`, `.agents/`, `.context/`); any other path, a shared package, the lockfile and root `package.json` included, requests the environment. Off by default.
+
+#### Changed
+- The writer-launch acceptance-criteria rule stays in the always-loaded fleet-orchestrator skill, and the handoff's running-app verification loads for every session (it was skipped for `serverOnly`, wider than the rule it replaced). Citations of headings that moved to `guardrails-ui.md` point there. The fleet recovery trigger also fires when `codex-usage` will reach `MOVE_AT_PERCENT` and when the operator reports high Claude usage.
+- `status-audit.mjs` takes `--at assignment|merge|report`; with `FLEET_TRIM_STATUS_AUDIT=1` a `report` run is skipped.
+- The handoff skill description no longer lists what the workers do; its trigger phrases are unchanged.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 923 words longer than in 1.1.42 (origin/main at the merge).
+
 ### vibe v1.1.42
 
 #### Added
-- Prevention coverage handles the eight defect classes found after PR 397: weakened behavioral expectations, incomplete security-exception cases, duplicated policy logic, helper-only replacement of production-wiring coverage, untraced destructive consumers of a new binding, over-broad gating patterns, release claims that disagree with the diff, and unreasoned full-suite reruns on small follow-ups. Focused review graders require a blocking finding and concrete repair for the semantic classes.
+- Spec Card (`references/spec-card.md`, `scripts/spec-card.mjs` with `check`, `save`, `path`, `budget`, `assumptions` and `audit-skeleton`) and `scripts/freshness.mjs`. The requirements worker returns a `draft` card of criteria, assumptions and open questions; the writer locks it with its plan before code and it seeds the session decision table once. A locked card is not edited afterwards: criteria change in the decision table. The fork checkpoint is off by default (`--checkpoint` or `VIBE_FORK_CHECKPOINT=1` turns it on). `budget` reports files outside the plan as cited or uncited and never blocks. `freshness.mjs` falls back to the recorded session base when the fetch cannot run. The handoff Assumptions line is generated from the card and required by `live-ticket-check.mjs`.
+- Triage manifest and class pipeline skills; triage reads the shared UI and Desktop host path lists, and the handoff inventory reads the triage backend list from `area-paths`.
+- Consolidated reviewer role with a review-scope escalation script, `guardrails-gate`, the lane-evidence cache keyed on tree, base, config and scope, and an off-by-default switch that skips the fleet's duplicate review chain. The adversarial reviewer is trimmed and fed the consumer pack and gate table.
+- Scripts `setup-ctl`, `env-ctl`, `graph-pack`, `req-gather`, `verify-run`, `inventory` bundle, `prototype-share` and `ticket-ctl` offline body templating.
+- Load-aware execution, off by default: `VIBE_HEAVY_BUDGET=on` gives heavy commands a cross-run worker budget, waiting for capacity (`VIBE_HEAVY_MAX_WAIT_SECONDS=0` skips it) and one retry on load failures (`VIBE_HEAVY_RETRIES=0` skips it), all inside the command's `seconds`. Without it `run-bounded.mjs` and `verify-run.mjs` behave as before and the verify lanes run serially; `VIBE_VERIFY_POOL_SIZE=1` keeps them serial with the budget on. `run-bounded.mjs` forwards SIGTERM and SIGINT to the command's process group. Background verify runs are joined at handoff.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 1,798 words longer than in 1.1.41.
-
-#### Fixed
-- The unchanged-definition upgrade-resume nightly uses released vibe 1.1.41 as its validated prior, so the case is available while the writer definition remains unchanged.
-- Pre-PR lane runs now declare first-candidate or follow-up phase and persist one source-bound selection receipt. First candidates require every CI-equivalent report lane; follow-ups require QA-impact or code-test provenance and record why each selected lane ran. Fleet ready and push checks reject missing or stale receipts and show those reasons.
+- `verify-run.mjs` blocks every lane when `pre-pr-lanes.mjs check` prints no summary line (a crash or timeout) instead of reading it as all lanes recorded, and a required check that is a no-op with its reason counts toward `ok`.
+- The guardrails reviewer reads the `guardrails-gate` findings as additions: it still runs all numbered checks, and a check the findings file does not name is not checked.
+- `BACKEND_PATH` again matches `apps/desktop/prisma/` and any `prisma` or `migrations` path segment; `pre-pr-lanes.mjs run` writes its records under a lock.
+- `criteria-audit.mjs` reads the verdict, evidence type and ref from one audit row, `| AC-n | MET | <type> | <ref> |`, so there is no separate evidence file and no `--evidence` argument on it, on `handoff-gate.mjs` or in the handoff skill. A criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists: in the worktree at a candidate audit, at HEAD at `handoff-gate.mjs` (`--at head`). `source-trace` is a fifth evidence type, its ref the file and line the trace ends at.
+- The brief returns `likelyFiles` for triage paths, and handoff reads the triage manifest's review output.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,909 words longer than in 1.1.41 (origin/main at the merge).
 
 ### vibe v1.1.41
 

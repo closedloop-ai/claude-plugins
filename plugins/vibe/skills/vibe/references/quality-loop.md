@@ -35,7 +35,9 @@ answer:
 
 Apply settled decisions; never ask them again. Only after all six fail,
 ask one absolutely necessary question with the checked sources and a
-recommendation. Under fleet orchestration a writer returns `NEEDS_PERSON` to
+recommendation. The Spec Card (`spec-card.md`, "Fork checkpoint") names which
+unresolved items may stop code, with 2 to 3 options and a recommendation; it
+adds no question this section would not allow. Under fleet orchestration a writer returns `NEEDS_PERSON` to
 the orchestrator, which finishes the remaining steps before asking. In a
 session another orchestrator drives through its turns, that orchestrator's
 own directions are operational and are recorded as `(orchestrator)`, never as
@@ -160,114 +162,7 @@ after a human or the engineering orchestrator installed that release
 (`guardrails.md`, "Plugins and tooling").
 Never use `register` to replace a writer or copy old agent definitions.
 
-1. Read `status` and the bounded binding facts from the private ledger. Wait
-   for source and record turns to finish with actual stopped-turn evidence;
-   a short-lived CLI PID exiting does not release an owned turn. While the
-   recorded definition is present, resolve any writer refusal in the original
-   request first. Never migrate around a refusal the recorded writer can still
-   settle. Once the recorded definition is missing, that writer can never run
-   again, so a `BLOCKED` request of any reason is carried over unchanged as the
-   active request and the new writer settles it before any other work (step 5).
-   That is the recovery `guardrails.md` promises for a turn stranded by a
-   plugin upgrade, not a bypass. Migration rejects `BLOCKED`
-   (except a removed definition, below) while the recorded definition is
-   present, running leases, matching definitions, unproven upgrades and stale
-   identity.
-2. Codex: spawn one current canonical `vibe-change-worker` with a read-only
-   hold brief and obtain its actual native ID. No source/test/record writes
-   until migration succeeds. Claude: the command allocates the new session ID;
-   do not spawn or resume the old Claude session under the new definition.
-3. Send this JSON on stdin, using the existing runtime and recorded facts:
-   `{ "worktree": "<wt>", "runtime": "<codex|claude>",
-      "previousWorkerId": "<recorded ID>", "previousDigest": "<recorded digest>",
-      "agentRoot": "<current-plugin-root>", "agentName": "vibe-change-worker",
-      "capabilities": <exact parent-discovered capabilities> }`.
-   For Codex add `"workerId": "<new held native ID>"`; omit it for Claude.
-   Leave `capabilities` out to keep the recorded binding's capabilities. When
-   given, it is at most 48 ClosedLoop graph reads, ClosedLoop live reads and
-   the five record writes (`writer-state.mjs help` lists the bindable
-   operations); anything else is refused.
-   The command independently reads the current definition from its own plugin
-   root and verifies the old definition with its recorded capabilities.
-4. The atomic ledger update appends `migrations`: old writer ID, full old
-   binding/digest and writer state, new ID and binding/digest, observed old
-   digest (null when absent), reason, UUID and time. Earlier migration history,
-   pending/completed requests and the active checkpoint/status remain intact.
-   The worktree, branch, local plan, decision table and change log carry over;
-   private traces remain where they were. Never discard or rewrite this history.
-5. Use only the returned current ID with the current binding supplied above.
-   Claim the existing active
-   request with a checkpoint continuation, or the oldest queued request if
-   none is active. When migrate returns `carriedBlock`, the continuation
-   names that block (its `resultSummary`) and asks the writer to settle it
-   first; `claim` refuses every queued request until the writer continues it.
-   Recover its input with the owned `take-input` lease. Brief
-   the new writer with the same plan/table paths, checkpoint, change log and
-   decisions before new code; migration grants no implementation or handoff
-   authority by itself. Codex resumes its held context. Claude's normal owned
-   launcher starts the recorded fresh session once, then resumes that ID.
-   Validation witnesses tied to the old writer are stale: collect fresh
-   source-owned readiness/validation before publication, keeping captured facts.
-
-**A turn stranded by a plugin upgrade.** A release installed while a Codex
-writer turn runs can remove the recorded `binding.agentRoot` under it. The
-turn stops, but `release-record` for the writer's own record continuation then
-fails with `ENOENT` for that root, so the grant stays retained. This is the
-same supported migration, not a tooling fix: ROOT recovers it immediately,
-internally and without asking the person running the session, and never tells the person to message
-engineering about it.
-
-1. Keep the record lease and the observed stopped-turn evidence (completed,
-   failed or canceled). Never retry `release-record` under another root;
-   owner equality stays exact.
-2. Finish the source turn with the writer's status and its own stopped-turn
-   evidence. When the writer is `BLOCKED` because its definition or plugin
-   root disappeared, finish with `"status": "BLOCKED"` and
-   `"blockReason": "recorded-definition-removed"`; the command refuses that
-   reason while the recorded definition is present. Every other `BLOCKED` is
-   stored with reason `other` and is carried over unchanged (step 1).
-3. Run the same `migrate` command with step 3's JSON plus
-   `"retainedRecord": { "lease": "<record lease>", "stoppedTurn": {
-   "runtime": "codex", "workerId": "<recorded ID>", "requestId": "<request ID>",
-   "lease": "<record lease>", "state": "<completed|failed|canceled>" } }`.
-   Omit `retainedRecord` when no grant is retained. The command accepts only
-   the registered writer's own record continuation for its current or just
-   completed request, issued under the exact recorded `binding.agentRoot`
-   whose definition is absent, with matching stopped-turn evidence. It then
-   releases that grant and migrates in one atomic ledger update; the
-   migration entry adds `releasedRecord` (request, action, stopped state,
-   never the lease). Another actor's grant, any other root, a present
-   definition (use `release-record`), a running lease, missing or mismatched
-   evidence and stale identity are refused with nothing changed. A stopped
-   helper's grant under a removed root needs no old cache: `release-record`
-   with its identical grant frees it, and `migrate` refuses until it is gone.
-4. A writer blocked before block reasons existed has no `blockReason`. With
-   that retained grant under an absent definition the command records the
-   proven reason; without it the request is carried over unchanged (step 1).
-5. Continue with step 5 above. All authority is fresh: the current writer and
-   helpers acquire new grants from the current plugin root (source `progress`,
-   publisher, ticket `handoff` and `assign`), and the writer reruns
-   source-owned readiness and validation for the captured transaction. Never
-   reuse an old grant, lease or validation witness.
-
-**A writer whose runtime cannot run.** A Codex writer stopped by its usage
-limit moves to Claude through this command, never to a worker outside the
-session records:
-
-1. Finish its turn `"status": "FAILED"` with `"state": "failed"` evidence.
-2. Run `migrate` with step 3's JSON (recorded `"runtime": "codex"`, no
-   `workerId`) plus this field:
-   `"harnessSwitch": { "to": "claude", "cause": "usage-limit", "evidence": "<error line>" }`
-3. Continue at step 5.
-
-The command refuses running turns, retained grants, a `BLOCKED`
-writer and a same-runtime switch, and records the switch in `migrations`.
-
-Any other binding/read/identity error remains `BLOCKED` internally. Never
-migrate around a refusal the recorded writer can still settle, or to create
-parallel authors. If migration fails,
-retain the ledger and stop the unused held Codex worker without source writes.
-New sessions bind the current release.
+> Read `references/quality-loop-recovery.md` (block `migration-steps`) when the recorded writer definition is missing or its digest differs, a turn was stranded by a plugin upgrade, or a Codex writer stopped on its usage limit.
 
 The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
@@ -369,7 +264,9 @@ or `/closedloop-core:decision-table` in Claude Code and use that skill's actual
 artifact format, edge-case expansion, review-prevention and adversarial rules.
 Never copy its skill, checklist or template into this plugin.
 
-Keep one living table for the whole session at
+The Spec Card (`spec-card.md`) seeds this table's `## Acceptance Criteria`
+section and Open Questions; it never replaces the table, its rows or its
+passes. Keep one living table for the whole session at
 `.closedloop-ai/decision-tables/<session-slug>.md`, in the SAME worktree and
 branch, authored only by the SAME persistent writer. New requests extend that
 file before code; they never start or replace a per-request table. Use real
@@ -778,7 +675,7 @@ requirement with no design-system equivalent goes to the existing
 missing-primitive path (`NEEDS_PRIMITIVE`, built by the writer from the
 read-only design-system steward's spec). Before any raw value, the writer
 reads the tokens the touched surface actually bundles, in each stylesheet's
-`:root` and `.dark` blocks (`guardrails.md`, "Check the bundled tokens
+`:root` and `.dark` blocks (`guardrails-ui.md`, "Check the bundled tokens
 first").
 
 - A bundled token is always used.
@@ -852,81 +749,7 @@ and the ready message names it as not done yet.
 
 ## Visual QA during the session
 
-This section adds an opt-in visual QA the orchestrator offers during the
-session, in Codex and Claude Code alike; it takes precedence over the lean build loop's rule that leaves
-visual QA to handoff alone. This section
-is the rule's one canonical statement, and handoff's visual QA compares
-against the same basis.
-
-### What it checks
-
-Visual QA uses the repository's own design pack: its read-only visual
-QA skill (`/visual-qa` in Claude Code, `$visual-qa` in Codex), which `/design`
-and `$design` route production review through.
-
-- When the linked ticket or its PRD has acceptance criteria, visual QA checks
-  the change against them: the run gets the session decision table's
-  `## Acceptance Criteria` list (those criteria, plus any the person's
-  requests added) and reports each visual and UX criterion as met or not,
-  with what it saw. For shared scope it compares each consumer page against
-  that page's approved prototype route, flags every control present in the
-  prototype but missing in production, and inventories rendered controls for
-  any with no requirement naming that control on that surface.
-- On a metric, summary, or card surface, it compares the card's owning
-  container, width, order and responsive placement with the established grid
-  or the page's official prototype story. A matching element count alone is
-  not a layout result.
-- When neither has any, it falls back to the design pack's best-practice
-  review, against `.claude/design/soul.md`, as the skill does when there is
-  no spec.
-
-Run it the way handoff runs its visual QA (the handoff skill, "Browser E2E
-and the repository's QA passes"): the skill dispatches its own read-only
-agents on the session's last deployed commit, with the session's app link
-and the screens the change touched. It changes no code. Its confirmed
-findings go to the SAME writer as one fix request in the queue, under the
-usual rules: design tokens and catalog components,
-never new user-visible words (`guardrails.md`, "Copy"), and a finding that
-needs a product choice goes through the research and necessity gate above.
-That fix deploys like any other request, and the ready message names what
-the check found and changed, in the person's terms. Owned prototype sessions
-keep their canonical single design review at handoff instead.
-
-### When it is offered
-
-At each visible milestone, the ready message offers it, without waiting for
-the person to think of it: when a user-visible change is first ready to look
-at, and again after a major visible change (a new screen or part of one, or
-a reworked layout). Never on a small edit (a spacing, color, wording or
-single-control fix), and never for a change that shows nothing visible. Ask
-it through `scripts/session-questions.mjs` with the key `visual-qa:<request
-ID>` of the milestone's request, so each milestone's offer is asked once, in
-exactly these words when the ticket or its PRD has acceptance criteria:
-
-```
-Want me to check how it looks against the ticket's requirements and fix anything that's off?
-```
-
-and otherwise:
-
-```
-Want me to check how it looks against our design standards and fix anything that's off?
-```
-
-A yes runs it. A no is recorded and declines visual QA for that version of
-the change, until the next visible milestone.
-
-### When the person asks for polish
-
-When the person says it looks good and wants to see it polished ("looks
-good, make it polished", "polish it", "clean it up so it looks finished",
-"make it look production ready", or words meaning the same), run visual QA
-before handoff without asking, and send its findings and the request to the
-SAME writer together. Skip it only when the change shows nothing visible, or
-when the person already declined visual QA for this version of the change
-(the recorded no for the latest milestone, with no major visible change
-since); then the request goes to the writer as an ordinary request under
-`guardrails.md`, "Making something look better".
+> Read `references/quality-loop-visual-qa.md` (block `visual-qa-body`) when a user-visible change is ready to look at or the person asks for polish; skip it when the change shows nothing visible.
 
 ## Tests: repair, don't author
 

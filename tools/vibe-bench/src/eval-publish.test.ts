@@ -8,6 +8,7 @@ import test from "node:test";
 import { buildEvalBaseline, evalBaselineFileName } from "./eval-baseline.ts";
 import type { EvalBaselineArtifact } from "./eval-baseline.ts";
 import type { LocalEvalResult } from "./eval-collector.ts";
+import { EVAL_POLICY } from "./eval-policy.ts";
 import { publishCompletedNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
 import { comparePublicEvalResults, projectPublicEvalResult,
   localRunForCompare, validatePublicEvalResult } from "./eval-public-result.ts";
@@ -37,6 +38,8 @@ function suite(runtime: "claude" | "codex", cases: Array<{ id: string; passed: b
   unavailableReason?: string }>): LocalEvalResult["runtimes"][number] {
   return { runtime, exitCode: cases.some((item) => !item.passed && !item.unavailableReason) ? 1 : 0,
     invalidReason: null, result: { runtime, cliVersion: "1",
+    model: runtime === "codex" ? EVAL_POLICY.codexModel : EVAL_POLICY.claudeModel,
+    ...(runtime === "codex" ? { judgeModel: EVAL_POLICY.codexJudgeModel } : {}),
     cases: cases.map((item) => ({ ...item, failedGraders: [], skippedGraders: [] })),
     passed: cases.filter((item) => item.passed).length,
     failed: cases.filter((item) => !item.passed && !item.unavailableReason).length,
@@ -46,7 +49,8 @@ function suite(runtime: "claude" | "codex", cases: Array<{ id: string; passed: b
 
 function publicResult(): PublicEvalResult {
   return { schemaVersion: 1, pluginVersion: "1.1.39", pluginSha: SHA,
-    runAt: "2026-11-04T23:12:00Z", models: PUBLIC.models,
+    runAt: "2026-11-04T23:12:00Z",
+    models: { ...PUBLIC.models, codex: EVAL_POLICY.codexModel },
     runtimes: [{ runtime: "claude", cases: [{ id: "case-a", status: "pass", retryCount: 0 },
       { id: "case-b", status: "fail", retryCount: 1 }] },
     { runtime: "codex", cases: [{ id: "case-a", status: "pass", retryCount: 0 },
@@ -150,7 +154,8 @@ test("AC-003 AC-009 projection derives retry counts and preserves unavailable", 
     recentNightlyOutcomes: status === "observed" ? [{ passes, runs: 1 }] : [],
     latestAvailability: status === "observed" ? { status } : { status, reason: "NO_VALID_PRIOR" },
   });
-  const baseline = { pluginSha: SHA, pluginVersion: "1.1.39", models: PUBLIC.models,
+  const baseline = { pluginSha: SHA, pluginVersion: "1.1.39",
+    models: { ...PUBLIC.models, codex: EVAL_POLICY.codexModel },
     sourceResultHashes: [initial.resultHash, retry.resultHash], costs: {},
     cases: [{ id: "case-a", outcomes: { claude: availability("observed", 1),
       codex: availability("observed", 1) } },

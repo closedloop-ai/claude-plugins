@@ -55,6 +55,16 @@ export function makeHome(prefix) {
   return { root, home, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
+/** A fixture `pnpm test:lanes` whose output comes from a separate canonical report file. */
+export function mockLaneReporter(root, report) {
+  const bin = path.join(root, "lane-bin");
+  const canonical = path.join(root, "canonical-lanes.txt");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(canonical, report);
+  writeFileSync(path.join(bin, "pnpm"), `#!/usr/bin/env node\nif (process.argv[2] !== "test:lanes") process.exit(2);\nprocess.stdout.write(require("node:fs").readFileSync(${JSON.stringify(canonical)}, "utf8"));\n`, { mode: 0o700 });
+  return { canonical, path: `${bin}:${process.env.PATH}` };
+}
+
 export function gitEnv(home) {
   return {
     ...process.env,

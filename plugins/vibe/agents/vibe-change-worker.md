@@ -155,6 +155,24 @@ build nothing and return `BLOCKED` with the command's clear
 engineering-routing message. For a mixed plan, record each outside or
 forbidden path the same way, remove it from implementation and build every
 allowed part without asking the person.
+Lock the Spec Card before code (`../skills/vibe/references/spec-card.md`): add
+its `plan` (owner files, files deliberately not touched) and save it with
+`node <plugin-root>/skills/vibe/scripts/spec-card.mjs save --worktree "<wt>" --stage locked <card>`.
+Run `spec-card.mjs check <card> --stage locked`: the fork checkpoint is off
+unless the brief or `VIBE_FORK_CHECKPOINT=1` switches it on; when on, return
+`NEEDS_PERSON` for each entry in its `blocking` list, and when off build as
+usual and let each `wouldBlock` entry stand as an unverified assumption in the
+handoff. Seed the table's `## Acceptance Criteria` section from the card's
+criteria. The locked card is not edited afterwards; criteria change in the
+decision table. Before any claim about current `main`, run
+`node <plugin-root>/skills/vibe/scripts/freshness.mjs --worktree "<wt>" --expect-path "<wt>"`.
+When its output has `fetchSkipped` the claim is about the session base, not
+current `main`; when it prints `escalate`, rerun it escalated if the claim
+needs current `main` (`../skills/vibe/references/spec-card.md`, "Freshness").
+Before `DONE`, run `spec-card.mjs budget`: it never blocks and never removes
+required scope; give every uncited file a `plan.justifications` entry that
+cites a criterion or a sourced requirement, or take it out of the diff when
+none drives it.
 
 Always load named core decision-table (`$decision-table` in Codex or
 `/closedloop-core:decision-table` in Claude Code) and create or extend the
@@ -281,7 +299,7 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it:
   go in a new entry in the current root holding only them when its story file
   is v1.0 (under a `<Level> v1.0/` root or tagged `deprecated`), which you
   never edit beyond a compile-only repair, and otherwise in its existing story
-  file, title and tag unchanged (`../skills/vibe/references/guardrails.md`,
+  file, title and tag unchanged (`../skills/vibe/references/guardrails-ui.md`,
   "Storybook taxonomy").
 - Never avoid a rename to protect a v1.0 story file; when a rename breaks
   one, repair it with only prop renames, imports and types, no story added or
@@ -293,7 +311,7 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it:
   `apps/storybook/package.json` on the main it last synced, and moves it after
   each main sync; never an entry for another version, a reworded main entry
   or a validator, test or key special-cased so two entries coexist
-  (`guardrails.md`, "Storybook taxonomy").
+  (`guardrails-ui.md`, "Storybook taxonomy").
 - Repair or log each reference an inventory `lost-story-id` finding names
   (same section).
 - On a base older than the lifecycle scheme, the doc on that base still sends
@@ -463,14 +481,14 @@ the table", gives.
 Before you write any color, shadow or dark-mode value, with or without a
 reference, read the tokens the touched surface actually bundles: each
 stylesheet it loads or inlines and, in each, its `:root` and `.dark` (or
-`prefers-color-scheme: dark`) blocks (`../skills/vibe/references/guardrails.md`,
+`prefers-color-scheme: dark`) blocks (`../skills/vibe/references/guardrails-ui.md`,
 "Check the bundled tokens first"). Use every
 bundled token that delivers the property as `var(--token)`; never a raw
 `rgb()`, hex or pixel value, a page-local custom property re-declaring a
 bundled token's value, or your own dark override of a value the token's
 `.dark` block defines. Dark mode comes from the bundled tokens' `.dark`
 values, so the surface's own CSS adds no `.dark` or `prefers-color-scheme`
-rule (`guardrails.md`, "Tokens and styling": no ad-hoc dark-mode overrides);
+rule (`guardrails-ui.md`, "Tokens and styling": no ad-hoc dark-mode overrides);
 a theme that reads wrong is fixed by choosing the token that delivers it in
 both themes. Only a token the surface genuinely lacks is logged,
 one line per token with the evidence of the check:
