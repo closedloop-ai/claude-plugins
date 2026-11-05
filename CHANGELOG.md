@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.43
+
+#### Changed
+- The nightly's ordinary Codex eval cases now use `gpt-5.6-sol` at low effort, with one shared model value for the TypeScript policy and Python runner default. The wording grader remains `gpt-6-luna`, and stateful upgrade-resume cells retain their runtime defaults. The new agent model starts a fresh baseline lineage, reported as a model-policy change rather than a regression.
+
 ### vibe v1.1.42
 
 #### Added

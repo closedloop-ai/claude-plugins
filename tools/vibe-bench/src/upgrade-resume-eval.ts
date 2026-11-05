@@ -322,7 +322,9 @@ export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
   const passed = cases.filter((item) => item.passed).length;
   const unavailable = cases.filter((item) => item.unavailableReason !== undefined).length;
   const failed = cases.length - passed - unavailable;
-  const payload = { runtime: ordinary.runtime, cliVersion: ordinary.cliVersion, cases, passed,
+  const payload = { runtime: ordinary.runtime, cliVersion: ordinary.cliVersion,
+    ...(ordinary.model ? { model: ordinary.model } : {}),
+    ...(ordinary.judgeModel ? { judgeModel: ordinary.judgeModel } : {}), cases, passed,
     failed, unavailable, wallMs: ordinary.wallMs + stateful.wallMs,
     agentCostUsd: nullableSum(ordinary.agentCostUsd, stateful.agentCostUsd),
     judgeCostUsd: nullableSum(ordinary.judgeCostUsd, stateful.judgeCostUsd),

@@ -700,6 +700,6 @@ reporter?: NightlyRegressionReporter): Promise<{
       `model-policy-changed:` +
       `claude=${existing?.artifact.models.claude ?? "none"}/${EVAL_POLICY.claudeModel},` +
       `claudeJudge=${existing?.artifact.models.claudeJudge ?? "none"}/${EVAL_POLICY.claudeJudgeModel},` +
-      `codex=${existing?.artifact.models.codex ?? "none"}/${EVAL_POLICY.codexModel},` +
+      `codex=${existing?.artifact.models.codex ?? "none"}/${result.models.codex},` +
       `codexJudge=${existing?.artifact.models.codexJudge ?? "none"}/${EVAL_POLICY.codexJudgeModel}` };
 }

@@ -14,6 +14,10 @@ export interface EvalCaseResult {
 export interface EvalSuiteResult {
   runtime: "claude" | "codex";
   cliVersion: string;
+  /** Validated native agent model for ordinary cases; stateful-only suites omit it. */
+  model?: string;
+  /** Validated native wording-grader model when the runtime reports one. */
+  judgeModel?: string;
   cases: EvalCaseResult[];
   passed: number;
   failed: number;
@@ -151,7 +155,8 @@ export function collectClaudeEval(raw: unknown, expectedCases: string[], expecte
   if (Math.abs(rootAgentCost - agentCostUsd) > 0.000001) {
     throw new Error("eval-claude-agent-cost-mismatch");
   }
-  return { runtime: "claude", cliVersion: expected.cliVersion, cases, passed,
+  return { runtime: "claude", cliVersion: expected.cliVersion,
+    model: String(suite.modelOverride), cases, passed,
     failed: cases.length - passed, wallMs: finite(root.durationSeconds, "eval-claude-duration-invalid") * 1000,
     agentCostUsd, judgeCostUsd, costUsd: agentCostUsd + judgeCostUsd, tokens: null,
     nativeHash: hash(raw) };
@@ -199,7 +204,8 @@ export function collectCodexEval(raw: unknown, expectedCases: string[], expected
   for (const [key, value] of Object.entries(tokens)) normalizedTokens[key] = finite(value,
     `eval-codex-token-invalid:${key}`);
   const passed = cases.filter((item) => item.passed).length;
-  return { runtime: "codex", cliVersion: expected.cliVersion, cases, passed,
+  return { runtime: "codex", cliVersion: expected.cliVersion,
+    model: String(run.model), judgeModel: String(run.grader_model), cases, passed,
     failed: cases.length - passed, wallMs: finite(run.elapsed_seconds,
       "eval-codex-duration-invalid") * 1000, agentCostUsd: null, judgeCostUsd: null,
     costUsd: null, tokens: normalizedTokens,
@@ -269,15 +275,15 @@ export function buildLocalEvalReport(result: LocalEvalResult): string {
       `Codex deterministic-only ${result.deterministicOnly ? "yes" : "no"}.`,
     `Verdict: ${verdict}.`,
     "",
-    "| runtime | status | passed | failed | unavailable | agent USD | judge USD | total USD | CLI | native hash |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    "| runtime | model | status | passed | failed | unavailable | agent USD | judge USD | total USD | CLI | native hash |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
   ];
   for (const record of result.runtimes) {
     const suite = record.result;
     const status = record.invalidReason ?? (suite
       ? (suite.unavailable ?? 0) > 0 ? "complete-with-unavailable" : "complete"
       : "incomplete");
-    lines.push(`| ${record.runtime} | ${status} | ` +
+    lines.push(`| ${record.runtime} | ${suite?.model ?? "not reported"} | ${status} | ` +
       `${suite?.passed ?? 0} | ${suite?.failed ?? result.selectedCases.length} | ` +
       `${suite?.unavailable ?? 0} | ` +
       `${suite?.agentCostUsd ?? "unavailable"} | ${suite?.judgeCostUsd ?? "unavailable"} | ` +
