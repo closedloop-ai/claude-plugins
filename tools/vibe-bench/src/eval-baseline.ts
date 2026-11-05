@@ -175,6 +175,13 @@ export function buildEvalBaseline(input: {
       }
     }
   }
+  const firstCodex = input.results[0].runtimes.find((record) => record.runtime === "codex")?.result;
+  const ordinaryCases = input.catalog.some((item) => item.kind !== "upgrade-resume");
+  if ((firstCodex?.model && firstCodex.model !== EVAL_POLICY.codexModel) ||
+      (ordinaryCases && (firstCodex?.model !== EVAL_POLICY.codexModel ||
+        firstCodex.judgeModel !== EVAL_POLICY.codexJudgeModel))) {
+    throw new Error("eval-baseline-codex-model-mismatch");
+  }
   const cases = input.catalog.map((definition): EvalBaselineCase => {
     const outcomes: EvalBaselineCase["outcomes"] = {};
     for (const runtime of ["claude", "codex"] as const) {
@@ -218,7 +225,8 @@ export function buildEvalBaseline(input: {
     schemaVersion: 2, createdAt: input.createdAt ?? new Date().toISOString(), pluginSha,
     pluginTreeSha: input.pluginTreeSha ?? pluginSha, pluginVersion: input.pluginVersion, runs: 1,
     models: { claude: EVAL_POLICY.claudeModel, claudeJudge: EVAL_POLICY.claudeJudgeModel,
-      codex: EVAL_POLICY.codexModel, codexJudge: EVAL_POLICY.codexJudgeModel },
+      codex: firstCodex?.model ?? EVAL_POLICY.codexModel,
+      codexJudge: firstCodex?.judgeModel ?? EVAL_POLICY.codexJudgeModel },
     costs: { claude: runtimeCosts(input.results, "claude"),
       codex: runtimeCosts(input.results, "codex") },
     sourceResultHashes: input.results.map((result) => result.resultHash),
