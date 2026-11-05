@@ -4,14 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.40
+### vibe v1.1.41
 
 #### Added
 - A pre-build scope-intake command checks every planned file with the same exported classifier and immutable repository-owned path declaration as handoff inventory. It preserves valid owned prototype paths and test repairs, admits new tests only for pull requests, routes mixed outside paths to engineering, and stops an all-outside plan before source changes.
 - Fleet sequencing rulings with explicit blocked tickets derive blocker-to-blocked edges, resolve pull requests through ticket mappings, and use one receipt-gated recording command that refuses unresolved references or missing confirmed `BLOCKS` links. Ordinary workflow prose is ignored, and status audit reports later sequencing-link drift.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 776 words longer than in 1.1.39.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 776 words longer than in 1.1.40.
 
 #### Fixed
 - Protected native and detected Bash writes admit only the current linked worktree's exact private `vibe-changes.md`; sibling Git metadata, symlink creation and write-through targets remain denied.
@@ -19,6 +19,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rulings checks distinguish quoted citations and test titles from operative quoted scope exclusions, and apply each human-source citation only to its own exclusion clause.
 - Citation-only and other self-bookkeeping repairs to vibe's private plans or records are made automatically and reported without asking the person for permission.
 - Forced heavy slots require a non-empty operator reason recorded on the slot, refuse loads above four times the core count, and always read the target machine's load instead of accepting a caller-supplied reading.
+
+### vibe v1.1.40
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.39.
+
+#### Fixed
+- Before launching any model, the nightly validates each stateful upgrade case's stored prior digest against the archived release and records the result under `premises/<case>/evidence.json`. When the prior is valid but no released prior matches the current `vibe-change-worker` definition for an unchanged-definition case, the case is not launched. It is recorded as unavailable with a `NO_VALID_PRIOR` reason on both runtimes instead of failing as a harness error.
+- Unavailable cases count as neither a pass nor a failure. Suite results, the local eval report (a new `unavailable` column and a `complete-with-unavailable` status) and the scheduled nightly summary count them separately. The stored baseline keeps earlier observations and reliability history unchanged and records `latestAvailability` on the outcome. Failure-only reruns, regression alerts and deterministic failure alerts skip them, and a run or baseline with an unavailable case is not green.
+- The nightly prints a `VIBE_NIGHTLY_CASE_UNAVAILABLE` line with the runtime, case and reason for each unavailable case.
+- The local eval finalizer rejects a case that is marked unavailable but also passed or carries grader results, and rejects suite pass, fail or unavailable counts that do not match the case list.
 
 ### vibe v1.1.39
 

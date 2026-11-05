@@ -6,7 +6,8 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { codexCaseId, collectClaudeEval, collectCodexEval, finalizeLocalEval } from "./eval-collector.ts";
+import { buildLocalEvalReport, codexCaseId, collectClaudeEval, collectCodexEval,
+  finalizeLocalEval } from "./eval-collector.ts";
 import type { EvalCaseResult, EvalSuiteResult, LocalEvalResult } from "./eval-collector.ts";
 import { buildEvalBaseline, isGreenEvalBaseline, publishEvalBaseline,
   evalQuarantineStatus, reconcileEvalBaselineQuarantine, resolveEvalBaselineHistory,
@@ -16,13 +17,14 @@ import type { EvalBaselineArtifact } from "./eval-baseline.ts";
 import { EVAL_POLICY, requireDeveloperMachine } from "./eval-policy.ts";
 import type { EvalRuntime } from "./eval-policy.ts";
 import { evalCaseCatalog, skillFromPrompt } from "./eval-selection.ts";
+import type { EvalCaseDefinition } from "./eval-selection.ts";
 import type { EvalCommands } from "./eval-driver.ts";
 import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegressions,
   deterministicNightlyFailures, evalCaseIds,
   deliverPendingRegressionReports, evalModelProcessEnv, failedCases,
   recoverPendingNightlyPublications,
   runLocalEvals, runT2Evals,
-  stageFocusedClaudeEvalCases } from "./eval-driver.ts";
+  stageFocusedClaudeEvalCases, unavailableNightlyCases } from "./eval-driver.ts";
 import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
 import { formatNightlyInfrastructureMessage, formatNightlyRegressionMessage, nightlyChangesSince,
   isRetrySafeSlackFailure, SLACK_DELIVERY_TEST_MESSAGE, SlackDeliveryError,
@@ -87,6 +89,20 @@ function comparisonEval(sha: string, states: Record<string, boolean>,
       const result = runtime(name);
       return { runtime: name, exitCode: result.failed ? 1 : 0, result, invalidReason: null };
     }) });
+}
+
+function unavailableEval(sha: string, id: string, reason: string): LocalEvalResult {
+  const runtime = (name: EvalRuntime): EvalSuiteResult => ({ runtime: name,
+    cliVersion: name === "claude" ? "2.1.311" : "codex-cli 0.163.0",
+    cases: [{ id, passed: false, failedGraders: [], skippedGraders: [],
+      unavailableReason: reason }], passed: 0, failed: 0, unavailable: 1, wallMs: 0,
+    agentCostUsd: name === "claude" ? 0 : null,
+    judgeCostUsd: name === "claude" ? 0 : null,
+    costUsd: name === "claude" ? 0 : null, tokens: name === "codex" ? {} : null,
+    nativeHash: name[0].repeat(64) });
+  return finalizeLocalEval({ pluginSha: sha, createdAt: "2026-11-05T00:00:00Z", wallMs: 0,
+    deterministicOnly: false, selectedCases: [id], runtimes: (["claude", "codex"] as const)
+      .map((name) => ({ runtime: name, exitCode: 0, result: runtime(name), invalidReason: null })) });
 }
 
 function withJudgeModel(artifact: EvalBaselineArtifact, judge: string): EvalBaselineArtifact {
@@ -187,22 +203,25 @@ test("scheduled task summary line reports skipped, run and failed outcomes", () 
     writeFileSync(artifact, JSON.stringify({ cases: [
       { outcomes: { claude: { recentNightlyOutcomes: [{ passes: 2, runs: 3 }] },
         codex: { recentNightlyOutcomes: [{ passes: 4, runs: 4 }] } } },
+      { outcomes: { claude: { recentNightlyOutcomes: [],
+        latestAvailability: { status: "unavailable", reason: "NO_VALID_PRIOR fixture" } } } },
     ] }));
     const ran = nightlyTaskSummary(0, `${artifact}\nVIBE_NIGHTLY_SLACK_POSTED\n`, log);
-    assert.deepEqual(ran, { result: "RAN", passed: 6, failed: 1, posted: "yes",
+    assert.deepEqual(ran, { result: "RAN", passed: 6, failed: 1, unavailable: 1, posted: "yes",
       path: artifact, failure: null });
     const line = formatNightlyTaskSummary(ran);
-    assert.match(line, /^VIBE_NIGHTLY_SUMMARY \{"result":"RAN","passed":6,"failed":1,/);
+    assert.match(line,
+      /^VIBE_NIGHTLY_SUMMARY \{"result":"RAN","passed":6,"failed":1,"unavailable":1,/);
     assert.deepEqual(JSON.parse(line.slice("VIBE_NIGHTLY_SUMMARY ".length)), ran);
     assert.deepEqual(nightlyTaskSummary(0, `SKIPPED ${artifact}\n`, log),
-      { result: "SKIPPED", passed: 0, failed: 0, posted: "no", path: artifact,
+      { result: "SKIPPED", passed: 0, failed: 0, unavailable: 0, posted: "no", path: artifact,
         failure: null });
     const failure = "VIBE_NIGHTLY_SLACK_FAILURE eval-slack-claude-timeout";
     assert.deepEqual(nightlyTaskSummary(0, `${artifact}\n${failure}\n`, log),
-      { result: "FAILED", passed: 0, failed: 0, posted: "no", path: artifact,
+      { result: "FAILED", passed: 0, failed: 0, unavailable: 0, posted: "no", path: artifact,
         failure });
     assert.deepEqual(nightlyTaskSummary(69, "wrapper failed\n", log),
-      { result: "FAILED", passed: 0, failed: 0, posted: "no", path: log,
+      { result: "FAILED", passed: 0, failed: 0, unavailable: 0, posted: "no", path: log,
         failure: "VIBE_NIGHTLY_INFRA_FAILURE nightly process exited with status 69" });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -258,7 +277,7 @@ test("scheduled task wrapper keeps T2 behind the local heavy slot", () => {
       "0", wrapperLog], { encoding: "utf8" });
     assert.equal(summary.status, 0, summary.stderr);
     assert.match(summary.stdout,
-      /^VIBE_NIGHTLY_SUMMARY \{"result":"RAN","passed":2,"failed":1,"posted":"yes",/);
+      /^VIBE_NIGHTLY_SUMMARY \{"result":"RAN","passed":2,"failed":1,"unavailable":0,"posted":"yes",/);
 
     rmSync(codex);
     const missingBinary = spawnSync(script, [heavySlot, node, nightly,
@@ -310,6 +329,45 @@ test("T2 store rolls reliability forward and resolves only its atomic newest bas
     assert.deepEqual(resolveEvalBaselineHistory(store).map((item) => item.resultHash),
       [second.resultHash, first.resultHash]);
   } finally { rmSync(store, { recursive: true, force: true }); }
+});
+
+test("ISS-13720 unavailable unchanged prior is explicit and never counted as pass or failure", () => {
+  const id = "upgrade-resume-unchanged-definition";
+  const reason = `NO_VALID_PRIOR case=${id} released=1.1.38@${"a".repeat(40)} ` +
+    `priorDigest=${"b".repeat(64)} currentDigest=${"c".repeat(64)}`;
+  const local = unavailableEval("d".repeat(40), id, reason);
+  assert.equal(local.success, false);
+  assert.deepEqual(failedCases(local, "claude"), []);
+  const report = buildLocalEvalReport(local);
+  assert.match(report, /Verdict: INCOMPLETE\./);
+  assert.match(report, new RegExp(`unavailable ${reason}`));
+  const catalog: EvalCaseDefinition[] = [{ id, skill: "vibe",
+    contentHash: "e".repeat(64), deterministic: true, kind: "upgrade-resume",
+    definition: "unchanged", nightlyPrior: { version: "1.1.38", ref: "a".repeat(40),
+      writerDigestSha256: "b".repeat(64) }, transitions: [
+        { target: { version: "1.1.25", ref: "f".repeat(40) },
+          prior: { version: "1.1.24", ref: "1".repeat(40) } },
+        { target: { version: "1.1.38", ref: "a".repeat(40) },
+          prior: { version: "1.1.25", ref: "f".repeat(40) } },
+      ] }];
+  const previous = buildEvalBaseline({ results: [comparisonEval("c".repeat(40), { [id]: true })],
+    catalog, pluginVersion: "1.1.39" });
+  const artifact = buildEvalBaseline({ results: [local], catalog,
+    pluginVersion: "1.1.40", previous });
+  verifyEvalBaseline(artifact);
+  for (const runtime of ["claude", "codex"] as const) {
+    const outcome = artifact.cases[0]?.outcomes[runtime];
+    assert.equal(outcome?.observations, 1);
+    assert.equal(outcome?.passes, 1);
+    assert.deepEqual(outcome?.recentNightlyOutcomes, [{ passes: 1, runs: 1 }]);
+    assert.deepEqual(outcome?.latestAvailability, { status: "unavailable", reason });
+  }
+  assert.equal(isGreenEvalBaseline(artifact), false);
+  assert.deepEqual(deterministicNightlyFailures(artifact), []);
+  assert.deepEqual(unavailableNightlyCases(artifact).map((item) =>
+    `${item.runtime}:${item.case}:${item.reason}`), [
+    `claude:${id}:${reason}`, `codex:${id}:${reason}`,
+  ]);
 });
 
 test("a journaled nightly publication resumes without repeating model work", async () => {

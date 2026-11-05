@@ -85,6 +85,8 @@ export interface UpgradeCaseEvidence {
   finalWriterId: string | null;
   migrationCount: number;
   trace: string[];
+  /** Harness availability gap. This is neither a pass nor a product failure. */
+  unavailableReason?: string;
   /** Aggregate result only: each selected historical cell and the current subject's disposition. */
   transitionResults?: UpgradeTransitionResult[];
   /** Every attempt of this cell, retained when transient infrastructure is retried. */
@@ -124,7 +126,8 @@ function hash(value: unknown): string {
 
 function caseResult(evidence: UpgradeCaseEvidence): EvalCaseResult {
   return { id: evidence.caseId, passed: evidence.passed,
-    failedGraders: evidence.failureCode ? [evidence.failureCode] : [], skippedGraders: [] };
+    failedGraders: evidence.failureCode ? [evidence.failureCode] : [], skippedGraders: [],
+    ...(evidence.unavailableReason ? { unavailableReason: evidence.unavailableReason } : {}) };
 }
 
 /** A known-bad product failure is expected; infrastructure failure never is. */
@@ -164,6 +167,8 @@ export function scoreUpgradeTransitions(items: Array<{ role: "historical" | "cur
 export function statefulSuite(runtime: EvalRuntime, evidence: UpgradeCaseEvidence[]): EvalSuiteResult {
   const cases = evidence.map(caseResult).sort((left, right) => left.id.localeCompare(right.id));
   const passed = cases.filter((item) => item.passed).length;
+  const unavailable = cases.filter((item) => item.unavailableReason !== undefined).length;
+  const failed = cases.length - passed - unavailable;
   const agentValues = evidence.map((item) => item.agentCostUsd);
   const agentCostUsd = runtime === "claude" && agentValues.every((value) => value !== null)
     ? agentValues.reduce((sum, value) => sum + (value ?? 0), 0) : null;
@@ -173,7 +178,7 @@ export function statefulSuite(runtime: EvalRuntime, evidence: UpgradeCaseEvidenc
       return totals;
     }, {}) : null;
   const payload = { runtime, cliVersion: evidence[0]?.cliVersion ?? "unknown", cases, passed,
-    failed: cases.length - passed, wallMs: evidence.reduce((sum, item) => sum + item.wallMs, 0),
+    failed, unavailable, wallMs: evidence.reduce((sum, item) => sum + item.wallMs, 0),
     agentCostUsd, judgeCostUsd: runtime === "claude" ? 0 : null,
     costUsd: runtime === "claude" && agentCostUsd !== null ? agentCostUsd : null, tokens };
   return { ...payload, nativeHash: hash({ payload, evidence }) };
@@ -226,9 +231,44 @@ export async function runUpgradeCellWithRetry(input: { transitionRoot: string;
   };
 }
 
-function definitionDigest(release: PluginReleaseArchive): string {
+function writerDefinitionDigest(vibeRoot: string): string {
   return createHash("sha256").update(readFileSync(
-    join(release.claudeVibeRoot, "agents/vibe-change-worker.md"))).digest("hex");
+    join(vibeRoot, "agents/vibe-change-worker.md"))).digest("hex");
+}
+
+function definitionDigest(release: PluginReleaseArchive): string {
+  return writerDefinitionDigest(release.claudeVibeRoot);
+}
+
+/** Whether a stateful case has a truthful current-subject premise. */
+export interface UpgradeCaseAvailability {
+  available: boolean;
+  reason: string | null;
+}
+
+/** Validate the stored prior and classify a current unchanged case before any model launch. */
+export function classifyUpgradeCaseAvailability(input: {
+  item: Pick<EvalCaseDefinition, "id" | "definition" | "nightlyPrior">;
+  priorDigest: string;
+  targetDigest: string;
+}): UpgradeCaseAvailability {
+  const prior = input.item.nightlyPrior;
+  if (!prior || prior.writerDigestSha256 !== input.priorDigest) {
+    throw new Error(`eval-stateful-nightly-prior-digest-mismatch:${input.item.id}:` +
+      `${prior?.version ?? "missing"}`);
+  }
+  const matches = input.priorDigest === input.targetDigest;
+  if (input.item.definition === "unchanged") {
+    return matches ? { available: true, reason: null }
+      : { available: false, reason: `NO_VALID_PRIOR case=${input.item.id} ` +
+        `released=${prior.version}@${prior.ref} priorDigest=${input.priorDigest} ` +
+        `currentDigest=${input.targetDigest}` };
+  }
+  if (input.item.definition !== "changed" || matches) {
+    throw new Error(`eval-stateful-definition-premise-mismatch:${input.item.id}:` +
+      `${prior.version}:current`);
+  }
+  return { available: true, reason: null };
 }
 
 /** Fail as a harness error when a case's definition premise is false. */
@@ -245,6 +285,20 @@ export function assertUpgradeDefinitionPremise(
     throw new Error(`eval-stateful-definition-premise-mismatch:${item.id}:` +
       `${prior.version}:${target.version}`);
   }
+}
+
+function unavailableCaseEvidence(input: { item: EvalCaseDefinition; runtime: EvalRuntime;
+  subject: ReleaseReference; cliVersion: string; reason: string }): UpgradeCaseEvidence {
+  const prior = input.item.nightlyPrior;
+  if (!prior) throw new Error(`eval-stateful-nightly-prior-missing:${input.item.id}`);
+  return { caseId: input.item.id, runtime: input.runtime, passed: false, failureCode: null,
+    unavailableReason: input.reason, wallMs: 0,
+    agentCostUsd: input.runtime === "claude" ? 0 : null,
+    tokens: input.runtime === "codex" ? {} : null, cliVersion: input.cliVersion,
+    target: input.subject, prior: { version: prior.version, ref: prior.ref },
+    oldArchiveRetained: true, proofLines: [], rootSessionId: "not-run-no-valid-prior",
+    previousWriterId: null, finalWriterId: null, migrationCount: 0,
+    trace: [`unavailable before model launch: ${input.reason}`] };
 }
 
 /** Merge disjoint ordinary and stateful cases while preserving existing per-runtime metrics. */
@@ -266,8 +320,10 @@ export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
     ? Object.fromEntries([...new Set([...Object.keys(ordinary.tokens), ...Object.keys(stateful.tokens)])]
       .map((key) => [key, (ordinary.tokens?.[key] ?? 0) + (stateful.tokens?.[key] ?? 0)])) : null;
   const passed = cases.filter((item) => item.passed).length;
+  const unavailable = cases.filter((item) => item.unavailableReason !== undefined).length;
+  const failed = cases.length - passed - unavailable;
   const payload = { runtime: ordinary.runtime, cliVersion: ordinary.cliVersion, cases, passed,
-    failed: cases.length - passed, wallMs: ordinary.wallMs + stateful.wallMs,
+    failed, unavailable, wallMs: ordinary.wallMs + stateful.wallMs,
     agentCostUsd: nullableSum(ordinary.agentCostUsd, stateful.agentCostUsd),
     judgeCostUsd: nullableSum(ordinary.judgeCostUsd, stateful.judgeCostUsd),
     costUsd: nullableSum(ordinary.costUsd, stateful.costUsd), tokens };
@@ -1415,11 +1471,42 @@ export async function runUpgradeResumeCases(input: UpgradeResumeRunInput): Promi
   if (!/^[a-f0-9]{40}$/.test(targetRef)) throw new Error("eval-stateful-target-ref-invalid");
   const subject = upgradeSubject({ repo: input.repo, targetRef, pluginSha: input.pluginSha,
     currentSnapshot: input.currentSnapshot });
+  const availabilities = new Map<string, UpgradeCaseAvailability>();
+  if (targetRef === input.pluginSha) {
+    const targetDigest = writerDefinitionDigest(input.currentSnapshot.vibeDir);
+    for (const item of input.cases) {
+      const priorReference = item.nightlyPrior;
+      if (!priorReference) throw new Error(`eval-stateful-nightly-prior-missing:${item.id}`);
+      const premiseRoot = join(input.runRoot, "premises", item.id);
+      const prior = archivePluginRelease(input.repo, priorReference.ref,
+        join(premiseRoot, "prior"), priorReference.version);
+      const priorDigest = definitionDigest(prior);
+      const availability = classifyUpgradeCaseAvailability({ item, priorDigest, targetDigest });
+      availabilities.set(item.id, availability);
+      writeFileSync(join(premiseRoot, "evidence.json"), `${JSON.stringify({
+        caseId: item.id, prior: priorReference, priorDigest, target: subject,
+        targetDigest, ...availability,
+      }, null, 2)}\n`, { mode: 0o600 });
+    }
+  }
   const lanes = input.runtimes.map(async (runtime) => {
     const evidence: UpgradeCaseEvidence[] = [];
     for (const item of input.cases) {
       const caseRoot = join(input.runRoot, runtime, item.id);
-      mkdirSync(dirname(caseRoot), { recursive: true });
+      mkdirSync(caseRoot, { recursive: true, mode: 0o700 });
+      const availability = availabilities.get(item.id);
+      if (availability && !availability.available) {
+        const cliVersion = runtime === "claude"
+          ? execFileSync(input.claudeExecutable, ["--version"], { encoding: "utf8" })
+            .match(/\d+\.\d+\.\d+/)?.[0] ?? "unknown"
+          : execFileSync(input.codexExecutable, ["--version"], { encoding: "utf8" }).trim();
+        const unavailable = unavailableCaseEvidence({ item, runtime, subject, cliVersion,
+          reason: availability.reason ?? `NO_VALID_PRIOR case=${item.id}` });
+        evidence.push(unavailable);
+        writeFileSync(join(caseRoot, "evidence.json"), `${JSON.stringify(unavailable, null, 2)}\n`,
+          { mode: 0o600 });
+        continue;
+      }
       const observations: Array<{ role: "historical" | "current"; expected: "pass" | "fail";
         evidence: UpgradeCaseEvidence }> = [];
       for (const planned of upgradeTransitionPlan(item, runtime, subject,
