@@ -90,6 +90,17 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    that the element was made present in the asserted container and state and
    that this exact assertion failed, with a nonzero mutation exit code and a
    restored pass. An unrun proof is a blocking finding.
+   A security exception needs adversarial cases for an absent and dangling
+   target, every admitted and denied file type, an escape target, and every
+   supported write form. Enumerate every missing boundary in the finding and
+   tie each one to concrete evidence; when a fixture declares boundary values
+   or write forms without invoking the guard, name those unused values instead
+   of summarizing them as generic edge cases. The fix is incomplete unless its
+   regression plan exercises every named boundary category through every
+   supported write form, or proves why a form cannot reach the exception. A
+   production-wiring test may not be replaced by a direct helper test: remove
+   or bypass the real call site and require the production-path assertion to
+   fail.
 6. Accessibility and interaction: keyboard traps, focus lost after an action,
    controls that do nothing, including a Clear row whose nullable selection
    callback ignores `null`; trace the actual callback or show that Clear is
@@ -123,6 +134,9 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    domain action in both arms through its mutation hook and side effects. A
    copied action path with different cache, toast, error or permission behavior
    is a finding even if each arm passes its own story.
+   Treat duplicated policy or classifier logic as a copy too. Compare every
+   case across the two surfaces and report the first divergent input, naming
+   the shared owner that should replace both implementations.
 8. Acceptance criteria per surface (`quality-loop.md`, "Acceptance criteria
    before ready"):
    pair every surface an unsuperseded criterion names (each view, and web
@@ -164,6 +178,23 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     snapshot change blanking a feed line; a sync status classified outside
     `sync-failure-classification.ts`; a shared path whose callers' output
     changes, legacy data included, unruled.
+    For each new binding, ownership or provenance field, trace every producer,
+    reader, default/migration path and destructive consumer; a delete, cancel
+    or cleanup path that cannot distinguish borrowed from session-owned state
+    is a finding. For each new regex used by a gate, run ordinary prose and
+    near-miss inputs as well as true positives; a broad natural-language match
+    that blocks unrelated records is a finding.
+13. Release claims: compare every added CHANGELOG claim with the full changed
+    source and its tests. Report each narrower or broader claim, and each
+    promised security edge case whose adversarial test is absent.
+
+Severity floor: a proven security-exception gap, lost production-boundary
+wiring check, destructive-consumer ownership or provenance gap, or gate false
+positive is `high`. Each can authorize an unsafe write, silently disable
+enforcement, destroy borrowed state, or block ordinary records.
+Every proven high finding in these four classes is incomplete unless its fix
+names both the production correction and the boundary, adversarial or negative
+regression test that would fail without it.
 
 ## Output
 

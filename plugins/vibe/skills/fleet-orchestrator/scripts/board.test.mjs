@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { recordUsageReading } from '../../codex-fleet-monitor/scripts/usage-state.mjs';
+import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -22,6 +23,32 @@ const tempDir = (t) => {
   return program;
 };
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'board.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+
+const receipt = (source, lanes = [{ command: 'pnpm test', reason: 'changed source selected this lane' }]) => ({
+  schemaVersion: 1,
+  source,
+  firstCandidateSource: source,
+  phase: 'followup',
+  selection: { kind: 'code-tests', key: 'a'.repeat(64) },
+  lanes,
+});
+
+function writeLaneReceipt(worktree, head = null, lanes) {
+  const git = (...args) => spawnSync('git', ['-C', worktree, ...args], { encoding: 'utf8' }).stdout.trim();
+  const current = git('rev-parse', 'HEAD');
+  const source = head && head !== current
+    ? { head, diffSha256: '0'.repeat(64), treeSha256: '1'.repeat(64) }
+    : sourceIdentity(worktree);
+  const file = path.join(git('rev-parse', '--absolute-git-dir'), 'vibe-lane-selection.json');
+  writeFileSync(file, JSON.stringify(receipt(source, lanes)));
+  return file;
+}
+
+function writeRemoteReceipt(dir, head, lanes) {
+  const file = path.join(dir, `lane-receipt-${head.slice(0, 8)}.json`);
+  writeFileSync(file, JSON.stringify(receipt({ head, diffSha256: '0'.repeat(64), treeSha256: '1'.repeat(64) }, lanes)));
+  return file;
+}
 
 test('scope delivery refuses stale loaded instructions and deleted plugin scripts', (t) => {
   const dir = tempDir(t);
@@ -72,6 +99,7 @@ test('status and watcher report every local commit not declared push-ready, even
   const intermediate = git('rev-parse', 'HEAD');
   git('commit', '--quiet', '--allow-empty', '-m', 'final');
   const final = git('rev-parse', 'HEAD');
+  writeLaneReceipt(wt, final);
   run([dir, 'writer', 'w', '--ready', final]);
   const status = run([dir, 'status']);
   assert.equal(status.status, 1, status.stdout);
@@ -79,7 +107,9 @@ test('status and watcher report every local commit not declared push-ready, even
   assert.doesNotMatch(status.stdout, new RegExp(`UNREADY-COMMIT w ${final}`));
   assert.match(run([dir, 'watch-lines']).stdout, /board UNREADY-COMMIT w/);
   assert.equal(run([dir, 'push-check', 'w', '--head', final]).status, 1);
+  writeLaneReceipt(wt, intermediate);
   run([dir, 'writer', 'w', '--ready', intermediate]);
+  writeLaneReceipt(wt, final);
   run([dir, 'writer', 'w', '--ready', final]);
   assert.equal(run([dir, 'status']).status, 0);
   assert.equal(run([dir, 'push-check', 'w', '--head', final]).status, 0);
@@ -92,6 +122,7 @@ test('status and watcher report every local commit not declared push-ready, even
   git('merge', '--quiet', '--no-ff', 'incoming', '-m', 'sync main');
   const merge = git('rev-parse', 'HEAD');
   assert.match(run([dir, 'status']).stdout, new RegExp(`UNREADY-COMMIT w ${merge}`));
+  writeLaneReceipt(wt, merge);
   run([dir, 'writer', 'w', '--ready', merge]);
   const synced = run([dir, 'status']);
   assert.equal(synced.status, 0, synced.stdout);
@@ -102,12 +133,15 @@ test('status and watcher report every local commit not declared push-ready, even
   git('checkout', '--quiet', branch);
   git('merge', '--quiet', '--no-ff', 'local-side', '-m', 'integrate local side');
   const sideMerge = git('rev-parse', 'HEAD');
+  writeLaneReceipt(wt, sideMerge);
   run([dir, 'writer', 'w', '--ready', sideMerge]);
   const hidden = run([dir, 'status']);
   assert.equal(hidden.status, 1, hidden.stdout);
   assert.match(hidden.stdout, new RegExp(`UNREADY-COMMIT w ${checkpoint}`), 'a merge cannot launder an undeclared local checkpoint');
   assert.equal(run([dir, 'push-check', 'w', '--head', sideMerge]).status, 1);
+  writeLaneReceipt(wt, checkpoint);
   run([dir, 'writer', 'w', '--ready', checkpoint]);
+  writeLaneReceipt(wt, sideMerge);
   run([dir, 'writer', 'w', '--ready', sideMerge]);
   assert.equal(run([dir, 'status']).status, 0);
 });
@@ -116,8 +150,9 @@ test('remote writers report NO-HEAD without blocking status or push-check', t =>
   const dir = tempDir(t);
   const head = 'a'.repeat(40);
   const base = 'b'.repeat(40);
+  const laneReceipt = writeRemoteReceipt(dir, head);
   const recorded = run([dir, 'writer', 'remote-w', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
-    '--ready', head, '--base', base]);
+    '--ready', head, '--base', base, '--lane-receipt', laneReceipt]);
   assert.equal(recorded.status, 0, recorded.stderr);
   const status = run([dir, 'status', '--pushed', `remote-w=${head}`]);
   assert.equal(status.status, 0, status.stdout + status.stderr);
@@ -126,6 +161,31 @@ test('remote writers report NO-HEAD without blocking status or push-check', t =>
   const push = run([dir, 'push-check', 'remote-w', '--head', head, '--pushed', `remote-w=${head}`]);
   assert.equal(push.status, 0, push.stdout + push.stderr);
   assert.match(push.stdout, /^READY remote-w /);
+});
+
+test('ready and push-check require the matching source receipt and render every lane reason', t => {
+  const dir = tempDir(t);
+  const wt = gitRepo(t);
+  assert.equal(spawnSync('git', ['-C', wt, '-c', 'user.name=Test', '-c', 'user.email=test',
+    'commit', '--quiet', '--allow-empty', '-m', 'ready candidate']).status, 0);
+  const head = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  assert.equal(run([dir, 'writer', 'receipt-w', '--worktree', wt, '--head', head]).status, 0);
+  const missing = run([dir, 'writer', 'receipt-w', '--ready', head]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /lane-selection receipt/);
+  writeLaneReceipt(wt, head, [
+    { command: 'pnpm test:unit', reason: 'qa-impact selected changed unit coverage' },
+    { command: 'pnpm test:e2e', reason: 'changed route selected browser boundary coverage' },
+  ]);
+  assert.equal(run([dir, 'writer', 'receipt-w', '--ready', head]).status, 0);
+  const page = readFileSync(path.join(dir, 'board.md'), 'utf8');
+  assert.match(page, /receipt-w: pnpm test:unit — qa-impact selected changed unit coverage/);
+  assert.match(page, /receipt-w: pnpm test:e2e — changed route selected browser boundary coverage/);
+  assert.equal(run([dir, 'push-check', 'receipt-w', '--head', head]).status, 0);
+  writeFileSync(path.join(wt, 'filters.ts'), 'export const quickFilters = false;\n');
+  const stale = run([dir, 'push-check', 'receipt-w', '--head', head]);
+  assert.equal(stale.status, 1);
+  assert.match(stale.stdout, /^LANE-RECEIPT receipt-w: .*stale/m);
 });
 
 test('the pushed head is read from gh for a row with a PR and repo', (t) => {
@@ -154,6 +214,7 @@ test('trusted stacked parent ancestry is excluded without declaring parent commi
   git('checkout', '-qb', 'writer');
   git('commit', '-q', '--allow-empty', '-m', 'writer ready change');
   const head = git('rev-parse', 'HEAD');
+  writeLaneReceipt(wt, head);
   run([dir, 'writer', 'w', '--worktree', wt, '--head', head, '--ready', head]);
   const file = path.join(dir, 'board.json');
   const board = JSON.parse(readFileSync(file, 'utf8'));
@@ -178,6 +239,7 @@ test('trusted stacked parent ancestry is excluded without declaring parent commi
   git('update-ref', 'refs/remotes/origin/trunk', parent);
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
   git('update-ref', '-d', 'refs/remotes/origin/main');
+  writeLaneReceipt(wt, head);
   assert.equal(run([dir, 'writer', 'default', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
   const fallback = run([dir, 'status'], { BOARD_GH: gh });
   assert.equal(fallback.status, 0, fallback.stdout + fallback.stderr);
@@ -341,17 +403,15 @@ test('a watched program needs a green-watch owner; REQUIRED_DUTIES names others'
   assert.match(run([dir, 'status', ...now]).stdout, /^MISSING-DUTY pr-shepherd/m);
 });
 
-test('a head is pushed for a writer only when the writer declared it ready (a partial commit was pushed)', (t) => {
+test('a ready declaration without a worktree receipt fails closed', (t) => {
   const dir = tempDir(t);
   assert.equal(run([dir, 'writer', 'w1', '--head', 'a77421d8fa00']).status, 0);
   const none = run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']);
   assert.equal(none.status, 1);
   assert.match(none.stdout, /^NOT-READY w1 head a77421d8fa00, declared ready none/);
-  assert.equal(run([dir, 'writer', 'w1', '--ready', '5ec6633da7ff']).status, 0);
-  assert.equal(run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']).status, 1, 'the committed head is not the ready one');
-  assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec6633da7']).status, 0);
-  assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec']).status, 1, 'a short prefix proves nothing');
-  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /\| w1 \|  \| a77421d8fa00 \| 5ec6633da7ff \|/);
+  const refused = run([dir, 'writer', 'w1', '--ready', '5ec6633da7ff']);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /worktree lane-selection receipt/);
 });
 
 test('status fails on state outside the fleet home: a flat watched dir, and a session not started through fleet.sh', (t) => {

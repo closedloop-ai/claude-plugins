@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 
 const SNAPSHOT = fileURLToPath(new URL('./snapshot.sh', import.meta.url));
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -236,6 +237,15 @@ test('board lines are snapshot lines: a scope change the writer has not acknowle
   assert.doesNotMatch(f.run('ok'), /^board /m);
   git('commit', '--quiet', '--allow-empty', '-m', 'undeclared grader tweak');
   assert.match(f.run('ok'), /^board UNREADY-COMMIT w1 /m);
+  const source = sourceIdentity(tree);
+  writeFileSync(join(git('rev-parse', '--absolute-git-dir'), 'vibe-lane-selection.json'), JSON.stringify({
+    schemaVersion: 1,
+    source,
+    firstCandidateSource: source,
+    phase: 'followup',
+    selection: { kind: 'code-tests', key: 'a'.repeat(64) },
+    lanes: [{ command: 'node --test snapshot.test.mjs', reason: 'changed board selected this snapshot test' }],
+  }));
   assert.equal(boardRun('writer', 'w1', '--ready', git('rev-parse', 'HEAD')).status, 0);
   assert.doesNotMatch(f.run('ok'), /^board /m);
 });

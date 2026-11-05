@@ -607,7 +607,7 @@ export function ciCheckProblems(runsFile, changed, commit) {
 /**
  * The Desktop Electron lane cannot run on a machine without the displayless
  * Linux harness, and vibe never launches Electron natively; there
- * `pre-pr-lanes.mjs check` records it `not-run` and the post-merge
+ * `pre-pr-lanes.mjs check --phase first-candidate --report` records it `not-run` and the post-merge
  * `desktop-e2e/validated` run covers it (ISS-13321).
  */
 function desktopLeftForCi(run) {

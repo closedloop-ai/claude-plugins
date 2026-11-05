@@ -43,7 +43,11 @@ test('criteria audit, rulings, rollout, independent review and verification prec
     assert.ok(index >= 0 && index < commit && index < push, `${gate} must accept the dirty candidate before first commit/push`);
   }
   assert.doesNotMatch(handoff, /After step 7 verifies the final publication, dispatch read-only/);
-  assert.match(handoff.slice(0, commit), /all CI\s+lanes[\s\S]*exact job shapes[\s\S]*Focused subsets never substitute/i);
+  const beforeCommit = handoff.slice(0, commit);
+  assert.ok(beforeCommit.includes('Before the first push-ready candidate'));
+  assert.ok(beforeCommit.includes('**all CI lanes** locally in their exact job shapes'));
+  assert.ok(beforeCommit.includes('After a later source change, use the source-bound'));
+  assert.ok(beforeCommit.includes('`qa-impact.mjs` or `code_tests_for_changes` selection and run only the lanes it'));
   assert.match(handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.')), /discovered after publication[\s\S]*new-commit[\s\S]*never amend a pushed/i);
   const monitor = read('../../codex-fleet-monitor/SKILL.md');
   assert.doesNotMatch(monitor, /add the new PR to `prs.txt` and start its review/);

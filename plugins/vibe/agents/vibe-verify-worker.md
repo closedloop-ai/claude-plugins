@@ -24,7 +24,7 @@ The existing `pre-pr` procedure writes its owned private
 `<gitdir>/vibe-pr-evidence.json` and `pre-pr-lanes.mjs` writes
 `<gitdir>/vibe-lane-results.json`; these are required verification receipts.
 Save `pnpm test:lanes` output as `<gitdir>/vibe-lane-report.txt` so
-`pre-pr-lanes.mjs check --report` reads a private, owned report.
+`pre-pr-lanes.mjs check --phase first-candidate --report` reads a private, owned report.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
 For a frozen comparison, run handoff's `frozen-render.mjs` with its prepared
@@ -158,12 +158,12 @@ failure, refresh the inventory and rerun only that failed case and any target
 the fix newly reaches, never the whole set. `qa-impact.mjs` decides reuse and
 names any lanes or screens. A selected failure runs once more on captured main (the main-sync
 `mainSha`; for a lane, `../skills/vibe/scripts/pre-pr-lanes.mjs run
---main-worktree <that checkout> --main-sha <mainSha>` with the same `--report`
-or `--impact` selection file). When it fails there
+--main-worktree <that checkout> --main-sha <mainSha>` with the same phase and
+selection file: `--phase first-candidate --report` initially or `--phase followup --impact` later). When it fails there
 too, record it `status: "main-preexisting"` with that `mainSha`: it does not
 block the pull request, and the body lists it under Known main failures
 (ISS-13321). One that passes on main stays a failure for the writer. A
-Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
+Desktop e2e lane `pre-pr-lanes.mjs check --phase first-candidate --report` recorded `not-run` is copied into
 `testRuns` the same way, with its `reason`.
 For each selected or edited E2E spec that this machine cannot run under an
 available tier, also record one spec-level `testRuns` item with its full
@@ -178,7 +178,8 @@ also named exactly in `e2eCapability.ciCoverage`. List the spec in
 capability probe found no permitted local or remote tier, and include it in
 an `e2e-reference` selection row. Desktop additionally needs the
 `desktop-e2e` lane's exact not-run command, reason and commit copied from
-`pre-pr-lanes.mjs check` and the matching lane from the saved
+`pre-pr-lanes.mjs check --phase first-candidate --report` (or the matching
+`--phase followup --impact` check after a later diff) and the matching lane from the saved
 `pnpm test:lanes` report. This is a carry to authoritative CI, never a
 passing local result. Do not label a spec `passed` unless its exact command
 and cases actually ran at the recorded commit.

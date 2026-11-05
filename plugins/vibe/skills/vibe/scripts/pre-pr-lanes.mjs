@@ -5,9 +5,9 @@
 // main broke four times in one day in suites PR CI does not run.
 //
 // Usage:
-//   pre-pr-lanes.mjs run    --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON>) [--main-worktree <checkout of captured main> --main-sha <sha>]
-//   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
-//   pre-pr-lanes.mjs check  --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON>) [--skip <regex> --skip-ruling "<who, when, where>"]
+//   pre-pr-lanes.mjs run    --phase first-candidate|followup --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON> | --code-tests <normalized evidence>) [--main-worktree <checkout of captured main> --main-sha <sha>]
+//   pre-pr-lanes.mjs record --phase first-candidate|followup [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON> | --code-tests <normalized evidence>)
+//   pre-pr-lanes.mjs check  --phase first-candidate|followup --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON> | --code-tests <normalized evidence>) [--skip <regex> --skip-ruling "<who, when, where>"]
 //
 // The report's lane commands are its 4-space-indented lines that start with a
 // package runner (pnpm, npm, npx, yarn, node), after any `KEY='value'`
@@ -17,7 +17,8 @@
 // and exits 1; a report it cannot read exits 2. After automated QA, `--impact`
 // narrows the check to only lanes qa-impact.mjs selected. A None result needs
 // no local lane merely because another commit exists. Records live in the session's
-// git dir (`vibe-lane-results.json`). Changes nothing else.
+// git dir (`vibe-lane-results.json`); a successful check writes the canonical
+// source-bound selection receipt beside it (`vibe-lane-selection.json`).
 //
 // Every lane the report names is required, e2e lanes included: a pull request
 // once merged with two Desktop E2E reds because this check skipped e2e lanes
@@ -59,7 +60,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { git } from "./session-record.mjs";
-import { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
+import { testedHead, testedSource, sourceIdentity, sameSource, validSourceIdentity, withStableSource } from "./tested-head.mjs";
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;
@@ -72,11 +73,16 @@ const ENV_LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/;
 export const NOT_RUN_NO_IDENTITY = "no staging e2e identities on this machine; the containerized or CI run covers it";
 export const NOT_RUN_NO_DESKTOP_HARNESS = "no displayless Linux Electron harness on this machine and vibe never launches Electron natively; the post-merge desktop-e2e-validation run (desktop-e2e/validated) covers it";
 const HARNESS_TOOLS = ["dbus-run-session", "xvfb-run", "gnome-keyring-daemon"];
+const RECEIPT_SCHEMA_VERSION = 1;
+const RECEIPT_FILE = "vibe-lane-selection.json";
+const PHASES = new Set(["first-candidate", "followup"]);
 
 /** The lane commands a lane report names, or null when it names none and does not say nothing changed. */
 export function reportLanes(report) {
   const all = [...new Set(report.split("\n").map((line) => LANE_LINE.exec(line)?.[1]).filter(Boolean))];
   if (all.length === 0) return NOTHING.test(report) ? [] : null;
+  const declared = [...report.matchAll(/\b(\d+) lane\(s\)/g)].map((match) => Number(match[1]));
+  if (declared.some((count) => count > all.length)) return null;
   return all;
 }
 
@@ -143,26 +149,123 @@ function readRecords(worktree) {
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
 }
 
-function selectedScope(values, command) {
-  if (Boolean(values.report) === Boolean(values.impact)) throw new Error("exactly one of --report or --impact is required");
+/** Absolute canonical source-bound lane-selection receipt path for a worktree. */
+export function laneSelectionReceiptFile(worktree) {
+  return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), RECEIPT_FILE);
+}
+
+/** Read the canonical lane-selection receipt, or null before a successful check. */
+export function readLaneSelectionReceipt(worktree) {
+  const file = laneSelectionReceiptFile(worktree);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+}
+
+/** Shape and exact-source problems; lane-selection semantics remain owned by this script. */
+export function laneSelectionReceiptProblems(receipt, source) {
+  const problems = [];
+  if (receipt?.schemaVersion !== RECEIPT_SCHEMA_VERSION) problems.push("lane receipt schemaVersion must be 1");
+  if (!validSourceIdentity(receipt?.source)) problems.push("lane receipt source identity is invalid");
+  else if (!sameSource(receipt.source, source)) problems.push("lane receipt source identity is stale");
+  if (!PHASES.has(receipt?.phase)) problems.push("lane receipt phase is invalid");
+  if (!validSourceIdentity(receipt?.firstCandidateSource)) {
+    problems.push("lane receipt needs a valid first-candidate source identity");
+  } else if (receipt?.phase === "first-candidate" && !sameSource(receipt.firstCandidateSource, source)) {
+    problems.push("first-candidate receipt history does not match its source");
+  }
+  const expectedKind = receipt?.phase === "first-candidate" ? "ci-report" : new Set(["qa-impact", "code-tests"]);
+  if (expectedKind instanceof Set ? !expectedKind.has(receipt?.selection?.kind) : receipt?.selection?.kind !== expectedKind) {
+    problems.push("lane receipt selection kind does not match its phase");
+  }
+  if (!/^[a-f0-9]{16,64}$/.test(receipt?.selection?.key ?? "")) problems.push("lane receipt selection key is invalid");
+  if (!Array.isArray(receipt?.lanes)) problems.push("lane receipt lanes must be an array");
+  else {
+    const commands = new Set();
+    for (const lane of receipt.lanes) {
+      if (typeof lane?.command !== "string" || !lane.command.trim()) problems.push("each lane receipt row needs a command");
+      if (typeof lane?.reason !== "string" || !lane.reason.trim()) problems.push("each lane receipt row needs a selection reason");
+      if (commands.has(lane.command)) problems.push(`duplicate lane receipt command ${lane.command}`);
+      commands.add(lane.command);
+    }
+  }
+  return problems;
+}
+
+function writeLaneSelectionReceipt(worktree, source, phase, selected) {
+  const prior = readLaneSelectionReceipt(worktree);
+  const receipt = {
+    schemaVersion: RECEIPT_SCHEMA_VERSION,
+    source,
+    phase,
+    selection: selected.selection,
+    lanes: selected.lanes.map((command) => ({ command, reason: selected.reasons[command] })),
+    ...(phase === "first-candidate" ? { firstCandidateSource: source }
+      : prior?.firstCandidateSource ? { firstCandidateSource: prior.firstCandidateSource } : {}),
+  };
+  const problems = laneSelectionReceiptProblems(receipt, source);
+  if (problems.length) throw new Error(problems.join("; "));
+  writeFileSync(laneSelectionReceiptFile(worktree), `${JSON.stringify(receipt, null, 2)}\n`);
+  return receipt;
+}
+
+function selectedScope(values, command, source) {
+  if (!PHASES.has(values.phase)) throw new Error("--phase first-candidate|followup is required");
+  const inputs = [values.report, values.impact, values["code-tests"]].filter(Boolean);
+  if (inputs.length !== 1) throw new Error("exactly one of --report, --impact or --code-tests is required");
+  if (values.phase === "first-candidate" && !values.report) {
+    throw new Error("first-candidate requires the repository CI-equivalent --report and cannot use targeted selection");
+  }
+  if (values.phase === "followup" && values.report) {
+    throw new Error("followup requires --impact or --code-tests selection provenance; an unreasoned full report is refused");
+  }
+  const priorReceipt = readLaneSelectionReceipt(values.worktree);
+  if (values.phase === "first-candidate" && priorReceipt?.firstCandidateSource) {
+    throw new Error("the successful first-candidate receipt already exists; later source uses --phase followup");
+  }
+  if (values.phase === "followup" && !validSourceIdentity(priorReceipt?.firstCandidateSource)) {
+    throw new Error("followup selection requires a successful first-candidate receipt");
+  }
   if (values.impact) {
     const impact = qaImpactRequest(values.worktree, JSON.parse(readFileSync(values.impact, "utf8")));
     if (!Array.isArray(impact.lanes) || (command && !impact.lanes.includes(command)) || (impact.lanes.length && !/^[a-f0-9]{16}$/.test(impact.laneKey ?? ""))) {
       throw new Error("--impact must select this lane and carry qa-impact.mjs laneKey");
     }
-    return { lanes: impact.lanes, laneKey: impact.laneKey ?? null, impact };
+    if (impact.source && !sameSource(impact.source, source)) throw new Error("qa-impact selection is stale for the current source");
+    const key = impact.laneKey ?? createHash("sha256").update(JSON.stringify({ source, outcome: impact.outcome, reason: impact.reason })).digest("hex").slice(0, 16);
+    const reason = `qa-impact ${impact.outcome}: ${impact.reason}`;
+    return { lanes: impact.lanes, laneKey: key, impact, selection: { kind: "qa-impact", key },
+      reasons: Object.fromEntries(impact.lanes.map((lane) => [lane, reason])) };
+  }
+  if (values["code-tests"]) {
+    const rawEvidence = readFileSync(values["code-tests"], "utf8");
+    const evidence = JSON.parse(rawEvidence);
+    if (evidence?.schemaVersion !== 1 || !validSourceIdentity(evidence.source) || !sameSource(evidence.source, source)) {
+      throw new Error("--code-tests needs schemaVersion 1 and the current source identity");
+    }
+    if (!Array.isArray(evidence.lanes)) throw new Error("--code-tests lanes must be an array");
+    const rows = evidence.lanes.map((lane) => {
+      if (typeof lane?.command !== "string" || !lane.command.trim() || typeof lane?.reason !== "string" || !lane.reason.trim()) {
+        throw new Error("each --code-tests lane needs command and selection reason");
+      }
+      return { command: lane.command.trim(), reason: lane.reason.trim() };
+    });
+    const lanes = [...new Set(rows.map((lane) => lane.command))];
+    if (lanes.length !== rows.length || (command && !lanes.includes(command))) throw new Error("--code-tests must select this lane exactly once");
+    const key = createHash("sha256").update(rawEvidence).digest("hex");
+    return { lanes, laneKey: key, impact: null, selection: { kind: "code-tests", key },
+      reasons: Object.fromEntries(rows.map((lane) => [lane.command, lane.reason])) };
   }
   const report = readFileSync(values.report, "utf8");
   const lanes = reportLanes(report);
   if (lanes === null || (command && !lanes.includes(command))) throw new Error("--report must name this lane or explicitly say nothing changed");
   const laneKey = createHash("sha256").update(JSON.stringify(lanes)).update("\n").update(report).digest("hex").slice(0, 16);
-  return { lanes, laneKey, impact: null };
+  return { lanes, laneKey, impact: null, selection: { kind: "ci-report", key: laneKey },
+    reasons: Object.fromEntries(lanes.map((lane) => [lane, "repository CI-equivalent report selected this lane"])) };
 }
 
 function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
-    worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
+    worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, phase: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, "code-tests": { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
@@ -176,7 +279,7 @@ function main(argv) {
       }
       if (values.source && !sameSource(JSON.parse(values.source), source)) throw new Error('record --source does not match the current inputs');
     }
-    const selected = { ...selectedScope(values, values.command.trim()), source };
+    const selected = { ...selectedScope(values, values.command.trim(), source), source };
     if (Boolean(values["main-worktree"]) !== Boolean(values["main-sha"]) || (values["main-worktree"] && command !== "run")) {
       throw new Error("--main-worktree and --main-sha go together, on run only");
     }
@@ -211,7 +314,9 @@ function main(argv) {
       }
     }
     const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
+    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey,
+      selection: { ...selected.selection, reason: selected.reasons[values.command.trim()] }, result,
+      ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
     writeFileSync(recordsFile(values.worktree), `${JSON.stringify(records, null, 2)}\n`);
     process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
@@ -220,7 +325,7 @@ function main(argv) {
     return withStableSource(values.worktree, source => {
       const head = source.head;
       if (values.skip && !values["skip-ruling"]?.trim()) throw new Error("--skip needs --skip-ruling naming the operator ruling that waives those lanes");
-      const selected = { ...selectedScope(values), source };
+      const selected = { ...selectedScope(values, undefined, source), source };
       const named = selected.lanes;
       const impact = selected.impact;
       if (impact && !["None", "Lanes only", "Visual QA"].includes(impact.outcome)) throw new Error("the impact file has no valid qa-impact outcome");
@@ -234,19 +339,23 @@ function main(argv) {
       if (notRun.length) {
         const kept = records.filter((record) => !(notRun.includes(record.command) && sameSelection(record, selected)));
         const at = new Date().toISOString();
-        writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey, result: "not-run", reason, at }))], null, 2)}\n`);
+        writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey,
+          selection: { ...selected.selection, reason: selected.reasons[lane] }, result: "not-run", reason, at }))], null, 2)}\n`);
         for (const { lane, reason } of left) process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
       }
       for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
         process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);
       }
       const missing = missingLanes(lanes, records, selected);
-      for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
+      const selector = selected.selection.kind === "qa-impact" ? "--impact <qa-impact JSON>"
+        : selected.selection.kind === "code-tests" ? "--code-tests <normalized evidence>" : "--report <lane report>";
+      for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --phase ${values.phase} --head <HEAD> --command "${lane}" ${selector}\n`);
       process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
+      if (missing.length === 0) writeLaneSelectionReceipt(values.worktree, source, values.phase, selected);
       return { exitCode: missing.length === 0 ? 0 : 1 };
     }).exitCode;
   }
-  throw new Error("Usage: pre-pr-lanes.mjs record|check ...");
+  throw new Error("Usage: pre-pr-lanes.mjs run|record|check --phase first-candidate|followup ...");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

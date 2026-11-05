@@ -613,13 +613,17 @@ human ruling. The ticket carries every ruling and amended criterion; no plan
 excludes scope without human authority. QA evidence names screen, host, state and
 flag arm. Later changes use `scripts/qa-impact.mjs` with importers, FEATURE_MAP,
 lane report and that evidence; `None` runs no local lane, screenshot, audit or
-critic, otherwise only its scope. `pre-pr-lanes.mjs check --impact` enforces
+critic, otherwise only its scope. `pre-pr-lanes.mjs check --phase followup --impact` enforces
 selected lanes; CI remains per push. Re-audit only criteria on affected screens.
 
-Before declaring push-ready, read the repository CI workflow and run **all CI
-lanes** locally in their exact job shapes: checkout depth, runtime/toolchain,
-install, lint/typecheck/test commands, matrix jobs, builds, and generated-dist
-checks. Focused subsets never substitute for this full pre-PR verification.
+Before the first push-ready candidate, read the repository CI workflow and run
+**all CI lanes** locally in their exact job shapes: checkout depth,
+runtime/toolchain, install, lint/typecheck/test commands, matrix jobs, builds,
+and generated-dist checks. After a later source change, use the source-bound
+`qa-impact.mjs` or `code_tests_for_changes` selection and run only the lanes it
+names; `None` runs nothing. Run the full set again only when that selection
+requires it, shared lane infrastructure changed, or a main merge conflicted.
+The matching `pre-pr-lanes.mjs` receipt records every lane and why it ran.
 
 On a requested pull request, skip assign mode: the ticket stays with the
 person, In Progress. Before dispatch, require the refreshed pinned-base
@@ -884,7 +888,9 @@ published commit from step 7, the tests the `pull-request` turn wrote and
 step 5's check results, and the ticket's Production impact and Flag changes
 and gates fields. It opens the pull request on the already pushed branch,
 blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` and
-`../vibe/scripts/pre-pr-lanes.mjs check` pass
+the current source's `pre-pr-lanes.mjs` receipt pass (`--phase first-candidate
+--report <lane report>` initially; `--phase followup --impact <qa-impact JSON>`
+or `--code-tests <normalized evidence>` after a later change)
 (`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, record the
 reason on the Engineering checklist as a verified human-only blocker does

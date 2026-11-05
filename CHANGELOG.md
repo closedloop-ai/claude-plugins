@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.42
+
+#### Added
+- Prevention coverage handles the eight defect classes found after PR 397: weakened behavioral expectations, incomplete security-exception cases, duplicated policy logic, helper-only replacement of production-wiring coverage, untraced destructive consumers of a new binding, over-broad gating patterns, release claims that disagree with the diff, and unreasoned full-suite reruns on small follow-ups. Focused review graders require a blocking finding and concrete repair for the semantic classes.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 1,798 words longer than in 1.1.41.
+
+#### Fixed
+- The unchanged-definition upgrade-resume nightly uses released vibe 1.1.41 as its validated prior, so the case is available while the writer definition remains unchanged.
+- Pre-PR lane runs now declare first-candidate or follow-up phase and persist one source-bound selection receipt. First candidates require every CI-equivalent report lane; follow-ups require QA-impact or code-test provenance and record why each selected lane ran. Fleet ready and push checks reject missing or stale receipts and show those reasons.
+
 ### vibe v1.1.41
 
 #### Added

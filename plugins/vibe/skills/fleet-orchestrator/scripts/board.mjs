@@ -4,7 +4,7 @@
 // a QA guide never heard that its checkpoint was ready, and a UX ruling
 // reached one writer as text while another PR rendered the same behavior.
 //
-// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--lane-receipt <remote receipt JSON>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
 //        board.mjs <orchDir> push-check <writer> --head <sha>
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
@@ -85,6 +85,8 @@ import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
+import { laneSelectionReceiptProblems, readLaneSelectionReceipt } from "../../vibe/scripts/pre-pr-lanes.mjs";
+import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 
 const STATE = "board.json";
 const PAGE = "board.md";
@@ -208,6 +210,8 @@ export function render(board) {
   const duties = Object.entries(board.duties).map(([duty, { owner, at }]) => `- ${duty}: ${owner} (since ${at})`);
   const scope = Object.keys(board.writers).flatMap((writer) => pendingFor(board, writer).filter((entry) => entry.kind === "SCOPE")
     .map((entry) => `- ${entry.id} for ${writer}: ${entry.text}`));
+  const laneSelections = Object.entries(board.writers).flatMap(([writer, row]) => (row.laneSelection?.lanes ?? [])
+    .map((lane) => `- ${writer}: ${lane.command} — ${lane.reason}`));
   return [
     "# Fleet board",
     "",
@@ -226,6 +230,10 @@ export function render(board) {
     "## Scope changes not acknowledged",
     "",
     ...(scope.length > 0 ? scope : ["- none"]),
+    "",
+    "## Ready lane selections",
+    "",
+    ...(laneSelections.length > 0 ? laneSelections : ["- none"]),
     "",
     "## Log",
     "",
@@ -304,6 +312,27 @@ function pairs(texts, flag) {
     }
     return [pair.slice(0, at), pair.slice(at + 1)];
   }));
+}
+
+function readyLaneSelection(row, ready, receiptFile) {
+  let receipt;
+  let source;
+  if (row.where === "remote") {
+    if (receiptFile && existsSync(receiptFile)) receipt = JSON.parse(readFileSync(receiptFile, "utf8"));
+    else if (row.laneSelection) receipt = row.laneSelection;
+    else throw new Error("a remote ready declaration needs --lane-receipt <source-bound receipt JSON>");
+    source = receipt?.source;
+    if (!source?.head?.startsWith(ready) && !ready.startsWith(source?.head ?? "")) throw new Error("lane receipt source head does not match the remote ready SHA");
+  } else {
+    if (!row.worktree) throw new Error("a local ready declaration needs its recorded worktree");
+    receipt = readLaneSelectionReceipt(row.worktree);
+    const current = repositoryGit(row.worktree, ["rev-parse", "HEAD"]);
+    source = current === ready ? sourceIdentity(row.worktree, ready) : receipt?.source;
+    if (!source?.head?.startsWith(ready) && !ready.startsWith(source?.head ?? "")) throw new Error("lane receipt source head does not match the ready SHA");
+  }
+  const problems = laneSelectionReceiptProblems(receipt, source);
+  if (problems.length) throw new Error(`lane-selection receipt refused: ${problems.join("; ")}`);
+  return receipt;
 }
 
 function threadCounts(board, texts) {
@@ -398,7 +427,7 @@ function main(argv) {
       to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
-      worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" },
+      worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" }, "lane-receipt": { type: "string" },
     },
   });
   if (!workDir || !ACTIONS.includes(action)) {
@@ -477,6 +506,11 @@ function main(argv) {
       process.stdout.write(`NOT-READY ${name} head ${values.head}, declared ready ${ready ?? "none"}: ask the writer for its push-ready head and wait for it; never push a head it has not called ready\n`);
       return 1;
     }
+    try { readyLaneSelection(board.writers[name], ready, undefined); }
+    catch (error) {
+      process.stdout.write(`LANE-RECEIPT ${name}: ${error.message}\n`);
+      return 1;
+    }
     process.stdout.write(`READY ${name} ${values.head}\n`);
     return 0;
   }
@@ -541,10 +575,12 @@ function main(argv) {
         : { ref: values.base, oid: repositoryGit(root, ['rev-parse', '--verify', '--end-of-options', `${values.base}^{commit}`]) };
       if (!update.trustedBase.oid) throw new Error('a remote writer needs --base <full OID>');
     }
+    let laneSelection;
     if (values.ready && (values.where ?? row.where) === 'remote') {
       if (!/^[a-f0-9]{7,40}$/i.test(values.ready) || !(update.trustedBase ?? row.trustedBase)) {
         throw new Error('a remote push-ready declaration needs a SHA and recorded full base OID');
       }
+      laneSelection = readyLaneSelection({ ...row, ...update, where: "remote" }, values.ready, values["lane-receipt"]);
     } else if (values.ready && (worktree ?? row.worktree)) {
       const root = worktree ?? row.worktree;
       const git = (...args) => repositoryGit(root, args);
@@ -558,8 +594,12 @@ function main(argv) {
       if (parent) {
         throw new Error('trusted base commits are inherited, never writer push-ready declarations');
       }
+      laneSelection = readyLaneSelection({ ...row, ...update, worktree: worktree ?? row.worktree }, ready, undefined);
+    } else if (values.ready) {
+      throw new Error("a ready declaration needs a worktree lane-selection receipt");
     }
     if (values.ready) update.readyHeads = [...new Set([...(row.readyHeads ?? []), row.ready, values.ready].filter(Boolean))];
+    if (laneSelection) update.laneSelection = laneSelection;
     const moved = values.head !== undefined && values.head !== row.head;
     board.writers[name] = { ...row, ...update, ...(values.deps === undefined ? {} : { deps: list(values.deps) }), ...(moved ? { headAt: at } : {}), updatedAt: at };
     write(orchDir, board, `${name}: ${Object.entries(update).map(([key, value]) => `${key} ${value}`).join(", ") || "touched"}`, at);

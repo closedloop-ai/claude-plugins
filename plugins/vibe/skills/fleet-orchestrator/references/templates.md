@@ -74,7 +74,7 @@ Review threads: reply on the thread naming the fixing SHA and resolve it only af
 Artifacts for people (tickets, PR bodies, comments, replies) never name a path on the operator's machine; embed evidence and attach plans.
 Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.
 Program rulings: read <orchDir>/rulings.md before planning, editing or auditing; the ticket carries the applicable per-ticket rulings through handoff's rulings check. My own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words I quote, with their source, are rulings.
-Declare each push-ready head with `board.mjs <orchDir> writer <you> --ready <sha>`. Iterate uncommitted through grader fixes, selected checks, independent review and verification. Only after acceptance: commit once, declare, pass `push-check`, push once, open the PR. Cadence never authorizes a checkpoint commit.
+Declare each push-ready head with `board.mjs <orchDir> writer <you> --ready <sha>` only after the matching lane-selection receipt exists; remote writers also pass `--lane-receipt <receipt JSON>`. Iterate uncommitted through grader fixes, selected checks, independent review and verification. Only after acceptance: commit once, declare, pass `push-check`, push once, open the PR. Cadence never authorizes a checkpoint commit.
 Report when done: pushed head SHA, files changed, tests run with HEAD plus diff/tree hashes each ran on and results, open items, anything that needs the operator.
 
 Task:

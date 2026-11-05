@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes } from "./pre-pr-lanes.mjs";
+import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, readLaneSelectionReceipt, reportLanes } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
+import { sourceIdentity } from "./tested-head.mjs";
 import { spawnSync } from "node:child_process";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-pr-lanes.mjs");
@@ -36,6 +38,93 @@ test("a selected lane needs a passing record at the source it exercises", () => 
   assert.deepEqual(missingLanes(lanes, [{ command: lanes[0], head: "h1", laneKey: "scope1", result: "fail" }], { laneKey: "scope1" }), lanes, "a failing run");
 });
 
+test("phase receipts refuse full followups and incomplete first candidates, then bind scoped reasons to source", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-lane-phase-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  writeFileSync(path.join(worktree, "a.txt"), "base\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], home);
+  const first = 'node -e "0"';
+  const second = 'node -e "process.exit(0)"';
+  const report = path.join(root, "report.txt");
+  writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 2 lane(s).\n    ${first}\n    ${second}\n`);
+  const incomplete = path.join(root, "incomplete.txt");
+  writeFileSync(incomplete, `OUTSIDE THE TURBO GRAPH: 2 lane(s).\n    ${first}\n`);
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], {
+    encoding: "utf8", env: { ...process.env, HOME: home },
+  });
+  assert.equal(run("check", "--worktree", worktree, "--report", report).status, 2, "phase is explicit");
+  const broadFollowup = run("check", "--worktree", worktree, "--phase", "followup", "--report", report);
+  assert.equal(broadFollowup.status, 2, "a followup cannot rerun the full report without selection provenance");
+  assert.match(broadFollowup.stderr, /unreasoned full report is refused/);
+  const incompleteFirst = run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", incomplete);
+  assert.equal(incompleteFirst.status, 2, "the first candidate cannot omit a declared CI-equivalent lane");
+  assert.match(incompleteFirst.stderr, /--report must name this lane or explicitly say nothing changed/);
+  const premature = path.join(root, "premature-code-tests.json");
+  writeFileSync(premature, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
+    lanes: [{ command: first, reason: "changed unit maps to this lane" }] }));
+  const prematureFollowup = run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", premature);
+  assert.equal(prematureFollowup.status, 2, "followup cannot bypass the full first-candidate lane set");
+  assert.match(prematureFollowup.stderr, /successful first-candidate receipt/);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  for (const command of [first, second]) {
+    assert.equal(run("record", "--worktree", worktree, "--head", head, "--phase", "first-candidate",
+      "--command", command, "--result", "pass", "--report", report).status, 0);
+  }
+  assert.equal(run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", report).status, 0);
+  const initial = readLaneSelectionReceipt(worktree);
+  assert.equal(initial.phase, "first-candidate");
+  assert.deepEqual(initial.lanes.map((lane) => lane.command), [first, second]);
+  assert.ok(initial.lanes.every((lane) => /CI-equivalent report/.test(lane.reason)));
+  assert.equal(run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", report).status, 2,
+    "a successful first candidate is declared once");
+
+  writeFileSync(path.join(worktree, "a.txt"), "followup\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "followup"], home);
+  const followHead = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const selected = path.join(root, "code-tests.json");
+  const selectedBytes = JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
+    lanes: [{ command: first, reason: "changed unit maps to this lane" }] });
+  const selectedKey = createHash("sha256").update(selectedBytes).digest("hex");
+  writeFileSync(selected, selectedBytes);
+  const extra = run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", selected,
+    "--command", second, "--result", "pass");
+  assert.equal(extra.status, 2, "an unselected extra lane is refused");
+  assert.match(extra.stderr, /--code-tests must select this lane exactly once/);
+  assert.equal(run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", selected,
+    "--command", first, "--result", "pass").status, 0);
+  const laneRows = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
+  const selectedRow = laneRows.find((row) => row.command === first && row.laneKey === selectedKey);
+  assert.deepEqual(selectedRow.selection, { kind: "code-tests", key: selectedKey, reason: "changed unit maps to this lane" });
+  writeFileSync(selected, selectedBytes.replace("changed unit", "tampered unit"));
+  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", selected).status, 1,
+    "changing the evidence bytes changes the selection key and invalidates its run");
+  writeFileSync(selected, selectedBytes);
+  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", selected).status, 0);
+  const followup = readLaneSelectionReceipt(worktree);
+  assert.deepEqual(followup.selection, { kind: "code-tests", key: selectedKey });
+  assert.equal(followup.lanes[0].reason, "changed unit maps to this lane");
+  assert.equal(run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", report).status, 2,
+    "followup receipts retain that the first candidate already ran");
+
+  const none = path.join(root, "code-tests-none.json");
+  writeFileSync(none, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree), lanes: [] }));
+  const noneRun = run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", none,
+    "--command", first, "--result", "pass");
+  assert.equal(noneRun.status, 2, "None selection permits no heavy run");
+  assert.match(noneRun.stderr, /--code-tests must select this lane exactly once/);
+  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", none).status, 0);
+  assert.deepEqual(readLaneSelectionReceipt(worktree).lanes, []);
+  const stale = path.join(root, "code-tests-stale.json");
+  writeFileSync(stale, JSON.stringify({ schemaVersion: 1,
+    source: { ...sourceIdentity(worktree), head: "0".repeat(40) }, lanes: [] }));
+  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", stale).status, 2,
+    "stale source-bound code-test evidence is refused");
+});
+
 test("the PR-open check refuses a diff naming desktop-renderer with no recorded run (pre-PR Vitest lanes ruling)", (t) => {
   const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-");
   t.after(cleanup);
@@ -46,7 +135,7 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   git(worktree, ["commit", "--quiet", "-m", "base"], home);
   const report = path.join(root, "lanes.txt");
   writeFileSync(report, REPORT);
-  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", args.includes("--impact") ? "followup" : "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home } });
   const refused = run("check", "--worktree", worktree, "--report", report);
   assert.equal(refused.status, 1);
   assert.match(refused.stdout, /^MISSING-LANE pnpm test:desktop-renderer:/m);
@@ -101,7 +190,7 @@ test("a result names the commit it ran: a run refuses another HEAD or a modified
   const old = git(worktree, ["rev-parse", "HEAD"], home).trim();
   git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "the PR head"], home);
   const intended = git(worktree, ["rev-parse", "HEAD"], home).trim();
-  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home } });
   const pass = 'node -e "process.exit(0)"';
   const movedCommand = `node -e "require('node:child_process').execFileSync('git',['checkout','--quiet','${old}'])"`;
   const report = path.join(root, "lanes.txt");
@@ -145,7 +234,7 @@ test('a lane detects uncommitted edits during a run and invalidates stale eviden
   const mutation = `node -e "require('fs').writeFileSync('a.txt','changed')"`;
   const report = path.join(root, 'lanes.txt');
   writeFileSync(report, `    ${pass}\n    ${mutation}\n`);
-  const run = (action, ...args) => spawnSync(process.execPath, [SCRIPT, action, '--worktree', wt, '--report', report, ...args], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  const run = (action, ...args) => spawnSync(process.execPath, [SCRIPT, action, '--worktree', wt, '--report', report, '--phase', 'first-candidate', ...args], { encoding: 'utf8', env: { ...process.env, HOME: home } });
   assert.equal(run('run', '--head', head, '--command', pass).status, 0);
   const changed = run('run', '--head', head, '--command', mutation);
   assert.equal(changed.status, 1, changed.stdout);
@@ -165,9 +254,11 @@ test("without the staging e2e identities the local web e2e lane is recorded not 
   writeFileSync(report, ["OUTSIDE THE TURBO GRAPH: 2 lane(s).", `    ${web}      (2 changed path(s) under e2e/)`, `    ${DESKTOP_E2E} (1 changed path(s))`, ""].join("\n"));
   const env = { ...process.env, HOME: home };
   delete env[STAGING_IDENTITY_KEY];
-  const run = (extra = {}) => spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report], { encoding: "utf8", env: { ...env, ...extra } });
+  const run = (extra = {}) => spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report, "--phase", "first-candidate"], { encoding: "utf8", env: { ...env, ...extra } });
   assert.equal(run().status, HARNESS ? 1 : 0, "the Desktop e2e lane is required only where the displayless harness exists");
-  spawnSync(process.execPath, [SCRIPT, "record", "--worktree", worktree, "--head", head, "--command", DESKTOP_E2E, "--result", "pass", "--report", report], { env });
+  const receipt = path.join(worktree, ".git", "vibe-lane-selection.json");
+  rmSync(receipt, { force: true });
+  spawnSync(process.execPath, [SCRIPT, "record", "--worktree", worktree, "--head", head, "--command", DESKTOP_E2E, "--result", "pass", "--report", report, "--phase", "first-candidate"], { env });
   const skipped = run();
   assert.equal(skipped.status, 0, skipped.stdout);
   assert.match(skipped.stdout, /^NOT-RUN-LANE pnpm test:e2e \(no staging e2e identities on this machine; the containerized or CI run covers it\)$/m);
@@ -175,10 +266,12 @@ test("without the staging e2e identities the local web e2e lane is recorded not 
   const records = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
   assert.deepEqual(records.filter((record) => record.command === web).map((record) => [record.head, record.result, record.reason]),
     [[head, "not-run", NOT_RUN_NO_IDENTITY]]);
+  rmSync(receipt, { force: true });
   assert.equal(run({ [STAGING_IDENTITY_KEY]: "set" }).status, 1, "a machine with the identity in its environment runs the web lane");
   mkdirSync(path.join(worktree, "apps", "app"), { recursive: true });
   writeFileSync(path.join(worktree, "apps", "app", ".env.local"), `${STAGING_IDENTITY_KEY}=""\n`);
   assert.equal(run().status, 0, "a blank value is not an identity");
+  rmSync(receipt, { force: true });
   writeFileSync(path.join(worktree, "apps", "app", ".env.local"), `OTHER=1\n${STAGING_IDENTITY_KEY}='secret'\n`);
   const required = run();
   assert.equal(required.status, 1);
@@ -228,7 +321,7 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${lane}      (1 changed path(s))\n`);
   const sessionReport = path.join(root, "session-lane.txt");
   writeFileSync(sessionReport, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${sessionCommand}\n`);
-  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args, "--phase", "first-candidate"], { encoding: "utf8", env: { ...process.env, HOME: home } });
   assert.deepEqual(missingLanes([lane], [{ command: lane, head, laneKey: "scope1", result: "main-preexisting", mainSha }], { laneKey: "scope1" }), []);
   assert.deepEqual(missingLanes([lane], [{ command: lane, head, laneKey: "scope1", result: "main-preexisting" }], { laneKey: "scope1" }), [lane], "it names the main it failed on");
   const records = path.join(worktree, ".git", "vibe-lane-results.json");
@@ -242,6 +335,7 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   assert.equal(checked.status, 0, checked.stdout);
   assert.match(checked.stdout, /^MAIN-PREEXISTING-LANE node -e /m);
   assert.ok(checked.stdout.includes(mainSha));
+  rmSync(path.join(worktree, ".git", "vibe-lane-selection.json"), { force: true });
   const sessionCaused = run("run", "--worktree", worktree, "--head", head, "--command", sessionCommand, "--report", sessionReport, "--main-worktree", mainCheckout, "--main-sha", mainSha);
   assert.equal(sessionCaused.status, 1, "a lane that passes on main is the session's failure");
   assert.match(sessionCaused.stdout, /^recorded fail for node -e /m);

@@ -145,6 +145,11 @@ path merely because another rule describes how its content should look.
      of a shared helper). Each is blocking. For a `duplicate-helper` diff
      finding, cite both the added function and the identical function in
      another changed file or the base tree; the added copy is the finding.
+     Apply the same ownership check to policy and classification logic, not
+     only identical helper bodies. When two intake, validation, handoff or
+     lifecycle surfaces classify the same input, enumerate their cases and
+     require one shared lower-level owner; a second classifier is blocking
+     even when its current happy path agrees.
    - Leftovers (`design-pass.md`, "Red flags"): list every file the diff
      deleted, renamed or extracted from with
      `git -C <wt> diff --name-status -M <base>`, and every export it removed.
@@ -172,6 +177,10 @@ path merely because another rule describes how its content should look.
      follow an import, a renamed or retired symbol, setup or a type; any changed
      assertion, expected value, matcher, case, skip, tolerance or timeout is
      blocking, and so is a repair the change log does not record as one.
+     Deleted named expectations, fixture members and expected collection
+     entries are weakened assertions too, even when an aggregate expectation
+     still passes. They stay unless a cited human behavior ruling makes that
+     exact expectation obsolete.
    - A retired-only deletion (the inventory's
      `retiredTests`) is allowed: read each deleted file or case at its base and
      confirm everything it exercised is code this session removed and the cited
@@ -352,6 +361,11 @@ path merely because another rule describes how its content should look.
     lacks, a key the rule does not support, split keys, a gate on a change
     the rule ships directly, or a new key where one already gates the surface
     is blocking. A cited source is not approval.
+17. Release claims: map each added CHANGELOG statement to the changed source
+    and the tests that prove its full scope. A claim that narrows broader code,
+    promises a denied edge case without its adversarial proof, or otherwise
+    overstates or understates the diff is blocking; quote the claim and the
+    contradicting source or test.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 after the committed merge. Canonical private diagnostics

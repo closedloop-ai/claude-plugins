@@ -454,8 +454,10 @@ changes and gates fields.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
    tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`
-   must pass. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
-   must pass (each test lane the report names has a passing run recorded at
+   must pass. The current source's `node ../skills/vibe/scripts/pre-pr-lanes.mjs check`
+   must pass: `--phase first-candidate --report <the repo's lane report output>`
+   initially, or the matching `--phase followup --impact <qa-impact JSON>` /
+   `--code-tests <normalized evidence>` after a later change (each selected test lane has a passing run recorded at
    HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). On a machine
    without the staging e2e identities it records the local web e2e lane not
    run (`NOT-RUN-LANE`) instead; the body's Test plan says that lane was not
