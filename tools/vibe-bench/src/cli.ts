@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compareResults } from "./comparison.ts";
@@ -14,6 +14,10 @@ import { runLocalEvals, runT2Evals } from "./eval-driver.ts";
 import { requireDeveloperMachine } from "./eval-policy.ts";
 import { evalCaseCatalog, evalChangedFiles } from "./eval-selection.ts";
 import { classifyVibeWorkingTreeScope } from "./vibe-change-scope.ts";
+import { comparePublicEvalResults, localRunForCompare,
+  validatePublicEvalResult } from "./eval-public-result.ts";
+import { queueCompletedNightlyResult, recoverPublicNightlyResults } from "./eval-publication-journal.ts";
+import { SystemEvalPublishAdapter } from "./eval-publish.ts";
 
 function readResults(path: string, shape: BenchmarkShape): ClaudeBenchmarkResult[] {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -47,8 +51,8 @@ export function upgradeResumeCaseIds(vibeDir: string, targetRef: string,
   return selected;
 }
 
-/** Local-only CLI; comparison requires explicit human explanations for regressions. */
-export async function main(args: string[]): Promise<string> {
+/** Local-only CLI; a repository root argument lets tests exercise baseline selection in isolation. */
+export async function main(args: string[], baselineRepo = fileURLToPath(new URL("../../../", import.meta.url))): Promise<string> {
   const [command, ...rest] = args;
   if (["run-local", "baseline", "eval-local", "eval-t2", "eval-upgrade-resume"].includes(command ?? "")) {
     requireDeveloperMachine();
@@ -60,6 +64,23 @@ export async function main(args: string[]): Promise<string> {
   if (command === "run-local" && (rest.length >= 4 && rest.length <= 6)) {
     const output = await runLocalClaude(rest[0], rest[1], rest[2], rest[3], rest[4], rest[5]);
     return `${output.jsonFile}\n${output.markdownFile}`;
+  }
+  if (command === "compare" && (rest.length === 1 ||
+      (rest.length === 3 && rest[1] === "--baseline"))) {
+    const root = join(baselineRepo, "evals/results/vibe");
+    const requested = rest[2] ?? "latest";
+    if (requested !== "latest" && !/^\d+\.\d+\.\d+$/.test(requested)) {
+      throw new Error("eval-compare-baseline-invalid");
+    }
+    const file = requested === "latest" ? join(root, "latest.json") : (() => {
+      const versionDir = join(root, requested);
+      const dates = readdirSync(versionDir).filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name)).sort();
+      if (!dates.length) throw new Error("eval-compare-baseline-missing");
+      return join(versionDir, dates.at(-1)!);
+    })();
+    const baseline = validatePublicEvalResult(JSON.parse(readFileSync(file, "utf8")) as unknown);
+    const local = localRunForCompare(JSON.parse(readFileSync(rest[0]!, "utf8")) as unknown, baseline);
+    return comparePublicEvalResults(baseline, local);
   }
   if (command === "compare" && (rest.length === 6 || rest.length === 7)) {
     const [baselineFile, candidateFile, baseWordsRaw, candidateWordsRaw, outputDir,
@@ -103,6 +124,13 @@ export async function main(args: string[]): Promise<string> {
     return JSON.stringify(classifyVibeWorkingTreeScope(rest[0], rest[1],
       evalChangedFiles(rest[0], rest[1])), null, 2);
   }
+  if (command === "eval-publish" && rest.length === 7) {
+    const [repo, runRootParent, outputDir, resultPath, runAt, uv, gh] = rest;
+    if (resultPath !== "RECOVER") queueCompletedNightlyResult(outputDir, resultPath, runAt);
+    const outcomes = await recoverPublicNightlyResults({ repo, runRootParent, outputDir },
+      new SystemEvalPublishAdapter(gh, uv));
+    return outcomes.length ? outcomes.join("\n") : "VIBE_NIGHTLY_PUBLISH_NONE";
+  }
   if (command === "eval-t2" && rest.length === 8) {
     const output = await runT2Evals({ repo: rest[0], pluginSha: rest[1], runRoot: rest[2],
       outputDir: rest[3], claudeExecutable: rest[4], codexExecutable: rest[5],
@@ -124,12 +152,18 @@ export async function main(args: string[]): Promise<string> {
       statefulTargetRef: rest[6] === rest[1] ? undefined : rest[6], runtimes: [...runtimes] });
     return `${output.jsonFile}\n${output.reportFile}`;
   }
-  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <baseline-results-or-batch-json> <candidate-results-or-batch-json> <base-words> <candidate-words> <output-dir> <vibe-or-fleet-one-writer> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> <nightly-results-store> | eval-scope <claude-plugins-repo> <base-ref> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [case ...] | eval-t2 <clean-main-repo> <sha> <empty-run-root> <results-store> <claude> <codex> <uv> <gh> | eval-upgrade-resume <claude-plugins-checkout> <worktree-head-sha> <empty-run-root> <output-dir> <claude> <codex> <target-ref> [claude|codex|both] [upgrade-resume-changed-definition|upgrade-resume-unchanged-definition]");
+  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <local-eval-run> [--baseline latest|<version>] | compare <baseline-results-or-batch-json> <candidate-results-or-batch-json> <base-words> <candidate-words> <output-dir> <vibe-or-fleet-one-writer> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> <nightly-results-store> | eval-scope <claude-plugins-repo> <base-ref> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [case ...] | eval-t2 <clean-main-repo> <sha> <empty-run-root> <results-store> <claude> <codex> <uv> <gh> | eval-upgrade-resume <claude-plugins-checkout> <worktree-head-sha> <empty-run-root> <output-dir> <claude> <codex> <target-ref> [claude|codex|both] [upgrade-resume-changed-definition|upgrade-resume-unchanged-definition]");
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).then(
     (output) => process.stdout.write(`${output}\n`),
-    (error) => { process.stderr.write(`${String(error)}\n`); process.exitCode = 1; },
+    (error) => {
+      const reason = process.argv[2] === "eval-publish"
+        ? ((error instanceof Error && /^eval-publish-[a-z0-9-]+$/.test(error.message))
+          ? error.message : "eval-publish-input-invalid") : String(error);
+      process.stderr.write(`${reason}\n`);
+      process.exitCode = 1;
+    },
   );
 }
