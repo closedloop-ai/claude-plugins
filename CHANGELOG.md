@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 776 words longer than in 1.1.40.
 
 #### Fixed
-- Protected native and detected Bash writes admit only the current linked worktree's exact private `vibe-changes.md`; sibling Git metadata, symlink creation and write-through targets remain denied.
+- The private `vibe-changes.md` exception admits the current linked worktree's exact regular path for native and detected interpreter writes. `cp`, `mv`, `install`, `rsync`, and `ln` destinations are denied there before execution, preventing symlink planting and write-through; sibling Git metadata remains denied.
 - Sessions started from an existing issue bind that issue as their live ticket without creating another ticket or mutating its current owner and status, including when the session is discarded.
 - Rulings checks distinguish quoted citations and test titles from operative quoted scope exclusions, and apply each human-source citation only to its own exclusion clause.
 - Citation-only and other self-bookkeeping repairs to vibe's private plans or records are made automatically and reported without asking the person for permission.

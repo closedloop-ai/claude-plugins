@@ -132,7 +132,3 @@ async function main(argv) {
   }
 }
 runWhenMain(import.meta.url, main);
-export {
-  classifyPlannedPaths,
-  intakeScope
-};

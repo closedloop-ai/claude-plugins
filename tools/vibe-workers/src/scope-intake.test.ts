@@ -1,56 +1,64 @@
 import { describe, expect, it } from "vitest";
-import { classifyPlannedPaths } from "./scope-intake.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const policy = {
-  version: 1 as const,
-  allowedPrefixes: ["packages/app/"],
-  allowedFiles: [] as string[],
-  forbiddenPrefixes: [".github/"],
-  forbiddenBasenames: ["AGENTS.md"],
-  rootTests: true,
-};
-const source = { kind: "base", commit: "a".repeat(40) };
-const loaded = () => ({ inventory: {
-  branch: "vibe/example", baseCommit: "b".repeat(40), pathPolicyFile: "vibe-handoff-paths.json", pathPolicySource: source,
-}, policy });
-const classified = (entries: Array<[string, "allowed" | "forbidden" | "outside"]>) =>
-  entries.map(([file, disposition]) => ({ file, classification: { disposition, reason: disposition } }));
+const scripts = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
+  "../../../plugins/vibe/skills/vibe/scripts");
+const scope = path.join(scripts, "dist", "scope-intake.mjs");
+const sessions = path.join(scripts, "vibe-sessions.mjs");
+const fixtureModule = new URL("../../../plugins/vibe/skills/vibe/scripts/test-fixtures.mjs", import.meta.url);
+const operator = ["--operator-id", "user-operator", "--operator-email", "operator@example.com"];
 
-describe("scope intake classification", () => {
-  it("refuses the ISS-12820 scripts-only plan and keeps canonical mixed classifications", () => {
-    const planned = [
-      "scripts/deploy/check-deployed-destructive-migrations.ts",
-      "scripts/lint/check-destructive-migrations.ts",
-    ];
-    const refused = classifyPlannedPaths({ worktree: "/repo", loaded: loaded(), planned,
-      classifications: classified(planned.map((file) => [file, "outside"] as [string, "outside"])) });
-    expect(refused.ok).toBe(false);
-    expect(refused.allOutsideAllowed).toBe(true);
-    expect(refused.allowed).toEqual([]);
-    expect(refused.outsideAllowed).toEqual([
-      "scripts/deploy/check-deployed-destructive-migrations.ts",
-      "scripts/lint/check-destructive-migrations.ts",
-    ]);
-    const mixed = classifyPlannedPaths({ worktree: "/repo", loaded: loaded(),
-      planned: ["packages/app/issues/list.tsx", "scripts/lint/check-destructive-migrations.ts"],
-      classifications: classified([
-        ["packages/app/issues/list.tsx", "allowed"],
-        ["scripts/lint/check-destructive-migrations.ts", "outside"],
-      ]) });
-    expect(mixed.ok).toBe(true);
-    expect(mixed.allowed).toEqual(["packages/app/issues/list.tsx"]);
+async function session() {
+  const fixtures = await import(fixtureModule.href);
+  const fixture = fixtures.makeHome("vibe-scope-intake-vitest-");
+  const checkout = path.join(fixture.home, "symphony-alpha");
+  fixtures.makeCheckout({ ...fixture, checkout, files: {
+    "vibe-handoff-paths.json": fixtures.SYMPHONY_PATH_POLICY,
+    "packages/app/issues/list.test.tsx": "test('list', () => {});\n",
+  } });
+  const created = fixtures.runNode(sessions, ["new", "--repo", checkout, "--slug", "scope-test",
+    "--summary", "Scope test", "--mode", "seeded", ...operator], fixture.home);
+  expect(created.status).toBe(0);
+  return { ...fixture, worktree: created.json.session.worktree, runNode: fixtures.runNode };
+}
+
+describe("scope intake public CLI", () => {
+  it("refuses scripts-only work and keeps mixed classifications", async () => {
+    const fixture = await session();
+    try {
+      const paths = ["scripts/deploy/check-deployed-destructive-migrations.ts",
+        "scripts/lint/check-destructive-migrations.ts"];
+      const refused = fixture.runNode(scope, ["--worktree", fixture.worktree, "--phase", "build",
+        ...paths.flatMap((file) => ["--path", file])], fixture.home);
+      expect(refused.status).toBe(1);
+      expect(refused.json.allOutsideAllowed).toBe(true);
+      expect(refused.json.allowed).toEqual([]);
+      expect(refused.json.outsideAllowed).toEqual(paths);
+
+      const mixed = fixture.runNode(scope, ["--worktree", fixture.worktree, "--phase", "build",
+        "--path", "packages/app/issues/list.test.tsx", "--path", paths[1]], fixture.home);
+      expect(mixed.status).toBe(0);
+      expect(mixed.json.ok).toBe(true);
+      expect(mixed.json.allowed).toEqual(["packages/app/issues/list.test.tsx"]);
+      expect(mixed.json.outsideAllowed).toEqual([paths[1]]);
+    } finally {
+      fixture.cleanup();
+    }
   });
 
-  it("keeps forbidden paths distinct from paths outside the allowlist", () => {
-    const result = classifyPlannedPaths({ worktree: "/repo", loaded: loaded(),
-      planned: [".github/workflows/release.yml", "scripts/release.mjs", "packages/app/page.tsx"],
-      classifications: classified([
-        [".github/workflows/release.yml", "forbidden"],
-        ["scripts/release.mjs", "outside"],
-        ["packages/app/page.tsx", "allowed"],
-      ]) });
-    expect(result.forbidden).toEqual([".github/workflows/release.yml"]);
-    expect(result.outsideAllowed).toEqual(["scripts/release.mjs"]);
-    expect(result.allowed).toEqual(["packages/app/page.tsx"]);
+  it("keeps forbidden paths distinct from paths outside the allowlist", async () => {
+    const fixture = await session();
+    try {
+      const result = fixture.runNode(scope, ["--worktree", fixture.worktree, "--phase", "build",
+        "--path", ".github/workflows/release.yml", "--path", "scripts/release.mjs",
+        "--path", "packages/app/issues/list.test.tsx"], fixture.home);
+      expect(result.status).toBe(0);
+      expect(result.json.forbidden).toEqual([".github/workflows/release.yml"]);
+      expect(result.json.outsideAllowed).toEqual(["scripts/release.mjs"]);
+      expect(result.json.allowed).toEqual(["packages/app/issues/list.test.tsx"]);
+    } finally {
+      fixture.cleanup();
+    }
   });
 });

@@ -55,6 +55,22 @@ test("a sourced sequencing ruling yields blocker-to-blocked edges and reports un
     unresolved: [{ reference: "#42", ruling: "ISS-300 waits until ISS-100 and #42 merge" }],
   });
   assert.deepEqual(sequencingRequirements(
+    '- Ruling 2026-11-04 (ticket: ISS-10): ISS-10 follows ISS-7; see ISS-8 for context\n',
+    {},
+  ), {
+    edges: [{ blocker: "ISS-7", blocked: "ISS-10" }],
+    unresolved: [],
+  }, "a ticket cited after the relation object is context, not another blocker");
+  for (const context of [", per ISS-8", " for ISS-8 context"]) {
+    assert.deepEqual(sequencingRequirements(
+      `- Ruling 2026-11-04 (ticket: ISS-10): ISS-10 follows ISS-7${context}\n`,
+      {},
+    ), {
+      edges: [{ blocker: "ISS-7", blocked: "ISS-10" }],
+      unresolved: [],
+    }, `a trailing ${context.trim()} citation is not another blocker`);
+  }
+  assert.deepEqual(sequencingRequirements(
     '- Ruling 2026-11-04 (operator message: release order): #500 waits until #42 merges\n',
     { 500: "ISS-300", 42: "ISS-200" },
   ), {
@@ -86,6 +102,7 @@ test("a sourced sequencing ruling yields blocker-to-blocked edges and reports un
   for (const ordinary of [
     "the PLN status follows the work",
     "reviewers wait for CI before commenting",
+    "QA follows the deploy for ISS-7",
   ]) {
     assert.deepEqual(sequencingRequirements(`- Ruling 2026-11-04 (ticket: ISS-9): ${ordinary}\n`, {}), {
       edges: [],

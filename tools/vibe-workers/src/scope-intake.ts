@@ -36,13 +36,13 @@ type PathClassifier = (input: {
   prototype: { owned: boolean; slug?: string | null };
   portableSurfaceAllowed: boolean;
 }) => PathClassification;
-export type IntakeScopeInput = {
+type IntakeScopeInput = {
   worktree: string;
   plannedPaths: string[];
   phase: Phase;
   inventoryScript?: string;
 };
-export type IntakeScopeResult = {
+type IntakeScopeResult = {
   ok: boolean;
   worktree: string;
   pathPolicyFile: string;
@@ -55,7 +55,7 @@ export type IntakeScopeResult = {
 };
 
 /** Classify planned files through the exact repository policy validated by handoff inventory. */
-export async function intakeScope(input: IntakeScopeInput): Promise<IntakeScopeResult> {
+async function intakeScope(input: IntakeScopeInput): Promise<IntakeScopeResult> {
   if (!input.worktree) throw new Error("--worktree is required");
   if (!Array.isArray(input.plannedPaths) || input.plannedPaths.length === 0) throw new Error("at least one --path is required");
   const worktree = resolve(input.worktree);
@@ -73,7 +73,7 @@ export async function intakeScope(input: IntakeScopeInput): Promise<IntakeScopeR
 }
 
 /** Aggregate the canonical handoff classifier's results into the intake response. */
-export function classifyPlannedPaths(input: { worktree: string; planned: string[];
+function classifyPlannedPaths(input: { worktree: string; planned: string[];
   loaded: { inventory: InventoryResult; policy: PathPolicy };
   classifications: Array<{ file: string; classification: PathClassification }> }): IntakeScopeResult {
   const dispositions = new Map(input.classifications.map((entry) => [entry.file, entry.classification.disposition]));

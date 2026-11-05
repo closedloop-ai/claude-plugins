@@ -48,7 +48,7 @@ export function classifyHandoffPath({
 }
 
 /** Whether the repository declaration forbids this literal path. */
-export function isForbiddenHandoffPath(policy, filePath) {
+function isForbiddenHandoffPath(policy, filePath) {
   return path.posix.basename(filePath) === PATH_POLICY_BASENAME ||
     Boolean(policy?.forbiddenPrefixes.some((prefix) => filePath.startsWith(prefix))) ||
     Boolean(policy?.forbiddenBasenames.includes(path.posix.basename(filePath)));

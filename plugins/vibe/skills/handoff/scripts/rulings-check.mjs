@@ -48,7 +48,9 @@ const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const AMENDS = /;\s*amends:\s*(\S.*)$/;
 const PROGRAM_RULING = /^\s*[-*]\s*Ruling\s+(\d{4}-\d{2}-\d{2})\s+\((operator message|AskUserQuestion|ticket):\s*(\S.*?)\):\s*(\S.*)$/gm;
-const SEQUENCING_RELATION = /^(?=.*(?:\b(?:ISS|FEA)-\d+\b|#\d+\b))(.*?)\b(?:waits?\s+(?:until|on|for)|follows?|is\s+blocked\s+by)\b(.*)$/i;
+const SEQUENCING_RELATION = /^(.*?)\b(?:waits?\s+(?:until|on|for)|follows?|is\s+blocked\s+by)\b(.*)$/i;
+const RELATION_PARTY_REFERENCE = /^\s*(?:the\s+)?(?:\b(?:ISS|FEA)-\d+\b|#\d+\b)/i;
+const OBJECT_CONTEXT = /(?:;|,\s*(?:per|see|for|because|since|as)\b|\s+(?:per|see|for|because|since|as)\s+(?=(?:ISS|FEA)-\d+\b|#\d+\b))/i;
 const TICKET_REFERENCE = /\b(?:ISS|FEA)-\d+\b/gi;
 const PULL_REQUEST_REFERENCE = /#(\d+)\b/g;
 
@@ -185,6 +187,9 @@ export function sequencingRequirements(program, pullRequestTickets = {}) {
     const ruling = match[4];
     const relation = ruling.match(SEQUENCING_RELATION);
     if (!relation) continue;
+    // A trailing attribution such as "the deploy for ISS-7" does not make the
+    // ticket the subject or object of the sequencing relation.
+    if (!RELATION_PARTY_REFERENCE.test(relation[1]) && !RELATION_PARTY_REFERENCE.test(relation[2])) continue;
     const left = resolvedTicketReferences(relation[1], pullRequestTickets);
     unresolved.push(...left.unresolved.map((reference) => ({ reference, ruling })));
     const targets = left.tickets;
@@ -193,11 +198,14 @@ export function sequencingRequirements(program, pullRequestTickets = {}) {
       continue;
     }
     const blocked = targets[0];
-    const right = resolvedTicketReferences(relation[2], pullRequestTickets);
-    if (right.hasReferences) right.unresolved.push(...namedDependencyReferences(relation[2]));
+    // Stop at a contextual citation rather than treating every ticket in
+    // the sentence as another object of the sequencing verb.
+    const dependencyClause = relation[2].split(OBJECT_CONTEXT, 1)[0].trim();
+    const right = resolvedTicketReferences(dependencyClause, pullRequestTickets);
+    if (right.hasReferences) right.unresolved.push(...namedDependencyReferences(dependencyClause));
     unresolved.push(...right.unresolved.map((reference) => ({ reference, ruling })));
     const resolved = [...new Set(right.tickets)].filter((blocker) => blocker !== blocked);
-    if (resolved.length === 0 && right.unresolved.length === 0) unresolved.push({ reference: relation[2].trim() || "blocking ticket", ruling });
+    if (resolved.length === 0 && right.unresolved.length === 0) unresolved.push({ reference: dependencyClause || "blocking ticket", ruling });
     for (const blocker of resolved) edges.push({ blocker, blocked });
   }
   return {

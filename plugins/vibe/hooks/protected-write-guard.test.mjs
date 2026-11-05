@@ -87,9 +87,30 @@ test("native and Bash writes admit only the linked worktree's own vibe change lo
   }
   for (const command of [
     `python -c "open('${changeLog}', 'a').write('entry')"`,
-    `cp prepared-entry.md '${changeLog}'`,
+    `node -e "require('fs').appendFileSync('${changeLog}', 'entry')"`,
   ]) {
     assert.equal(decision(run(worktree, "PreToolUse", "Bash", { command })), null, command);
+  }
+  writeFileSync(changeLog, "existing entry\n");
+  assert.equal(decision(run(worktree, "PreToolUse", "Write", { file_path: changeLog })), null,
+    "native Write admits an existing regular log file");
+  assert.equal(decision(run(worktree, "PreToolUse", "Bash", {
+    command: `python -c "open('${changeLog}', 'a').write('entry')"`,
+  })), null, "detected interpreter append admits an existing regular log file");
+  rmSync(changeLog);
+
+  const hookTarget = path.join(checkout, ".git", "hooks", "pre-commit");
+  const linkSource = path.join(base, "pending-link");
+  symlinkSync(hookTarget, linkSource);
+  for (const command of [
+    `ln -s '${hookTarget}' '${linkSource}-chain'; mv '${linkSource}-chain' '${changeLog}'; cp payload '${changeLog}'`,
+    `mv '${linkSource}' '${changeLog}'`,
+    `cp -R '${linkSource}' '${changeLog}'`,
+    `install '${linkSource}' '${changeLog}'`,
+    `rsync '${linkSource}' '${changeLog}'`,
+  ]) {
+    assert.equal(decision(run(worktree, "PreToolUse", "Bash", { command }))?.permissionDecision,
+      "deny", `destination writers cannot plant a link at the private change log: ${command}`);
   }
 
   for (const file_path of [
@@ -102,10 +123,21 @@ test("native and Bash writes admit only the linked worktree's own vibe change lo
     command: `python -c "open('${path.join(gitDir, "config")}', 'a').write('x')"`,
   }))?.permissionDecision, "deny");
 
-  const hookTarget = path.join(checkout, ".git", "hooks", "pre-commit");
   assert.equal(decision(run(worktree, "PreToolUse", "Bash", {
     command: `ln -s '${hookTarget}' '${changeLog}'`,
   }))?.permissionDecision, "deny", "the exception cannot create a dangling symlink");
+  mkdirSync(changeLog);
+  assert.equal(decision(run(worktree, "PreToolUse", "Write", { file_path: changeLog }))?.permissionDecision,
+    "deny", "the private log exception cannot admit an existing directory");
+  assert.equal(decision(run(worktree, "PreToolUse", "Bash", {
+    command: `python -c "open('${changeLog}', 'a').write('entry')"`,
+  }))?.permissionDecision, "deny", "detected interpreter writes cannot target a directory");
+  rmSync(changeLog, { recursive: true });
+  const fifo = spawnSync("mkfifo", [changeLog], { encoding: "utf8", timeout: 3000 });
+  assert.equal(fifo.status, 0, fifo.stderr);
+  assert.equal(decision(run(worktree, "PreToolUse", "Write", { file_path: changeLog }))?.permissionDecision,
+    "deny", "the private log exception cannot admit a FIFO");
+  rmSync(changeLog);
   symlinkSync(hookTarget, changeLog);
   assert.equal(decision(run(worktree, "PermissionRequest", "Write", { file_path: changeLog }))?.decision?.behavior,
     "deny", "native Write cannot follow the dangling change-log symlink");

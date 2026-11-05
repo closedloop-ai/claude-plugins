@@ -64,7 +64,7 @@ function isOwnChangeLog(root, target) {
     const effective = path.join(realpathSync(gitDir), "vibe-changes.md");
     if (target.lexical !== lexical || target.effective !== effective) return false;
     try {
-      if (lstatSync(target.lexical).isSymbolicLink()) return false;
+      if (!lstatSync(target.lexical).isFile()) return false;
     } catch (error) {
       if (error?.code !== "ENOENT") return false;
     }
@@ -174,7 +174,9 @@ function bashProtectedWrite(root, cwd, command) {
       }
     }
     if (destinationWriters.has(name) && args.length >= 2) {
-      const reason = decisionFor(args.at(-1), name !== "ln");
+      // The hook checks the whole command before execution. Any destination writer
+      // can plant a symlink that an earlier path check cannot yet observe.
+      const reason = decisionFor(args.at(-1), false);
       if (reason) return reason;
     }
     if (name === "sed" && args.some((arg) => arg === "-i" || arg.startsWith("-i"))
