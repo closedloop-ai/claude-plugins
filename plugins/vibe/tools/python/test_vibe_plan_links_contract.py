@@ -108,6 +108,23 @@ def test_the_plan_follows_the_ticket_safety_rules_and_a_refusal_goes_to_the_writ
     assert "the ticket worker publishes it as the session's PLN" in writer
 
 
+def test_citation_only_self_bookkeeping_is_fixed_without_asking_the_person() -> None:
+    ticket = flat(agent("vibe-ticket-worker"))
+    writer = flat(agent("vibe-change-worker"))
+    quality = flat(QUALITY.read_text())
+    skill = flat(VIBE_SKILL.read_text())
+    required = (
+        "self-bookkeeping",
+        "no scope, code, test or HEAD change",
+        "never `NEEDS_PERSON`",
+        "one line",
+    )
+    assert_all(ticket, required)
+    assert_all(writer, required)
+    assert_all(quality, required)
+    assert_all(skill, required)
+
+
 def test_pln_status_follows_the_work_with_stale_write_guards() -> None:
     rules = plan_rules()
     status = rules[rules.index("F. Status."):]

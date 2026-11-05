@@ -134,7 +134,9 @@ publishes it as the session's PLN (`quality-loop.md`, "Local plan"), so write
 it for an engineer who never saw the session, with repo-relative paths and no
 local absolute paths, usernames, personal emails, secrets, credentials or
 private session inputs. A plan problem the ticket worker returns is yours to
-fix in the local plan. Name scope,
+fix in the local plan. A `self-bookkeeping` repair to vibe's private plan or
+records has no scope, code, test or HEAD change: make it without permission,
+never return `NEEDS_PERSON`, and report the completed repair in one line. Name scope,
 owners, dependencies and checks, including every NEW Storybook component the
 request needs (or none). When the plan adds periodic or cross-surface work (a
 poller, interval, background lane, socket, subscription, feed or watcher), it
@@ -144,6 +146,15 @@ The plan gets no review: build in the same turn right after it
 (`quality-loop.md`, "Lean build loop"). No technical plan goes to the person
 running the session for approval.
 
+After the plan names every planned file, run
+`node <plugin-root>/skills/vibe/scripts/dist/scope-intake.mjs --worktree "<wt>" --phase <pull-request for a pull-request turn, otherwise build> --path <each planned file>`
+before any source edit. This uses the repository policy already validated by
+handoff inventory. When `allOutsideAllowed` is true, record every returned
+path as `Engineering needed (forbidden path): <path>; why: <need>`,
+build nothing and return `BLOCKED` with the command's clear
+engineering-routing message. For a mixed plan, record each outside or
+forbidden path the same way, remove it from implementation and build every
+allowed part without asking the person.
 Lock the Spec Card before code (`../skills/vibe/references/spec-card.md`): add
 its `plan` (owner files, files deliberately not touched) and save it with
 `node <plugin-root>/skills/vibe/scripts/spec-card.mjs save --worktree "<wt>" --stage locked <card>`.

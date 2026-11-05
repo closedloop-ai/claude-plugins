@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
@@ -86,8 +86,31 @@ export async function main(args: string[],
   }
 }
 
+/** Use a newly loaded child after fast-forward; SKIPPED only recovers prior durable RAN work. */
+export async function publishCompletedNightly(output: string, args: string[], runAt: string,
+  invoke: (args: string[]) => Promise<string> = (command) =>
+    new SystemNightlyCommands().node(command)): Promise<string> {
+  if (args.length !== 7) throw new Error("eval-publish-nightly-args-invalid");
+  const skipped = output.split(/\r?\n/).some((line) => line.startsWith("SKIPPED "));
+  const path = skipped ? "RECOVER" : output.trim().split(/\r?\n/).at(-1);
+  if (!path || (path !== "RECOVER" && (!isAbsolute(path) ||
+      !/^eval-t2-[a-zA-Z0-9.-]+\.json$/.test(path.split("/").at(-1)!)))) {
+    throw new Error("eval-publish-nightly-result-missing");
+  }
+  const cli = fileURLToPath(new URL("./cli.ts", import.meta.url));
+  try {
+    return await invoke(["--experimental-strip-types", cli, "eval-publish", args[0]!, args[1]!,
+      args[2]!, path, runAt, args[5]!, args[6]!]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    throw new Error(/^eval-publish-[a-z0-9-]+$/.test(message)
+      ? message : "eval-publish-input-invalid");
+  }
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
+  const runAt = new Date().toISOString();
   if (args[0] === "--notify-infra" && args.length === 3) {
     new SlackNightlyRegressionReporter(args[1]).reportInfrastructure({
       reason: args[2], occurredAt: new Date().toISOString(),
@@ -97,13 +120,20 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     });
   } else {
     main(args).then(
-      (output) => process.stdout.write(`${output}\n`),
+      async (output) => {
+        const publication = await publishCompletedNightly(output, args, runAt);
+        process.stdout.write(`${publication}\n${output}\n`);
+      },
       async (error) => {
         const claude = args.length === 7 ? args[3] : "claude";
         await reportNightlyInfrastructureFailure(errorReason(error),
           new SlackNightlyRegressionReporter(claude));
         process.exitCode = 1;
       },
-    );
+    ).catch(async (error) => {
+      await reportNightlyInfrastructureFailure(errorReason(error),
+        new SlackNightlyRegressionReporter(args[3] ?? "claude"));
+      process.exitCode = 1;
+    });
   }
 }

@@ -24,6 +24,8 @@ export interface EvalBaselineOutcome {
   reliable: boolean;
   nightlies: number;
   recentNightlyOutcomes: Array<{ passes: number; runs: number }>;
+  /** Latest nightly observation state. Missing on legacy artifacts means observed. */
+  latestAvailability?: { status: "observed" } | { status: "unavailable"; reason: string };
 }
 
 /** Content-keyed case evidence retained by the stored T2 baseline. */
@@ -165,6 +167,7 @@ export function buildEvalBaseline(input: {
       if (!record) continue;
       if (!record.result || record.invalidReason) throw new Error("eval-baseline-runtime-incomplete");
       for (const item of record.result.cases) {
+        if (item.unavailableReason !== undefined) continue;
         const outcomes = prior.get(item.id) ?? [];
         if (outcomes.some(Boolean)) throw new Error("eval-baseline-passing-case-rerun");
         outcomes.push(item.passed);
@@ -182,20 +185,31 @@ export function buildEvalBaseline(input: {
       if (!observations.length || observations.length > 1 + EVAL_POLICY.failureReruns) {
         throw new Error("eval-baseline-case-missing");
       }
-      const currentPasses = observations.some((item) => item.passed) ? 1 : 0;
+      const unavailable = observations.filter((item) => item.unavailableReason !== undefined);
+      const observed = observations.filter((item) => item.unavailableReason === undefined);
+      if (unavailable.length > 1 || (unavailable.length > 0 && observed.length > 0)) {
+        throw new Error("eval-baseline-case-availability-conflict");
+      }
+      const currentPasses = observed.some((item) => item.passed) ? 1 : 0;
       const previous = previousCases.get(definition.id);
       const prior = previous?.contentHash === definition.contentHash ? previous.outcomes[runtime] : undefined;
-      const totalObservations = 1 + (prior?.observations ?? 0);
+      const observedThisNight = unavailable.length === 0 ? 1 : 0;
+      const totalObservations = observedThisNight + (prior?.observations ?? 0);
       const passes = currentPasses + (prior?.passes ?? 0);
-      const passRate = passes / totalObservations;
-      const recentNightlyOutcomes = [...(prior?.recentNightlyOutcomes ?? []),
-        { passes: currentPasses, runs: 1 }].slice(-5);
+      const passRate = totalObservations > 0 ? passes / totalObservations : 0;
+      const recentNightlyOutcomes = unavailable.length
+        ? [...(prior?.recentNightlyOutcomes ?? [])]
+        : [...(prior?.recentNightlyOutcomes ?? []),
+          { passes: currentPasses, runs: 1 }].slice(-5);
       const recentObservations = recentNightlyOutcomes.reduce((sum, item) => sum + item.runs, 0);
       const recentPasses = recentNightlyOutcomes.reduce((sum, item) => sum + item.passes, 0);
       outcomes[runtime] = { observations: totalObservations, passes, passRate,
         reliable: recentObservations >= EVAL_POLICY.reliabilityMinimumObservations &&
           recentPasses / recentObservations >= EVAL_POLICY.reliabilityThreshold,
-        nightlies: (prior?.nightlies ?? 0) + 1, recentNightlyOutcomes };
+        nightlies: (prior?.nightlies ?? 0) + 1, recentNightlyOutcomes,
+        latestAvailability: unavailable.length
+          ? { status: "unavailable", reason: unavailable[0]!.unavailableReason! }
+          : { status: "observed" } };
     }
     return { ...definition, outcomes };
   });
@@ -214,6 +228,22 @@ export function buildEvalBaseline(input: {
   return { ...payload, resultHash: hash(payload) };
 }
 
+function baselineOutcomeInvalid(outcome: EvalBaselineOutcome | undefined): boolean {
+  if (!outcome) return true;
+  const availability = outcome.latestAvailability as { status?: unknown; reason?: unknown } | undefined;
+  if (availability?.status !== undefined && availability.status !== "observed" &&
+      availability.status !== "unavailable") return true;
+  const unavailable = availability?.status === "unavailable";
+  if (unavailable && (typeof availability.reason !== "string" || !availability.reason.trim())) return true;
+  return outcome.observations < (unavailable ? 0 : 1) || outcome.passes < 0 ||
+    outcome.passes > outcome.observations || outcome.nightlies < 1 ||
+    outcome.recentNightlyOutcomes.length < (unavailable ? 0 : 1) ||
+    outcome.recentNightlyOutcomes.length > 5 ||
+    outcome.recentNightlyOutcomes.some((item) => !Number.isInteger(item.passes) ||
+      !Number.isInteger(item.runs) || ![1, 3].includes(item.runs) ||
+      item.passes < 0 || item.passes > item.runs);
+}
+
 /** Reject a modified or structurally invalid immutable T2 baseline. */
 export function verifyEvalBaseline(result: EvalBaselineArtifact): void {
   const { resultHash, ...payload } = result;
@@ -226,13 +256,8 @@ export function verifyEvalBaseline(result: EvalBaselineArtifact): void {
           value !== null && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) ||
         (cost.agentUsd !== null && cost.judgeUsd !== null && cost.totalUsd !== null &&
           Math.abs(cost.agentUsd + cost.judgeUsd - cost.totalUsd) > 0.000001))) ||
-      result.cases.some((item) => [item.outcomes.claude, item.outcomes.codex].some((outcome) =>
-        !outcome || outcome.observations < 1 || outcome.passes < 0 ||
-        outcome.passes > outcome.observations || outcome.nightlies < 1 ||
-        outcome.recentNightlyOutcomes.length < 1 || outcome.recentNightlyOutcomes.length > 5 ||
-        outcome.recentNightlyOutcomes.some((item) => !Number.isInteger(item.passes) ||
-          !Number.isInteger(item.runs) || ![1, 3].includes(item.runs) ||
-          item.passes < 0 || item.passes > item.runs)) ||
+      result.cases.some((item) => [item.outcomes.claude, item.outcomes.codex]
+        .some(baselineOutcomeInvalid) ||
         (item.deterministic !== undefined && item.deterministic !== true) ||
         (item.kind !== undefined && item.kind !== "upgrade-resume"))) {
     throw new Error("eval-baseline-hash-mismatch");
@@ -391,6 +416,7 @@ export function isGreenEvalBaseline(artifact: EvalBaselineArtifact): boolean {
     .map((entry) => `${entry.runtime}:${entry.case}`));
   return artifact.cases.every((item) => (["claude", "codex"] as const).every((runtime) => {
     const outcome = item.outcomes[runtime];
+    if (outcome?.latestAvailability?.status === "unavailable") return false;
     const last = outcome?.recentNightlyOutcomes.at(-1);
     return last?.passes === last?.runs ||
       quarantined.has(`${runtime}:${item.id}`);

@@ -9,20 +9,25 @@ export interface NightlyTaskSummary {
   result: NightlyTaskResult;
   passed: number;
   failed: number;
+  unavailable: number;
   posted: "yes" | "no";
   path: string;
   failure: string | null;
 }
 
-function artifactCounts(path: string): { passed: number; failed: number } {
+function artifactCounts(path: string): { passed: number; failed: number; unavailable: number } {
   const artifact = JSON.parse(readFileSync(path, "utf8")) as {
     cases?: Array<{ outcomes?: Record<string, { recentNightlyOutcomes?: Array<{
       passes?: unknown; runs?: unknown;
-    }> }> }>;
+    }>; latestAvailability?: { status?: unknown } }> }>;
   };
   if (!Array.isArray(artifact.cases)) throw new Error("nightly-summary-artifact-invalid");
   return artifact.cases.reduce((total, item) => {
     for (const outcome of Object.values(item.outcomes ?? {})) {
+      if (outcome.latestAvailability?.status === "unavailable") {
+        total.unavailable += 1;
+        continue;
+      }
       const latest = outcome.recentNightlyOutcomes?.at(-1);
       if (!latest || typeof latest.passes !== "number" || typeof latest.runs !== "number" ||
           latest.passes < 0 || latest.runs < latest.passes) continue;
@@ -30,7 +35,7 @@ function artifactCounts(path: string): { passed: number; failed: number } {
       total.failed += latest.runs - latest.passes;
     }
     return total;
-  }, { passed: 0, failed: 0 });
+  }, { passed: 0, failed: 0, unavailable: 0 });
 }
 
 function artifactPath(lines: string[]): string | null {
@@ -51,7 +56,7 @@ export function nightlyTaskSummary(exitCode: number, output: string, logPath: st
   let failure = failures.at(-1) ?? (exitCode === 0 ? null
     : `VIBE_NIGHTLY_INFRA_FAILURE nightly process exited with status ${exitCode}`);
   let result: NightlyTaskResult = exitCode === 0 && !failure ? (skipped ? "SKIPPED" : "RAN") : "FAILED";
-  let counts = { passed: 0, failed: 0 };
+  let counts = { passed: 0, failed: 0, unavailable: 0 };
   if (result === "RAN" && artifact) {
     try { counts = artifactCounts(artifact); }
     catch { failure = "VIBE_NIGHTLY_INFRA_FAILURE nightly summary artifact is unreadable"; }

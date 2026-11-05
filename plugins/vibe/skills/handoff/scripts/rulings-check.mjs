@@ -8,6 +8,9 @@
 //        rulings-check.mjs --program <rulings.md> --record <orchestrator transcript or QA record> [--record <file>]...
 //        rulings-check.mjs --plan <get-document JSON of a PLN> [--plan-body <its latest version text>] [--plan ...]
 //        rulings-check.mjs --ruling <file with the cited ruling's words> --scope <ticket slug>[,<PRD slug>]
+//        rulings-check.mjs --sequencing <candidate rulings.md> [--pr-tickets <PR-number-to-ticket JSON>]
+//        rulings-check.mjs --record-sequencing <candidate ruling> --program <rulings.md>
+//          --links <confirmed BLOCKS links JSON> [--pr-tickets <PR-number-to-ticket JSON>]
 //
 // A ruling in a record is a line `Ruling <anything>: <decision>` (the resume
 // log's `- Ruling (operator): ...`, or the same line in a QA record). The
@@ -36,7 +39,7 @@
 // ruling names that ticket or its PRD (`--ruling` with `--scope`): rollout
 // tickets were once closed DONE on a ruling about a different surface.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { criteriaStates } from "./criteria-audit.mjs";
@@ -45,6 +48,11 @@ const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const AMENDS = /;\s*amends:\s*(\S.*)$/;
 const PROGRAM_RULING = /^\s*[-*]\s*Ruling\s+(\d{4}-\d{2}-\d{2})\s+\((operator message|AskUserQuestion|ticket):\s*(\S.*?)\):\s*(\S.*)$/gm;
+const SEQUENCING_RELATION = /^(.*?)\b(?:waits?\s+(?:until|on|for)|follows?|is\s+blocked\s+by)\b(.*)$/i;
+const RELATION_PARTY_REFERENCE = /^\s*(?:the\s+)?(?:\b(?:ISS|FEA)-\d+\b|#\d+\b)/i;
+const OBJECT_CONTEXT = /(?:;|,\s*(?:per|see|for|because|since|as)\b|\s+(?:per|see|for|because|since|as)\s+(?=(?:ISS|FEA)-\d+\b|#\d+\b))/i;
+const TICKET_REFERENCE = /\b(?:ISS|FEA)-\d+\b/gi;
+const PULL_REQUEST_REFERENCE = /#(\d+)\b/g;
 
 const EXCLUSION_LABEL = /^\s*(?:[-*]\s+)?(?:\[[ xX]\]\s*)?\**\s*(out[- ]of[- ]scope|non-?goals?|excluded|exclusions?|deferred|descoped|obsolete|not covered|GAP(?:-\d+)?)\s*\**\s*:\s*\**\s*(.*)$/i;
 const EXCLUSION_HEADING = /^#{2,6}\s+(?:out[- ]of[- ]scope|non-?goals?|excluded|exclusions|deferred|descoped|obsolete|not covered|gaps?)\b/i;
@@ -68,14 +76,29 @@ export function uncitedExclusions(body) {
       items = /^GAP/i.test(label[1]) ? [label[2]] : splitItems(label[2]);
     } else if (underHeading && /^\s*[-*]\s+/.test(line)) {
       items = splitItems(line.replace(/^\s*[-*]\s+(?:\[[ xX]\]\s*)?/, ""));
-    } else if (EXCLUSION_PHRASE.test(line)) {
-      items = line.split(/[|;]/).filter((clause) => EXCLUSION_PHRASE.test(clause));
+    } else {
+      const prose = withoutQuotedCitations(line);
+      if (EXCLUSION_PHRASE.test(prose)) {
+        items = prose.split(/[|;]/).filter((clause) => EXCLUSION_PHRASE.test(clause));
+      }
     }
     for (const item of items.map((text) => text.trim().replace(/^\*+|\*+$/g, "").trim()).filter(Boolean)) {
       if (!NOTHING.test(item) && !HUMAN_SOURCE.test(item)) uncited.push(item);
     }
   }
   return uncited;
+}
+
+/** Remove quoted references such as test titles, while retaining operative quoted scope prose. */
+function withoutQuotedCitations(line) {
+  return line.replace(/"[^"\n]*"|“[^”\n]*”|`[^`\n]*`/g, (quoted, offset, input) => {
+    if (quoted.startsWith("`")) return "";
+    const before = input.slice(0, offset);
+    const after = input.slice(offset + quoted.length);
+    const citationNoun = /^(?:\s|[,;:()])*(?:test|case|criterion|citation|title|heading|label|message|error|command|line|comment|phrase|string|copy)\b/i;
+    const citationCue = /\b(?:called|named|titled|quoted?|citation|test)\s*$/i;
+    return citationNoun.test(after) || citationCue.test(before) ? "" : quoted;
+  });
 }
 
 /** Items of a list line; a trailing citation clause ("..., per operator ruling") stays with its item. */
@@ -156,12 +179,135 @@ export function programRulingProblems(program, records) {
   return problems;
 }
 
+/** BLOCKS edges required by sourced human sequencing rulings in a program index. */
+export function sequencingRequirements(program, pullRequestTickets = {}) {
+  const edges = [];
+  const unresolved = [];
+  for (const match of program.matchAll(PROGRAM_RULING)) {
+    const ruling = match[4];
+    const relation = ruling.match(SEQUENCING_RELATION);
+    if (!relation) continue;
+    // A trailing attribution such as "the deploy for ISS-7" does not make the
+    // ticket the subject or object of the sequencing relation.
+    if (!RELATION_PARTY_REFERENCE.test(relation[1]) && !RELATION_PARTY_REFERENCE.test(relation[2])) continue;
+    const left = resolvedTicketReferences(relation[1], pullRequestTickets);
+    unresolved.push(...left.unresolved.map((reference) => ({ reference, ruling })));
+    const targets = left.tickets;
+    if (targets.length !== 1) {
+      if (left.unresolved.length === 0) unresolved.push({ reference: relation[1].trim() || "blocked ticket", ruling });
+      continue;
+    }
+    const blocked = targets[0];
+    // Stop at a contextual citation rather than treating every ticket in
+    // the sentence as another object of the sequencing verb.
+    const dependencyClause = relation[2].split(OBJECT_CONTEXT, 1)[0].trim();
+    const right = resolvedTicketReferences(dependencyClause, pullRequestTickets);
+    if (right.hasReferences) right.unresolved.push(...namedDependencyReferences(dependencyClause));
+    unresolved.push(...right.unresolved.map((reference) => ({ reference, ruling })));
+    const resolved = [...new Set(right.tickets)].filter((blocker) => blocker !== blocked);
+    if (resolved.length === 0 && right.unresolved.length === 0) unresolved.push({ reference: dependencyClause || "blocking ticket", ruling });
+    for (const blocker of resolved) edges.push({ blocker, blocked });
+  }
+  return {
+    edges: uniqueObjects(edges, (edge) => `${edge.blocker}>${edge.blocked}`),
+    unresolved: uniqueObjects(unresolved, (entry) => `${entry.reference}>${entry.ruling}`),
+  };
+}
+
+function ticketReferences(text) {
+  return [...text.matchAll(TICKET_REFERENCE)].map((match) => match[0].toUpperCase());
+}
+
+function resolvedTicketReferences(text, pullRequestTickets) {
+  const tickets = ticketReferences(text);
+  const unresolved = [];
+  let hasReferences = tickets.length > 0;
+  for (const pr of text.matchAll(PULL_REQUEST_REFERENCE)) {
+    hasReferences = true;
+    const resolved = pullRequestTickets[pr[1]] ?? pullRequestTickets[Number(pr[1])];
+    if (typeof resolved === "string" && /^(?:ISS|FEA)-\d+$/i.test(resolved)) tickets.push(resolved.toUpperCase());
+    else unresolved.push(`#${pr[1]}`);
+  }
+  return { tickets: [...new Set(tickets)], unresolved, hasReferences };
+}
+
+function namedDependencyReferences(text) {
+  const remainder = text.replace(TICKET_REFERENCE, " ").replace(PULL_REQUEST_REFERENCE, " ");
+  return [...remainder.matchAll(/\b(?:the\s+)?(?:[a-z][a-z0-9-]*\s+){1,3}(?:ticket|issue|pull request)\b/gi)]
+    .map((match) => match[0].replace(/^(?:and|or)\s+/i, "").trim());
+}
+
+function uniqueObjects(values, keyOf) {
+  const seen = new Set();
+  return values.filter((value) => {
+    const key = keyOf(value);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function confirmedBlockLinks(file) {
+  const parsed = JSON.parse(readFileSync(file, "utf8"));
+  if (!Array.isArray(parsed)) throw new Error("--links must contain a JSON array of confirmed artifact links");
+  return new Set(parsed.filter((link) => link?.linkType === "BLOCKS").map((link) => {
+    const source = link.sourceSlug ?? link.source;
+    const target = link.targetSlug ?? link.target;
+    return `${source}>${target}`;
+  }));
+}
+
+function recordSequencing(candidateFile, programFile, prTicketsFile, linksFile) {
+  const candidate = readFileSync(candidateFile, "utf8").trim();
+  const prTickets = prTicketsFile ? JSON.parse(readFileSync(prTicketsFile, "utf8")) : {};
+  const requirements = sequencingRequirements(candidate, prTickets);
+  const syntax = programRulingProblems(candidate, []);
+  const links = confirmedBlockLinks(linksFile);
+  const missing = requirements.edges.filter((edge) => !links.has(`${edge.blocker}>${edge.blocked}`));
+  const problems = [
+    ...syntax,
+    ...requirements.unresolved.map((entry) => `unresolved sequencing reference ${entry.reference}`),
+    ...(requirements.edges.length === 0 && requirements.unresolved.length === 0 ? ["candidate contains no sequencing dependency"] : []),
+    ...missing.map((edge) => `missing confirmed BLOCKS link ${edge.blocker} -> ${edge.blocked}`),
+  ];
+  if (problems.length > 0) return { ok: false, ...requirements, missing, problems };
+  const current = readFileSync(programFile, "utf8");
+  if (!current.split("\n").includes(candidate)) {
+    const next = `${current}${current && !current.endsWith("\n") ? "\n" : ""}${candidate}\n`;
+    const temporary = `${programFile}.${process.pid}.tmp`;
+    writeFileSync(temporary, next);
+    renameSync(temporary, programFile);
+  }
+  return { ok: true, ...requirements, missing: [], problems: [] };
+}
+
 function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
     ticket: { type: "string" }, program: { type: "string" }, record: { type: "string", multiple: true },
     plan: { type: "string", multiple: true }, "plan-body": { type: "string", multiple: true }, "criteria-before": { type: "string" },
-    ruling: { type: "string" }, scope: { type: "string" },
+    ruling: { type: "string" }, scope: { type: "string" }, sequencing: { type: "string" },
+    "record-sequencing": { type: "string" }, "pr-tickets": { type: "string" }, links: { type: "string" },
   } });
+  if (values["record-sequencing"]) {
+    if (!values.program || !values.links || values.ticket || values.record?.length || values.plan?.length || values.ruling || values.scope || values.sequencing) {
+      throw new Error("--record-sequencing requires --program and --links and cannot be combined with other checks");
+    }
+    const result = recordSequencing(values["record-sequencing"], values.program, values["pr-tickets"], values.links);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return result.ok ? 0 : 1;
+  }
+  if (values.links) throw new Error("--links requires --record-sequencing");
+  if (values.sequencing) {
+    if (values.ticket || values.program || values.record?.length || values.plan?.length || values.ruling || values.scope) {
+      throw new Error("--sequencing cannot be combined with ticket, program, plan or ruling checks");
+    }
+    const prTickets = values["pr-tickets"] ? JSON.parse(readFileSync(values["pr-tickets"], "utf8")) : {};
+    const result = sequencingRequirements(readFileSync(values.sequencing, "utf8"), prTickets);
+    const ok = result.unresolved.length === 0;
+    process.stdout.write(`${JSON.stringify({ ok, ...result }, null, 2)}\n`);
+    return ok ? 0 : 1;
+  }
+  if (values["pr-tickets"]) throw new Error("--pr-tickets requires --sequencing");
   if (values.ruling || values.scope) {
     if (!values.ruling || !values.scope) throw new Error("--ruling <file> and --scope <ticket slug>[,<PRD slug>] go together");
     const slugs = values.scope.split(",").map((slug) => slug.trim()).filter(Boolean);

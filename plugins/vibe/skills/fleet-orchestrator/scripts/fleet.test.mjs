@@ -10,6 +10,7 @@ import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
+const LOAD_CHECK = join(SCRIPTS, 'load-check.sh');
 const TIMEOUT = { timeout: 20_000 };
 const RELATIVE_IMPORT = /^import [^;]*? from (['"])(\.{1,2}\/[^'"]+)\1;/gms;
 const PLUGIN_ROOT = realpathSync(join(SCRIPTS, '..', '..', '..'));
@@ -30,15 +31,17 @@ function fixture(config) {
   // work-dir.mjs resolves the orchestration dir with the real node; every other node call is recorded.
   writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   writeFileSync(join(bin, 'ssh'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${root}/ssh-args\nexec bash -c "\${@: -1}"\n`);
+  writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_LOAD:-0}"\n');
+  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "${FLEET_TEST_LOAD:-0}"\n');
+  writeFileSync(join(bin, 'getconf'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_CORES:-8}"\n');
   writeRemoteCodexStub(bin, PLUGIN_ROOT);
-  chmodSync(join(bin, 'node'), 0o755);
-  chmodSync(join(bin, 'ssh'), 0o755);
+  for (const command of ['node', 'ssh', 'cut', 'sysctl', 'getconf']) chmodSync(join(bin, command), 0o755);
   const prompt = join(root, 'prompts', 'w1-01-start.md');
   mkdirSync(join(root, 'prompts'));
   writeFileSync(prompt, '$vibe ISS-1\n');
   const run = (args, env = {}) => spawnSync('bash', [FLEET, orch, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), FLEET_LOAD: '0 8', ...env },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), ...env },
   });
   const argv = (result) => result.stdout.split('\n').filter((l) => l.startsWith('arg:')).map((l) => l.slice(4));
   return { root, orch, prompt, run, argv };
@@ -301,11 +304,43 @@ test('rejects unknown machines and actions with usage', TIMEOUT, () => {
 
 test('a heavy slot refuses a machine whose load per core is over the limit and names the other machine', TIMEOUT, () => {
   const f = fixture('HEAVY_SLOTS=2\n');
-  const busy = f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'ran'], { FLEET_LOAD: '34 18' });
+  const evaluate = (load, cores, env = {}) => spawnSync('bash', [LOAD_CHECK, '--evaluate', String(load), String(cores)], {
+    encoding: 'utf8', env: { ...process.env, ...env },
+  });
+  const busy = evaluate(34, 18);
   assert.equal(busy.status, 4);
   assert.equal(busy.stdout, '');
   assert.match(busy.stderr, /load 34 on 18 cores is over 1\.5 per core.*run this heavy check on the other machine/);
-  assert.equal(f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'ran'], { FLEET_LOAD: '20 18' }).stdout, 'ran\n');
-  assert.equal(f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'ran'], { FLEET_LOAD: '34 18', FLEET_FORCE_HERE: '1' }).stdout, 'ran\n');
-  assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran'], { FLEET_LOAD: '34 18' }).stdout, 'ran\n', 'only heavy slots are load-checked');
+  const localBusy = f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'must-not-run'],
+    { FLEET_TEST_LOAD: '34', FLEET_TEST_CORES: '18' });
+  assert.equal(localBusy.status, 4, localBusy.stdout + localBusy.stderr);
+  assert.doesNotMatch(localBusy.stdout, /must-not-run/);
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const remoteBusy = f.run(['remote', 'slot', 'heavy', 'w2 tests', f.root, 'echo', 'must-not-run'],
+    { FLEET_TEST_LOAD: '34', FLEET_TEST_CORES: '18' });
+  assert.equal(remoteBusy.status, 4, remoteBusy.stdout + remoteBusy.stderr);
+  assert.doesNotMatch(remoteBusy.stdout, /must-not-run/);
+  assert.equal(evaluate(20, 18).status, 0);
+  const missingReason = evaluate(34, 18, { FLEET_FORCE_HERE: '1' });
+  assert.equal(missingReason.status, 4);
+  assert.match(missingReason.stderr, /requires an operator-set reason/);
+  const forced = f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'cat', join(f.root, 'locks', 'heavy-1.lock', 'owner')],
+    { MAX_LOAD_PER_CORE: '1000000', FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator kept the signed release lane local' });
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.match(forced.stdout, /force reason: operator kept the signed release lane local/);
+  const ceiling = evaluate(252, 18, { FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator requested local verification' });
+  assert.equal(ceiling.status, 4);
+  assert.match(ceiling.stderr, /hard ceiling of 4 per core/);
+  const remoteForced = f.run(['remote', 'slot', 'heavy', 'w2 tests', f.root, 'cat', join(f.root, 'locks', 'heavy-1.lock', 'owner')],
+    { MAX_LOAD_PER_CORE: '1000000', FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator kept the remote signing lane' });
+  assert.equal(remoteForced.status, 0, remoteForced.stderr);
+  assert.match(remoteForced.stdout, /force reason: operator kept the remote signing lane/);
+  const emptyReason = f.run(['local', 'slot', 'shared', 'w3 tests', f.root, 'cat', join(f.root, 'locks', 'shared-1.lock', 'owner')],
+    { FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: '' });
+  assert.equal(emptyReason.status, 0, emptyReason.stderr);
+  assert.doesNotMatch(emptyReason.stdout, /force reason:/, 'an empty reason is never recorded');
+  assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran']).stdout, 'ran\n', 'only heavy slots are load-checked');
+  const skill = readFileSync(join(SCRIPTS, '..', 'SKILL.md'), 'utf8');
+  assert.match(skill, /Writers never set `FLEET_FORCE_HERE`[\s\S]*or `FLEET_LOAD`/);
+  assert.doesNotMatch(readFileSync(LOAD_CHECK, 'utf8'), /FLEET_LOAD/, 'production admission has no caller-supplied load override');
 });

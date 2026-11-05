@@ -203,6 +203,41 @@ test("new requires a seeded or blank mode and records the branch's Vercel URLs",
   assert.equal(listed.json.sessions[0].liveTicket, null);
 });
 
+test("a session started from ISS-12820 binds that issue as its live ticket", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const existing = runNode(
+    SCRIPT,
+    ["new", "--slug", "destructive-gate", "--summary", "Destructive gate", "--mode", "seeded", "--ticket", "ISS-12820", ...OPERATOR_ARGS],
+    home
+  );
+  assert.equal(existing.status, 0, existing.stderr);
+  assert.equal(existing.json.session.ticket, "ISS-12820");
+  assert.equal(existing.json.session.liveTicket, "ISS-12820");
+  assert.equal(existing.json.session.liveTicketCreatedBySession, false);
+  const cannotPromote = runNode(SCRIPT, ["touch", "--worktree", existing.json.session.worktree,
+    "--live-ticket", "ISS-12820", "--created-live-ticket"], home);
+  assert.equal(cannotPromote.status, 1);
+  assert.match(cannotPromote.json.error, /not a bound existing ticket/);
+
+  const prd = runNode(
+    SCRIPT,
+    ["new", "--slug", "prd-source", "--summary", "PRD source", "--mode", "seeded", "--ticket", "PRD-729", ...OPERATOR_ARGS],
+    home
+  );
+  assert.equal(prd.status, 0, prd.stderr);
+  assert.equal(prd.json.session.ticket, "PRD-729");
+  assert.equal(prd.json.session.liveTicket, null);
+
+  const skill = readFileSync(path.join(path.dirname(SCRIPT), "..", "SKILL.md"), "utf8");
+  const ticketWorker = readFileSync(path.join(path.dirname(SCRIPT), "..", "..", "..", "agents", "vibe-ticket-worker.md"), "utf8");
+  assert.match(skill, /When the returned\s+`session\.liveTicket` is the originating issue,[\s\S]*do not dispatch\s+`vibe-ticket-worker`[\s\S]*never queue `create` mode/);
+  assert.match(skill, /liveTicketCreatedBySession[\s\S]*leave the bound ticket's status and owner untouched/);
+  assert.doesNotMatch(skill, /`vibe-ticket-worker` in `bind` mode/);
+  assert.doesNotMatch(ticketWorker, /## Bind mode/);
+  assert.match(ticketWorker, /--created-live-ticket/);
+});
+
 test("new records the person running the session and refuses to start without them", (t) => {
   const { home, checkout } = setup(t);
   rememberRepo(home, checkout);
@@ -796,7 +831,7 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
 test("discard reports what would be lost, then requests the schema drop and deletes the pushed branch everywhere so the slug can be reused", (t) => {
   const { checkout, home, root, worktree } = newSession(t, "throw-away");
   const gh = ghStub(root, 0);
-  runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-30"], home);
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-30", "--created-live-ticket"], home);
   git(worktree, ["push", "--quiet", "-u", "origin", "vibe/throw-away"], home);
   writeFileSync(path.join(worktree, "draft.txt"), "unsaved\n");
 
@@ -820,7 +855,7 @@ test("discard reports what would be lost, then requests the schema drop and dele
   ]);
   assert.equal(done.json.wouldLose.liveTicket, "ISS-30");
   assert.deepEqual(done.json.cancelEvidence, { discarded: true, branch: "vibe/throw-away", liveTicket: "ISS-30",
-    operatorId: "user-operator", operatorEmail: "operator@example.com" });
+    liveTicketCreatedBySession: true, operatorId: "user-operator", operatorEmail: "operator@example.com" });
   assert.equal(git(checkout, ["ls-remote", "--heads", "origin", "vibe/throw-away"], home), "");
   assert.equal(git(checkout, ["branch", "--list", "vibe/throw-away"], home), "");
   assert.deepEqual(runNode(SCRIPT, ["list"], home).json.sessions, []);
@@ -831,6 +866,21 @@ test("discard reports what would be lost, then requests the schema drop and dele
     home
   );
   assert.equal(again.status, 0, again.stderr);
+});
+
+test("discard leaves a pre-existing bound ticket untouched", (t) => {
+  const { checkout, home, root, worktree } = newSession(t, "bound-ticket", ["--ticket", "ISS-12820"]);
+  const gh = ghStub(root, 0);
+  const preview = runNode(SCRIPT, ["discard", "--worktree", worktree], home, gh.env);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(preview.json.wouldLose.liveTicket, "ISS-12820");
+  assert.equal(preview.json.wouldLose.liveTicketCreatedBySession, false);
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home, gh.env);
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.json.discarded, true);
+  assert.equal("cancelEvidence" in done.json, false);
+  assert.deepEqual(gh.calls(), []);
+  assert.equal(git(checkout, ["branch", "--list", "vibe/bound-ticket"], home), "");
 });
 
 test("discard keeps the session when the schema drop cannot be requested", (t) => {

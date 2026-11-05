@@ -14,6 +14,7 @@
 //   vibe-sessions.mjs prototype-result --worktree <path> --file <canonical result.json>
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
+//                                     [--created-live-ticket]
 //                                     [--live-plan PLN-123] [--live-plan-status DRAFT|APPROVED|EXECUTED]
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--clerk-org-id org_...]
@@ -57,7 +58,8 @@
 // the live ticket is assigned to them and handoff checks it still is.
 // The live ticket (ISS-12057) is `liveTicket`; `--handoff-ticket` and a
 // record's `handoffTicket` are read as the same field for sessions started
-// before it. `livePlan` is the session plan's implementation plan document
+// before it. `liveTicketCreatedBySession` distinguishes a ticket create mode
+// made from a pre-existing issue that the session only bound. `livePlan` is the session plan's implementation plan document
 // (PLN) that the ticket worker publishes from the local plans and links from
 // the live ticket, and `livePlanStatus` the status it last set on it
 // (operator ruling, 2026-10-19). `flag-snapshot` validates and saves the production flag snapshot
@@ -142,6 +144,7 @@ const MAX_SLUG_LENGTH = 40;
 // Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
 const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
+const ISSUE_PATTERN = /^(?:ISS|FEA)-\d+$/;
 const PLAN_PATTERN = /^PLN-\d+$/;
 // The PLN's status follows the work (operator ruling, 2026-10-19): DRAFT while
 // its plan is not built yet, APPROVED once the session wrote and checked the
@@ -192,6 +195,7 @@ const { positionals, values } = parseArgs({
     status: { type: "string" },
     mode: { type: "string" },
     "live-ticket": { type: "string" },
+    "created-live-ticket": { type: "boolean", default: false },
     "handoff-ticket": { type: "string" },
     "live-plan": { type: "string" },
     "live-plan-status": { type: "string" },
@@ -362,6 +366,7 @@ function listSessions(repo) {
         mode: record?.mode ?? null,
         operator: record?.operator ?? null,
         liveTicket: record?.liveTicket ?? null,
+        liveTicketCreatedBySession: record?.liveTicketCreatedBySession ?? false,
         livePlan: record?.livePlan ?? null,
         livePlanStatus: record?.livePlanStatus ?? null,
         createdAt: record?.createdAt ?? null,
@@ -435,7 +440,8 @@ function newSession({ prototype = false } = {}) {
     status: SessionStatus.Active,
     mode,
     operator,
-    liveTicket: null,
+    liveTicket: ISSUE_PATTERN.test(values.ticket ?? "") ? values.ticket : null,
+    liveTicketCreatedBySession: false,
     livePlan: null,
     livePlanStatus: null,
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),
@@ -468,6 +474,11 @@ function touchSession() {
   const liveTicket = values["live-ticket"] ?? values["handoff-ticket"];
   if (liveTicket !== undefined && !TICKET_PATTERN.test(liveTicket)) {
     throw new Error("--live-ticket must be a ClosedLoop slug such as ISS-123.");
+  }
+  if (values["created-live-ticket"] &&
+    !(liveTicket && (record.liveTicket === null ||
+      (record.liveTicketCreatedBySession === true && record.liveTicket === liveTicket)))) {
+    throw new Error("--created-live-ticket requires the newly created --live-ticket, not a bound existing ticket.");
   }
   const livePlan = values["live-plan"];
   if (livePlan !== undefined && !PLAN_PATTERN.test(livePlan)) {
@@ -519,6 +530,7 @@ function touchSession() {
     mode: values.mode ? requireMode(values.mode) : record.mode,
     operator: operatorFromArgs({ required: false }) ?? record.operator,
     liveTicket: liveTicket ?? record.liveTicket,
+    liveTicketCreatedBySession: values["created-live-ticket"] || record.liveTicketCreatedBySession,
     livePlan: livePlan ?? record.livePlan,
     livePlanStatus: livePlanStatus ?? record.livePlanStatus,
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
@@ -550,7 +562,8 @@ function showSession() {
  * branch, the worktree, and the local branch, in that order, so a failed
  * request or remote delete leaves the session intact. A handed-off session is never
  * discarded. The result carries the live ticket and operator read from the
- * record before it is deleted, for the worker that cancels the ticket.
+ * record before it is deleted. Cancellation evidence is returned only for a
+ * ticket that this session created, never for a pre-existing bound issue.
  */
 /**
  * Stops the session's recorded Storybook and Desktop, each only after proving it is still the process the
@@ -584,6 +597,7 @@ async function discardSession() {
     branch,
     summary: record?.summary ?? null,
     liveTicket: record?.liveTicket ?? null,
+    liveTicketCreatedBySession: record?.liveTicketCreatedBySession ?? false,
     operator,
     uncommittedFiles: changed ? changed.split("\n").map((line) => line.slice(3)) : [],
     pushed: git(worktree, ["ls-remote", "--heads", "origin", branch]) !== "",
@@ -617,8 +631,10 @@ async function discardSession() {
     remoteBranchDeleted: wouldLose.pushed,
     schemaCleanupRequested: wouldLose.pushed && !prototype,
     wouldLose,
-    ...(wouldLose.liveTicket ? { cancelEvidence: { discarded: true, branch, liveTicket: wouldLose.liveTicket,
-      operatorId: operator.id, operatorEmail: operator.email } } : {}),
+    ...(wouldLose.liveTicket && wouldLose.liveTicketCreatedBySession ? { cancelEvidence: {
+      discarded: true, branch, liveTicket: wouldLose.liveTicket, liveTicketCreatedBySession: true,
+      operatorId: operator.id, operatorEmail: operator.email,
+    } } : {}),
   };
 }
 
@@ -635,6 +651,10 @@ function requireOwnedSession(worktree, record, action) {
     ...(record.operator?.name ? { name: record.operator.name } : {}) });
   if (record.liveTicket !== null && !TICKET_PATTERN.test(record.liveTicket)) {
     throw new Error(`${action} requires a valid recorded live ticket or no ticket.`);
+  }
+  if (typeof record.liveTicketCreatedBySession !== "boolean" ||
+    (record.liveTicketCreatedBySession && !record.liveTicket)) {
+    throw new Error(`${action} requires valid live-ticket ownership provenance.`);
   }
   const prototype = isOwnedPrototypeSession(record, branch);
   if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
@@ -760,6 +780,8 @@ function withDefaults(record) {
     mode: rest.mode ?? null,
     operator: rest.operator ?? null,
     liveTicket: sessionLiveTicket(record),
+    liveTicketCreatedBySession: rest.liveTicketCreatedBySession === undefined
+      ? sessionLiveTicket(record) !== null : rest.liveTicketCreatedBySession,
     livePlan: rest.livePlan ?? null,
     livePlanStatus: rest.livePlanStatus ?? null,
     vercel: vercelWithDefaults(rest),

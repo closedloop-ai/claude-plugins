@@ -540,11 +540,13 @@ describe("production Claude CLI adapter", () => {
     const input = { agentName: "vibe-ticket-worker", input: "Cancel the operator's discarded ticket after live ownership verification",
       mode: "record", recordAction: "cancel", exclusiveRecordTurn: true, capabilities: [...graph, ...liveReads, recordWrite, update] };
     expect(run(value, { ...input, sessionless: { kind: "discarded" } }).status).toBe(1);
-    const evidence = { discarded: true, branch: "vibe/discarded-test", liveTicket: "ISS-1",
+    const evidence = { discarded: true, branch: "vibe/discarded-test", liveTicket: "ISS-1", liveTicketCreatedBySession: true,
       operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" };
+    expect(run(value, { ...input, sessionless: { kind: "discarded",
+      evidence: { ...evidence, liveTicketCreatedBySession: false } } }).status).toBe(1);
     expect(run(value, { ...input, worktree: deleted, sessionless: { kind: "discarded", evidence } }).status).toBe(1);
     const result = run(value, { ...input, sessionless: { kind: "discarded", evidence } });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     const proof = readProof(value.metadata)[0];
     expect(proof?.definition["vibe:vibe-ticket-worker"]?.tools).toContain(recordWrite.name);
     expect(proof?.definition["vibe:vibe-ticket-worker"]?.tools).toContain(update.name);
@@ -561,20 +563,21 @@ describe("production Claude CLI adapter", () => {
     execFileSync("git", ["worktree", "add", "-b", branch, target], { cwd: value.worktree, stdio: "ignore" });
     const metadata = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: target, encoding: "utf8" }).trim();
     writeFileSync(join(metadata, "vibe-session.json"), JSON.stringify({ worktree: target, branch, status: "active",
-      liveTicket: "ISS-2", operator: { id: "fixture-owner", email: "owner@example.invalid" } }));
-    const discardTarget = { worktree: target, confirmed: true, branch, liveTicket: "ISS-2",
+      liveTicket: "ISS-2", liveTicketCreatedBySession: true, operator: { id: "fixture-owner", email: "owner@example.invalid" } }));
+    const discardTarget = { worktree: target, confirmed: true, branch, liveTicket: "ISS-2", liveTicketCreatedBySession: true,
       operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" };
     const input = { agentName: "vibe-setup-worker", input: "DISCARD_OWNED_FIXTURE", sessionless: { kind: "startup" },
       mode: "record", recordAction: "discard", exclusiveRecordTurn: true, discardTarget };
     expect(run(value, { ...input, discardTarget: { ...discardTarget, operatorId: "different-owner" } }).status).toBe(1);
     expect(run(value, { ...input, discardTarget: { ...discardTarget, liveTicket: "ISS-3" } }).status).toBe(1);
+    expect(run(value, { ...input, discardTarget: { ...discardTarget, liveTicketCreatedBySession: false } }).status).toBe(1);
     mkdirSync(join(metadata, "vibe-record-turn.lock"));
     expect(run(value, input).status).toBe(1);
     expect(existsSync(target)).toBe(true);
     expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
     rmSync(join(metadata, "vibe-record-turn.lock"), { recursive: true });
     const result = run(value, input);
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(existsSync(target)).toBe(false);
     expect(existsSync(value.worktree)).toBe(true);
     expect(existsSync(JSON.parse(result.stdout).tracePath)).toBe(true);
@@ -582,7 +585,8 @@ describe("production Claude CLI adapter", () => {
     expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
     expect(readProof(value.metadata)[0]?.payload.input).toBe("DISCARD_OWNED_FIXTURE");
     expect(JSON.parse(result.stdout).data.discardReceipt.cancelEvidence).toEqual({ discarded: true, branch,
-      liveTicket: "ISS-2", operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" });
+      liveTicket: "ISS-2", liveTicketCreatedBySession: true,
+      operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" });
   });
   it("uses the canonical historical ticket read from preview through confirmed discard and preserves ticket absence", () => {
     const value = setup();
@@ -607,8 +611,9 @@ describe("production Claude CLI adapter", () => {
         sessionless: { kind: "startup" }, mode: "record", recordAction: "discard", exclusiveRecordTurn: true,
         discardTarget: { worktree: facts.worktree, branch: facts.branch, confirmed: true,
           operatorId: facts.operator.id, operatorEmail: facts.operator.email,
+          liveTicketCreatedBySession: facts.liveTicketCreatedBySession,
           ...(facts.liveTicket ? { liveTicket: facts.liveTicket } : {}) } });
-      expect(result.status, result.stderr).toBe(0);
+      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
       const receipt = JSON.parse(result.stdout).data.discardReceipt;
       expect(receipt.discarded).toBe(true);
       expect(receipt.wouldLose.liveTicket).toBe(legacyTicket ?? null);

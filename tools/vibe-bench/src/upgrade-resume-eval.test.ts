@@ -28,7 +28,8 @@ import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuit
   STATEFUL_INFRASTRUCTURE_RETRIES, runUpgradeCellWithRetry, assertUpgradeDefinitionPremise,
   requireIdleCodexLedger, targetMigrationChild, upgradeCasePasses, validateClaudeVersionRecord,
   validateClaudeLoadContract, validateUpgradeCapabilities,
-  validateCodexInstalledPlugin, statefulInfrastructureInvalidReason } from "./upgrade-resume-eval.ts";
+  validateCodexInstalledPlugin, statefulInfrastructureInvalidReason,
+  statefulSuite } from "./upgrade-resume-eval.ts";
 
 const REPO = realpathSync(join(import.meta.dirname, "../../.."));
 const RELEASE_REFS = [
@@ -273,6 +274,13 @@ test("S8 mixed suite merge gives every selected case exactly one owner", () => {
   const selected = ["pm-ordinary", "upgrade-resume-unchanged-definition"];
   assert.deepEqual(mergeEvalSuiteResults(ordinary, stateful, selected)?.cases.map((item) => item.id),
     selected);
+  const unavailable = statefulSuite("claude", [{ ...evidence(null, 1),
+    caseId: "upgrade-resume-unchanged-definition", passed: false,
+    unavailableReason: "NO_VALID_PRIOR fixture", cliVersion: ordinary.cliVersion }]);
+  const merged = mergeEvalSuiteResults(ordinary, unavailable, selected);
+  assert.equal(merged?.passed, 1);
+  assert.equal(merged?.failed, 0);
+  assert.equal(merged?.unavailable, 1);
   assert.throws(() => mergeEvalSuiteResults(ordinary, stateful, ["pm-ordinary"]),
     /coverage-mismatch/);
 });

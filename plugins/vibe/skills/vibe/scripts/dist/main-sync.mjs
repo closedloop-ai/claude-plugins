@@ -224512,6 +224512,7 @@ var recordContextSchema = external_exports.object({
     confirmed: external_exports.literal(true),
     branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
     liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/).optional(),
+    liveTicketCreatedBySession: external_exports.boolean(),
     operatorId: external_exports.string().min(1),
     operatorEmail: external_exports.string().email()
   }).strict().optional(),
@@ -224521,6 +224522,7 @@ var recordContextSchema = external_exports.object({
       discarded: external_exports.literal(true),
       branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
       liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/),
+      liveTicketCreatedBySession: external_exports.literal(true),
       operatorId: external_exports.string().min(1),
       operatorEmail: external_exports.string().email()
     }).strict() }).strict()

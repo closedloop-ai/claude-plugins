@@ -629,12 +629,16 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    actual transcript path>"`. The command verifies the transcript's own
    session ID. Never invent an ID or record the implementation writer as the
    orchestrator.
-6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
-   `vibe-ticket-worker` in create mode with the worktree, the
-   requirements worker's brief, the originating ticket if any, and the mode.
-   It records the ticket's slug on the session itself and links the
-   originating document (a PRD, an ISS or another document) to the ticket
-   (source PRODUCES ticket).
+6. Dispatch `vibe-setup-worker` to bootstrap the new worktree. Read the
+   `session` returned by `vibe-sessions.mjs new`. When the returned
+   `session.liveTicket` is the originating issue, do not dispatch
+   `vibe-ticket-worker` and never queue `create` mode: the session record is
+   already bound to that issue, preserving its current owner and status.
+   Otherwise dispatch the
+   ticket worker in create mode with the worktree, the requirements worker's
+   brief, the originating document if any, and the mode. Create mode records
+   the new issue's slug on the session and links the originating document (a
+   PRD, an ISS or another document) to the ticket (source PRODUCES ticket).
    Keep the ticket link in the session record for completion and handoff.
 7. Classify the work and stand up the environment (section 3). Run
    `scripts/vibe-triage.mjs classify` and keep its manifest
@@ -923,7 +927,10 @@ evidence, never by replacing the writer.
    PLN's status. Its `NEEDS_CHANGE` (a plan line
    that would publish a local path, a username, a secret or a private input)
    goes to the SAME writer to fix its local plan, then plan mode runs again.
-   None of it waits on or reaches the person, and it never delays the deploy.
+   A repair only to vibe's private plan or records, with no scope, code, test
+   or HEAD change, is `self-bookkeeping`: the writer makes it automatically,
+   it is never `NEEDS_PERSON`, and Root reports it in one line. None of it
+   waits on or reaches the person, and it never delays the deploy.
    A plan's body never goes into the ticket. Operational bootstrap/build/deploy helpers
    execute no implementation edits, and sharing waits for the writer's quick
    checks. The orchestrator alone commits through its owned script.
@@ -1174,26 +1181,30 @@ Whenever the person asks to throw a session away (at any point, for any
    the person it is already finished (a pull request was opened, or it went
    to design and engineering) and stop.
 2. Tell them in plain words what will be lost (the session's summary, its
-   unsaved files, their Vercel copy of the app and its data, and the ticket,
-   which is canceled) and ask them to confirm.
+   unsaved files, and their Vercel copy of the app and its data). When
+   `liveTicketCreatedBySession` is true, also say that session-created ticket
+   is canceled. A bound pre-existing ticket is not canceled or reassigned.
+   Ask them to confirm.
 3. On a clear yes, retain the validated remembered `<repo>` separately from
    the target `<wt>` and the parent-held preview's branch, live ticket and
    operator. Dispatch `vibe-setup-worker` from that stable `<repo>` with
    `sessionless: {kind: "startup"}`, mode `record`, `recordAction: "discard"`,
    `exclusiveRecordTurn: true`, graph/live reads only, and `discardTarget`:
    `{worktree: "<wt>", confirmed: true, branch, operatorId, operatorEmail}`
-   plus `liveTicket` only when present (`references/quality-loop.md`,
+   plus `liveTicket` and `liveTicketCreatedBySession` when present (`references/quality-loop.md`,
    "Exactly three helper paths"). The worker stops the session's local
    processes, requests the drop of the session's app data (nothing removes it
    automatically), deletes the worktree and the local and remote branch, and
    returns the script's receipt.
 4. Only after that successful result has `discarded: true`, retain its
-   `cancelEvidence` in the parent. If there was a live ticket, dispatch
+   `cancelEvidence` in the parent. If it names a ticket with
+   `liveTicketCreatedBySession: true`, dispatch
    `vibe-ticket-worker` from the retained `<repo>` in mode `record`, action
    `cancel`, with `exclusiveRecordTurn: true` and
    `sessionless: {kind: "discarded", evidence: <cancelEvidence>}`, granting
    only parent-discovered graph/live reads and the declared cancel writes. A
-   failed or partial discard blocks cancellation.
+   failed or partial discard blocks cancellation. Without that evidence,
+   leave the bound ticket's status and owner untouched.
 5. Tell them in one line that it is gone.
 
 ## References
