@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.40
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.39.
+
+#### Fixed
+- Before launching any model, the nightly validates each stateful upgrade case's stored prior digest against the archived release and records the result under `premises/<case>/evidence.json`. When the prior is valid but no released prior matches the current `vibe-change-worker` definition for an unchanged-definition case, the case is not launched. It is recorded as unavailable with a `NO_VALID_PRIOR` reason on both runtimes instead of failing as a harness error.
+- Unavailable cases count as neither a pass nor a failure. Suite results, the local eval report (a new `unavailable` column and a `complete-with-unavailable` status) and the scheduled nightly summary count them separately. The stored baseline keeps earlier observations and reliability history unchanged and records `latestAvailability` on the outcome. Failure-only reruns, regression alerts and deterministic failure alerts skip them, and a run or baseline with an unavailable case is not green.
+- The nightly prints a `VIBE_NIGHTLY_CASE_UNAVAILABLE` line with the runtime, case and reason for each unavailable case.
+- The local eval finalizer rejects a case that is marked unavailable but also passed or carries grader results, and rejects suite pass, fail or unavailable counts that do not match the case list.
+
 ### vibe v1.1.39
 
 #### Changed
