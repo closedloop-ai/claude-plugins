@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.1.43
 
 #### Changed
-- The nightly's ordinary Codex eval cases now use `gpt-5.6-sol` at low effort, with one shared model value for the TypeScript policy and Python runner default. The wording grader remains `gpt-6-luna`, and stateful upgrade-resume cells retain their runtime defaults. The new agent model starts a fresh baseline lineage, reported as a model-policy change rather than a regression.
+- The nightly's ordinary and stateful Codex eval cells now use `gpt-5.6-sol` from one shared model value for the TypeScript policy, Python runner default, and stateful App Server requests. Ordinary cases retain low effort; stateful cells retain their existing effort behavior. The wording grader remains `gpt-6-luna`. The new agent model starts a fresh baseline lineage, reported as a model-policy change rather than a regression.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 13 words longer than in 1.1.42 (origin/main at the merge).
 
 ### vibe v1.1.42
 

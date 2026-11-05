@@ -13,6 +13,7 @@ import type { CodexAppServerClient } from "../../shared/codex-app-server-client.
 import { labelWorkerThread, WORKER_THREAD_SOURCE } from
   "../../shared/thread-sidebar.mjs";
 import type { EvalCaseResult, EvalSuiteResult } from "./eval-collector.ts";
+import { EVAL_POLICY } from "./eval-policy.ts";
 import type { EvalRuntime } from "./eval-policy.ts";
 import type { EvalCaseDefinition, ReleaseReference, UpgradeTransition } from "./eval-selection.ts";
 import { archivePluginRelease, archiveSnapshotTarget, snapshotPluginVersion } from "./plugin-snapshot.ts";
@@ -31,6 +32,10 @@ const CODEX_MARKETPLACE = "closedloop-ai";
 const CODEX_PLUGIN_SELECTOR = `vibe@${CODEX_MARKETPLACE}`;
 const CODEX_CORE_SELECTOR = `closedloop-core@${CODEX_MARKETPLACE}`;
 const PROOF_FILE = "upgrade-resume-proof.txt";
+const statefulCodexModelInstruction = () =>
+  `In this isolated evaluation, pass model ${EVAL_POLICY.codexModel} for every spawned ` +
+  `Codex subagent, including the writer. Preserve each role's existing reasoning effort. ` +
+  `This instruction changes only the model selection in the loaded skill.`;
 
 const REQUIRED_GRAPH_OPERATIONS = ["get_routing_protocol", "code_projects", "code_symbols",
   "code_callers", "code_importers", "blast_radius_tickets", "code_grep", "code_snippet",
@@ -64,6 +69,8 @@ export interface UpgradeAttemptEvidence {
   failureCode: UpgradeFailureCode | null;
   wallMs: number;
   rootSessionId: string;
+  /** Validated native Codex model when an agent turn started. */
+  model?: string;
   trace: string[];
 }
 
@@ -76,6 +83,8 @@ export interface UpgradeCaseEvidence {
   agentCostUsd: number | null;
   tokens: Record<string, number> | null;
   cliVersion: string;
+  /** Validated native Codex model; absent when no Codex turn started. */
+  model?: string;
   target: ReleaseReference;
   prior: ReleaseReference;
   oldArchiveRetained: boolean;
@@ -163,7 +172,7 @@ export function scoreUpgradeTransitions(items: Array<{ role: "historical" | "cur
     (failure ? "ORACLE_MISMATCH" : null), transitions };
 }
 
-/** Convert stateful evidence into the existing native suite shape without new result fields. */
+/** Preserve the validated Codex model when building a stateful-only suite. */
 export function statefulSuite(runtime: EvalRuntime, evidence: UpgradeCaseEvidence[]): EvalSuiteResult {
   const cases = evidence.map(caseResult).sort((left, right) => left.id.localeCompare(right.id));
   const passed = cases.filter((item) => item.passed).length;
@@ -177,7 +186,12 @@ export function statefulSuite(runtime: EvalRuntime, evidence: UpgradeCaseEvidenc
       for (const [key, value] of Object.entries(item.tokens ?? {})) totals[key] = (totals[key] ?? 0) + value;
       return totals;
     }, {}) : null;
-  const payload = { runtime, cliVersion: evidence[0]?.cliVersion ?? "unknown", cases, passed,
+  const models = [...new Set(evidence.flatMap((item) => item.model ? [item.model] : []))];
+  if (runtime === "codex" && models.some((model) => model !== EVAL_POLICY.codexModel)) {
+    throw new Error("eval-stateful-codex-model-mismatch");
+  }
+  const payload = { runtime, cliVersion: evidence[0]?.cliVersion ?? "unknown",
+    ...(runtime === "codex" && models.length ? { model: models[0] } : {}), cases, passed,
     failed, unavailable, wallMs: evidence.reduce((sum, item) => sum + item.wallMs, 0),
     agentCostUsd, judgeCostUsd: runtime === "claude" ? 0 : null,
     costUsd: runtime === "claude" && agentCostUsd !== null ? agentCostUsd : null, tokens };
@@ -227,7 +241,8 @@ export async function runUpgradeCellWithRetry(input: { transitionRoot: string;
     ]),
     attemptResults: attempts.map((item, index) => ({ attempt: index + 1,
       passed: item.passed, failureCode: item.failureCode, wallMs: item.wallMs,
-      rootSessionId: item.rootSessionId, trace: item.trace })),
+      rootSessionId: item.rootSessionId,
+      ...(item.model ? { model: item.model } : {}), trace: item.trace })),
   };
 }
 
@@ -308,6 +323,9 @@ export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
   if (!stateful) return ordinary;
   if (ordinary.runtime !== stateful.runtime || ordinary.cliVersion !== stateful.cliVersion) {
     throw new Error("eval-stateful-suite-identity-mismatch");
+  }
+  if (ordinary.model && stateful.model && ordinary.model !== stateful.model) {
+    throw new Error("eval-stateful-suite-model-mismatch");
   }
   const cases = [...ordinary.cases, ...stateful.cases].sort((left, right) => left.id.localeCompare(right.id));
   if (cases.map((item) => item.id).join("\0") !== [...selectedCases].sort().join("\0") ||
@@ -1268,9 +1286,10 @@ export async function finalizeCodexObservedRequest(input: { trace: string[];
   return after!;
 }
 
-async function appServerTurn(client: CodexAppServerClient, input: { threadId?: string;
+/** Pin and verify every Codex thread used by a stateful cell, including native children. */
+export async function appServerTurn(client: CodexAppServerClient, input: { threadId?: string;
   cwd: string; skill: string; prompt: string }): Promise<{ threadId: string; trace: string[];
-    tokens: Record<string, number> }> {
+    tokens: Record<string, number>; model: string }> {
   const trace: string[] = [];
   trace.push(`skill:${realpathSync(input.skill)}`);
   let resolveDone: (() => void) | undefined;
@@ -1281,11 +1300,15 @@ async function appServerTurn(client: CodexAppServerClient, input: { threadId?: s
   });
   try {
     const created = input.threadId ? null : await client.request("thread/start", { cwd: input.cwd,
+      model: EVAL_POLICY.codexModel,
+      developerInstructions: statefulCodexModelInstruction(),
       approvalPolicy: "never", sandbox: "danger-full-access", threadSource: WORKER_THREAD_SOURCE });
     const threadId = input.threadId ?? created.thread.id;
     if (created) await labelWorkerThread(client, threadId, "vibe upgrade resume");
     await client.request("turn/start", { threadId, cwd: input.cwd,
-      input: [{ type: "text", text: input.prompt, text_elements: [] },
+      model: EVAL_POLICY.codexModel,
+      input: [{ type: "text", text: `${statefulCodexModelInstruction()}\n\n${input.prompt}`,
+        text_elements: [] },
         { type: "skill", name: "vibe:vibe", path: input.skill }] });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1294,8 +1317,40 @@ async function appServerTurn(client: CodexAppServerClient, input: { threadId?: s
           CODEX_STATEFUL_ROOT_TIMEOUT_MS);
       })]);
     } finally { if (timer) clearTimeout(timer); }
-    return { threadId, trace, tokens: appServerTokenUsage(trace) };
+    const threadIds = new Set([threadId]);
+    for (const line of trace) {
+      if (!line.startsWith("{")) continue;
+      const event = JSON.parse(line) as { method?: string; params?: { toModel?: string;
+        item?: { type?: string; agentThreadId?: string };
+        turn?: { items?: Array<{ type?: string; agentThreadId?: string }> } } };
+      if (event.method === "model/rerouted" &&
+          event.params?.toModel !== EVAL_POLICY.codexModel) {
+        throw new Error("eval-stateful-codex-model-rerouted");
+      }
+      for (const item of [event.params?.item, ...(event.params?.turn?.items ?? [])]) {
+        if (item?.type === "subAgentActivity" && item.agentThreadId) {
+          threadIds.add(item.agentThreadId);
+        }
+      }
+    }
+    for (const id of threadIds) {
+      const read = await client.request("thread/read", { threadId: id, includeTurns: false });
+      if (read?.thread?.model !== EVAL_POLICY.codexModel) {
+        throw new Error("eval-stateful-codex-model-mismatch");
+      }
+      trace.push(`model:${id}:${read.thread.model}`);
+    }
+    return { threadId, trace, tokens: appServerTokenUsage(trace), model: EVAL_POLICY.codexModel };
   } finally { remove(); }
+}
+
+/** Reassert the stateful eval model when the exact root resumes after upgrade. */
+export async function resumeStatefulCodexThread(client: CodexAppServerClient,
+  threadId: string, cwd: string): Promise<void> {
+  const resumed = await client.resumeThread(threadId, cwd, { model: EVAL_POLICY.codexModel,
+    developerInstructions: statefulCodexModelInstruction() });
+  if (resumed.id !== threadId) throw new Error("WRONG_SESSION Codex resumed another root");
+  if (resumed.model !== EVAL_POLICY.codexModel) throw new Error("eval-stateful-codex-model-mismatch");
 }
 
 /** Ask the real root to apply an exact writer-state finalization, preserving its native trace. */
@@ -1332,6 +1387,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
   const env = { ...process.env, CODEX_HOME: home };
   let client: CodexAppServerClient | null = null;
   let rootSessionId = "";
+  let observedModel: string | undefined;
   let before: Record<string, any> | null = null;
   const trace: string[] = [];
   try {
@@ -1347,6 +1403,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
         marker: "turn-one", continuation: false, vibeRoot: oldInstall.installedPath,
         runtime: "codex" })}` });
     rootSessionId = first.threadId;
+    observedModel = first.model;
     trace.push(...first.trace);
     before = writerLedger(prepared.worktree);
     const held = heldCodexWriter(first.trace, before !== null, proofLines(prepared.worktree));
@@ -1384,8 +1441,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
       addMarketplace: false });
     client = await startCodexAppServer({ codex: input.codexExecutable, env,
       clientName: "vibe_upgrade_resume" });
-    const resumed = await client.resumeThread(rootSessionId, prepared.worktree);
-    if (resumed.id !== rootSessionId) throw new Error("WRONG_SESSION Codex resumed another root");
+    await resumeStatefulCodexThread(client, rootSessionId, prepared.worktree);
     const migrationPayload = { worktree: prepared.worktree, runtime: "codex",
       agentRoot: targetInstall.installedPath, agentName: "vibe-change-worker",
       previousWorkerId: priorLedger.workerId, previousDigest: priorLedger.binding.digest,
@@ -1445,7 +1501,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
         { encoding: "utf8" }).trim(), target: input.transition.target, prior: input.transition.prior,
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: lines, rootSessionId,
       previousWriterId: priorLedger.workerId, finalWriterId: after?.workerId ?? null,
-      migrationCount, trace: boundedTrace(trace) };
+      migrationCount, model: observedModel, trace: boundedTrace(trace) };
   } catch (error) {
     const ledger = writerLedger(prepared.worktree);
     return { caseId: input.item.id, runtime: "codex", passed: false,
@@ -1456,6 +1512,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: proofLines(prepared.worktree),
       rootSessionId, previousWriterId: before?.workerId ?? null, finalWriterId: ledger?.workerId ?? null,
       migrationCount: Array.isArray(ledger?.migrations) ? ledger.migrations.length : 0,
+      ...(observedModel ? { model: observedModel } : {}),
       trace: boundedTrace([...trace, error instanceof Error ? error.message : String(error)]) };
   } finally {
     await client?.close();

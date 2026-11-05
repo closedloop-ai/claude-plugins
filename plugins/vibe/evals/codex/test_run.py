@@ -25,7 +25,7 @@ SPEC.loader.exec_module(runner)
 
 def test_default_model_uses_shared_policy_at_low_effort(tmp_path: Path) -> None:
     """Direct runner invocations agree with the nightly without copying its ID."""
-    policy = json.loads(Path(runner.__file__).with_name("model-policy.json").read_text())
+    policy = json.loads(Path(__file__).with_name("model-policy.json").read_text())
     assert runner.default_codex_model() == policy["codexModel"]
     args = runner.exec_args(runner.default_codex_model(), tmp_path, tmp_path / "reply.txt")
     assert args[args.index("-m") + 1] == policy["codexModel"]

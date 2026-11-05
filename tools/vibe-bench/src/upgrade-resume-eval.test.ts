@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test, { before } from "node:test";
 import type { EvalSuiteResult } from "./eval-collector.ts";
+import { finalizeLocalEval } from "./eval-collector.ts";
+import { buildEvalBaseline } from "./eval-baseline.ts";
 import { ensureGitCommits } from "../../shared/git-commit-fixture.mjs";
 import { upgradeResumeCaseIds } from "./cli.ts";
 import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
@@ -16,10 +18,12 @@ import { archivePluginRelease } from "./plugin-snapshot.ts";
 import type { PluginReleaseArchive } from "./plugin-snapshot.ts";
 import * as pluginSnapshots from "./plugin-snapshot.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
+import { EVAL_POLICY } from "./eval-policy.ts";
 import * as upgradeEval from "./upgrade-resume-eval.ts";
 import type { UpgradeCaseEvidence, UpgradeFailureCode } from "./upgrade-resume-eval.ts";
 import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuiteResults,
-  appServerTokenUsage, claudeStaleRecoveryEligible, claudeStaleRecoveryPrompt,
+  appServerTokenUsage, appServerTurn, resumeStatefulCodexThread,
+  claudeStaleRecoveryEligible, claudeStaleRecoveryPrompt,
   claudeUpgradeRootArgs, cleanupClaudeVersionRecords,
   cleanupClaudeVersionRecordsForSignal,
   classifyUpgradeFailure, codexStoppedTurn, enqueueUpgradeRequest, heldCodexWriter,
@@ -42,6 +46,68 @@ const RELEASE_REFS = [
 
 before(() => ensureGitCommits(REPO, RELEASE_REFS));
 
+test("ISS-13743 stateful Codex root and spawned writer use the shared model without effort overrides", async () => {
+  const calls: Array<{ method: string; params: Record<string, any> }> = [];
+  const handlers = new Set<(message: { method: string; params?: Record<string, unknown> }) => void>();
+  let childModel = EVAL_POLICY.codexModel;
+  let reroute = false;
+  const client = {
+    onNotification(handler: (message: { method: string; params?: Record<string, unknown> }) => void) {
+      handlers.add(handler);
+      return () => { handlers.delete(handler); };
+    },
+    async request(method: string, params: Record<string, any>) {
+      calls.push({ method, params });
+      if (method === "thread/start") return { thread: { id: "root-thread" } };
+      if (method === "threadSection/list") return { data: [{ id: "section", name: "Fleet workers" }] };
+      if (method === "turn/start") {
+        queueMicrotask(() => {
+          for (const handler of handlers) {
+            if (reroute) handler({ method: "model/rerouted",
+              params: { toModel: "different-codex-model" } });
+            handler({ method: "item/completed", params: { item: { type: "subAgentActivity",
+              agentThreadId: "writer-thread" } } });
+            handler({ method: "turn/completed" });
+          }
+        });
+        return { turn: { id: "turn-1" } };
+      }
+      if (method === "thread/read") return { thread: { model: params.threadId === "writer-thread"
+        ? childModel : EVAL_POLICY.codexModel } };
+      return {};
+    },
+    async resumeThread(threadId: string, cwd: string, options: {
+      model: string; developerInstructions: string }) {
+      calls.push({ method: "thread/resume", params: { threadId, cwd, ...options } });
+      return { id: threadId, model: options.model };
+    },
+  } as unknown as Parameters<typeof appServerTurn>[0];
+  const input = { cwd: REPO, skill: join(REPO, "plugins/vibe/skills/vibe/SKILL.md"),
+    prompt: "$vibe stateful proof" };
+  const first = await appServerTurn(client, input);
+  assert.equal(first.model, EVAL_POLICY.codexModel);
+  assert.ok(first.trace.some((line) => line === `model:writer-thread:${EVAL_POLICY.codexModel}`));
+  await resumeStatefulCodexThread(client, first.threadId, REPO);
+  await appServerTurn(client, { ...input, threadId: first.threadId });
+  for (const method of ["thread/start", "thread/resume", "turn/start"]) {
+    const matching = calls.filter((call) => call.method === method);
+    assert.ok(matching.length > 0, method);
+    assert.ok(matching.every((call) => call.params.model === EVAL_POLICY.codexModel), method);
+    assert.ok(matching.every((call) => !("effort" in call.params)), method);
+  }
+  assert.ok(calls.filter((call) => ["thread/start", "thread/resume"].includes(call.method))
+    .every((call) => call.params.developerInstructions.includes(EVAL_POLICY.codexModel)));
+  const turns = calls.filter((call) => call.method === "turn/start");
+  assert.ok(turns.every((call) => call.params.input[0].text.includes(EVAL_POLICY.codexModel)));
+  childModel = "different-codex-model";
+  await assert.rejects(appServerTurn(client, { ...input, threadId: first.threadId }),
+    /eval-stateful-codex-model-mismatch/);
+  childModel = EVAL_POLICY.codexModel;
+  reroute = true;
+  await assert.rejects(appServerTurn(client, { ...input, threadId: first.threadId }),
+    /eval-stateful-codex-model-rerouted/);
+});
+
 function suite(runtime: "claude" | "codex", ids: string[]): EvalSuiteResult {
   const cases = ids.map((id) => ({ id, passed: true, failedGraders: [], skippedGraders: [] }));
   return { runtime, cliVersion: runtime === "claude" ? "2.1.311" : "codex-cli 0.163.0",
@@ -63,6 +129,46 @@ function evidence(failureCode: UpgradeFailureCode | null,
     rootSessionId: `root-${attempt}`, previousWriterId: "writer-1", finalWriterId: "writer-2",
     migrationCount: 1, trace: [`attempt-${attempt}`] };
 }
+
+test("ISS-13743 stateful-only and combined Codex suites retain the observed model", () => {
+  const cell: UpgradeCaseEvidence = { ...evidence(null, 1), runtime: "codex",
+    model: EVAL_POLICY.codexModel, cliVersion: "codex-cli 0.163.0",
+    agentCostUsd: null, tokens: { input_tokens: 2 } };
+  const stateful = statefulSuite("codex", [cell]);
+  assert.equal(stateful.model, EVAL_POLICY.codexModel);
+  const ordinary = { ...suite("codex", ["pm-ordinary"]), model: EVAL_POLICY.codexModel };
+  const merged = mergeEvalSuiteResults(ordinary, stateful,
+    ["pm-ordinary", cell.caseId]);
+  assert.equal(merged?.model, EVAL_POLICY.codexModel);
+  const claude = statefulSuite("claude", [evidence(null, 1)]);
+  const run = finalizeLocalEval({ pluginSha: "a".repeat(40), createdAt: "2026-11-05T00:00:00Z",
+    wallMs: 10, deterministicOnly: false, selectedCases: [cell.caseId],
+    runtimes: [
+      { runtime: "claude", exitCode: 0, result: claude, invalidReason: null },
+      { runtime: "codex", exitCode: 0, result: stateful, invalidReason: null },
+    ] });
+  const baseline = buildEvalBaseline({ results: [run], catalog: [{ id: cell.caseId,
+    skill: "vibe", kind: "upgrade-resume", deterministic: true, contentHash: "b".repeat(64) }],
+  pluginVersion: "1.1.43" });
+  assert.equal(baseline.models.codex, EVAL_POLICY.codexModel);
+  assert.throws(() => statefulSuite("codex", [{ ...cell, model: "different-codex-model" }]),
+    /eval-stateful-codex-model-mismatch/);
+});
+
+test("ISS-13743 stateful attempt evidence records the validated Codex model", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-stateful-model-evidence-"));
+  try {
+    const cell: UpgradeCaseEvidence = { ...evidence(null, 1), runtime: "codex",
+      model: EVAL_POLICY.codexModel, agentCostUsd: null, tokens: {} };
+    const result = await runUpgradeCellWithRetry({ transitionRoot: root,
+      run: async () => cell });
+    assert.equal(result.model, EVAL_POLICY.codexModel);
+    assert.equal(result.attemptResults?.[0]?.model, EVAL_POLICY.codexModel);
+    const written = JSON.parse(readFileSync(join(root, "attempts/1/evidence.json"), "utf8")) as
+      UpgradeCaseEvidence;
+    assert.equal(written.model, EVAL_POLICY.codexModel);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("ISS-13720 isolated Claude MCP config contains only granted local graph tools", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-eval-mcp-isolation-"));

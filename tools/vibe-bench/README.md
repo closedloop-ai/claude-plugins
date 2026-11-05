@@ -19,7 +19,7 @@ node --experimental-strip-types tools/vibe-bench/src/cli.ts eval-scope <claude-p
 
 ## Nightly T2 baseline
 
-The nightly starts from a dedicated clean `main` checkout at fetched `origin/main`. If no behavior path changed since the latest accepted baseline, it prints `SKIPPED` and makes no model call. Otherwise it runs the full corpus once on both runtimes, then reruns only failures at most twice. Claude pins the agent to `claude-sonnet-5-5` and the judge to `claude-opus-5-5`. Ordinary Codex cases use `gpt-5.6-sol` at low effort from `plugins/vibe/evals/codex/model-policy.json`, read by both `eval-policy.ts` and the Python runner. The wording grader remains `gpt-6-luna`; stateful upgrade-resume cells keep their runtime defaults.
+The nightly starts from a dedicated clean `main` checkout at fetched `origin/main`. If no behavior path changed since the latest accepted baseline, it prints `SKIPPED` and makes no model call. Otherwise it runs the full corpus once on both runtimes, then reruns only failures at most twice. Claude pins the agent to `claude-sonnet-5-5` and the judge to `claude-opus-5-5`. Ordinary and stateful Codex cells use `gpt-5.6-sol` from `plugins/vibe/evals/codex/model-policy.json`, read by `eval-policy.ts`, the Python runner, and the stateful App Server harness. Ordinary cases remain at low effort, while stateful cells retain their existing effort behavior. The wording grader remains `gpt-6-luna`.
 
 Claude Code 2.1.311's embedded model catalog names the judge model `claude-opus-5-5`. Anthropic's current [models overview](https://platform.claude.com/docs/en/models/overview) lists the same exact Claude API ID, so the runtime catalog and public model catalog agree on the local `claude plugin eval` pin.
 
