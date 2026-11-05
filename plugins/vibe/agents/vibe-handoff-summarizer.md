@@ -38,6 +38,17 @@ closedloop-graph is required (`closedloop-graph.md`, Required calls): use
 appears on, and `blast_radius_tickets` on the changed files to list other
 open tickets touching them.
 
+The inventory's `bundle` (handoff and pull-request phases, from
+`../skills/handoff/scripts/inventory-bundle.mjs`) already holds the backend
+paths by kind, the guard predicates and flag reads on the changed lines, the
+session's flag keys, the Storybook links for each changed story and a worktree
+blast bundle per changed source file. Write prose over those fields instead of
+deriving them again, and read the diff only to check a field you will state.
+The blast bundle is worktree evidence, not graph evidence: its
+`graphCallsStillOwed` and the graph calls above stay yours. A `bundle` that
+reads `{ unavailable }`, or a field you cannot find in it, is derived by hand as
+before.
+
 ## Return (under 260 words)
 
 `DONE` with two blocks:

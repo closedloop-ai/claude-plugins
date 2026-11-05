@@ -158,6 +158,7 @@ async function productionRedeployRelevant(root, file) {
     if (line.includes("vibe-sessions.mjs show")) return ok({ session: { baseCommit: "b".repeat(40), lastRequestId: "guard", localFixes: [], vercel: { mode: "create", lastDeployedCommit: deployed } } });
     if (line.includes("local-plans.mjs")) return ok({ ok: true });
     if (line.includes("migration-publish.mjs")) return ok({ ok: true });
+    if (line.includes("rev-parse --absolute-git-dir")) return ok("/wt/.git");
     if (line.includes("status --porcelain")) return ok("");
     if (line.includes("vibe-sessions.mjs main-sync-push")) return ok({ ok: true, mainSync: { pushed: true } });
     if (line.includes(`diff --name-only ${deployed} HEAD`)) return ok(`${file}\n`);

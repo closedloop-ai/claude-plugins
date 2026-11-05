@@ -153,6 +153,7 @@ change worker has not handled is refused with `NEEDS_CHANGE`.
 | Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
 | Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
+| Consolidated review, only when `review-scope.mjs` says so (step 6) | `vibe-consolidated-reviewer` |
 | Requested pull request: review of the tests the writer wrote | repo `review-soul`, required (step 6) |
 | Visual QA, logical QA and product-contract QA | the repository's own read-only skills (step 6) |
 | Backend: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
@@ -313,6 +314,18 @@ asked to do").
 Keep the remaining checklist internal; never show the person a technical
 task list, upfront summary or plan to approve. Preserve
 the lighter versus backend validation and review weights below.
+
+### Start the lane run in the background
+
+When `../vibe/scripts/verify-run.mjs` exists and the worktree is clean at its
+head (it refuses a dirty one), start the CPU-bound checks now, before steps 2
+to 6, and keep working while they run:
+`node ../vibe/scripts/verify-run.mjs --background --worktree "<wt>" --head "<full SHA>"`
+prints a run id at once. Record it. The summary, the guardrail and adversarial
+reviews, the Storybook work and the ticket worker's and PLN work that does not
+need the lane result all proceed while it runs; the lanes are scheduled, never
+skipped. With uncommitted work, or without the script, start nothing and
+run the steps below unchanged. A new head after a fix needs a new run.
 
 ## 2. Summarize internally
 
@@ -476,6 +489,31 @@ Each such criterion goes on the Engineering checklist (`../vibe/references/ticke
 "Criteria waiting on other work"), so the people who close the dependency
 receive the work. A requested pull request still needs every criterion met.
 
+Consolidated review (ISS-13352), off unless `VIBE_CONSOLIDATED_REVIEW=1`: when a
+precomputed findings file exists (`vibe.guardrails-findings/1`), run
+`node scripts/review-scope.mjs --worktree "<wt>" --findings <file> --inventory <inventory json>`.
+Only when it prints `"mode": "consolidated"` does one `vibe-consolidated-reviewer`
+take the place of step 3's guardrails reviewer and the adversarial reviewer
+below, on the final diff; `review-soul` on a requested pull request's tests and
+the backend passes still run. Any other output, a missing script or file, a
+skipped check or an error means the existing reviewers run unchanged. The
+escalation numbers are `REVIEW_SCOPE_DEFAULTS` in that script, unruled.
+
+Triage manifest (ITEM 2 = A, the owner's ruling): when the session has a
+triage manifest file (`../vibe/references/triage.md`), add
+`--manifest <file>` to that command, and run it for the manifest even when no
+findings file exists (the decision is then the existing full review). The script reads the manifest only when
+it passes `vibe-triage.mjs check`; a missing or invalid one changes nothing.
+When its `triage.applied` is `true` (the triage switch was on at classify
+time), also run each `triage.addedReviews` entry (`vibe-adversarial-reviewer`
+beside the consolidated reviewer, when the manifest scope asks for it) and each
+`triage.extraGates` entry (`workflow-code-review`, `logical-qa`) as an
+additional gate on the final diff, skipping one this handoff already ran for
+this head; their confirmed findings are handled like any handoff reviewer's.
+The manifest only adds review work: `mode` and its reasons stay as the diff
+decided them, so it never removes a review. With `applied` `false`, run
+nothing extra.
+
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
 `workflow-code-review` runs its two existing review passes
@@ -510,6 +548,17 @@ normal green run or a count-only assertion cannot substitute for it. Its
 confirmed findings resume the SAME writer
 in its `pull-request` turn, and the pull request does not open, or take a new
 push, until its rerun on the corrected tests is clean.
+
+### Join the background lane run
+
+Before `Final Alignment Status: Aligned`, before the PLN is left Approved and
+before anything is called ready, join the run from step 1:
+`node ../vibe/scripts/verify-run.mjs --wait <run id> --worktree "<wt>" --head "<the head under review>"`.
+Only `state: passed` (exit 0) joins. `running` (4) means keep waiting;
+`failed` (1) goes to the SAME writer; `orphaned` (3) and `head-moved` (5) mean
+start a new run at the current head. None of these is a pass, and the result's
+head must be the head under review. A required check that was a no-op with its reason (no file Biome checks, nothing for the lane report to cover) counts toward `passed`. Nothing here is counted as aligned, approved or ready
+while the lanes are pending, running or failed.
 
 ### Browser E2E and the repository's QA passes
 
@@ -605,7 +654,9 @@ release. The queue settles later collisions (ISS-13321).
 
 Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
-`scripts/criteria-audit.mjs --ticket <body> --audit <audit> --matrix <matrix>`
+`scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
+(every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
+`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
 Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific
@@ -869,8 +920,8 @@ the PR worker. A hand-written empty findings list is never a receipt. Any
 current blocking finding prevents the PR, even if someone marks it waived.
 After composing the final PR body, the PR worker runs `handoff-gate.mjs`
 immediately before `gh pr create` with the body, verifier evidence, receipts,
-current fetched base, and when available the criteria ticket, audit and
-matrix. This gate rechecks mergeability, acceptance criteria, the PR body,
+current fetched base, and when available the criteria ticket, audit
+and matrix. This gate rechecks mergeability, acceptance criteria, the PR body,
 verifier evidence and machine-produced reviewer findings,
 then records a private witness bound to the source. A later source change
 invalidates it; finish the affected handoff steps and rerun this gate. The

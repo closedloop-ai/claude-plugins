@@ -64,6 +64,26 @@ writer's detailed final packet/report paths for Production impact, Flag changes
 and gates, and Open Questions. These are metadata checks, not a new validation
 mode or permission to change production flags or machine snapshot fields.
 
+## The script for the scriptable checks
+
+When `../skills/vibe/scripts/verify-run.mjs` exists, run
+`node ../skills/vibe/scripts/verify-run.mjs --worktree "<wt>" --head "<full SHA>" [--base <sha>] [--tests-file <file>]`
+once at the final head instead of running the bounded checks below by hand. It
+wraps the repository's own Biome, `pnpm check:source-gates`,
+`pnpm typecheck:affected`, the lanes `pnpm test:lanes` names (through
+`pre-pr-lanes.mjs`) and the commands in your `--tests-file`, which is the
+`code_tests_for` selection you make (it is an MCP tool the script cannot call).
+It writes one evidence JSON that keeps `passed`, `failed`, `blocked`, `cached`,
+`main-preexisting`, `no-op`, `skipped` and `not-run` apart: a skipped, no-op,
+cached or not-run entry is never reported as a pass, and a `cached` entry is a
+pass at the same head and command from an earlier run. Its `leftToWorker` list
+(E2E specs, story plays, touch flows, the control sweep) is still yours, as are
+failure triage, reference-image comparison and the private PR evidence. Without
+the script, run the checks below unchanged. When the handoff orchestrator already
+started a background run (`verify-run.mjs --background`) and gives you its run
+id, join it with `--wait <run id> --worktree "<wt>" --head "<SHA>"` and use its
+evidence file instead of running the script again; only `state: passed` is a pass.
+
 ## Existing checks
 
 macOS has no `timeout` or `gtimeout` command. To bound or wait on a long check,

@@ -594,7 +594,7 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    and no record grants. Keep its brief internal; no upfront summary or plan approval.
    Keep its quoted acceptance criteria from the ticket and its PRD for the
    writer's first request (`references/quality-loop.md`, "Acceptance criteria
-   before ready"). When the source is a PRD, its existing children are the
+   before ready"), as the draft Spec Card (`references/spec-card.md`). When the source is a PRD, its existing children are the
    scope units: the requirements brief classifies every child before the
    session ticket exists, and the ticket worker claims or reports them
    (`vibe-ticket-worker.md`, create step 7).
@@ -640,7 +640,14 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    the new issue's slug on the session and links the originating document (a
    PRD, an ISS or another document) to the ticket (source PRODUCES ticket).
    Keep the ticket link in the session record for completion and handoff.
-7. Stand up the environment (section 3).
+7. Classify the work and stand up the environment (section 3). Run
+   `scripts/vibe-triage.mjs classify` and keep its manifest
+   (`references/triage.md`), passing the brief's `likelyFiles` as `--paths` and
+   their sources as `--path-sources-file`, and no `--paths` when the brief has
+   none; for the class it names, other than `unknown`
+   or `mockup`, also load that class's pipeline skill. Section 3 runs now unless
+   the manifest's `environment` step has `effective: defer`, which happens only
+   while the triage switch is on (off by default).
 
 ### Mockup sessions
 
@@ -734,7 +741,9 @@ When it returns `DONE`:
 - Confirm the tab shows the app (with seeded data when seeded), not an error
   page or an empty shell, before saying it is ready.
 - Start Desktop for every session, per the Desktop section of
-  `references/environment.md`, and open it as a second tab:
+  `references/environment.md`, unless the manifest's `desktop` step has
+  `effective: skip` (`references/triage.md`, "The switch"; off by default), and
+  open it as a second tab:
   1. Run `node scripts/vibe-sessions.mjs desktop-tab --worktree "<wt>"`. If it
      reports `running`, skip to step 3.
   2. If the session has no Desktop profile yet (`desktopAuthSavedAt` is null
@@ -851,7 +860,8 @@ evidence, never by replacing the writer.
    every saved reference image path. Never send your own description of an
    image in place of its path. It performs
    graph/owner prep and writes the canonical core-template plan locally.
-   It always creates or extends the one session decision table at
+   It locks the Spec Card before any code (`references/spec-card.md`). It
+   always creates or extends the one session decision table at
    `.closedloop-ai/decision-tables/<session-slug>.md` before any code, using
    the named core skill in quality-loop.md. Include its path and affected/
    interacting row IDs in every applicable worker brief. Later requests append
@@ -1200,6 +1210,8 @@ Whenever the person asks to throw a session away (at any point, for any
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
+- `references/triage.md`: the triage manifest, its classes and the switch;
+  `references/pipeline-core.md`: the rules every class pipeline shares.
 - `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions and the precedent check, visual references and the reference check before ready, visual QA during the session, and the repair-only test rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,

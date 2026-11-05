@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.42
+
+#### Added
+- Spec Card (`references/spec-card.md`, `scripts/spec-card.mjs` with `check`, `save`, `path`, `budget`, `assumptions` and `audit-skeleton`) and `scripts/freshness.mjs`. The requirements worker returns a `draft` card of criteria, assumptions and open questions; the writer locks it with its plan before code and it seeds the session decision table once. A locked card is not edited afterwards: criteria change in the decision table. The fork checkpoint is off by default (`--checkpoint` or `VIBE_FORK_CHECKPOINT=1` turns it on). `budget` reports files outside the plan as cited or uncited and never blocks. `freshness.mjs` falls back to the recorded session base when the fetch cannot run. The handoff Assumptions line is generated from the card and required by `live-ticket-check.mjs`.
+- Triage manifest and class pipeline skills; triage reads the shared UI and Desktop host path lists, and the handoff inventory reads the triage backend list from `area-paths`.
+- Consolidated reviewer role with a review-scope escalation script, `guardrails-gate`, the lane-evidence cache keyed on tree, base, config and scope, and an off-by-default switch that skips the fleet's duplicate review chain. The adversarial reviewer is trimmed and fed the consumer pack and gate table.
+- Scripts `setup-ctl`, `env-ctl`, `graph-pack`, `req-gather`, `verify-run`, `inventory` bundle, `prototype-share` and `ticket-ctl` offline body templating.
+- Load-aware execution, off by default: `VIBE_HEAVY_BUDGET=on` gives heavy commands a cross-run worker budget, waiting for capacity (`VIBE_HEAVY_MAX_WAIT_SECONDS=0` skips it) and one retry on load failures (`VIBE_HEAVY_RETRIES=0` skips it), all inside the command's `seconds`. Without it `run-bounded.mjs` and `verify-run.mjs` behave as before and the verify lanes run serially; `VIBE_VERIFY_POOL_SIZE=1` keeps them serial with the budget on. `run-bounded.mjs` forwards SIGTERM and SIGINT to the command's process group. Background verify runs are joined at handoff.
+
+#### Changed
+- `verify-run.mjs` blocks every lane when `pre-pr-lanes.mjs check` prints no summary line (a crash or timeout) instead of reading it as all lanes recorded, and a required check that is a no-op with its reason counts toward `ok`.
+- The guardrails reviewer reads the `guardrails-gate` findings as additions: it still runs all numbered checks, and a check the findings file does not name is not checked.
+- `BACKEND_PATH` again matches `apps/desktop/prisma/` and any `prisma` or `migrations` path segment; `pre-pr-lanes.mjs run` writes its records under a lock.
+- `criteria-audit.mjs` reads the verdict, evidence type and ref from one audit row, `| AC-n | MET | <type> | <ref> |`, so there is no separate evidence file and no `--evidence` argument on it, on `handoff-gate.mjs` or in the handoff skill. A criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists: in the worktree at a candidate audit, at HEAD at `handoff-gate.mjs` (`--at head`). `source-trace` is a fifth evidence type, its ref the file and line the trace ends at.
+- The brief returns `likelyFiles` for triage paths, and handoff reads the triage manifest's review output.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,909 words longer than in 1.1.41 (origin/main at the merge).
+
 ### vibe v1.1.41
 
 #### Added

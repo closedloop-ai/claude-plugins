@@ -57,3 +57,35 @@ test("a missing limit or command is refused instead of running unbounded", () =>
   assert.equal(noCommand.status, 2);
   assert.match(noCommand.stderr, /Usage/);
 });
+
+test("a heavy command takes a worker budget and a lease and its environment is capped; a non-heavy command is untouched (ISS-13584)", async () => {
+  const { runBudgeted } = await import("./run-bounded.mjs");
+  const taken = [];
+  const snapshot = { cores: 8, capacity: 8, available: 4, belowMinimum: false, workers: 4, leases: 0, unleasedCores: 0 };
+  const fakeBudget = { snapshot: () => snapshot, acquire: (request) => { taken.push(request); return { workers: 4, env: { TURBO_TEST_CONCURRENCY: "2", VITEST_MAX_WORKERS: "2" }, budget: { available: 4, capacity: 8, leases: 0, unleasedCores: 0 }, release: () => taken.push("released") }; } };
+  const printEnv = ["-e", "process.exit(process.env.VITEST_MAX_WORKERS === '2' ? 0 : 9)"];
+  // Not heavy: no lease, and the child does not see the cap.
+  const on = { VIBE_HEAVY_BUDGET: "on" };
+  assert.equal((await runBudgeted(process.execPath, printEnv, { seconds: 20, budget: fakeBudget, env: on })).exitCode, 9);
+  assert.deepEqual(taken, []);
+  // Heavy (names vitest): leased, capped, released after the child ends.
+  assert.equal((await runBudgeted(process.execPath, [...printEnv, "vitest"], { seconds: 20, budget: fakeBudget, env: on, loadAverage: () => 0 })).exitCode, 0);
+  assert.equal(taken.length, 2);
+  assert.equal(taken[1], "released");
+  // Unset (the default) or off: previous behavior, no lease.
+  taken.length = 0;
+  for (const env of [{}, { VIBE_HEAVY_BUDGET: "off" }]) {
+    assert.equal((await runBudgeted(process.execPath, [...printEnv, "vitest"], { seconds: 20, budget: fakeBudget, env })).exitCode, 9);
+    assert.deepEqual(taken, []);
+  }
+});
+
+test("a SIGTERM to run-bounded reaches the child's process group instead of orphaning it", async () => {
+  const { spawn } = await import("node:child_process");
+  const { once } = await import("node:events");
+  const wrapper = spawn(process.execPath, [SCRIPT, "60", process.execPath, "-e", "console.log(process.pid);setInterval(()=>{},1000)"], { stdio: ["ignore", "pipe", "inherit"] });
+  const childPid = Number(await new Promise((resolve) => wrapper.stdout.once("data", (chunk) => resolve(String(chunk).trim()))));
+  wrapper.kill("SIGTERM");
+  await once(wrapper, "close");
+  assert.throws(() => process.kill(childPid, 0), { code: "ESRCH" }, "the child is gone once its wrapper was terminated");
+});

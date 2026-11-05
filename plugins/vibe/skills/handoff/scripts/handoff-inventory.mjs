@@ -67,6 +67,13 @@
 // handoff (vibe SKILL.md section 5); the handoff and pull-request phases block
 // on it. A writer's DONE once waited hours on 49 such renders (2026-10-26).
 //
+// In the handoff and pull-request phases `bundle` is the summarizer's prebuilt
+// evidence (inventory-bundle.mjs): backend paths by kind, guard predicates and
+// flag reads on the changed lines, the session's flag keys, Storybook links to
+// each changed story, and a worktree blast bundle per changed source file. It
+// covers tracked changes, is additive, and reads `{ unavailable }` rather than
+// failing the inventory.
+//
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff adds two workflow-code-review passes when it did;
 // its test run stays targeted either way.
@@ -83,6 +90,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { BACKEND_PATH } from "../../vibe/scripts/area-paths.mjs";
 import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { committedLocalPlans, isLocalPlanPath, LOCAL_PLAN_PREFIX } from "../../vibe/scripts/local-plans.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
@@ -93,6 +101,7 @@ import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
+import { buildInventoryBundle } from "./inventory-bundle.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
 import { loadOpenPrs, pullRequestFacts } from "./pr-facts.mjs";
 import {
@@ -110,18 +119,6 @@ const BRANCH_PREFIX = "vibe/";
 // The sole implementation writer owns frontend and backend changes (ISS-12135);
 // an engineer reviews both before merge.
 const PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
-const BACKEND_PREFIXES = [
-  "apps/api/",
-  "apps/mcp/",
-  "apps/relay/",
-  "apps/realtime/",
-  "packages/api/",
-  "packages/database/",
-  "apps/desktop/src/main/",
-  "apps/desktop/src/server/",
-  "apps/desktop/prisma/",
-];
-const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
 
 const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);
 const STORY_PATTERN = /\.stories\.tsx?$/;
@@ -265,6 +262,7 @@ const result = withStableSource(worktree, () => {
     compileOnlyV1Repairs,
     retitledStories,
     diffRules: { blocking: diffRulesBlocking, deferredToHandoff, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
+    ...(values.phase === "build" ? {} : { bundle: buildBundle() }),
     ...prFacts,
   };
   return result;
@@ -513,10 +511,7 @@ const result = withStableSource(worktree, () => {
   }
 
   function isBackend(filePath) {
-    return (
-      BACKEND_PREFIXES.some((prefix) => filePath.startsWith(prefix)) ||
-      BACKEND_SEGMENTS.some((segment) => `/${filePath}`.includes(segment))
-    );
+    return BACKEND_PATH.test(filePath);
   }
 
   /**
@@ -618,6 +613,18 @@ const result = withStableSource(worktree, () => {
     } catch {
       return undefined;
     }
+  }
+
+  /** The summarizer's prebuilt evidence (inventory-bundle.mjs) over the session's tracked changes; never fails the inventory. */
+  function buildBundle() {
+    const excluded = [...localFixTickets.keys()].map((file) => `:(exclude)${file}`);
+    return buildInventoryBundle({
+      worktree,
+      diffText: git(["diff", "--no-color", "--unified=0", "-M", baseCommit, "--", ".", ":(exclude).closedloop-ai/vibe-plans", ...excluded]),
+      backendFiles: backendFiles.map((file) => file.path),
+      record,
+      readHead: readWorktreeFile,
+    });
   }
 });
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

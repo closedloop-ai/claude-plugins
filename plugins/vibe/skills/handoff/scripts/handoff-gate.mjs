@@ -135,7 +135,7 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   if (ticket && (!audit || !matrix)) throw new Error("criteria audit and matrix are required with a ticket");
   if (ticket) {
     const criteria = runScript(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), "criteria-audit.mjs"),
-      "--ticket", ticket, "--audit", audit, "--matrix", matrix], { encoding: "utf8" });
+      "--worktree", worktree, "--ticket", ticket, "--audit", audit, "--matrix", matrix, "--at", "head"], { encoding: "utf8" });
     if (criteria.status !== 0) throw new Error(`acceptance criteria audit failed: ${criteria.stdout || criteria.stderr}`);
   }
   const args = [path.join(path.dirname(fileURLToPath(import.meta.url)), "handoff-inventory.mjs"),

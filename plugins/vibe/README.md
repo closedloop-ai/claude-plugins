@@ -302,6 +302,7 @@ applies to other shared skills such as `decision-table`.
 | `vibe-verify-worker` | sonnet | Read-only targeted existing checks (`code_tests_for` per changed file), locked containerized e2e for the specs the change needs, handoff coverage review, Storybook footprint and handoff running app checks with `pnpm control` |
 | `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement (including Storybook precedent placement), copy provenance, accessibility, and tests |
 | `vibe-adversarial-reviewer` | opus | Separate read-only handoff review of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
+| `vibe-consolidated-reviewer` | opus | Read-only single read of the final diff over the precomputed guardrails findings, used only when `review-scope.mjs` chooses the consolidated path (off unless `VIBE_CONSOLIDATED_REVIEW=1`) |
 | `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |
 | `vibe-seed-check-worker` | sonnet | Fresh-main seed checks and latest Vibe Seed Walk inspection |
 | `vibe-seed-fix-worker` | sonnet | Seed drift fixes, validation, and follow-up PR-check and review-comment fixes |
@@ -364,14 +365,14 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.41` contains 13 skills, 16 agents, and one hook manifest
+Version `1.1.42` contains 17 skills, 17 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they
 share. Runtime helpers and tests live alongside their owning skills, or under
 `shared/` when reused across skills. They include shared process identity
-validation, vibe session and prototype records, local-plan publication guards, bundled
+validation, vibe session and prototype records, the triage classifier and its manifest (recommendations off by default), local-plan publication guards, bundled
 persistent writer state, Claude launch/resume and shared main-sync publication
 helpers, handoff checks, sweep ownership and worker recovery, and the
-work-report renderer. Shared PR-monitor notification delivery and manual-QA
+work-report renderer, the WS3 control scripts (`setup-ctl`, `env-ctl`, `graph-pack`, `guardrails-gate`, `verify-run`, `req-gather`, `prototype-share`, `ticket-ctl` and the handoff inventory's `bundle`) that run a worker's mechanical steps with no model, each optional for the worker that uses it, and the WS8 load-aware execution scripts (`heavy-budget`, `load-admission`, `lane-pool`, `verify-background`) that make `run-bounded` and `verify-run` cooperate under load. Shared PR-monitor notification delivery and manual-QA
 browser helpers live in `closedloop-core`.

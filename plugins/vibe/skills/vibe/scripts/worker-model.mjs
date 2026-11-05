@@ -21,6 +21,7 @@ export const VIBE_AGENT_ROLES = Object.freeze({
   "vibe-adversarial-reviewer": CodexWorkerRole.Reviewer,
   "vibe-backend-worker": CodexWorkerRole.Explorer,
   "vibe-change-worker": CodexWorkerRole.Writer,
+  "vibe-consolidated-reviewer": CodexWorkerRole.Reviewer,
   "vibe-environment-worker": CodexWorkerRole.Writer,
   "vibe-guardrails-reviewer": CodexWorkerRole.Reviewer,
   "vibe-handoff-summarizer": CodexWorkerRole.Explorer,
