@@ -35,7 +35,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { execCommand, tailLines, toolDidNotRun } from "../../vibe/scripts/ws3-exec.mjs";
+import { execCommand, stdoutOf, tailLines, toolDidNotRun } from "../../vibe/scripts/ws3-exec.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
 
@@ -379,7 +379,7 @@ function main(argv) {
   const report = createGuardrailsGate().gate({ worktree: path.resolve(values.worktree), base: values.base });
   const problems = findingsProblems(report);
   if (problems.length > 0) throw new Error(`the findings report broke its own contract: ${problems.join("; ")}`);
-  const gitDir = execCommand("git", ["-C", values.worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+  const gitDir = stdoutOf(execCommand("git", ["-C", values.worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
   const out = values.out ?? path.join(gitDir, "vibe-guardrails-findings.json");
   mkdirSync(path.dirname(out), { recursive: true });
   const text = `${JSON.stringify(report, null, 2)}\n`;

@@ -115,3 +115,41 @@ test('FLEET_TRIM_STATUS_AUDIT=1 skips only a report run; every other run audits 
   assert.equal(run('report', {}).status, 1, 'a report audits when the switch is off');
   rmSync(dir, { recursive: true });
 });
+
+test('the status sweep flags a recorded sequencing ruling whose BLOCKS link is missing', (t) => {
+  const snapshot = {
+    prds: [],
+    programRulings: '- Ruling 2026-11-02 (ticket: ISS-3): ISS-3 waits until ISS-1 and #42 merge\n',
+    pullRequestTickets: { 42: 'ISS-2' },
+    artifactLinks: [{ source: 'ISS-1', target: 'ISS-3', linkType: 'BLOCKS' }],
+  };
+  assert.deepEqual(auditStatuses(snapshot).findings, [{
+    kind: 'SEQUENCING-BLOCKS-MISSING',
+    blocker: 'ISS-2',
+    blocked: 'ISS-3',
+  }]);
+
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'status-audit-sequencing-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'snapshot.json');
+  writeFileSync(file, JSON.stringify(snapshot));
+  const result = spawnSync(process.execPath, [SCRIPT, '--snapshot', file], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /SEQUENCING-BLOCKS-MISSING ISS-2 blocks ISS-3/);
+
+  const unresolved = { ...snapshot,
+    programRulings: '- Ruling 2026-11-04 (ticket: ISS-9): ISS-9 waits until the migrations ticket merges\n',
+    pullRequestTickets: {}, artifactLinks: [] };
+  assert.deepEqual(auditStatuses(unresolved).findings, [{
+    kind: 'SEQUENCING-UNRESOLVED',
+    reference: 'the migrations ticket merges',
+    ruling: 'ISS-9 waits until the migrations ticket merges',
+  }]);
+
+  const ordinary = { ...snapshot,
+    programRulings: [
+      '- Ruling 2026-11-04 (ticket: ISS-9): the PLN status follows the work',
+      '- Ruling 2026-11-04 (ticket: ISS-9): reviewers wait for CI before commenting',
+    ].join('\n'), pullRequestTickets: {}, artifactLinks: [] };
+  assert.deepEqual(auditStatuses(ordinary).findings, []);
+});

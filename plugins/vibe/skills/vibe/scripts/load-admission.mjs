@@ -11,11 +11,14 @@
 //    on the retry. The result keeps `attempts`, the first failure's signature and the
 //    load at start.
 //
-// Switches: VIBE_HEAVY_WAIT=off skips the wait, VIBE_HEAVY_RETRY=off skips the retry,
-// VIBE_HEAVY_BUDGET=off skips both (and the budget itself). Defaults: heavy-budget.mjs.
+// Waiting, every attempt and the retry share the caller's `seconds`: the whole call never outlasts it,
+// so a caller's outer limit of `seconds` plus a margin cannot fire on a wait or a retry.
+//
+// Without VIBE_HEAVY_BUDGET=on none of this runs (run-bounded.mjs). VIBE_HEAVY_MAX_WAIT_SECONDS=0 skips the wait
+// and VIBE_HEAVY_RETRIES=0 skips the retry. Defaults: heavy-budget.mjs.
 
 import os from "node:os";
-import { ENV, featureDisabled, resolveSettings } from "./heavy-budget.mjs";
+import { resolveSettings } from "./heavy-budget.mjs";
 
 export const Signature = Object.freeze({
   Assertion: "assertion-failure",
@@ -77,9 +80,12 @@ export async function runAdmitted(command, args, {
   seconds, budget, run, env = process.env, settings = resolveSettings(env), sleep = realSleep, now = () => Date.now(),
   loadAverage = () => os.loadavg()[0], log = () => {},
 }) {
-  const waiting = !featureDisabled(env, ENV.wait);
-  const retrying = !featureDisabled(env, ENV.retry) && settings.retries > 0;
-  const first = await waitForAdmission({ budget, settings, sleep, now, wait: waiting, log });
+  const deadline = now() + seconds * 1000;
+  const remainingSeconds = () => (deadline - now()) / 1000;
+  const waitSettings = () => ({ ...settings, maxWaitSeconds: Math.max(0, Math.min(settings.maxWaitSeconds, remainingSeconds())) });
+  const waiting = settings.maxWaitSeconds > 0;
+  const retrying = settings.retries > 0;
+  const first = await waitForAdmission({ budget, settings: waitSettings(), sleep, now, wait: waiting, log });
   const load1 = loadAverage();
   const loadAtStart = { load1, cores: first.snapshot.cores, perCore: load1 / first.snapshot.cores, belowMinimum: first.snapshot.belowMinimum };
   const loadHigh = loadAtStart.perCore > settings.highLoadPerCore || first.snapshot.belowMinimum;
@@ -92,13 +98,13 @@ export async function runAdmitted(command, args, {
     const started = now();
     let result;
     try {
-      result = await run(command, args, { seconds, env: taken.env });
+      result = await run(command, args, { seconds: Math.max(1, remainingSeconds()), env: taken.env });
     } finally {
       taken.release();
     }
     const verdict = classifyLoadFailure({ exitCode: result.code, output: result.output, loadHigh });
     attempts.push({ attempt, workers, exitCode: result.code, signature: verdict.signature, durationMs: now() - started, ...(attempt === 1 ? {} : { waitedMs: admission.waitedMs }) });
-    const retry = verdict.retry && retrying && attempt <= settings.retries;
+    const retry = verdict.retry && retrying && attempt <= settings.retries && remainingSeconds() > 0;
     if (!retry) {
       return {
         exitCode: result.code, attempts, retried: attempt > 1, firstFailureSignature: attempts.find((item) => item.signature)?.signature ?? null,
@@ -106,7 +112,7 @@ export async function runAdmitted(command, args, {
       };
     }
     log(`run-bounded: load failure (${verdict.signature}); waiting for capacity, then one retry at half the workers\n`);
-    admission = await waitForAdmission({ budget, settings, sleep, now, wait: waiting, log });
+    admission = await waitForAdmission({ budget, settings: waitSettings(), sleep, now, wait: waiting, log });
     waitedMs += admission.waitedMs;
     workers = Math.max(1, Math.floor(workers / settings.retryWorkerDivisor));
   }

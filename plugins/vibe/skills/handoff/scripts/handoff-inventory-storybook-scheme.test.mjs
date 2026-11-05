@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
 import { STORY_GROUP_ORDER_PATH, StorybookScheme, storybookSchemeOf } from "./storybook-taxonomy.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -71,7 +71,9 @@ function setup(t, slug, files) {
   const fixture = makeHome("handoff-storybook-scheme-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "Documents", "Closedloop.ai - Active Work", "symphony-alpha");
-  makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: { "apps/app/page.tsx": "export const page = 1;\n", ...files } });
+  makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: {
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+    "apps/app/page.tsx": "export const page = 1;\n", ...files } });
   const created = runNode(
     SESSIONS,
     ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--mode", "seeded", "--operator-id", "user-operator", "--operator-email", "operator@example.com"],

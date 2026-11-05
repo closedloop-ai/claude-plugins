@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUSY_EXIT, DUPLICATE_EXIT, captureOwnedDockerResources, composeProjectFor, defaultLockDir, readHolder, release, removeOwnedDockerResources, runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
+import { BUSY_EXIT, DUPLICATE_EXIT, composeProjectFor, defaultLockDir, readHolder, release,
+  runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
+import { installOwnedBuildShim, recordBuiltTags } from "./owned-builder.mjs";
+import { captureOwnedDockerResources, plannedLocalTags, removeOwnedDockerResources,
+  reserveGeneratedE2E } from "./owned-docker.mjs";
 import { sourceIdentity } from './tested-head.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
@@ -29,6 +33,15 @@ const owner = (pid, token) => ({ pid, token, cwd: root, command: "e2e", startedA
 const DEAD_PID = 99_999_999;
 const FULL_CONTAINER_ID = "a".repeat(64);
 const FULL_NETWORK_ID = "c".repeat(64);
+
+async function waitUntil(predicate, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail('timed out waiting for fixture state');
+}
 
 test("e2e lock and fleet helpers share the raw process identity primitive", () => {
   const e2e = readFileSync(SCRIPT, "utf8");
@@ -193,9 +206,10 @@ case "$1 $2" in
   "container ls") [ -f "$dir/container" ] && echo ${FULL_CONTAINER_ID}; exit 0 ;;
   "volume ls") [ -f "$dir/volume" ] && echo v1; exit 0 ;;
   "network ls") [ -f "$dir/network" ] && echo ${FULL_NETWORK_ID}; exit 0 ;;
-  "container inspect") [ -f "$dir/container" ] || { printf 'Error response from daemon: No such container: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_CONTAINER_ID}","Created":"2026-10-29T00:00:00Z","Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
-  "volume inspect") [ -f "$dir/volume" ] || { printf 'Error response from daemon: get %s: no such volume\n' "$last" >&2; exit 1; }; printf '[{"Name":"v1","CreatedAt":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
-  "network inspect") [ -f "$dir/network" ] || { printf 'Error response from daemon: network %s not found\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_NETWORK_ID}","Created":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "image ls") exit 0 ;;
+  "container inspect") [ -f "$dir/container" ] || { printf 'Error response from daemon: No such container: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_CONTAINER_ID}","Created":"2099-10-29T00:00:00Z","State":{"Running":false},"Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "volume inspect") [ -f "$dir/volume" ] || { printf 'Error response from daemon: get %s: no such volume\n' "$last" >&2; exit 1; }; printf '[{"Name":"v1","CreatedAt":"2099-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "network inspect") [ -f "$dir/network" ] || { printf 'Error response from daemon: network %s not found\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_NETWORK_ID}","Created":"2099-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
   "container rm") rm "$dir/container"; exit 0 ;;
   "volume rm") rm "$dir/volume"; exit 0 ;;
   "network rm") rm "$dir/network"; exit 0 ;;
@@ -215,6 +229,434 @@ exit 9
   assert.equal(savedOwner.name, "writer-a");
   assert.equal(savedOwner.ticket, "ticket-one");
   for (const kind of ["container", "volume", "network"]) assert.equal(existsSync(path.join(dir, kind)), false, kind);
+});
+
+test('cleanup refusal preserves the command exit and writes its receipt for the later sweep', () => {
+  const dir = path.join(root, 'cleanup-refusal-receipt');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const marker = path.join(dir, 'project');
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, `#!${process.execPath}
+const fs=require('node:fs'),args=process.argv.slice(2),kind=args[0],action=args[1],id='a'.repeat(64),marker=${JSON.stringify(marker)};
+if(kind==='version')process.exit(0);
+if(action==='ls'){if(kind==='container'&&fs.existsSync(marker))process.stdout.write(id+'\\n');process.exit(0)}
+if(kind==='container'&&action==='inspect'){process.stdout.write(JSON.stringify([{Id:id,Created:'2099-01-01T00:00:00Z',Config:{Labels:{'com.docker.compose.project':fs.readFileSync(marker,'utf8')}},State:{Running:true}}]));process.exit(0)}
+process.stderr.write('unexpected '+args.join(' '));process.exit(9);
+`, { mode: 0o700 });
+  const command = `require('node:fs').writeFileSync(${JSON.stringify(marker)},process.env.COMPOSE_PROJECT_NAME)`;
+  const result = spawnSync(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', path.join(dir, 'lock'),
+    process.execPath, '-e', command], { cwd: repo, encoding: 'utf8', env: { ...process.env, VIBE_E2E_DOCKER: docker } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /LEFTOVER vibe-e2e-.*container is running/);
+  const gitDir = spawnSync('git', ['-C', repo, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).stdout.trim();
+  const receipts = readdirSync(path.join(gitDir, 'vibe-e2e-results'));
+  assert.equal(receipts.length, 1);
+  assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'vibe-e2e-results', receipts[0]), 'utf8')).exitCode, 0);
+});
+
+test('SIGHUP reaches the detached command and the lock stays held until its group exits', async () => {
+  const dir = path.join(root, 'sighup-forwarding');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\n[ "$1" = version ] && exit 0\ncase "$2" in ls) exit 0;; esac\nexit 9\n', { mode: 0o700 });
+  const marker = path.join(dir, 'hup');
+  const ready = path.join(dir, 'ready');
+  const lock = path.join(dir, 'lock');
+  const program = `const fs=require('node:fs');let done=false;process.on('SIGHUP',()=>{if(done)return;done=true;fs.writeFileSync(${JSON.stringify(marker)},'hup');process.exit(129)});fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`;
+  const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', lock, process.execPath, '-e', program],
+  { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
+  await waitUntil(() => existsSync(ready));
+  child.kill('SIGHUP');
+  const code = await new Promise((resolve) => child.once('close', resolve));
+  assert.equal(code, 129);
+  assert.equal(readFileSync(marker, 'utf8').trim(), 'hup');
+  assert.equal(existsSync(lock), false);
+});
+
+test('SIGINT waits for a bounded command-group drain and preserves exit 130', async () => {
+  const dir = path.join(root, 'sigint-drain');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\n[ "$1" = version ] && exit 0\ncase "$2" in ls) exit 0;; esac\nexit 9\n', { mode: 0o700 });
+  const marker = path.join(dir, 'int');
+  const ready = path.join(dir, 'ready');
+  const lock = path.join(dir, 'lock');
+  const program = `const fs=require('node:fs');let count=0;process.on('SIGINT',()=>{count+=1;setTimeout(()=>{fs.writeFileSync(${JSON.stringify(marker)},String(count));process.exit(130)},300)});fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`;
+  const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', lock, process.execPath, '-e', program],
+  { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
+  await waitUntil(() => existsSync(ready));
+  const signalledAt = Date.now();
+  child.kill('SIGINT');
+  const code = await new Promise((resolve) => child.once('close', resolve));
+  assert.equal(code, 130);
+  assert.ok(Date.now() - signalledAt >= 250, 'wrapper waits for the child trap');
+  assert.equal(readFileSync(marker, 'utf8').trim(), '1', 'the child gate does not re-forward the group signal');
+  assert.equal(existsSync(lock), false);
+});
+
+test('one SIGINT allows the repository teardown budget to finish without forced escalation', async () => {
+  const dir = path.join(root, 'sigint-slow-drain');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\n[ "$1" = version ] && exit 0\ncase "$2" in ls) exit 0;; esac\nexit 9\n', { mode: 0o700 });
+  const marker = path.join(dir, 'slow-int');
+  const ready = path.join(dir, 'ready');
+  const lock = path.join(dir, 'lock');
+  const program = `const fs=require('node:fs');process.on('SIGINT',()=>setTimeout(()=>{fs.writeFileSync(${JSON.stringify(marker)},'finished');process.exit(130)},15000));fs.writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`;
+  const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', lock, process.execPath, '-e', program],
+    { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
+  await waitUntil(() => existsSync(ready));
+  const signalledAt = Date.now();
+  child.kill('SIGINT');
+  const code = await new Promise((resolve) => child.once('close', resolve));
+  assert.equal(code, 130);
+  assert.ok(Date.now() - signalledAt >= 14_500, 'single signal does not force-kill teardown at ten seconds');
+  assert.equal(readFileSync(marker, 'utf8'), 'finished');
+});
+
+test('a second signal explicitly escalates a stuck command group', async () => {
+  const dir = path.join(root, 'sigint-second-signal');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\n[ "$1" = version ] && exit 0\ncase "$2" in ls) exit 0;; esac\nexit 9\n', { mode: 0o700 });
+  const ready = path.join(dir, 'ready');
+  const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', path.join(dir, 'lock'),
+    process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(ready)},'ready');process.on('SIGINT',()=>{});setInterval(()=>{},1000)`],
+  { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
+  await waitUntil(() => existsSync(ready));
+  const started = Date.now();
+  child.kill('SIGINT');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  child.kill('SIGINT');
+  const code = await new Promise((resolve) => child.once('close', resolve));
+  assert.equal(code, 137);
+  assert.ok(Date.now() - started < 2_000, 'second signal escalates immediately');
+});
+
+test("generated runner removes its locally built Compose tag after a successful command", () => {
+  const dir = path.join(root, "owned-local-image-fixture");
+  mkdirSync(dir);
+  const imageFile = path.join(dir, "image-tag");
+  const builderFile = path.join(dir, "builder-name");
+  const docker = path.join(dir, "docker");
+  writeFileSync(docker, `#!${process.execPath}
+const fs=require('node:fs');
+const file=${JSON.stringify(imageFile)};
+const builderFile=${JSON.stringify(builderFile)};
+const args=process.argv.slice(2);
+const [kind,action]=args;
+if(kind==='version') process.exit(0);
+if(kind==='info'){process.stdout.write(${JSON.stringify(dir)});process.exit(0)}
+if(kind==='context'){process.stdout.write('unix:///var/run/docker.sock');process.exit(0)}
+if(kind==='buildx' && action==='version') { process.stdout.write('github.com/docker/buildx v0.14.1'); process.exit(0); }
+if(kind==='compose' && action==='build' && args.includes('--help')) { process.stdout.write('--builder'); process.exit(0); }
+if(kind==='buildx' && action==='create') {
+  const name=args[args.indexOf('--name')+1]; fs.writeFileSync(builderFile,name); process.stdout.write(name); process.exit(0);
+}
+if(kind==='buildx' && action==='prune') process.exit(0);
+if(kind==='compose' && args.includes('build') && !args.includes('--help')) {
+  const index=args.indexOf('build'); const builder=fs.readFileSync(builderFile,'utf8');
+  if(args[index+1]!=='--builder' || args[index+2]!==builder || process.env.BUILDX_BUILDER!==builder) process.exit(8);
+  fs.writeFileSync(file,process.env.COMPOSE_PROJECT_NAME+'-api'); process.exit(0);
+}
+if(kind==='compose' && args.includes('config')) {
+  process.stdout.write(JSON.stringify({services:{api:{build:{context:'.'}},
+   storybook:{build:{context:'.'},profiles:['storybook']},
+   prototypes:{build:{context:'.'},profiles:['prototypes']},
+   'e2e-runner':{build:{context:'.'},profiles:['runner']}}})); process.exit(0);
+}
+if(kind==='image' && action==='ls') { if(fs.existsSync(file))process.stdout.write(fs.readFileSync(file,'utf8')+':latest\\n'); process.exit(0); }
+if(['container','volume','network'].includes(kind) && action==='ls') process.exit(0);
+if(['container','volume'].includes(kind) && action==='inspect') {
+  const name=args.at(-1); const builder=fs.existsSync(builderFile)?fs.readFileSync(builderFile,'utf8'):null;
+  const expected=builder?'buildx_buildkit_'+builder+'0':null;
+  if(expected && name===(kind==='container'?expected:expected+'_state')) {
+    const value=kind==='container'?{Name:'/'+expected,Id:'e'.repeat(64),Created:'2099-11-03T00:00:00Z',Config:{Labels:{}}}:{Name:name,CreatedAt:'2099-11-03T00:00:00Z'};
+    process.stdout.write(JSON.stringify([value])); process.exit(0);
+  }
+  process.stderr.write(kind==='container'?'Error response from daemon: No such container: '+name+'\\n'
+    :'Error response from daemon: get '+name+': no such volume\\n'); process.exit(1);
+}
+if(kind==='image' && action==='inspect') {
+  const tag=args.at(-1);
+  if(!fs.existsSync(file) || fs.readFileSync(file,'utf8')!==tag) { process.stderr.write('Error response from daemon: No such image: '+tag+'\\n'); process.exit(1); }
+  process.stdout.write(JSON.stringify([{Id:'sha256:'+'d'.repeat(64),Created:'2099-11-03T00:00:00Z',RepoTags:[tag+':latest']}]));
+  process.exit(0);
+}
+if(kind==='image' && action==='rm') { fs.rmSync(file); process.exit(0); }
+process.stderr.write('unexpected fake Docker call '+args.join(' ')); process.exit(9);
+`, { mode: 0o700 });
+  const runner = path.join(dir, "run-containerized.sh");
+  writeFileSync(runner, `#!${process.execPath}
+if(process.env.BUILDX_BUILDER!=='vibe-build' || process.env.TURBO_CACHE_DIR) process.exit(5);
+const result=require('node:child_process').spawnSync('docker',['compose','-f','fixture.yml','build','api'],{stdio:'inherit',env:process.env});
+if(result.status!==0) process.exit(result.status||6);
+`, { mode: 0o700 });
+  writeFileSync(path.join(dir, "df"), "#!/bin/sh\nprintf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' '/dev/disk 100000000 1 62500000 1% /'\n", { mode: 0o700 });
+  const env = { ...process.env, VIBE_E2E_DOCKER: docker, PATH: dir + path.delimiter + process.env.PATH };
+  delete env.COMPOSE_PROJECT_NAME;
+  const result = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", path.join(dir, "lock"), runner],
+    { encoding: "utf8", env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(imageFile), false, "the exact generated tag is removed");
+});
+
+test('generated projects discover images from direct scripts, pnpm wrappers, and node wrappers', () => {
+  const dir = path.join(root, 'all-wrapper-image-discovery');
+  mkdirSync(dir);
+  const imageFile = path.join(dir, 'image');
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, `#!${process.execPath}
+const fs=require('node:fs'),args=process.argv.slice(2),kind=args[0],action=args[1],file=${JSON.stringify(imageFile)};
+if(kind==='version')process.exit(0);
+if(kind==='image'&&action==='ls'){if(fs.existsSync(file))process.stdout.write(fs.readFileSync(file,'utf8')+':latest\\n');process.exit(0)}
+if(kind==='image'&&action==='inspect'){const tag=args.at(-1);if(!fs.existsSync(file)||fs.readFileSync(file,'utf8')!==tag){process.stderr.write('Error response from daemon: No such image: '+tag+'\\n');process.exit(1)}process.stdout.write(JSON.stringify([{Id:'sha256:'+'a'.repeat(64),Created:'2099-01-01T00:00:00Z',RepoTags:[tag+':latest']}]));process.exit(0)}
+if(kind==='image'&&action==='rm'){fs.rmSync(file);process.exit(0)}
+if(['container','volume','network'].includes(kind)&&action==='ls')process.exit(0);
+process.stderr.write('unexpected '+args.join(' '));process.exit(9);
+`, { mode: 0o700 });
+  const writer = `require('node:fs').writeFileSync(${JSON.stringify(imageFile)},process.env.COMPOSE_PROJECT_NAME+'-wrapped')`;
+  const script = path.join(dir, 'script.sh');
+  const pnpm = path.join(dir, 'pnpm');
+  for (const executable of [script, pnpm]) writeFileSync(executable, `#!${process.execPath}\n${writer}\n`, { mode: 0o700 });
+  const commands = [[script], [pnpm, 'wrapped'], [process.execPath, '-e', writer]];
+  for (const [index, command] of commands.entries()) {
+    const result = spawnSync(process.execPath, [SCRIPT, 'run', '--head', SHA, '--lock-dir', path.join(dir, `lock-${index}`), ...command],
+      { encoding: 'utf8', env: { ...process.env, VIBE_E2E_DOCKER: docker } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(imageFile), false, command[0]);
+  }
+});
+
+test("E2E lock refuses a Dagger e-2-e build below 64 GB after taking its lock", () => {
+  const dir = path.join(root, "e2e-low-disk");
+  const bin = path.join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  const marker = path.join(dir, "built");
+  const docker = path.join(bin, "docker");
+  writeFileSync(docker, `#!/bin/sh
+case "$1 $2" in
+ "version ") exit 0 ;;
+ "info --format") printf '%s\\n' "${dir}"; exit 0 ;;
+ "context inspect") printf '%s\\n' 'unix:///var/run/docker.sock'; exit 0 ;;
+ "container ls"|"volume ls"|"network ls") exit 0 ;;
+esac
+exit 9
+`, { mode: 0o700 });
+  writeFileSync(path.join(bin, "df"), `#!/bin/sh
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/disk 100000000 1 62499999 1%% /${dir}\\n'
+`, { mode: 0o700 });
+  const dagger = path.join(bin, "dagger");
+  writeFileSync(dagger, `#!/bin/sh
+printf ran > "${marker}"
+`, { mode: 0o700 });
+  const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, VIBE_E2E_DOCKER: docker };
+  delete env.COMPOSE_PROJECT_NAME;
+  const result = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", path.join(dir, "lock"),
+    dagger, "call", "e-2-e"], { encoding: "utf8", env });
+  assert.notEqual(result.status, 0, "the low-disk build must be refused");
+  assert.match(result.stderr, /64,000,000,000|64000000000/);
+  assert.equal(existsSync(marker), false, "Dagger never started");
+  assert.equal(existsSync(path.join(dir, "lock")), false, "the admission releases the E2E lock");
+});
+
+test("mixed GHCR overlay still requires its one local build tag while cleanup retains the persistent builder", () => {
+  const dir = path.join(root, "mixed-ghcr-local-fixture");
+  mkdirSync(dir);
+  const builderFile = path.join(dir, "builder-name");
+  const callsFile = path.join(dir, "docker-calls");
+  const fallbackFile = path.join(dir, "local-fallback-tag");
+  const upOverlayFile = path.join(dir, "up-overlay.json");
+  const docker = path.join(dir, "docker");
+  writeFileSync(docker, `#!${process.execPath}
+const fs=require('node:fs');
+const builderFile=${JSON.stringify(builderFile)};
+const callsFile=${JSON.stringify(callsFile)};
+const fallbackFile=${JSON.stringify(fallbackFile)};
+const upOverlayFile=${JSON.stringify(upOverlayFile)};
+const args=process.argv.slice(2), [kind,action]=args, name=args.at(-1);
+fs.appendFileSync(callsFile,args.join(' ')+'\\n');
+if(kind==='version') process.exit(0);
+if(kind==='info'){process.stdout.write(${JSON.stringify(dir)});process.exit(0)}
+if(kind==='context'){process.stdout.write('unix:///var/run/docker.sock');process.exit(0)}
+if(kind==='buildx' && action==='version'){process.stdout.write('github.com/docker/buildx v0.14.1');process.exit(0)}
+if(kind==='compose' && action==='build' && args.includes('--help')){process.stdout.write('--builder');process.exit(0)}
+if(kind==='compose' && args.includes('build')){
+ if(process.env.MOCK_BUILD_FALLBACK==='1' && args.includes('api'))fs.writeFileSync(fallbackFile,process.env.COMPOSE_PROJECT_NAME+'-api');
+ process.exit(0);
+}
+if(kind==='compose' && args.includes('up')){
+ fs.copyFileSync(args[args.lastIndexOf('-f')+1],upOverlayFile);process.exit(0)
+}
+if(kind==='compose' && args.includes('config')){
+ process.stdout.write(JSON.stringify({services:{api:{build:{context:'.'},
+  image:process.env.E2E_CONTENT_IMAGE_API||'cl-e2e-api-local'},
+  realtime:{build:{context:'.'}},app:{image:'ghcr.io/shared/app:sha'}}}));process.exit(0)
+}
+if(kind==='image' && action==='ls'){
+ if(fs.existsSync(fallbackFile))process.stdout.write(fs.readFileSync(fallbackFile,'utf8')+':latest\\n');
+ process.exit(0)
+}
+if(kind==='buildx' && action==='create'){const builder=args[args.indexOf('--name')+1];fs.writeFileSync(builderFile,builder);process.stdout.write(builder);process.exit(0)}
+if(kind==='buildx' && action==='prune')process.exit(0)
+if(['container','volume','network'].includes(kind) && action==='ls')process.exit(0);
+if(['container','volume'].includes(kind) && action==='inspect'){
+ const builder=fs.existsSync(builderFile)?fs.readFileSync(builderFile,'utf8'):null;
+ const expected=builder?'buildx_buildkit_'+builder+'0':null;
+ if(expected && name===(kind==='container'?expected:expected+'_state')){
+  process.stdout.write(JSON.stringify([kind==='container'?{Name:'/'+expected,Id:'e'.repeat(64),Created:'2099-11-03T00:00:00Z',Config:{Labels:{}}}:
+   {Name:name,CreatedAt:'2099-11-03T00:00:00Z'}]));process.exit(0)
+ }
+ process.stderr.write(kind==='container'?'Error response from daemon: No such container: '+name+'\\n':
+  'Error response from daemon: get '+name+': no such volume\\n');process.exit(1)
+}
+if(kind==='image' && action==='inspect'){
+ if(name==='ghcr.io/shared/api:sha'){process.stdout.write(JSON.stringify([{Id:'sha256:'+'f'.repeat(64),
+   Created:'2026-10-01T00:00:00Z',RepoTags:[name]}]));process.exit(0)}
+ if(fs.existsSync(fallbackFile) && name===fs.readFileSync(fallbackFile,'utf8')){
+  process.stdout.write(JSON.stringify([{Id:'sha256:'+'d'.repeat(64),Created:'2099-11-03T00:00:00Z',RepoTags:[name+':latest']}]));
+  process.exit(0)
+ }
+ process.stderr.write('Error response from daemon: No such image: '+name+'\\n');process.exit(1)
+}
+if(kind==='image' && action==='rm' && fs.existsSync(fallbackFile) && name===fs.readFileSync(fallbackFile,'utf8')){fs.rmSync(fallbackFile);process.exit(0)}
+process.stderr.write('unexpected fake Docker call '+args.join(' '));process.exit(9);
+`, { mode: 0o700 });
+  const runner = path.join(dir, "run-containerized.sh");
+  writeFileSync(runner, `#!${process.execPath}
+if(!process.env.BUILDX_BUILDER)process.exit(5);
+const service=process.env.MOCK_BUILD_FALLBACK==='1'?'api':'realtime';
+if(service==='api')process.env.E2E_CONTENT_IMAGE_API='';
+const result=require('node:child_process').spawnSync('docker',['compose','-f','fixture.yml','build',service],{stdio:'inherit',env:process.env});
+if(result.status!==0)process.exit(result.status??1);
+if(service==='api'){
+ const up=require('node:child_process').spawnSync('docker',['compose','-f','fixture.yml','up','-d'],{stdio:'inherit',env:process.env});
+ process.exit(up.status??1);
+}
+`, { mode: 0o700 });
+  writeFileSync(path.join(dir, "df"), "#!/bin/sh\nprintf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' '/dev/disk 100000000 1 62500000 1% /'\n", { mode: 0o700 });
+  const env = { ...process.env, VIBE_E2E_DOCKER: docker, E2E_GHCR_CONTENT_IMAGES: "1",
+    E2E_CONTENT_IMAGE_API: 'ghcr.io/shared/api:sha',
+    PATH: dir + path.delimiter + process.env.PATH };
+  delete env.COMPOSE_PROJECT_NAME;
+  const result = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", path.join(dir, "lock"), runner],
+    { encoding: "utf8", env });
+  assert.equal(result.status, 127, "the build shim refuses a successful wave that loaded no local tag");
+  assert.equal(existsSync(builderFile), true, "the persistent vibe builder remains available for the next run");
+  assert.doesNotMatch(readFileSync(callsFile, "utf8"), /image rm ghcr\.io\/shared\/api:sha/);
+  const fallback = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", path.join(dir, "lock"), runner],
+    { encoding: "utf8", env: { ...env, MOCK_BUILD_FALLBACK: '1' } });
+  assert.equal(fallback.status, 0, fallback.stderr);
+  assert.equal(existsSync(fallbackFile), false, 'witnessed private fallback tag is removed');
+  const overlay = JSON.parse(readFileSync(upOverlayFile, 'utf8'));
+  assert.match(overlay.services.api.image, /^vibe-e2e-[a-f0-9]{32}-api$/);
+  assert.equal(overlay.services.app, undefined, 'GHCR content service keeps its shared image');
+  assert.doesNotMatch(readFileSync(callsFile, "utf8"), /image rm ghcr\.io\/shared\/api:sha/);
+});
+
+test("real GHCR overlay reserves private candidate tags while content images stay outside cleanup", () => {
+  const dir = path.join(root, 'ghcr-fallback-tags');
+  mkdirSync(dir);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, `#!${process.execPath}
+const api=process.env.E2E_CONTENT_IMAGE_API||'cl-e2e-api-local';
+const local=process.env.E2E_CONTENT_IMAGE_API||'cl-e2e-api-local-local';
+process.stdout.write(JSON.stringify({services:{api:{build:{context:'.'},image:api},
+ 'api-local':{build:{context:'.'},image:local},realtime:{build:{context:'.'}},
+ postgres:{image:'postgres:16'}}}));
+`, { mode: 0o700 });
+  const project = 'vibe-e2e-' + 'c'.repeat(32);
+  const tags = plannedLocalTags(docker, project, defaultWorktree, 'e2e/run-containerized.sh', [],
+    { ...process.env, E2E_GHCR_CONTENT_IMAGES: '1', E2E_CONTENT_IMAGE_API: 'ghcr.io/shared/api:sha' });
+  assert.deepEqual(tags, [project + '-api', project + '-api-local', project + '-realtime']);
+  assert.equal(tags.includes('ghcr.io/shared/api:sha'), false);
+});
+
+test('all-profile reservation permits profiled builds but requires only the selected wave', () => {
+  const dir = path.join(root, 'profiled-build-tags');
+  mkdirSync(dir);
+  const docker = path.join(dir, 'docker');
+  const builtFile = path.join(dir, 'built-tag');
+  const token = 'c'.repeat(32);
+  const project = 'vibe-e2e-' + token;
+  writeFileSync(docker, `#!${process.execPath}
+const fs=require('node:fs');
+const args=process.argv.slice(2);
+const project=${JSON.stringify(project)};
+const builtFile=${JSON.stringify(builtFile)};
+if(args[0]==='compose' && args.includes('config')){
+ const services={api:{build:{context:'.'}}};
+ if(args.includes('--profile') && args[args.indexOf('--profile')+1]==='*'){
+  for(const name of ['e2e-runner','storybook','prototypes'])services[name]={build:{context:'.'},profiles:[name]};
+ }
+ process.stdout.write(JSON.stringify({services}));process.exit(0);
+}
+if(args[0]==='compose' && args.includes('build')){
+ const overlay=JSON.parse(fs.readFileSync(args[args.lastIndexOf('-f')+1],'utf8'));
+ if(overlay.services['e2e-runner']?.image!==project+'-e2e-runner')process.exit(9);
+ fs.writeFileSync(builtFile,project+'-e2e-runner');process.exit(0);
+}
+if(args[0]==='image' && args[1]==='inspect'){
+ const tag=args[2];
+ if(fs.existsSync(builtFile) && fs.readFileSync(builtFile,'utf8')===tag){
+  process.stdout.write(JSON.stringify([{Id:'sha256:'+'d'.repeat(64),Created:'2099-11-03T00:00:00Z',RepoTags:[tag+':latest']}]));process.exit(0);
+ }
+ process.stderr.write('Error response from daemon: No such image: '+tag);process.exit(1);
+}
+process.exit(9);
+`, { mode: 0o700 });
+  const defaults = JSON.parse(spawnSync(docker, ['compose', 'config', '--format', 'json'], { encoding: 'utf8' }).stdout).services;
+  assert.deepEqual(Object.keys(defaults), ['api'], 'default Compose config omits profiled services');
+  const tags = plannedLocalTags(docker, project, defaultWorktree, 'e2e/run-containerized.sh');
+  assert.deepEqual(tags, ['api', 'e2e-runner', 'storybook', 'prototypes'].map((name) => project + '-' + name));
+  const file = path.join(dir, 'reservation.json');
+  const run = (args) => args[0] === 'image'
+    ? { status: 1, stderr: 'Error response from daemon: No such image: ' + args[2] + ':latest' }
+    : { status: 0, stdout: '' };
+  const record = reserveGeneratedE2E({ token, project, owner: { pid: 99_999_999, identity: 'dead', token },
+    startedAt: '2026-11-03T00:00:00Z', plannedTags: tags, file }, { run });
+  assert.deepEqual(record.requiredBuiltTags ?? [], [], 'profile candidates are not required at reservation');
+  const state = path.join(dir, 'run-state');
+  mkdirSync(path.join(state, 'turbo-cache'), { recursive: true });
+  record.runState = { path: state };
+  record.cache = { path: path.join(state, 'turbo-cache') };
+  record.builder = { name: 'fixture-builder', container: { id: 'owned' } };
+  const shim = path.join(installOwnedBuildShim(record, docker), 'docker');
+  const built = spawnSync(shim, ['compose', '-f', 'fixture.yml', 'build', 'e2e-runner'],
+    { encoding: 'utf8', env: { ...process.env, COMPOSE_PROJECT_NAME: project } });
+  assert.equal(built.status, 0, built.stderr);
+  recordBuiltTags(record);
+  assert.deepEqual(record.requiredBuiltTags, [project + '-e2e-runner']);
+  assert.equal(record.requiredBuiltTags.includes(project + '-storybook'), false);
+  assert.equal(record.requiredBuiltTags.includes(project + '-prototypes'), false);
+});
+
+test('child gate starts no command until the durable launch handshake is released', async () => {
+  const dir = path.join(root, 'child-gate');
+  mkdirSync(dir);
+  const token = 'a'.repeat(32);
+  const gate = path.join(dir, `e2e-gate-${token}.ready`);
+  const marker = path.join(dir, 'ran');
+  const command = path.join(dir, 'mark.cjs');
+  writeFileSync(command, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
+  const child = spawn(process.execPath, [SCRIPT, 'child-gate', gate, process.execPath, command],
+    { stdio: 'ignore', detached: true });
+  const closed = new Promise((resolve) => child.once('close', resolve));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(existsSync(marker), false, 'the real command has not begun before acknowledgement');
+  writeFileSync(gate, token, { mode: 0o600, flag: 'wx' });
+  assert.equal(await closed, 0);
+  assert.equal(readFileSync(marker, 'utf8'), 'ran');
 });
 
 test("the lock is one folder per machine, under the vibe home", () => {
@@ -239,6 +681,23 @@ test("a lock left by a process that no longer exists is taken over", () => {
   const next = tryAcquire(lockDir, owner(process.pid, "next"));
   assert.equal(next.acquired, true);
   assert.equal(readHolder(lockDir).token, "next");
+});
+
+test('a dead wrapper cannot yield the lock while its recorded command group is alive', async (t) => {
+  const dir = path.join(root, 'live-child-lock');
+  const lockDir = path.join(dir, 'e2e-stack');
+  mkdirSync(lockDir, { recursive: true });
+  const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+  t.after(() => {
+    const group = child.pid;
+    if (group > 1) { try { process.kill(-group, 'SIGKILL'); } catch { /* Group already exited. */ } }
+  });
+  const token = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: DEAD_PID, token }));
+  writeFileSync(path.join(dir, `e2e-cleanup-${token}.json`), JSON.stringify({ owner: { token }, child: { pgid: child.pid } }));
+  const attempt = tryAcquire(lockDir, owner(process.pid, 'new-owner'));
+  assert.equal(attempt.acquired, false);
+  assert.equal(readHolder(lockDir).token, token);
 });
 
 test("a lock folder whose owner is still writing its record is not taken; an old ownerless one is", () => {
@@ -332,12 +791,12 @@ test("each run gets its own compose project unless the caller set one", () => {
   const first = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", lockDir, ...print], { encoding: "utf8", env });
   const second = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", lockDir, ...print], { encoding: "utf8", env });
   assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stdout, /^vibe-e2e-[0-9a-f]{8}$/);
+  assert.match(first.stdout, /^vibe-e2e-[0-9a-f]{32}$/);
   assert.notEqual(first.stdout, second.stdout, "two runs never share a project, so one teardown cannot remove the other's stack");
   assert.match(first.stderr, new RegExp(`compose project ${first.stdout}`));
   const kept = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", lockDir, ...print], { encoding: "utf8", env: { ...env, COMPOSE_PROJECT_NAME: "callers-own" } });
   assert.equal(kept.stdout, "callers-own");
-  assert.equal(composeProjectFor({}, "0123abcd-ef45-6789"), "vibe-e2e-0123abcd");
+  assert.equal(composeProjectFor({}, "0123abcd-ef45-6789-abcd-0123456789ab"), "vibe-e2e-0123abcdef456789abcd0123456789ab");
 });
 
 test("a stack started outside the lock on a named compose project keeps the stack busy; no Docker checks nothing", () => {

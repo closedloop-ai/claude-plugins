@@ -5,11 +5,11 @@
 // other lane is serial: at most one runs at a time, alongside the pool. A lane this file does
 // not recognise is serial. e2e lanes are serial and run under e2e-lock.mjs.
 //
-// VIBE_VERIFY_POOL=serial restores strictly serial execution (verify-run's previous path).
+// Without VIBE_HEAVY_BUDGET=on, or with VIBE_VERIFY_POOL_SIZE=1, execution is strictly serial (verify-run's previous path).
 // VIBE_VERIFY_POOL_SIZE overrides the pool size; VIBE_VERIFY_POOLABLE adds root script names to
 // the poolable list.
 
-import { ENV, featureDisabled } from "./heavy-budget.mjs";
+import { budgetDisabled, ENV } from "./heavy-budget.mjs";
 
 export const LaneKind = Object.freeze({ Pool: "pool", Serial: "serial" });
 
@@ -46,7 +46,7 @@ export function classifyLane(lane, env = process.env) {
 
 /** How many lanes may run at once: 1 when pooling is switched off, else the budget's spare workers over the minimum, between 1 and `poolSize`. */
 export function poolSizeFor({ env = process.env, settings, snapshot }) {
-  if (String(env[ENV.pool] ?? "").trim().toLowerCase() === "serial" || featureDisabled(env, ENV.off)) return 1;
+  if (budgetDisabled(env)) return 1;
   const spare = snapshot ? Math.floor(snapshot.available / settings.minWorkers) : settings.poolSize;
   return Math.max(1, Math.min(settings.poolSize, spare));
 }

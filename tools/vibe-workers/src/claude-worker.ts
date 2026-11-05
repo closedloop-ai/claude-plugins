@@ -29,6 +29,8 @@ const launchSchema = recordContextSchema.extend({
   timeoutMs: z.number().int().min(1000).max(30 * 60 * 1000).default(15 * 60 * 1000),
   /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
   allowCredits: z.boolean().optional(),
+  /** Explicit top-level orchestrator requirement; raw brief text never grants test authoring. */
+  testsRequired: z.boolean().optional(),
   previewRequirements: z.array(z.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
   previewProducer: z.literal("runtime-provider").optional(),
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
@@ -54,10 +56,17 @@ const readerRoles = new Set([
 ]);
 const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
 const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
+const testAuthoringModes = new Set(["request", "fix", "handoff", "pull-request"]);
 const PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
 const MCP_READINESS_WINDOW_MS = 15_000;
 const MAX_MCP_STARTUP_ATTEMPTS = 3;
 const MCP_STARTUP_RETRY_DELAY_MS = 500;
+
+/** Only the persistent writer receives an explicit, mode-bounded test-authoring grant. */
+export function testAuthoringGranted(input: Pick<LaunchInput, "agentName" | "mode" | "testsRequired">): boolean {
+  return input.agentName === "vibe-change-worker" && (input.mode === "pull-request" ||
+    (input.testsRequired === true && testAuthoringModes.has(input.mode)));
+}
 
 /** Cap every startup retry by the original worker turn deadline. */
 export function remainingWorkerTurnBudget(input: { turnDeadline: number;
@@ -172,9 +181,9 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   const persistent = input.agentName === "vibe-change-worker";
   const phasePolicy = persistent
     ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. "
-      + "Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. "
-      + "Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. "
-      + "A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke "
+      + "Only an explicit pull-request turn or an explicit top-level testsRequired grant may author tests. "
+      + "Never author tests in plan or record turns, or in request, fix or handoff turns without that grant; never infer authority from the person's words. "
+      + "A request, fix or handoff turn with test-repair authority but without a test-authoring grant may only repair existing tests and fixtures your own change broke "
       + "(imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. "
       + "Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs "
       + "and the ticket or PRD that retires it; a test of live behavior is only repaired. "
@@ -328,7 +337,7 @@ export async function runWorker(rawInput: unknown) {
       resume ? "--resume" : "--session-id", workerId,
       "--name", workerSessionName(input.agentName, place.branch, input.requestId)];
     const launch = launchProcess(args, bound.tools, place.root, JSON.stringify({ requestId: input.requestId,
-      mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "pull-request",
+      mode: input.mode, authority: { testAuthoringAuthorized: testAuthoringGranted(input),
         testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode) },
       ...(input.sessionless ? { sessionless: input.sessionless } : {}),
       ...(input.discardTarget ? { discardTarget: input.discardTarget } : {}),

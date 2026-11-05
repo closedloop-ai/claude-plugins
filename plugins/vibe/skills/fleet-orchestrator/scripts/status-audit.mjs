@@ -16,7 +16,9 @@
 //     "pullRequests": [{"url", "state": "MERGED" | "OPEN" | "CLOSED"}],
 //     "body": "<the ticket's latest text>", "plans": [{"slug", "status"}],
 //     "absorbedBy": {"slug", "status"} (the umbrella ticket that absorbed it)}]}],
-//    "outOfScope": [{"slug", "reason": "<who ruled it out, and where>"}]}
+//    "outOfScope": [{"slug", "reason": "<who ruled it out, and where>"}],
+//    "programRulings": "<current rulings.md>", "pullRequestTickets": {"123": "ISS-1"},
+//    "artifactLinks": [{"source": "ISS-1", "target": "ISS-2", "linkType": "BLOCKS"}]}
 // For each child: a merged pull request means DONE; an open pull request or an
 // assigned writer means IN_PROGRESS or IN_REVIEW; not DONE or CANCELED with
 // neither means UNOWNED. A merged pull request is not DONE on its own: a child
@@ -37,12 +39,14 @@
 // umbrella that absorbed it closed; close those children in the same step as
 // the umbrella, with its merge as evidence. Plans stayed open behind DONE
 // tickets and absorbed children stayed IN_PROGRESS until the operator noticed.
+// It also prints SEQUENCING-UNRESOLVED or SEQUENCING-BLOCKS-MISSING when a
+// sourced human sequencing ruling cannot be resolved or lacks its graph edge.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ticketProblems } from "../../handoff/scripts/executed-check.mjs";
-import { rulingNamesScope } from "../../handoff/scripts/rulings-check.mjs";
+import { rulingNamesScope, sequencingRequirements } from "../../handoff/scripts/rulings-check.mjs";
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
@@ -109,7 +113,7 @@ export function auditStatuses(snapshot) {
     .map((entry) => [entry.slug, entry.reason.trim()]));
   const children = (Array.isArray(snapshot?.prds) ? snapshot.prds : [])
     .flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []).map((child) => ({ child, prdSlug: prd?.slug })));
-  const findings = [];
+  const findings = sequencingFindings(snapshot);
   const outOfScope = [];
   for (const { child, prdSlug } of children) {
     findings.push(...sweepFindings(child).map((found) => ({ slug: child.slug, status: child.status, ...found })));
@@ -121,6 +125,20 @@ export function auditStatuses(snapshot) {
     else findings.push({ slug: child.slug, status: child.status, ...finding });
   }
   return { children: children.length, findings, outOfScope };
+}
+
+/** Missing or unresolved BLOCKS edges implied by the program's recorded sequencing rulings. */
+function sequencingFindings(snapshot) {
+  if (typeof snapshot?.programRulings !== "string") return [];
+  const { edges, unresolved } = sequencingRequirements(snapshot.programRulings, snapshot.pullRequestTickets ?? {});
+  const links = new Set((Array.isArray(snapshot.artifactLinks) ? snapshot.artifactLinks : [])
+    .filter((link) => link?.linkType === "BLOCKS")
+    .map((link) => `${link.sourceSlug ?? link.source}>${link.targetSlug ?? link.target}`));
+  return [
+    ...unresolved.map((entry) => ({ kind: "SEQUENCING-UNRESOLVED", ...entry })),
+    ...edges.filter((edge) => !links.has(`${edge.blocker}>${edge.blocked}`))
+      .map((edge) => ({ kind: "SEQUENCING-BLOCKS-MISSING", ...edge })),
+  ];
 }
 
 function main(argv) {
@@ -141,6 +159,8 @@ function main(argv) {
     UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
     UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,
     MISMATCH: (finding) => `MISMATCH ${finding.slug} ${finding.status}, expected ${finding.expected} (${finding.evidence})`,
+    "SEQUENCING-UNRESOLVED": (finding) => `SEQUENCING-UNRESOLVED ${finding.reference}: cannot resolve the recorded ruling "${finding.ruling.slice(0, 160)}" to ticket dependencies`,
+    "SEQUENCING-BLOCKS-MISSING": (finding) => `SEQUENCING-BLOCKS-MISSING ${finding.blocker} blocks ${finding.blocked}: the recorded sequencing ruling has no matching BLOCKS link`,
   };
   for (const finding of findings) process.stdout.write(`${lines[finding.kind](finding)}\n`);
   for (const entry of outOfScope) process.stdout.write(`OUT-OF-SCOPE ${entry.slug}: ${entry.reason}\n`);

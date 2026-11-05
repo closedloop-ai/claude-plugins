@@ -22,7 +22,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 
-export const EVIDENCE_TYPES = ["test", "script", "screenshot", "api-read"];
+export const EVIDENCE_TYPES = ["test", "script", "screenshot", "api-read", "source-trace"];
 export const ASSUMPTION_TAGS = ["grounded", "unverified"];
 export const QUESTION_KINDS = ["assumption", "product-fork", "technical-fork"];
 export const CHECKPOINT_ENV = "VIBE_FORK_CHECKPOINT";

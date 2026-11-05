@@ -48,10 +48,12 @@ first and read its findings file (`../skills/vibe/references/guardrails-findings
 holds the shape). It wraps the repository's Biome and `pnpm check:source-gates`
 and `diff-rules.mjs`, and scans added lines for tokens, conventions, changed
 assertions in repaired tests and new exports another file already owns. Report
-each finding it lists, confirmed by reading the line, and spend your reading on
-what it lists under `checks_skipped`: an empty `findings` list proves nothing
-about a check that did not run. Without the script, run the checks below
-unchanged.
+each finding it lists, confirmed by reading the line. The findings file adds
+findings and replaces none of the numbered checks below: run every one of them
+whether or not the script ran, and treat a check the file does not name as not
+checked; an empty `findings` list proves nothing about a check that did not run,
+and `checks_skipped` only names the ones it knows it skipped. Without the
+script, run the checks below unchanged.
 
 ## Check, for added or changed lines only
 
@@ -219,8 +221,8 @@ path merely because another rule describes how its content should look.
      owner is mocked or which asserts before a positive mounted signal, or a
      metric/summary/card test with only a count assertion is blocking. Match
      each one to its exact `testIntegrityProofs` entry and confirm the recorded
-     mutation failed, the restored case passed, and the proof covers the
-     current tested source.
+     mutation failed at the named assertion, the restored case passed, and the
+     proof covers the current tested source.
    - Layout coverage names the established grid or official prototype story
      and asserts containment or geometry. `toHaveCount(1)` or `toHaveLength(1)`
      may preserve cardinality but can never establish card width or placement.

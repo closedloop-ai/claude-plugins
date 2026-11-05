@@ -21,6 +21,18 @@ export function execCommand(command, args, { cwd, input, timeoutMs = DEFAULT_TIM
   return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
+/** The stdout of a result that exited 0; any other status throws with the command's stderr, so a failed command is never read as an empty answer. */
+export function stdoutOf(result, what) {
+  if (result.status !== 0) throw new Error(`${what} failed (status ${result.status}): ${String(result.stderr ?? "").trim().split("\n").pop() ?? ""}`);
+  return result.stdout;
+}
+
+/** The stdout of a command that ran, whatever its exit code (a check that reports by exiting non-zero still prints); one that could not run or timed out (status 124 or 127) throws. */
+export function printedStdout(result, what) {
+  if (result.status === 124 || result.status === 127) throw new Error(`${what} could not run (status ${result.status}): ${String(result.stderr ?? "").trim().split("\n").pop() ?? ""}`);
+  return result.stdout;
+}
+
 /** `execCommand` without blocking the process, so several commands can run at once. Same result shape and the same 124 and 127 codes. */
 export function execCommandAsync(command, args, { cwd, input, timeoutMs = DEFAULT_TIMEOUT_MS, env } = {}) {
   return new Promise((resolve) => {

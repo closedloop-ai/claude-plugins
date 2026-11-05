@@ -37,7 +37,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { BACKEND_PATH, UI_PREFIXES } from "./area-paths.mjs";
 import { DISPATCH_WORKFLOW } from "./vibe-session-data.mjs";
-import { execCommand, parseJson, tailLines } from "./ws3-exec.mjs";
+import { execCommand, parseJson, stdoutOf, tailLines } from "./ws3-exec.mjs";
 
 export const REPO = "closedloop-ai/symphony-alpha";
 export const ENVIRONMENT_WORKFLOW = "vibe-environment.yml";
@@ -151,7 +151,7 @@ export function createEnvCtl({
   const node = (name, args, options) => run(process.execPath, [script(name), ...args], options);
   const sessions = (args, options) => run(process.execPath, [SESSIONS, ...args], options);
   const gh = (args, options) => run("gh", args, options);
-  const gitDir = (worktree) => run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+  const gitDir = (worktree) => stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
 
   async function flags({ worktree, distinctId, orgId, replace = false }) {
     if (!distinctId || !orgId) return { status: Status.Blocked, error: "--distinct-id and --org-id come from ClosedLoop get-me." };
@@ -276,7 +276,7 @@ export function createEnvCtl({
     if (!baseline) return { status: Status.Blocked, error: "No --since commit and the record has no lastDeployedCommit or baseCommit." };
     const migrations = parseJson(node("migration-publish.mjs", ["--worktree", worktree, "--since", baseline]).stdout, {});
     if (migrations.ok !== true) return { status: Status.Blocked, problems: migrations.problems ?? ["migration-publish refused"] };
-    const left = uncommittedDeliverables(run("git", ["-C", worktree, "status", "--porcelain"]).stdout, (session.localFixes ?? []).map((fix) => fix.path ?? fix));
+    const left = uncommittedDeliverables(stdoutOf(run("git", ["-C", worktree, "status", "--porcelain"]), "git status"), (session.localFixes ?? []).map((fix) => fix.path ?? fix));
     if (left.length > 0) return { status: Status.NeedsCommit, files: left };
     const pushed = parseJson(sessions(["main-sync-push", "--worktree", worktree], { input: stdin }).stdout, {});
     if (pushed.ok !== true) return { status: pushed.status ?? Status.Blocked, error: pushed.error ?? "main-sync-push refused" };
@@ -309,7 +309,7 @@ export function createEnvCtl({
 
   /** Opens the pull request, or reports the open one. The body and title are the worker's. */
   function openPullRequest({ worktree, branch, commit, title, bodyFile, base }) {
-    const remote = run("git", ["-C", worktree, "ls-remote", "origin", branch]).stdout.split(/\s+/)[0];
+    const remote = stdoutOf(run("git", ["-C", worktree, "ls-remote", "origin", branch]), "git ls-remote").split(/\s+/)[0];
     if (remote !== commit) return { status: Status.Blocked, error: `origin/${branch} is at ${remote || "nothing"}, not the verified commit; nothing was pushed.` };
     const existing = parseJson(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url,number"]).stdout, []);
     if (existing.length > 0) return { status: Status.Done, created: false, url: existing[0].url, number: existing[0].number };

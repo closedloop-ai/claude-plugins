@@ -20,8 +20,8 @@
 // Usage: heavy-budget.mjs status      prints the current budget snapshot as JSON
 //
 // Every default is in DEFAULTS, one frozen object, and every one is overridable by
-// an environment variable named in ENV. VIBE_HEAVY_BUDGET=off restores the previous
-// behavior (no budget, no lease, the command's own concurrency).
+// an environment variable named in ENV. The budget is opt-in: VIBE_HEAVY_BUDGET=on enables it, and without that
+// the previous behavior holds (no budget, no lease, the command's own concurrency).
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -53,17 +53,13 @@ export const ENV = Object.freeze({
   targetUtilisation: "VIBE_HEAVY_TARGET",
   minWorkers: "VIBE_HEAVY_MIN_WORKERS",
   leaseDir: "VIBE_HEAVY_LEASE_DIR",
-  wait: "VIBE_HEAVY_WAIT",
   maxWaitSeconds: "VIBE_HEAVY_MAX_WAIT_SECONDS",
-  retry: "VIBE_HEAVY_RETRY",
   retries: "VIBE_HEAVY_RETRIES",
   highLoadPerCore: "VIBE_HEAVY_HIGH_LOAD_PER_CORE",
-  pool: "VIBE_VERIFY_POOL",
   poolSize: "VIBE_VERIFY_POOL_SIZE",
   poolable: "VIBE_VERIFY_POOLABLE",
 });
 
-const OFF_VALUES = new Set(["off", "0", "false", "no"]);
 const HEAVY_TOOLS = new Set(["vitest", "jest", "playwright", "turbo", "tsc", "dagger"]);
 const PACKAGE_RUNNERS = new Set(["pnpm", "npm", "npx", "yarn"]);
 const HEAVY_SCRIPT = /^(?:test|typecheck|lint|build|verify|check)(?::|$)/;
@@ -90,14 +86,9 @@ export function resolveSettings(env = process.env) {
   });
 }
 
-/** Whether waiting for capacity (`VIBE_HEAVY_WAIT=off`) or the load-failure retry (`VIBE_HEAVY_RETRY=off`) is switched off. */
-export function featureDisabled(env, name) {
-  return OFF_VALUES.has(String(env[name] ?? "").trim().toLowerCase());
-}
-
-/** Whether the budget is switched off (`VIBE_HEAVY_BUDGET=off`). */
+/** Whether the budget is off: it is opt-in, so anything but `VIBE_HEAVY_BUDGET=on` leaves the previous behavior. */
 export function budgetDisabled(env = process.env) {
-  return OFF_VALUES.has(String(env[ENV.off] ?? "").trim().toLowerCase());
+  return !(env[ENV.off] === "on");
 }
 
 /** Whether a command is CPU-heavy: a known heavy tool, or a package runner invoked with a test, typecheck, lint, build, verify or check script. */

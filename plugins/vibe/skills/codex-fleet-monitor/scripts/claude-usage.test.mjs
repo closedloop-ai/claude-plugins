@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { claudeUsageLine, parseUsage } from './claude-usage.mjs';
+import { readUsageReadings } from './usage-state.mjs';
 
 // The real `claude -p "/usage"` lines, as the operator's session printed them.
 const REAL = [
@@ -38,6 +39,10 @@ test('the usage probe runs claude without saving a session', () => {
   const script = fileURLToPath(new URL('./claude-usage.mjs', import.meta.url));
   const result = spawnSync(process.execPath, [script, dir, 'local'], { encoding: 'utf8', env: { ...process.env, CLAUDE_BIN: fake } });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^claude-usage local session=/);
+  assert.match(result.stdout.trim(), /^claude-usage local session=.* read=\S+ source=claude-usage$/);
   assert.deepEqual(readFileSync(join(dir, 'args.txt'), 'utf8').trim().split('\n'), ['-p', '--no-session-persistence', '/usage']);
+  const persisted = readUsageReadings(dir).find((reading) => reading.runtime === 'claude');
+  assert.equal(persisted.runtime, 'claude');
+  assert.equal(persisted.source, 'claude-usage');
+  assert.ok(Number.isFinite(Date.parse(persisted.readAt)));
 });

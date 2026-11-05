@@ -5,6 +5,11 @@ description: Finish a vibe session and hand it to whoever picks it up next, usua
 
 # Handoff
 
+Handoff inventory reads one committed repo-root `vibe-handoff-paths.json` from
+the target repository's captured base or verified fetched default branch.
+Inventory blocks a nested or missing declaration and every session change to
+a file with that name.
+
 The person ran `vibe` and built something they are happy with. You
 orchestrate making it safe and complete for the next people, without asking
 them to understand any of the engineering. The session's live ClosedLoop
@@ -66,7 +71,7 @@ fix and never stops the handoff: it is recorded for engineering and the handoff
 goes on (`../vibe/references/quality-loop.md`, "Failures already on main").
 Only a failure the session caused blocks.
 
-Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests; on a failure the SAME persistent `vibe-change-worker` fixes the session's own code, never what the test asserts, and repairs only an existing test or fixture the change broke ("Repair, don't author"). Tests still needed go on the live ticket under Missing tests. Verification/review helpers are read-only, and no check is weakened. Never ask the person about tests or any other engineering choice.
+Handoff authors no tests without an explicit top-level test-authoring grant (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests; on a failure the SAME persistent `vibe-change-worker` fixes the session's own code, never what the test asserts, and, without that grant, repairs only an existing test or fixture the change broke ("Repair, don't author"). Tests still needed go on the live ticket under Missing tests. Verification/review helpers are read-only, and no check is weakened. Never ask the person about tests or any other engineering choice.
 
 The build loop is lean (`../vibe/references/quality-loop.md`, "Lean build
 loop"), so the guardrails and adversarial reviews, browser E2E, visual QA, logical QA and product-contract QA run here. Handoff opens a pull request only when the person asks for one ("A
@@ -141,7 +146,7 @@ change worker has not handled is refused with `NEEDS_CHANGE`.
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| ALL source fixes, behavior answers, the missing tests list, the feature docs record and the frozen behavior rows (tests only for a requested pull request) | the SAME persistent `vibe-change-worker` context |
+| ALL source fixes, behavior answers, the missing tests list, the feature docs record and the frozen behavior rows (test authoring only under an explicit top-level grant) | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
 | Storybook placement and advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
@@ -498,7 +503,7 @@ before anything is called ready, join the run from step 1:
 Only `state: passed` (exit 0) joins. `running` (4) means keep waiting;
 `failed` (1) goes to the SAME writer; `orphaned` (3) and `head-moved` (5) mean
 start a new run at the current head. None of these is a pass, and the result's
-head must be the head under review. Nothing here is counted as aligned, approved or ready
+head must be the head under review. A required check that was a no-op with its reason (no file Biome checks, nothing for the lane report to cover) counts toward `passed`. Nothing here is counted as aligned, approved or ready
 while the lanes are pending, running or failed.
 
 ### Browser E2E and the repository's QA passes
@@ -569,7 +574,7 @@ Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
 `scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
 (every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
-`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists at HEAD)
+`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
 Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific
@@ -811,11 +816,20 @@ the ticket is still assigned to the session's operator, the person who ran it
 that branch is theirs now), assigns it and its PLN to the next owner, and
 leaves the ticket status In Progress.
 
-Then mark the session handed off:
-`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`,
-and stop local Storybook and Desktop with
+Then mark the session handed off. For a requested PR, parse the returned URL
+for its repository and number, use the already verified pushed commit as its
+head, and record all three through the root-owned transition:
+`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off --pr-repo <owner/repo> --pr-number <n> --pr-head <full pushed sha>`.
+The command reads the live PR and refuses a different repository, branch or
+head. For an owner-assignment handoff without a PR, use
+`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`.
+The PR worker never writes session state. Then stop local Storybook and Desktop with
 `node ../vibe/scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals
 only a recorded process it proves is still the session's own (ISS-13321).
+Run `node ../vibe/scripts/e2e-lock.mjs cleanup-sweep sweep` from a retained checkout
+after the stop; a live PR leaves its retirement record pending for a fleet
+supervisor or the next vibe session-entry sweep. The sweep never removes the
+executing checkout.
 
 Tell them, in a few lines, each as a link that opens it
 (`../vibe/references/plain-words.md`, "Links to what the person should look

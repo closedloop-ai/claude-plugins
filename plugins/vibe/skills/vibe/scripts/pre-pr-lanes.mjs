@@ -69,7 +69,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -153,6 +153,43 @@ export function notRunLanes(lanes, records, selection, { identity, harness }) {
 
 function recordsFile(worktree) {
   return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-lane-results.json");
+}
+
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 60_000;
+
+/** Writes the records through a temp file and a rename, so a reader never sees half a file. */
+function writeRecords(worktree, records) {
+  const file = recordsFile(worktree);
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(records, null, 2)}\n`);
+  renameSync(temp, file);
+}
+
+/** Runs `change` holding the records lock (an atomic mkdir beside the file); a lock older than LOCK_STALE_MS is a dead holder's and is taken over. */
+function withRecordsLock(worktree, change) {
+  const lock = `${recordsFile(worktree)}.lock`;
+  const started = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { recursive: true, force: true });
+      } catch {
+        // The holder released it between the two calls.
+      }
+      if (Date.now() - started > LOCK_WAIT_MS) throw new Error(`the lane records lock ${lock} stayed held for ${LOCK_WAIT_MS / 1000}s`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+  try {
+    return change();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
 }
 
 function readRecords(worktree) {
@@ -294,10 +331,13 @@ function main(argv) {
         mainSha = mainTested;
       }
     }
-    const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
     const cacheKey = source.diffSha256 === createHash("sha256").digest("hex") ? laneKeyFor(values.worktree, { command: values.command, base: values.base, config: values.config }) : null;
-    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
-    writeFileSync(recordsFile(values.worktree), `${JSON.stringify(records, null, 2)}\n`);
+    // Two lanes of one pool finish close together: the read, the change and the write happen under one lock so neither record is lost.
+    withRecordsLock(values.worktree, () => {
+      const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
+      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
+      writeRecords(values.worktree, records);
+    });
     process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
   }

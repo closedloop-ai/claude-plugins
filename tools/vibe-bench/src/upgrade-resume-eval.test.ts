@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
   readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,10 +11,13 @@ import test, { before } from "node:test";
 import type { EvalSuiteResult } from "./eval-collector.ts";
 import { ensureGitCommits } from "../../shared/git-commit-fixture.mjs";
 import { upgradeResumeCaseIds } from "./cli.ts";
+import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
 import { archivePluginRelease } from "./plugin-snapshot.ts";
+import type { PluginReleaseArchive } from "./plugin-snapshot.ts";
 import * as pluginSnapshots from "./plugin-snapshot.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
 import * as upgradeEval from "./upgrade-resume-eval.ts";
+import type { UpgradeCaseEvidence, UpgradeFailureCode } from "./upgrade-resume-eval.ts";
 import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuiteResults,
   appServerTokenUsage, claudeStaleRecoveryEligible, claudeStaleRecoveryPrompt,
   claudeUpgradeRootArgs, cleanupClaudeVersionRecords,
@@ -22,9 +25,11 @@ import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuit
   classifyUpgradeFailure, codexStoppedTurn, enqueueUpgradeRequest, heldCodexWriter,
   holdStatusText, linkCodexAuth,
   prepareClaudeVersionRecord, STATEFUL_CLAUDE_ROOT_TIMEOUT_MS, UPGRADE_GRAPH_CAPABILITIES,
+  STATEFUL_INFRASTRUCTURE_RETRIES, runUpgradeCellWithRetry, assertUpgradeDefinitionPremise,
   requireIdleCodexLedger, targetMigrationChild, upgradeCasePasses, validateClaudeVersionRecord,
   validateClaudeLoadContract, validateUpgradeCapabilities,
-  validateCodexInstalledPlugin, statefulInfrastructureInvalidReason } from "./upgrade-resume-eval.ts";
+  validateCodexInstalledPlugin, statefulInfrastructureInvalidReason,
+  statefulSuite } from "./upgrade-resume-eval.ts";
 
 const REPO = realpathSync(join(import.meta.dirname, "../../.."));
 const RELEASE_REFS = [
@@ -47,6 +52,109 @@ function suite(runtime: "claude" | "codex", ids: string[]): EvalSuiteResult {
     tokens: runtime === "codex" ? { input_tokens: 2 } : null,
     nativeHash: runtime[0].repeat(64) };
 }
+
+function evidence(failureCode: UpgradeFailureCode | null,
+  attempt: number): UpgradeCaseEvidence {
+  return { caseId: "upgrade-resume-changed-definition", runtime: "claude",
+    passed: failureCode === null, failureCode, wallMs: attempt * 10, agentCostUsd: attempt / 100,
+    tokens: null, cliVersion: "2.1.318", target: { version: "1.1.39", ref: "a".repeat(40) },
+    prior: { version: "1.1.23", ref: "b".repeat(40) }, oldArchiveRetained: true,
+    proofLines: failureCode === null ? ["turn-one", "turn-two"] : [],
+    rootSessionId: `root-${attempt}`, previousWriterId: "writer-1", finalWriterId: "writer-2",
+    migrationCount: 1, trace: [`attempt-${attempt}`] };
+}
+
+test("ISS-13720 isolated Claude MCP config contains only granted local graph tools", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-eval-mcp-isolation-"));
+  try {
+    const isolated = createClaudeEvalIsolation(join(root, "graph"), process.execPath,
+      UPGRADE_GRAPH_CAPABILITIES);
+    const config = JSON.parse(readFileSync(isolated.mcpConfigFile, "utf8")) as {
+      mcpServers: Record<string, { command: string; args: string[] }>;
+    };
+    assert.deepEqual(Object.keys(config.mcpServers), ["closedloop-graph"]);
+    assert.equal(config.mcpServers["closedloop-graph"]?.command, process.execPath);
+    assert.deepEqual(config.mcpServers["closedloop-graph"]?.args.at(-1)?.split(","),
+      UPGRADE_GRAPH_CAPABILITIES.map((item) => item.operation).sort());
+    const wrapper = readFileSync(isolated.executable, "utf8");
+    assert.match(wrapper, /--setting-sources ''/);
+    assert.match(wrapper, /--strict-mcp-config/);
+    assert.match(wrapper, new RegExp(isolated.mcpConfigFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    const empty = createClaudeEvalIsolation(join(root, "ordinary"), process.execPath, []);
+    assert.deepEqual(JSON.parse(readFileSync(empty.mcpConfigFile, "utf8")), { mcpServers: {} });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13720 isolated MCP fixture exposes only its declared operations", () => {
+  const script = join(import.meta.dirname, "eval-mcp-stub.ts");
+  const calls = [
+    { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } },
+    { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "code_symbols", arguments: {} } },
+    { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_document", arguments: {} } },
+  ].map((item) => JSON.stringify(item)).join("\n") + "\n";
+  const result = spawnSync(process.execPath,
+    ["--experimental-strip-types", script, "--operations", "code_symbols,code_grep"],
+    { input: calls, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const responses = result.stdout.trim().split("\n").map((line) => JSON.parse(line) as {
+    id: number; result?: { tools?: Array<{ name: string }> }; error?: { code: number };
+  });
+  assert.deepEqual(responses.find((item) => item.id === 2)?.result?.tools?.map((item) => item.name),
+    ["code_grep", "code_symbols"]);
+  assert.equal(responses.find((item) => item.id === 3)?.error, undefined);
+  assert.equal(responses.find((item) => item.id === 4)?.error?.code, -32601);
+});
+
+test("ISS-13720 transient stateful infrastructure retries once and retains both attempts", async () => {
+  assert.equal(STATEFUL_INFRASTRUCTURE_RETRIES, 1);
+  const root = mkdtempSync(join(tmpdir(), "vibe-stateful-retry-"));
+  try {
+    let calls = 0;
+    const recovered = await runUpgradeCellWithRetry({ transitionRoot: join(root, "recovered"),
+      run: async () => evidence(++calls === 1 ? "INSTALL_INVALID" : null, calls) });
+    assert.equal(recovered.passed, true);
+    assert.equal(recovered.failureCode, null);
+    assert.deepEqual(recovered.attemptResults?.map((item) => item.failureCode),
+      ["INSTALL_INVALID", null]);
+    assert.equal(recovered.wallMs, 30);
+    assert.equal(existsSync(join(root, "recovered/attempts/1/evidence.json")), true);
+    assert.equal(existsSync(join(root, "recovered/attempts/2/evidence.json")), true);
+
+    calls = 0;
+    const persistent = await runUpgradeCellWithRetry({ transitionRoot: join(root, "persistent"),
+      run: async () => evidence("INSTALL_INVALID", ++calls) });
+    assert.equal(persistent.failureCode, "INSTALL_INVALID");
+    assert.equal(persistent.attemptResults?.length, 2);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13720 definition premise mismatch is a harness error", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-definition-premise-"));
+  try {
+    const release = (name: string, version: string, body: string): PluginReleaseArchive => {
+      const claudeVibeRoot = join(root, name);
+      mkdirSync(join(claudeVibeRoot, "agents"), { recursive: true });
+      writeFileSync(join(claudeVibeRoot, "agents/vibe-change-worker.md"), body);
+      return { sha: name.padEnd(40, "a").slice(0, 40), version, archiveRoot: claudeVibeRoot,
+        vibeDir: claudeVibeRoot, coreDir: claudeVibeRoot, claudeVibeRoot,
+        claudeCoreRoot: claudeVibeRoot };
+    };
+    const prior = release("prior", "1.1.38", "same definition\n");
+    const same = release("same", "1.1.39", "same definition\n");
+    const changed = release("changed", "1.1.39", "changed definition\n");
+    assert.doesNotThrow(() => assertUpgradeDefinitionPremise(
+      { id: "unchanged", definition: "unchanged" }, prior, same));
+    assert.doesNotThrow(() => assertUpgradeDefinitionPremise(
+      { id: "changed", definition: "changed" }, prior, changed));
+    assert.throws(() => assertUpgradeDefinitionPremise(
+      { id: "stale", definition: "unchanged" }, prior, changed), /definition-premise-mismatch/);
+    assert.throws(() => assertUpgradeDefinitionPremise(
+      { id: "wrong-stored-digest", definition: "unchanged", nightlyPrior: {
+        version: prior.version, ref: prior.sha, writerDigestSha256: "f".repeat(64),
+      } }, prior, same), /nightly-prior-digest-mismatch:wrong-stored-digest/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("AC1 released archive builds Claude cache roots and retains exact release bytes", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-release-archive-"));
@@ -166,6 +274,13 @@ test("S8 mixed suite merge gives every selected case exactly one owner", () => {
   const selected = ["pm-ordinary", "upgrade-resume-unchanged-definition"];
   assert.deepEqual(mergeEvalSuiteResults(ordinary, stateful, selected)?.cases.map((item) => item.id),
     selected);
+  const unavailable = statefulSuite("claude", [{ ...evidence(null, 1),
+    caseId: "upgrade-resume-unchanged-definition", passed: false,
+    unavailableReason: "NO_VALID_PRIOR fixture", cliVersion: ordinary.cliVersion }]);
+  const merged = mergeEvalSuiteResults(ordinary, unavailable, selected);
+  assert.equal(merged?.passed, 1);
+  assert.equal(merged?.failed, 0);
+  assert.equal(merged?.unavailable, 1);
   assert.throws(() => mergeEvalSuiteResults(ordinary, stateful, ["pm-ordinary"]),
     /coverage-mismatch/);
 });
@@ -787,6 +902,7 @@ test("AC6 fixed manifests include both runtime cases and current-subject priors"
     .filter((item) => item.kind === "upgrade-resume");
   assert.deepEqual(cases.map((item) => item.definition), ["changed", "unchanged"]);
   assert.ok(cases.every((item) => item.deterministic === true && item.nightlyPrior &&
+    /^[a-f0-9]{64}$/.test(item.nightlyPrior.writerDigestSha256) &&
     item.transitions && item.transitions.length >= 2));
   assert.ok(cases.find((item) => item.definition === "changed")?.transitions
     ?.some((item) => item.target.version === "1.1.24"));

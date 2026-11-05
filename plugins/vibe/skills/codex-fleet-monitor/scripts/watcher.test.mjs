@@ -150,6 +150,18 @@ test('an armed watcher with no change exits with HEARTBEAT after HEARTBEAT_SECON
   assert.ok(JSON.parse(readFileSync(join(dir, 'watcher.json'), 'utf8')).exitedAt, 'the heartbeat exit is recorded, so watcher.mjs says to re-arm');
 });
 
+test('new usage read times do not emit an event when the usage band is unchanged', { timeout: 30_000 }, (t) => {
+  const dir = workDir(t);
+  const snapshot = join(dir, 'fake-usage-snapshot.sh');
+  writeFileSync(snapshot, 'print "codex-usage local under80% ok resets=0 read=$(date -u +%Y-%m-%dT%H:%M:%SZ) source=snapshot"\n');
+  writeFileSync(join(dir, 'config.env'), 'HEARTBEAT_SECONDS=2\n');
+  const run = spawnSync('zsh', [WATCH, dir, '1'], { encoding: 'utf8', timeout: 20_000, env: { ...process.env, WATCH_SNAPSHOT: snapshot } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^HEARTBEAT no change for 2s:/m);
+  assert.doesNotMatch(run.stdout, /^EVENT$/m);
+  assert.match(readFileSync(join(dir, 'last-snapshot.txt'), 'utf8'), /read=\d{4}-\d{2}-\d{2}T/);
+});
+
 test('a watcher without SendMessage surfaces a new event file', { timeout: 30_000 }, async (t) => {
   const dir = workDir(t);
   const snapshot = join(dir, 'fake-snapshot.sh');

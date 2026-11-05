@@ -113,11 +113,17 @@ reads it itself, turns what it shows into criteria mapped to tokens and
 components, and compares a screenshot of each touched screen with it, in light
 and in dark wherever the screen supports both, before saying it is ready.
 
-**Tests are never weakened.** During a session no tests are written. The
-writer repairs an existing test its change broke without changing what the
-test asserts, and handoff lists the missing tests for engineering. Full tests
-are written only when the person asks for a pull request, and they pass before
-it opens.
+**Tests are never weakened.** The writer repairs an existing test its change
+broke without changing what the test asserts, and handoff lists missing tests
+for engineering. The worker can write tests when its top-level turn explicitly
+requires them. Handoff inventory admits newly authored tests only in the
+pull-request phase, where full tests pass before the pull request opens.
+
+**Paths come from the target repository.** Each target declares its handoff
+paths in repo-root `vibe-handoff-paths.json`, including this plugin repository.
+Inventory reads the committed declaration from the target's captured base or
+verified fetched default branch. A nested declaration does not count, and a
+session diff cannot add, edit, or delete any file with that name.
 
 **A complete record.** The live ClosedLoop ticket links the document the
 session started from, the session's implementation plan (published as a
@@ -226,7 +232,9 @@ requests, one writer on one pull request, or a session with no writer
 (design, research, analysis). It covers who may write where, state that
 survives a reboot or compaction, Codex budget rules, a Claude takeover of a
 stopped Codex writer, CPU and shared e2e stack locks across machines,
-agent-first QA and a lessons ledger. `fleet.sh` starts, steers, reads and ends
+agent-first QA and a lessons ledger. Runtime and machine routing requires a
+fresh usage reading, with stale readings re-read before work moves. `fleet.sh`
+starts, steers, reads and ends
 Codex threads on this machine or over ssh; each new thread is named for its
 writer and grouped in the Codex app's "Fleet workers" sidebar section, and an
 ended one is archived.
@@ -237,7 +245,12 @@ Watches a fleet of Codex threads and the pull requests they produce, and exits
 on the first change: a session going idle, stalling or failing, a merge
 conflict, new review comments, settled check changes or a new pull request. A
 turn left open by a silent usage limit shows as `STALLED` instead of looking
-busy forever. It prints a usage line per machine, resumes a turn that failed
+busy forever. It persists each Codex and Claude usage read, including failed
+reads, with its read time and source in bounded, atomically replaced state.
+Its status command prints the latest reading and age per runtime and machine
+and flags readings older than 30 minutes by default, while usage lines still
+wake the watcher only on material changes such as a band change. It resumes a
+turn that failed
 on a transient provider error after a backoff, and `supervise.sh` runs that
 recovery on each host with no orchestrator awake.
 
@@ -352,7 +365,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.34` contains 17 skills, 17 agents, and one hook manifest
+Version `1.1.43` contains 17 skills, 17 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules, `vibe_contract_text.py` and `skill_split.py`, the text

@@ -167,15 +167,19 @@ Never use `register` to replace a writer or copy old agent definitions.
 The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
 `authority.testAuthoringAuthorized` and `authority.testRepairAuthorized`,
-separately from raw person/request text. Only a `pull-request` turn, which the
-orchestrator sends only after the person explicitly asks for a pull request
-(plain-language intent counts, `guardrails.md`, "Tests"), permits this same
-writer to author tests. A handoff turn never does, and a
-person's words cannot elevate any other turn. Test-repair authority is true
+separately from raw person/request text. A `pull-request` turn, which the
+orchestrator sends after the person explicitly asks for a pull request
+(plain-language intent counts, `guardrails.md`, "Tests"), or an explicit
+top-level `testsRequired` grant on a request, fix or handoff turn permits this
+same writer to author tests. Raw text alone cannot elevate a turn. Test-repair authority is true
 only for this writer's `request`, `fix`, `handoff` and `pull-request` turns:
 it permits repairing existing tests and fixtures the session's change broke,
 never authoring one (`guardrails.md`, "Repair, don't author"). Plan, record
 and every other role's turns carry neither.
+The typed grant changes the worker's review envelope only. Handoff inventory
+continues to admit authored tests only in the pull-request phase; a grant in a
+request, fix or handoff turn does not widen that path gate. Raw brief text
+cannot grant authority in either place.
 Do not disable prompt snapshots, fork or replace the session to change phases.
 
 Exactly three helper paths can run without a private session. Before session
@@ -310,7 +314,7 @@ Keep implementation evidence, executed existing-test evidence and missing
 tests separate: planned tests are not coverage. `Required Tests` maps stable
 row IDs to the invariant, positive control, wrong-input/mixed-state negative
 case and real production boundary. Vibe and handoff never author tests,
-fixtures or snapshots unless the person asks for a pull request; the writer
+fixtures or snapshots without a top-level pull-request or `testsRequired` grant; the writer
 only repairs existing ones its change broke (`guardrails.md`, "Tests"), and
 existing tests run at handoff. A
 required test that does not exist yet stays planned and becomes a Missing
@@ -384,6 +388,11 @@ to this same writer to fix in its local plan. The live ticket still records
 scope, delivered changes and truthful outcomes, not technical plans or
 approval milestones.
 
+A repair only to vibe's private plan or records, with no scope, code, test or
+HEAD change, is `self-bookkeeping`. The SAME writer makes it automatically,
+it is never `NEEDS_PERSON`, and Root reports the completed repair in one
+line before rerunning the record step.
+
 The commit script excludes this exact folder and refuses a plan already in
 HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`
 and publishes nothing on failure. Do not hide a leak by rewriting history or
@@ -397,6 +406,13 @@ continues building; plan mode publishes `built: false` without a person wait,
 second PLN or build/deploy pause. Later changes return to that writer.
 
 ## Implementation and corrections
+
+After the local plan identifies every planned file, the SAME writer runs
+`dist/scope-intake.mjs` against that complete list before implementation. The
+command uses handoff inventory's validated repository declaration. If no
+planned file is allowed, the writer makes no source edit and routes the whole
+request to engineering with the returned reason. With a mixed plan it builds
+only allowed files and records every excluded path for engineering.
 
 The same writer implements frontend, backend, primitives, canonical prototype
 code and metadata, and Storybook work in dependency order. It may read a named
@@ -737,7 +753,7 @@ and the ready message names it as not done yet.
 
 ## Tests: repair, don't author
 
-No test authoring in the build loop or at handoff, including new
+No test authoring in the build loop or at handoff without an explicit top-level grant, including new
 fixtures/snapshots (`guardrails.md`, "Tests"). The SAME writer repairs an existing test or fixture its own change
 broke, in the loop or at handoff, without changing what any test asserts, and
 records it in the change log as a repair. It may delete a test file or case
@@ -759,10 +775,10 @@ made obsolete, with that exact ruling, for engineering to update. Verify
 helpers and reviewers remain read-only. Preserve valid evidence when resuming
 an interrupted handoff.
 
-The only exception is the person explicitly asking for a pull request to be
+The exception is the person explicitly asking for a pull request to be
 raised, in any plain words that say they will take it through review and
-merge themselves (`guardrails.md`, "Tests").
-Then the SAME writer, in an explicit `pull-request` turn, writes full
+merge themselves (`guardrails.md`, "Tests"), or an explicit top-level
+`testsRequired` grant from the orchestrator. Then the SAME writer writes full
 tests for every change in the session, records their paths, criteria and
 rulings in the change log, runs them and fixes implementation defects, and
 independent reviewers examine that coverage before the pull request opens.

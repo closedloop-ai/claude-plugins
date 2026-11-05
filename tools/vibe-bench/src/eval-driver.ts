@@ -25,6 +25,7 @@ import { runOwnedProcess } from "./owned-process.ts";
 import { mergeEvalSuiteResults, statefulInfrastructureInvalidReason,
   SystemUpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 import type { UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
+import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
 
 /** Explicit inputs for a local-only dual-runtime model eval. */
 export interface LocalEvalOptions {
@@ -250,6 +251,8 @@ export async function runLocalEvals(options: LocalEvalOptions,
     ? await version(commands, options.claudeExecutable, options.runRoot, "claude", deadline, options.signal) : null;
   const claudeVersion = claudeVersionFull?.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
   if (runtimes.includes("claude") && !claudeVersion) throw new Error("eval-claude-version-invalid");
+  const isolatedClaude = runtimes.includes("claude")
+    ? createClaudeEvalIsolation(options.runRoot, options.claudeExecutable, []) : null;
   const codexVersion = runtimes.includes("codex")
     ? await version(commands, options.codexExecutable, options.runRoot, "codex", deadline, options.signal) : null;
   const claudeOutput = join(options.runRoot, "claude");
@@ -290,7 +293,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
   try {
     const launches = [
       runtimes.includes("claude") && partition.ordinary.length
-        ? commands.run(options.claudeExecutable, claudeArgs, options.runRoot,
+        ? commands.run(isolatedClaude!.executable, claudeArgs, options.runRoot,
           { deadline, signal: siblings.signal }) : Promise.resolve(null),
       runtimes.includes("codex") && partition.ordinary.length
         ? commands.run(options.uvExecutable, codexArgs, options.runRoot,
@@ -343,7 +346,11 @@ export async function runLocalEvals(options: LocalEvalOptions,
     const stateful = statefulSuites[runtime] ?? null;
     if (stateful) {
       const invalidReason = statefulInfrastructureInvalidReason(stateful);
-      if (invalidReason) return { runtime, exitCode: 1, result: null, invalidReason };
+      if (invalidReason) {
+        const merged = mergeEvalSuiteResults(ordinary?.result ?? null, stateful, selected);
+        if (!merged) return { runtime, exitCode: 1, result: null, invalidReason };
+        return { runtime, exitCode: 1, result: merged, invalidReason };
+      }
     }
     const merged = mergeEvalSuiteResults(ordinary?.result ?? null, stateful, selected);
     if (!merged) return { runtime, exitCode: 1, result: null,
@@ -366,7 +373,9 @@ export async function runLocalEvals(options: LocalEvalOptions,
 export function failedCases(result: LocalEvalResult, runtime: EvalRuntime): string[] {
   const record = result.runtimes.find((item) => item.runtime === runtime);
   if (record?.invalidReason) return [];
-  return [...new Set(record?.result?.cases.filter((item) => !item.passed).map((item) => item.id) ??
+  return [...new Set(record?.result?.cases
+    .filter((item) => !item.passed && item.unavailableReason === undefined)
+    .map((item) => item.id) ??
     result.selectedCases)].sort();
 }
 
@@ -383,6 +392,7 @@ export function confirmedNightlyRegressions(lastGreen: EvalBaselineArtifact,
     return (["claude", "codex"] as const).flatMap((runtime): NightlyRegressionCase[] => {
       const before = previous.outcomes[runtime];
       const after = next.outcomes[runtime];
+      if (after?.latestAvailability?.status === "unavailable") return [];
       const beforeLast = before?.recentNightlyOutcomes.at(-1);
       const afterLast = after?.recentNightlyOutcomes.at(-1);
       if (!before?.reliable || beforeLast?.passes !== beforeLast?.runs ||
@@ -400,10 +410,22 @@ export function deterministicNightlyFailures(current: EvalBaselineArtifact): Nig
   return current.cases.flatMap((item) => item.deterministic === true
     ? (["claude", "codex"] as const).flatMap((runtime): NightlyRegressionCase[] => {
       const last = item.outcomes[runtime]?.recentNightlyOutcomes.at(-1);
+      if (item.outcomes[runtime]?.latestAvailability?.status === "unavailable") return [];
       return last && last.passes < last.runs && !quarantined.has(`${runtime}:${item.id}`)
         ? [{ runtime, case: item.id }] : [];
     }) : []).sort((left, right) => `${left.runtime}:${left.case}`
     .localeCompare(`${right.runtime}:${right.case}`));
+}
+
+/** Current nightly cases that could not run because their harness premise was unavailable. */
+export function unavailableNightlyCases(current: EvalBaselineArtifact): Array<{
+  runtime: EvalRuntime; case: string; reason: string;
+}> {
+  return current.cases.flatMap((item) => (["claude", "codex"] as const).flatMap((runtime) => {
+    const availability = item.outcomes[runtime]?.latestAvailability;
+    return availability?.status === "unavailable"
+      ? [{ runtime, case: item.id, reason: availability.reason }] : [];
+  })).sort((left, right) => `${left.runtime}:${left.case}`.localeCompare(`${right.runtime}:${right.case}`));
 }
 
 interface RegressionDeliveryRecord {
@@ -650,6 +672,10 @@ reporter?: NightlyRegressionReporter): Promise<{
   }
   requireCleanT2Snapshot(input.repo, input.pluginSha);
   const result = buildEvalBaseline({ results, catalog, pluginVersion, pluginTreeSha, previous });
+  for (const unavailable of unavailableNightlyCases(result)) {
+    process.stdout.write(`VIBE_NIGHTLY_CASE_UNAVAILABLE runtime=${unavailable.runtime} ` +
+      `case=${unavailable.case} reason=${unavailable.reason}\n`);
+  }
   const lastGreen = existing && currentModels ? resolveLastGreenEvalBaseline(input.outputDir) : null;
   const regressions = [...new Map([
     ...(lastGreen ? confirmedNightlyRegressions(lastGreen, result) : []),

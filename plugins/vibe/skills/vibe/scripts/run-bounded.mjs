@@ -15,7 +15,8 @@
 // a load signature (exit 137, out of memory, a timeout under load) is retried once at half
 // the workers (ISS-13585, load-admission.mjs). A final stderr line `run-bounded-result: {json}`
 // carries the attempts. Any other
-// command is untouched, and VIBE_HEAVY_BUDGET=off restores the previous behavior.
+// command is untouched. This is opt-in: without VIBE_HEAVY_BUDGET=on a heavy command runs exactly as before.
+// Waiting and the retry count inside the time limit, so a caller's outer limit of `seconds` plus a margin still holds.
 //
 // Output streams through unchanged. On time out it stops the command and
 // everything it started, then exits 124, the code GNU `timeout` uses, and
@@ -71,16 +72,31 @@ export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", 
         }
       }
     };
+    // A caller's kill of this process must reach the detached group, or the group is orphaned.
+    const forward = (signal) => {
+      signalGroup(signal);
+      killTimer ??= setTimeout(() => signalGroup("SIGKILL"), GRACE_MS);
+    };
+    const onTerm = () => forward("SIGTERM");
+    const onInt = () => forward("SIGINT");
+    process.on("SIGTERM", onTerm);
+    process.on("SIGINT", onInt);
+    const release = () => {
+      process.off("SIGTERM", onTerm);
+      process.off("SIGINT", onInt);
+    };
     const deadline = setTimeout(() => {
       timedOut = true;
       signalGroup("SIGTERM");
       killTimer = setTimeout(() => signalGroup("SIGKILL"), GRACE_MS);
     }, seconds * 1000);
     child.once("error", (error) => {
+      release();
       clearTimeout(deadline);
       reject(error);
     });
     child.once("close", (code, signal) => {
+      release();
       clearTimeout(deadline);
       if (timedOut) {
         signalGroup("SIGKILL");

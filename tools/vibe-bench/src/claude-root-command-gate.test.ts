@@ -71,3 +71,33 @@ test("ISS-13563 AC3 incomplete Claude migration is denied before a canonical cor
     } }, config).hookSpecificOutput.permissionDecision, "deny");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("ISS-13720 changed-definition prompt emits a migration command the gate accepts", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-claude-prompt-gate-"));
+  try {
+    const worktree = join(root, "worktree");
+    const agentRoot = join(root, "release");
+    const scripts = join(agentRoot, "skills/vibe/scripts/dist");
+    mkdirSync(worktree);
+    mkdirSync(scripts, { recursive: true });
+    const state = join(scripts, "writer-state.mjs");
+    const worker = join(scripts, "claude-worker.mjs");
+    writeFileSync(state, "fixture\n");
+    writeFileSync(worker, "fixture\n");
+    const prompt = upgradeEval.rootPrompt({ fixture: { worktree: realpathSync(worktree),
+      branch: "benchmark/upgrade-resume-changed-definition",
+      sessionSlug: "upgrade-resume-changed-definition", requestOne: "request-one",
+      requestTwo: "request-two" }, requestId: "request-two",
+      marker: "turn-two", continuation: true, vibeRoot: agentRoot, runtime: "claude",
+      migration: { previousWorkerId: "writer-one", previousDigest: "a".repeat(64) } });
+    const prefix = "The definition changed. After status and before the launcher, run exactly ";
+    const suffix = ". This command already has every required field.";
+    const start = prompt.indexOf(prefix);
+    const end = prompt.indexOf(suffix, start);
+    assert.ok(start >= 0 && end > start);
+    const command = prompt.slice(start + prefix.length, end);
+    const decision = claudeRootCommandDecision({ tool_name: "Bash", tool_input: { command } },
+      { worktree: realpathSync(worktree), scripts: [state, worker] });
+    assert.equal(decision.hookSpecificOutput.permissionDecision, "allow");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

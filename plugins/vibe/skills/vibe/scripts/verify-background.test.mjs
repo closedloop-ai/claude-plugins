@@ -93,6 +93,8 @@ function repo() {
   writeFileSync(path.join(dir, "package.json"), "{}\n");
   git("add", ".");
   git("commit", "-q", "-m", "init");
+  // The run reads the changed files against origin/main and now fails when that ref is missing.
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
   return { dir, head: git("rev-parse", "HEAD").stdout.trim(), git };
 }
 

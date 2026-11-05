@@ -32,7 +32,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
-import { execCommand, parseJson, tailLines } from "./ws3-exec.mjs";
+import { execCommand, parseJson, printedStdout, stdoutOf, tailLines } from "./ws3-exec.mjs";
 
 export const Status = Object.freeze({ Ok: "OK", NeedsPerson: "NEEDS_PERSON", Blocked: "BLOCKED", NeedsAgent: "NEEDS_AGENT" });
 // references/preflight.md, the `claude-auth-login` row, word for word.
@@ -143,9 +143,9 @@ export function createSetupCtl({
   writeFile = (file, text) => writeFileSync(file, text),
   exists = existsSync,
 } = {}) {
-  const sessions = (args, options) => parseJson(run(process.execPath, [SESSIONS, ...args], options).stdout, {});
+  const sessions = (args, options) => parseJson(printedStdout(run(process.execPath, [SESSIONS, ...args], options), "vibe-sessions"), {});
   const bounded = (seconds, command, args, options) => run(process.execPath, [BOUNDED, String(seconds), command, ...args], { ...options, timeoutMs: (seconds + 30) * 1000 });
-  const gitDir = (worktree) => run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+  const gitDir = (worktree) => stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
   const session = (worktree) => {
     const shown = sessions(["show", "--worktree", worktree]);
     return shown.session ?? shown;
@@ -157,7 +157,7 @@ export function createSetupCtl({
 
   function preflightFix(options) {
     const args = preflightArgs(options);
-    const first = parsePreflight(run("bash", [PREFLIGHT, ...args]).stdout);
+    const first = parsePreflight(printedStdout(run("bash", [PREFLIGHT, ...args]), "preflight"));
     if (first.length === 0) return { status: Status.Blocked, error: "vibe-preflight.sh printed no checks" };
     let plan = classifyChecks(first);
     const applied = [];
@@ -167,7 +167,7 @@ export function createSetupCtl({
         const result = bounded(LIMITS.bootstrap, fix.command, fix.args);
         applied.push({ fix: item.fix, command: fix.display, ok: result.status === 0, ...(result.status === 0 ? {} : { evidenceTail: tailLines(`${result.stdout}\n${result.stderr}`, 4) }) });
       }
-      if (applied.length > 0) plan = classifyChecks(parsePreflight(run("bash", [PREFLIGHT, ...args]).stdout));
+      if (applied.length > 0) plan = classifyChecks(parsePreflight(printedStdout(run("bash", [PREFLIGHT, ...args]), "preflight")));
     }
     return { status: overallStatus(plan), applied, ...plan, passing: first.filter((check) => check.ok === true).map((check) => check.check) };
   }

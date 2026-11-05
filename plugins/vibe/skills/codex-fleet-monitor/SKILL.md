@@ -40,6 +40,7 @@ WATCH_NEW_PR_REPOS="owner/repo"  # open PRs here that PR_SEARCH lists or WATCH_P
 PR_SEARCH="head:feature/"        # optional: search filter for that list
 BOT_LOGIN_REGEX="vercel|codex|github-actions|copilot|bot"  # authors not counted as human feedback
 # USAGE_HIGH_PERCENT=80         # usage below this prints one band (default MOVE_AT_PERCENT, else 80)
+# USAGE_STALE_SECONDS=1800      # status flags the last good reading after this age (default 30m)
 # CODEX_MODEL=<model>            # with CODEX_EFFORT, a thread on another model or effort gets a MODEL(...) word
 # CODEX_EFFORT=high
 RECOVERY_BACKOFF_SECONDS="120 300 600"  # wait before each resume of a transient failure; one retry per value
@@ -92,6 +93,7 @@ Start it as its own `run_in_background` call, never with `&` (a second copy exit
 | `session remote <host> UNREACHABLE` | ssh failed | check the host |
 | `codex-usage <local\|remote> under80% ok resets=<n>` / `HIGH(<band>%)` | Codex usage on that machine: one band below `USAGE_HIGH_PERCENT` (80 here), then the used percent floored to 10; `resets` counts available limit resets | on `HIGH`, warn the user at once with the band and `resets` (applying one is theirs); if they are away, move the busiest writers to Claude writers |
 | `claude-usage local session=<band> week=<band>` | Claude usage from `claude -p "/usage"` on the same bands (read at most every `CLAUDE_USAGE_SECONDS`, 600) | on `HIGH`, warn the user at once with its `resets=` time; if they are away, move the busiest Claude writers to Codex writers |
+| `usage <runtime> <machine> ... STALE last-good=<time>` | The last successful reading is older than `USAGE_STALE_SECONDS`, or no successful reading exists | run a fresh read before any runtime or machine routing decision; if it fails, ask the operator |
 | `codex-usage ... LIMIT` / `LIMIT-STOPPED` | usage limit reached; `LIMIT` means ordinary usage is still allowed, `LIMIT-STOPPED` means sessions cannot run | tell the user right away; a reset or second account is theirs to do |
 | `codex-usage ... LIMIT-SPENDING-CREDITS` | limit reached and turns are now consuming paid credits | tell the user at once and stop sending turns unless they approve paid credits |
 | `codex-usage ... unknown` / `unreadable READFAIL` | the App Server answered without rate limits, or it or the remote host could not be read | check `codex` on that machine |
@@ -103,6 +105,8 @@ Start it as its own `run_in_background` call, never with `&` (a second copy exit
 | `pr ... <state> <head> <reviewDecision> <mergeable> comments= reviews= inline= threads= checks=` | any field changed | new head: re-review; count up: read the feedback; `CONFLICTING`: tell the owning session to merge the base branch; checks: act on failures (counts change only once settled, with ` (running)` meanwhile) |
 
 Surface everything that needs a human to the user immediately: limits, paid-credit spending, stalls, failures, and new human review comments.
+
+Every usage line includes `read=<ISO time>` and `source=<reader>`. Each actual probe, including READFAIL, updates `<workDir>/usage-readings.json` through an atomic replacement. The file retains the latest reading, latest good reading and 100 recent readings per runtime and machine. Run `node scripts/usage-state.mjs status <workDir>` for one latest-reading report per runtime and machine with ages and stale flags. The watcher ignores only changing `read=` and `source=` fields when deciding whether to emit an EVENT; band changes and stale-state transitions still wake it.
 
 ## Recovery
 

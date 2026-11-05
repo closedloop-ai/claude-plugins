@@ -27,7 +27,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { createGraphPack } from "./graph-pack.mjs";
-import { execCommand, parseJson } from "./ws3-exec.mjs";
+import { execCommand, parseJson, stdoutOf } from "./ws3-exec.mjs";
 
 export const EVIDENCE_SCHEMA = "vibe.req-evidence/1";
 // closedloop-graph.md "Required calls", the `vibe-requirements-worker` row, plus the ticket read and comments its description names.
@@ -79,7 +79,7 @@ export function readResults(dir, { exists = existsSync, read = (file) => readFil
 
 export function gatherEvidence({ worktree, request, resultsDir, terms = [] }, deps = {}) {
   const run = deps.run ?? execCommand;
-  const tracked = new Set(run("git", ["-C", worktree, "ls-files"]).stdout.split("\n").filter(Boolean));
+  const tracked = new Set(stdoutOf(run("git", ["-C", worktree, "ls-files"]), "git ls-files").split("\n").filter(Boolean));
   const paths = pathsIn(request, tracked);
   const pack = (deps.graphPack ?? createGraphPack({ run })).pack({ worktree, paths, terms });
   const queries = readResults(resultsDir, deps.fs);

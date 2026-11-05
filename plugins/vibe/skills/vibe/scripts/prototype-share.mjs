@@ -26,7 +26,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { execCommand, parseJson, tailLines } from "./ws3-exec.mjs";
+import { execCommand, parseJson, printedStdout, stdoutOf, tailLines } from "./ws3-exec.mjs";
 
 export const REPO = "closedloop-ai/symphony-alpha";
 export const READY = "success";
@@ -70,7 +70,7 @@ export function createPrototypeShare({
   repo = REPO,
   write = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); },
 } = {}) {
-  const sessions = (args, options) => parseJson(run(process.execPath, [script("vibe-sessions.mjs"), ...args], options).stdout, {});
+  const sessions = (args, options) => parseJson(printedStdout(run(process.execPath, [script("vibe-sessions.mjs"), ...args], options), "vibe-sessions"), {});
   const gh = (args) => run("gh", args);
 
   function deploymentsFor(sha) {
@@ -107,7 +107,7 @@ export function createPrototypeShare({
   }
 
   async function share({ worktree, pollSeconds = 15, deadlineMinutes = 20, stdin }) {
-    const plans = parseJson(run(process.execPath, [script("local-plans.mjs"), "--worktree", worktree]).stdout, {});
+    const plans = parseJson(printedStdout(run(process.execPath, [script("local-plans.mjs"), "--worktree", worktree]), "local-plans"), {});
     if (plans.ok !== true) return { status: Status.Blocked, problems: plans.committedLocalPlans ?? [plans.error ?? "committed local plans"] };
     const admitted = sessions(["main-sync-share", "--worktree", worktree], { input: stdin });
     if (admitted.ok !== true) return { status: admitted.status ?? Status.Blocked, error: admitted.error ?? "main-sync-share refused" };
@@ -115,7 +115,7 @@ export function createPrototypeShare({
     const pushed = sessions(["main-sync-push", "--worktree", worktree], { input: stdin });
     if (pushed.ok !== true) return { status: pushed.status ?? Status.Blocked, error: pushed.error ?? "main-sync-push refused" };
     const pushedAt = now();
-    const sha = run("git", ["-C", worktree, "rev-parse", "HEAD"]).stdout.trim();
+    const sha = stdoutOf(run("git", ["-C", worktree, "rev-parse", "HEAD"]), "git rev-parse HEAD").trim();
     const record = sessions(["show", "--worktree", worktree]);
     const slug = (record.session ?? record).slug;
     if (!/^[0-9a-f]{40}$/.test(sha) || !slug) return { status: Status.Blocked, error: "could not read the full HEAD SHA or the session slug" };
@@ -123,7 +123,7 @@ export function createPrototypeShare({
     if (!waited.ready) return { status: Status.Blocked, error: waited.blocked, deployedCommit: sha, ...waited.evidence };
     const previewUrl = previewUrlFor(waited.environmentUrl, slug);
     if (!previewUrl) return { status: Status.Blocked, error: "the ready deployment has no usable environment_url", deployedCommit: sha, deploymentId: waited.deploymentId };
-    const gitDir = run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+    const gitDir = stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
     const file = path.join(gitDir, "vibe-prototype-result.json");
     write(file, `${JSON.stringify({ slug, previewUrl, deployedCommit: sha, verifiedAt: new Date(now()).toISOString() }, null, 2)}\n`);
     const recorded = sessions(["prototype-result", "--worktree", worktree, "--file", file]);

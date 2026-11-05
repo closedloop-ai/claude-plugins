@@ -142,7 +142,9 @@ never asking for a restart.
    every thread through the REST review-comment reply endpoint, a fixed one
    with the fixing commit SHA. Only `scripts/review-threads.mjs resolve`
    resolves, after its check passes in the same run.
-8. `touch --status handed-off` again, stop local Storybook and Desktop with
+8. Run the same root-owned `touch --status handed-off --pr-repo <owner/repo>
+   --pr-number <n> --pr-head <full pushed sha>` transition again for the updated
+   PR head, stop local Storybook and Desktop with
    `vibe-sessions.mjs stop`, and tell the person in a line or two what changed and that the
    pull request is updated, with its link. Never a branch to merge.
 

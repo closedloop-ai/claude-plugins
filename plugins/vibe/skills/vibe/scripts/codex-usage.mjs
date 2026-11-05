@@ -11,6 +11,7 @@
 // so a check never starts or depends on the managed daemon.
 //
 // Usage: codex-usage.mjs check [--allow-credits] [--codex <CLI>] [--timeout-ms <n>]
+//                              [--work-dir <orchDir>] [--machine <name>] [--source <name>]
 //
 // Prints one JSON object:
 //   {"status":"ok", ...}               continue (also when a limit is reached but ordinary
@@ -28,7 +29,8 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { classifyUsage, readRateLimits, UsageState, UsageTransport } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
+import { classifyUsage, rateLimitReading, readRateLimits, UsageState, UsageTransport } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
+import { defaultUsageWorkDir, recordUsageReading } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { BUNDLED_CODEX, findCli, Harness } from "./plugin-version.mjs";
 
 export const UsageStatus = Object.freeze({
@@ -64,12 +66,14 @@ export function decideUsage(result, { allowCredits = false } = {}) {
 }
 
 /** Reads the limits and decides; an unreadable answer is `unknown`, never a guessed `ok` or `stop`. */
-export async function checkUsage({ codex, timeoutMs, allowCredits = false } = {}) {
+export async function checkUsage({ codex, timeoutMs, allowCredits = false, workDir, machine = "local", source = "codex-usage" } = {}) {
   const outcome = await readRateLimits({ transport: UsageTransport.Stdio, codex: codex ?? findCli(Harness.Codex) ?? BUNDLED_CODEX, timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS });
+  const reading = rateLimitReading(machine, outcome, { source });
+  recordUsageReading(workDir ?? defaultUsageWorkDir(), reading);
   if (outcome.error) {
-    return { status: UsageStatus.Unknown, reason: outcome.error };
+    return { status: UsageStatus.Unknown, reason: outcome.error, readAt: reading.readAt, source };
   }
-  return decideUsage(outcome.result, { allowCredits });
+  return { ...decideUsage(outcome.result, { allowCredits }), readAt: reading.readAt, source };
 }
 
 function windowUsage(window) {
@@ -103,16 +107,22 @@ async function main(argv) {
       "allow-credits": { type: "boolean", default: false },
       codex: { type: "string" },
       "timeout-ms": { type: "string" },
+      "work-dir": { type: "string" },
+      machine: { type: "string" },
+      source: { type: "string" },
     },
   });
   if (positionals[0] !== "check") {
-    throw new Error("Usage: codex-usage.mjs check [--allow-credits] [--codex <CLI>] [--timeout-ms <n>]");
+    throw new Error("Usage: codex-usage.mjs check [--allow-credits] [--codex <CLI>] [--timeout-ms <n>] [--work-dir <orchDir>] [--machine <name>] [--source <name>]");
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1) {
     throw new Error("--timeout-ms must be a positive number of milliseconds.");
   }
-  const decision = await checkUsage({ codex: values.codex, timeoutMs, allowCredits: values["allow-credits"] });
+  const decision = await checkUsage({
+    codex: values.codex, timeoutMs, allowCredits: values["allow-credits"], workDir: values["work-dir"],
+    machine: values.machine ?? "local", source: values.source ?? "codex-usage",
+  });
   process.stdout.write(`${JSON.stringify(decision)}\n`);
   return decision.status === UsageStatus.Stop ? STOP_EXIT : 0;
 }

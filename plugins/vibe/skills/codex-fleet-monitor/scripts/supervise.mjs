@@ -13,7 +13,10 @@ import {
   supervisorLockPath, timedPass, writeHeartbeat,
 } from './recover.mjs';
 import { isEntryPoint } from './liveness.mjs';
+import { rateLimitReading, readRateLimits } from './ratelimit.mjs';
+import { recordUsageReading } from './usage-state.mjs';
 import { resolveWorkDir } from './work-dir.mjs';
+import { hasPendingOwnedCleanups, sweepOwnedCleanups } from '../../vibe/scripts/owned-cleanup.mjs';
 
 export const DEFAULT_INTERVAL_SECONDS = 60;
 export const SUMMARY_INTERVAL_MS = 3_600_000;
@@ -62,6 +65,19 @@ async function tick(workDir, stateDir, config) {
     const message = oneLine(error.message);
     return { lines: [`EVENT recovery pass-failed: ${message}`], error: `pass-failed: ${message}` };
   }
+}
+
+/** Take and persist the supervisor's independent Codex usage reading. */
+export async function recordSupervisorUsage(workDir, { read = readRateLimits, timeoutMs = 20_000 } = {}) {
+  let outcome;
+  try {
+    outcome = await read({ timeoutMs });
+  } catch (error) {
+    outcome = { error: error instanceof Error ? error.message : String(error), readAt: new Date().toISOString() };
+  }
+  const reading = rateLimitReading('local', outcome, { source: 'supervisor' });
+  recordUsageReading(workDir, reading);
+  return reading;
 }
 
 async function main() {
@@ -114,6 +130,19 @@ async function main() {
   for (;;) {
     const started = Date.now();
     const { lines, error } = await tick(workDir, stateDir, config);
+    const repairPending = stats.passes % 30 === 0;
+    if (repairPending || hasPendingOwnedCleanups()) {
+      try {
+        const cleanup = await sweepOwnedCleanups({ forceDiscovery: repairPending });
+        for (const line of cleanup.leftover) log(line);
+        if (cleanup.removed.length) log(`cleanup: reconciled ${cleanup.removed.length} owned targets`);
+      } catch (cleanupError) {
+        log(`cleanup: ${oneLine(cleanupError.message)}`);
+      }
+    }
+    // A failed or timed-out recovery pass already proves the daemon is not healthy enough for another bounded read.
+    // Keep the last good usage time intact; the watcher will flag it stale if recovery does not resume.
+    if (!error) await recordSupervisorUsage(workDir);
     const lastPassMs = Date.now() - started;
     for (const line of lines) log(line);
     stats.passes += 1;

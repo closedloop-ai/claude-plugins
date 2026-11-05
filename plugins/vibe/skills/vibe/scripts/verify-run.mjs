@@ -36,7 +36,7 @@
 // a pool sized from the worker budget (at most 2 by default), every other lane, and any lane the
 // pool list does not name, runs serially, and e2e lanes run under e2e-lock.mjs. The records come
 // back in lane-report order whatever finished first. `scheduling` in the evidence is additive.
-// VIBE_VERIFY_POOL=serial (or VIBE_HEAVY_BUDGET=off) restores the previous strictly serial path.
+// Leaving VIBE_HEAVY_BUDGET unset (the default) or setting VIBE_VERIFY_POOL_SIZE=1 is the previous strictly serial path.
 //
 // Background (ISS-13586, verify-background.mjs): `--background` starts the same run detached and prints a
 // run id at once; `--status <id>` and `--wait <id>` (both need --worktree) read its record under
@@ -56,7 +56,7 @@ import { reportLanes } from "./pre-pr-lanes.mjs";
 import { budgetDisabled, createBudget, resolveSettings } from "./heavy-budget.mjs";
 import { classifyLane, LaneKind, poolSizeFor, runScheduled } from "./lane-pool.mjs";
 import { readRun, RunExit, startBackground, waitForRun, writeRecord } from "./verify-background.mjs";
-import { execCommand, execCommandAsync, parseJson, tailLines, toolDidNotRun } from "./ws3-exec.mjs";
+import { execCommand, execCommandAsync, parseJson, stdoutOf, tailLines, toolDidNotRun } from "./ws3-exec.mjs";
 
 export const SCHEMA = "vibe.verify-evidence/1";
 export const Status = Object.freeze({
@@ -64,10 +64,11 @@ export const Status = Object.freeze({
   NoOp: "no-op", Skipped: "skipped", NotRun: "not-run",
 });
 // Fixed per-check limits: a check that outruns its limit is `blocked` on this machine, not failed and not passed.
-export const TIME_LIMITS = Object.freeze({ biome: 300, sourceGates: 600, typecheck: 900, lane: 1800, tests: 900, report: 300 });
+export const TIME_LIMITS = Object.freeze({ biome: 300, sourceGates: 600, typecheck: 900, lane: 1800, tests: 900, report: 300, laneCheck: 600 });
 const TIMED_OUT = 124;
 const BIOME_FILE = /\.(?:tsx?|jsx?|mjs|cjs|json|jsonc|css)$/;
 const BIOME_CHUNK = 200;
+const LANE_CHECK_SUMMARY = /^pre-pr lanes: /m;
 export const LEFT_TO_WORKER = Object.freeze([
   { name: "e2e-specs", reason: "E2E specs run through the tier the capability probe selects, under the repository's lock" },
   { name: "story-plays", reason: "story plays run in a real browser and are judged by story-play-verdict.mjs" },
@@ -121,10 +122,11 @@ export function turboReplay(output) {
   return /FULL TURBO/.test(output) ? "FULL TURBO" : null;
 }
 
-/** Whether every required check is satisfied: a pass at this head or a cached pass. Nothing skipped, no-op, not run or failed counts. */
+/** Whether every required check is satisfied: a pass at this head, a cached pass, or a no-op that says why there was nothing to run. Nothing skipped, not run, blocked or failed counts. */
 export function evidenceOk(checks) {
   const requiredChecks = checks.filter((check) => check.required);
-  return requiredChecks.length > 0 && requiredChecks.every((check) => check.status === Status.Passed || check.status === Status.Cached);
+  const satisfied = (check) => check.status === Status.Passed || check.status === Status.Cached || (check.status === Status.NoOp && String(check.reason ?? "").trim() !== "");
+  return requiredChecks.length > 0 && requiredChecks.every(satisfied);
 }
 
 /** The counts per status, so a reader sees skipped and cached next to passed. */
@@ -211,7 +213,7 @@ export function createVerifyRun({
 
   /** The lane report, the lane check and the records that need no run; each lane still to run carries its key and its scheduling class. */
   function planLanes({ worktree, head, cache, useCache, state }) {
-    const gitDir = run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+    const gitDir = stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
     const reportRun = bounded(TIME_LIMITS.report, "pnpm", ["test:lanes"], worktree);
     if (reportRun.status !== 0) {
       return { done: [required("lanes", "pnpm test:lanes", Status.Blocked, { reason: "the repository's lane report did not run", exitCode: reportRun.status, evidenceTail: tailLines(`${reportRun.stdout}\n${reportRun.stderr}`) })] };
@@ -222,7 +224,14 @@ export function createVerifyRun({
     if (lanes.length === 0) return { done: [required("lanes", "pnpm test:lanes", Status.NoOp, { reason: "the lane report says there is nothing to cover on this diff" })] };
     const reportFile = path.join(gitDir, "vibe-verify-lane-report.txt");
     write(reportFile, reportRun.stdout);
-    const checked = parseLaneCheck(run(process.execPath, [PRE_PR_LANES, "check", "--worktree", worktree, "--report", reportFile]).stdout);
+    const checkRun = run(process.execPath, [PRE_PR_LANES, "check", "--worktree", worktree, "--report", reportFile], { timeoutMs: TIME_LIMITS.laneCheck * 1000 });
+    // A check that crashed, timed out or printed nothing names no missing lane; reading that as "every lane has a record" would pass lanes that never ran.
+    if (!LANE_CHECK_SUMMARY.test(checkRun.stdout)) {
+      const reason = "the lane check printed no summary, so no lane's record could be read";
+      const evidenceTail = tailLines(`${checkRun.stdout}\n${checkRun.stderr}`);
+      return { done: lanes.map((lane) => required(`lane: ${lane}`, lane, Status.Blocked, { reason, exitCode: checkRun.status, evidenceTail })) };
+    }
+    const checked = parseLaneCheck(checkRun.stdout);
     const entries = lanes.map((lane) => {
       const name = `lane: ${lane}`;
       const notRun = checked.notRun.find((item) => item.lane === lane);
@@ -316,9 +325,9 @@ export function createVerifyRun({
 
   /** Everything before the lanes. `done` is the finished evidence when the worktree is not at the intended head or is dirty. */
   function begin({ worktree, head, base, useCache = true }) {
-    const gitDir = run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
-    const actual = run("git", ["-C", worktree, "rev-parse", "HEAD"]).stdout.trim();
-    const dirty = run("git", ["-C", worktree, "status", "--porcelain", "--untracked-files=no"]).stdout.trim();
+    const gitDir = stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
+    const actual = stdoutOf(run("git", ["-C", worktree, "rev-parse", "HEAD"]), "git rev-parse HEAD").trim();
+    const dirty = stdoutOf(run("git", ["-C", worktree, "status", "--porcelain", "--untracked-files=no"]), "git status").trim();
     const evidence = { schema: SCHEMA, head: actual, base: base ?? null, ranAt: new Date(now()).toISOString(), checks: [], coveredByNoLane: null, leftToWorker: LEFT_TO_WORKER };
     const intended = (head ?? "").toLowerCase();
     if (!/^[0-9a-f]{7,40}$/.test(intended) || !actual.startsWith(intended) || dirty) {
@@ -328,9 +337,9 @@ export function createVerifyRun({
     }
     const cacheFile = path.join(gitDir, "vibe-verify-cache.json");
     const cache = useCache ? loadCache(cacheFile) : {};
-    const baseRef = base ?? run("git", ["-C", worktree, "merge-base", "HEAD", "origin/main"]).stdout.trim();
+    const baseRef = base ?? stdoutOf(run("git", ["-C", worktree, "merge-base", "HEAD", "origin/main"]), "git merge-base").trim();
     evidence.base = baseRef || null;
-    const changed = run("git", ["-C", worktree, "diff", "--name-only", "--diff-filter=AMR", `${baseRef}...HEAD`]).stdout.split("\n").filter(Boolean);
+    const changed = stdoutOf(run("git", ["-C", worktree, "diff", "--name-only", "--diff-filter=AMR", `${baseRef}...HEAD`]), "git diff").split("\n").filter(Boolean);
     const state = { coveredByNoLane: null };
     const common = { worktree, head: actual, cache, useCache };
     evidence.checks.push(
@@ -359,7 +368,7 @@ export function createVerifyRun({
     return conclude(begun, options);
   }
 
-  /** `verify` with independent lanes running at once. VIBE_VERIFY_POOL=serial gives exactly `verify`. */
+  /** `verify` with independent lanes running at once. A pool of one gives exactly `verify`. */
   async function verifyPooled(options) {
     const begun = begin(options);
     if (begun.done) return begun.done;
@@ -380,9 +389,9 @@ export function createVerifyRun({
   return { verify, verifyPooled };
 }
 
-/** Whether lanes run strictly one after another: VIBE_VERIFY_POOL=serial, or the whole budget switched off. */
+/** Whether lanes run strictly one after another: the budget is not switched on. */
 export function strictlySerial(env = process.env) {
-  return String(env.VIBE_VERIFY_POOL ?? "").trim().toLowerCase() === "serial" || budgetDisabled(env);
+  return budgetDisabled(env);
 }
 
 const OPTIONS = {
@@ -392,14 +401,14 @@ const OPTIONS = {
 };
 
 function gitDirOf(worktree) {
-  return execCommand("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+  return stdoutOf(execCommand("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
 }
 
 /** `--status <id>` and `--wait <id>`: print the run's state and exit 0 only for a pass. */
 async function joinRun(values) {
   const gitDir = gitDirOf(values.worktree);
   const id = values.status ?? values.wait;
-  const read = () => readRun({ gitDir, id, currentHead: execCommand("git", ["-C", values.worktree, "rev-parse", "HEAD"]).stdout.trim(), expectedHead: values.head });
+  const read = () => readRun({ gitDir, id, currentHead: stdoutOf(execCommand("git", ["-C", values.worktree, "rev-parse", "HEAD"]), "git rev-parse HEAD").trim(), expectedHead: values.head });
   const run = values.wait ? await waitForRun({ read, waitSeconds: Number(values["wait-seconds"] ?? 7200) }) : read();
   process.stdout.write(`${JSON.stringify(run, null, 2)}\n`);
   return RunExit[run.state] ?? 1;

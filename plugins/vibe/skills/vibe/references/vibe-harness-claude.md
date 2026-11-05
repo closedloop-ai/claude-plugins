@@ -12,8 +12,18 @@ Moved unchanged out of `../SKILL.md`, which says when to read it; paths stay rel
   native dispatch is the bootstrap in section 1. Send the launcher one JSON
   object on stdin: `{"worktree", "agentName", "mode", "requestId", "input"
   (or "continuation"), "capabilities"}` plus the record and sessionless fields
-  below when they apply. Leave `agentRoot` out: the launcher binds its own
-  installed plugin root, or a resumed writer's recorded root, so a guessed or
+  below when they apply. When the session brief or orchestrator explicitly
+  requires tests outside a pull-request turn, pass `"testsRequired": true`
+  for the persistent change writer; the launcher never infers it from raw text.
+  In Codex, carry the same explicit requirement in the root-controlled turn
+  envelope. Handoff inventory still admits authored tests only in its
+  pull-request phase; this envelope grant does not change that path gate.
+  Handoff paths come from the target repository's committed root-level
+  `vibe-handoff-paths.json`. Inventory rejects nested declarations and every
+  session edit to a file with that name, and fails closed when the target has
+  no root declaration.
+  Leave `agentRoot` out: the launcher binds its own installed plugin root,
+  or a resumed writer's recorded root, so a guessed or
   remembered path can never point it at the wrong place (a supplied
   `<root>/agents` is read as `<root>`; another release's root is refused as
   `STALE_PLUGIN_ROOT`). `capabilities` lists every closedloop-graph read and

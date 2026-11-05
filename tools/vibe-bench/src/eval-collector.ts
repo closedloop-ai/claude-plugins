@@ -6,6 +6,8 @@ export interface EvalCaseResult {
   passed: boolean;
   failedGraders: string[];
   skippedGraders: string[];
+  /** A harness availability gap, distinct from both pass and product failure. */
+  unavailableReason?: string;
 }
 
 /** Native suite result normalized without manufacturing missing token data. */
@@ -15,6 +17,7 @@ export interface EvalSuiteResult {
   cases: EvalCaseResult[];
   passed: number;
   failed: number;
+  unavailable?: number;
   wallMs: number;
   agentCostUsd: number | null;
   judgeCostUsd: number | null;
@@ -216,11 +219,23 @@ export function finalizeLocalEval(input: Omit<LocalEvalResult, "schemaVersion" |
   const runtimes = [...input.runtimes].sort((left, right) => left.runtime.localeCompare(right.runtime));
   for (const record of runtimes) {
     if (record.result) {
-      if (record.invalidReason || record.result.runtime !== record.runtime) {
+      if (record.result.runtime !== record.runtime || (record.invalidReason !== null &&
+          !record.invalidReason.startsWith("eval-stateful-infrastructure:"))) {
         throw new Error("eval-runtime-record-conflict");
       }
       exactCoverage(record.result.cases.map((item) => item.id), input.selectedCases);
-      const expectedExit = record.result.failed === 0 ? 0 : 1;
+      if (record.result.cases.some((item) => item.unavailableReason !== undefined &&
+          (item.passed || item.failedGraders.length > 0 || item.skippedGraders.length > 0))) {
+        throw new Error("eval-runtime-availability-conflict");
+      }
+      const passed = record.result.cases.filter((item) => item.passed).length;
+      const unavailable = record.result.cases.filter((item) => item.unavailableReason !== undefined).length;
+      const failed = record.result.cases.length - passed - unavailable;
+      if (record.result.passed !== passed || record.result.failed !== failed ||
+          (record.result.unavailable ?? 0) !== unavailable) {
+        throw new Error("eval-runtime-count-mismatch");
+      }
+      const expectedExit = record.invalidReason || record.result.failed > 0 ? 1 : 0;
       if (record.exitCode !== expectedExit) throw new Error("eval-runtime-exit-mismatch");
     } else if (!record.invalidReason) {
       throw new Error("eval-runtime-invalid-reason-missing");
@@ -234,28 +249,37 @@ export function finalizeLocalEval(input: Omit<LocalEvalResult, "schemaVersion" |
     deterministicOnly: input.deterministicOnly,
     selectedCases: [...input.selectedCases],
     runtimes,
-    success: runtimes.every((item) => item.result?.failed === 0),
+    success: runtimes.every((item) => item.invalidReason === null && item.result?.failed === 0 &&
+      (item.result.unavailable ?? 0) === 0),
   };
   return { ...payload, resultHash: hash(payload) };
 }
 
 /** Human report with identities and counts, but no developer-machine paths. */
 export function buildLocalEvalReport(result: LocalEvalResult): string {
+  const hasFailure = result.runtimes.some((item) => item.invalidReason !== null ||
+    (item.result?.failed ?? 0) > 0);
+  const hasUnavailable = result.runtimes.some((item) => (item.result?.unavailable ?? 0) > 0);
+  const verdict = result.success ? "PASS" : hasUnavailable && !hasFailure ? "INCOMPLETE" : "FAIL";
   const lines = [
     "# Vibe local model eval",
     "",
     `Plugin ${result.pluginSha}; result hash \`${result.resultHash}\`.`,
     `Cases ${result.selectedCases.length}; wall ${result.wallMs} ms; ` +
       `Codex deterministic-only ${result.deterministicOnly ? "yes" : "no"}.`,
-    `Verdict: ${result.success ? "PASS" : "FAIL"}.`,
+    `Verdict: ${verdict}.`,
     "",
-    "| runtime | status | passed | failed | agent USD | judge USD | total USD | CLI | native hash |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    "| runtime | status | passed | failed | unavailable | agent USD | judge USD | total USD | CLI | native hash |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
   ];
   for (const record of result.runtimes) {
     const suite = record.result;
-    lines.push(`| ${record.runtime} | ${suite ? "complete" : record.invalidReason} | ` +
+    const status = record.invalidReason ?? (suite
+      ? (suite.unavailable ?? 0) > 0 ? "complete-with-unavailable" : "complete"
+      : "incomplete");
+    lines.push(`| ${record.runtime} | ${status} | ` +
       `${suite?.passed ?? 0} | ${suite?.failed ?? result.selectedCases.length} | ` +
+      `${suite?.unavailable ?? 0} | ` +
       `${suite?.agentCostUsd ?? "unavailable"} | ${suite?.judgeCostUsd ?? "unavailable"} | ` +
       `${suite?.costUsd ?? "unavailable"} | ` +
       `${suite?.cliVersion ?? "unknown"} | ${suite?.nativeHash ?? "unavailable"} |`);
@@ -264,6 +288,8 @@ export function buildLocalEvalReport(result: LocalEvalResult): string {
   const findings = result.runtimes.flatMap((record) => record.result?.cases.flatMap((item) => [
     ...item.failedGraders.map((grader) => `${record.runtime} ${item.id}: failed ${grader}`),
     ...item.skippedGraders.map((grader) => `${record.runtime} ${item.id}: skipped ${grader}`),
+    ...(item.unavailableReason
+      ? [`${record.runtime} ${item.id}: unavailable ${item.unavailableReason}`] : []),
   ]) ?? []);
   lines.push(...(findings.length ? findings.map((item) => `- ${item}`) : ["None."]));
   return `${lines.join("\n")}\n`;
