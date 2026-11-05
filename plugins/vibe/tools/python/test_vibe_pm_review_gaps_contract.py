@@ -83,7 +83,7 @@ def test_the_writer_checks_bundled_tokens_before_any_raw_value_and_logs_per_toke
         PER_TOKEN,
     ))
     quality = flat(QUALITY.read_text())
-    assert "(`guardrails.md`, \"Check the bundled tokens first\")" in quality
+    assert "(`guardrails-ui.md`, \"Check the bundled tokens first\")" in quality
     assert "`Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`" in quality
     for text in (writer, quality, flat(GUARDRAILS.read_text())):
         assert "`Engineering needed (tokens not bundled): <surface>; uses <token> values`" not in text

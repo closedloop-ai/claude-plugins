@@ -111,7 +111,8 @@ describe("vibe worker cross-runtime tool contract", () => {
   });
 
   it("keeps each runtime's public vibe invocation distinct", () => {
-    const skillText = readFileSync(join(pluginRoot, "skills", "vibe", "SKILL.md"), "utf8");
+    const skillText = ["SKILL.md", "references/vibe-harness-codex.md", "references/vibe-harness-claude.md"]
+      .map((file) => readFileSync(join(pluginRoot, "skills", "vibe", file), "utf8")).join("\n");
     const templateText = readFileSync(join(pluginRoot, "skills", "fleet-orchestrator", "references", "templates.md"), "utf8");
     expect(skillText).toContain("Codex: invoke as `$vibe`");
     expect(skillText).toContain("Claude Code: invoke as `/vibe:vibe`");

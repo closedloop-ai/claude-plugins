@@ -26,6 +26,15 @@
 // `CACHED-LANE <command> (reused from <sha>: not a fresh run)`; a cached record
 // is never a `pass`, and without the flag it counts as missing.
 //
+// `check --reuse-unaffected <qa-impact request JSON>` (off by default, PRD-823 WS7 F2) also
+// accepts a lane with no passing record for the scope when an earlier FRESH pass recorded at
+// the request's `lastQa.boundary` commit (committed inputs only) is untouched by what changed
+// since: qa-impact.mjs is recomputed in this worktree, and a lane counts as untouched when
+// the outcome is None, or when every changed file names its lanes in `laneSelections` and
+// this lane is not among them. A changed file with no lane entry, or a lane that is not
+// named, is never reused. It records the lane `cached` and prints `CACHED-LANE <command>
+// (reused from <sha>: ...; not a fresh run)`; a cached record is never a `pass`.
+//
 // Every lane the report names is required, e2e lanes included: a pull request
 // once merged with two Desktop E2E reds because this check skipped e2e lanes
 // by default and could not read a lane line that starts with the step's
@@ -204,11 +213,52 @@ function reuseCachedLanes(values, lanes, records, selected) {
       covered.push({ lane, from: earlier.head });
     }
   }
-  const isCached = (record) => record.result === CACHED_RESULT && lanes.includes(record.command) && sameSelection(record, selected);
+  const isCached = (record) => record.result === CACHED_RESULT && !record.unaffectedSince && lanes.includes(record.command) && sameSelection(record, selected);
   const stale = (record) => isCached(record) && !covered.some((item) => item.lane === record.command && item.from === record.reusedFrom?.head);
   if (written.length || records.some(stale)) {
     const kept = records.filter((record) => !stale(record));
     writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...written], null, 2)}\n`);
+  }
+  return covered;
+}
+
+const NO_DIFF = createHash("sha256").digest("hex");
+
+/** The lanes the changes since `request.lastQa.boundary` can touch, or null when that cannot be proven. */
+export function lanesTouchedSince(request, impact) {
+  if (impact.outcome === "None") return new Set();
+  const map = request.laneSelections?.files ?? request.laneSelections;
+  const touched = new Set();
+  for (const file of impact.changedFiles ?? []) {
+    const lanes = map?.[file];
+    if (!Array.isArray(lanes) || lanes.length === 0) return null;
+    for (const lane of lanes) touched.add(lane);
+  }
+  return touched;
+}
+
+/** The lanes an earlier fresh pass covers because nothing since touched them; new matches are recorded and cached records that no longer hold are dropped. */
+function reuseUnaffectedLanes(values, lanes, records, selected, already) {
+  const request = JSON.parse(readFileSync(values["reuse-unaffected"], "utf8"));
+  const impact = qaImpactRequest(values.worktree, request);
+  const touched = lanesTouchedSince(request, impact);
+  const boundary = git(values.worktree, ["rev-parse", "--verify", `${request.lastQa.boundary}^{commit}`]);
+  const covered = [];
+  const written = [];
+  for (const lane of missingLanes(lanes, records, selected).filter((name) => !already.some((item) => item.lane === name))) {
+    const earlier = touched && !touched.has(lane)
+      ? records.find((record) => record.command === lane && record.result === "pass" && record.provenance !== Provenance.Cached && record.head === boundary && record.source?.diffSha256 === NO_DIFF)
+      : undefined;
+    if (!earlier) continue;
+    const key = createHash("sha256").update(JSON.stringify({ unaffectedSince: boundary, impact: impact.laneKey ?? null, command: lane })).digest("hex");
+    const existing = records.find((record) => record.command === lane && sameSelection(record, selected) && record.cacheKey === key);
+    if (!existing) written.push({ ...cachedRecord({ command: lane, head: selected.source.head, key, source: earlier }), unaffectedSince: boundary, source: selected.source, laneKey: selected.laneKey });
+    covered.push({ lane, from: earlier.head });
+  }
+  const holds = (record) => covered.some((item) => item.lane === record.command && item.from === record.reusedFrom?.head);
+  const stale = (record) => record.unaffectedSince && record.result === CACHED_RESULT && lanes.includes(record.command) && sameSelection(record, selected) && !holds(record);
+  if (written.length || records.some(stale)) {
+    writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...records.filter((record) => !stale(record)), ...written], null, 2)}\n`);
   }
   return covered;
 }
@@ -234,7 +284,7 @@ function main(argv) {
   const { values } = parseArgs({ args: rest, options: {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
-    "reuse-cache": { type: "boolean" }, base: { type: "string" }, config: { type: "string", multiple: true },
+    "reuse-cache": { type: "boolean" }, "reuse-unaffected": { type: "string" }, base: { type: "string" }, config: { type: "string", multiple: true },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
@@ -317,9 +367,11 @@ function main(argv) {
       }
       const covered = values["reuse-cache"] ? reuseCachedLanes(values, lanes, records, selected) : [];
       for (const { lane, from } of covered) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: same tree, base, config and scope; not a fresh run)\n`);
-      const missing = missingLanes(lanes, records, selected).filter((lane) => !covered.some((item) => item.lane === lane));
+      const unaffected = values["reuse-unaffected"] ? reuseUnaffectedLanes(values, lanes, records, selected, covered) : [];
+      for (const { lane, from } of unaffected) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: nothing changed since touches this lane; not a fresh run)\n`);
+      const missing = missingLanes(lanes, records, selected).filter((lane) => ![...covered, ...unaffected].some((item) => item.lane === lane));
       for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
-      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] ? `, ${covered.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
+      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] || values["reuse-unaffected"] ? `, ${covered.length + unaffected.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
       return { exitCode: missing.length === 0 ? 0 : 1 };
     }).exitCode;
   }
