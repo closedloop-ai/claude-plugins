@@ -48,7 +48,7 @@ const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const AMENDS = /;\s*amends:\s*(\S.*)$/;
 const PROGRAM_RULING = /^\s*[-*]\s*Ruling\s+(\d{4}-\d{2}-\d{2})\s+\((operator message|AskUserQuestion|ticket):\s*(\S.*?)\):\s*(\S.*)$/gm;
-const SEQUENCING_RELATION = /^(.*?)\b(?:waits?\s+(?:until|on|for)|follows?|is\s+blocked\s+by)\b(.*)$/i;
+const SEQUENCING_RELATION = /^(?=.*(?:\b(?:ISS|FEA)-\d+\b|#\d+\b))(.*?)\b(?:waits?\s+(?:until|on|for)|follows?|is\s+blocked\s+by)\b(.*)$/i;
 const TICKET_REFERENCE = /\b(?:ISS|FEA)-\d+\b/gi;
 const PULL_REQUEST_REFERENCE = /#(\d+)\b/g;
 
@@ -64,7 +64,6 @@ export function uncitedExclusions(body) {
   const uncited = [];
   let underHeading = false;
   for (const line of body.split("\n")) {
-    const lineHasHumanSource = HUMAN_SOURCE.test(withoutQuotedCitations(line));
     if (/^#{1,6}\s/.test(line)) {
       underHeading = EXCLUSION_HEADING.test(line);
       continue;
@@ -82,7 +81,7 @@ export function uncitedExclusions(body) {
       }
     }
     for (const item of items.map((text) => text.trim().replace(/^\*+|\*+$/g, "").trim()).filter(Boolean)) {
-      if (!NOTHING.test(item) && !lineHasHumanSource && !HUMAN_SOURCE.test(item)) uncited.push(item);
+      if (!NOTHING.test(item) && !HUMAN_SOURCE.test(item)) uncited.push(item);
     }
   }
   return uncited;
@@ -183,14 +182,12 @@ export function sequencingRequirements(program, pullRequestTickets = {}) {
   const edges = [];
   const unresolved = [];
   for (const match of program.matchAll(PROGRAM_RULING)) {
-    const source = match[3];
     const ruling = match[4];
     const relation = ruling.match(SEQUENCING_RELATION);
     if (!relation) continue;
     const left = resolvedTicketReferences(relation[1], pullRequestTickets);
     unresolved.push(...left.unresolved.map((reference) => ({ reference, ruling })));
-    const sourceTickets = sourceTicketReferences(source);
-    const targets = left.hasReferences ? left.tickets : sourceTickets;
+    const targets = left.tickets;
     if (targets.length !== 1) {
       if (left.unresolved.length === 0) unresolved.push({ reference: relation[1].trim() || "blocked ticket", ruling });
       continue;
@@ -230,13 +227,6 @@ function namedDependencyReferences(text) {
   const remainder = text.replace(TICKET_REFERENCE, " ").replace(PULL_REQUEST_REFERENCE, " ");
   return [...remainder.matchAll(/\b(?:the\s+)?(?:[a-z][a-z0-9-]*\s+){1,3}(?:ticket|issue|pull request)\b/gi)]
     .map((match) => match[0].replace(/^(?:and|or)\s+/i, "").trim());
-}
-
-function sourceTicketReferences(source) {
-  const explicit = ticketReferences(source);
-  if (explicit.length > 0) return explicit;
-  const rulingId = source.match(/\bR-(\d+)(?:-|\b)/i);
-  return rulingId ? [`ISS-${rulingId[1]}`] : [];
 }
 
 function uniqueObjects(values, keyOf) {

@@ -88,9 +88,10 @@ import { committedLocalPlans, isLocalPlanPath, LOCAL_PLAN_PREFIX } from "../../v
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { readRetiredTests } from "../../vibe/scripts/retired-tests.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
-import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
+import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
+import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
 import { loadOpenPrs, pullRequestFacts } from "./pr-facts.mjs";
@@ -188,14 +189,16 @@ const result = withStableSource(worktree, () => {
     .map((file) => ({ ...file, ticket: localFixTickets.get(file.path) }));
   const retiredRecord = readRetiredTests(worktree);
   const retiredFiles = new Set(retiredRecord.filter((entry) => entry.case === undefined).map((entry) => entry.path));
-  const testRepairs = changedFiles.filter((file) => isTestRepair(file));
   const changedStatus = new Map(changedFiles.map((file) => [file.path, file.status]));
   const retiredTests = retiredRecord.map((entry) => ({ ...entry, status: changedStatus.get(entry.path) ?? null }));
   const shrinkOnlyAllowlists = changedFiles.filter((file) => isShrinkOnlyEdit(file));
   const shrinkOnlyPaths = new Set(shrinkOnlyAllowlists.map((file) => file.path));
-  const forbidden = changedFiles.filter((file) => isForbidden(file.path) && !shrinkOnlyPaths.has(file.path));
+  const classifications = new Map(changedFiles.map((file) => [file.path, classifyPath(file)]));
+  const testRepairs = changedFiles.filter((file) => classifications.get(file.path)?.reason === "test-repair");
+  const forbidden = changedFiles.filter((file) =>
+    classifications.get(file.path)?.disposition === PathDisposition.Forbidden && !shrinkOnlyPaths.has(file.path));
   const outsideAllowed = changedFiles.filter(
-    (file) => !isForbidden(file.path) && !isAllowed(file) && !shrinkOnlyPaths.has(file.path)
+    (file) => classifications.get(file.path)?.disposition === PathDisposition.Outside && !shrinkOnlyPaths.has(file.path)
   );
   const backendFiles = changedFiles.filter((file) => isBackend(file.path));
   const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
@@ -231,6 +234,8 @@ const result = withStableSource(worktree, () => {
     ok: Object.values(blocking).every(Boolean),
     worktree,
     branch,
+    ownedPrototype: prototype,
+    sessionSlug: record?.slug ?? null,
     mode: record?.mode ?? null,
     liveTicket: record?.liveTicket ?? record?.handoffTicket ?? null,
     vercel: record?.vercel ?? null,
@@ -316,14 +321,6 @@ const result = withStableSource(worktree, () => {
       files.set(filePath, { path: filePath, status: "A" });
     }
     return [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  function isForbidden(filePath) {
-    return (
-      path.posix.basename(filePath) === PATH_POLICY_BASENAME ||
-      (pathPolicy?.forbiddenPrefixes.some((prefix) => filePath.startsWith(prefix)) ?? false) ||
-      (pathPolicy?.forbiddenBasenames.includes(path.basename(filePath)) ?? false)
-    );
   }
 
   /** Use the captured base first, then a fetched newer default branch only for a missing declaration. */
@@ -423,20 +420,19 @@ const result = withStableSource(worktree, () => {
     return isShrinkOnlyAllowlistEdit(baseText, readFileSync(absolute, "utf8"));
   }
 
-  function isAllowed(file) {
-    if (isTestFile(file.path)) {
-      return isTestRepair(file) || isRetiredDeletion(file) ||
-        (values.phase === "pull-request" && isPullRequestTest(file));
-    }
-    return isAllowedPath(file);
+  function classifyPath(file) {
+    return classifyHandoffPath({
+      file,
+      phase: values.phase,
+      policy: pathPolicy,
+      prototype: { owned: prototype, slug: record?.slug },
+      portableSurfaceAllowed: portableSurfaceEditAllowed(file),
+      retiredDeletion: isRetiredDeletion(file),
+    });
   }
 
-  function isAllowedPath(file) {
+  function portableSurfaceEditAllowed(file) {
     const filePath = file.path;
-    if (prototype && (filePath.startsWith(`apps/prototypes/app/p/${record.slug}/`) ||
-      filePath === "apps/prototypes/lib/registry.generated.ts")) {
-      return true;
-    }
     if (prototype && filePath === PORTABLE_SURFACE_CHECKER) {
       try {
         return isPortableSurfaceAllowlistEdit(
@@ -447,24 +443,12 @@ const result = withStableSource(worktree, () => {
         );
       } catch { return false; }
     }
-    return (pathPolicy?.allowedPrefixes.some((prefix) => filePath.startsWith(prefix)) ?? false) ||
-      (pathPolicy?.allowedFiles.includes(filePath) ?? false);
-  }
-
-  function isPullRequestTest(file) {
-    return isAllowedPath(file) || (pathPolicy?.rootTests && isRootTest(file.path) && TEST_SPEC_PATTERN.test(file.path));
-  }
-
-  /** An existing test or fixture modified in place; never an added or deleted file or an updated snapshot. */
-  function isTestRepair(file) {
-    return file.status === "M" && isTestFile(file.path) && !isSnapshot(file.path) &&
-      ((pathPolicy?.rootTests && isRootTest(file.path)) || isAllowedPath(file));
+    return false;
   }
 
   /** A deleted test file the writer recorded as covering only code the request retires. */
   function isRetiredDeletion(file) {
-    return file.status === "D" && retiredFiles.has(file.path) &&
-      ((pathPolicy?.rootTests && isRootTest(file.path)) || isAllowedPath(file));
+    return file.status === "D" && retiredFiles.has(file.path);
   }
 
   function findComponentsWithoutStories(files) {

@@ -83,8 +83,24 @@ test("a sourced sequencing ruling yields blocker-to-blocked edges and reports un
     edges: [],
     unresolved: [],
   }, "operational orchestrator directions are not human rulings");
+  for (const ordinary of [
+    "the PLN status follows the work",
+    "reviewers wait for CI before commenting",
+  ]) {
+    assert.deepEqual(sequencingRequirements(`- Ruling 2026-11-04 (ticket: ISS-9): ${ordinary}\n`, {}), {
+      edges: [],
+      unresolved: [],
+    }, `ordinary workflow prose is not a sequencing dependency: ${ordinary}`);
+  }
+  assert.deepEqual(sequencingRequirements(
+    "- Ruling 2026-11-02 (operator message: R-13164-PHASE1): phase 2 waits until ISS-13526 merges\n",
+    {},
+  ), {
+    edges: [],
+    unresolved: [{ reference: "phase 2", ruling: "phase 2 waits until ISS-13526 merges" }],
+  }, "a ruling label is never guessed to be the blocked ticket");
 
-  const realCase = '- Ruling 2026-11-02 (operator message: R-13164-PHASE1): phase 2 waits until ISS-13526, ISS-13557, ISS-13474, ISS-13465, ISS-13479, ISS-13527, #9366 and #9448 merge\n';
+  const realCase = '- Ruling 2026-11-02 (operator message: R-13164-PHASE1): ISS-13164 phase 2 waits until ISS-13526, ISS-13557, ISS-13474, ISS-13465, ISS-13479, ISS-13527, #9366 and #9448 merge\n';
   assert.deepEqual(sequencingRequirements(realCase, { 9366: "ISS-9366", 9448: "ISS-9448" }).edges, [
     { blocker: "ISS-13526", blocked: "ISS-13164" },
     { blocker: "ISS-13557", blocked: "ISS-13164" },
@@ -163,19 +179,26 @@ const MARKER = "> Self-approved: vibe sets this plan's status and no human appro
 
 test("a plan no human approved cannot exclude work without citing a human source for each exclusion", () => {
   assert.deepEqual(uncitedExclusions(PLN_2212_SHAPED), [
+    "ISS-9381 prototype recomposition",
+    "ISS-9522 responsive preference versioning",
+    "public documentation",
+    "ISS-9381 is explicitly outside this build scope and remains untouched",
     "- Child mapping at handoff: covered are ISS-9377 and ISS-9380. Not covered and unchanged are ISS-9381 and ISS-9522.",
     "ISS-9381 prototype recomposition is explicitly outside this build scope.",
   ]);
   const problems = planProblems(planDoc());
-  assert.equal(problems.length, 3);
+  assert.equal(problems.length, 7);
   assert.match(problems[0], /PLN-2212 is APPROVED with no human approver and is not marked self-approved/);
-  assert.match(problems[1], /PLN-2212 is APPROVED with no human approver, so its exclusion "- Child mapping at handoff/);
-  assert.equal(planProblems(planDoc(), `${MARKER}\n\n${PLN_2212_SHAPED}`).length, 2, "the marker says it is self-approved; its uncited lines still need sources");
+  assert.match(problems[1], /PLN-2212 is APPROVED with no human approver, so its exclusion "ISS-9381 prototype recomposition" is not a ruling/);
+  assert.equal(planProblems(planDoc(), `${MARKER}\n\n${PLN_2212_SHAPED}`).length, 6, "the marker says it is self-approved; its exclusions still need sources");
   assert.deepEqual(planProblems(planDoc({ approverId: "user-1" })), [], "a plan a named human approved is a source");
-  assert.equal(planProblems(planDoc({ status: "DRAFT" })).length, 2, "a draft is not a ruling either, and needs no marker");
+  assert.equal(planProblems(planDoc({ status: "DRAFT" })).length, 6, "a draft is not a ruling either, and needs no marker");
   assert.deepEqual(uncitedExclusions("- Out-of-scope: none\n- Non-goals: ISS-9 per ISS-8 AC-3; offline sync (PRD-4)\n"), []);
   assert.deepEqual(uncitedExclusions("## Out of scope\n\n- the export menu\n- bulk delete, per operator ruling 2026-10-20\n"), ["the export menu"]);
   assert.deepEqual(uncitedExclusions("- Obsolete: the RTL criterion\n"), ["the RTL criterion"]);
+  assert.deepEqual(uncitedExclusions("- Out-of-scope: ISS-9381; ISS-9522; the operator dashboard\n"), ["ISS-9381", "ISS-9522"]);
+  assert.deepEqual(uncitedExclusions("- Deferred: offline sync; the rulings page redesign\n"), ["offline sync"]);
+  assert.deepEqual(uncitedExclusions("The export menu is deferred; see PRD-12 for context.\n"), ["The export menu is deferred"]);
   assert.match(planProblems(planDoc({ version: { content: "truncated", contentTruncated: true } })).join(), /--plan-body/);
 });
 
@@ -186,8 +209,11 @@ test("a quoted test title from PLN-2253 is not parsed as a scope exclusion", () 
     'The plan says "offline editing is out of scope" and omits it.',
   ], "quoted operative scope prose is still an exclusion");
   assert.deepEqual(uncitedExclusions(
+    "- Out-of-scope: local collector changes stay excluded; per operator ruling 2026-11-04.",
+  ), [], "a citation clause after a semicolon applies to the exclusion clause it cites");
+  assert.deepEqual(uncitedExclusions(
     "- Out-of-scope: local collector changes stay excluded per operator ruling 2026-11-04; the related retry path is deferred.",
-  ), [], "one cited source covers every semicolon clause on the same line");
+  ), ["the related retry path is deferred."], "a citation does not cover a separate exclusion clause");
   assert.deepEqual(uncitedExclusions(
     '- Out-of-scope: offline sync; replace the "rejects without operator ruling" test.',
   ), ["offline sync"],
@@ -201,7 +227,7 @@ test("the command fails on a PLN-2212-shaped plan and passes once it is marked a
   writeFileSync(doc, JSON.stringify(planDoc()));
   const refused = spawnSync(process.execPath, [SCRIPT, "--plan", doc], { encoding: "utf8" });
   assert.equal(refused.status, 1);
-  assert.equal(JSON.parse(refused.stdout).problems.length, 3);
+  assert.equal(JSON.parse(refused.stdout).problems.length, 7);
   const body = path.join(dir, "body.md");
   writeFileSync(body, `${MARKER}\n\n- Out-of-scope: ISS-9381 per ISS-9381 AC-2 (operator ruling 2026-10-21)\n`);
   assert.equal(spawnSync(process.execPath, [SCRIPT, "--plan", doc, "--plan-body", body], { encoding: "utf8" }).status, 0);

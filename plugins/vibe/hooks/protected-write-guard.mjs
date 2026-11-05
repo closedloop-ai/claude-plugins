@@ -5,7 +5,7 @@
 // markers needed here; this narrow splitter retains them without importing the dispatcher.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +25,7 @@ const pythonOpen = /\bopen\s*\(\s*(['"`])([^'"`]+)\1\s*,\s*(['"`])[wax+][^'"`]*\
 const pythonPath = /\bPath\s*\(\s*(['"`])([^'"`]+)\1\s*\)\s*\.\s*(?:write_text|write_bytes)\s*\(/g;
 const nodeWrite = /\b(?:writeFileSync|appendFileSync|createWriteStream|writeFile|appendFile)\s*\(\s*(['"`])([^'"`]+)\1/g;
 const nodeSecond = /\b(?:copyFileSync|renameSync|copyFile|rename)\s*\(\s*(['"`])[^'"`]+\1\s*,\s*(['"`])([^'"`]+)\2/g;
+const gitDirectoryCache = new Map();
 
 /** Segment-aware membership in a canonical directory. */
 function inside(root, target) {
@@ -52,12 +53,22 @@ function targetPaths(root, cwd, raw) {
 /** Match the one private change log owned by this exact linked worktree. */
 function isOwnChangeLog(root, target) {
   try {
-    const gitDir = path.resolve(execFileSync("git", ["-C", root, "rev-parse", "--absolute-git-dir"], {
-      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    }).trim());
+    let gitDir = gitDirectoryCache.get(root);
+    if (!gitDir) {
+      gitDir = path.resolve(execFileSync("git", ["-C", root, "rev-parse", "--absolute-git-dir"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      }).trim());
+      gitDirectoryCache.set(root, gitDir);
+    }
     const lexical = path.join(gitDir, "vibe-changes.md");
     const effective = path.join(realpathSync(gitDir), "vibe-changes.md");
-    return target.lexical === lexical && target.effective === effective;
+    if (target.lexical !== lexical || target.effective !== effective) return false;
+    try {
+      if (lstatSync(target.lexical).isSymbolicLink()) return false;
+    } catch (error) {
+      if (error?.code !== "ENOENT") return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -72,9 +83,9 @@ function protectedPath(root, target) {
     || protectedFiles.has(part) || (part === "git" && parts[index - 1] === ".config"));
 }
 
-function protectedWrite(root, cwd, raw) {
+function protectedWrite(root, cwd, raw, { allowOwnChangeLog = true } = {}) {
   const target = targetPaths(root, cwd, raw);
-  if (isOwnChangeLog(root, target)) return false;
+  if (allowOwnChangeLog && isOwnChangeLog(root, target)) return false;
   return protectedPath(root, target.lexical) || protectedPath(realpathSync(root), target.effective);
 }
 
@@ -149,9 +160,9 @@ function bashProtectedWrite(root, cwd, command) {
       }
       continue;
     }
-    const decisionFor = (target) => {
+    const decisionFor = (target, allowOwnChangeLog = true) => {
       if (unresolvedCwd && !path.isAbsolute(target)) return unresolvedReason;
-      return protectedWrite(root, currentCwd, target) ? protectedReason : null;
+      return protectedWrite(root, currentCwd, target, { allowOwnChangeLog }) ? protectedReason : null;
     };
     if (writers.has(name)) {
       const inline = args.findIndex((arg) => ["-c", "-e", "--eval"].includes(arg));
@@ -163,7 +174,7 @@ function bashProtectedWrite(root, cwd, command) {
       }
     }
     if (destinationWriters.has(name) && args.length >= 2) {
-      const reason = decisionFor(args.at(-1));
+      const reason = decisionFor(args.at(-1), name !== "ln");
       if (reason) return reason;
     }
     if (name === "sed" && args.some((arg) => arg === "-i" || arg.startsWith("-i"))

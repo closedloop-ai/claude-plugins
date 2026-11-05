@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "./test-fixtures.mjs";
+import { makeCheckout, makeHome, portableSurfaceChecker, runNode, SYMPHONY_PATH_POLICY } from "./test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCOPE = path.join(HERE, "dist", "scope-intake.mjs");
@@ -14,7 +14,11 @@ function session(t, prototype = false) {
   const fixture = makeHome("vibe-scope-intake-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "symphony-alpha");
-  makeCheckout({ ...fixture, checkout, files: { "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY } });
+  makeCheckout({ ...fixture, checkout, files: {
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+    "packages/app/issues/list.test.tsx": "test('list', () => {});\n",
+    "apps/prototypes/scripts/check-catalog-imports.mjs": portableSurfaceChecker([]),
+  } });
   const args = prototype
     ? ["new-prototype", "--repo", checkout, "--slug", "board-mockup", "--summary", "Board mockup", ...OPERATOR]
     : ["new", "--repo", checkout, "--slug", "destructive-gate", "--summary", "Destructive gate", "--mode", "seeded", ...OPERATOR];
@@ -48,8 +52,22 @@ test("intake preserves owned prototype paths, pull-request root tests, and canon
   assert.deepEqual(owned.json.outsideAllowed, []);
   assert.equal(runNode(SCOPE, ["--worktree", prototype.worktree, "--phase", "build",
     "--path", "apps/prototypes/app/p/other/page.tsx"], prototype.home).status, 1);
+  writeFileSync(path.join(prototype.worktree, "apps/prototypes/scripts/check-catalog-imports.mjs"),
+    portableSurfaceChecker([]).replace(".has(specifier)", ".has(specifier) || true"));
+  assert.equal(runNode(SCOPE, ["--worktree", prototype.worktree, "--phase", "build",
+    "--path", "apps/prototypes/scripts/check-catalog-imports.mjs"], prototype.home).status, 1,
+  "intake rejects the same invalid portable-checker edit as handoff");
 
   const app = session(t);
+  assert.deepEqual(runNode(SCOPE, ["--worktree", app.worktree, "--phase", "build",
+    "--path", "packages/app/issues/list.test.tsx"], app.home).json.allowed,
+  ["packages/app/issues/list.test.tsx"], "an existing modified test is a build-phase repair");
+  assert.deepEqual(runNode(SCOPE, ["--worktree", app.worktree, "--phase", "build",
+    "--path", "packages/app/issues/new.test.tsx"], app.home).json.outsideAllowed,
+  ["packages/app/issues/new.test.tsx"], "a new test under an allowed prefix still needs pull-request phase");
+  assert.deepEqual(runNode(SCOPE, ["--worktree", app.worktree, "--phase", "pull-request",
+    "--path", "packages/app/issues/new.test.tsx"], app.home).json.allowed,
+  ["packages/app/issues/new.test.tsx"]);
   assert.equal(runNode(SCOPE, ["--worktree", app.worktree, "--phase", "build",
     "--path", "e2e/issues.spec.ts"], app.home).status, 1);
   assert.deepEqual(runNode(SCOPE, ["--worktree", app.worktree, "--phase", "pull-request",

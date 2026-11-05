@@ -129,4 +129,11 @@ test('the status sweep flags a recorded sequencing ruling whose BLOCKS link is m
     reference: 'the migrations ticket merges',
     ruling: 'ISS-9 waits until the migrations ticket merges',
   }]);
+
+  const ordinary = { ...snapshot,
+    programRulings: [
+      '- Ruling 2026-11-04 (ticket: ISS-9): the PLN status follows the work',
+      '- Ruling 2026-11-04 (ticket: ISS-9): reviewers wait for CI before commenting',
+    ].join('\n'), pullRequestTickets: {}, artifactLinks: [] };
+  assert.deepEqual(auditStatuses(ordinary).findings, []);
 });

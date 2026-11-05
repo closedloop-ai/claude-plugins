@@ -129,7 +129,7 @@ slot() {
     check=1
   fi
   local admission_note=
-  if [ "${FLEET_FORCE_HERE:-}" = 1 ]; then
+  if [ "${FLEET_FORCE_HERE:-}" = 1 ] && [ -n "${FLEET_FORCE_REASON:-}" ]; then
     admission_note="force reason: ${FLEET_FORCE_REASON:-}"
   fi
   if [ "$where" = local ]; then

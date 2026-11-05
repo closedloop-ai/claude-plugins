@@ -1171,26 +1171,30 @@ Whenever the person asks to throw a session away (at any point, for any
    the person it is already finished (a pull request was opened, or it went
    to design and engineering) and stop.
 2. Tell them in plain words what will be lost (the session's summary, its
-   unsaved files, their Vercel copy of the app and its data, and the ticket,
-   which is canceled) and ask them to confirm.
+   unsaved files, and their Vercel copy of the app and its data). When
+   `liveTicketCreatedBySession` is true, also say that session-created ticket
+   is canceled. A bound pre-existing ticket is not canceled or reassigned.
+   Ask them to confirm.
 3. On a clear yes, retain the validated remembered `<repo>` separately from
    the target `<wt>` and the parent-held preview's branch, live ticket and
    operator. Dispatch `vibe-setup-worker` from that stable `<repo>` with
    `sessionless: {kind: "startup"}`, mode `record`, `recordAction: "discard"`,
    `exclusiveRecordTurn: true`, graph/live reads only, and `discardTarget`:
    `{worktree: "<wt>", confirmed: true, branch, operatorId, operatorEmail}`
-   plus `liveTicket` only when present (`references/quality-loop.md`,
+   plus `liveTicket` and `liveTicketCreatedBySession` when present (`references/quality-loop.md`,
    "Exactly three helper paths"). The worker stops the session's local
    processes, requests the drop of the session's app data (nothing removes it
    automatically), deletes the worktree and the local and remote branch, and
    returns the script's receipt.
 4. Only after that successful result has `discarded: true`, retain its
-   `cancelEvidence` in the parent. If there was a live ticket, dispatch
+   `cancelEvidence` in the parent. If it names a ticket with
+   `liveTicketCreatedBySession: true`, dispatch
    `vibe-ticket-worker` from the retained `<repo>` in mode `record`, action
    `cancel`, with `exclusiveRecordTurn: true` and
    `sessionless: {kind: "discarded", evidence: <cancelEvidence>}`, granting
    only parent-discovered graph/live reads and the declared cancel writes. A
-   failed or partial discard blocks cancellation.
+   failed or partial discard blocks cancellation. Without that evidence,
+   leave the bound ticket's status and owner untouched.
 5. Tell them in one line that it is gone.
 
 ## References

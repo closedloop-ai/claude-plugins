@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -6,7 +7,6 @@ import { runWhenMain } from "../../shared/cli.js";
 
 const DEFAULT_INVENTORY = fileURLToPath(new URL("../../../handoff/scripts/handoff-inventory.mjs", import.meta.url));
 const PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
-const PROTOTYPE_REGISTRY = "apps/prototypes/lib/registry.generated.ts";
 const PROTOTYPE_CHECKER = "apps/prototypes/scripts/check-catalog-imports.mjs";
 
 type Phase = "build" | "pull-request";
@@ -24,8 +24,18 @@ type InventoryResult = {
   pathPolicyFile?: string | null;
   pathPolicySource?: PolicySource | null;
   branch?: string;
+  baseCommit?: string;
+  ownedPrototype?: boolean;
+  sessionSlug?: string | null;
 };
-type RootTestContract = { isRootTest: (file: string) => boolean; testSpecPattern: RegExp };
+type PathClassification = { disposition: "allowed" | "forbidden" | "outside"; reason: string };
+type PathClassifier = (input: {
+  file: { path: string; status: "A" | "M" };
+  phase: Phase;
+  policy: PathPolicy;
+  prototype: { owned: boolean; slug?: string | null };
+  portableSurfaceAllowed: boolean;
+}) => PathClassification;
 export type IntakeScopeInput = {
   worktree: string;
   plannedPaths: string[];
@@ -51,15 +61,24 @@ export async function intakeScope(input: IntakeScopeInput): Promise<IntakeScopeR
   const worktree = resolve(input.worktree);
   const planned = [...new Set(input.plannedPaths.map(plannedPath))].sort();
   const loaded = loadPathPolicy(worktree, input.phase, input.inventoryScript ?? DEFAULT_INVENTORY);
-  const rootTests = input.phase === "pull-request" ? await rootTestContract() : undefined;
-  return classifyPlannedPaths({ worktree, planned, phase: input.phase, loaded, rootTests });
+  const classify = await pathClassifierContract();
+  const classifications = await Promise.all(planned.map(async (file) => ({ file, classification: classify({
+    file: { path: file, status: plannedStatus(worktree, loaded.inventory.baseCommit as string, file) },
+    phase: input.phase,
+    policy: loaded.policy,
+    prototype: { owned: loaded.inventory.ownedPrototype === true, slug: loaded.inventory.sessionSlug },
+    portableSurfaceAllowed: await portableSurfaceEditAllowed(worktree, loaded.inventory, file),
+  }) })));
+  return classifyPlannedPaths({ worktree, planned, loaded, classifications });
 }
 
-/** Pure classification used by unit tests; policy selection remains owned by handoff inventory. */
-export function classifyPlannedPaths(input: { worktree: string; planned: string[]; phase: Phase;
-  loaded: { inventory: InventoryResult; policy: PathPolicy }; rootTests?: RootTestContract }): IntakeScopeResult {
-  const forbidden = input.planned.filter((file) => isForbidden(input.loaded.policy, file));
-  const outsideAllowed = input.planned.filter((file) => !forbidden.includes(file) && !isAllowed(input.loaded, file, input.phase, input.rootTests));
+/** Aggregate the canonical handoff classifier's results into the intake response. */
+export function classifyPlannedPaths(input: { worktree: string; planned: string[];
+  loaded: { inventory: InventoryResult; policy: PathPolicy };
+  classifications: Array<{ file: string; classification: PathClassification }> }): IntakeScopeResult {
+  const dispositions = new Map(input.classifications.map((entry) => [entry.file, entry.classification.disposition]));
+  const forbidden = input.planned.filter((file) => dispositions.get(file) === "forbidden");
+  const outsideAllowed = input.planned.filter((file) => dispositions.get(file) === "outside");
   const rejected = new Set([...forbidden, ...outsideAllowed]);
   const allowed = input.planned.filter((file) => !rejected.has(file));
   const allOutsideAllowed = allowed.length === 0;
@@ -80,10 +99,34 @@ export function classifyPlannedPaths(input: { worktree: string; planned: string[
   };
 }
 
-async function rootTestContract(): Promise<RootTestContract> {
-  const moduleUrl = new URL("../test-files.mjs", import.meta.url).href;
-  const runtime = await import(moduleUrl) as { isRootTest: (file: string) => boolean; TEST_SPEC_PATTERN: RegExp };
-  return { isRootTest: runtime.isRootTest, testSpecPattern: runtime.TEST_SPEC_PATTERN };
+async function pathClassifierContract(): Promise<PathClassifier> {
+  const moduleUrl = new URL("../../../handoff/scripts/path-classifier.mjs", import.meta.url).href;
+  const runtime = await import(moduleUrl) as { classifyHandoffPath: PathClassifier };
+  return runtime.classifyHandoffPath;
+}
+
+function plannedStatus(worktree: string, baseCommit: string, file: string): "A" | "M" {
+  const result = spawnSync("git", ["-C", worktree, "cat-file", "-e", `${baseCommit}:${file}`], {
+    encoding: "utf8", stdio: "ignore",
+  });
+  return result.status === 0 ? "M" : "A";
+}
+
+async function portableSurfaceEditAllowed(worktree: string, inventory: InventoryResult, file: string) {
+  if (!inventory.ownedPrototype || file !== PROTOTYPE_CHECKER || !inventory.baseCommit) return false;
+  try {
+    const moduleUrl = new URL("../../../handoff/scripts/prototype-allowlist.mjs", import.meta.url).href;
+    const runtime = await import(moduleUrl) as {
+      isPortableSurfaceAllowlistEdit: (base: string, current: string, exists: (specifier: string) => boolean) => boolean;
+    };
+    const base = execFileSync("git", ["-C", worktree, "show", `${inventory.baseCommit}:${file}`], { encoding: "utf8" });
+    const current = readFileSync(resolve(worktree, file), "utf8");
+    return runtime.isPortableSurfaceAllowlistEdit(base, current, (specifier) =>
+      [".ts", ".tsx", ".mjs"].some((extension) =>
+        existsSync(resolve(worktree, "packages/app", `${specifier.slice("@repo/app/".length)}${extension}`))));
+  } catch {
+    return false;
+  }
 }
 
 function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript: string) {
@@ -98,7 +141,9 @@ function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript: string
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
   const file = inventory.pathPolicyFile;
-  if (!source?.commit || file !== PATH_POLICY_BASENAME) throw new Error("handoff inventory did not return one validated root path policy");
+  if (!source?.commit || !inventory.baseCommit || file !== PATH_POLICY_BASENAME) {
+    throw new Error("handoff inventory did not return one validated root path policy and base commit");
+  }
   const text = execFileSync("git", ["-C", worktree, "show", `${source.commit}:${file}`], { encoding: "utf8" });
   return { inventory, policy: JSON.parse(text) as PathPolicy };
 }
@@ -109,22 +154,6 @@ function plannedPath(value: string) {
     throw new Error(`planned path must be one literal repository-relative file: ${JSON.stringify(value)}`);
   }
   return value;
-}
-
-function isForbidden(policy: PathPolicy, file: string) {
-  const basename = file.slice(file.lastIndexOf("/") + 1);
-  return basename === PATH_POLICY_BASENAME || policy.forbiddenPrefixes.some((prefix) => file.startsWith(prefix)) ||
-    policy.forbiddenBasenames.includes(basename);
-}
-
-function isAllowed(loaded: { inventory: InventoryResult; policy: PathPolicy }, file: string, phase: Phase, rootTests?: RootTestContract) {
-  const branch = loaded.inventory.branch ?? "";
-  if (branch.startsWith("prototype/")) {
-    const slug = branch.slice("prototype/".length);
-    if (file.startsWith(`apps/prototypes/app/p/${slug}/`) || file === PROTOTYPE_REGISTRY || file === PROTOTYPE_CHECKER) return true;
-  }
-  if (phase === "pull-request" && loaded.policy.rootTests && rootTests?.isRootTest(file) && rootTests.testSpecPattern.test(file)) return true;
-  return loaded.policy.allowedPrefixes.some((prefix) => file.startsWith(prefix)) || loaded.policy.allowedFiles.includes(file);
 }
 
 async function main(argv: string[]) {

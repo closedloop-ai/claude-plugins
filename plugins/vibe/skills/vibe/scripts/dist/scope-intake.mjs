@@ -3,6 +3,7 @@ import { createRequire as __vibeRequire } from 'node:module'; import {fileURLToP
 
 // src/scope-intake.ts
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -25,7 +26,6 @@ function runWhenMain(metaUrl, main2) {
 // src/scope-intake.ts
 var DEFAULT_INVENTORY = fileURLToPath(new URL("../../../handoff/scripts/handoff-inventory.mjs", import.meta.url));
 var PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
-var PROTOTYPE_REGISTRY = "apps/prototypes/lib/registry.generated.ts";
 var PROTOTYPE_CHECKER = "apps/prototypes/scripts/check-catalog-imports.mjs";
 async function intakeScope(input) {
   if (!input.worktree) throw new Error("--worktree is required");
@@ -33,12 +33,20 @@ async function intakeScope(input) {
   const worktree = resolve(input.worktree);
   const planned = [...new Set(input.plannedPaths.map(plannedPath))].sort();
   const loaded = loadPathPolicy(worktree, input.phase, input.inventoryScript ?? DEFAULT_INVENTORY);
-  const rootTests = input.phase === "pull-request" ? await rootTestContract() : void 0;
-  return classifyPlannedPaths({ worktree, planned, phase: input.phase, loaded, rootTests });
+  const classify = await pathClassifierContract();
+  const classifications = await Promise.all(planned.map(async (file) => ({ file, classification: classify({
+    file: { path: file, status: plannedStatus(worktree, loaded.inventory.baseCommit, file) },
+    phase: input.phase,
+    policy: loaded.policy,
+    prototype: { owned: loaded.inventory.ownedPrototype === true, slug: loaded.inventory.sessionSlug },
+    portableSurfaceAllowed: await portableSurfaceEditAllowed(worktree, loaded.inventory, file)
+  }) })));
+  return classifyPlannedPaths({ worktree, planned, loaded, classifications });
 }
 function classifyPlannedPaths(input) {
-  const forbidden = input.planned.filter((file) => isForbidden(input.loaded.policy, file));
-  const outsideAllowed = input.planned.filter((file) => !forbidden.includes(file) && !isAllowed(input.loaded, file, input.phase, input.rootTests));
+  const dispositions = new Map(input.classifications.map((entry) => [entry.file, entry.classification.disposition]));
+  const forbidden = input.planned.filter((file) => dispositions.get(file) === "forbidden");
+  const outsideAllowed = input.planned.filter((file) => dispositions.get(file) === "outside");
   const rejected = /* @__PURE__ */ new Set([...forbidden, ...outsideAllowed]);
   const allowed = input.planned.filter((file) => !rejected.has(file));
   const allOutsideAllowed = allowed.length === 0;
@@ -54,10 +62,29 @@ function classifyPlannedPaths(input) {
     message: allOutsideAllowed ? "Every planned file is outside the repository's allowed vibe paths. Build nothing and route this work to engineering." : rejected.size > 0 ? "Build only the allowed planned files and route the listed outside or forbidden paths to engineering." : "Every planned file is allowed for this vibe session."
   };
 }
-async function rootTestContract() {
-  const moduleUrl = new URL("../test-files.mjs", import.meta.url).href;
+async function pathClassifierContract() {
+  const moduleUrl = new URL("../../../handoff/scripts/path-classifier.mjs", import.meta.url).href;
   const runtime = await import(moduleUrl);
-  return { isRootTest: runtime.isRootTest, testSpecPattern: runtime.TEST_SPEC_PATTERN };
+  return runtime.classifyHandoffPath;
+}
+function plannedStatus(worktree, baseCommit, file) {
+  const result = spawnSync("git", ["-C", worktree, "cat-file", "-e", `${baseCommit}:${file}`], {
+    encoding: "utf8",
+    stdio: "ignore"
+  });
+  return result.status === 0 ? "M" : "A";
+}
+async function portableSurfaceEditAllowed(worktree, inventory, file) {
+  if (!inventory.ownedPrototype || file !== PROTOTYPE_CHECKER || !inventory.baseCommit) return false;
+  try {
+    const moduleUrl = new URL("../../../handoff/scripts/prototype-allowlist.mjs", import.meta.url).href;
+    const runtime = await import(moduleUrl);
+    const base = execFileSync("git", ["-C", worktree, "show", `${inventory.baseCommit}:${file}`], { encoding: "utf8" });
+    const current = readFileSync(resolve(worktree, file), "utf8");
+    return runtime.isPortableSurfaceAllowlistEdit(base, current, (specifier) => [".ts", ".tsx", ".mjs"].some((extension) => existsSync(resolve(worktree, "packages/app", `${specifier.slice("@repo/app/".length)}${extension}`))));
+  } catch {
+    return false;
+  }
 }
 function loadPathPolicy(worktree, _phase, inventoryScript) {
   const result = spawnSync(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "build"], {
@@ -74,7 +101,9 @@ function loadPathPolicy(worktree, _phase, inventoryScript) {
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
   const file = inventory.pathPolicyFile;
-  if (!source?.commit || file !== PATH_POLICY_BASENAME) throw new Error("handoff inventory did not return one validated root path policy");
+  if (!source?.commit || !inventory.baseCommit || file !== PATH_POLICY_BASENAME) {
+    throw new Error("handoff inventory did not return one validated root path policy and base commit");
+  }
   const text = execFileSync("git", ["-C", worktree, "show", `${source.commit}:${file}`], { encoding: "utf8" });
   return { inventory, policy: JSON.parse(text) };
 }
@@ -83,19 +112,6 @@ function plannedPath(value) {
     throw new Error(`planned path must be one literal repository-relative file: ${JSON.stringify(value)}`);
   }
   return value;
-}
-function isForbidden(policy, file) {
-  const basename = file.slice(file.lastIndexOf("/") + 1);
-  return basename === PATH_POLICY_BASENAME || policy.forbiddenPrefixes.some((prefix) => file.startsWith(prefix)) || policy.forbiddenBasenames.includes(basename);
-}
-function isAllowed(loaded, file, phase, rootTests) {
-  const branch = loaded.inventory.branch ?? "";
-  if (branch.startsWith("prototype/")) {
-    const slug = branch.slice("prototype/".length);
-    if (file.startsWith(`apps/prototypes/app/p/${slug}/`) || file === PROTOTYPE_REGISTRY || file === PROTOTYPE_CHECKER) return true;
-  }
-  if (phase === "pull-request" && loaded.policy.rootTests && rootTests?.isRootTest(file) && rootTests.testSpecPattern.test(file)) return true;
-  return loaded.policy.allowedPrefixes.some((prefix) => file.startsWith(prefix)) || loaded.policy.allowedFiles.includes(file);
 }
 async function main(argv) {
   try {

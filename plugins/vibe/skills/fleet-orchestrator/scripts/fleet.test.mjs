@@ -31,9 +31,9 @@ function fixture(config) {
   // work-dir.mjs resolves the orchestration dir with the real node; every other node call is recorded.
   writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   writeFileSync(join(bin, 'ssh'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${root}/ssh-args\nexec bash -c "\${@: -1}"\n`);
-  writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "0\\n"\n');
-  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ 0 0 0 }\\n"\n');
-  writeFileSync(join(bin, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
+  writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_LOAD:-0}"\n');
+  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "${FLEET_TEST_LOAD:-0}"\n');
+  writeFileSync(join(bin, 'getconf'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_CORES:-8}"\n');
   writeRemoteCodexStub(bin, PLUGIN_ROOT);
   for (const command of ['node', 'ssh', 'cut', 'sysctl', 'getconf']) chmodSync(join(bin, command), 0o755);
   const prompt = join(root, 'prompts', 'w1-01-start.md');
@@ -311,6 +311,15 @@ test('a heavy slot refuses a machine whose load per core is over the limit and n
   assert.equal(busy.status, 4);
   assert.equal(busy.stdout, '');
   assert.match(busy.stderr, /load 34 on 18 cores is over 1\.5 per core.*run this heavy check on the other machine/);
+  const localBusy = f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'must-not-run'],
+    { FLEET_TEST_LOAD: '34', FLEET_TEST_CORES: '18' });
+  assert.equal(localBusy.status, 4, localBusy.stdout + localBusy.stderr);
+  assert.doesNotMatch(localBusy.stdout, /must-not-run/);
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const remoteBusy = f.run(['remote', 'slot', 'heavy', 'w2 tests', f.root, 'echo', 'must-not-run'],
+    { FLEET_TEST_LOAD: '34', FLEET_TEST_CORES: '18' });
+  assert.equal(remoteBusy.status, 4, remoteBusy.stdout + remoteBusy.stderr);
+  assert.doesNotMatch(remoteBusy.stdout, /must-not-run/);
   assert.equal(evaluate(20, 18).status, 0);
   const missingReason = evaluate(34, 18, { FLEET_FORCE_HERE: '1' });
   assert.equal(missingReason.status, 4);
@@ -322,11 +331,14 @@ test('a heavy slot refuses a machine whose load per core is over the limit and n
   const ceiling = evaluate(252, 18, { FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator requested local verification' });
   assert.equal(ceiling.status, 4);
   assert.match(ceiling.stderr, /hard ceiling of 4 per core/);
-  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
   const remoteForced = f.run(['remote', 'slot', 'heavy', 'w2 tests', f.root, 'cat', join(f.root, 'locks', 'heavy-1.lock', 'owner')],
     { MAX_LOAD_PER_CORE: '1000000', FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator kept the remote signing lane' });
   assert.equal(remoteForced.status, 0, remoteForced.stderr);
   assert.match(remoteForced.stdout, /force reason: operator kept the remote signing lane/);
+  const emptyReason = f.run(['local', 'slot', 'shared', 'w3 tests', f.root, 'cat', join(f.root, 'locks', 'shared-1.lock', 'owner')],
+    { FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: '' });
+  assert.equal(emptyReason.status, 0, emptyReason.stderr);
+  assert.doesNotMatch(emptyReason.stdout, /force reason:/, 'an empty reason is never recorded');
   assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran']).stdout, 'ran\n', 'only heavy slots are load-checked');
   const skill = readFileSync(join(SCRIPTS, '..', 'SKILL.md'), 'utf8');
   assert.match(skill, /Writers never set `FLEET_FORCE_HERE`[\s\S]*or `FLEET_LOAD`/);

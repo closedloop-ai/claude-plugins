@@ -10,20 +10,20 @@ const policy = {
   rootTests: true,
 };
 const source = { kind: "base", commit: "a".repeat(40) };
-const loaded = (branch = "vibe/example") => ({ inventory: {
-  branch, pathPolicyFile: "vibe-handoff-paths.json", pathPolicySource: source,
+const loaded = () => ({ inventory: {
+  branch: "vibe/example", baseCommit: "b".repeat(40), pathPolicyFile: "vibe-handoff-paths.json", pathPolicySource: source,
 }, policy });
-const rootTests = {
-  isRootTest: (file: string) => file.startsWith("e2e/"),
-  testSpecPattern: /\.(?:test|spec)\.ts$/,
-};
+const classified = (entries: Array<[string, "allowed" | "forbidden" | "outside"]>) =>
+  entries.map(([file, disposition]) => ({ file, classification: { disposition, reason: disposition } }));
 
 describe("scope intake classification", () => {
-  it("refuses the ISS-12820 scripts-only plan and keeps allowed mixed work", () => {
-    const refused = classifyPlannedPaths({ worktree: "/repo", phase: "build", loaded: loaded(), planned: [
+  it("refuses the ISS-12820 scripts-only plan and keeps canonical mixed classifications", () => {
+    const planned = [
       "scripts/deploy/check-deployed-destructive-migrations.ts",
       "scripts/lint/check-destructive-migrations.ts",
-    ] });
+    ];
+    const refused = classifyPlannedPaths({ worktree: "/repo", loaded: loaded(), planned,
+      classifications: classified(planned.map((file) => [file, "outside"] as [string, "outside"])) });
     expect(refused.ok).toBe(false);
     expect(refused.allOutsideAllowed).toBe(true);
     expect(refused.allowed).toEqual([]);
@@ -31,25 +31,26 @@ describe("scope intake classification", () => {
       "scripts/deploy/check-deployed-destructive-migrations.ts",
       "scripts/lint/check-destructive-migrations.ts",
     ]);
-    const mixed = classifyPlannedPaths({ worktree: "/repo", phase: "build", loaded: loaded(),
-      planned: ["packages/app/issues/list.tsx", "scripts/lint/check-destructive-migrations.ts"] });
+    const mixed = classifyPlannedPaths({ worktree: "/repo", loaded: loaded(),
+      planned: ["packages/app/issues/list.tsx", "scripts/lint/check-destructive-migrations.ts"],
+      classifications: classified([
+        ["packages/app/issues/list.tsx", "allowed"],
+        ["scripts/lint/check-destructive-migrations.ts", "outside"],
+      ]) });
     expect(mixed.ok).toBe(true);
     expect(mixed.allowed).toEqual(["packages/app/issues/list.tsx"]);
   });
 
-  it("preserves owned prototype paths and pull-request root tests", () => {
-    const prototype = classifyPlannedPaths({ worktree: "/repo", phase: "build", loaded: loaded("prototype/board-mockup"), planned: [
-      "apps/prototypes/app/p/board-mockup/page.tsx",
-      "apps/prototypes/lib/registry.generated.ts",
-      "apps/prototypes/scripts/check-catalog-imports.mjs",
-    ] });
-    expect(prototype.ok).toBe(true);
-    expect(prototype.outsideAllowed).toEqual([]);
-    expect(classifyPlannedPaths({ worktree: "/repo", phase: "build", loaded: loaded("prototype/board-mockup"),
-      planned: ["apps/prototypes/app/p/other/page.tsx"] }).ok).toBe(false);
-    expect(classifyPlannedPaths({ worktree: "/repo", phase: "build", loaded: loaded(), rootTests,
-      planned: ["e2e/issues.spec.ts"] }).ok).toBe(false);
-    expect(classifyPlannedPaths({ worktree: "/repo", phase: "pull-request", loaded: loaded(), rootTests,
-      planned: ["e2e/issues.spec.ts"] }).allowed).toEqual(["e2e/issues.spec.ts"]);
+  it("keeps forbidden paths distinct from paths outside the allowlist", () => {
+    const result = classifyPlannedPaths({ worktree: "/repo", loaded: loaded(),
+      planned: [".github/workflows/release.yml", "scripts/release.mjs", "packages/app/page.tsx"],
+      classifications: classified([
+        [".github/workflows/release.yml", "forbidden"],
+        ["scripts/release.mjs", "outside"],
+        ["packages/app/page.tsx", "allowed"],
+      ]) });
+    expect(result.forbidden).toEqual([".github/workflows/release.yml"]);
+    expect(result.outsideAllowed).toEqual(["scripts/release.mjs"]);
+    expect(result.allowed).toEqual(["packages/app/page.tsx"]);
   });
 });

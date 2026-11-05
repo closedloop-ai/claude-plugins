@@ -1,6 +1,6 @@
 ---
 name: vibe-ticket-worker
-description: Owns a vibe session's live ClosedLoop ticket in the target repository for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template, records its slug on the session and links the document the session started from to it. Plan mode publishes the session's local plans as one implementation plan document (PLN) linked from the ticket, keeps it current and sets its status as the work moves, recording the PLN on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff and Grading sections, reconciles the backend sections, attaches decision tables, verifies and repairs the source link, the PLN and its link, leaves the PLN Approved, and checks the ticket is complete. Assign mode hands the ticket and its PLN to the next owner the lookup resolved, with the ticket status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
+description: Owns a vibe session's live ClosedLoop ticket in the target repository for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template, records its slug on the session and links the document the session started from to it. Plan mode publishes the session's local plans as one implementation plan document (PLN) linked from the ticket, keeps it current and sets its status as the work moves, recording the PLN on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff and Grading sections, reconciles the backend sections, attaches decision tables, verifies and repairs the source link, the PLN and its link, leaves the PLN Approved, and checks the ticket is complete. Assign mode hands the ticket and its PLN to the next owner the lookup resolved, with the ticket status left In Progress. Cancel mode moves only a discarded session's own created ticket to Canceled. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -19,7 +19,7 @@ when the writer stopped after its plan without finishing the build, or
 `mergeCheck: true` when the orchestrator only asks whether the session's pull
 request merged. Cancel: the retained validated execution checkout
 and parent-held `cancelEvidence` from a successful `discarded: true` script
-receipt, with branch, live ticket and exact operator id/email. It runs in mode
+receipt, with branch, live ticket, `liveTicketCreatedBySession: true` and exact operator id/email. It runs in mode
 `record`, action `cancel`, with exclusive record ownership and
 `sessionless: {kind: "discarded", evidence: <cancelEvidence>}`. No failed or
 partial discard can authorize cancellation. Lookup: the person's exact words naming who picks the work up next.
@@ -214,7 +214,7 @@ F. Status. The PLN's status follows the work:
    session's branch.
 5. Record the slug on the session yourself, then confirm `show` reports it as
    `liveTicket`:
-   `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <slug>`.
+   `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <slug> --created-live-ticket`.
 6. Link the source document to the ticket ("Source link and session plan",
    step A). The session has no plan yet; plan mode publishes it.
 7. For every open source-PRD child classified untouched, reread it and claim
@@ -475,7 +475,9 @@ Finds the next owner; reads only, and never touches the ticket.
 
 ## Cancel mode
 
-The person threw the session away and its branch is deleted.
+The person threw the session away and its branch is deleted. Refuse unless
+the parent-held receipt says `liveTicketCreatedBySession: true`; a session
+bound to a pre-existing issue never enters cancel mode.
 
 1. `get-document` the ticket; confirm it is still assigned to the operator
    you were given (same check as handoff mode) and In Progress. If not,

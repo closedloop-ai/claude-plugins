@@ -101,6 +101,17 @@ test("native and Bash writes admit only the linked worktree's own vibe change lo
   assert.equal(decision(run(worktree, "PreToolUse", "Bash", {
     command: `python -c "open('${path.join(gitDir, "config")}', 'a').write('x')"`,
   }))?.permissionDecision, "deny");
+
+  const hookTarget = path.join(checkout, ".git", "hooks", "pre-commit");
+  assert.equal(decision(run(worktree, "PreToolUse", "Bash", {
+    command: `ln -s '${hookTarget}' '${changeLog}'`,
+  }))?.permissionDecision, "deny", "the exception cannot create a dangling symlink");
+  symlinkSync(hookTarget, changeLog);
+  assert.equal(decision(run(worktree, "PermissionRequest", "Write", { file_path: changeLog }))?.decision?.behavior,
+    "deny", "native Write cannot follow the dangling change-log symlink");
+  assert.equal(decision(run(worktree, "PreToolUse", "Bash", {
+    command: `cp prepared-entry.md '${changeLog}'`,
+  }))?.permissionDecision, "deny", "Bash cannot write through the dangling change-log symlink");
 });
 
 test("hook-checked Bash write forms deny protected destinations", (t) => {
