@@ -254,6 +254,13 @@ turn that failed
 on a transient provider error after a backoff, and `supervise.sh` runs that
 recovery on each host with no orchestrator awake.
 
+### Internal pipeline skills
+
+`vibe-pipeline-backend`, `vibe-pipeline-docs-config`,
+`vibe-pipeline-trivial-ui` and `vibe-pipeline-ui-feature` load the build and
+handoff rules for the class selected by a session's triage manifest. They are
+internal parts of `$vibe`, not separate entry points.
+
 ### ClosedLoop ticket skills
 
 `cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`,
@@ -365,7 +372,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.44` contains 17 skills, 17 agents, and one hook manifest
+Version `1.1.45` contains 17 skills, 17 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules, `vibe_contract_text.py` and `skill_split.py`, the text

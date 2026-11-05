@@ -244,6 +244,27 @@ function sandbox(t) {
   return { ...fixture, out: path.join(fixture.root, "out") };
 }
 
+test("byte-identical screenshots skip PNG decode, while different bytes with identical pixels still compare equal", async (t) => {
+  const { out } = sandbox(t);
+  const png = shot(GREY);
+  const differentlyEncoded = Buffer.concat([png, Buffer.from([0])]);
+  const browser = fakeBrowser({
+    [BASE]: { "a--same": passes(png), "b--same-pixels": [passes(png), passes(differentlyEncoded)] },
+    [HEAD]: { "a--same": passes(png), "b--same-pixels": passes(png) },
+  });
+  let decodes = 0;
+  const dependencies = { decodePng: (bytes) => { decodes++; return decodePng(bytes); } };
+  const summary = await frozenRenders({ ids: ["a--same", "b--same-pixels"], fileCount: 1, baseUrl: BASE, headUrl: HEAD,
+    browser, out, command: "frozen-render.mjs" }, dependencies);
+  const details = JSON.parse(readFileSync(path.join(out, "results.json"), "utf8")).details;
+  assert.equal(decodes, 2, "the all-equal story does no decode; the two byte-distinct groups decode once each");
+  assert.deepEqual(details.map((story) => story.outcome), [FrozenOutcome.Identical, FrozenOutcome.Identical]);
+  assert.deepEqual(Object.values(details[0].renders).map((render) => render.timingsMs.decode), [0, 0, 0]);
+  assert.equal(new Set(Object.values(details[1].renders).map((render) => render.pixels)).size, 1,
+    "different PNG bytes with identical decoded pixels share the exact pixel hash");
+  assert.equal(summary.ok, true);
+});
+
 test("each class: identical, unstable on base, same failure, changed render, new failure and a changed play on an unstable base (ISS-13317)", async (t) => {
   const { out } = sandbox(t);
   const ids = ["a--identical", "b--unstable", "c--same-failure", "d--changed", "e--newly-failing", "f--unstable-play-changed"];
@@ -289,6 +310,12 @@ test("each class: identical, unstable on base, same failure, changed render, new
     "same-failure c--same-failure: fails the same way on the base: storyThrewException fired: No fixture for /api/pr-files",
   ]);
   assert.equal(summary.lines.at(-1), `summary: 6 stories in 2 story files: 1 identical, 1 unstable on base (b--unstable), 1 same failure (c--same-failure), 3 blocking; results ${path.join(out, "results.json")}`);
+  const phaseNames = ["contextCreation", "pageLoad", "playWait", "fonts", "screenshot", "decode", "hash"];
+  for (const render of Object.values(details[0].renders)) {
+    assert.deepEqual(Object.keys(render.timingsMs), phaseNames);
+    assert.ok(Object.values(render.timingsMs).every((duration) => Number.isFinite(duration) && duration >= 0));
+    assert.equal("rawPngHash" in render, false, "results record timings without exposing the internal raw-byte hash");
+  }
   // A cropped diff only for the unstable base and for blocking pixel differences, never for a new failure with the base's pixels.
   assert.deepEqual(details.filter((story) => story.crop).map((story) => story.storyId), ["b--unstable", "d--changed"]);
   const crop = decodePng(readFileSync(summary.blocking[0].crop));
