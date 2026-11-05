@@ -61,6 +61,6 @@ Checks:
 The scripted checks report candidates with the line as evidence. The reviewer
 still decides whether a candidate is a defect (a token the surface does not
 bundle, for example, is not a finding the reviewer may accept without reading
-`guardrails.md`, "Check the bundled tokens first"). Exit codes of the script: 0
+`guardrails-ui.md`, "Check the bundled tokens first"). Exit codes of the script: 0
 no finding and every scriptable check ran, 1 at least one finding, 3 no finding
 but a scriptable check was skipped, 2 the script could not run.

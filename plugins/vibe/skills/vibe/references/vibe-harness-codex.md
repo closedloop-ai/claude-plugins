@@ -1,6 +1,6 @@
 # Vibe: Codex harness notes
 
-Moved unchanged out of `../SKILL.md`, which says when to read it; paths stay relative to the skill folder.
+Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: codex-invoke-and-workers -->
 - Codex: invoke as `$vibe`. Workers are this plugin's agents in `agents/`

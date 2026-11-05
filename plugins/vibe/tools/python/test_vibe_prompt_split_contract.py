@@ -110,7 +110,7 @@ def test_the_deciding_text_stays_in_the_always_loaded_file() -> None:
 def test_the_loader_conditions_name_inventory_flags_and_classes_that_exist() -> None:
     ui_stub = "Read `references/handoff-ui.md`"
     handoff = skill_split.raw(SKILLS / "handoff" / "SKILL.md")
-    assert handoff.count("unless the inventory's `serverOnly` is true") == 2
+    assert handoff.count("unless the inventory's `serverOnly` is true") == 1
     assert ui_stub in handoff
     assert "serverOnly:" in (SKILLS / "handoff" / "scripts" / "pr-facts.mjs").read_text()
     guardrails = skill_split.raw(SKILLS / "vibe" / "references" / "guardrails.md")

@@ -1,6 +1,6 @@
 # Handoff: pull request steps
 
-Moved unchanged out of `../SKILL.md`, which says when to read it; paths stay relative to the skill folder.
+Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: requested-pull-request -->
 When the person explicitly asks for a pull request to

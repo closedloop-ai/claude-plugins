@@ -1,5 +1,9 @@
 """Contract tests read the prompt files whole: a stub a split left behind reads as the block it names.
 
+This applies to every pytest in the repo, so a contract test passes whether a rule is always loaded or sits behind a
+stub. The exact SPLIT set in test_vibe_prompt_split_contract.py is the only guard on what is split; a placement test
+must read `skill_split.raw`, never `read_text`, or it cannot tell the two apart.
+
 Lives at the repo root, not beside the vibe tests: plugins/code-review imports `conftest` by name inside
 functions, and a second nested conftest.py would shadow its module in sys.modules.
 """

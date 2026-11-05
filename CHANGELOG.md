@@ -8,14 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - Prompt split (`references/handoff-ui.md`, `handoff-pr.md`, `vibe-harness-codex.md`, `vibe-harness-claude.md`, `vibe-mockup.md`, `quality-loop-recovery.md`, `quality-loop-visual-qa.md`, `guardrails-ui.md`, and the fleet-orchestrator `fleet-qa-gate.md`, `fleet-recovery.md`, `fleet-codex-sessions.md`). Each block is the original text moved unchanged, replaced in its skill or reference by one stub line that names the file, the block and the condition (the inventory's `serverOnly`, the triage class, the runtime, a requested pull request). `scripts/skill-split.mjs` and `tools/python/skill_split.py` read a file with its stubs put back for the contract tests.
-- `fleet-orchestrator/scripts/dispatch-route.mjs` (`FLEET_CLASS_ROUTING=1`) names a writer runtime from the triage class and the `codex-usage` and `claude-usage` lines and says whether a pull request gets a QA-guide session; `dispatch-budget.mjs` (`FLEET_BUDGET_GUIDANCE=1`) reads how many heavy runs the shared worker budget has room for. Both are off by default.
+- `fleet-orchestrator/scripts/dispatch-route.mjs` (`FLEET_CLASS_ROUTING=1`) names a writer runtime from the triage class and the `codex-usage` and `claude-usage` lines and says whether a pull request gets a QA-guide session (skipped only for `docs-config`; `trivial-ui` keeps its guide). A line is used only with a read time no older than 30 minutes (`--codex-read-at`, `--claude-read-at`) and never when it reports an unknown reading (`?%`, an `unknown` band); `dispatch-budget.mjs` (`FLEET_BUDGET_GUIDANCE=1`) reads how many heavy runs the shared worker budget has room for. Both are off by default.
 - `pre-pr-lanes.mjs check --reuse-unaffected <qa-impact request JSON>` accepts a lane whose earlier fresh pass at the request's boundary commit nothing changed since touches, recorded as `cached`. Off by default.
-- `env-ctl.mjs redeploy` skips the environment request when no UI or backend path changed since the last deployed commit, with `VIBE_REDEPLOY_UI_ONLY=1`. Off by default.
+- `env-ctl.mjs redeploy` skips the environment request, with `VIBE_REDEPLOY_UI_ONLY=1`, only when every path changed since the last deployed commit cannot change a build (`NON_BUILD_PATH`: root docs, root Markdown, `.claude/`, `.agents/`, `.context/`); any other path, a shared package, the lockfile and root `package.json` included, requests the environment. Off by default.
 
 #### Changed
+- The writer-launch acceptance-criteria rule stays in the always-loaded fleet-orchestrator skill, and the handoff's running-app verification loads for every session (it was skipped for `serverOnly`, wider than the rule it replaced). Citations of headings that moved to `guardrails-ui.md` point there. The fleet recovery trigger also fires when `codex-usage` will reach `MOVE_AT_PERCENT` and when the operator reports high Claude usage.
 - `status-audit.mjs` takes `--at assignment|merge|report`; with `FLEET_TRIM_STATUS_AUDIT=1` a `report` run is skipped.
 - The handoff skill description no longer lists what the workers do; its trigger phrases are unchanged.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 720 words longer than in 1.1.33 (71568a6).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 923 words longer than in 1.1.42 (origin/main at the merge).
 
 ### vibe v1.1.42
 

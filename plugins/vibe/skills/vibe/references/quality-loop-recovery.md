@@ -1,6 +1,6 @@
 # Quality loop: recorded definition migration
 
-Moved unchanged out of `quality-loop.md`, which says when to read it; paths stay relative to the skill folder.
+Moved out of `quality-loop.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: migration-steps -->
 1. Read `status` and the bounded binding facts from the private ledger. Wait

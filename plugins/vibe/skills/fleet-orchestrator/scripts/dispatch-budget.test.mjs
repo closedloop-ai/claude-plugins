@@ -45,8 +45,11 @@ test('the CLI is off by default and honours the environment switch', () => {
   assert.deepEqual([off.schema, off.source, off.concurrentRuns], ['vibe.fleet-dispatch-budget/1', Source.Slots, 2]);
   const dir = mkdtempSync(join(tmpdir(), 'budget-cli-'));
   writeFileSync(join(dir, 'x.json'), '');
-  const on = run({ FLEET_BUDGET_GUIDANCE: '1', VIBE_HEAVY_LEASE_DIR: dir, VIBE_HEAVY_CORES: '10' });
+  const on = run({ FLEET_BUDGET_GUIDANCE: '1', VIBE_HEAVY_BUDGET: 'on', VIBE_HEAVY_LEASE_DIR: dir, VIBE_HEAVY_CORES: '10' });
   assert.equal(on.source, Source.Budget);
+  // The shared worker budget is opt-in (#383), so guidance alone keeps the slot count.
+  const budgetUnset = run({ FLEET_BUDGET_GUIDANCE: '1', VIBE_HEAVY_LEASE_DIR: dir, VIBE_HEAVY_CORES: '10' });
+  assert.equal(budgetUnset.source, Source.Slots);
   const disabled = run({ FLEET_BUDGET_GUIDANCE: '1', VIBE_HEAVY_BUDGET: 'off' });
   assert.equal(disabled.source, Source.Slots);
 });

@@ -102,7 +102,7 @@ def test_a_polish_request_runs_visual_qa_unless_nothing_is_visible_or_it_was_dec
         "\"looks good, make it polished\"",
         "run visual QA before handoff without asking",
         "Skip it only when the change shows nothing visible, or when the person already declined visual QA for this version of the change",
-        "an ordinary request under `guardrails.md`, \"Making something look better\"",
+        "an ordinary request under `guardrails-ui.md`, \"Making something look better\"",
     ))
     deploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
     assert "wants it polished, run visual QA before handoff without asking" in deploy

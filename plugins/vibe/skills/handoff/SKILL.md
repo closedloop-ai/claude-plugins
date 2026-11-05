@@ -553,7 +553,9 @@ Storybook plays run in a real browser, and card or narrow-layout
 interactions on WebKit iPhone and Chromium Pixel, as the verify worker's
 checks mode says; a requested pull request cannot open without them (step 9).
 
-> Read `references/handoff-ui.md` (block `running-app-verification`) unless the inventory's `serverOnly` is true.
+### Running app verification
+
+> Read `references/handoff-ui.md` (block `running-app-verification`) before the first commit or push, for every session.
 
 ### Pinned-base Storybook train
 

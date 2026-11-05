@@ -1,6 +1,6 @@
 # Handoff: UI steps
 
-Moved unchanged out of `../SKILL.md`, which says when to read it; paths stay relative to the skill folder.
+Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: step-4-storybook -->
 ## 4. Storybook
@@ -15,7 +15,7 @@ audience, and the ticket worker places it by that audience
 Every new story follows the repo's `apps/storybook/TAXONOMY.md`, a v1.0
 story file is never edited beyond a compile-only repair and any other existing
 story file keeps its title and tag
-(`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
+(`../vibe/references/guardrails-ui.md`, "Storybook taxonomy"); the inventory's
 `v1Stories` and `retitledStories` block handoff, judged by the scheme of the
 session's base (`storybookScheme`: under the lifecycle scheme, the
 `<Level> v1.0/` roots and the `deprecated` tag are v1.0). Its `compileOnlyV1Repairs`
@@ -37,8 +37,6 @@ Source inspection alone does not clear a compiled warning or prove appearance.
 <!-- end: step-4-storybook -->
 
 <!-- block: running-app-verification -->
-### Running app verification
-
 Before the first commit or push, dispatch read-only `vibe-verify-worker` control
 mode on every locally served uncommitted candidate screen, naming HEAD plus
 diff/tree hashes. Use the repository's control skill

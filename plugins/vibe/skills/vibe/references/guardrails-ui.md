@@ -1,6 +1,6 @@
 # Guardrails: UI rules
 
-Moved unchanged out of `guardrails.md`, which says when to read it; paths stay relative to the skill folder.
+Moved out of `guardrails.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: ui-rules -->
 ## Missing primitives

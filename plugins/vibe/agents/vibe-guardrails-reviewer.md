@@ -77,7 +77,7 @@ path merely because another rule describes how its content should look.
    color, shadow or dark override, read which tokens the touched surface
    actually bundles: each stylesheet it loads or inlines and, in each, its
    `:root` and `.dark` (or `prefers-color-scheme: dark`) blocks
-   (`guardrails.md`, "Check the bundled tokens first"). A raw value, a page-local custom property re-declaring a
+   (`guardrails-ui.md`, "Check the bundled tokens first"). A raw value, a page-local custom property re-declaring a
    bundled token's value, or a dark override of a value the token's `.dark`
    block already defines, where that bundled token exists, is blocking, never
    advisory; quote the token's `:root` and `.dark` lines as evidence. Check
@@ -239,7 +239,7 @@ path merely because another rule describes how its content should look.
      renumbered criterion or test name that drops the recorded source
      provenance is blocking; preserve the source's existing identifier instead
      of creating one for the test.
-10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
+10. Storybook taxonomy (`guardrails-ui.md`, "Storybook taxonomy"): read the
     repo's `apps/storybook/TAXONOMY.md` as the session's base has it; the
     inventory's `storybookScheme` names that base's scheme. A new story file
     titled under or tagged for a frozen v1.0 root (a `<Level> v1.0/` root or
@@ -266,7 +266,7 @@ path merely because another rule describes how its content should look.
     route-level page component, or several page sections composed into one
     flow) titled under `Composites/` instead of named `Surfaces/` stories per
     the doc is blocking.
-    Version History (`guardrails.md`, "Storybook taxonomy"): diff
+    Version History (`guardrails-ui.md`, "Storybook taxonomy"): diff
     `apps/storybook/stories/start-here-version-history.stories.tsx` and
     `apps/storybook/package.json` against the base. More than one new entry,
     an entry whose version is not the next after the base's `version`, a

@@ -675,7 +675,7 @@ requirement with no design-system equivalent goes to the existing
 missing-primitive path (`NEEDS_PRIMITIVE`, built by the writer from the
 read-only design-system steward's spec). Before any raw value, the writer
 reads the tokens the touched surface actually bundles, in each stylesheet's
-`:root` and `.dark` blocks (`guardrails.md`, "Check the bundled tokens
+`:root` and `.dark` blocks (`guardrails-ui.md`, "Check the bundled tokens
 first").
 
 - A bundled token is always used.

@@ -16,8 +16,8 @@
 //   env-ctl.mjs publish  --worktree <path> [--since <sha>]       (checks, then main-sync-push; parent context on stdin)
 //   env-ctl.mjs redeploy --worktree <path> [--since <sha>] [--person-email <email>]
 //       With VIBE_REDEPLOY_UI_ONLY=1 (off by default, PRD-823 P2) the push still happens but the
-//       environment is not requested again when no UI or backend path changed since the
-//       session's lastDeployedCommit; the result says so in `skippedRedeploy`.
+//       environment is not requested again when every path changed since the session's
+//       lastDeployedCommit is one that cannot change a build (`NON_BUILD_PATH`, area-paths.mjs); the result says so in `skippedRedeploy`.
 //   env-ctl.mjs desktop  --worktree <path> [--person-email <email>]
 //   env-ctl.mjs pr       --worktree <path> --branch <vibe/slug> --commit <sha> --title <text> --body-file <file> --base <sha>
 //   env-ctl.mjs pr-update --worktree <path> --pr <number> --body-file <file> --title <text>
@@ -35,7 +35,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { BACKEND_PATH, UI_PREFIXES } from "./area-paths.mjs";
+import { NON_BUILD_PATH } from "./area-paths.mjs";
 import { DISPATCH_WORKFLOW } from "./vibe-session-data.mjs";
 import { execCommand, parseJson, stdoutOf, tailLines } from "./ws3-exec.mjs";
 
@@ -300,7 +300,7 @@ export function createEnvCtl({
     const session = record.session ?? record;
     if (!session.lastRequestId) return { ...published, requested: false, progress: "pushed" };
     const since_ = changesSinceDeploy(worktree, session);
-    if (since_ && !since_.files.some((file) => UI_PREFIXES.some((prefix) => file.startsWith(prefix)) || BACKEND_PATH.test(file))) {
+    if (since_ && since_.files.every((file) => NON_BUILD_PATH.test(file))) {
       return { ...published, requested: false, progress: "pushed", skippedRedeploy: { since: since_.deployed, files: since_.files.length } };
     }
     const requested = await request({ worktree, mode: session.vercel?.mode ?? "create", personEmail, stdin, ...timing });

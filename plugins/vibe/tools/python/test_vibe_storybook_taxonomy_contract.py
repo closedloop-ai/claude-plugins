@@ -66,13 +66,13 @@ def test_the_rule_defers_to_the_repo_taxonomy_doc_and_states_only_the_minimum() 
 def test_every_story_author_and_advisor_points_at_the_doc_and_the_rule() -> None:
     writer = flat(agent("vibe-change-worker"))
     assert f"Read the repo's {TAXONOMY_DOC} and follow it" in writer
-    assert f"(`../skills/vibe/references/guardrails.md`, {POINTER})" in writer
+    assert f"(`../skills/vibe/references/guardrails-ui.md`, {POINTER})" in writer
     decomposer = flat(agent("vibe-storybook-decomposer"))
     assert TAXONOMY_DOC in decomposer
-    assert f"(`../skills/vibe/references/guardrails.md`, {POINTER})" in decomposer
+    assert f"(`../skills/vibe/references/guardrails-ui.md`, {POINTER})" in decomposer
     primitive = flat(agent("vibe-primitive-worker"))
     assert f"Place them per the repo's {TAXONOMY_DOC}" in primitive
-    assert f"(`guardrails.md`, {POINTER})" in primitive
+    assert f"(`guardrails-ui.md`, {POINTER})" in primitive
     primitives = section(GUARDRAILS.read_text(), "## Missing primitives")
     assert (
         'Stories follow "Storybook taxonomy" below: a current root, the page tree and a lifecycle tag, never a v1.0 root.'
@@ -83,7 +83,7 @@ def test_every_story_author_and_advisor_points_at_the_doc_and_the_rule() -> None
 def test_the_guardrails_reviewer_blocks_v1_placement() -> None:
     reviewer = flat(agent("vibe-guardrails-reviewer"))
     for required in (
-        f"10. Storybook taxonomy (`guardrails.md`, {POINTER})",
+        f"10. Storybook taxonomy (`guardrails-ui.md`, {POINTER})",
         "the inventory's `storybookScheme` names that base's scheme",
         "titled under or tagged for a frozen v1.0 root (a `<Level> v1.0/` root or the `deprecated` tag; on a "
         "version-scheme base, a plain root or the `v1.0` tag), or any edit or move of a story file that is v1.0 "
@@ -98,7 +98,7 @@ def test_the_guardrails_reviewer_blocks_v1_placement() -> None:
 
 def test_handoff_blocks_on_the_inventory_check() -> None:
     storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
-    assert f"(`../vibe/references/guardrails.md`, {POINTER})" in storybook
+    assert f"(`../vibe/references/guardrails-ui.md`, {POINTER})" in storybook
     assert "the inventory's `v1Stories` and `retitledStories` block handoff, judged by the scheme of the session's base" in storybook
     inventory = INVENTORY.read_text()
     assert "storiesInV2Taxonomy: v1Stories.length === 0," in inventory

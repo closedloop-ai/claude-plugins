@@ -133,7 +133,7 @@ Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-mo
 
 ## Moving work between runtimes and accounts
 
-> Read `references/fleet-recovery.md` (block `recovery-rules`) when a writer must move runtime, account or machine, a writer is dead, a `codex-usage` or `claude-usage` band reaches its limit, or an engineer takes over a pull request.
+> Read `references/fleet-recovery.md` (block `recovery-rules`) when a writer must move runtime, account or machine, a writer is dead, a `codex-usage` or `claude-usage` band reaches its limit, a `codex-usage` band will reach `MOVE_AT_PERCENT` before the work is done, the operator reports high Claude usage, or an engineer takes over a pull request.
 
 ## Machines and CPU
 
@@ -146,6 +146,8 @@ Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-mo
 - Plugin marketplaces and env files on a remote machine live in persistent paths too.
 
 ## Quality gates and QA
+
+- A writer starts only once its plan holds a numbered acceptance-criteria list, each criterion sourced to a ticket AC, a PRD line or an operator ruling; a mid-flight ruling joins it with its date. Nobody is in the loop to ask while the build runs.
 
 > Read `references/fleet-qa-gate.md` (block `qa-gate-rules`) when a pull request is being reviewed, QA'd or prepared to enqueue.
 
@@ -167,7 +169,7 @@ Pushback applies principle 2; more patterns: [references/judgment.md](./referenc
 - Repo knowledge: a repo fact a worker learns goes into the team's repo memory (`REPO_MEMORY_CMD`), and into the nearest `AGENTS.md` through that worker's PR when it binds code.
 - Deadline mode, only when the operator rules it (record it in `rulings.md` with its end): no pre-merge e2e (`pre-pr-lanes.mjs --skip <lanes> --skip-ruling <the ruling>`), follow-up pushes run focused tests plus the affected typecheck and leave full lanes to CI, and extras ship in follow-up PRs.
 - Runtime choice: judgment-heavy work and takeovers go to Claude writers, which are faster; bulk mechanical work goes to Codex on `CODEX_MODEL`, which is cheaper. Move work on usage and speed.
-- Off by default: `node scripts/dispatch-route.mjs --manifest <triage manifest> [--codex-usage <line>] [--claude-usage <line>]` (`FLEET_CLASS_ROUTING=1`) names the runtime for a ticket from its class and the usage lines, and whether its pull request gets a QA-guide session; `node scripts/dispatch-budget.mjs` (`FLEET_BUDGET_GUIDANCE=1`) says how many heavy runs the shared worker budget has room for. `slot heavy` still enforces its caps.
+- Off by default: `node scripts/dispatch-route.mjs --manifest <triage manifest> [--codex-usage <line> --codex-read-at <time>] [--claude-usage <line> --claude-read-at <time>]` (`FLEET_CLASS_ROUTING=1`) names the runtime for a ticket from its class and the usage lines, each used only with a read time no older than 30 minutes and never when it reports an unknown reading, and whether its pull request gets a QA-guide session; `node scripts/dispatch-budget.mjs` (`FLEET_BUDGET_GUIDANCE=1`) says how many heavy runs the shared worker budget has room for when `VIBE_HEAVY_BUDGET=on`, and otherwise the slot count. `slot heavy` still enforces its caps.
 
 ## Lessons loop
 

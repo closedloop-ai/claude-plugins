@@ -1,6 +1,6 @@
 # Quality loop: visual QA during the session
 
-Moved unchanged out of `quality-loop.md`, which says when to read it; paths stay relative to the skill folder.
+Moved out of `quality-loop.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: visual-qa-body -->
 This section adds an opt-in visual QA the orchestrator offers during the
@@ -77,5 +77,5 @@ SAME writer together. Skip it only when the change shows nothing visible, or
 when the person already declined visual QA for this version of the change
 (the recorded no for the latest milestone, with no major visible change
 since); then the request goes to the writer as an ordinary request under
-`guardrails.md`, "Making something look better".
+`guardrails-ui.md`, "Making something look better".
 <!-- end: visual-qa-body -->

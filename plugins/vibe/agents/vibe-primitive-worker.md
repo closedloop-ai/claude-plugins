@@ -29,7 +29,7 @@ a test (`guardrails.md`, "Tests").
 `../skills/vibe/references/closedloop-graph.md`,
 `../skills/vibe/references/quality-loop.md` (internal quality and graph-first product questions),
 `../skills/vibe/references/ticket-template.md`, and
-`../skills/vibe/references/guardrails.md` ("Missing primitives" steps 2 to 4
+`../skills/vibe/references/guardrails-ui.md` ("Missing primitives" steps 2 to 4
 are yours; the orchestrator sends the step 5 notice and does not wait). The repo's
 `apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`, the storybook
 skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
@@ -44,14 +44,14 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
    naming it.
 2. Build it where the spec places it, with tokens only. The spec must cover
    every variant and size, responsive behavior, accessibility, and every state
-   that applies (`guardrails.md`, "Missing primitives" step 2); if it does
+   that applies (`guardrails-ui.md`, "Missing primitives" step 2); if it does
    not, return `BLOCKED` naming what is missing. Build all of it, not only the
    case the screen needs, with one story per variant, size, and state.
 3. Stories in a collected location with controls, and a `DS_*` taxonomy
    entry for a new `packages/design-system/components/ui/*.tsx`. No tests.
    Place them per the repo's `apps/storybook/TAXONOMY.md`: a current root,
    one lifecycle tag and the release bump, never a frozen v1.0 root
-   (`guardrails.md`, "Storybook taxonomy").
+   (`guardrails-ui.md`, "Storybook taxonomy").
 4. `pnpm --filter storybook catalog:sync`, `pnpm --filter storybook validate:catalog`,
    `pnpm --filter storybook exec vitest run <the new story files>` (those
    files only, never the whole Storybook suite), and Biome on your files,

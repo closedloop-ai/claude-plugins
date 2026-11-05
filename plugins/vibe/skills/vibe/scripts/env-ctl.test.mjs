@@ -268,10 +268,10 @@ test("redeploy with no environment stops after the push", async () => {
   assert.equal(result.progress, "pushed");
 });
 
-test("VIBE_REDEPLOY_UI_ONLY=1 skips the environment request only when no UI or backend path changed since the last deploy", async () => {
+test("VIBE_REDEPLOY_UI_ONLY=1 skips the environment request only when every changed path cannot change a build", async () => {
   const deployed = "a".repeat(40);
   const show = ok({ ok: true, session: { baseCommit: "b".repeat(40), localFixes: [{ path: "fix.ts" }], lastRequestId: "r0", vercel: { mode: "create", lastDeployedCommit: deployed } } });
-  const run = (changed, extra = []) => [...publishRoutes({ show }), [`diff --name-only ${deployed} HEAD`, changed], ...extra];
+  const run = (changed, extra = []) => [...publishRoutes({ show }), [`diff --name-only ${deployed} HEAD`, changed], ["rev-parse --absolute-git-dir", ok("/gd\n")], ...extra];
   const requested = (calls) => calls.some((call) => call.line.includes("workflow view"));
   const on = { VIBE_REDEPLOY_UI_ONLY: "1" };
   const calls = [];
@@ -279,7 +279,7 @@ test("VIBE_REDEPLOY_UI_ONLY=1 skips the environment request only when no UI or b
   assert.deepEqual([docs.status, docs.requested, docs.progress, docs.skippedRedeploy], [Status.Done, false, "pushed", { since: deployed, files: 2 }]);
   assert.ok(calls.some((call) => call.line.includes("main-sync-push")), "the push still happens");
   assert.ok(!requested(calls));
-  for (const file of ["apps/app/a.tsx", "packages/design-system/b.ts", "apps/api/route.ts", "packages/database/prisma/schema.prisma"]) {
+  for (const file of ["apps/app/a.tsx", "packages/design-system/b.ts", "apps/api/route.ts", "packages/database/prisma/schema.prisma", "packages/auth/client.ts", "packages/lib/x.ts", "package.json", "pnpm-lock.yaml", "apps/desktop/prisma/migrations/migration_lock.toml", "apps/web/content/page.md"]) {
     const touched = [];
     await createEnvCtl({ run: router(run(ok(`docs/a.md\n${file}\n`), [["workflow view", bad()]]), touched), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
     assert.ok(requested(touched), file);

@@ -1,6 +1,6 @@
 # fleet-orchestrator: moving work between runtimes and accounts
 
-Moved unchanged out of `../SKILL.md`, which says when to read it; paths stay relative to the skill folder.
+Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: recovery-rules -->
 - `(orchestrator)` Before any Codex versus Claude choice or any local versus remote machine choice, including a new worker or a writer move, run `node ../codex-fleet-monitor/scripts/usage-state.mjs status <orchDir>`. Use only a reading at or under `USAGE_STALE_SECONDS` (default 1800 seconds). Re-read a stale runtime and machine with `snapshot.sh <orchDir>` before deciding; when that re-read fails, ask the operator instead of routing from the old value. Every status or recommendation that cites usage includes the reader's exact `read=` time and `source=` value.
@@ -8,5 +8,5 @@ Moved unchanged out of `../SKILL.md`, which says when to read it; paths stay rel
 - When a machine's `codex-usage` band reaches `MOVE_AT_PERCENT`, or will before the work is done, tell the operator at once with the band and `resets=<n>` (applying a reset is theirs); when they are away, or on `LIMIT` or `LIMIT-SPENDING-CREDITS`, move its busiest writers to Claude writers. The watcher's `claude-usage` line (`claude -p "/usage"`) works the same way in reverse: on `HIGH` tell the operator its reset time and, when away, move the busiest Claude writers to Codex, at once for one at its limit.
 - When the operator reports high Claude usage, stop idle and polling Claude workers first. Active writers publish only an already push-ready head; otherwise record their uncommitted state, end safely, and resume the work with Codex. Widen the Claude polling interval.
 - Before any move the old writer stops, or is confirmed dead, after committing and pushing or reporting its uncommitted state.
-- To Codex (another machine, account, or from Claude): a fresh `fleet.sh` thread in the branch's worktree there with a [resume prompt](./references/templates.md#resume-prompt), which carries the operator's plugin version answer. Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble), which first moves the vibe writer with vibe's harness switch.
+- To Codex (another machine, account, or from Claude): a fresh `fleet.sh` thread in the branch's worktree there with a [resume prompt](./templates.md#resume-prompt), which carries the operator's plugin version answer. Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./templates.md#worker-preamble), which first moves the vibe writer with vibe's harness switch.
 <!-- end: recovery-rules -->

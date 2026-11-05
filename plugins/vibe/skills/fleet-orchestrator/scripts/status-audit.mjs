@@ -52,7 +52,6 @@ const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
 const PLAN_CLOSED = new Set(["EXECUTED", "OBSOLETE"]);
 
-/** Plan and absorption drift for one child: its plans behind a DONE ticket, or an absorbed child left open. */
 export const TRIM_ENV = "FLEET_TRIM_STATUS_AUDIT";
 export const AuditPoint = Object.freeze({ Assignment: "assignment", Merge: "merge", Report: "report" });
 
@@ -62,6 +61,7 @@ export function skipsAudit(at, env = process.env) {
   return at === AuditPoint.Report && env[TRIM_ENV] === "1";
 }
 
+/** Plan and absorption drift for one child: its plans behind a DONE ticket, or an absorbed child left open. */
 export function sweepFindings(child) {
   const findings = [];
   if (child?.status === "DONE") {
