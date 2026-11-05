@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { readAssembled } from "../../vibe/scripts/skill-split.mjs";
 
 // Rung 4 (advisory) text pins: these read agent, skill and source text and fail when a named
 // sentence or identifier is removed, not when the behavior is, so a comment or usage string can
 // keep them green. Structured premise validation is proved at rung 3 by review-premises.test.mjs
 // and review-receipts.test.mjs, which call the code.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../..");
-const read = file => readFileSync(path.join(root, file), "utf8");
+const read = file => readAssembled(path.join(root, file));
 
 test("rung 4 text pin: every vibe and fleet review surface carries the premise and relay contract", () => {
   for (const file of [

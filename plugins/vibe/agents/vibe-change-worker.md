@@ -299,7 +299,7 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it:
   go in a new entry in the current root holding only them when its story file
   is v1.0 (under a `<Level> v1.0/` root or tagged `deprecated`), which you
   never edit beyond a compile-only repair, and otherwise in its existing story
-  file, title and tag unchanged (`../skills/vibe/references/guardrails.md`,
+  file, title and tag unchanged (`../skills/vibe/references/guardrails-ui.md`,
   "Storybook taxonomy").
 - Never avoid a rename to protect a v1.0 story file; when a rename breaks
   one, repair it with only prop renames, imports and types, no story added or
@@ -311,7 +311,7 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it:
   `apps/storybook/package.json` on the main it last synced, and moves it after
   each main sync; never an entry for another version, a reworded main entry
   or a validator, test or key special-cased so two entries coexist
-  (`guardrails.md`, "Storybook taxonomy").
+  (`guardrails-ui.md`, "Storybook taxonomy").
 - Repair or log each reference an inventory `lost-story-id` finding names
   (same section).
 - On a base older than the lifecycle scheme, the doc on that base still sends
@@ -481,14 +481,14 @@ the table", gives.
 Before you write any color, shadow or dark-mode value, with or without a
 reference, read the tokens the touched surface actually bundles: each
 stylesheet it loads or inlines and, in each, its `:root` and `.dark` (or
-`prefers-color-scheme: dark`) blocks (`../skills/vibe/references/guardrails.md`,
+`prefers-color-scheme: dark`) blocks (`../skills/vibe/references/guardrails-ui.md`,
 "Check the bundled tokens first"). Use every
 bundled token that delivers the property as `var(--token)`; never a raw
 `rgb()`, hex or pixel value, a page-local custom property re-declaring a
 bundled token's value, or your own dark override of a value the token's
 `.dark` block defines. Dark mode comes from the bundled tokens' `.dark`
 values, so the surface's own CSS adds no `.dark` or `prefers-color-scheme`
-rule (`guardrails.md`, "Tokens and styling": no ad-hoc dark-mode overrides);
+rule (`guardrails-ui.md`, "Tokens and styling": no ad-hoc dark-mode overrides);
 a theme that reads wrong is fixed by choosing the token that delivers it in
 both themes. Only a token the surface genuinely lacks is logged,
 one line per token with the evidence of the check:

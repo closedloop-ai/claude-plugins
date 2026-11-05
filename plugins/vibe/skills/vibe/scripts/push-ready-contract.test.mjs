@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { readAssembled } from './skill-split.mjs';
 
-const read = relative => readFileSync(new URL(relative, import.meta.url), 'utf8');
+const read = relative => readAssembled(fileURLToPath(new URL(relative, import.meta.url)));
 
 test('writer and fleet extend the existing ready rule and cite the human source once', () => {
   const writer = read('../../../agents/vibe-change-worker.md');

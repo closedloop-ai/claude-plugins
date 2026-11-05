@@ -15,6 +15,9 @@
 //                        [--keep-flag-snapshot true|false] [--poll-seconds 15] [--find-seconds 600] [--give-up-seconds 2700]
 //   env-ctl.mjs publish  --worktree <path> [--since <sha>]       (checks, then main-sync-push; parent context on stdin)
 //   env-ctl.mjs redeploy --worktree <path> [--since <sha>] [--person-email <email>]
+//       With VIBE_REDEPLOY_UI_ONLY=1 (off by default, PRD-823 P2) the push still happens but the
+//       environment is not requested again when every path changed since the session's
+//       lastDeployedCommit is one that cannot change a build (`NON_BUILD_PATH`, area-paths.mjs); the result says so in `skippedRedeploy`.
 //   env-ctl.mjs desktop  --worktree <path> [--person-email <email>]
 //   env-ctl.mjs pr       --worktree <path> --branch <vibe/slug> --commit <sha> --title <text> --body-file <file> --base <sha>
 //   env-ctl.mjs pr-update --worktree <path> --pr <number> --body-file <file> --title <text>
@@ -32,11 +35,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { NON_BUILD_PATH } from "./area-paths.mjs";
 import { DISPATCH_WORKFLOW } from "./vibe-session-data.mjs";
 import { execCommand, parseJson, stdoutOf, tailLines } from "./ws3-exec.mjs";
 
 export const REPO = "closedloop-ai/symphony-alpha";
 export const ENVIRONMENT_WORKFLOW = "vibe-environment.yml";
+export const REDEPLOY_UI_ONLY_ENV = "VIBE_REDEPLOY_UI_ONLY";
 export const RUN_FAILURES = new Set(["failure", "cancelled", "timed_out"]);
 // agents/vibe-environment-worker.md, the sentence it returns when no analytics key can be found.
 export const NO_ANALYTICS_KEY = "I couldn't find the product's analytics key, so I can't copy your feature flags yet.";
@@ -139,6 +144,7 @@ export function createEnvCtl({
   now = () => Date.now(),
   fetchFn = globalThis.fetch,
   repo = REPO,
+  env = process.env,
   write = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); },
   read = (file) => readFileSync(file, "utf8"),
 } = {}) {
@@ -278,6 +284,14 @@ export function createEnvCtl({
     return { status: Status.Done, pushed: sync.pushed ?? null, alreadyPublished: sync.alreadyPublished ?? false, ...(sync.sha ? { sha: sync.sha } : {}) };
   }
 
+  /** The commit the last request deployed and the files changed since, when the switch is on and git can say; otherwise null. */
+  function changesSinceDeploy(worktree, session) {
+    const deployed = session.vercel?.lastDeployedCommit;
+    if (env[REDEPLOY_UI_ONLY_ENV] !== "1" || !deployed) return null;
+    const diff = run("git", ["-C", worktree, "diff", "--name-only", deployed, "HEAD"]);
+    return diff.status === 0 ? { deployed, files: diff.stdout.split("\n").filter(Boolean) } : null;
+  }
+
   async function redeploy({ worktree, since, personEmail, stdin, ...timing }) {
     const published = publish({ worktree, since, stdin });
     if (published.status !== Status.Done) return published;
@@ -285,6 +299,10 @@ export function createEnvCtl({
     const record = parseJson(sessions(["show", "--worktree", worktree]).stdout, {});
     const session = record.session ?? record;
     if (!session.lastRequestId) return { ...published, requested: false, progress: "pushed" };
+    const since_ = changesSinceDeploy(worktree, session);
+    if (since_ && since_.files.every((file) => NON_BUILD_PATH.test(file))) {
+      return { ...published, requested: false, progress: "pushed", skippedRedeploy: { since: since_.deployed, files: since_.files.length } };
+    }
     const requested = await request({ worktree, mode: session.vercel?.mode ?? "create", personEmail, stdin, ...timing });
     return { ...requested, pushed: published.pushed };
   }

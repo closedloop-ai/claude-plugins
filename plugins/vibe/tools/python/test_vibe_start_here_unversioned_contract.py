@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import skill_split
 from vibe_contract_text import flat, paragraph, section
 
 
@@ -56,12 +57,12 @@ def test_each_holder_states_the_exemption_once() -> None:
     holders = sorted(
         path.relative_to(PLUGIN_ROOT).as_posix()
         for path in PLUGIN_ROOT.rglob("*.md")
-        if flat(path.read_text()).count(EXEMPTION) == 1
+        if flat(skill_split.raw(path)).count(EXEMPTION) == 1
     )
     assert holders == [
         "agents/vibe-storybook-decomposer.md",
-        "skills/handoff/SKILL.md",
-        "skills/vibe/references/guardrails.md",
+        "skills/handoff/references/handoff-ui.md",
+        "skills/vibe/references/guardrails-ui.md",
     ]
 
 
