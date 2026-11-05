@@ -73,7 +73,7 @@ import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
 import { withVerifyStorybook } from "../../vibe/scripts/verify-storybook-process.mjs";
 import { storyId } from "./diff-rules.mjs";
-import { cropDiffPng, decodePng, pixelHash } from "./png-diff.mjs";
+import { cropDiffPng, decodePng, pixelHash, pngHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
 import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
@@ -207,33 +207,93 @@ export function frozenStoryIds(repo, base, storyFiles) {
   });
 }
 
-/** One render of one story: its play verdict, first failure, screenshot and pixel hash. */
-export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPORT, timeoutMs = DEFAULT_TIMEOUT_MS, now = DEFAULT_NOW } = {}) {
+/** Milliseconds elapsed while `action` runs, recorded under `phase`. */
+async function measurePhase(timings, phase, action) {
+  const started = performance.now();
+  try {
+    return await action();
+  } finally {
+    timings[phase] = Math.round((performance.now() - started) * 1000) / 1000;
+  }
+}
+
+/**
+ * Renders one story in a fresh browser context and returns its play result, screenshot and phase timings.
+ * Direct callers receive its exact pixel hash. `deferPixels` lets `frozenRenders` avoid every decode when raw PNGs match;
+ * `dependencies.reference` preserves the pairwise short circuit, and the remaining dependencies exist for focused tests.
+ */
+export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPORT, timeoutMs = DEFAULT_TIMEOUT_MS, now = DEFAULT_NOW } = {}, dependencies = {}) {
+  const timingsMs = { contextCreation: 0, pageLoad: 0, playWait: 0, fonts: 0, screenshot: 0, decode: 0, hash: 0 };
+  const decode = dependencies.decodePng ?? decodePng;
+  const hashPixels = dependencies.pixelHash ?? pixelHash;
+  const hashPng = dependencies.pngHash ?? pngHash;
+  const reference = dependencies.reference;
   // A fresh context per render, so storage or cache one render leaves behind never reaches the next.
-  const context = await browser.newContext({ viewport, ...PINNED_CONTEXT });
+  const context = await measurePhase(timingsMs, "contextCreation", () => browser.newContext({ viewport, ...PINNED_CONTEXT }));
   try {
     const page = await context.newPage();
     await page.clock.setFixedTime(new Date(now));
     await page.addInitScript(PLAY_EVENT_RECORDER);
-    await page.goto(`${url.replace(/\/+$/, "")}/iframe.html?id=${encodeURIComponent(id)}&viewMode=story`, { waitUntil: "load", timeout: timeoutMs });
+    await measurePhase(timingsMs, "pageLoad", () => page.goto(`${url.replace(/\/+$/, "")}/iframe.html?id=${encodeURIComponent(id)}&viewMode=story`, { waitUntil: "load", timeout: timeoutMs }));
     let finished = true;
     try {
       // The iframe renders only this story, so an event Storybook sent without a story ID is its own.
-      await page.waitForFunction(([storyIdArg, types]) => (window.__vibePlayEvents ?? [])
-        .some((event) => (event.storyId ?? storyIdArg) === storyIdArg && types.includes(event.type)), [id, FINISH_EVENTS], { timeout: timeoutMs });
+      await measurePhase(timingsMs, "playWait", () => page.waitForFunction(([storyIdArg, types]) => (window.__vibePlayEvents ?? [])
+        .some((event) => (event.storyId ?? storyIdArg) === storyIdArg && types.includes(event.type)), [id, FINISH_EVENTS], { timeout: timeoutMs }));
     } catch {
       finished = false;
     }
     const events = (await page.evaluate(() => window.__vibePlayEvents ?? [])).map((event) => ({ ...event, storyId: event.storyId ?? id }));
-    await page.evaluate(() => document.fonts.ready.then(() => undefined));
-    const screenshot = await page.screenshot({ animations: "disabled", caret: "hide", scale: "css", fullPage: true });
+    await measurePhase(timingsMs, "fonts", () => page.evaluate(() => document.fonts.ready.then(() => undefined)));
+    const screenshot = await measurePhase(timingsMs, "screenshot", () => page.screenshot({ animations: "disabled", caret: "hide", scale: "css", fullPage: true }));
+    const hash = async (action) => {
+      const before = timingsMs.hash;
+      const result = await measurePhase(timingsMs, "hash", action);
+      timingsMs.hash += before;
+      return result;
+    };
+    // Hash encoded bytes before decoding. A byte-identical screenshot has the reference's exact pixels.
+    const rawPngHash = await hash(() => hashPng(screenshot));
+    let decodedPixelHash;
+    const decodePixels = async () => {
+      if (decodedPixelHash !== undefined) return decodedPixelHash;
+      const decoded = await measurePhase(timingsMs, "decode", () => decode(screenshot));
+      decodedPixelHash = await hash(() => hashPixels(decoded));
+      return decodedPixelHash;
+    };
+    let pixels;
+    if (!dependencies.deferPixels) {
+      pixels = reference?.rawPngHash === rawPngHash ? reference.pixels : await decodePixels();
+    }
     const verdict = finished ? playVerdicts(events, [id])[0]
       : { storyId: id, verdict: "FAIL", reason: `the play did not finish within ${timeoutMs} ms` };
     const failure = events.find((event) => event.storyId === id && FINISH_EVENTS.includes(event.type) && event.type !== "storyFinished");
     return { verdict: verdict.verdict, reason: verdict.reason, failure: failure ? { type: failure.type, message: failure.message ?? null } : null,
-      pixels: pixelHash(decodePng(screenshot)), screenshot, events };
+      pixels, rawPngHash, decodePixels, screenshot, events, timingsMs };
   } finally {
     await context.close();
+  }
+}
+
+/**
+ * Resolves the pixel identities needed by `classifyStory`. One raw-PNG group needs no decode; multiple groups decode
+ * one representative each so differently encoded screenshots still compare by their exact decoded pixels.
+ */
+async function resolvePixelHashes(renders) {
+  const groups = Map.groupBy(renders, (render) => render.rawPngHash);
+  if (groups.size === 1) {
+    for (const render of renders) {
+      render.pixels = render.rawPngHash;
+      render.pixelsDecoded = false;
+    }
+    return;
+  }
+  for (const group of groups.values()) {
+    const pixels = group.find((render) => render.pixelsDecoded)?.pixels ?? await group[0].decodePixels();
+    for (const render of group) {
+      render.pixels = pixels;
+      render.pixelsDecoded = true;
+    }
   }
 }
 
@@ -266,25 +326,28 @@ export function classifyStory(bases, head) {
 }
 
 /** Renders every story twice on the base and once on the branch. */
-export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, head, inputs, repairedIds = new Map(), refused = [] }) {
+export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, head, inputs, repairedIds = new Map(), refused = [] }, renderDependencies = {}) {
   const stories = [];
   const options = { viewport, timeoutMs, now };
   for (const id of ids) {
+    const baseRender = await renderStory(browser, baseUrl, id, options, { ...renderDependencies, deferPixels: true });
     const renders = {
-      [Side.Base]: await renderStory(browser, baseUrl, id, options),
-      [Side.BaseAgain]: await renderStory(browser, baseUrl, id, options),
-      [Side.Head]: await renderStory(browser, headUrl, id, options),
+      [Side.Base]: baseRender,
+      [Side.BaseAgain]: await renderStory(browser, baseUrl, id, options, { ...renderDependencies, deferPixels: true }),
+      [Side.Head]: await renderStory(browser, headUrl, id, options, { ...renderDependencies, deferPixels: true }),
     };
     for (const [side, render] of Object.entries(renders)) {
       saveScreenshot(out, side, id, render);
     }
+    await resolvePixelHashes(Object.values(renders));
     let { diff, ...result } = classifyStory([renders[Side.Base], renders[Side.BaseAgain]], renders[Side.Head]);
     if (result.outcome === FrozenOutcome.Blocking) {
       // A base that matched itself twice can still vary (ISS-13167): a blocking verdict stands only after more base renders agree.
       for (let n = 1; n <= CONFIRM_RENDERS; n++) {
-        renders[`${Side.BaseConfirm}-${n}`] = await renderStory(browser, baseUrl, id, options);
+        renders[`${Side.BaseConfirm}-${n}`] = await renderStory(browser, baseUrl, id, options, { ...renderDependencies, deferPixels: true });
         saveScreenshot(out, `${Side.BaseConfirm}-${n}`, id, renders[`${Side.BaseConfirm}-${n}`]);
       }
+      await resolvePixelHashes(Object.values(renders));
       const bases = Object.entries(renders).filter(([side]) => side !== Side.Head).map(([, render]) => render);
       ({ diff, ...result } = classifyStory(bases, renders[Side.Head]));
       result.confirmRenders = CONFIRM_RENDERS;
@@ -294,7 +357,7 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
     }
     const crop = diff ? writeCrop(out, id, diff[0].screenshot, diff[1].screenshot) : null;
     stories.push({ storyId: id, ...result, ...(crop ? { crop } : {}), ...(repairedIds.has(id) ? { headStoryFile: repairedIds.get(id) } : {}),
-      renders: Object.fromEntries(Object.entries(renders).map(([side, { screenshot, ...rest }]) => [side, rest])) });
+      renders: Object.fromEntries(Object.entries(renders).map(([side, { screenshot, rawPngHash, decodePixels, pixelsDecoded, ...rest }]) => [side, rest])) });
   }
   stories.push(...refused.map((story) => ({ ...story, outcome: FrozenOutcome.Blocking })));
   return summarize(stories, { fileCount, out, command, head, inputs });

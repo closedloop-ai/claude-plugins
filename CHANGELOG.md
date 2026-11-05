@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.45
+
+#### Changed
+- Frozen-render results record per-render phase timings. The gate hashes raw PNG bytes before decoding, skips decode for byte-identical screenshots, and preserves decoded-pixel comparison for differently encoded screenshots.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.44 (origin/main at the merge).
+
 ### vibe v1.1.44
 
 #### Changed
