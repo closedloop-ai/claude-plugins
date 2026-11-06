@@ -32,6 +32,7 @@ REMOTE_STATE_DIR=/path/on/remote # remote scratch dir; also holds state files fo
 REMOTE_SHELL="zsh -lic"          # login shell so node/codex are on PATH (default)
 STALL_SECONDS=720                # no new thread items for this long means STALLED (default 12m)
 # CLAUDE_USAGE=0                 # turn off the claude-usage line; CLAUDE_USAGE_SECONDS=600 sets how often it is read
+# CLAUDE_USAGE_TIMEOUT_SECONDS=90 # bound a slow Claude usage probe; watcher sleeps 120s between ticks and lapses after 360s
 # QUESTION_SECONDS=900          # an idle writer's question unanswered this long is QUESTION-UNANSWERED (default 15m)
 # STALE_PR_SECONDS=2700         # a PR needing its writer with no push this long is STALE-PR (default 45m)
 # HEARTBEAT_SECONDS=1800         # with no change, watch.sh exits with HEARTBEAT after this long (default 30m)

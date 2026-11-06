@@ -18,6 +18,7 @@ import { parseArgs } from "node:util";
 import { readConfig, resolveWorkDir } from "./work-dir.mjs";
 
 export const DEFAULT_STALE_SECONDS = 30 * 60;
+export const DEFAULT_CLAUDE_USAGE_INTERVAL_SECONDS = 600;
 export const USAGE_HISTORY_LIMIT = 100;
 export const USAGE_READINGS_FILE = "usage-readings.json";
 const USAGE_LOCK_FILE = ".usage-readings.lock";
@@ -32,12 +33,12 @@ export function defaultUsageWorkDir() {
   return path.join(os.homedir(), ".codex", "vibe");
 }
 
-/** Persist one usage probe while retaining only the state the reader needs and a bounded recent history. */
-export function recordUsageReading(workDir, reading) {
+/** Persist one usage probe; an optional callback can act on its committed state before the lock is released. */
+export function recordUsageReading(workDir, reading, afterRecord) {
   const normalized = normalizeReading(reading);
   const dir = resolveWorkDir(workDir).dir;
   mkdirSync(dir, { recursive: true });
-  withStateLock(dir, () => {
+  return withStateLock(dir, () => {
     const file = path.join(dir, USAGE_READINGS_FILE);
     const state = readUsageState(file);
     const key = `${normalized.runtime}:${normalized.machine}`;
@@ -47,8 +48,8 @@ export function recordUsageReading(workDir, reading) {
     const recent = [...previous.recent, normalized].slice(-USAGE_HISTORY_LIMIT);
     state.entries[key] = { latest, lastGood, recent };
     writeUsageState(file, state);
+    return afterRecord ? afterRecord({ latest, lastGood, consecutiveFailures: consecutiveReadFailures(recent, normalized.runtime, normalized.machine) }) : normalized;
   });
-  return normalized;
 }
 
 /** Read the bounded recent probes plus separately retained latest and last-good readings. */
@@ -93,6 +94,7 @@ export function usageStatuses(readings, { now = Date.now(), staleSeconds = DEFAU
       lastGoodAgeSeconds: goodAgeSeconds,
       stale: goodAgeSeconds === null || goodAgeSeconds > staleSeconds,
       staleSeconds,
+      consecutiveFailures: consecutiveReadFailures(readings, latest.runtime, latest.machine),
     };
   });
 }
@@ -107,11 +109,31 @@ export function formatUsageStatus(row) {
 }
 
 /** Stable watcher flags. Read attempt times are deliberately absent so a failed retry is not an event every tick. */
-export function usageWatchLines(rows) {
-  return rows.filter((row) => row.stale || row.status === "readfail").map((row) => {
+export function usageWatchLines(rows, { claudeIntervalSeconds = DEFAULT_CLAUDE_USAGE_INTERVAL_SECONDS } = {}) {
+  return rows.filter((row) => row.stale || (row.status === "readfail" && !(
+    row.runtime === "claude" && row.consecutiveFailures === 1
+      && isRecentClaudeGood(row.lastGoodAt, row.readAt, claudeIntervalSeconds)
+  ))).map((row) => {
     const flags = [row.status === "readfail" ? "READFAIL" : null, row.stale ? "STALE" : null].filter(Boolean).join(",");
     return `usage ${row.runtime} ${row.machine} ${flags} last-good=${row.lastGoodAt ?? "none"}`;
   });
+}
+
+/** Whether a successful Claude reading is inside the one-failure retry window at the failed read time. */
+export function isRecentClaudeGood(lastGoodAt, readAt, intervalSeconds) {
+  const ageMilliseconds = Date.parse(readAt) - Date.parse(lastGoodAt);
+  return Number.isFinite(ageMilliseconds) && ageMilliseconds >= 0 && ageMilliseconds < 2 * intervalSeconds * 1000;
+}
+
+function consecutiveReadFailures(readings, runtime, machine) {
+  const matching = readings.filter((reading) => reading.runtime === runtime && reading.machine === machine)
+    .sort((a, b) => Date.parse(b.readAt) - Date.parse(a.readAt));
+  let count = 0;
+  for (const reading of matching) {
+    if (reading.status !== "readfail") break;
+    count += 1;
+  }
+  return Math.min(count, 2);
 }
 
 /** Board failures with exact evidence and a stable kind for each condition. */
@@ -133,6 +155,13 @@ export function configuredStaleSeconds(workDir, explicit) {
   if (explicit !== undefined) return requireStaleSeconds(Number(explicit));
   const configured = readConfig(resolveWorkDir(workDir)).USAGE_STALE_SECONDS;
   return configured === undefined || configured === "" ? DEFAULT_STALE_SECONDS : requireStaleSeconds(Number(configured));
+}
+
+/** Resolve the existing Claude probe interval from config.env or the inherited process environment. */
+function configuredClaudeUsageIntervalSeconds(workDir) {
+  const configured = readConfig(resolveWorkDir(workDir)).CLAUDE_USAGE_SECONDS ?? process.env.CLAUDE_USAGE_SECONDS;
+  const seconds = Number(configured);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_CLAUDE_USAGE_INTERVAL_SECONDS;
 }
 
 function normalizeReading(reading) {
@@ -295,7 +324,8 @@ async function main(argv) {
   if (!Number.isFinite(now)) throw new Error("--now must be an ISO timestamp");
   const staleSeconds = configuredStaleSeconds(workDir, values["stale-seconds"]);
   const rows = usageStatuses(readUsageReadings(workDir), { now, staleSeconds });
-  const lines = command === "status" ? rows.map(formatUsageStatus) : usageWatchLines(rows);
+  const lines = command === "status" ? rows.map(formatUsageStatus)
+    : usageWatchLines(rows, { claudeIntervalSeconds: configuredClaudeUsageIntervalSeconds(workDir) });
   if (lines.length) process.stdout.write(`${lines.join("\n")}\n`);
   return command === "status" && rows.some((row) => row.stale || row.status === "readfail") ? 1 : 0;
 }

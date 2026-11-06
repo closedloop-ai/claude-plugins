@@ -211,6 +211,14 @@ test('the Claude usage line reads claude -p /usage on the Codex bands, at most o
   assert.match(f.run('ok'), /^claude-usage local session=under80%/m, 'the cached line holds within the interval');
 });
 
+test('config.env forwards the Claude usage timeout to the probe', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.work, 'config.env'), 'CLAUDE_USAGE_TIMEOUT_SECONDS=7\n');
+  writeFileSync(join(f.root, 'bin', 'claude'), '#!/bin/sh\nprintf "%s" "$CLAUDE_USAGE_TIMEOUT_SECONDS" > "$FAKE_ROOT/claude-timeout"\nexit 1\n');
+  f.run('ok');
+  assert.equal(readFileSync(join(f.root, 'claude-timeout'), 'utf8'), '7');
+});
+
 test('the watch set adds open PRs on any branch prefix and drops a merged PR after reporting it once (silent writer on fix/ PRs)', TIMEOUT, () => {
   const f = fixture();
   const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');

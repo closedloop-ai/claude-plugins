@@ -72,7 +72,8 @@ record_usage_readfail() {
 }
 codex_json=$(USAGE_HIGH_PERCENT=$HIGH node $K/ratelimit.mjs local --json --source snapshot --work-dir $W 2>/dev/null)
 if [ -n "$codex_json" ]; then echo "$codex_json" | jq -r .line; else record_usage_readfail codex local snapshot; fi
-[ "${CLAUDE_USAGE:-1}" = 0 ] || USAGE_HIGH_PERCENT=$HIGH CLAUDE_USAGE_SECONDS=${CLAUDE_USAGE_SECONDS:-} node $K/claude-usage.mjs $W local --source snapshot 2>/dev/null
+[ "${CLAUDE_USAGE:-1}" = 0 ] || USAGE_HIGH_PERCENT=$HIGH CLAUDE_USAGE_SECONDS=${CLAUDE_USAGE_SECONDS:-} \
+  CLAUDE_USAGE_TIMEOUT_SECONDS=${CLAUDE_USAGE_TIMEOUT_SECONDS:-} node $K/claude-usage.mjs $W local --source snapshot 2>/dev/null
 if [ -n "${REMOTE_HOST:-}" ]; then
   remote_usage_dir=${REMOTE_FLEET_HOME:+$REMOTE_FLEET_HOME/programs/$FLEET_PROGRAM}; remote_usage_dir=${remote_usage_dir:-$REMOTE_STATE_DIR}
   out=$(remote_node ratelimit.mjs remote --json --source snapshot --work-dir $remote_usage_dir)

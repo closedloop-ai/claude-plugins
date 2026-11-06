@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -43,6 +43,46 @@ test("READFAIL keeps the last good reading time visible and does not refresh its
   assert.equal(rows[0].stale, true);
   assert.match(formatUsageStatus(rows[0]), /READFAIL read=2026-11-03T17:59:50\.000Z age=10s source=snapshot/);
   assert.match(formatUsageStatus(rows[0]), /last-good=2026-11-03T16:00:00\.000Z last-good-age=2h0m/);
+});
+
+test("the first Codex failure wakes, while a recent first Claude failure is quiet", () => {
+  const now = Date.parse("2026-11-03T18:00:00.000Z");
+  const firstFailure = [
+    reading("2026-11-03T17:59:00.000Z"),
+    reading("2026-11-03T18:00:00.000Z", "readfail"),
+  ];
+  const codex = usageStatuses(firstFailure, { now })[0];
+  const claude = usageStatuses(firstFailure.map((item) => ({ ...item, runtime: "claude" })), { now })[0];
+  assert.deepEqual(usageWatchLines([codex]), ["usage codex local READFAIL last-good=2026-11-03T17:59:00.000Z"]);
+  assert.deepEqual(usageWatchLines([claude]), []);
+});
+
+test("a Claude read failure after the reuse window is visible before the stale threshold", () => {
+  const now = Date.parse("2026-11-03T18:00:00.000Z");
+  const rows = usageStatuses([
+    { ...reading("2026-11-03T17:38:20.000Z"), runtime: "claude" },
+    { ...reading("2026-11-03T18:00:00.000Z", "readfail"), runtime: "claude" },
+  ], { now, staleSeconds: 1800 });
+  assert.equal(rows[0].lastGoodAgeSeconds, 1300);
+  assert.equal(rows[0].stale, false);
+  assert.deepEqual(usageWatchLines(rows), ["usage claude local READFAIL last-good=2026-11-03T17:38:20.000Z"]);
+});
+
+test("watch-lines reads the Claude interval from config.env and wakes on a second failure", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "fleet-usage-interval-"));
+  writeFileSync(path.join(dir, "config.env"), "CLAUDE_USAGE_SECONDS=2\n");
+  const good = { ...reading("2026-11-03T17:59:57.000Z"), runtime: "claude" };
+  const failed = { ...reading("2026-11-03T18:00:00.000Z", "readfail"), runtime: "claude" };
+  recordUsageReading(dir, good);
+  recordUsageReading(dir, failed);
+  const first = spawnSync(process.execPath, [SCRIPT, "watch-lines", dir, "--now", failed.readAt], { encoding: "utf8" });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.stdout, "");
+
+  recordUsageReading(dir, { ...failed, readAt: "2026-11-03T18:00:02.000Z" });
+  const second = spawnSync(process.execPath, [SCRIPT, "watch-lines", dir, "--now", "2026-11-03T18:00:02.000Z"], { encoding: "utf8" });
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(second.stdout, "usage claude local READFAIL last-good=2026-11-03T17:59:57.000Z\n");
 });
 
 test("each good and failed reading is persisted with its read time and source", () => {

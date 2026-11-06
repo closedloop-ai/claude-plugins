@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.60
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 15 words longer than in 1.1.54 (main at the branch point).
+
+#### Fixed
+- Claude usage probes allow 90 seconds by default and accept `CLAUDE_USAGE_TIMEOUT_SECONDS`, giving slow machines headroom above a measured 44.7 second read. The watcher sleeps 120 seconds between ticks and shares a 360 second lapse limit (`2 * interval + 120`) with liveness and recovery.
+- Claude usage output printed before a timeout or nonzero exit is still parsed. One failed probe after a recent good reading reuses that good line without waking the watcher, while repeated failures retain the documented `unreadable READFAIL` report.
+
 ### vibe v1.1.54
 
 #### Changed

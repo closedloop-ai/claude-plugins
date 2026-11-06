@@ -18,11 +18,19 @@ import { parseArgs } from 'node:util';
 import { isEntryPoint } from './liveness.mjs';
 import { resolveWorkDir } from './work-dir.mjs';
 import { highUsagePercent, usageBand } from './ratelimit.mjs';
-import { recordUsageReading } from './usage-state.mjs';
+import { DEFAULT_CLAUDE_USAGE_INTERVAL_SECONDS, isRecentClaudeGood, recordUsageReading } from './usage-state.mjs';
 
 const LINE = /^\s*Current (session|week \(all models\)):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s+(.+?))?\s*$/gim;
-export const DEFAULT_INTERVAL_SECONDS = 600;
+export const DEFAULT_INTERVAL_SECONDS = DEFAULT_CLAUDE_USAGE_INTERVAL_SECONDS;
+export const DEFAULT_TIMEOUT_SECONDS = 90;
 export const USAGE_ARGS = Object.freeze(['-p', '--no-session-persistence', '/usage']);
+
+/** Convert a configured duration to Node's supported timer milliseconds, or use the 90-second default. */
+export function usageTimeoutMilliseconds(value) {
+  const milliseconds = Number(value) * 1000;
+  return Number.isSafeInteger(milliseconds) && milliseconds > 0 && milliseconds <= 2_147_483_647
+    ? milliseconds : DEFAULT_TIMEOUT_SECONDS * 1000;
+}
 
 /** The session and all-models weekly percentages and reset times in `/usage` output, or null when absent. */
 export function parseUsage(text) {
@@ -52,6 +60,21 @@ function cachedLine(file, maxAgeSeconds, now = Date.now()) {
   return null;
 }
 
+/** Persist a Claude probe and cache the line selected from its committed state under the same lock. */
+export function recordClaudeUsageProbe(workDir, label, usage, { readAt, source, interval }) {
+  const resolved = resolveWorkDir(workDir).dir;
+  const file = join(resolved, 'claude-usage.txt');
+  const readingLine = claudeUsageLine(label, usage, highUsagePercent(), { readAt, source });
+  return recordUsageReading(resolved, { runtime: 'claude', machine: label, source, status: usage ? 'ok' : 'readfail', readAt, line: readingLine },
+    ({ latest, lastGood, consecutiveFailures }) => {
+      const recentGood = latest.status === 'readfail' && consecutiveFailures === 1
+        && isRecentClaudeGood(lastGood?.readAt, latest.readAt, interval);
+      const displayed = recentGood ? lastGood.line : latest.line;
+      writeFileSync(file, `${displayed}\n`);
+      return displayed;
+    });
+}
+
 function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2), allowPositionals: true,
@@ -65,18 +88,21 @@ function main() {
   const resolved = resolveWorkDir(workDir).dir;
   const file = join(resolved, 'claude-usage.txt');
   const interval = Number(process.env.CLAUDE_USAGE_SECONDS) > 0 ? Number(process.env.CLAUDE_USAGE_SECONDS) : DEFAULT_INTERVAL_SECONDS;
+  const timeout = usageTimeoutMilliseconds(process.env.CLAUDE_USAGE_TIMEOUT_SECONDS);
   let line = cachedLine(file, interval);
   if (!line) {
     let output = '';
     try {
-      output = execFileSync(process.env.CLAUDE_BIN || 'claude', USAGE_ARGS, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 });
-    } catch {}
+      output = execFileSync(process.env.CLAUDE_BIN || 'claude', USAGE_ARGS, {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout,
+      });
+    } catch (error) {
+      output = error?.stdout?.toString?.() ?? '';
+    }
     const usage = parseUsage(output);
     const readAt = new Date().toISOString();
     const source = values.source ?? 'claude-usage';
-    line = claudeUsageLine(label, usage, highUsagePercent(), { readAt, source });
-    recordUsageReading(resolved, { runtime: 'claude', machine: label, source, status: usage ? 'ok' : 'readfail', readAt, line });
-    writeFileSync(file, `${line}\n`);
+    line = recordClaudeUsageProbe(resolved, label, usage, { readAt, source, interval });
   }
   console.log(line);
 }
