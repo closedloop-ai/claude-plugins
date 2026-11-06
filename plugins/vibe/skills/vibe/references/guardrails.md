@@ -91,7 +91,9 @@ Handoff path permissions come from one committed root-level
 `vibe-handoff-paths.json` owned by the target repository. A nested declaration
 does not count. A session may not add, edit, or delete any file with that name;
 the inventory uses the captured base or verified fetched default policy and
-blocks an undeclared repository.
+blocks an undeclared repository. The sole inventory exception adds typed lane-source
+metadata only when base, freshly fetched merge target and candidate share one
+regular workflow with identical bytes/modes and unchanged permission fields.
 
 For an owned `prototype/<slug>` mockup session, the repository's canonical
 `<repo-root>/.claude/skills/prototype/SKILL.md` owns sandbox rules instead of

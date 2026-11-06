@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from vibe_contract_text import flat
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -18,7 +20,17 @@ def test_handoff_requires_final_diff_inventory_before_pr_creation() -> None:
     environment = read("agents/vibe-environment-worker.md")
     assert "`pre-pr` mode on the candidate\nHEAD plus diff/tree hashes" in handoff
     assert "read the final uncommitted change identified by HEAD plus\ndiff/tree hashes, never the plan" in verify
-    assert "Run `pnpm test:lanes`" in verify
+    lane_rules = flat(verify)
+    assert (
+        "`targetedInventory` in that file as a read-only actor. "
+        "Read its declared lane source for repository-owned names and exact recipes"
+    ) in lane_rules
+    assert "or typed `source` from the committed root declaration `vibe-handoff-paths.json`" in lane_rules
+    assert (
+        "For `github-workflow`, bind the workflow path, commit and SHA-256; "
+        "use every job/matrix recipe"
+    ) in lane_rules
+    assert "run `pnpm test:lanes` only for the command-based source" in lane_rules
     assert "post-merge-only lane" in verify
     assert "rerun only that failed case" in verify
     assert "pr-evidence-comment.mjs" in environment

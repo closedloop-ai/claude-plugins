@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { writeLoopbackSsh, writeRemoteCodexStub } from '../../fleet-orchestrator/scripts/fleet-test-support.mjs';
 
 const SNAPSHOT = fileURLToPath(new URL('./snapshot.sh', import.meta.url));
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -73,6 +74,56 @@ test('the recovery events log is a snapshot line, so a recovery action wakes the
   assert.match(f.run('ok'), /^recovery local 0 -$/m);
   writeFileSync(join(state, '.fleet-recovery', 'events.log'), '2026-01-01T00:00:00.000Z EVENT recovery w1 resumed attempt=1/3 turn=t2\n');
   assert.match(f.run('ok'), /^recovery local 1 recovery w1 resumed attempt=1\/3 turn=t2$/m);
+});
+
+test('AC-005 watcher snapshot reports exact stale writer line and clears it after load evidence updates', TIMEOUT, () => {
+  const f = fixture();
+  const state = join(f.root, 'state');
+  mkdirSync(state);
+  writeFileSync(join(f.work, 'config.env'), `LOCAL_STATE_DIR=${state}\nCLAUDE_USAGE=0\n`);
+  writeFileSync(join(f.work, 'sessions.txt'), 'local w1 T1\n');
+  writeFileSync(join(f.work, 'prs.txt'), '');
+  const loaded = loadedSkillEvidence('T1', 'codex', PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
+  const actor = { threadId: 'T1', cwd: '/same/worktree', loadedSkill: { ...loaded, version: '1.1.38' } };
+  writeFileSync(join(state, 'w1.json'), JSON.stringify(actor));
+  const first = f.run('ok');
+  assert.ok(first.split('\n').includes(`SKILL-STALE w1 1.1.38 -> ${loaded.version}`), first);
+  writeFileSync(join(state, 'w1.json'), JSON.stringify({ ...actor, loadedSkill: loaded }));
+  assert.doesNotMatch(f.run('ok'), /SKILL-STALE/);
+  writeFileSync(join(state, 'w1.json'), JSON.stringify({ ...actor, loadedSkill: { ...actor.loadedSkill, actorId: 'other' } }));
+  assert.doesNotMatch(f.run('ok'), /SKILL-STALE/, 'wrong-actor evidence is never attributed to this writer');
+});
+
+test('AC-005 remote watcher ships its checker imports and compares the owning host installation', TIMEOUT, () => {
+  const f = fixture();
+  const state = join(f.root, 'remote');
+  mkdirSync(state);
+  writeLoopbackSsh(join(f.root, 'bin'), join(f.root, 'ssh-args'));
+  writeRemoteCodexStub(join(f.root, 'bin'), PLUGIN_ROOT);
+  writeFileSync(join(f.work, 'config.env'), `REMOTE_HOST=loopback\nREMOTE_STATE_DIR=${state}\nREMOTE_SHELL="bash -c"\nCLAUDE_USAGE=0\n`);
+  writeFileSync(join(f.work, 'sessions.txt'), 'remote w1 T1\n');
+  writeFileSync(join(f.work, 'prs.txt'), '');
+  const loaded = loadedSkillEvidence('T1', 'codex', PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
+  writeFileSync(join(state, 'w1.json'), JSON.stringify({ threadId: 'T1', cwd: '/remote/worktree', loadedSkill: { ...loaded, version: '1.1.38' } }));
+  const output = f.run('ok');
+  assert.ok(output.split('\n').includes(`SKILL-STALE w1 1.1.38 -> ${loaded.version}`), output);
+  assert.ok(existsSync(join(state, '.fleet-monitor/vibe/scripts/loaded-skill.mjs')));
+  assert.doesNotMatch(output, /^(?:PATH|HOME|SHELL)=/m, 'a remote env wrapper must execute a command, never print the environment');
+});
+
+test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, () => {
+  const f = fixture();
+  const state = join(f.root, 'remote'); mkdirSync(state);
+  const archive = join(f.root, 'idle.tar');
+  writeLoopbackSsh(join(f.root, 'bin'), join(f.root, 'ssh-args'), { archive });
+  writeFileSync(join(f.work, 'config.env'), `REMOTE_HOST=loopback\nREMOTE_STATE_DIR=${state}\nREMOTE_SHELL="bash -c"\nCLAUDE_USAGE=0\n`);
+  writeFileSync(join(f.work, 'sessions.txt'), ''); writeFileSync(join(f.work, 'prs.txt'), '');
+  f.run('ok');
+  const entries = execFileSync('tar', ['-tf', archive], { encoding: 'utf8', timeout: 5000 }).trim().split('\n');
+  assert.deepEqual(entries, ['liveness.mjs', 'ratelimit.mjs', 'recover.mjs', 'usage-state.mjs', 'work-dir.mjs']);
+  const baseline = execFileSync('tar', ['-C', fileURLToPath(new URL('.', import.meta.url)), '-cf', '-', ...entries],
+    { timeout: 5000, env: { ...process.env, COPYFILE_DISABLE: '1' } });
+  assert.equal(readFileSync(archive).byteLength, baseline.byteLength, 'zero additional idle transfer bytes');
 });
 
 /** A work dir with one local session and no PRs; its heartbeat file and supervisor lock are the fixture's to write. */

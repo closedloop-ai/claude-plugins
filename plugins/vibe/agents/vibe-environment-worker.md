@@ -500,7 +500,7 @@ changes and gates fields.
    mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
    Capture the new URL, render the validated evidence with
-   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
+   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --worktree "<wt>" --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
    and post it with `gh pr comment <url> --body-file <file>`. Do not return
    `DONE` until the comment lists the inventory, result SHAs, probe and tier.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI

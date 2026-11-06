@@ -9,8 +9,41 @@ const DEFINITION = Object.freeze({ vibe: "skills/vibe/SKILL.md", "fleet-orchestr
  * actor start the skill. `installed-at-spawn`: the orchestrator recorded the installed
  * definition when it created a fresh thread, a proxy for what that thread will read, not an
  * observation of the read (PR #371 review).
+ * `reload-acknowledged`: the recorded actor acknowledged each exact definition page on its
+ * App Server turn; this is never mislabeled as a hook-observed load.
  */
-export const LoadBasis = Object.freeze({ HookObserved: "hook-observed", InstalledAtSpawn: "installed-at-spawn" });
+export const LoadBasis = Object.freeze({ HookObserved: "hook-observed", InstalledAtSpawn: "installed-at-spawn", ReloadAcknowledged: "reload-acknowledged" });
+
+/** A closed, versioned wire envelope: no fields or free text can smuggle work through reload admission. */
+export const SKILL_RELOAD = 'VIBE_SKILL_RELOAD v1';
+export function isSkillReload(text, page) {
+  return page ? text === skillReloadPage(page) : text === SKILL_RELOAD || text === `${SKILL_RELOAD}\n`;
+}
+
+/** Canonical page envelope: all content comes from the bound installed definition, never caller prose. */
+export function skillReloadPage({ threadId, nonce, definition, definitionSha256, start, end, total, content }) {
+  return `${SKILL_RELOAD}\n${JSON.stringify({ kind: 'page', threadId, nonce, definition, definitionSha256, start, end, total, content,
+    instruction: 'Read this installed skill page and its required references. Run no other work until all pages are acknowledged.',
+    acknowledge: `VIBE_SKILL_RELOAD_ACK v1 ${nonce}` })}`;
+}
+
+/** Compare release components numerically, then exact spelling for ties; unknown values never establish an upgrade. */
+export function compareSkillVersions(left, right) {
+  const version = /^(\d+)\.(\d+)\.(\d+)$/;
+  const a = version.exec(left ?? ''); const b = version.exec(right ?? '');
+  if (!a || !b) return null;
+  for (let i = 1; i < 4; i += 1) if (Number(a[i]) !== Number(b[i])) return Number(a[i]) < Number(b[i]) ? -1 : 1;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Only an authentic-shaped older actor binding qualifies for in-place recovery, never a wrong actor. */
+export function reloadableSkill(evidence, { actorId, pluginRoot }) {
+  if (!evidence || evidence.actorId !== actorId || !/^[a-f0-9]{64}$/.test(evidence.definitionSha256 ?? '')) return false;
+  try {
+    const current = loadedSkillEvidence(actorId, evidence.runtime, pluginRoot, evidence.skill, evidence.basis);
+    return evidence.definition === current.definition && compareSkillVersions(evidence.version, current.version) === -1;
+  } catch { return false; }
+}
 
 function json(file) { return JSON.parse(readFileSync(file, "utf8")); }
 function sha256(file) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }

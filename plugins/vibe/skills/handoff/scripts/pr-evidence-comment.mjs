@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { tierEvidenceProblems } from "./e2e-tier.mjs";
 import { targetedEvidenceProblems } from "./pr-facts.mjs";
+import { laneReportLabel } from "./ci-job-shape.mjs";
 import { testIntegrityProofShapeProblems } from "./test-integrity.mjs";
 
 function tableCell(value) {
@@ -11,11 +12,11 @@ function tableCell(value) {
 }
 
 /** Render a reviewable comment only from complete pre-PR evidence. */
-export function renderEvidenceComment(evidence) {
+export function renderEvidenceComment(evidence, worktree) {
   const commit = evidence?.targetedInventory?.commit;
   const e2eSpecs = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path);
   const problems = [
-    ...targetedEvidenceProblems(evidence, commit),
+    ...targetedEvidenceProblems(evidence, commit, worktree),
     ...tierEvidenceProblems(evidence?.e2eCapability, e2eSpecs),
     ...testIntegrityProofShapeProblems(evidence),
   ];
@@ -26,7 +27,7 @@ export function renderEvidenceComment(evidence) {
     "## Targeted pre-PR evidence",
     "",
     `Final committed diff: \`${commit}\``,
-    `Inventory: read-only worker using \`${evidence.targetedInventory.laneReport.command}\``,
+    `Inventory: read-only worker using \`${laneReportLabel(evidence.targetedInventory.laneReport)}\``,
     `E2E tier: ${capability.selectedTier ?? "none"}`,
     `Capability probe: \`${probe.command}\` (Docker present ${probe.dockerPresent}, reachable ${probe.dockerReachable}, memory ${probe.memoryGiB}/${probe.minimumMemoryGiB} GiB, disk ${probe.diskGiB}/${probe.minimumDiskGiB} GiB)`,
     "",
@@ -56,7 +57,7 @@ export function renderEvidenceComment(evidence) {
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  const { values } = parseArgs({ options: { evidence: { type: "string" }, output: { type: "string" } } });
+  const { values } = parseArgs({ options: { evidence: { type: "string" }, output: { type: "string" }, worktree: { type: "string" } } });
   if (!values.evidence || !values.output) throw new Error("--evidence and --output are required");
-  writeFileSync(values.output, renderEvidenceComment(JSON.parse(readFileSync(values.evidence, "utf8"))));
+  writeFileSync(values.output, renderEvidenceComment(JSON.parse(readFileSync(values.evidence, "utf8")), values.worktree));
 }

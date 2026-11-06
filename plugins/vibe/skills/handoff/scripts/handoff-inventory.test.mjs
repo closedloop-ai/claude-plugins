@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, chmodSync, symlinkSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, mutationPreload, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
+import { unexplainedLockfileEntries } from "./lockfile-manifest.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -58,6 +59,951 @@ function useMasterDefault({ home, checkout, origin, worktree }) {
 
 const PATH_POLICY = "vibe-handoff-paths.json";
 const CLAUDE_PLUGIN_POLICY = readFileSync(path.resolve(HERE, "../../../../..", PATH_POLICY), "utf8");
+
+const storybookManifest = (query, version = "^5.90.20") => `${JSON.stringify({
+  name: "storybook", dependencies: { react: "^19.0.0", ...(query ? { "@tanstack/react-query": version } : {}) },
+}, null, 2)}\n`;
+const lockfile = ({ query = false, other = false, resolved = false, rogue = false } = {}) => `lockfileVersion: '9.0'
+
+importers:
+
+  apps/storybook:
+    dependencies:
+      react:
+        specifier: ^19.0.0
+        version: 19.0.0
+${query ? `      '@tanstack/react-query':
+        specifier: ^5.90.20
+        version: 5.90.21(react@19.0.0)
+` : ""}${other ? `  apps/unrelated:
+    dependencies:
+      rogue:
+        specifier: ^1.0.0
+        version: 1.0.0
+` : ""}${rogue ? `  packages/rogue:
+    dependencies:
+      rogue:
+        specifier: ^1.0.0
+        version: 1.0.0
+` : ""}
+packages:
+
+  react@19.0.0:
+    resolution: {integrity: sha512-react}
+${resolved ? `  '@tanstack/react-query@5.90.21':
+    resolution: {integrity: sha512-query}
+
+  '@tanstack/query-core@5.90.21':
+    resolution: {integrity: sha512-core}
+` : ""}
+snapshots:
+
+  react@19.0.0: {}
+${resolved ? `  '@tanstack/react-query@5.90.21(react@19.0.0)':
+    dependencies:
+      '@tanstack/query-core': 5.90.21
+      react: 19.0.0
+
+  '@tanstack/query-core@5.90.21': {}
+` : ""}`;
+const lockfileWithPnpmDocument = (options) => `---
+lockfileVersion: '9.0'
+
+importers:
+  .:
+    packageManagerDependencies:
+      pnpm:
+        specifier: 12.14.0
+        version: 12.14.0
+
+---
+${lockfile(options)}`;
+
+test("AC-001/AC-003: admitted Storybook dependency and its pnpm importer delta pass in any declared repository", (t) => {
+  for (const repoName of ["symphony-alpha", "another-declared-repo"]) {
+    const fixture = setup(t, `lock-query-${repoName}`, {
+      "apps/storybook/package.json": storybookManifest(false),
+      "pnpm-lock.yaml": lockfileWithPnpmDocument(),
+    }, { repoName });
+    write(fixture.worktree, "apps/storybook/package.json", storybookManifest(true));
+    write(fixture.worktree, "pnpm-lock.yaml", lockfileWithPnpmDocument({ query: true }));
+    const result = runNode(INVENTORY, ["--worktree", fixture.worktree, "--phase", "pull-request"], fixture.home);
+    assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+    assert.deepEqual(result.json.outsideAllowed, []);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+  }
+});
+
+test("AC-001: resolved package and snapshot additions reachable from an admitted dependency pass", (t) => {
+  const f = setup(t, "lock-resolved", { "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile() });
+  write(f.worktree, "apps/storybook/package.json", storybookManifest(true));
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ query: true, resolved: true }));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+  assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+});
+
+test("AC-001: admitted dependency bump and removal explain their old and new resolved entries", (t) => {
+  const bump = setup(t, "lock-bump", {
+    "apps/storybook/package.json": storybookManifest(true),
+    "pnpm-lock.yaml": lockfile({ query: true, resolved: true }),
+  });
+  write(bump.worktree, "apps/storybook/package.json", storybookManifest(true, "^5.91.0"));
+  write(bump.worktree, "pnpm-lock.yaml", lockfile({ query: true, resolved: true })
+    .replaceAll("^5.90.20", "^5.91.0").replaceAll("5.90.21", "5.91.1"));
+  const bumped = runNode(INVENTORY, ["--worktree", bump.worktree, "--phase", "pull-request"], bump.home);
+  assert.equal(bumped.json.blocking.forbiddenPaths, true, JSON.stringify(bumped.json.unexplainedLockfileEntries));
+
+  const removal = setup(t, "lock-remove", {
+    "apps/storybook/package.json": storybookManifest(true),
+    "pnpm-lock.yaml": lockfile({ query: true, resolved: true }),
+  });
+  write(removal.worktree, "apps/storybook/package.json", storybookManifest(false));
+  write(removal.worktree, "pnpm-lock.yaml", lockfile());
+  const removed = runNode(INVENTORY, ["--worktree", removal.worktree, "--phase", "pull-request"], removal.home);
+  assert.equal(removed.json.blocking.forbiddenPaths, true, JSON.stringify(removed.json.unexplainedLockfileEntries));
+});
+
+test("AC-002/AC-003: mixed unrelated importer and resolved entry block with exact entry names", (t) => {
+  const f = setup(t, "lock-mixed", { "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile() });
+  write(f.worktree, "apps/storybook/package.json", storybookManifest(true));
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ query: true, other: true, resolved: true }).replace(
+    "  react@19.0.0: {}\n", "  react@19.0.0: {}\n\n  unrelated@2.0.0: {}\n"));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, [
+    "importers/apps/unrelated", "importers/apps/unrelated/dependencies/rogue", "snapshots/unrelated@2.0.0",
+  ]);
+  assert.deepEqual(result.json.outsideAllowed, [{ path: "pnpm-lock.yaml", status: "M" }]);
+});
+
+test("AC-002/AC-003: a lockfile-only importer edit blocks and names the dependency", (t) => {
+  const f = setup(t, "lock-only", { "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile() });
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ query: true }));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/storybook/dependencies/@tanstack/react-query"]);
+});
+
+test("AC-002: adding or removing an empty importer without a manifest edit names the importer", (t) => {
+  const empty = "lockfileVersion: '9.0'\nimporters: {}\n";
+  const withImporter = "lockfileVersion: '9.0'\nimporters:\n  apps/unrelated: {}\n";
+  for (const [slug, before, after] of [
+    ["lock-empty-added", empty, withImporter],
+    ["lock-empty-removed", withImporter, empty],
+  ]) {
+    const f = setup(t, slug, { "pnpm-lock.yaml": before });
+    write(f.worktree, "pnpm-lock.yaml", after);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/unrelated"]);
+    assert.deepEqual(result.json.outsideAllowed, [{ path: "pnpm-lock.yaml", status: "M" }]);
+  }
+});
+
+test("AC-002: an explained dependency plus an empty unrelated importer still blocks", (t) => {
+  const f = setup(t, "lock-query-empty-other", {
+    "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+  });
+  write(f.worktree, "apps/storybook/package.json", storybookManifest(true));
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ query: true }).replace(
+    "\npackages:\n", "\n  apps/unrelated: {}\n\npackages:\n"));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/unrelated"]);
+});
+
+test("AC-002: adding or removing an empty dependency category names the category", (t) => {
+  const empty = "lockfileVersion: '9.0'\nimporters:\n  apps/example: {}\n";
+  const withCategory = "lockfileVersion: '9.0'\nimporters:\n  apps/example:\n    dependencies: {}\n";
+  for (const [slug, before, after] of [
+    ["lock-empty-category-added", empty, withCategory],
+    ["lock-empty-category-removed", withCategory, empty],
+  ]) {
+    const f = setup(t, slug, { "pnpm-lock.yaml": before });
+    write(f.worktree, "pnpm-lock.yaml", after);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/example/dependencies"]);
+  }
+});
+
+test("AC-002: an explained dependency cannot admit an unrelated empty-category transition", (t) => {
+  const base = lockfile().replace("\npackages:\n", "\n  apps/example: {}\n\npackages:\n");
+  const f = setup(t, "lock-query-empty-category", {
+    "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": base,
+  });
+  write(f.worktree, "apps/storybook/package.json", storybookManifest(true));
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ query: true }).replace(
+    "\npackages:\n", "\n  apps/example:\n    dependencies: {}\n\npackages:\n"));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/example/dependencies"]);
+});
+
+test("AC-002: unknown inline importer and section header values fail closed", (t) => {
+  const cases = [
+    ["lock-importer-inline", "lockfileVersion: '9.0'\nimporters:\n  apps/example: {}\n",
+      "lockfileVersion: '9.0'\nimporters:\n  apps/example: {unexpected: true}\n", "importers/apps/example"],
+    ["lock-section-inline", "lockfileVersion: '9.0'\nimporters: {}\n",
+      "lockfileVersion: '9.0'\nimporters: {unexpected: true}\n", "importers"],
+  ];
+  for (const [slug, before, after, entry] of cases) {
+    const f = setup(t, slug, { "pnpm-lock.yaml": before });
+    write(f.worktree, "pnpm-lock.yaml", after);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, [entry]);
+  }
+});
+
+test("AC-002: inline empty mapping headers with nested children fail closed", (t) => {
+  const valid = lockfile({ query: true, resolved: true });
+  const cases = [
+    ["section-importers", valid.replace("importers:\n", "importers: {}\n"), "importers"],
+    ["entry-importer", valid.replace("  apps/storybook:\n", "  apps/storybook: {}\n"), "importers/apps/storybook"],
+    ["entry-category", valid.replace("    dependencies:\n", "    dependencies: {}\n"), "importers/apps/storybook/dependencies"],
+    ["section-packages", valid.replace("packages:\n", "packages: {}\n"), "packages"],
+    [
+      "entry-snapshot",
+      valid.replace(
+        "  '@tanstack/react-query@5.90.21(react@19.0.0)':\n",
+        "  '@tanstack/react-query@5.90.21(react@19.0.0)': {}\n",
+      ),
+      "snapshots/@tanstack/react-query@5.90.21(react@19.0.0)",
+    ],
+  ];
+  for (const [slug, changed, entry] of cases) {
+    const f = setup(t, `lock-empty-header-${slug}`, {
+      "apps/storybook/package.json": storybookManifest(false),
+      "pnpm-lock.yaml": lockfile(),
+    });
+    write(f.worktree, "apps/storybook/package.json", storybookManifest(true));
+    write(f.worktree, "pnpm-lock.yaml", changed);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, [entry]);
+  }
+});
+
+test("AC-001: a new importer with a matching admitted manifest dependency passes", (t) => {
+  const f = setup(t, "lock-new-importer", {
+    "pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters: {}\n",
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { react: "^19.0.0" } }));
+  write(f.worktree, "pnpm-lock.yaml", "lockfileVersion: '9.0'\nimporters:\n  apps/storybook:\n    dependencies:\n      react:\n        specifier: ^19.0.0\n        version: 19.0.0\n");
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+});
+
+test("AC-001: an admitted npm alias reaches its target package and snapshot", (t) => {
+  const f = setup(t, "lock-npm-alias", {
+    "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({
+    dependencies: { react: "^19.0.0", "posthog-js-shipped": "npm:posthog-js@1.359.1" },
+  }));
+  const updated = lockfile()
+    .replace("      react:\n", `      posthog-js-shipped:
+        specifier: npm:posthog-js@1.359.1
+        version: posthog-js@1.359.1
+      react:
+`)
+    .replace("\nsnapshots:\n", `
+  posthog-js@1.359.1:
+    resolution: {integrity: sha512-posthog}
+
+snapshots:
+`)
+    .replace("  react@19.0.0: {}\n", "  react@19.0.0: {}\n\n  posthog-js@1.359.1: {}\n");
+  write(f.worktree, "pnpm-lock.yaml", updated);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+  assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+});
+
+test("AC-001: transitive npm aliases resolve through dependencies and optionalDependencies", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const f = setup(t, "lock-transitive-alias", {
+    "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+  write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-wrapper}
+  string-width@4.2.3:
+    resolution: {integrity: sha512-width}
+  strip-ansi@6.0.1:
+    resolution: {integrity: sha512-strip}
+snapshots:
+  wrapper@1.0.0:
+    dependencies:
+      string-width-cjs: string-width@4.2.3
+    optionalDependencies:
+      strip-ansi-cjs: strip-ansi@6.0.1
+  string-width@4.2.3: {}
+  strip-ansi@6.0.1: {}
+`);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+  assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+});
+
+test("AC-002: malformed or extra importer dependency fields name the exact entry", (t) => {
+  const manifest = JSON.stringify({ dependencies: { react: "^19.0.0", foo: "^1.0.0" } });
+  for (const [slug, fields] of [
+    ["lock-version-map", "        version: {}\n"],
+    ["lock-extra-dep-field", "        version: 1.0.0\n        unexpected: arbitrary\n"],
+  ]) {
+    const f = setup(t, slug, { "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile() });
+    write(f.worktree, "apps/storybook/package.json", manifest);
+    write(f.worktree, "pnpm-lock.yaml", lockfile().replace("      react:\n", `      foo:
+        specifier: ^1.0.0
+${fields}      react:
+`));
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/storybook/dependencies/foo"]);
+  }
+});
+
+test("AC-002: YAML non-string importer versions name the dependency entry", (t) => {
+  const manifest = JSON.stringify({ dependencies: { react: "^19.0.0", foo: "^1.0.0" } });
+  for (const [slug, version] of [
+    ["true", "true"], ["null", "null"], ["tilde", "~"], ["integer", "42"],
+    ["zero", "0"], ["exponent", "1e3"], ["nan", ".nan"], ["hex", "0x2a"],
+  ]) {
+    const f = setup(t, `lock-version-${slug}`, {
+      "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+    });
+    write(f.worktree, "apps/storybook/package.json", manifest);
+    write(f.worktree, "pnpm-lock.yaml", lockfile().replace("      react:\n", `      foo:
+        specifier: ^1.0.0
+        version: ${version}
+      react:
+`));
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/storybook/dependencies/foo"]);
+  }
+});
+
+test("AC-002: YAML comments cannot disguise non-string importer versions", (t) => {
+  const manifest = JSON.stringify({ dependencies: { react: "^19.0.0", foo: "^1.0.0" } });
+  for (const [slug, version] of [["integer", "42"], ["boolean", "true"], ["nan", ".nan"]]) {
+    const f = setup(t, `lock-commented-version-${slug}`, {
+      "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+    });
+    write(f.worktree, "apps/storybook/package.json", manifest);
+    write(f.worktree, "pnpm-lock.yaml", lockfile().replace("      react:\n", `      foo:
+        specifier: ^1.0.0
+        version: ${version} # disguised scalar
+      react:
+`));
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/storybook/dependencies/foo"]);
+  }
+});
+
+test("AC-002: invalid plain importer scalars cannot grant permission", (t) => {
+  const manifest = JSON.stringify({ dependencies: { react: "^19.0.0", foo: "^1.0.0" } });
+  for (const [slug, version] of [["comment-only", "# empty"], ["mapping", "1.0.0: evil"]]) {
+    const f = setup(t, `lock-invalid-plain-${slug}`, {
+      "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+    });
+    write(f.worktree, "apps/storybook/package.json", manifest);
+    write(f.worktree, "pnpm-lock.yaml", lockfile().replace("      react:\n", `      foo:
+        specifier: ^1.0.0
+        version: ${version}
+      react:
+`));
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/storybook/dependencies/foo"]);
+  }
+});
+
+test("AC-002: unsupported importer category shapes return a named entry", (t) => {
+  const f = setup(t, "lock-importer-sequence", {
+    "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { react: "^19.0.0", foo: "^1.0.0" } }));
+  write(f.worktree, "pnpm-lock.yaml", lockfile().replace("      react:\n", `      - foo
+      react:
+`));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/storybook/dependencies"]);
+});
+
+test("AC-002: reachable package and snapshot entries reject non-mapping bodies", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const valid = `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-wrapper}
+  string-width@4.2.3:
+    resolution: {integrity: sha512-width}
+snapshots:
+  wrapper@1.0.0:
+    dependencies:
+      string-width-cjs: string-width@4.2.3
+  string-width@4.2.3: {}
+`;
+  for (const [slug, changed, entry] of [
+    ["package-scalar", valid.replace("  string-width@4.2.3:\n    resolution: {integrity: sha512-width}", "  string-width@4.2.3: true"), "packages/string-width@4.2.3"],
+    ["snapshot-inline", valid.replace("  string-width@4.2.3: {}", "  string-width@4.2.3: {unexpected: true}"), "snapshots/string-width@4.2.3"],
+  ]) {
+    const f = setup(t, `lock-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+    write(f.worktree, "pnpm-lock.yaml", changed);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, [entry]);
+  }
+});
+
+test("AC-002: a reachable snapshot rejects unsupported dependency scalars", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const f = setup(t, "lock-resolved-alias", {
+    "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+  write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-wrapper}
+snapshots:
+  wrapper@1.0.0:
+    dependencies:
+      child: *unknown
+`);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["snapshots/wrapper@1.0.0"]);
+});
+
+test("AC-002: reachable package metadata rejects unsupported YAML references", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  for (const [slug, resolution] of [["alias", "*unknown"], ["inline-alias", "{integrity: *unknown}"]]) {
+    const f = setup(t, `lock-package-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+    write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: ${resolution}
+snapshots:
+  wrapper@1.0.0: {}
+`);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["packages/wrapper@1.0.0"]);
+  }
+});
+
+test("AC-002: reachable metadata rejects malformed or wrong node shapes", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  for (const [slug, field, entry] of [
+    ["resolution-sequence", "resolution: [evil]", "packages/wrapper@1.0.0"],
+    ["resolution-tagged", "resolution: !<tag:yaml.org,2002:seq> [evil]", "packages/wrapper@1.0.0"],
+    ["resolution-open", "resolution: {integrity: sha512-x", "packages/wrapper@1.0.0"],
+    ["resolution-quote", "resolution: {integrity: 'unterminated}", "packages/wrapper@1.0.0"],
+    ["resolution-comment", "resolution: {integrity: sha512-x # comment}", "packages/wrapper@1.0.0"],
+    ["unknown-field", "unexpected: value", "packages/wrapper@1.0.0"],
+  ]) {
+    const f = setup(t, `lock-metadata-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+    write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    ${field}
+snapshots:
+  wrapper@1.0.0: {}
+`);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, [entry]);
+  }
+
+  const f = setup(t, "lock-metadata-snapshot-sequence", {
+    "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+  write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-wrapper}
+snapshots:
+  wrapper@1.0.0:
+    transitivePeerDependencies: [oops
+`);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["snapshots/wrapper@1.0.0"]);
+});
+
+test("AC-001: canonical pnpm package and snapshot metadata remains attributable", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const f = setup(t, "lock-canonical-metadata", {
+    "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+  write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-wrapper}
+    engines: {node: '>=18'}
+    hasBin: true
+    cpu: [arm64]
+    os:
+      - linux
+    bundledDependencies: [child]
+    peerDependencies:
+      zod: ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+    deprecated: 'use another package'
+    version: 1.0.0
+snapshots:
+  wrapper@1.0.0:
+    optional: false
+    transitivePeerDependencies:
+      - zod
+`);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+  assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+});
+
+test("AC-001: comments after complete flow metadata remain attributable", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const manifest = [{ file: "apps/storybook/package.json", before: JSON.stringify({ dependencies: {} }),
+    after: JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }) }];
+  const after = `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-wrapper} # complete flow map
+    cpu: [x64] # complete flow list
+snapshots:
+  wrapper@1.0.0: {}
+`;
+  assert.deepEqual(unexplainedLockfileEntries({ before: base, after, manifests: manifest }), []);
+});
+
+test("AC-001: pnpm registry revision metadata remains attributable", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  for (const [slug, resolution] of [
+    ["block", "resolution:\n      integrity: sha512-wrapper\n      revision: 1"],
+    ["inline", "resolution: {integrity: sha512-wrapper, revision: 0}"],
+  ]) {
+    const f = setup(t, `lock-revision-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+    write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    ${resolution}
+snapshots:
+  wrapper@1.0.0: {}
+`);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+    assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+  }
+});
+
+test("AC-002: inline metadata maps enforce field-specific value shapes", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  for (const [slug, metadata] of [
+    ["peer-key", "peerDependenciesMeta: {zod: {evil: true}}"],
+    ["peer-value", "peerDependenciesMeta: {zod: {optional: invalid}}"],
+    ["integrity", "resolution: {integrity: true}"],
+    ["revision-boolean", "resolution: {integrity: sha512-wrapper, revision: true}"],
+    ["revision-sequence", "resolution: {integrity: sha512-wrapper, revision: [evil]}"],
+    ["engines", "engines: {node: 42}"],
+  ]) {
+    const f = setup(t, `lock-inline-metadata-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+    const packageBody = metadata.startsWith("resolution:") ? metadata : `resolution: {integrity: sha512-wrapper}\n    ${metadata}`;
+    write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    ${packageBody}
+snapshots:
+  wrapper@1.0.0: {}
+`);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["packages/wrapper@1.0.0"]);
+  }
+});
+
+test("AC-002: inline metadata maps reject duplicate keys", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  for (const [slug, metadata] of [
+    ["resolution", "resolution: {integrity: sha512-good, integrity: sha512-forged}"],
+    ["peer-meta", "peerDependenciesMeta: {zod: {optional: true, optional: false}}"],
+  ]) {
+    const f = setup(t, `lock-duplicate-inline-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }));
+    write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    ${metadata}
+snapshots:
+  wrapper@1.0.0: {}
+`);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["packages/wrapper@1.0.0"]);
+  }
+});
+
+test("AC-001: pnpm platform variation resolutions remain attributable", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const f = setup(t, "lock-resolution-variants", {
+    "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { node: "runtime:22" } }));
+  write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      node:
+        specifier: runtime:22
+        version: 22.0.0
+packages:
+  node@22.0.0:
+    resolution:
+      type: variations
+      variants:
+        - resolution:
+            type: binary
+            url: https://example.invalid/node.tar.gz
+            integrity: sha512-node
+            bin: node
+            archive: tarball
+          targets:
+            - os: linux
+              cpu: x64
+              libc: musl
+              libcVersion: '1.2'
+              osVersion: '6.0'
+              napi: 8
+              nodeAbi: node-115
+            - wasm32: true
+            - any: true
+snapshots:
+  node@22.0.0: {}
+`);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+  assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+});
+
+test("AC-002: variation resolutions require platform resolution objects", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  for (const [slug, variants] of [
+    ["boolean", "variants: true"], ["number", "variants: 42"],
+    ["mapping", "variants: {bogus: true}"], ["scalar-list", "variants: [x64]"],
+    ["block-scalar", "variants:\n        - bogus"],
+  ]) {
+    const f = setup(t, `lock-variants-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { node: "runtime:22" } }));
+    write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      node:
+        specifier: runtime:22
+        version: 22.0.0
+packages:
+  node@22.0.0:
+    resolution:
+      type: variations
+      ${variants}
+snapshots:
+  node@22.0.0: {}
+`);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["packages/node@22.0.0"]);
+  }
+});
+
+test("AC-002: platform variation targets enforce their field shapes", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  for (const [slug, target] of [
+    ["any-extra", "any: true\n              os: linux"],
+    ["wasm-os", "wasm32: true\n              os: linux\n              cpu: x64"],
+    ["missing-cpu", "os: linux"],
+    ["napi-overflow", "os: linux\n              cpu: x64\n              napi: 4294967296"],
+    ["bad-abi", "os: linux\n              cpu: x64\n              nodeAbi: other-1"],
+    ["unknown", "os: linux\n              cpu: x64\n              unexpected: value"],
+  ]) {
+    const f = setup(t, `lock-target-${slug}`, {
+      "apps/storybook/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": base,
+    });
+    write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { node: "runtime:22" } }));
+    write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      node:
+        specifier: runtime:22
+        version: 22.0.0
+packages:
+  node@22.0.0:
+    resolution:
+      type: variations
+      variants:
+        - resolution:
+            type: binary
+            url: https://example.invalid/node.tar.gz
+            integrity: sha512-node
+            bin: node
+            archive: tarball
+          targets:
+            - ${target}
+snapshots:
+  node@22.0.0: {}
+`);
+    const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.unexplainedLockfileEntries, ["packages/node@22.0.0"]);
+  }
+});
+
+test("AC-001/AC-002: resolution revisions are bounded and gitHosted is boolean", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const manifest = [{ file: "apps/storybook/package.json", before: JSON.stringify({ dependencies: {} }),
+    after: JSON.stringify({ dependencies: { foo: "^1.0.0" } }) }];
+  const lock = (resolution) => `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  foo@1.0.0:
+    resolution: ${resolution}
+snapshots:
+  foo@1.0.0: {}
+`;
+  assert.deepEqual(unexplainedLockfileEntries({ before: base, after: lock("{integrity: sha512-x, revision: 9007199254740991}"), manifests: manifest }), []);
+  assert.deepEqual(unexplainedLockfileEntries({ before: base, after: lock("{integrity: sha512-x, revision: 9007199254740992}"), manifests: manifest }), ["packages/foo@1.0.0"]);
+  assert.deepEqual(unexplainedLockfileEntries({ before: base, after: lock("{integrity: sha512-x, gitHosted: true}"), manifests: manifest }), []);
+  assert.deepEqual(unexplainedLockfileEntries({ before: base, after: lock("{integrity: sha512-x, gitHosted: value}"), manifests: manifest }), ["packages/foo@1.0.0"]);
+});
+
+test("AC-001: git-hosted tarball resolutions remain attributable", (t) => {
+  const base = "lockfileVersion: '9.0'\nimporters:\n  apps/storybook: {}\npackages: {}\nsnapshots: {}\n";
+  const f = setup(t, "lock-git-hosted", {
+    "apps/storybook/package.json": JSON.stringify({ devDependencies: {} }), "pnpm-lock.yaml": base,
+  });
+  const url = "https://codeload.github.com/avajs/test/tar.gz/abcdef";
+  const version = `${url}(@ava/typescript@7.0.0)(supports-color@10.2.2)`;
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ devDependencies: { "@ava/test": "github:avajs/test" } }));
+  write(f.worktree, "pnpm-lock.yaml", `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    devDependencies:
+      '@ava/test':
+        specifier: github:avajs/test
+        version: ${version}
+packages:
+  '@ava/test@${url}':
+    resolution: {gitHosted: true, integrity: sha512-test, tarball: ${url}}
+snapshots:
+  '@ava/test@${version}': {}
+`);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+  assert.deepEqual(result.json.unexplainedLockfileEntries, []);
+});
+
+test("AC-002: a resolved edge change cannot explain unrelated same-key metadata", (t) => {
+  const before = `lockfileVersion: '9.0'
+importers:
+  apps/storybook:
+    dependencies:
+      wrapper:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-wrapper}
+snapshots:
+  wrapper@1.0.0:
+    dependencies:
+      child: 1.0.0
+`;
+  const f = setup(t, "lock-edge-metadata", {
+    "apps/storybook/package.json": JSON.stringify({ dependencies: { wrapper: "^1.0.0" } }),
+    "pnpm-lock.yaml": before,
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { wrapper: "^1.0.1" } }));
+  write(f.worktree, "pnpm-lock.yaml", before.replace("specifier: ^1.0.0", "specifier: ^1.0.1")
+    .replace("child: 1.0.0", "child: 2.0.0\n    optional: true"));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["snapshots/wrapper@1.0.0"]);
+  write(f.worktree, "pnpm-lock.yaml", before.replace("specifier: ^1.0.0", "specifier: ^1.0.1")
+    .replace("child: 1.0.0", "child: 2.0.0"));
+  const edgeOnly = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(edgeOnly.json.blocking.forbiddenPaths, true, JSON.stringify(edgeOnly.json.unexplainedLockfileEntries));
+});
+
+test("AC-002: a reachable same-key package and snapshot metadata mutation is unexplained", (t) => {
+  const f = setup(t, "lock-reachable-integrity", {
+    "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+  });
+  write(f.worktree, "apps/storybook/package.json", JSON.stringify({ dependencies: { react: "^19.0.1" } }));
+  write(f.worktree, "pnpm-lock.yaml", lockfile()
+    .replace("specifier: ^19.0.0", "specifier: ^19.0.1")
+    .replace("sha512-react", "sha512-tampered")
+    .replace("  react@19.0.0: {}", "  react@19.0.0:\n    optional: true"));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["packages/react@19.0.0", "snapshots/react@19.0.0"]);
+});
+
+test("AC-002: a lockfile-only version change names the importer and resolved entries", (t) => {
+  const f = setup(t, "lock-version-only", {
+    "apps/storybook/package.json": storybookManifest(false), "pnpm-lock.yaml": lockfile(),
+  });
+  write(f.worktree, "pnpm-lock.yaml", lockfile().replaceAll("19.0.0", "19.1.0"));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, [
+    "importers/apps/storybook/dependencies/react", "packages/react@19.0.0", "packages/react@19.1.0",
+    "snapshots/react@19.0.0", "snapshots/react@19.1.0",
+  ]);
+});
+
+test("AC-002: an unadmitted manifest cannot explain a lockfile importer edit", (t) => {
+  const f = setup(t, "lock-forbidden-manifest", {
+    "packages/rogue/package.json": JSON.stringify({ dependencies: {} }), "pnpm-lock.yaml": lockfile(),
+  });
+  write(f.worktree, "packages/rogue/package.json", JSON.stringify({ dependencies: { rogue: "^1.0.0" } }));
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ rogue: true }));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, [
+    "importers/packages/rogue", "importers/packages/rogue/dependencies/rogue",
+  ]);
+});
+
+test("AC-002: an explicit lockfile path allowance still requires matching manifest dependencies", (t) => {
+  const policy = JSON.parse(SYMPHONY_PATH_POLICY);
+  policy.allowedFiles.push("pnpm-lock.yaml");
+  const f = setup(t, "lock-explicit-path", {
+    "vibe-handoff-paths.json": JSON.stringify(policy),
+    "apps/storybook/package.json": storybookManifest(false),
+    "pnpm-lock.yaml": lockfile(),
+  });
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ query: true }));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.unexplainedLockfileEntries, ["importers/apps/storybook/dependencies/@tanstack/react-query"]);
+});
+
+test("AC-004: a declared root package.json can explain the root importer", (t) => {
+  const policy = JSON.parse(SYMPHONY_PATH_POLICY);
+  policy.allowedFiles.push("package.json");
+  const base = lockfile().replace("  apps/storybook:", "  .:");
+  const f = setup(t, "lock-root-manifest", {
+    "vibe-handoff-paths.json": JSON.stringify(policy),
+    "package.json": storybookManifest(false), "pnpm-lock.yaml": base,
+  }, { repoName: "custom-pnpm-repo" });
+  write(f.worktree, "package.json", storybookManifest(true));
+  write(f.worktree, "pnpm-lock.yaml", lockfile({ query: true }).replace("  apps/storybook:", "  .:"));
+  const result = runNode(INVENTORY, ["--worktree", f.worktree, "--phase", "pull-request"], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json.unexplainedLockfileEntries));
+});
 
 test("target repository declaration admits claude-plugins source, tools, evals, changelog and docs", (t) => {
   const { home, worktree } = setup(t, "claude-paths", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
@@ -1030,4 +1976,108 @@ test("a new comparator outside the pull-request phase clears with its tie test l
   assert.deepEqual(ties("build"), []);
   assert.deepEqual(ties("handoff"), []);
   assert.equal(ties("pull-request").length, 1, "the pull-request turn writes the tie test");
+});
+
+
+test("root lane metadata is typed without widening path permissions or accepting unknown declaration fields", t => {
+  for (const [name, patch] of [["invalid-source", { laneSource: { kind: "environment", name: "LANES" } }],
+    ["unknown-field", { laneSources: [] }]]) {
+    const policy = { ...JSON.parse(CLAUDE_PLUGIN_POLICY), ...patch };
+    const { home, worktree } = setup(t, `lane-${name}`, { [PATH_POLICY]: JSON.stringify(policy) }, {
+      repoName: "claude-plugins", declared: false,
+    });
+    const result = runNode(INVENTORY, ["--worktree", worktree], home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.match(result.json.pathPolicyProblem, /typed laneSource|expected fields/);
+  }
+});
+
+
+test("lane source bootstrap admits only metadata for the sole unchanged committed workflow", t => {
+  const before = JSON.parse(CLAUDE_PLUGIN_POLICY); delete before.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n";
+  const { home, worktree } = setup(t, "lane-source-bootstrap", { [PATH_POLICY]: JSON.stringify(before),
+    ".github/workflows/ci.yml": workflow }, { repoName: "claude-plugins", declared: false });
+  const after = { ...before, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } };
+  write(worktree, PATH_POLICY, JSON.stringify(after));
+  const inspect = () => runNode(INVENTORY, ["--worktree", worktree], home).json;
+  assert.equal(inspect().blocking.forbiddenPaths, true);
+  write(worktree, PATH_POLICY, JSON.stringify({ ...after, allowedPrefixes: [...before.allowedPrefixes, "rogue/"] }));
+  assert.equal(inspect().blocking.forbiddenPaths, false);
+  write(worktree, PATH_POLICY, JSON.stringify(after));
+  write(worktree, ".github/workflows/ci.yml", workflow.replace("node --test", "echo passed"));
+  assert.equal(inspect().blocking.forbiddenPaths, false);
+});
+
+
+test("lane source bootstrap rejects ambiguous workflows and replacement of an existing source", t => {
+  const legacy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete legacy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n";
+  for (const kind of ["ambiguous", "replacement", "command"]) {
+    const source = { kind: "github-workflow", path: ".github/workflows/ci.yml" };
+    const before = kind === "replacement" ? { ...legacy, laneSource: source } : legacy;
+    const files = { [PATH_POLICY]: JSON.stringify(before), ".github/workflows/ci.yml": workflow,
+      ...(kind === "ambiguous" ? { ".github/workflows/other.yml": workflow } : {}) };
+    const { home, worktree } = setup(t, `lane-bootstrap-${kind}`, files, { repoName: "claude-plugins", declared: false });
+    write(worktree, PATH_POLICY, JSON.stringify({ ...legacy, laneSource: kind === "command"
+      ? { kind: "command", command: "echo passed" } : kind === "replacement" ? { ...source, path: ".github/workflows/other.yml" } : source }));
+    const result = runNode(INVENTORY, ["--worktree", worktree], home).json;
+    assert.equal(result.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+  }
+});
+
+
+test("bootstrap refuses a workflow added on fetched main after the writer captured its base", t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, "lane-main-moved", { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  write(f.checkout, ".github/workflows/second.yml", workflow);
+  git(f.checkout, ["add", ".github/workflows/second.yml"], f.home);
+  git(f.checkout, ["commit", "--quiet", "-m", "parallel workflow"], f.home);
+  git(f.checkout, ["push", "origin", "main"], f.home);
+  git(f.worktree, ["fetch", "origin"], f.home);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home).json;
+  assert.equal(result.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+});
+
+
+test("metadata bootstrap freshly fetches a compatible moved merge target without relying on an old tracking ref", t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, "lane-fresh-target", { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  const old = git(f.worktree, ["rev-parse", "origin/main"], f.home);
+  write(f.checkout, "README.md", "unrelated main change\n");
+  git(f.checkout, ["commit", "--quiet", "-am", "advance main"], f.home); git(f.checkout, ["push", "origin", "main"], f.home);
+  const target = git(f.checkout, ["rev-parse", "HEAD"], f.home);
+  assert.notEqual(target, old);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, result.stderr);
+  assert.equal(git(f.worktree, ["rev-parse", "origin/main"], f.home), target);
+});
+
+for (const kind of ["bytes", "removed", "renamed", "permissions", "source", "mode", "symlink"]) test(`bootstrap rejects fetched target ${kind} changes`, t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, `lane-target-${kind}`, { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  const file = path.join(f.checkout, ".github/workflows/ci.yml");
+  if (kind === "bytes") writeFileSync(file, workflow.replace("echo pass", "echo changed"));
+  if (kind === "removed") git(f.checkout, ["rm", "-q", ".github/workflows/ci.yml"], f.home);
+  if (kind === "renamed") git(f.checkout, ["mv", ".github/workflows/ci.yml", ".github/workflows/renamed.yml"], f.home);
+  if (kind === "permissions") write(f.checkout, PATH_POLICY, JSON.stringify({ ...policy, rootTests: !policy.rootTests }));
+  if (kind === "source") write(f.checkout, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "command", command: "echo pass" } }));
+  if (kind === "mode") chmodSync(file, 0o755);
+  if (kind === "symlink") { unlinkSync(file); symlinkSync("../../README.md", file); }
+  git(f.checkout, ["add", "-A"], f.home); git(f.checkout, ["commit", "--quiet", "-m", `main ${kind}`], f.home);
+  git(f.checkout, ["push", "origin", "main"], f.home); git(f.worktree, ["fetch", "origin"], f.home);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home).json;
+  assert.equal(result.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
 });
