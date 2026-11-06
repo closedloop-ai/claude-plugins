@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.1.46
 
 #### Added
-- Nightly review cases cover the seven semantic defect classes found after PR 397: weakened behavioral expectations, incomplete security-exception cases, duplicated policy logic, helper-only replacement of production-wiring coverage, untraced destructive consumers of a new binding, over-broad gating patterns, and release claims that disagree with the diff. Each case has a red proof.
+- Nightly review cases cover seven PR #397 classes: weakened behavioral expectations, incomplete security-exception cases, duplicated policy logic, helper-only tests replacing wiring coverage, untraced destructive binding consumers, over-broad gating patterns, and false release claims. Each has a red proof. The prohibited-phrase fixture retains its exact assertion without appearing as a responsive test.
 
 #### Changed
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 1,177 words longer than in 1.1.45 (origin/main at the merge). Nightly eval fixtures account for the growth; loaded instruction text is unchanged in total.
