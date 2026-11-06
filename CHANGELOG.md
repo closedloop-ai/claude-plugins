@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.55
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54 (origin/main at this merge, 16c854310eac).
+
+#### Fixed
+- Handoff admits `pnpm-lock.yaml` changes only when changed importer and resolved package entries follow dependency edits in package manifests allowed by the target repository; malformed or unexplained entries are named when refusing the handoff.
+- Lockfile evidence parsing rejects malformed manifest dependency maps and keeps its regression coverage in focused test files.
+- Manifest dependency evidence uses own string-map fields, including explicit-null rejection, and its lockfile regressions stay split into focused suites.
+
 ### vibe v1.1.54
 
 #### Changed

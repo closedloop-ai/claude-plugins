@@ -372,7 +372,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.54` contains 17 skills, 17 agents, and one hook manifest
+Version `1.1.55` contains 17 skills, 17 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules, `vibe_contract_text.py` and `skill_split.py`, the text
