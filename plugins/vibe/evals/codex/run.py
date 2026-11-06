@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import importlib.util
 import json
 import hashlib
 import os
@@ -28,6 +29,17 @@ PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestr
 SKILLS = ("pr-takeover", "fleet-orchestrator", "handoff", "vibe")
 ACTIVE_PROCESSES: set[subprocess.Popen[str]] = set()
 ACTIVE_PROCESSES_LOCK = threading.Lock()
+
+CHECKER_SPEC = importlib.util.spec_from_file_location(
+    "vibe_reply_checker", Path(__file__).with_name("reply_checker.py")
+)
+if CHECKER_SPEC is None or CHECKER_SPEC.loader is None:
+    raise RuntimeError("eval-checker-adapter-missing")
+CHECKER_ADAPTER = importlib.util.module_from_spec(CHECKER_SPEC)
+CHECKER_SPEC.loader.exec_module(CHECKER_ADAPTER)
+reply_checker = CHECKER_ADAPTER.reply_checker
+run_reply_checker = CHECKER_ADAPTER.run_reply_checker
+CheckerInfrastructureError = CHECKER_ADAPTER.CheckerInfrastructureError
 
 
 def default_codex_model() -> str:
@@ -523,6 +535,11 @@ def deterministic(
             else:
                 wording.append(meta.get("criteria", body))
             continue
+        checker = reply_checker(case["source"].name, name)
+        if checker is not None:
+            passed, reason = run_reply_checker(checker, case["source"].name, name, reply)
+            results.append(check(name, passed, reason))
+            continue
         if meta["type"] == "regex":
             target = meta.get("target", {})
             file = work / target["path"] if target.get("source") == "file" else None
@@ -718,6 +735,8 @@ def run_case(
             result["checks"].append(
                 check("plain-language", grade["passed"], grade["reason"])
             )
+    except CheckerInfrastructureError as error:
+        result["infrastructure_invalid"] = str(error)
     except Exception as error:
         result["checks"].append(check("execution", False, str(error)))
     for path in work.rglob("events.jsonl"):
