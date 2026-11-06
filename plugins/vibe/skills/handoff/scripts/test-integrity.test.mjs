@@ -135,6 +135,40 @@ test("responsive candidates ignore reviewer wording but retain mobile cases and 
     "the checker's synthetic source is not an executable responsive boundary");
 });
 
+test("MobileCard and NarrowLayout story plays require proof, while NarrowerLayout does not", () => {
+  const fixtures = ["MobileCard", "NarrowLayout", "NarrowerLayout"].map((name) => changed(
+    `packages/app/${name}.stories.tsx`, [
+      `export const ${name}: Story = {`,
+      "  play: async () => { await expect(card).toBeVisible(); },",
+      "};",
+    ].join("\n"), ["play: async"]));
+  const sources = new Map(fixtures.map(({ file, source }) => [file.path, source]));
+  const files = fixtures.map(({ file }) => file);
+  const read = (file) => sources.get(file) ?? null;
+  const missing = testIntegrityProblems({ testIntegrityProofs: [] }, files, read, COMMIT).join("\n");
+  assert.match(missing, /responsive:packages\/app\/MobileCard\.stories\.tsx/);
+  assert.match(missing, /responsive:packages\/app\/NarrowLayout\.stories\.tsx/);
+  assert.doesNotMatch(missing, /NarrowerLayout/);
+});
+
+test("responsive test names accept spaced and camel tokens but not ordinary narrower wording", () => {
+  const cases = [
+    ["mobile card", true],
+    ["isMobileCard visible", true],
+    ["narrow layout", true],
+    ["narrower layout", false],
+  ];
+  for (const [name, expected] of cases) {
+    const fixture = changed(`packages/app/${name.replace(/\W+/g, "-")}.test.tsx`, [
+      `test("${name}", () => {`,
+      "  expect(card).toBeVisible();",
+      "});",
+    ].join("\n"), ["toBeVisible"]);
+    const candidates = testIntegrityCandidates([fixture.file], () => fixture.source);
+    assert.equal(candidates.some(({ kind }) => kind === "responsive"), expected, name);
+  }
+});
+
 test("AC-4 absence assertions reject missing or unrun proof and accept an executed failure", () => {
   const fixture = changed(
     "apps/desktop/test/e2e/branches-page.spec.ts",

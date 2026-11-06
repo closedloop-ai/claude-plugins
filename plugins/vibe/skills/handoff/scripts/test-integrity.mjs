@@ -7,7 +7,7 @@ import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
 const CHECKER_FIXTURE = "plugins/vibe/skills/handoff/scripts/test-integrity.test.mjs";
-const RESPONSIVE_NAME = /\b(?:narrow|mobile)\b/i;
+const RESPONSIVE_TOKEN = /^(?:narrow|mobile)$/i;
 const RESPONSIVE_EVIDENCE = /\b(?:setViewportSize|viewport\s*:|matchMedia\s*\(|innerWidth|screen\.width|(?:sm|md|lg):(?:hidden|block|flex|grid)\b)|@media\b/i;
 const ABSENCE_ASSERTION = /toHaveCount\(\s*0\s*\)|\.not\s*\.\s*(?:toBeInTheDocument|toBeVisible|toBeAttached|toExist)\s*\(|\.\s*(?:toBeNull|toBeHidden)\s*\(/;
 const ABSENCE_MATCHER = /^\s*(\.not\s*)?\.\s*(toHaveCount|toBeInTheDocument|toBeVisible|toBeAttached|toExist|toBeNull|toBeHidden)\s*\(/;
@@ -19,6 +19,12 @@ const COUNT_ONE = /(?:toHaveCount|toHaveLength)\(\s*1\s*\)/;
 const LAYOUT_SURFACE = /\b(?:card|metric|summary)\b/i;
 const PROOF_CLASSES = new Set(["responsive", "absence", "layout"]);
 const SHA = /^[a-f0-9]{40}$/;
+
+/** Match a responsive name token across words, underscores, and camel/Pascal case. */
+function hasResponsiveName(name) {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/).some((part) => RESPONSIVE_TOKEN.test(part));
+}
 
 function addedLines(file) {
   if (Array.isArray(file?.added)) return file.added;
@@ -79,7 +85,7 @@ function responsiveStoryCandidates(file, source, changedLines) {
   const exported = /\bexport\s+const\s+([A-Z][\w$]*)[^=]*=\s*\{/g;
   for (const match of source.matchAll(exported)) {
     const name = match[1];
-    if (!RESPONSIVE_NAME.test(name)) continue;
+    if (!hasResponsiveName(name)) continue;
     const open = source.indexOf("{", match.index);
     const close = matchingBrace(source, open);
     const block = source.slice(open, close + 1);
@@ -159,7 +165,7 @@ export function testIntegrityCandidates(files, read) {
     for (const entry of changedLines) {
       const context = nearby(sourceLines, entry.line, 4);
       const caseName = nearestCase(sourceLines, entry.line);
-      if (!STORY_FILE.test(file.path) && (RESPONSIVE_NAME.test(caseName) || RESPONSIVE_EVIDENCE.test(entry.text))
+      if (!STORY_FILE.test(file.path) && (hasResponsiveName(caseName) || RESPONSIVE_EVIDENCE.test(entry.text))
         && /\b(?:it|test)\b/.test(nearby(sourceLines, entry.line))) {
         found.push(candidate("responsive", file.path, entry.line, caseName,
           "changed test covers a narrow or mobile state"));
