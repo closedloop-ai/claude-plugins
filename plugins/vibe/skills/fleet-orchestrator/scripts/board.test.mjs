@@ -173,10 +173,17 @@ test('ready and push-check require the matching source receipt and render every 
   const missing = run([dir, 'writer', 'receipt-w', '--ready', head]);
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /lane-selection receipt/);
-  writeLaneReceipt(wt, head, [
+  const receiptFile = writeLaneReceipt(wt, head, [
     { command: 'pnpm test:unit', reason: 'qa-impact selected changed unit coverage' },
     { command: 'pnpm test:e2e', reason: 'changed route selected browser boundary coverage' },
   ]);
+  const validReceipt = readFileSync(receiptFile, 'utf8');
+  writeFileSync(receiptFile, JSON.stringify({ ...JSON.parse(validReceipt),
+    firstCandidateSource: { ...JSON.parse(validReceipt).firstCandidateSource, head: 'f'.repeat(40) } }));
+  const outsideHistory = run([dir, 'writer', 'receipt-w', '--ready', head]);
+  assert.equal(outsideHistory.status, 2);
+  assert.match(outsideHistory.stderr, /first-candidate head is unreadable or outside current source ancestry/);
+  writeFileSync(receiptFile, validReceipt);
   assert.equal(run([dir, 'writer', 'receipt-w', '--ready', head]).status, 0);
   const page = readFileSync(path.join(dir, 'board.md'), 'utf8');
   assert.match(page, /receipt-w: pnpm test:unit: qa-impact selected changed unit coverage/);

@@ -126,10 +126,72 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   const followup = readLaneSelectionReceipt(worktree);
   assert.deepEqual(followup.selection, { kind: "qa-impact", key: selection.laneKey });
   assert.match(followup.lanes[0].reason, /qa-impact Lanes only/);
+  assert.deepEqual(laneSelectionReceiptProblems(followup, sourceIdentity(worktree), worktree), [],
+    "a same-history followup receipt remains valid");
   assert.equal(run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", report).status, 2,
     "followup receipts retain that the first candidate already ran");
   const unsupportedReceipt = { ...followup, selection: { kind: "code-tests", key: "a".repeat(64) }, lanes: [] };
   assert.match(laneSelectionReceiptProblems(unsupportedReceipt, sourceIdentity(worktree)).join("\n"), /selection kind/);
+  const receiptFile = path.join(worktree, ".git", "vibe-lane-selection.json");
+  const unreadable = { ...followup, firstCandidateSource: { ...followup.firstCandidateSource, head: "f".repeat(40) } };
+  writeFileSync(receiptFile, JSON.stringify(unreadable));
+  const missingHead = run("check", "--worktree", worktree, "--phase", "followup", "--impact", impact);
+  assert.equal(missingHead.status, 2);
+  assert.match(missingHead.stderr, /first-candidate head is unreadable or outside current source ancestry/);
+  assert.match(laneSelectionReceiptProblems(unreadable, sourceIdentity(worktree), worktree).join("\n"), /outside current source ancestry/);
+  writeFileSync(receiptFile, JSON.stringify(followup));
+  writeFileSync(path.join(worktree, "src/a.mjs"), "export const value = 3;\n");
+  const dirtyImpact = path.join(root, "dirty-impact.json");
+  writeFileSync(dirtyImpact, JSON.stringify({ ...request, lastQa: { boundary: followHead } }));
+  const dirtySource = sourceIdentity(worktree);
+  const dirtyPass = run("record", "--worktree", worktree, "--head", followHead, "--source", JSON.stringify(dirtySource),
+    "--phase", "followup", "--impact", dirtyImpact, "--command", first, "--result", "pass");
+  assert.equal(dirtyPass.status, 0, dirtyPass.stderr);
+  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--impact", dirtyImpact).status, 0,
+    "dirty content on an ancestor HEAD retains exact source identity");
+});
+
+test("an unrelated first-candidate history cannot authorize a followup receipt", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-lane-lineage-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  mkdirSync(path.join(worktree, "src"), { recursive: true });
+  writeFileSync(path.join(worktree, "src/a.mjs"), "export const value = 1;\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "first"], home);
+  const firstHead = git(worktree, ["rev-parse", "HEAD"], home);
+  const command = 'node -e "0"';
+  const report = path.join(root, "report.txt");
+  writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${command}\n`);
+  const reporter = mockLaneReporter(root, readFileSync(report, "utf8"));
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], {
+    encoding: "utf8", env: { ...process.env, HOME: home, PATH: reporter.path },
+  });
+  assert.equal(run("record", "--worktree", worktree, "--head", firstHead, "--phase", "first-candidate",
+    "--command", command, "--result", "pass", "--report", report).status, 0);
+  assert.equal(run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", report).status, 0);
+  const firstReceipt = readLaneSelectionReceipt(worktree);
+  git(worktree, ["checkout", "--quiet", "--orphan", "unrelated"], home);
+  git(worktree, ["rm", "-rf", "--quiet", "."], home);
+  mkdirSync(path.join(worktree, "src"), { recursive: true });
+  writeFileSync(path.join(worktree, "src/a.mjs"), "export const value = 10;\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "unrelated base"], home);
+  const boundary = git(worktree, ["rev-parse", "HEAD"], home);
+  writeFileSync(path.join(worktree, "src/a.mjs"), "export const value = 11;\n");
+  git(worktree, ["commit", "--quiet", "-am", "unrelated change"], home);
+  const request = { lastQa: { boundary }, evidence: { screens: [] }, featureMap: { entries: [] },
+    laneSelections: { files: { "src/a.mjs": [command] } } };
+  assert.deepEqual(qaImpactRequest(worktree, request).lanes, [command], "the new branch's impact input is otherwise valid");
+  const impact = path.join(root, "impact.json");
+  writeFileSync(impact, JSON.stringify(request));
+  const refused = run("check", "--worktree", worktree, "--phase", "followup", "--impact", impact);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /first-candidate head is unreadable or outside current source ancestry/);
+  const rebound = { ...firstReceipt, source: sourceIdentity(worktree), phase: "followup",
+    selection: { kind: "qa-impact", key: "a".repeat(16) } };
+  assert.match(laneSelectionReceiptProblems(rebound, sourceIdentity(worktree), worktree).join("\n"), /outside current source ancestry/);
 });
 
 test("the PR-open check refuses a diff naming desktop-renderer with no recorded run (pre-PR Vitest lanes ruling)", (t) => {

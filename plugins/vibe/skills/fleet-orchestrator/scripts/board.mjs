@@ -330,7 +330,7 @@ function readyLaneSelection(row, ready, receiptFile) {
     source = current === ready ? sourceIdentity(row.worktree, ready) : receipt?.source;
     if (!source?.head?.startsWith(ready) && !ready.startsWith(source?.head ?? "")) throw new Error("lane receipt source head does not match the ready SHA");
   }
-  const problems = laneSelectionReceiptProblems(receipt, source);
+  const problems = laneSelectionReceiptProblems(receipt, source, row.where === "remote" ? undefined : row.worktree);
   if (problems.length) throw new Error(`lane-selection receipt refused: ${problems.join("; ")}`);
   return receipt;
 }

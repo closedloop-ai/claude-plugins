@@ -311,7 +311,7 @@ export function readLaneSelectionReceipt(worktree) {
 }
 
 /** Shape and exact-source problems; lane-selection semantics remain owned by this script. */
-export function laneSelectionReceiptProblems(receipt, source) {
+export function laneSelectionReceiptProblems(receipt, source, worktree) {
   const problems = [];
   if (receipt?.schemaVersion !== RECEIPT_SCHEMA_VERSION) problems.push("lane receipt schemaVersion must be 1");
   if (!validSourceIdentity(receipt?.source)) problems.push("lane receipt source identity is invalid");
@@ -321,6 +321,9 @@ export function laneSelectionReceiptProblems(receipt, source) {
     problems.push("lane receipt needs a valid first-candidate source identity");
   } else if (receipt?.phase === "first-candidate" && !sameSource(receipt.firstCandidateSource, source)) {
     problems.push("first-candidate receipt history does not match its source");
+  } else if (receipt?.phase === "followup" && worktree) {
+    try { git(worktree, ["merge-base", "--is-ancestor", receipt.firstCandidateSource.head, source.head]); }
+    catch { problems.push("followup first-candidate head is unreadable or outside current source ancestry"); }
   }
   const expectedKind = receipt?.phase === "first-candidate" ? "ci-report" : "qa-impact";
   if (receipt?.selection?.kind !== expectedKind) {
@@ -351,7 +354,7 @@ function writeLaneSelectionReceipt(worktree, source, phase, selected) {
     ...(phase === "first-candidate" ? { firstCandidateSource: source }
       : prior?.firstCandidateSource ? { firstCandidateSource: prior.firstCandidateSource } : {}),
   };
-  const problems = laneSelectionReceiptProblems(receipt, source);
+  const problems = laneSelectionReceiptProblems(receipt, source, worktree);
   if (problems.length) throw new Error(problems.join("; "));
   const file = laneSelectionReceiptFile(worktree);
   const temp = `${file}.${process.pid}.tmp`;
@@ -375,8 +378,12 @@ function selectedScope(values, command, source) {
   if (values.phase === "first-candidate" && priorReceipt?.firstCandidateSource) {
     throw new Error("the successful first-candidate receipt already exists; later source uses --phase followup");
   }
-  if (values.phase === "followup" && !validSourceIdentity(priorReceipt?.firstCandidateSource)) {
-    throw new Error("followup selection requires a successful first-candidate receipt");
+  if (values.phase === "followup") {
+    if (!validSourceIdentity(priorReceipt?.firstCandidateSource)) {
+      throw new Error("followup selection requires a successful first-candidate receipt");
+    }
+    try { git(values.worktree, ["merge-base", "--is-ancestor", priorReceipt.firstCandidateSource.head, source.head]); }
+    catch { throw new Error("followup first-candidate head is unreadable or outside current source ancestry"); }
   }
   if (values.impact) {
     const impact = qaImpactRequest(values.worktree, JSON.parse(readFileSync(values.impact, "utf8")));

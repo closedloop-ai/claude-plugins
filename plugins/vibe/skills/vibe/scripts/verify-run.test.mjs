@@ -18,7 +18,7 @@ function router(routes, calls = []) {
 }
 
 const LANE = "pnpm --filter app test";
-const REPORT = `Lanes:\n    ${LANE}\n`;
+const REPORT = `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${LANE}\n`;
 const PACKAGE = JSON.stringify({ scripts: { "check:source-gates": "x", "typecheck:affected": "y", "test:lanes": "z" } });
 
 function harness({ installed = true, extra = [], files = { "package.json": PACKAGE, "apps/app/a.tsx": "x" }, calls = [], controllerOptions = {} } = {}) {
@@ -149,7 +149,7 @@ test("lanes: a lane this machine cannot run is not-run with its reason, a main f
   const { controller } = harness({
     files,
     extra: [
-      ["run-bounded.mjs 300 pnpm test:lanes", ok(lanes.map((lane) => `    ${lane}\n`).join(""))],
+      ["run-bounded.mjs 300 pnpm test:lanes", ok(`OUTSIDE THE TURBO GRAPH: ${lanes.length} lane(s).\n${lanes.map((lane) => `    ${lane}\n`).join("")}`)],
       ["pre-pr-lanes.mjs check", ok(check)],
     ],
   });
@@ -330,7 +330,7 @@ test("a run that was neither retried nor waited carries no load block, and a fai
 
 // ISS-13587: independent lanes run in a bounded pool; the evidence contract is unchanged.
 const POOL_LANES = ["pnpm test:lint", "pnpm --filter app test", "pnpm test:ci", "pnpm test:e2e"];
-const POOL_REPORT = `Lanes:\n${POOL_LANES.map((lane) => `    ${lane}`).join("\n")}\n`;
+const POOL_REPORT = `OUTSIDE THE TURBO GRAPH: ${POOL_LANES.length} lane(s).\n${POOL_LANES.map((lane) => `    ${lane}`).join("\n")}\n`;
 const POOL_CHECK = POOL_LANES.map((lane) => `MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}"\n`).join("") + "pre-pr lanes: 4 lanes, 4 missing\n";
 const POOL_FILES = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
 
