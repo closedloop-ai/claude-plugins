@@ -23,6 +23,15 @@ runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
 
 
+def test_default_model_uses_shared_policy_at_low_effort(tmp_path: Path) -> None:
+    """Direct runner invocations agree with the nightly without copying its ID."""
+    policy = json.loads(Path(__file__).with_name("model-policy.json").read_text())
+    assert runner.default_codex_model() == policy["codexModel"]
+    args = runner.exec_args(runner.default_codex_model(), tmp_path, tmp_path / "reply.txt")
+    assert args[args.index("-m") + 1] == policy["codexModel"]
+    assert 'model_reasoning_effort="low"' in args
+
+
 def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None:
     """An outer interrupt can stop a model process started by a worker thread."""
     marker = tmp_path / "grandchild.pid"
@@ -178,7 +187,7 @@ def test_claude_eval_uses_an_identified_uncommitted_snapshot(tmp_path: Path) -> 
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 109
+    assert len(found) == 121
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -190,6 +199,17 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
     assert "my name is the product manager" in next(
         c["prompt"] for c in found if "real-exchange" in c["name"]
     )
+
+
+def test_takeover_prompts_rewrite_the_installed_codex_skill() -> None:
+    prompts = sorted(runner.EVALS.glob("orch-pr-takeover-*/prompt.md"))
+    assert len(prompts) == 6
+    for path in prompts:
+        original = path.read_text()
+        assert "(`vibe:pr-takeover`)" in original, path
+        converted = runner.rewrite_skill_invocations(original)
+        assert "(`$pr-takeover`)" in converted, path
+        assert "(`vibe:pr-takeover`)" not in converted, path
 
 
 def test_run_source_identity_comes_from_the_copied_vibe_payload() -> None:
@@ -455,6 +475,19 @@ def test_plugin_version_accepts_either_runtime_manifest(tmp_path: Path, layout: 
     manifest.parent.mkdir()
     manifest.write_text(json.dumps({"version": "1.2.3"}))
     assert runner.plugin_version(tmp_path) == "1.2.3"
+
+
+def test_split_keys_blocking_grader_honors_multiline_flag(tmp_path: Path) -> None:
+    case = next(
+        c for c in runner.cases() if c["name"] == "product-manager-flag-key-sprawl-blocked"
+    )
+    reply = (
+        "REPLY: This is the review result.\n"
+        "blocking | branches-list.tsx | use one behavior key instead of three split rollout states"
+    )
+    checks, _ = runner.deterministic(case, reply, tmp_path, [])
+    split_keys = next(check for check in checks if check["grader"] == "split-keys-blocking")
+    assert split_keys["passed"]
 
 
 def test_every_model_grader_has_a_deterministic_or_wording_route() -> None:

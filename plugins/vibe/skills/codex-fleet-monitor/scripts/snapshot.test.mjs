@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { writeLoopbackSsh, writeRemoteCodexStub } from '../../fleet-orchestrator/scripts/fleet-test-support.mjs';
 
 const SNAPSHOT = fileURLToPath(new URL('./snapshot.sh', import.meta.url));
+const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const TIMEOUT = { timeout: 60_000 };
 
 // A fake gh: answers each call snapshot.sh makes while <root>/gh-mode says ok, prints nothing and fails otherwise.
@@ -50,13 +53,15 @@ function fixture() {
   return { root, work, run };
 }
 
+const withoutUsageReadMetadata = (text) => text.replace(/ read=[^\s]+ source=[^\s]+/g, '');
+
 test('a blank gh read keeps the last value for each key, so it is not an event', TIMEOUT, () => {
   const f = fixture();
   const good = f.run('ok');
   assert.match(good, /^open-prs acme\/app 5 7 $/m);
   assert.match(good, /^pr acme\/app#42 OPEN abcdef12 APPROVED MERGEABLE comments=2 reviews=1 inline=3 threads=0 checks=/m);
-  assert.equal(f.run('fail'), good);
-  assert.equal(f.run('ok'), good);
+  assert.equal(withoutUsageReadMetadata(f.run('fail')), withoutUsageReadMetadata(good));
+  assert.equal(withoutUsageReadMetadata(f.run('ok')), withoutUsageReadMetadata(good));
 });
 
 test('the recovery events log is a snapshot line, so a recovery action wakes the watcher', TIMEOUT, () => {
@@ -69,6 +74,56 @@ test('the recovery events log is a snapshot line, so a recovery action wakes the
   assert.match(f.run('ok'), /^recovery local 0 -$/m);
   writeFileSync(join(state, '.fleet-recovery', 'events.log'), '2026-01-01T00:00:00.000Z EVENT recovery w1 resumed attempt=1/3 turn=t2\n');
   assert.match(f.run('ok'), /^recovery local 1 recovery w1 resumed attempt=1\/3 turn=t2$/m);
+});
+
+test('AC-005 watcher snapshot reports exact stale writer line and clears it after load evidence updates', TIMEOUT, () => {
+  const f = fixture();
+  const state = join(f.root, 'state');
+  mkdirSync(state);
+  writeFileSync(join(f.work, 'config.env'), `LOCAL_STATE_DIR=${state}\nCLAUDE_USAGE=0\n`);
+  writeFileSync(join(f.work, 'sessions.txt'), 'local w1 T1\n');
+  writeFileSync(join(f.work, 'prs.txt'), '');
+  const loaded = loadedSkillEvidence('T1', 'codex', PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
+  const actor = { threadId: 'T1', cwd: '/same/worktree', loadedSkill: { ...loaded, version: '1.1.38' } };
+  writeFileSync(join(state, 'w1.json'), JSON.stringify(actor));
+  const first = f.run('ok');
+  assert.ok(first.split('\n').includes(`SKILL-STALE w1 1.1.38 -> ${loaded.version}`), first);
+  writeFileSync(join(state, 'w1.json'), JSON.stringify({ ...actor, loadedSkill: loaded }));
+  assert.doesNotMatch(f.run('ok'), /SKILL-STALE/);
+  writeFileSync(join(state, 'w1.json'), JSON.stringify({ ...actor, loadedSkill: { ...actor.loadedSkill, actorId: 'other' } }));
+  assert.doesNotMatch(f.run('ok'), /SKILL-STALE/, 'wrong-actor evidence is never attributed to this writer');
+});
+
+test('AC-005 remote watcher ships its checker imports and compares the owning host installation', TIMEOUT, () => {
+  const f = fixture();
+  const state = join(f.root, 'remote');
+  mkdirSync(state);
+  writeLoopbackSsh(join(f.root, 'bin'), join(f.root, 'ssh-args'));
+  writeRemoteCodexStub(join(f.root, 'bin'), PLUGIN_ROOT);
+  writeFileSync(join(f.work, 'config.env'), `REMOTE_HOST=loopback\nREMOTE_STATE_DIR=${state}\nREMOTE_SHELL="bash -c"\nCLAUDE_USAGE=0\n`);
+  writeFileSync(join(f.work, 'sessions.txt'), 'remote w1 T1\n');
+  writeFileSync(join(f.work, 'prs.txt'), '');
+  const loaded = loadedSkillEvidence('T1', 'codex', PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
+  writeFileSync(join(state, 'w1.json'), JSON.stringify({ threadId: 'T1', cwd: '/remote/worktree', loadedSkill: { ...loaded, version: '1.1.38' } }));
+  const output = f.run('ok');
+  assert.ok(output.split('\n').includes(`SKILL-STALE w1 1.1.38 -> ${loaded.version}`), output);
+  assert.ok(existsSync(join(state, '.fleet-monitor/vibe/scripts/loaded-skill.mjs')));
+  assert.doesNotMatch(output, /^(?:PATH|HOME|SHELL)=/m, 'a remote env wrapper must execute a command, never print the environment');
+});
+
+test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, () => {
+  const f = fixture();
+  const state = join(f.root, 'remote'); mkdirSync(state);
+  const archive = join(f.root, 'idle.tar');
+  writeLoopbackSsh(join(f.root, 'bin'), join(f.root, 'ssh-args'), { archive });
+  writeFileSync(join(f.work, 'config.env'), `REMOTE_HOST=loopback\nREMOTE_STATE_DIR=${state}\nREMOTE_SHELL="bash -c"\nCLAUDE_USAGE=0\n`);
+  writeFileSync(join(f.work, 'sessions.txt'), ''); writeFileSync(join(f.work, 'prs.txt'), '');
+  f.run('ok');
+  const entries = execFileSync('tar', ['-tf', archive], { encoding: 'utf8', timeout: 5000 }).trim().split('\n');
+  assert.deepEqual(entries, ['liveness.mjs', 'ratelimit.mjs', 'recover.mjs', 'usage-state.mjs', 'work-dir.mjs']);
+  const baseline = execFileSync('tar', ['-C', fileURLToPath(new URL('.', import.meta.url)), '-cf', '-', ...entries],
+    { timeout: 5000, env: { ...process.env, COPYFILE_DISABLE: '1' } });
+  assert.equal(readFileSync(archive).byteLength, baseline.byteLength, 'zero additional idle transfer bytes');
 });
 
 /** A work dir with one local session and no PRs; its heartbeat file and supervisor lock are the fixture's to write. */
@@ -123,7 +178,7 @@ test('an approved PR with unresolved review threads is BLOCKED, apart from its r
   writeFileSync(join(f.root, 'threads'), '2\n');
   const blocked = f.run('ok');
   assert.match(blocked, /^pr acme\/app#42 OPEN abcdef12 APPROVED MERGEABLE comments=2 reviews=1 inline=3 threads=2 checks=.*pass.* BLOCKED\(unresolved threads\)$/m);
-  assert.equal(f.run('fail'), blocked, 'a failed read keeps the block');
+  assert.equal(withoutUsageReadMetadata(f.run('fail')), withoutUsageReadMetadata(blocked), 'a failed read keeps the block');
   writeFileSync(join(f.root, 'threads'), '0\n');
   const clear = f.run('ok');
   assert.match(clear, /^pr acme\/app#42 .* threads=0 checks=/m);
@@ -151,7 +206,7 @@ test('an open PR needing its writer with no push for 45 minutes is STALE-PR, how
 test('the Claude usage line reads claude -p /usage on the Codex bands, at most once per CLAUDE_USAGE_SECONDS', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.root, 'claude-usage'), 'Current session: 51% used \u00b7 resets Oct 22 at 12:39pm (America/Chicago)\nCurrent week (all models): 69% used \u00b7 resets Oct 27 at 9am (America/Chicago)\n');
-  assert.match(f.run('ok'), /^claude-usage local session=under80% week=under80%$/m);
+  assert.match(f.run('ok'), /^claude-usage local session=under80% week=under80% read=\S+ source=snapshot$/m);
   writeFileSync(join(f.root, 'claude-usage'), 'Current session: 91% used \u00b7 resets Oct 22 at 12:39pm (America/Chicago)\nCurrent week (all models): 69% used\n');
   assert.match(f.run('ok'), /^claude-usage local session=under80%/m, 'the cached line holds within the interval');
 });
@@ -221,6 +276,10 @@ test('board lines are snapshot lines: a scope change the writer has not acknowle
   git('branch', '--set-upstream-to=pushed');
   const boardRun = (...args) => spawnSync(process.execPath, [board, f.work, ...args], { encoding: 'utf8' });
   assert.equal(boardRun('writer', 'w1', '--worktree', tree).status, 0);
+  writeFileSync(join(f.work, 'plugin-version.json'), JSON.stringify({
+    status: 'current',
+    loadedSkill: loadedSkillEvidence('snapshot-orchestrator', 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved),
+  }));
   assert.equal(boardRun('deliver', 'item-4', '--kind', 'scope', '--to', 'w1', '--text', 'match legacy Archived Projects').status, 0);
   assert.equal(boardRun('told', 'item-4', 'w1', '--now', new Date(Date.now() - 20 * 60_000).toISOString()).status, 0);
   assert.match(f.run('ok'), /^board UNACKED-SCOPE item-4 w1$/m);

@@ -9,6 +9,8 @@ You review one vibe session's diff in the target repository's worktree. The
 work was built by the person running the session with an agent and will be
 taken over by engineering. Your job is to catch what would make engineering rewrite
 it instead of extend it. You never edit files.
+Read `../skills/vibe/references/review-premises.md` before any finding. Verify
+every material premise and include its evidence in `data.findings[].premises`.
 
 ## Inputs
 
@@ -38,6 +40,21 @@ it instead of extend it. You never edit files.
 
 closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): make its required calls for your role (`code_symbols` and `search_nodes` to find an existing component a hand-rolled one duplicates, `code_callers` and `code_importers` to see which screens render a changed shared component and whether two of them share a parent), and end your result with the Graph block.
 
+## The findings file
+
+When `../skills/handoff/scripts/guardrails-gate.mjs` exists, run
+`node ../skills/handoff/scripts/guardrails-gate.mjs --worktree "<wt>" [--base <captured main sha>]`
+first and read its findings file (`../skills/vibe/references/guardrails-findings.md`
+holds the shape). It wraps the repository's Biome and `pnpm check:source-gates`
+and `diff-rules.mjs`, and scans added lines for tokens, conventions, changed
+assertions in repaired tests and new exports another file already owns. Report
+each finding it lists, confirmed by reading the line. The findings file adds
+findings and replaces none of the numbered checks below: run every one of them
+whether or not the script ran, and treat a check the file does not name as not
+checked; an empty `findings` list proves nothing about a check that did not run,
+and `checks_skipped` only names the ones it knows it skipped. Without the
+script, run the checks below unchanged.
+
 ## Check, for added or changed lines only
 
 Before the numbered review, require the inventory's `forbiddenPaths` gate to
@@ -60,7 +77,7 @@ path merely because another rule describes how its content should look.
    color, shadow or dark override, read which tokens the touched surface
    actually bundles: each stylesheet it loads or inlines and, in each, its
    `:root` and `.dark` (or `prefers-color-scheme: dark`) blocks
-   (`guardrails.md`, "Check the bundled tokens first"). A raw value, a page-local custom property re-declaring a
+   (`guardrails-ui.md`, "Check the bundled tokens first"). A raw value, a page-local custom property re-declaring a
    bundled token's value, or a dark override of a value the token's `.dark`
    block already defines, where that bundled token exists, is blocking, never
    advisory; quote the token's `:root` and `.dark` lines as evidence. Check
@@ -108,6 +125,20 @@ path merely because another rule describes how its content should look.
    Any component that composes or inherits from a shared parent keeps only
    what is specific to it: two children of one parent that each implement the
    same behavior is blocking. Code outside its logged `Owner` is advisory.
+   Compare both arms of every changed feature flag: when the old and new UI
+   perform the same domain action, they must call the same domain hook or a
+   shared lower-level owner. A second copied create/update flow is blocking;
+   compare mutation inputs, cache invalidation, errors and success behavior.
+   Inspect every production prop added to show a Storybook state: if real
+   callers never pass it and the product cannot persist or reach that state,
+   remove the prop and model the story at a real supported boundary.
+   Inspect cross-slice imports in every changed adapter against the providing
+   feature's ownership boundary; importing another slice's private component
+   is blocking even when the Storybook file sits beside a valid component.
+   For sibling children, compare failure alerts, reset/dismiss behavior,
+   defaults, owner fields and confirmation UI as well as state handlers; the
+   shared parent owns identical mechanics, with distinct copy/data adapters
+   left in the children. Cite both children and the parent slot.
    Run and quote:
    - Same capability component: treat every `shared-capability-owner` diff
    finding as blocking when two or more page-level adapters compose it
@@ -126,7 +157,9 @@ path merely because another rule describes how its content should look.
      or consumed, `rg` the children and the owning feature package for a
      local function, map or constant doing the same job (a local partition
      or group builder, a duplicated band or status icon map, a private copy
-     of a shared helper). Each is blocking.
+     of a shared helper). Each is blocking. For a `duplicate-helper` diff
+     finding, cite both the added function and the identical function in
+     another changed file or the base tree; the added copy is the finding.
    - Leftovers (`design-pass.md`, "Red flags"): list every file the diff
      deleted, renamed or extracted from with
      `git -C <wt> diff --name-status -M <base>`, and every export it removed.
@@ -137,6 +170,9 @@ path merely because another rule describes how its content should look.
      arm are each blocking, cited at `file:line`. So is a changed literal or
      contract value whose old value `rg` still finds anywhere in the repo,
      and a test locator widened to a page-wide match that is not unique.
+   - Adjacent comments: for each edited function, prop or callsite, read its
+     nearby comments and JSDoc against the new behavior. A comment describing
+     a retired path, old owner or impossible state is a blocking stale comment.
 9. Tests and checks: an added or deleted test file (`*.test.*`, `*.spec.*`,
    `__tests__/`, `e2e/`, or a snapshot or fixture a test reads), a changed
    snapshot, or a changed test that is not a pure repair is blocking in the
@@ -180,6 +216,16 @@ path merely because another rule describes how its content should look.
      test or a sibling production helper) instead of a literal or the spec's
      words is blocking, because it agrees with the code it should check
      (`vibe-change-worker.md`, "Tests: repair, don't author"), in a repair too.
+   - Recompute the inventory's responsive, absence and layout candidates. A
+     narrow/mobile test without a desktop-width failure, an absence test whose
+     owner is mocked or which asserts before a positive mounted signal, or a
+     metric/summary/card test with only a count assertion is blocking. Match
+     each one to its exact `testIntegrityProofs` entry and confirm the recorded
+     mutation failed at the named assertion, the restored case passed, and the
+     proof covers the current tested source.
+   - Layout coverage names the established grid or official prototype story
+     and asserts containment or geometry. `toHaveCount(1)` or `toHaveLength(1)`
+     may preserve cardinality but can never establish card width or placement.
    - Deleting a replaced (not removed) component's tests ports each case its
      successor still enforces or cites the retiring ruling.
    - Open what each change log line that cleared an
@@ -193,7 +239,7 @@ path merely because another rule describes how its content should look.
      renumbered criterion or test name that drops the recorded source
      provenance is blocking; preserve the source's existing identifier instead
      of creating one for the test.
-10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
+10. Storybook taxonomy (`guardrails-ui.md`, "Storybook taxonomy"): read the
     repo's `apps/storybook/TAXONOMY.md` as the session's base has it; the
     inventory's `storybookScheme` names that base's scheme. A new story file
     titled under or tagged for a frozen v1.0 root (a `<Level> v1.0/` root or
@@ -220,7 +266,7 @@ path merely because another rule describes how its content should look.
     route-level page component, or several page sections composed into one
     flow) titled under `Composites/` instead of named `Surfaces/` stories per
     the doc is blocking.
-    Version History (`guardrails.md`, "Storybook taxonomy"): diff
+    Version History (`guardrails-ui.md`, "Storybook taxonomy"): diff
     `apps/storybook/stories/start-here-version-history.stories.tsx` and
     `apps/storybook/package.json` against the base. More than one new entry,
     an entry whose version is not the next after the base's `version`, a
@@ -341,3 +387,7 @@ decision`; handoff records it for engineering
 findings" when there are none. Do not pad the list. End
 with the Graph block. Your findings go to the orchestrator, which routes the
 fixes to a worker; the person is not involved.
+In the launcher structured result, set `data.findings` to the current-source
+findings only: an array of `{id, blocking, evidence, premises}` objects, or `[]` after a
+clean recheck. The launcher receipt and graph trace bind this list to the
+source; a narrative "No findings" without the array cannot clear handoff.

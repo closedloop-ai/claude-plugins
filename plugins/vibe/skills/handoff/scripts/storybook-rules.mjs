@@ -3,11 +3,14 @@
 // green: a release that reused a version or bumped the wrong semver level, new
 // stories in a frozen root, a no-op handler on an editable story, hand-rolled
 // table cells, a missing controls decision hidden by a gate allowlist, a
-// lifecycle tag outside its roots, a computed options list, and a story kept
-// alive by a story-local copy of a deleted component. diff-rules.mjs runs them.
+// lifecycle tag outside its roots, a computed options list, an unregistered
+// viewport name, and a story kept alive by a story-local copy of a deleted
+// component. diff-rules.mjs runs them.
 //
-// Every repository fact lives in the declaration; a rule whose key is absent
-// does not run, and a repository with no declaration runs none:
+// Every repository fact lives in the declaration, and a repository with no
+// declaration runs none. Viewport registration is the one intrinsic Storybook
+// contract: whenever the declaration exists it recognizes MINIMAL_VIEWPORTS,
+// standard preview config, and optional additional config paths below:
 //   {"release": {"versionFile": "apps/storybook/package.json", "versionField": "version",
 //                "historyFiles": ["apps/storybook/stories/start-here-version-history*"]},
 //    "frozenRoots": {"titlePattern": "^[^/]+ v1\\.0/", "tags": ["deprecated"]},
@@ -16,6 +19,7 @@
 //    "handRolledCells": {"patterns": ["<td\\b"], "canonical": "TableTextCell from ..."},
 //    "controlsDecision": {"comment": "No controls:", "exemptTags": ["deprecated"], "allowlist": "..."},
 //    "literalOptions": true,
+//    "viewportOptions": {"configPaths": ["apps/storybook/config/**"]},
 //    "storySupportPaths": ["apps/storybook/stories/**"],
 //    "checks": [{"name": "validate-catalog", "command": "pnpm ...", "paths": ["..."]}]}
 // Paths are path-gates.mjs globs. `checks` become required tests whose path is
@@ -46,6 +50,8 @@ const STRING_LITERAL = /(["'`])((?:(?!\1).)*)\1/g;
 const EXPORTED_NAME = /\bexport\s+(?:default\s+)?(?:function|const|class)\s+([A-Z][\w$]*)/g;
 const LEVELS = ["patch", "minor", "major"];
 const LISTED = 4;
+const BUILTIN_VIEWPORTS = new Set(["mobile1", "mobile2", "tablet", "desktop"]);
+const STANDARD_VIEWPORT_CONFIG = /(?:^|\/)\.storybook\/preview\.[cm]?[jt]sx?$/;
 
 /** The parsed declaration from `read` (null when absent), or `{problem}` when it cannot be used. */
 export function readStorybookRules(read) {
@@ -64,6 +70,9 @@ export function readStorybookRules(read) {
         noOp: regex(raw.noOpHandler?.pattern),
         cells: (raw.handRolledCells?.patterns ?? []).map(regex),
         supportPaths: Array.isArray(raw.storySupportPaths) ? raw.storySupportPaths.map(pathMatcher) : null,
+        viewportOptionPaths: Array.isArray(raw.viewportOptions?.configPaths)
+          ? raw.viewportOptions.configPaths.map(pathMatcher)
+          : [],
       },
     };
   } catch (error) {
@@ -94,6 +103,7 @@ export function checkStorybookRules(files, repo, logged, add) {
     checkAddedLines(file, head, config, logged, add);
     checkControlsDecision(file, head, config.controlsDecision, logged, add);
     checkTagRoots(file, head, config.tagRootPatterns, logged, add);
+    checkViewportNames(file, head, repo, config, add);
   }
   checkStoryCopies(files, repo, config, logged, add);
 }
@@ -339,6 +349,122 @@ function checkTagRoots(file, head, tagRootPatterns, logged, add) {
     if (!roots.test(title)) {
       add("story-tag-root", file.path, lineOf(head, "tags:"), `tags a story ${tag} under ${title}, outside the roots that tag is for (${roots.source})`, `use the tag the repo's taxonomy gives this root, or record \`Story tag: <path>: <ruling>\``);
     }
+  }
+}
+
+function closingBrace(source, open) {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}" && --depth === 0) return index;
+  }
+  return -1;
+}
+
+function objectAfter(source, offset) {
+  const open = source.indexOf("{", offset);
+  const close = open < 0 ? -1 : closingBrace(source, open);
+  return close < 0 ? null : { open, close, text: source.slice(open, close + 1) };
+}
+
+function viewportBlocks(source) {
+  const blocks = [];
+  for (const match of source.matchAll(/\bviewport\s*:/g)) {
+    const block = objectAfter(source, match.index + match[0].length);
+    if (block) blocks.push(block);
+  }
+  return blocks;
+}
+
+function topLevelObjectKeys(block) {
+  const keys = [];
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < block.length; index += 1) {
+    const char = block[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      if (depth === 1) {
+        const end = block.indexOf(char, index + 1);
+        if (end > index && /^\s*:/.test(block.slice(end + 1))) keys.push(block.slice(index + 1, end));
+      }
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") depth -= 1;
+    else if (depth === 1 && /[A-Za-z_$]/.test(char) && (index === 0 || /[,{\s]/.test(block[index - 1]))) {
+      const match = /^([A-Za-z_$][\w$-]*)\s*:/.exec(block.slice(index));
+      if (match) keys.push(match[1]);
+    }
+  }
+  return keys;
+}
+
+function registeredViewportNames(source) {
+  const names = new Set();
+  for (const viewport of viewportBlocks(source)) {
+    const options = /\boptions\s*:/.exec(viewport.text);
+    if (!options) continue;
+    const block = objectAfter(viewport.text, options.index + options[0].length);
+    if (block) topLevelObjectKeys(block.text).forEach((name) => names.add(name));
+  }
+  return names;
+}
+
+function resolveLocalString(source, expression) {
+  const literal = /^(?:"([^"]+)"|'([^']+)'|`([^`]+)`)$/.exec(expression.trim());
+  if (literal) return literal[1] ?? literal[2] ?? literal[3];
+  const identifier = /^([A-Za-z_$][\w$]*)$/.exec(expression.trim())?.[1];
+  if (!identifier) return null;
+  const assigned = new RegExp(String.raw`\b(?:const|let|var)\s+${escapeRegExp(identifier)}\s*=\s*(["'\x60])([^"'\x60]+)\1`).exec(source);
+  return assigned?.[2] ?? null;
+}
+
+function requestedViewportNames(source) {
+  const requested = [];
+  for (const viewport of viewportBlocks(source)) {
+    for (const match of viewport.text.matchAll(/\b(value|defaultViewport)\s*:\s*((?:"[^"]+"|'[^']+'|`[^`]+`|[A-Za-z_$][\w$]*))/g)) {
+      const name = resolveLocalString(source, match[2]);
+      if (name) requested.push({ name, line: source.slice(0, viewport.open + match.index).split("\n").length });
+    }
+  }
+  return requested;
+}
+
+/** A changed story may request only a built-in or parameters.viewport.options name. */
+function checkViewportNames(file, head, repo, config, add) {
+  const requested = requestedViewportNames(head);
+  if (!requested.length) return;
+  const registered = new Set(BUILTIN_VIEWPORTS);
+  registeredViewportNames(head).forEach((name) => registered.add(name));
+  for (const configPath of [...repo.headFiles].filter((entry) => STANDARD_VIEWPORT_CONFIG.test(entry)
+    || config.viewportOptionPaths.some((matches) => matches(entry)))) {
+    registeredViewportNames(repo.head(configPath) ?? "").forEach((name) => registered.add(name));
+  }
+  for (const request of requested.filter(({ name }) => !registered.has(name))) {
+    add("story-viewport-unregistered", file.path, request.line,
+      `requests viewport ${JSON.stringify(request.name)}, which addon-vitest cannot resolve from MINIMAL_VIEWPORTS or parameters.viewport.options`,
+      `use mobile1, mobile2, tablet or desktop, or register ${JSON.stringify(request.name)} in parameters.viewport.options before relying on this story's play`);
   }
 }
 

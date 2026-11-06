@@ -8,7 +8,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from conftest import API_KEY, FakeClosedLoop, SCRIPTS, embedded, new_graph, refresh_body, serving
+from conftest import API_KEY, FakeClosedLoop, SCRIPTS, embedded, fake_cached_helper, new_graph, refresh_body, serving
 
 LEGACY_PAGE = ('<!doctype html><html><body><div class="wrap"><h1>PRD-9 dependency graph</h1>'
                '<div class="depgraph-block" data-refresh-url="http://127.0.0.1:8765/refresh?graph=prd-9&amp;'
@@ -236,20 +236,11 @@ def test_launcher_follows_plugin_update_after_old_cache_is_removed(graph, tmp_pa
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
-    def cached_helper(version):
-        script = (codex_home / "plugins" / "cache" / "closedloop-ai" / "closedloop-core" / version
-                  / "skills" / "prd-dependency-graph" / "scripts" / "refresh_server.py")
-        script.parent.mkdir(parents=True)
-        script.write_text("import json, sys\nprint(json.dumps({'version': %r, 'args': sys.argv[1:]}))\n" % version,
-                          encoding="utf-8")
-        return script
-
-    old_script = cached_helper("0.0.1")
+    old_script = fake_cached_helper(codex_home, "0.0.1")
     graph.server.install_launcher()
-    # Newer than this checkout's own version, which the launcher prefers on a tie.
     source_version = json.loads((SCRIPTS.parents[2] / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     newer = f"{int(source_version['version'].split('.')[0]) + 1}.0.0"
-    new_script = cached_helper(newer)
+    new_script = fake_cached_helper(codex_home, newer)
     shutil.rmtree(old_script.parents[3])
     launcher_env = dict(os.environ, PATH=os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"])
 

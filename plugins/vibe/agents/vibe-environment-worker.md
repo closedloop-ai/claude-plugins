@@ -45,6 +45,18 @@ Never self-declare continuation intent or borrow the publisher's lease.
 Publication readiness is not completed handoff E2E coverage: preserve reported
 incomplete scenarios and never assign/claim completion from a preview alone.
 
+When an enabled provider explicitly supplies `previewProducer: runtime-provider`
+and `previewRequirements` for this request, obtain its capability receipt for
+the exact environment request and deployed source. Return the private path as
+`data.previewReceipt` and environment identity as `data.environmentId`;
+the launcher verifies both at the result boundary. Requirements include
+`app-preview`, plus `feature-flags` or `collaboration` when needed. Missing,
+stale, unsupported or unproven declared capabilities block `DONE`. With no
+provider producer/support declaration, use the repository's generic preview
+path and do not claim those extra capabilities. Never substitute a console snippet, cloud
+administration sign-in or shell command for the person. Repository-specific
+probes and provisioning belong to the optional provider.
+
 The mode (`create`, `redeploy`, `flags`, `desktop`, `handover`, or `pull-request`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
 `localFixes` paths (managed local workarounds for a bug in the target repository, authored
@@ -68,6 +80,21 @@ report a tooling defect and keep using the supported paths there; return
 Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
 then plain search.
+
+## The script for the mechanical steps
+
+When `../skills/vibe/scripts/env-ctl.mjs` exists, run
+`node ../skills/vibe/scripts/env-ctl.mjs flags|request|publish|redeploy|desktop|pr|pr-update --worktree "<wt>" ...`
+(usage in its header) for the flag snapshot, the publish checks and push, the
+request, the run polling and the recording below, so no model reads `gh`
+output every 15 seconds. It wraps the same scripts this file names and returns
+one JSON `status`. `NEEDS_AGENT` carries the run's org or identity evidence;
+steps 5 to 7 and every sentence for the person stay yours, and the ticket
+update after a `DONE` stays yours too. A `redeploy` result with `skippedRedeploy`
+(only when `VIBE_REDEPLOY_UI_ONLY=1`) pushed the commit and requested no new
+environment: record the push, and the last deployed commit stays the earlier one.
+Without the script, or for a case it
+returns `BLOCKED` on that you can fix, follow the steps below unchanged.
 
 ## Flag snapshot (create and flags modes)
 
@@ -454,7 +481,16 @@ changes and gates fields.
    `MAIN-PREEXISTING-LANE`, and every `testRuns` or `runs` entry recorded
    `main-preexisting`, also fails on the captured main: list each in the
    body under a `Known main failures` line with the main commit it failed
-   on, which `blocking.prBody` checks; it never blocks the pull request. Create it with
+   on, which `blocking.prBody` checks; it never blocks the pull request. Fetch
+   the current PR base and run `node ../skills/handoff/scripts/handoff-gate.mjs
+   --worktree "<wt>" --base "<fetched base ref>" --body <file> --runs
+   <verifier evidence file> --receipt <guardrails receipt> --receipt
+   <adversarial receipt> --receipt <Storybook receipt> --receipt
+   <verifier receipt> --ticket
+   <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
+   file>` immediately before creation. Use the paths step 9 of handoff passed;
+   when there is no ticket, omit the ticket/audit/matrix arguments. A failed
+   gate is `BLOCKED`, not a reason to bypass the hook. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
@@ -464,7 +500,7 @@ changes and gates fields.
    mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
    Capture the new URL, render the validated evidence with
-   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
+   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --worktree "<wt>" --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
    and post it with `gh pr comment <url> --body-file <file>`. Do not return
    `DONE` until the comment lists the inventory, result SHAs, probe and tier.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI

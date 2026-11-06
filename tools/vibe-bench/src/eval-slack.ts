@@ -1,8 +1,32 @@
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { EvalQuarantineEntry } from "./eval-baseline.ts";
 
-const SLACK_POST_TIMEOUT_MS = 30_000;
+const SLACK_POST_TIMEOUT_MS = 20_000;
+const SLACK_HEALTH_TIMEOUT_MS = 10_000;
+const SLACK_CHANNEL_ID = "C0CC9G7V01G";
+const SLACK_POST_TOOL = "mcp__plugin_slack_slack__slack_send_message";
+const SLACK_DELIVERY_MODEL = "claude-haiku-5-5";
+const SLACK_PLUGIN_ID = "slack@anthropic-plugin-directory";
+const SLACK_MCP_SERVER = "plugin:slack:slack";
+const SLACK_DETAIL_LIMIT = 50;
+const SLACK_FIELD_LIMIT = 500;
+const SLACK_MESSAGE_BYTE_LIMIT = 30_000;
+const CHANGE_ATTRIBUTION_LIMIT = 1_000;
+
+/** Operator-approved one-shot message for validating the nightly Slack relay. */
+export const SLACK_DELIVERY_TEST_MESSAGE =
+  "vibe nightly: test post from the second laptop to confirm Slack delivery (ISS-13478). " +
+  "No action needed.";
+
+/** Observable delivery metadata returned by Slack's send-message result. */
+export interface SlackDeliveryReceipt {
+  timestamp: string | null;
+  permalink: string | null;
+}
 
 /** One unchanged, reliable case that failed all nightly attempts. */
 export interface NightlyRegressionCase {
@@ -55,9 +79,8 @@ export function formatNightlyRegressionMessage(notice: NightlyRegressionNotice):
   if (!notice.cases.length && !notice.expiredQuarantine.length) {
     throw new Error("eval-slack-alert-empty");
   }
-  const cases = notice.cases.length ? notice.cases
-    .map((item) => `• ${item.runtime}: ${item.case}`)
-    .join("\n") : "• None";
+  const cases = notice.cases.length ? limitedLines(notice.cases
+    .map((item) => `• ${item.runtime}: ${slackText(item.case)}`)).join("\n") : "• None";
   const changes = [
     ...notice.mergedPullRequests.map((item) =>
       `• <${item.url}|#${item.number}> by @${item.author}: ${slackText(item.title)}`),
@@ -66,20 +89,26 @@ export function formatNightlyRegressionMessage(notice: NightlyRegressionNotice):
       slackText(item.title)),
   ];
   const expired = notice.expiredQuarantine.map((item) =>
-    `• ${item.runtime}: ${item.case}, owner @${slackText(item.owner)}, expired ${item.deadline}`);
-  return [
+    `• ${item.runtime}: ${slackText(item.case)}, owner @${slackText(item.owner)}, ` +
+      `expired ${slackText(item.deadline)}`);
+  const message = [
     ":rotating_light: Vibe nightly eval attention required",
     ...(notice.cases.length ? [
       `Confirmed regressions between ${notice.baselineSha.slice(0, 12)} and ` +
         `${notice.currentSha.slice(0, 12)}:`, cases,
       "Changes since the last green nightly:",
-      changes.length ? changes.join("\n") : "• None",
+      changes.length ? limitedLines(changes).join("\n") : "• None",
     ] : []),
-    ...(expired.length ? ["Expired quarantine entries are gating:", expired.join("\n")] : []),
-    `Quarantine owner: ${notice.quarantineOwner}`,
+    ...(expired.length ? ["Expired quarantine entries are gating:",
+      limitedLines(expired).join("\n")] : []),
+    `Quarantine owner: ${slackText(notice.quarantineOwner)}`,
     "PR authors and the quarantine owner: coordinate a fix-forward or revert.",
-    `Full results: ${notice.resultsArtifact}`,
+    `Full results: ${slackText(notice.resultsArtifact)}`,
   ].join("\n");
+  if (Buffer.byteLength(message, "utf8") > SLACK_MESSAGE_BYTE_LIMIT) {
+    throw new Error("eval-slack-message-too-large");
+  }
+  return message;
 }
 
 /** Format a scheduler failure for the same team-owned channel. */
@@ -94,15 +123,20 @@ export function formatNightlyInfrastructureMessage(notice: NightlyInfrastructure
 }
 
 function slackText(value: string): string {
-  return value.replaceAll(/[\r\n\t\u0000-\u001f\u007f]+/g, " ")
+  const sanitized = value.replaceAll(/[\r\n\t\u0000-\u001f\u007f]+/g, " ")
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const characters = [...sanitized];
+  return characters.length > SLACK_FIELD_LIMIT
+    ? `${characters.slice(0, SLACK_FIELD_LIMIT).join("")}…` : sanitized;
 }
 
-function deliveryId(notice: NightlyRegressionNotice): string {
-  const hex = createHash("sha256").update(JSON.stringify({ currentSha: notice.currentSha,
-    baselineSha: notice.baselineSha, cases: notice.cases,
-    expiredQuarantine: notice.expiredQuarantine })).digest("hex").slice(0, 32);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+function limitedLines(lines: string[]): string[] {
+  return lines.length <= SLACK_DETAIL_LIMIT ? lines
+    : [...lines.slice(0, SLACK_DETAIL_LIMIT), `• … ${lines.length - SLACK_DETAIL_LIMIT} more`];
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 /** Attribute every first-parent main commit to a merged PR or a direct commit. */
@@ -112,11 +146,16 @@ export function nightlyChangesSince(input: {
   baselineSha: string;
   currentSha: string;
 }): { mergedPullRequests: NightlyMergedPullRequest[]; directCommits: NightlyDirectCommit[] } {
-  const commits = spawnSync("git", ["-C", input.repo, "rev-list", "--first-parent",
+  const commits = spawnSync("git", ["-C", input.repo, "rev-list", "--parents", "--first-parent",
     `${input.baselineSha}..${input.currentSha}`], { encoding: "utf8", timeout: 90_000,
     maxBuffer: 4 * 1024 * 1024 });
   if (commits.status !== 0) throw new Error("eval-regression-commit-range-unavailable");
-  const range = new Set(commits.stdout.split("\n").filter(Boolean));
+  const commitRows = commits.stdout.split("\n").filter(Boolean).map((line) => line.split(/\s+/));
+  if (commitRows.length > CHANGE_ATTRIBUTION_LIMIT) {
+    throw new Error("eval-regression-commit-range-too-large");
+  }
+  const range = new Set(commitRows.map(([commit]) => commit));
+  const parentCounts = new Map(commitRows.map(([commit, ...parents]) => [commit, parents.length]));
   const repository = spawnSync(input.ghExecutable,
     ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
     { cwd: input.repo, encoding: "utf8", timeout: 90_000, maxBuffer: 4 * 1024 * 1024 });
@@ -124,7 +163,7 @@ export function nightlyChangesSince(input: {
     throw new Error("eval-regression-repository-unavailable");
   }
   const listed = spawnSync(input.ghExecutable, ["pr", "list", "--repo", repository.stdout.trim(),
-    "--state", "merged", "--base", "main", "--limit", "200", "--json",
+    "--state", "merged", "--base", "main", "--limit", String(CHANGE_ATTRIBUTION_LIMIT), "--json",
     "number,title,url,author,mergeCommit"], { cwd: input.repo, encoding: "utf8", timeout: 90_000,
     maxBuffer: 16 * 1024 * 1024 });
   if (listed.status !== 0) throw new Error("eval-regression-pull-requests-unavailable");
@@ -145,62 +184,270 @@ export function nightlyChangesSince(input: {
       author: value.author.login, mergeCommit: oid }];
   }).sort((left, right) => left.number - right.number);
   const matchedCommits = new Set(matched.map((item) => item.mergeCommit));
-  const directCommits = [...range].filter((commit) => !matchedCommits.has(commit)).map((commit) => {
-    const parents = spawnSync("git", ["-C", input.repo, "rev-list", "--parents", "-n", "1", commit],
-      { encoding: "utf8", timeout: 90_000, maxBuffer: 4 * 1024 * 1024 });
-    if (parents.status !== 0) throw new Error("eval-regression-commit-attribution-unavailable");
-    if (parents.stdout.trim().split(/\s+/).length > 2) {
+  const directShas = [...range].filter((commit) => !matchedCommits.has(commit));
+  for (const commit of directShas) {
+    if ((parentCounts.get(commit) ?? 0) > 1) {
       throw new Error("eval-regression-pull-request-attribution-incomplete");
     }
-    const detail = spawnSync("git", ["-C", input.repo, "show", "-s",
-      "--format=%H%x00%s%x00%an%x00%ae", commit],
+  }
+  if (!directShas.length) return { mergedPullRequests: matched, directCommits: [] };
+  const detail = spawnSync("git", ["-C", input.repo, "show", "-s",
+    "--format=%H%x1f%s%x1f%an%x1f%ae%x1e", ...directShas],
     { encoding: "utf8", timeout: 90_000, maxBuffer: 4 * 1024 * 1024 });
-    const [sha, title, authorName, authorEmail] = detail.stdout.trim().split("\0");
-    if (detail.status !== 0 || sha !== commit || !title || !authorName || !authorEmail) {
+  if (detail.status !== 0) throw new Error("eval-regression-commit-attribution-unavailable");
+  const details = new Map(detail.stdout.split("\x1e").flatMap((record) => {
+    const [sha, title, authorName, authorEmail] = record.trim().split("\x1f");
+    return sha && title && authorName && authorEmail
+      ? [[sha, { title, authorName, authorEmail }] as const] : [];
+  }));
+  const directCommits = directShas.map((commit) => {
+    const value = details.get(commit);
+    if (!value) {
       throw new Error("eval-regression-direct-commit-invalid");
     }
-    return { commit, title, author: `${authorName} <${authorEmail}>`,
+    return { commit, title: value.title, author: `${value.authorName} <${value.authorEmail}>`,
       url: `https://github.com/${repository.stdout.trim()}/commit/${commit}` };
   });
   return { mergedPullRequests: matched, directCommits };
 }
 
-/** Post through the existing team Slack bot without storing credentials. */
-export class SlackNightlyRegressionReporter implements NightlyRegressionReporter {
-  private readonly env: NodeJS.ProcessEnv;
-  private readonly send: typeof fetch;
+/** Captured synchronous Claude CLI result used by the injectable transport boundary. */
+export interface SlackClaudeResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+}
 
-  constructor(env: NodeJS.ProcessEnv = process.env, send: typeof fetch = fetch) {
-    this.env = env;
-    this.send = send;
+/** Stable relay failure that identifies whether no Slack side effect was attempted. */
+export class SlackDeliveryError extends Error {
+  readonly retrySafe: boolean;
+
+  constructor(message: string, retrySafe: boolean) {
+    super(message);
+    this.name = "SlackDeliveryError";
+    this.retrySafe = retrySafe;
+  }
+}
+
+/** Return true only for failures proven to happen before the Slack tool process starts. */
+export function isRetrySafeSlackFailure(error: unknown): boolean {
+  return error instanceof SlackDeliveryError && error.retrySafe;
+}
+
+/** Injectable process boundary; tests never launch Claude or contact Slack. */
+export type SlackClaudeRunner = (command: string, args: string[], options: {
+  input: string;
+  timeout: number;
+}) => SlackClaudeResult;
+
+const runSlackClaude: SlackClaudeRunner = (command, args, options) => {
+  const result = spawnSync(command, args, { input: options.input, encoding: "utf8",
+    timeout: options.timeout, maxBuffer: 4 * 1024 * 1024,
+    stdio: ["pipe", "pipe", "pipe"] });
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "",
+    error: result.error };
+};
+
+function deliveryPrompt(text: string): string {
+  return [
+    "Act only as a deterministic transport.",
+    `Call ${SLACK_POST_TOOL} exactly once with the JSON object below.`,
+    "Copy both values exactly. Do not compose, summarize, escape, reformat, or add text.",
+    "Do not call any other tool and do not write prose.",
+    JSON.stringify({ channel_id: SLACK_CHANNEL_ID, message: text }),
+  ].join("\n");
+}
+
+function embeddedValues(value: unknown): unknown[] {
+  const values: unknown[] = [];
+  const queue = [value];
+  while (queue.length) {
+    const current = queue.shift();
+    values.push(current);
+    if (Array.isArray(current)) {
+      queue.push(...current);
+    } else if (current && typeof current === "object") {
+      queue.push(...Object.values(current));
+    } else if (typeof current === "string") {
+      const trimmed = current.trim();
+      const candidates = [trimmed];
+      const firstBrace = trimmed.indexOf("{");
+      const lastBrace = trimmed.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+      }
+      for (const candidate of candidates) {
+        try {
+          const parsed = JSON.parse(candidate) as unknown;
+          if (parsed !== current) queue.push(parsed);
+        } catch { /* Non-JSON tool-result text has no structured receipt fields. */ }
+      }
+    }
+  }
+  return values;
+}
+
+function firstReceiptValue(value: unknown, keys: string[]): string | null {
+  for (const candidate of embeddedValues(value)) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const record = candidate as Record<string, unknown>;
+    for (const key of keys) {
+      if (typeof record[key] === "string" && record[key].trim()) return record[key];
+    }
+  }
+  return null;
+}
+
+function verifySlackTranscript(stdout: string, expectedText: string): SlackDeliveryReceipt {
+  const events = stdout.split("\n").filter(Boolean).map((line) => {
+    try { return JSON.parse(line) as Record<string, unknown>; }
+    catch { throw new Error("eval-slack-claude-output-malformed"); }
+  });
+  const toolUses = events.flatMap((event) => {
+    if (event.type !== "assistant") return [];
+    const message = event.message as { content?: unknown } | undefined;
+    return Array.isArray(message?.content) ? message.content.filter((block) =>
+      (block as { type?: unknown }).type === "tool_use") as Array<{
+        id?: unknown; name?: unknown; input?: unknown;
+      }> : [];
+  });
+  if (toolUses.length !== 1) throw new Error("eval-slack-tool-call-count-invalid");
+  const toolUse = toolUses[0];
+  const input = toolUse.input as Record<string, unknown> | undefined;
+  if (toolUse.name !== SLACK_POST_TOOL || typeof toolUse.id !== "string" || !input ||
+      Object.keys(input).sort().join(",") !== "channel_id,message" ||
+      input.channel_id !== SLACK_CHANNEL_ID || input.message !== expectedText) {
+    throw new Error("eval-slack-tool-call-altered");
+  }
+  const matchingResults = events.flatMap((event) => {
+    if (event.type !== "user") return [];
+    const message = event.message as { content?: unknown } | undefined;
+    return Array.isArray(message?.content) ? message.content.filter((block) => {
+      const value = block as { type?: unknown; tool_use_id?: unknown };
+      return value.type === "tool_result" && value.tool_use_id === toolUse.id;
+    }) as Array<{ is_error?: unknown; content?: unknown }> : [];
+  });
+  if (matchingResults.length !== 1 || matchingResults[0].is_error === true) {
+    throw new Error("eval-slack-tool-result-failed");
+  }
+  const content = matchingResults[0].content;
+  return {
+    timestamp: firstReceiptValue(content, ["ts", "message_ts", "timestamp"]),
+    permalink: firstReceiptValue(content, ["permalink", "message_link"]),
+  };
+}
+
+function requireSlackMcpConnection(result: SlackClaudeResult): void {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const slackLine = output.split(/\r?\n/).find((line) => line.includes(SLACK_MCP_SERVER));
+  if (!result.error && result.status === 0 && slackLine && /\bConnected\b/.test(slackLine)) return;
+  if (slackLine && /credential|authenticat|keychain/i.test(slackLine)) {
+    throw new SlackDeliveryError(
+      "eval-slack-credentials-unavailable: macOS login keychain is locked or Slack MCP " +
+      "credentials are missing; unlock the login keychain or keep the GUI session logged in",
+      true,
+    );
+  }
+  throw new SlackDeliveryError("eval-slack-mcp-unavailable", true);
+}
+
+function requireSlackGateOutcome(attemptPath: string): void {
+  let value: unknown;
+  try { value = JSON.parse(readFileSync(attemptPath, "utf8")); }
+  catch { throw new SlackDeliveryError("eval-slack-gate-not-confirmed", false); }
+  const decision = (value as { permissionDecision?: unknown } | null)?.permissionDecision;
+  if (decision === "deny") throw new SlackDeliveryError("eval-slack-gate-denied", true);
+  if (decision !== "allow") {
+    throw new SlackDeliveryError("eval-slack-gate-not-confirmed", false);
+  }
+}
+
+/** Post a pre-rendered notice through the authenticated Slack MCP connection. */
+export class SlackNightlyRegressionReporter implements NightlyRegressionReporter {
+  private readonly claudeExecutable: string;
+  private readonly run: SlackClaudeRunner;
+
+  constructor(claudeExecutable = "claude", run: SlackClaudeRunner = runSlackClaude) {
+    this.claudeExecutable = claudeExecutable;
+    this.run = run;
   }
 
   async report(notice: NightlyRegressionNotice): Promise<void> {
-    await this.post(formatNightlyRegressionMessage(notice), deliveryId(notice));
+    await this.post(formatNightlyRegressionMessage(notice));
   }
 
-  /** Post one non-model infrastructure failure when credentials are available. */
+  /** Post one non-model infrastructure failure when user auth and Slack MCP are available. */
   async reportInfrastructure(notice: NightlyInfrastructureNotice): Promise<void> {
-    const hex = createHash("sha256").update(JSON.stringify(notice)).digest("hex").slice(0, 32);
-    const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-` +
-      `${hex.slice(16, 20)}-${hex.slice(20)}`;
-    await this.post(formatNightlyInfrastructureMessage(notice), id);
+    await this.post(formatNightlyInfrastructureMessage(notice));
   }
 
-  private async post(text: string, clientMessageId: string): Promise<void> {
-    const token = this.env.SLACK_BOT_TOKEN?.trim();
-    const channel = this.env.SLACK_CHANNEL_ID?.trim();
-    if (!token || !channel) throw new Error("eval-slack-credentials-missing");
-    const response = await this.send("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ channel, text, client_msg_id: clientMessageId,
-        unfurl_links: false, unfurl_media: false }),
-      signal: AbortSignal.timeout(SLACK_POST_TIMEOUT_MS),
+  /** Send the single operator-approved fixed relay test and return its Slack receipt. */
+  async reportApprovedTest(): Promise<SlackDeliveryReceipt> {
+    return await this.post(SLACK_DELIVERY_TEST_MESSAGE);
+  }
+
+  private async post(text: string): Promise<SlackDeliveryReceipt> {
+    const plugins = this.run(this.claudeExecutable, ["plugin", "list", "--json"], {
+      input: "", timeout: 5_000,
     });
-    let body: unknown;
-    try { body = await response.json(); }
-    catch { throw new Error("eval-slack-response-malformed"); }
-    if (!response.ok || !(body as { ok?: unknown }).ok) throw new Error("eval-slack-post-failed");
+    if (plugins.error || plugins.status !== 0) {
+      throw new SlackDeliveryError("eval-slack-plugin-unavailable", true);
+    }
+    let installed: unknown;
+    try { installed = JSON.parse(plugins.stdout); }
+    catch { throw new SlackDeliveryError("eval-slack-plugin-list-malformed", true); }
+    const slack = Array.isArray(installed) ? installed.find((item) =>
+      (item as { id?: unknown }).id === SLACK_PLUGIN_ID) as {
+        enabled?: unknown; installPath?: unknown;
+      } | undefined : undefined;
+    if (slack?.enabled !== true || typeof slack.installPath !== "string" ||
+        !slack.installPath.startsWith("/")) {
+      throw new SlackDeliveryError("eval-slack-plugin-unavailable", true);
+    }
+    const health = this.run(this.claudeExecutable, ["--plugin-dir", slack.installPath,
+      "--setting-sources", "", "--settings", "{}", "mcp", "list"], {
+      input: "", timeout: SLACK_HEALTH_TIMEOUT_MS,
+    });
+    requireSlackMcpConnection(health);
+    const gateRoot = mkdtempSync(join(tmpdir(), "vibe-slack-gate-"));
+    try {
+      const expectedPath = join(gateRoot, "expected.json");
+      const attemptPath = join(gateRoot, "attempted");
+      writeFileSync(expectedPath, JSON.stringify({ channel_id: SLACK_CHANNEL_ID, message: text }),
+        { mode: 0o600 });
+      const gate = fileURLToPath(new URL("./slack-tool-gate.ts", import.meta.url));
+      const gateCommand = [process.execPath, "--experimental-strip-types", gate,
+        expectedPath, attemptPath].map(shellQuote).join(" ");
+      const settings = JSON.stringify({ hooks: { PreToolUse: [{ matcher: SLACK_POST_TOOL, hooks: [{
+        type: "command", command: gateCommand, timeout: 5,
+      }] }] } });
+      const args = ["-p", "--model", SLACK_DELIVERY_MODEL, "--effort", "low",
+        "--max-turns", "2", "--max-budget-usd", "0.20", "--permission-mode", "dontAsk",
+        "--permission-prompts", "none", "--no-session-persistence", "--output-format",
+        "stream-json", "--verbose", "--tools", "", "--setting-sources", "", "--settings",
+        settings, "--plugin-dir", slack.installPath, "--allowedTools", SLACK_POST_TOOL];
+      const result = this.run(this.claudeExecutable, args, {
+        input: deliveryPrompt(text), timeout: SLACK_POST_TIMEOUT_MS,
+      });
+      try {
+        requireSlackGateOutcome(attemptPath);
+        return verifySlackTranscript(result.stdout, text);
+      }
+      catch (error) {
+        if (error instanceof SlackDeliveryError) throw error;
+        if (result.error?.message.includes("ETIMEDOUT") ||
+            result.error?.message.includes("timed out")) {
+          throw new SlackDeliveryError("eval-slack-claude-timeout", false);
+        }
+        if (result.error || result.status !== 0) {
+          throw new SlackDeliveryError("eval-slack-claude-failed", false);
+        }
+        throw new SlackDeliveryError(error instanceof Error ? error.message
+          : "eval-slack-transcript-invalid", false);
+      }
+    } finally {
+      rmSync(gateRoot, { recursive: true, force: true });
+    }
   }
 }

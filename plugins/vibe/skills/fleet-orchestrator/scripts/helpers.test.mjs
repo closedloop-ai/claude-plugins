@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { historyOrigin } from './history-origin.mjs';
-import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
-import { endProcesses, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
+import { removeOwnedDockerResources } from '../../vibe/scripts/owned-docker.mjs';
+import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
+import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity,
+  reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
+import { reconcileExpiredScratchHelpers, sweepScratchHelpers } from './scratch-cleanup.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const run = (args) => {
   const [dir, action] = args;
   const isolated = action === 'status' && !args.includes('--e2e-lock-dir')
@@ -19,6 +26,7 @@ const run = (args) => {
 const tempDir = (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-helpers-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'now', loadedSkill: actorLoad(), harnesses: [] }));
   return dir;
 };
 /** A pid this test started; anything else (empty output parses as 0) fails the test before any signal. */
@@ -99,6 +107,249 @@ const fakeTable = (processes) => {
 /** A target as `stopped` builds it from the ledger, with the identity recorded at `pid` time. */
 const recorded = (pid, group, identity = `id-${pid}`) => ({ pid, group, identity });
 const FAKE = 2_147_480_000;
+
+test('idle notice cannot accept or stop a reviewer without its source-bound FINAL deliverable', (t) => {
+  const dir = tempDir(t);
+  const help = run([dir]);
+  assert.equal(help.status, 2);
+  assert.match(help.stderr, /--kind reviewer\|verifier\|critic.*--agent-definition.*--capabilities/);
+  const worktree = path.join(dir, 'source');
+  mkdirSync(worktree);
+  execFileSync('git', ['init', '-q', '-b', 'review', worktree]);
+  writeFileSync(path.join(worktree, 'app.txt'), 'source\n');
+  execFileSync('git', ['-C', worktree, 'add', '.']);
+  execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const capabilities = path.join(dir, 'capabilities.json');
+  writeFileSync(capabilities, '[]\n');
+  const definition = path.join(dir, 'reviewer.md');
+  writeFileSync(definition, '---\nname: reviewer\n---\n');
+  const brief = path.join(dir, 'review.md');
+  writeFileSync(brief, 'Review the current diff.\n');
+  assert.notEqual(run([dir, 'start', 'missing', '--kind', 'reviewer', '--worktree', worktree]).status, 0, 'reviewer needs a brief');
+  writeFileSync(brief, 'Run handoff/scripts/qa-merge-order.mjs.\n');
+  assert.notEqual(run([dir, 'start', 'missing-script', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'native-reviewer-missing', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0,
+  'Claude helper launch refuses a deleted installed plugin script');
+  writeFileSync(brief, 'Review the current diff.\n');
+  assert.equal(run([dir, 'start', 'reviewer', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'native-reviewer-1', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
+  assert.notEqual(run([dir, 'accepted', 'reviewer']).status, 0, 'idle is not a final report');
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'a working reviewer cannot be stopped');
+  const helper = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).reviewer;
+  // PR #371 review: spawn-time evidence is labeled as such and names the helper's real runtime.
+  assert.deepEqual([helper.loadedSkill.runtime, helper.loadedSkill.basis], ['claude', 'installed-at-spawn']);
+  assert.equal(run([dir, 'start', 'codex-reviewer', '--kind', 'reviewer', '--runtime', 'codex', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'codex-thread-1', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['codex-reviewer'].loadedSkill.runtime, 'codex');
+  assert.notEqual(run([dir, 'start', 'bad-runtime', '--kind', 'reviewer', '--runtime', 'gemini', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'other-thread', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
+  const token = helper.finalToken;
+  const deliverable = path.join(dir, 'review-final.md');
+  writeFileSync(deliverable, 'verified findings\n');
+  const report = path.join(dir, 'review-report.json');
+  const final = { helper: 'reviewer', token, status: 'FINAL', workerId: 'native-reviewer-1', source: sourceIdentity(worktree),
+    completion: { sessionId: 'session-1', turnId: 'turn-1' }, deliverable: evidenceFingerprint(deliverable) };
+  writeFileSync(report, JSON.stringify(final));
+  assert.notEqual(run([dir, 'accepted', 'reviewer', '--report', report]).status, 0, 'hand-written FINAL wrapper around partial work is refused');
+  writeFileSync(report, JSON.stringify({ ...final, status: 'IDLE' }));
+  assert.notEqual(run([dir, 'accepted', 'reviewer', '--report', report]).status, 0, 'turn end is not final');
+  const finalReport = path.join(dir, 'helper-produced-final.json');
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--out', finalReport]).status, 0, 'partial deliverable has no FINAL marker');
+  writeFileSync(deliverable, `verified findings\n${finalMarker(helper, final.completion)}\n`);
+  final.deliverable = evidenceFingerprint(deliverable);
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'invented', '--turn-id', 'turn-1', '--out', finalReport]).status, 0, 'invented completion identity cannot match helper marker');
+  writeFileSync(path.join(worktree, 'app.txt'), 'changed source\n');
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--out', finalReport]).status, 0, 'changed start source blocks completion');
+  writeFileSync(path.join(worktree, 'app.txt'), 'source\n');
+  const completionEvent = path.join(dir, 'thread-read.json');
+  const event = (status) => ({ thread: { id: 'session-1', turns: [{ id: 'turn-1', status }] } });
+  writeFileSync(completionEvent, JSON.stringify(event('inProgress')));
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--completion-event', completionEvent, '--out', finalReport]).status, 0, 'runtime still working cannot finalize');
+  writeFileSync(completionEvent, JSON.stringify(event('completed')));
+  final.completionEvidence = evidenceFingerprint(completionEvent);
+  assert.equal(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--completion-event', completionEvent, '--out', finalReport]).status, 0);
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--out', path.join(dir, 'second-final.json')]).status, 0, 'the FINAL token is consumed once');
+  assert.deepEqual(JSON.parse(readFileSync(finalReport, 'utf8')), final);
+  assert.equal(run([dir, 'accepted', 'reviewer', '--report', finalReport]).status, 0);
+  writeFileSync(definition, '---\nname: reviewer\n---\nchanged definition\n');
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'changed canonical role definition invalidates final proof');
+  writeFileSync(definition, '---\nname: reviewer\n---\n');
+  writeFileSync(deliverable, 'changed after acceptance\n');
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'stale final report cannot justify stop');
+  writeFileSync(deliverable, `verified findings\n${finalMarker(helper, final.completion)}\n`);
+  writeFileSync(completionEvent, JSON.stringify(event('inProgress')));
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'runtime completion evidence is rechecked');
+  writeFileSync(completionEvent, JSON.stringify(event('completed')));
+  assert.equal(run([dir, 'stopped', 'reviewer']).status, 0);
+});
+
+test('scratch helper start requires owner, exact project, finite TTL and label proof', (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'scratch-worktree');
+  mkdirSync(worktree);
+  execFileSync('git', ['init', '-q', '-b', 'main', worktree]);
+  writeFileSync(path.join(worktree, 'README.md'), 'scratch\n');
+  execFileSync('git', ['-C', worktree, 'add', '.']);
+  execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(gitDir, 'vibe-session.json'), JSON.stringify({ createdAt: '2026-11-03T00:00:00Z', status: 'active' }));
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\ncase "$1 $2" in "container ls"|"volume ls"|"network ls") exit 0;; esac\nexit 2\n', { mode: 0o755 });
+  const result = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'scratch-pg',
+    '--kind', 'scratch', '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree,
+    '--project', 'iss42-scratch-pg', '--ttl-seconds', '600'],
+  { encoding: 'utf8', env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: docker } });
+  assert.equal(result.status, 0, result.stderr);
+  const saved = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['scratch-pg'];
+  assert.equal(saved.kind, 'scratch');
+  assert.ok(Date.parse(saved.expiresAt) > Date.parse(saved.startedAt), 'finite TTL is recorded');
+  assert.ok(saved.ownerToken, 'creation-time owner label token is recorded');
+  const repeated = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'scratch-pg',
+    '--kind', 'scratch', '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree,
+    '--project', 'other-scratch-pg', '--ttl-seconds', '600'],
+  { encoding: 'utf8', env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: docker } });
+  assert.notEqual(repeated.status, 0, 'an active same-name stack cannot be overwritten');
+  assert.match(repeated.stderr, /active helper already owns this name/);
+  const kept = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['scratch-pg'];
+  assert.equal(kept.project, saved.project);
+  assert.equal(kept.ownerToken, saved.ownerToken);
+});
+
+test('generic stopped and pr-terminal paths cannot bypass scratch TTL and writer lease', async (t) => {
+  const dir = tempDir(t);
+  const ledgerFile = path.join(dir, 'helpers.json');
+  const child = spawn('sleep', ['30']);
+  const childExited = new Promise((resolve) => child.once('close', resolve));
+  t.after(() => killOwned(child.pid));
+  const identity = readIdentity(child.pid);
+  assert.ok(identity);
+  const scratch = { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'token',
+    project: 'scratch-one', worktree: '/owned', startedAt: '2026-11-03T00:00:00Z',
+    expiresAt: '2099-11-03T00:00:00Z', writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' },
+    pids: [child.pid], identities: { [child.pid]: identity },
+    dockerResources: { project: 'scratch-one', containers: [], volumes: [], networks: [] } };
+  writeFileSync(ledgerFile, JSON.stringify({ scratch }));
+  const stopped = run([dir, 'stopped', 'scratch']);
+  assert.notEqual(stopped.status, 0);
+  assert.match(stopped.stderr, /Scratch stop requires elapsed TTL and terminal writer lease/);
+  assert.equal(JSON.parse(readFileSync(ledgerFile, 'utf8')).scratch.stoppedAt, undefined);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\ncase "$1 $2" in "container ls"|"volume ls"|"network ls") exit 0;; esac\nexit 2\n', { mode: 0o755 });
+  const explicit = (owner, token = 'token') => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'stopped', 'scratch',
+    '--owner', owner, '--owner-token', token],
+    { encoding: 'utf8', env: { ...process.env, VIBE_E2E_DOCKER: docker } });
+  const wrong = explicit('other-writer');
+  assert.notEqual(wrong.status, 0);
+  assert.match(wrong.stderr, /owner differs/);
+  const wrongToken = explicit('writer', 'other-token');
+  assert.notEqual(wrongToken.status, 0);
+  assert.match(wrongToken.stderr, /recorded owner token/);
+  const owned = explicit('writer');
+  assert.equal(owned.status, 0, owned.stderr);
+  assert.ok(JSON.parse(readFileSync(ledgerFile, 'utf8')).scratch.stoppedAt, 'recorded owner can retire before TTL');
+  await childExited;
+  assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' }, 'explicit owner stop drains recorded processes');
+  delete scratch.stoppedAt;
+  let removed = false;
+  const legacy = { scratch: { ...scratch, ending: 'pr-terminal', repo: 'acme/repo', pr: '42' } };
+  const result = await reconcileTerminalHelpers(legacy, { prState: async () => 'terminal',
+    end: async () => [], cleanup: () => { removed = true; }, alive: () => false });
+  assert.equal(removed, false);
+  assert.match(result.findings.join(' '), /scratch cannot use pr-terminal/);
+});
+
+test('concurrent scratch reservations keep both helper ledger entries', async (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'concurrent-worktree');
+  mkdirSync(worktree);
+  execFileSync('git', ['init', '-q', '-b', 'main', worktree]);
+  writeFileSync(path.join(worktree, 'README.md'), 'scratch\n');
+  execFileSync('git', ['-C', worktree, 'add', '.']);
+  execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(gitDir, 'vibe-session.json'), JSON.stringify({ createdAt: '2026-11-03T00:00:00Z', status: 'active' }));
+  const docker = path.join(dir, 'slow-docker');
+  writeFileSync(docker, '#!/bin/sh\nsleep 0.2\nexit 0\n', { mode: 0o755 });
+  const start = (name) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', name, '--kind', 'scratch',
+      '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree, '--project', name,
+      '--ttl-seconds', '600'], { env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: docker } });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code) => resolve({ code, stderr }));
+  });
+  const results = await Promise.all([start('scratch-a'), start('scratch-b')]);
+  for (const result of results) assert.equal(result.code, 0, result.stderr);
+  const ledger = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'));
+  assert.deepEqual(Object.keys(ledger).sort(), ['scratch-a', 'scratch-b']);
+  assert.notEqual(ledger['scratch-a'].ownerToken, ledger['scratch-b'].ownerToken);
+});
+
+test('expired scratch PostgreSQL/perf/seed stacks reconcile only exact owner-labelled resources', () => {
+  const witness = { id: 'scratch-data', created: '2026-11-03T00:00:01Z', project: 'scratch-one', ownerToken: 'owner-one' };
+  for (const category of ['postgres', 'perf', 'seed']) {
+    const ledger = { [category]: { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'owner-one',
+      project: 'scratch-one', worktree: '/owned', startedAt: '2026-11-03T00:00:00Z',
+      expiresAt: '2026-11-03T00:10:00Z', writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' }, pids: [] } };
+    const removed = [];
+    const resources = { project: 'scratch-one', containers: [], volumes: [witness], networks: [] };
+    const result = reconcileExpiredScratchHelpers(ledger, Date.parse('2026-11-03T00:11:00Z'), {
+      capture: () => resources, cleanup: (record) => removed.push(record), alive: () => false,
+      lockHeld: () => false, leaseTerminal: () => true,
+    });
+    assert.equal(result.changed, true, category);
+    assert.equal(removed.length, 1, category);
+    assert.ok(ledger[category].stoppedAt, category);
+  }
+});
+
+test('first scratch resource capture still requires the recorded owner token label', () => {
+  const ledger = { scratch: { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'owner-one',
+    project: 'scratch-one', worktree: '/owned', startedAt: '2026-11-03T00:00:00Z',
+    expiresAt: '2026-11-03T00:10:00Z', writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' }, pids: [] } };
+  let removed = false;
+  const result = reconcileExpiredScratchHelpers(ledger, Date.parse('2026-11-03T00:11:00Z'), {
+    capture: () => ({ project: 'scratch-one', containers: [], volumes: [{ id: 'data', created: '2026-11-03T00:00:01Z',
+      project: 'scratch-one', ownerToken: 'foreign' }], networks: [] }),
+    cleanup: () => { removed = true; }, alive: () => false, lockHeld: () => false, leaseTerminal: () => true,
+  });
+  assert.equal(removed, false);
+  assert.equal(ledger.scratch.stoppedAt, undefined);
+  assert.match(result.findings.join(' '), /owner and creation proof/);
+});
+
+test('a not-yet-due scratch program neither rewrites nor waits on the helper ledger', async (t) => {
+  const dir = tempDir(t);
+  const ledgerFile = path.join(dir, 'helpers.json');
+  writeFileSync(ledgerFile, JSON.stringify({ scratch: { kind: 'scratch', expiresAt: '2099-11-03T00:00:00Z' } }));
+  const old = new Date('2026-01-01T00:00:00Z');
+  utimesSync(ledgerFile, old, old);
+  const result = await sweepScratchHelpers(dir, { now: Date.parse('2026-11-03T00:00:00Z') });
+  assert.deepEqual(result, { removed: [], leftover: [], visited: 0 });
+  assert.equal(statSync(ledgerFile).mtimeMs, old.getTime());
+});
+
+test('scratch TTL cannot remove a live lease, foreign label or changed witness', () => {
+  const base = { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'owner-one', project: 'scratch-one',
+    worktree: '/owned', startedAt: '2026-11-03T00:00:00Z', expiresAt: '2026-11-03T00:10:00Z',
+    writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' },
+    pids: [345], identities: { 345: 'birth' }, dockerResources: { project: 'scratch-one',
+      containers: [], volumes: [{ id: 'data', created: '2026-11-03T00:00:01Z', project: 'scratch-one', ownerToken: 'owner-one' }], networks: [] } };
+  for (const change of ['lease', 'live', 'lock', 'foreign', 'changed']) {
+    const ledger = { scratch: structuredClone(base) };
+    let removed = false;
+    const resources = structuredClone(base.dockerResources);
+    if (change === 'foreign') resources.volumes[0].ownerToken = 'other';
+    if (change === 'changed') resources.volumes[0].created = '2026-11-03T00:00:02Z';
+    reconcileExpiredScratchHelpers(ledger, Date.parse('2026-11-03T00:11:00Z'), {
+      capture: () => resources, cleanup: () => { removed = true; },
+      alive: () => change === 'live', identityOf: () => 'birth', lockHeld: () => change === 'lock',
+      leaseTerminal: () => change !== 'lease',
+    });
+    assert.equal(removed, false, change);
+    assert.equal(ledger.scratch.stoppedAt, undefined, change);
+  }
+});
 
 test('a terminal PR reconciles only its recorded helper and reports a refused cleanup with owner and ticket', async () => {
   const record = { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
@@ -243,11 +494,30 @@ const waitUntil = async (predicate) => {
 };
 
 test('a helper whose result was accepted and that still runs is a stop candidate', (t) => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-helpers-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  assert.equal(run([dir, 'start', 'review-a', '--brief', 'prompts/review-a-01.md', '--now', '2026-10-21T10:00:00Z']).status, 0);
+  const dir = tempDir(t);
+  const source = path.join(dir, 'source');
+  mkdirSync(source);
+  execFileSync('git', ['init', '-q', '-b', 'review', source]);
+  writeFileSync(path.join(source, 'app.txt'), 'source\n');
+  execFileSync('git', ['-C', source, 'add', '.']);
+  execFileSync('git', ['-C', source, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const capabilities = path.join(dir, 'capabilities.json');
+  writeFileSync(capabilities, '[]\n');
+  const definition = path.join(dir, 'review-a.md');
+  writeFileSync(definition, '---\nname: review-a\n---\n');
+  const brief = path.join(dir, 'prompts', 'review-a-01.md');
+  mkdirSync(path.dirname(brief));
+  writeFileSync(brief, 'Review.\n');
+  assert.equal(run([dir, 'start', 'review-a', '--kind', 'reviewer', '--brief', 'prompts/review-a-01.md', '--worktree', source,
+    '--worker-id', 'native-reviewer-a', '--role', 'review-a', '--agent-definition', definition,
+    '--capabilities', capabilities, '--now', '2026-10-21T10:00:00Z']).status, 0);
   assert.equal(run([dir, 'start', 'review-b', '--now', '2026-10-21T10:00:00Z']).status, 0);
-  assert.equal(run([dir, 'accepted', 'review-a', '--now', '2026-10-21T10:10:00Z']).status, 0);
+  const helper = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['review-a'];
+  const deliverable = path.join(dir, 'final.md');
+  writeFileSync(deliverable, `final review\n${finalMarker(helper, { sessionId: 's-1', turnId: 't-1' })}\n`);
+  const report = path.join(dir, 'final.json');
+  assert.equal(run([dir, 'final', 'review-a', '--deliverable', deliverable, '--session-id', 's-1', '--turn-id', 't-1', '--out', report]).status, 0);
+  assert.equal(run([dir, 'accepted', 'review-a', '--report', report, '--now', '2026-10-21T10:10:00Z']).status, 0);
   const busy = run([dir, 'status', '--now', '2026-10-21T10:20:00Z']);
   assert.equal(busy.status, 1);
   assert.match(busy.stdout, /^STOP review-a accepted 10m ago; relaunch from prompts\/review-a-01\.md$/m);

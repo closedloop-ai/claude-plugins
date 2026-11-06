@@ -25,9 +25,18 @@ EVALS = Path(__file__).resolve().parents[1]
 PLUGIN = EVALS.parent
 MANIFESTS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
 PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestrator-"}
-SKILLS = ("fleet-orchestrator", "handoff", "vibe")
+SKILLS = ("pr-takeover", "fleet-orchestrator", "handoff", "vibe")
 ACTIVE_PROCESSES: set[subprocess.Popen[str]] = set()
 ACTIVE_PROCESSES_LOCK = threading.Lock()
+
+
+def default_codex_model() -> str:
+    """Read the same ordinary-agent model policy used by the nightly driver."""
+    policy = Path(__file__).with_name("model-policy.json")
+    model = json.loads(policy.read_text())["codexModel"]
+    if not isinstance(model, str) or not re.fullmatch(r"gpt-[a-z0-9.-]+", model):
+        raise ValueError("eval-codex-model-policy-invalid")
+    return model
 
 
 def snapshot_metadata(output: Path) -> dict[str, Any]:
@@ -87,6 +96,15 @@ def role_text(text: str) -> str:
         r"(?i)(my name is )[A-Z][a-z]+ [A-Z][a-z]+", r"\1the product manager", text
     )
     return text
+
+
+def rewrite_skill_invocations(prompt: str) -> str:
+    """Map the shared Claude Skill syntax to the installed Codex skill syntax."""
+    return re.sub(
+        r"\(`vibe:(vibe|handoff|fleet-orchestrator|pr-takeover)`\)",
+        lambda match: "(`$" + match[1] + "`)",
+        prompt,
+    )
 
 
 def cases(root: Path = EVALS) -> list[dict[str, Any]]:
@@ -509,11 +527,24 @@ def deterministic(
             target = meta.get("target", {})
             file = work / target["path"] if target.get("source") == "file" else None
             text = file.read_text() if file and file.exists() else "" if file else reply
-            matched = bool(
-                re.search(
-                    meta["pattern"], text, re.I if "i" in meta.get("flags", "") else 0
+            declared_flags = meta.get("flags", "")
+            flag_values = {
+                "a": re.A,
+                "i": re.I,
+                "m": re.M,
+                "s": re.S,
+                "u": re.U,
+                "x": re.X,
+            }
+            unknown_flags = set(declared_flags) - set(flag_values)
+            if unknown_flags:
+                raise ValueError(
+                    "unsupported grader regex flags: " + "".join(sorted(unknown_flags))
                 )
-            )
+            regex_flags = re.NOFLAG
+            for flag in declared_flags:
+                regex_flags |= flag_values[flag]
+            matched = bool(re.search(meta["pattern"], text, regex_flags))
             passed = (
                 matched if meta.get("match", "contains") == "contains" else not matched
             )
@@ -588,9 +619,7 @@ def run_case(
             "Load the instructions with the Skill tool",
             "Load the installed Codex skill instructions",
         )
-        prompt = re.sub(
-            r"\(`vibe:(vibe|handoff|fleet-orchestrator)`\)", lambda m: "(`$" + m[1] + "`)", prompt
-        )
+        prompt = rewrite_skill_invocations(prompt)
         header = case["meta"].get("append_system_prompt", "")
         history = case["source"] / "history.jsonl"
         if history.exists():
@@ -727,7 +756,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--list", action="store_true")
-    parser.add_argument("--model", default="gpt-6-sol")
+    parser.add_argument("--model", default=default_codex_model())
     parser.add_argument("--grader-model", default="gpt-6-luna")
     parser.add_argument(
         "--deterministic-only", action="store_true",

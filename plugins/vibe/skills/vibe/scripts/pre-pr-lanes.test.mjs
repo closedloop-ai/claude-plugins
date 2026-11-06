@@ -250,3 +250,25 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   assert.equal(dirtyMain.status, 2, 'a dirty baseline cannot establish a failure on captured main');
   assert.match(dirtyMain.stderr, /captured main must be clean/);
 });
+
+test("lanes of one pool finishing together all keep their records", async (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-pool-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  writeFileSync(path.join(worktree, "a.txt"), "one\n");
+  git(worktree, ["add", "a.txt"], home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const lanes = ["a", "b", "c", "d", "e", "f"].map((name) => `node -e "process.exit(0)" ${name}`);
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `${lanes.map((lane) => `    ${lane}`).join("\n")}\n`);
+  const { spawn } = await import("node:child_process");
+  const runs = lanes.map((lane) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [SCRIPT, "run", "--worktree", worktree, "--head", head, "--command", lane, "--report", report], { env: { ...process.env, HOME: home }, stdio: "ignore" });
+    child.on("close", resolve);
+  }));
+  assert.deepEqual(await Promise.all(runs), lanes.map(() => 0));
+  const recorded = JSON.parse(readFileSync(path.join(worktree, ".git/vibe-lane-results.json"), "utf8")).map((row) => row.command).sort();
+  assert.deepEqual(recorded, [...lanes].sort());
+});

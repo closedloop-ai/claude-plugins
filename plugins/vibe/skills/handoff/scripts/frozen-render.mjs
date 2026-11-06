@@ -73,9 +73,9 @@ import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
 import { withVerifyStorybook } from "../../vibe/scripts/verify-storybook-process.mjs";
 import { storyId } from "./diff-rules.mjs";
-import { cropDiffPng, decodePng, pixelHash } from "./png-diff.mjs";
+import { cropDiffPng, decodePng, pixelHash, pngHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
-import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { createImportClosure, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
@@ -99,11 +99,28 @@ const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head"
 export const CONFIRM_RENDERS = 2;
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
-const FROZEN_GLOBAL_INPUT = /\.(?:css|scss|sass|less)$|(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)|(?:^|\/)tailwind\.config\.[cm]?[jt]s$|(?:^|\/)\.storybook\/preview\.[cm]?[jt]sx?$/i;
+const STYLESHEET = /\.(?:css|scss|sass|less)$/i;
+const PREVIEW_ENTRY = /^apps\/storybook\/\.storybook\/preview\.[cm]?[jt]sx?$/i;
+const TOKEN_OR_THEME = /(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)/i;
+const TAILWIND_CONFIG = /(?:^|\/)tailwind\.config\.[cm]?[jt]s$/i;
+const STORYBOOK_GLOBAL = /^apps\/storybook\/(?:\.storybook\/(?:preview-head\.html|main\.ts)$|public\/)/;
+const GLOBAL_MANIFESTS = new Set(["apps/storybook/package.json", "packages/design-system/package.json", "packages/app/package.json", "pnpm-lock.yaml"]);
 
-/** Global inputs that can affect every frozen story without a direct import. */
-export function isFrozenGlobalInput(file) {
-  return FROZEN_GLOBAL_INPUT.test(file);
+/** Preview dependencies from both revisions, with extension resolution confined to each revision's files. */
+export function storybookPreviewImportClosure(baseFiles, headFiles, baseTextAt, headTextAt) {
+  const walk = (files, textAt) => {
+    const closure = createImportClosure(files, (paths) => new Map(paths.map((file) => [file, textAt(file)])));
+    return closure([...files].filter((file) => PREVIEW_ENTRY.test(file)));
+  };
+  return new Set([...walk(baseFiles, baseTextAt), ...walk(headFiles, headTextAt)]);
+}
+
+/** Global inputs that can affect every frozen story without a direct story import. */
+export function isFrozenGlobalInput(file, previewClosure = new Set()) {
+  // Storybook's static build has no manualChunks; one would load CSS outside its importer's graph.
+  return PREVIEW_ENTRY.test(file) || TOKEN_OR_THEME.test(file) || TAILWIND_CONFIG.test(file)
+    || STORYBOOK_GLOBAL.test(file) || GLOBAL_MANIFESTS.has(file)
+    || (STYLESHEET.test(file) && previewClosure.has(file));
 }
 
 /** Pick separate loopback ports; the verifier still refuses a port already recorded by a peer. */
@@ -207,33 +224,93 @@ export function frozenStoryIds(repo, base, storyFiles) {
   });
 }
 
-/** One render of one story: its play verdict, first failure, screenshot and pixel hash. */
-export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPORT, timeoutMs = DEFAULT_TIMEOUT_MS, now = DEFAULT_NOW } = {}) {
+/** Milliseconds elapsed while `action` runs, recorded under `phase`. */
+async function measurePhase(timings, phase, action) {
+  const started = performance.now();
+  try {
+    return await action();
+  } finally {
+    timings[phase] = Math.round((performance.now() - started) * 1000) / 1000;
+  }
+}
+
+/**
+ * Renders one story in a fresh browser context and returns its play result, screenshot and phase timings.
+ * Direct callers receive its exact pixel hash. `deferPixels` lets `frozenRenders` avoid every decode when raw PNGs match;
+ * `dependencies.reference` preserves the pairwise short circuit, and the remaining dependencies exist for focused tests.
+ */
+export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPORT, timeoutMs = DEFAULT_TIMEOUT_MS, now = DEFAULT_NOW } = {}, dependencies = {}) {
+  const timingsMs = { contextCreation: 0, pageLoad: 0, playWait: 0, fonts: 0, screenshot: 0, decode: 0, hash: 0 };
+  const decode = dependencies.decodePng ?? decodePng;
+  const hashPixels = dependencies.pixelHash ?? pixelHash;
+  const hashPng = dependencies.pngHash ?? pngHash;
+  const reference = dependencies.reference;
   // A fresh context per render, so storage or cache one render leaves behind never reaches the next.
-  const context = await browser.newContext({ viewport, ...PINNED_CONTEXT });
+  const context = await measurePhase(timingsMs, "contextCreation", () => browser.newContext({ viewport, ...PINNED_CONTEXT }));
   try {
     const page = await context.newPage();
     await page.clock.setFixedTime(new Date(now));
     await page.addInitScript(PLAY_EVENT_RECORDER);
-    await page.goto(`${url.replace(/\/+$/, "")}/iframe.html?id=${encodeURIComponent(id)}&viewMode=story`, { waitUntil: "load", timeout: timeoutMs });
+    await measurePhase(timingsMs, "pageLoad", () => page.goto(`${url.replace(/\/+$/, "")}/iframe.html?id=${encodeURIComponent(id)}&viewMode=story`, { waitUntil: "load", timeout: timeoutMs }));
     let finished = true;
     try {
       // The iframe renders only this story, so an event Storybook sent without a story ID is its own.
-      await page.waitForFunction(([storyIdArg, types]) => (window.__vibePlayEvents ?? [])
-        .some((event) => (event.storyId ?? storyIdArg) === storyIdArg && types.includes(event.type)), [id, FINISH_EVENTS], { timeout: timeoutMs });
+      await measurePhase(timingsMs, "playWait", () => page.waitForFunction(([storyIdArg, types]) => (window.__vibePlayEvents ?? [])
+        .some((event) => (event.storyId ?? storyIdArg) === storyIdArg && types.includes(event.type)), [id, FINISH_EVENTS], { timeout: timeoutMs }));
     } catch {
       finished = false;
     }
     const events = (await page.evaluate(() => window.__vibePlayEvents ?? [])).map((event) => ({ ...event, storyId: event.storyId ?? id }));
-    await page.evaluate(() => document.fonts.ready.then(() => undefined));
-    const screenshot = await page.screenshot({ animations: "disabled", caret: "hide", scale: "css", fullPage: true });
+    await measurePhase(timingsMs, "fonts", () => page.evaluate(() => document.fonts.ready.then(() => undefined)));
+    const screenshot = await measurePhase(timingsMs, "screenshot", () => page.screenshot({ animations: "disabled", caret: "hide", scale: "css", fullPage: true }));
+    const hash = async (action) => {
+      const before = timingsMs.hash;
+      const result = await measurePhase(timingsMs, "hash", action);
+      timingsMs.hash += before;
+      return result;
+    };
+    // Hash encoded bytes before decoding. A byte-identical screenshot has the reference's exact pixels.
+    const rawPngHash = await hash(() => hashPng(screenshot));
+    let decodedPixelHash;
+    const decodePixels = async () => {
+      if (decodedPixelHash !== undefined) return decodedPixelHash;
+      const decoded = await measurePhase(timingsMs, "decode", () => decode(screenshot));
+      decodedPixelHash = await hash(() => hashPixels(decoded));
+      return decodedPixelHash;
+    };
+    let pixels;
+    if (!dependencies.deferPixels) {
+      pixels = reference?.rawPngHash === rawPngHash ? reference.pixels : await decodePixels();
+    }
     const verdict = finished ? playVerdicts(events, [id])[0]
       : { storyId: id, verdict: "FAIL", reason: `the play did not finish within ${timeoutMs} ms` };
     const failure = events.find((event) => event.storyId === id && FINISH_EVENTS.includes(event.type) && event.type !== "storyFinished");
     return { verdict: verdict.verdict, reason: verdict.reason, failure: failure ? { type: failure.type, message: failure.message ?? null } : null,
-      pixels: pixelHash(decodePng(screenshot)), screenshot, events };
+      pixels, rawPngHash, decodePixels, screenshot, events, timingsMs };
   } finally {
     await context.close();
+  }
+}
+
+/**
+ * Resolves the pixel identities needed by `classifyStory`. One raw-PNG group needs no decode; multiple groups decode
+ * one representative each so differently encoded screenshots still compare by their exact decoded pixels.
+ */
+async function resolvePixelHashes(renders) {
+  const groups = Map.groupBy(renders, (render) => render.rawPngHash);
+  if (groups.size === 1) {
+    for (const render of renders) {
+      render.pixels = render.rawPngHash;
+      render.pixelsDecoded = false;
+    }
+    return;
+  }
+  for (const group of groups.values()) {
+    const pixels = group.find((render) => render.pixelsDecoded)?.pixels ?? await group[0].decodePixels();
+    for (const render of group) {
+      render.pixels = pixels;
+      render.pixelsDecoded = true;
+    }
   }
 }
 
@@ -266,25 +343,28 @@ export function classifyStory(bases, head) {
 }
 
 /** Renders every story twice on the base and once on the branch. */
-export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, head, inputs, repairedIds = new Map(), refused = [] }) {
+export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, head, inputs, repairedIds = new Map(), refused = [] }, renderDependencies = {}) {
   const stories = [];
   const options = { viewport, timeoutMs, now };
   for (const id of ids) {
+    const baseRender = await renderStory(browser, baseUrl, id, options, { ...renderDependencies, deferPixels: true });
     const renders = {
-      [Side.Base]: await renderStory(browser, baseUrl, id, options),
-      [Side.BaseAgain]: await renderStory(browser, baseUrl, id, options),
-      [Side.Head]: await renderStory(browser, headUrl, id, options),
+      [Side.Base]: baseRender,
+      [Side.BaseAgain]: await renderStory(browser, baseUrl, id, options, { ...renderDependencies, deferPixels: true }),
+      [Side.Head]: await renderStory(browser, headUrl, id, options, { ...renderDependencies, deferPixels: true }),
     };
     for (const [side, render] of Object.entries(renders)) {
       saveScreenshot(out, side, id, render);
     }
+    await resolvePixelHashes(Object.values(renders));
     let { diff, ...result } = classifyStory([renders[Side.Base], renders[Side.BaseAgain]], renders[Side.Head]);
     if (result.outcome === FrozenOutcome.Blocking) {
       // A base that matched itself twice can still vary (ISS-13167): a blocking verdict stands only after more base renders agree.
       for (let n = 1; n <= CONFIRM_RENDERS; n++) {
-        renders[`${Side.BaseConfirm}-${n}`] = await renderStory(browser, baseUrl, id, options);
+        renders[`${Side.BaseConfirm}-${n}`] = await renderStory(browser, baseUrl, id, options, { ...renderDependencies, deferPixels: true });
         saveScreenshot(out, `${Side.BaseConfirm}-${n}`, id, renders[`${Side.BaseConfirm}-${n}`]);
       }
+      await resolvePixelHashes(Object.values(renders));
       const bases = Object.entries(renders).filter(([side]) => side !== Side.Head).map(([, render]) => render);
       ({ diff, ...result } = classifyStory(bases, renders[Side.Head]));
       result.confirmRenders = CONFIRM_RENDERS;
@@ -294,7 +374,7 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
     }
     const crop = diff ? writeCrop(out, id, diff[0].screenshot, diff[1].screenshot) : null;
     stories.push({ storyId: id, ...result, ...(crop ? { crop } : {}), ...(repairedIds.has(id) ? { headStoryFile: repairedIds.get(id) } : {}),
-      renders: Object.fromEntries(Object.entries(renders).map(([side, { screenshot, ...rest }]) => [side, rest])) });
+      renders: Object.fromEntries(Object.entries(renders).map(([side, { screenshot, rawPngHash, decodePixels, pixelsDecoded, ...rest }]) => [side, rest])) });
   }
   stories.push(...refused.map((story) => ({ ...story, outcome: FrozenOutcome.Blocking })));
   return summarize(stories, { fileCount, out, command, head, inputs });
@@ -340,40 +420,44 @@ export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
  */
 export function frozenInputs(repo, base, storyFiles = []) {
   const run = (args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
-  const baseFiles = new Set(run(["ls-tree", "-r", "--name-only", base]).split("\n").filter((file) => SOURCE_FILE.test(file)));
-  const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter((file) => SOURCE_FILE.test(file)));
-  const allFiles = new Set([...baseFiles, ...headFiles]);
-  const changed = run(["diff", "--name-only", "--no-renames", base]).split("\n").filter((file) => SOURCE_FILE.test(file));
-  const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(isFrozenGlobalInput)])];
-  const closure = new Set();
-  const queue = [...new Set(roots)];
+  const baseFiles = new Set(run(["ls-tree", "-r", "--name-only", base]).split("\n").filter(Boolean));
+  const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter(Boolean));
+  const changed = [...new Set([
+    ...run(["diff", "--name-only", "--no-renames", "-z", base]).split("\0"),
+    ...run(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
+  ].filter(Boolean))];
+  const texts = new Map();
   const textAt = (file, ref) => {
+    const key = `${ref}:${file}`;
+    if (texts.has(key)) return texts.get(key);
+    let text;
     if (ref === "head") {
       const absolute = path.join(repo, file);
-      return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
-    }
-    try {
-      return run(["show", `${base}:${file}`]);
-    } catch {
-      return null;
-    }
-  };
-  while (queue.length) {
-    const file = queue.shift();
-    if (!SOURCE_FILE.test(file) || closure.has(file)) continue;
-    closure.add(file);
-    for (const text of [textAt(file, "base"), textAt(file, "head")]) {
-      for (const match of text?.matchAll(IMPORT_SPECIFIER) ?? []) {
-        const target = resolveImport(file, match[1], allFiles);
-        if (target && !closure.has(target)) queue.push(target);
+      text = existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
+    } else {
+      try {
+        text = run(["show", `${base}:${file}`]);
+      } catch {
+        text = null;
       }
     }
-  }
+    texts.set(key, text);
+    return text;
+  };
+  const previewClosure = storybookPreviewImportClosure(baseFiles, headFiles,
+    (file) => textAt(file, "base"), (file) => textAt(file, "head"));
+  const globalInput = (file) => isFrozenGlobalInput(file, previewClosure);
+  const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(globalInput)])];
+  const walk = (files, ref) => createImportClosure(files,
+    (paths) => new Map(paths.map((file) => [file, textAt(file, ref)])),
+    (file) => SOURCE_FILE.test(file) || globalInput(file))(roots);
+  const closure = new Set([...walk(baseFiles, "base"), ...walk(headFiles, "head")]);
   const hash = createHash("sha256");
   for (const file of [...closure].sort()) {
-    const text = textAt(file, "head");
-    const semantic = semanticSourceText(file, text) ?? text;
-    hash.update(`${file}\0${semantic === null ? "deleted" : createHash("sha256").update(semantic).digest("hex")}\n`);
+    const absolute = path.join(repo, file);
+    const bytes = existsSync(absolute) ? readFileSync(absolute) : null;
+    const semantic = bytes && semanticSourceText(file, bytes.toString("utf8"));
+    hash.update(`${file}\0${bytes === null ? "deleted" : createHash("sha256").update(semantic ?? bytes).digest("hex")}\n`);
   }
   return hash.digest("hex").slice(0, 16);
 }

@@ -13,6 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SYMPHONY_REMOTE = "git@github.com:closedloop-ai/symphony-alpha.git";
+// Fixture mirror of symphony-alpha/vibe-handoff-paths.json; production loads the target repository itself.
+export const SYMPHONY_PATH_POLICY = readFileSync(new URL("./fixtures/symphony-vibe-handoff-paths.json", import.meta.url), "utf8");
 
 /** Mutate a fixture immediately after a named source read, without patching the consumer under test. */
 export function mutateSourceRead({ file, caller, text, gitDiff = false, writeTo = file, excludeCaller }) {

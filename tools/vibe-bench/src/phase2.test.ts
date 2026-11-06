@@ -42,13 +42,14 @@ test("seeded setup time does not consume the model execution budget", () => {
   assert.ok(deadline > batchStartedAt + 10 * 60 * 1000);
 });
 
-test("main plugin hooks require a checked conversation and a run-owned session record", async () => {
+test("main plugin hooks require a checked conversation and always refuse native vibe workers", async () => {
   const vibeDir = join(dirname(new URL(import.meta.url).pathname), "../../../plugins/vibe");
   const agentModule = await import(pathToFileURL(join(vibeDir, "hooks/agent-guard.mjs")).href) as {
     agentGuard(input: unknown): unknown;
   };
   const versionModule = await import(pathToFileURL(join(vibeDir, "hooks/plugin-version-guard.mjs")).href) as {
     pluginVersionGuard(input: unknown, home: string): unknown;
+    pluginVersionPromptStart(input: unknown, home: string): unknown;
   };
   const { agentGuard } = agentModule;
   const { pluginVersionGuard } = versionModule;
@@ -67,10 +68,18 @@ test("main plugin hooks require a checked conversation and a run-owned session r
     assert.ok(pluginVersionGuard(input, root), "unverified plugin version must deny a writer");
     await writeBenchmarkSessionRecord(vibeDir, checkout,
       "benchmark/project-search-infix", "seeded", "a".repeat(40));
-    assert.equal(agentGuard(input), null, "run-owned session record admits the writer");
-    writeFileSync(startup, `${JSON.stringify({ conversation: sessionId, status: "unknown" })}\n`);
+    assert.ok(agentGuard(input), "run-owned session still requires the capability-bound launcher");
+    versionModule.pluginVersionPromptStart({ session_id: sessionId, prompt: "$vibe benchmark" }, root);
+    const hookLoad = JSON.parse(readFileSync(join(root, ".vibe-hook-scope", `${sessionId}.json`), "utf8")).loadedSkill;
+    writeFileSync(startup, `${JSON.stringify({ conversation: sessionId, status: "unknown", loadedSkill: hookLoad })}\n`);
     assert.equal(pluginVersionGuard(input, root), null, "a completed version check admits the writer");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("isolated benchmark delegates only through the capability-bound launcher", () => {
+  const prompt = shapePrompt("vibe");
+  assert.match(prompt, /capability-bound claude-worker launcher/);
+  assert.doesNotMatch(prompt, /Delegate to exactly one vibe-change-worker/);
 });
 
 test("version-check launcher uses a physical plugin path so its CLI main guard runs", () => {

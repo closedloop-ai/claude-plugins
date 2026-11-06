@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "allowedPrefixes": ["plugins/", "tools/", "evals/", "docs/"],
+  "allowedFiles": ["CHANGELOG.md"],
+  "forbiddenPrefixes": [".github/"],
+  "forbiddenBasenames": ["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"],
+  "rootTests": false,
+  "laneSource": { "kind": "github-workflow", "path": ".github/workflows/ci.yml" }
+}

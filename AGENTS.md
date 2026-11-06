@@ -16,7 +16,7 @@ This repository is a plugin monorepo under `plugins/`.
 - `pip install -r plugins/code/tools/python/requirements.txt -r plugins/self-learning/tools/python/requirements.txt`  
   Install runtime dependencies used by Python tools.
 - `git config core.hooksPath .githooks`  
-  Enable repo hooks (required for contributor checks).
+  Enable repo hooks (required for contributor checks). The pre-push hook also runs CI's `uv run ruff check .` and `uv run pyright` on the pushed commit when it changes a Python file or Python config (needs `uv`); `SKIP_PYTHON_CHECKS=1 git push` bypasses them for one push.
 - `./plugins/code/scripts/install-dependencies.sh`  
   Install system/Python dependencies used by the `code` and `self-learning` toolchain.
 - `ruff check .`  

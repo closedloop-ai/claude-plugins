@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, makeCheckout, makeHome, portableSurfaceChecker, runNode } from "./test-fixtures.mjs";
+import { git, makeCheckout, makeHome, portableSurfaceChecker, runNode, SYMPHONY_PATH_POLICY } from "./test-fixtures.mjs";
 import { checkLiveTicket, parseSections, TICKET_SECTIONS } from "../../handoff/scripts/live-ticket-check.mjs";
 import { isOwnedPrototypeSession, validatePrototypePublication } from "./prototype-session.mjs";
 
@@ -17,7 +17,8 @@ function setup(t, files = {}) {
   const fixture = makeHome("vibe-prototype-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "checkout with spaces");
-  makeCheckout({ ...fixture, checkout, files });
+  makeCheckout({ ...fixture, checkout, files: {
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY, ...files } });
   const created = runNode(SESSIONS, ["new-prototype", "--repo", checkout,
     "--slug", "board-mockup", "--summary", "Board mockup", ...OPERATOR], fixture.home);
   assert.equal(created.status, 0, JSON.stringify(created.json));
@@ -124,6 +125,7 @@ test("handoff validates owned publication and session ids without weakening app 
     "- Visual inspection: not performed; protection and appearance remain unverified.",
   ].join("\n");
   sections.set("Design Review", designReview);
+  sections.set("Handoff", "- Assumptions: None: no Spec Card");
   sections.set("Scope and acceptance criteria", "- Newest ruling: none found (searched: fixture ticket comments)\n- Prior removal: none found (searched: fixture element names)");
   const body = TICKET_SECTIONS.map((heading) => `## ${heading}\n\n${sections.get(heading) ?? "None."}\n`).join("\n");
   const file = path.join(fixture.privateDir, "ticket.md");

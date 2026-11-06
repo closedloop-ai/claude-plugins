@@ -1,0 +1,1255 @@
+{
+  "schemaVersion": 1,
+  "pluginVersion": "1.1.39",
+  "pluginSha": "bdc8ee86759ae6e36cfd2e00d31aceb52967fd53",
+  "runAt": "2026-11-04T23:12:00Z",
+  "models": {
+    "claude": "claude-sonnet-5-5",
+    "claudeJudge": "claude-opus-5-5",
+    "codex": "gpt-6-sol",
+    "codexJudge": "gpt-6-luna"
+  },
+  "runtimes": [
+    {
+      "runtime": "claude",
+      "totalCostUsd": 55.68960840000001,
+      "cases": [
+        {
+          "id": "exec-asana-lacks-flow-checks-another-app",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "exec-closedloop-connection-lost-no-settings",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-closedloop-sign-in-ran-out-mid-chat-new-chat",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-closedloop-signed-in-again-keeps-chat",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-confused-thought-you-would-code-it",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-described-change-no-reference",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "exec-done-asks-two-way",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-github-sign-in-run-for-the-person",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-main-only-failure-does-not-block",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-new-session-first-reply",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pass-on-named-person",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pass-on-send-to-design",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pending-question-not-repeated",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-polish-after-declined-skips-visual-qa",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-polish-request-design-pack-without-criteria",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pr-intent-take-it-through-review",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-precedent-answer-recorded-not-asked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-sample-data-question-is-plain",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-sandbox-blocked-sign-in-asks-allow-once",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-setup-check-block-first-reply",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-sign-in-expired-is-one-plain-step",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-proceed-does-not-wait",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-sandboxed-runs-escalated",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-unreachable-carries-on",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-update-done-asks-reopen",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-update-runs-both",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-visual-qa-not-offered-on-small-edit",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-visual-qa-offered-without-criteria",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "orch-compaction-rereads-resume-log",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-failed-command-counts-not-reported",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-owned-qa-cleanup",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-parallel-build-helpers",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-parallel-e2e-queued",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "orch-pr-takeover-delivery",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-pr-takeover-e2e",
+          "status": "pass",
+          "retryCount": 2
+        },
+        {
+          "id": "orch-pr-takeover-premises",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-pr-takeover-prevention",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "orch-pr-takeover-stack",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "orch-pr-takeover-url-only",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-program-change-recorded-first",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-push-ready-grader-loop",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-agent-docs-draft-blocked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-answered-question-not-asked-again",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-asana-checked-before-asking",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-asked-for-plan-and-files",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-card-touch-device-coverage",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-claimed-child-moves-only-on-gate",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-codex-limit-writer-switch",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-criterion-unchecked-on-board",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-desktop-build-before-electron",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-done-asks-two-way",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-first-thing-to-do-is-a-story-link",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-flag-key-sprawl-blocked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-fleet-defaults-not-asked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-fleet-no-writer-design-session",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-fleet-single-writer-program",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-fleet-version-outdated-asks-operator",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-graph-answered-question-not-asked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-hardcoded-shadow-blocked-at-review",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-held-flag-retirement-blocked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-is-engineer-next-step",
+          "status": "pass",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-look-first-gets-clickable-links",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-main-sync-capability-removal-blocks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-missing-tests-host-adapters",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-new-session-first-reply",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-no-precedent-asks-once",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-nothing-running-offers-to-start",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-orchestrator-direction-not-a-ruling",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-outside-product-cards",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-owned-lockfile-recovery",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-pass-on-someone-else-finishes",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-polish-request-runs-visual-qa",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-body-facts-block-create",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-intent-get-the-pr-merged",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-intent-raise-a-pr",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-intent-ship-it-myself",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-path-ends-with-the-pr-link",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-prd-children-are-scope",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-question-recorded-before-asking",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-real-engineering-blocker-handover",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-real-exchange-get-the-pr-merged-with-name",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-reference-card",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-requirements-overlap-shipped",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-resume-existing-ticket-plan",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-resume-has-no-endings-line",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-comments-fix-the-pr",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-dead-clear-control",
+          "status": "pass",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-review-dirty-field-coverage",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-duplicate-helper-copy",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-flag-resolution",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-gates-block-handoff",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-paged-refetch",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-review-pending-owner-value",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-sample-data-not-asked-for-a-restyle",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-sample-data-question-is-plain",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-session-caused-failure-blocks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-shared-selection-slot-not-owner",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-sign-in-expired-is-one-plain-step",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-stale-story-id-blocks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-static-page-light-and-dark",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-story-play-real-browser",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-storybook-flag-off-is-preview",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-storybook-names-claim-what-plays-assert",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-storybook-new-states-for-deprecated-component",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-storybook-synced-main-moves-own-entries",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-handoff-plan-approved-before-pr",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-handoff-repairs-missing-link",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-plan-local-path-refused",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-prd-start-links-prd-and-plan",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-resume-no-duplicate-plan",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-tooling-rerun-continues",
+          "status": "pass",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-two-screenshot-page",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-unprompted-update-stays-plain",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-version-current-says-nothing",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-history-and-v1-prose-blocked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-keep-going-records-choice",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-kept-then-endings-line",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-outdated-asks-keep-going-or-update",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-resume-asks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-visual-qa-offered-at-first-visible-change",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-weekly-project-fallback",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "upgrade-resume-changed-definition",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "upgrade-resume-unchanged-definition",
+          "status": "pass",
+          "retryCount": 0
+        }
+      ]
+    },
+    {
+      "runtime": "codex",
+      "cases": [
+        {
+          "id": "exec-asana-lacks-flow-checks-another-app",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "exec-closedloop-connection-lost-no-settings",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-closedloop-sign-in-ran-out-mid-chat-new-chat",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-closedloop-signed-in-again-keeps-chat",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-confused-thought-you-would-code-it",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-described-change-no-reference",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-done-asks-two-way",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-github-sign-in-run-for-the-person",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-main-only-failure-does-not-block",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-new-session-first-reply",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pass-on-named-person",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pass-on-send-to-design",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pending-question-not-repeated",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-polish-after-declined-skips-visual-qa",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-polish-request-design-pack-without-criteria",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-pr-intent-take-it-through-review",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-precedent-answer-recorded-not-asked",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "exec-sample-data-question-is-plain",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-sandbox-blocked-sign-in-asks-allow-once",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-setup-check-block-first-reply",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-sign-in-expired-is-one-plain-step",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-proceed-does-not-wait",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-sandboxed-runs-escalated",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-unreachable-carries-on",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-update-done-asks-reopen",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-version-update-runs-both",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-visual-qa-not-offered-on-small-edit",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "exec-visual-qa-offered-without-criteria",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-compaction-rereads-resume-log",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-failed-command-counts-not-reported",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-owned-qa-cleanup",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-parallel-build-helpers",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "orch-parallel-e2e-queued",
+          "status": "pass",
+          "retryCount": 2
+        },
+        {
+          "id": "orch-pr-takeover-delivery",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-pr-takeover-e2e",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-pr-takeover-premises",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-pr-takeover-prevention",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-pr-takeover-stack",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "orch-pr-takeover-url-only",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-program-change-recorded-first",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "orch-push-ready-grader-loop",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-agent-docs-draft-blocked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-answered-question-not-asked-again",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-asana-checked-before-asking",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-asked-for-plan-and-files",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-card-touch-device-coverage",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-claimed-child-moves-only-on-gate",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-codex-limit-writer-switch",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-criterion-unchecked-on-board",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-desktop-build-before-electron",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-done-asks-two-way",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-first-thing-to-do-is-a-story-link",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-flag-key-sprawl-blocked",
+          "status": "pass",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-fleet-defaults-not-asked",
+          "status": "pass",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-fleet-no-writer-design-session",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-fleet-single-writer-program",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-fleet-version-outdated-asks-operator",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-graph-answered-question-not-asked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-hardcoded-shadow-blocked-at-review",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-held-flag-retirement-blocked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-is-engineer-next-step",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-look-first-gets-clickable-links",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-main-sync-capability-removal-blocks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-missing-tests-host-adapters",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-new-session-first-reply",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-no-precedent-asks-once",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-nothing-running-offers-to-start",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-orchestrator-direction-not-a-ruling",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-outside-product-cards",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-owned-lockfile-recovery",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pass-on-someone-else-finishes",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-polish-request-runs-visual-qa",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-body-facts-block-create",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-intent-get-the-pr-merged",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-intent-raise-a-pr",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-intent-ship-it-myself",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-pr-path-ends-with-the-pr-link",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-prd-children-are-scope",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-question-recorded-before-asking",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-real-engineering-blocker-handover",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-real-exchange-get-the-pr-merged-with-name",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-reference-card",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-requirements-overlap-shipped",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-resume-existing-ticket-plan",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-resume-has-no-endings-line",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-comments-fix-the-pr",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-dead-clear-control",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-dirty-field-coverage",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-duplicate-helper-copy",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-review-flag-resolution",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-gates-block-handoff",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-review-paged-refetch",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-review-pending-owner-value",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-sample-data-not-asked-for-a-restyle",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-sample-data-question-is-plain",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-session-caused-failure-blocks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-shared-selection-slot-not-owner",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-sign-in-expired-is-one-plain-step",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-stale-story-id-blocks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-static-page-light-and-dark",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-story-play-real-browser",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-storybook-flag-off-is-preview",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-storybook-names-claim-what-plays-assert",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-storybook-new-states-for-deprecated-component",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-storybook-synced-main-moves-own-entries",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-handoff-plan-approved-before-pr",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-handoff-repairs-missing-link",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-plan-local-path-refused",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-prd-start-links-prd-and-plan",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-ticket-resume-no-duplicate-plan",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-tooling-rerun-continues",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-two-screenshot-page",
+          "status": "pass",
+          "retryCount": 1
+        },
+        {
+          "id": "pm-unprompted-update-stays-plain",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-current-says-nothing",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-history-and-v1-prose-blocked",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-keep-going-records-choice",
+          "status": "fail",
+          "retryCount": 2
+        },
+        {
+          "id": "pm-version-kept-then-endings-line",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-outdated-asks-keep-going-or-update",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-version-resume-asks",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-visual-qa-offered-at-first-visible-change",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "pm-weekly-project-fallback",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "upgrade-resume-changed-definition",
+          "status": "pass",
+          "retryCount": 0
+        },
+        {
+          "id": "upgrade-resume-unchanged-definition",
+          "status": "pass",
+          "retryCount": 0
+        }
+      ]
+    }
+  ]
+}

@@ -21,7 +21,6 @@ import { commandSegments } from "./command-segments.mjs";
 import { deny, eventCwd, isMain } from "./hook-dispatch.mjs";
 
 const SIGNAL_OPTION = /^-(?:[A-Za-z][A-Za-z0-9+-]*|\d+)$/;
-const SUBSTITUTED_KILL = /(?:^|[\s;&|(])kill\b[^;&|\n]*(?:\$\(|`)/;
 const BY_NAME = /^p?kill(?:all)?$/;
 
 /** The file recording the pids each session called its own. */
@@ -31,16 +30,23 @@ export function ledgerFile(home = os.homedir()) {
 
 /** Problems with the signal-sending commands in `command`; `isOwn(pid)` says whether a pid is recorded as this session's. */
 export function killProblems(command, isOwn) {
-  const problems = SUBSTITUTED_KILL.test(command)
-    ? ["kill with a command substitution signals whatever a search matched; kill only a pid you recorded as your own"]
-    : [];
-  for (const { words } of commandSegments(command)) {
+  const problems = [];
+  for (const { words, remote, hasSubstitution } of commandSegments(command, { expandShellPayloads: true })) {
     const name = path.basename(words[0] ?? "");
+    if (remote) {
+      if (name === "kill" && hasSubstitution) {
+        problems.push("kill with a command substitution signals whatever a search matched; kill only a pid you recorded as your own");
+      }
+      continue;
+    }
     if (name !== "kill" && BY_NAME.test(name)) {
       problems.push(`${name} signals by pattern, which can end other sessions' processes; record your own pid when you start a process and run kill <pid>`);
     } else if (name === "xargs" && words.slice(1).some((word) => path.basename(word) === "kill")) {
       problems.push("xargs kill signals whatever a search matched; kill only a pid you recorded as your own");
     } else if (name === "kill") {
+      if (hasSubstitution) {
+        problems.push("kill with a command substitution signals whatever a search matched; kill only a pid you recorded as your own");
+      }
       problems.push(...killTargets(words.slice(1), isOwn));
     }
   }

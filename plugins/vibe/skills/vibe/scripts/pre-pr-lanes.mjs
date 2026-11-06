@@ -19,6 +19,22 @@
 // no local lane merely because another commit exists. Records live in the session's
 // git dir (`vibe-lane-results.json`). Changes nothing else.
 //
+// `check --reuse-cache [--base <sha>] [--config <text>]...` (off by default,
+// ISS-13354) also accepts a lane with no passing record for the scope when an
+// earlier FRESH pass has the same cache key (lane-cache.mjs: command, tree,
+// base, config and changed-file scope). It records the lane `cached` and prints
+// `CACHED-LANE <command> (reused from <sha>: not a fresh run)`; a cached record
+// is never a `pass`, and without the flag it counts as missing.
+//
+// `check --reuse-unaffected <qa-impact request JSON>` (off by default, PRD-823 WS7 F2) also
+// accepts a lane with no passing record for the scope when an earlier FRESH pass recorded at
+// the request's `lastQa.boundary` commit (committed inputs only) is untouched by what changed
+// since: qa-impact.mjs is recomputed in this worktree, and a lane counts as untouched when
+// the outcome is None, or when every changed file names its lanes in `laneSelections` and
+// this lane is not among them. A changed file with no lane entry, or a lane that is not
+// named, is never reused. It records the lane `cached` and prints `CACHED-LANE <command>
+// (reused from <sha>: ...; not a fresh run)`; a cached record is never a `pass`.
+//
 // Every lane the report names is required, e2e lanes included: a pull request
 // once merged with two Desktop E2E reds because this check skipped e2e lanes
 // by default and could not read a lane line that starts with the step's
@@ -53,11 +69,12 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
 import { git } from "./session-record.mjs";
 import { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
 
@@ -138,9 +155,112 @@ function recordsFile(worktree) {
   return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-lane-results.json");
 }
 
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 60_000;
+
+/** Writes the records through a temp file and a rename, so a reader never sees half a file. */
+function writeRecords(worktree, records) {
+  const file = recordsFile(worktree);
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(records, null, 2)}\n`);
+  renameSync(temp, file);
+}
+
+/** Runs `change` holding the records lock (an atomic mkdir beside the file); a lock older than LOCK_STALE_MS is a dead holder's and is taken over. */
+function withRecordsLock(worktree, change) {
+  const lock = `${recordsFile(worktree)}.lock`;
+  const started = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { recursive: true, force: true });
+      } catch {
+        // The holder released it between the two calls.
+      }
+      if (Date.now() - started > LOCK_WAIT_MS) throw new Error(`the lane records lock ${lock} stayed held for ${LOCK_WAIT_MS / 1000}s`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+  try {
+    return change();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
+
 function readRecords(worktree) {
   const file = recordsFile(worktree);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
+}
+
+/** The lanes a cached result covers for the selection, with the head each was reused from; a new match is recorded and a cached record whose key no longer matches is replaced or dropped. */
+function reuseCachedLanes(values, lanes, records, selected) {
+  const covered = [];
+  const written = [];
+  const head = selected.source.head;
+  for (const lane of missingLanes(lanes, records, selected)) {
+    const key = laneKeyFor(values.worktree, { command: lane, base: values.base, config: values.config });
+    const existing = records.find((record) => record.command === lane && sameSelection(record, selected) && record.result === CACHED_RESULT);
+    const earlier = findReusable(records, key);
+    if (existing && key && existing.cacheKey === key) {
+      covered.push({ lane, from: existing.reusedFrom.head });
+    } else if (earlier) {
+      written.push({ ...cachedRecord({ command: lane, head, key, source: earlier }), source: selected.source, laneKey: selected.laneKey });
+      covered.push({ lane, from: earlier.head });
+    }
+  }
+  const isCached = (record) => record.result === CACHED_RESULT && !record.unaffectedSince && lanes.includes(record.command) && sameSelection(record, selected);
+  const stale = (record) => isCached(record) && !covered.some((item) => item.lane === record.command && item.from === record.reusedFrom?.head);
+  if (written.length || records.some(stale)) {
+    const kept = records.filter((record) => !stale(record));
+    writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...written], null, 2)}\n`);
+  }
+  return covered;
+}
+
+const NO_DIFF = createHash("sha256").digest("hex");
+
+/** The lanes the changes since `request.lastQa.boundary` can touch, or null when that cannot be proven. */
+export function lanesTouchedSince(request, impact) {
+  if (impact.outcome === "None") return new Set();
+  const map = request.laneSelections?.files ?? request.laneSelections;
+  const touched = new Set();
+  for (const file of impact.changedFiles ?? []) {
+    const lanes = map?.[file];
+    if (!Array.isArray(lanes) || lanes.length === 0) return null;
+    for (const lane of lanes) touched.add(lane);
+  }
+  return touched;
+}
+
+/** The lanes an earlier fresh pass covers because nothing since touched them; new matches are recorded and cached records that no longer hold are dropped. */
+function reuseUnaffectedLanes(values, lanes, records, selected, already) {
+  const request = JSON.parse(readFileSync(values["reuse-unaffected"], "utf8"));
+  const impact = qaImpactRequest(values.worktree, request);
+  const touched = lanesTouchedSince(request, impact);
+  const boundary = git(values.worktree, ["rev-parse", "--verify", `${request.lastQa.boundary}^{commit}`]);
+  const covered = [];
+  const written = [];
+  for (const lane of missingLanes(lanes, records, selected).filter((name) => !already.some((item) => item.lane === name))) {
+    const earlier = touched && !touched.has(lane)
+      ? records.find((record) => record.command === lane && record.result === "pass" && record.provenance !== Provenance.Cached && record.head === boundary && record.source?.diffSha256 === NO_DIFF)
+      : undefined;
+    if (!earlier) continue;
+    const key = createHash("sha256").update(JSON.stringify({ unaffectedSince: boundary, impact: impact.laneKey ?? null, command: lane })).digest("hex");
+    const existing = records.find((record) => record.command === lane && sameSelection(record, selected) && record.cacheKey === key);
+    if (!existing) written.push({ ...cachedRecord({ command: lane, head: selected.source.head, key, source: earlier }), unaffectedSince: boundary, source: selected.source, laneKey: selected.laneKey });
+    covered.push({ lane, from: earlier.head });
+  }
+  const holds = (record) => covered.some((item) => item.lane === record.command && item.from === record.reusedFrom?.head);
+  const stale = (record) => record.unaffectedSince && record.result === CACHED_RESULT && lanes.includes(record.command) && sameSelection(record, selected) && !holds(record);
+  if (written.length || records.some(stale)) {
+    writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...records.filter((record) => !stale(record)), ...written], null, 2)}\n`);
+  }
+  return covered;
 }
 
 function selectedScope(values, command) {
@@ -164,6 +284,7 @@ function main(argv) {
   const { values } = parseArgs({ args: rest, options: {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
+    "reuse-cache": { type: "boolean" }, "reuse-unaffected": { type: "string" }, base: { type: "string" }, config: { type: "string", multiple: true },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
@@ -210,9 +331,13 @@ function main(argv) {
         mainSha = mainTested;
       }
     }
-    const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
-    writeFileSync(recordsFile(values.worktree), `${JSON.stringify(records, null, 2)}\n`);
+    const cacheKey = source.diffSha256 === createHash("sha256").digest("hex") ? laneKeyFor(values.worktree, { command: values.command, base: values.base, config: values.config }) : null;
+    // Two lanes of one pool finish close together: the read, the change and the write happen under one lock so neither record is lost.
+    withRecordsLock(values.worktree, () => {
+      const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
+      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
+      writeRecords(values.worktree, records);
+    });
     process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
   }
@@ -240,9 +365,13 @@ function main(argv) {
       for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
         process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);
       }
-      const missing = missingLanes(lanes, records, selected);
+      const covered = values["reuse-cache"] ? reuseCachedLanes(values, lanes, records, selected) : [];
+      for (const { lane, from } of covered) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: same tree, base, config and scope; not a fresh run)\n`);
+      const unaffected = values["reuse-unaffected"] ? reuseUnaffectedLanes(values, lanes, records, selected, covered) : [];
+      for (const { lane, from } of unaffected) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: nothing changed since touches this lane; not a fresh run)\n`);
+      const missing = missingLanes(lanes, records, selected).filter((lane) => ![...covered, ...unaffected].some((item) => item.lane === lane));
       for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
-      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
+      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] || values["reuse-unaffected"] ? `, ${covered.length + unaffected.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
       return { exitCode: missing.length === 0 ? 0 : 1 };
     }).exitCode;
   }

@@ -8,6 +8,30 @@ export interface EvalCaseDefinition {
   id: string;
   skill: EvalSkill;
   contentHash: string;
+  deterministic?: true;
+  kind?: "upgrade-resume";
+  definition?: "unchanged" | "changed";
+  nightlyPrior?: NightlyPriorReference;
+  transitions?: UpgradeTransition[];
+}
+
+/** One immutable vibe release selected by exact commit and manifest version. */
+export interface ReleaseReference {
+  version: string;
+  ref: string;
+}
+
+/** A current-subject prior with the offline-checkable writer definition digest. */
+export interface NightlyPriorReference extends ReleaseReference {
+  writerDigestSha256: string;
+}
+
+/** Fixed historical proof transition for one writer-definition relation. */
+export interface UpgradeTransition {
+  target: ReleaseReference;
+  prior: ReleaseReference;
+  /** Historical outcome fixed by the release proof; omitted legacy manifests mean pass. */
+  expected?: { claude: "pass" | "fail"; codex: "pass" | "fail" };
 }
 
 function filesBelow(root: string): string[] {
@@ -33,11 +57,83 @@ export function evalCaseContentHash(caseDir: string): string {
 
 /** Derive the canonical skill tag from the actual invocation in a case prompt. */
 export function skillFromPrompt(prompt: string): EvalSkill {
-  const found = [...prompt.matchAll(/vibe:(vibe|handoff|fleet-orchestrator)/g)]
+  const found = [...prompt.matchAll(/vibe:(vibe|handoff|fleet-orchestrator|pr-takeover)/g)]
     .map((match) => match[1] as EvalSkill);
   const unique = [...new Set(found)];
   if (unique.length !== 1) throw new Error("eval-case-skill-invocation-invalid");
   return unique[0];
+}
+
+function releaseReference(value: unknown, field: string): ReleaseReference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`eval-stateful-${field}-invalid`);
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== "ref,version" ||
+      typeof record.version !== "string" || !/^\d+\.\d+\.\d+$/.test(record.version) ||
+      typeof record.ref !== "string" || !/^[a-f0-9]{40}$/.test(record.ref)) {
+    throw new Error(`eval-stateful-${field}-invalid`);
+  }
+  return { version: record.version, ref: record.ref };
+}
+
+function nightlyPriorReference(value: unknown): NightlyPriorReference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("eval-stateful-nightly-prior-invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== "ref,version,writerDigestSha256" ||
+      typeof record.writerDigestSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(record.writerDigestSha256)) {
+    throw new Error("eval-stateful-nightly-prior-invalid");
+  }
+  const release = releaseReference({ ref: record.ref, version: record.version }, "nightly-prior");
+  return { ...release, writerDigestSha256: record.writerDigestSha256 };
+}
+
+/** Parse the dependency-free JSON subset of YAML used by stateful case manifests. */
+export function statefulCaseDefinition(caseDir: string, id: string): EvalCaseDefinition | null {
+  const manifest = join(caseDir, "case.yaml");
+  if (!existsSync(manifest)) return null;
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(manifest, "utf8")) as unknown; }
+  catch { throw new Error("eval-stateful-manifest-malformed"); }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("eval-stateful-manifest-invalid");
+  }
+  const value = raw as Record<string, unknown>;
+  const keys = Object.keys(value).sort().join(",");
+  if (keys !== "definition,deterministic,kind,nightlyPrior,schemaVersion,skill,transitions" ||
+      value.schemaVersion !== 1 || value.kind !== "upgrade-resume" || value.skill !== "vibe" ||
+      value.deterministic !== true || (value.definition !== "unchanged" && value.definition !== "changed") ||
+      !Array.isArray(value.transitions) || value.transitions.length < 2) {
+    throw new Error("eval-stateful-manifest-invalid");
+  }
+  const transitions = value.transitions.map((item, index): UpgradeTransition => {
+    if (!item || typeof item !== "object" || Array.isArray(item) ||
+        !["prior,target", "expected,prior,target"].includes(
+          Object.keys(item as Record<string, unknown>).sort().join(","))) {
+      throw new Error(`eval-stateful-transition-${index}-invalid`);
+    }
+    const record = item as Record<string, unknown>;
+    const expected = record.expected;
+    if (expected !== undefined && (!expected || typeof expected !== "object" ||
+        Array.isArray(expected) || Object.keys(expected).sort().join(",") !== "claude,codex" ||
+        !["pass", "fail"].includes((expected as Record<string, unknown>).claude as string) ||
+        !["pass", "fail"].includes((expected as Record<string, unknown>).codex as string))) {
+      throw new Error(`eval-stateful-transition-${index}-expected-invalid`);
+    }
+    return { target: releaseReference(record.target, `target-${index}`),
+      prior: releaseReference(record.prior, `prior-${index}`),
+      ...(expected ? { expected: expected as UpgradeTransition["expected"] } : {}) };
+  });
+  if (new Set(transitions.map((item) => item.target.ref)).size !== transitions.length ||
+      transitions.some((item) => item.target.ref === item.prior.ref)) {
+    throw new Error("eval-stateful-transitions-invalid");
+  }
+  return { id, skill: "vibe", contentHash: evalCaseContentHash(caseDir), deterministic: true,
+    kind: "upgrade-resume", definition: value.definition, nightlyPrior:
+      nightlyPriorReference(value.nightlyPrior), transitions };
 }
 
 /** Discover the complete case catalog and its derived `skill:<name>` ownership. */
@@ -46,9 +142,11 @@ export function evalCaseCatalog(vibeDir: string): EvalCaseDefinition[] {
   const catalog = readdirSync(evals, { withFileTypes: true }).flatMap((entry) => {
     const caseDir = join(evals, entry.name);
     const prompt = join(caseDir, "prompt.md");
-    if (!entry.isDirectory() || !existsSync(prompt)) return [];
-    return [{ id: entry.name, skill: skillFromPrompt(readFileSync(prompt, "utf8")),
-      contentHash: evalCaseContentHash(caseDir) }];
+    if (!entry.isDirectory()) return [];
+    if (existsSync(prompt)) return [{ id: entry.name,
+      skill: skillFromPrompt(readFileSync(prompt, "utf8")), contentHash: evalCaseContentHash(caseDir) }];
+    const stateful = statefulCaseDefinition(caseDir, entry.name);
+    return stateful ? [stateful] : [];
   }).sort((left, right) => left.id.localeCompare(right.id));
   if (!catalog.length || new Set(catalog.map((item) => item.id)).size !== catalog.length) {
     throw new Error("eval-case-catalog-invalid");

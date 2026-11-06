@@ -5,17 +5,36 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { recordUsageReading } from '../../codex-fleet-monitor/scripts/usage-state.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 // A fleet home's active program dir (fleet-home.mjs), so a watched program is not reported as a flat layout.
 const tempDir = (t) => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(path.join(home, 'programs', 'p1'), { recursive: true });
   writeFileSync(path.join(home, 'current'), 'p1\n');
-  return path.join(home, 'programs', 'p1');
+  const program = path.join(home, 'programs', 'p1');
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'now', loadedSkill: actorLoad(), harnesses: [] }));
+  return program;
 };
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'board.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+
+test('scope delivery refuses stale loaded instructions and deleted plugin scripts', (t) => {
+  const dir = tempDir(t);
+  writeFileSync(path.join(dir, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'old', loadedSkill: { ...actorLoad('same'), version: '1.0.85' }, harnesses: [] }));
+  let result = run([dir, 'deliver', 'stale', '--to', 'w1', '--text', 'continue']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /loaded 1\.0\.85/);
+  writeFileSync(path.join(dir, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'new', loadedSkill: actorLoad('reloaded'), harnesses: [] }));
+  result = run([dir, 'deliver', 'missing', '--to', 'w1', '--text', 'run handoff/scripts/qa-merge-order.mjs']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /qa-merge-order\.mjs: plugin script does not exist/);
+  assert.equal(run([dir, 'deliver', 'valid', '--to', 'w1', '--text', 'run handoff/scripts/handoff-gate.mjs']).status, 0);
+});
 
 test('a writer row whose head is behind the pushed head is stale until the writer row is updated', (t) => {
   const dir = tempDir(t);
@@ -262,6 +281,20 @@ test('a work dir that watches sessions or PRs fails status while its watcher is 
   assert.equal(armed.status, 0, armed.stdout);
   writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120, exitedAt: '2026-10-22T05:59:00Z' }));
   assert.match(run([dir, 'status', '--now', '2026-10-22T13:00:00Z']).stdout, /^WATCHER-MISSING \(exited 421m ago\)/m);
+});
+
+test('status flags stale usage and keeps the last good time visible after READFAIL', (t) => {
+  const dir = tempDir(t);
+  const good = (readAt) => ({ runtime: 'codex', machine: 'local', source: 'supervisor', status: 'ok', readAt, line: 'codex-usage local under80% ok' });
+  recordUsageReading(dir, good('2026-11-03T17:45:00.000Z'));
+  assert.equal(run([dir, 'status', '--now', '2026-11-03T18:00:00.000Z']).status, 0, 'a 15 minute reading is fresh');
+  const stale = run([dir, 'status', '--now', '2026-11-03T18:16:00.000Z']);
+  assert.equal(stale.status, 1);
+  assert.match(stale.stdout, /^STALE-USAGE codex local: last good 2026-11-03T17:45:00\.000Z \(31m ago\); threshold 1800s$/m);
+  recordUsageReading(dir, { runtime: 'codex', machine: 'local', source: 'snapshot', status: 'readfail', readAt: '2026-11-03T18:17:00.000Z', line: 'codex-usage local unreadable READFAIL' });
+  const failed = run([dir, 'status', '--now', '2026-11-03T18:17:10.000Z']);
+  assert.match(failed.stdout, /^USAGE-READFAIL codex local: read failed at 2026-11-03T18:17:00\.000Z from snapshot; last good 2026-11-03T17:45:00\.000Z$/m);
+  assert.match(failed.stdout, /^STALE-USAGE codex local: last good 2026-11-03T17:45:00\.000Z \(32m ago\)/m);
 });
 
 test('a writer question waiting 15 minutes is QUESTION-UNANSWERED until answered (#9118)', (t) => {

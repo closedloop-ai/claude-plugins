@@ -43,6 +43,7 @@ installing <thing>; type it in the prompt" and wait.
 | `brew-install-jq` | `brew install jq` |
 | `brew-install-gh` | `brew install gh`, then apply `gh-auth-login`. |
 | `claude-auth-login` | Claude Code only: the `claude` command that runs this session's workers is signed out. Return `NEEDS_PERSON` with exactly: "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done." Never give `claude /login` instead: it opens a full Claude session in the Terminal that prints the project's permission rules and asks about project connections. Re-run the preflight once they say they're done. |
+| `claude-protected-hook-version` | Claude Code only: the headless writer requires Claude Code 2.1.295 or newer for a failure-blocking protected-write hook. Check the installed CLI version and that the installed vibe guard is a regular file. Update the standalone Claude CLI through its supported updater when needed, without changing any plugin, then rerun the writer preflight. If the guard is missing, diagnose the installed release internally. Preserve the same request and writer; ask the person nothing. |
 | `gh-auth-login` | You run it; the person only finishes the GitHub page in the browser. Follow "Signing in to GitHub" below. Never send the person to the Terminal app for it. |
 | `choose-repo` | More than one checkout of the repository was found (the `detail` lists them, separated by a vertical bar). Resolve the active workspace or recorded session through current evidence, then rerun with `--repo "<chosen folder>"`. If it remains ambiguous, return `BLOCKED` internally rather than asking the person a technical checkout question or guessing. |
 | `allow-folder-access` | macOS did not let Codex look inside the folders in `detail`. Return `NEEDS_PERSON`: "Your Mac is asking whether Codex can open your <folder> folder; click Allow." If no prompt appears, they allow it in System Settings, Privacy & Security, Files & Folders, under ChatGPT. Then re-run the preflight. Never clone while this is unresolved; the checkout may be in that folder. |
@@ -84,6 +85,14 @@ These are checked by the skill, not the script:
   says. Never send the person into the app's Settings to find it.
 - Codex Browser plugin: the in-app Browser must be available. If it is not,
   stop; a human adds it (`guardrails.md`, "Plugins and tooling").
+- Codex plugin hooks: open `/hooks` and have the person review and trust the
+  current vibe hook definition before relying on its PreToolUse refusals.
+  Installing the plugin alone does not trust hooks; until a hook has recorded
+  the conversation, `plugin-version.mjs loaded` reports `enforced: false` and
+  sessions start without the loaded-skill gate. Current official Codex
+  hooks documentation confirms Bash and Agent routing but does not establish
+  whether `request_user_input` invokes PreToolUse; treat the question guard's
+  Codex coverage for that tool as UNVERIFIED, never as a safety gate.
 
 ## Commands the sandbox blocks
 

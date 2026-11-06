@@ -56,8 +56,9 @@ def test_plain_words_are_an_explicit_pull_request_request() -> None:
     for phrase in (*PR_PHRASES, "open a pull request", "I'll get it merged"):
         assert phrase in rule, phrase
     assert "take handoff's requested pull request path" in rule
-    assert "the rule that tests are written only on that request is unchanged" in rule
-    assert "That request is the only thing that authorizes test writing" in rule
+    assert "Other test work needs the explicit top-level" in rule
+    assert "`testsRequired` grant" in rule
+    assert "raw brief text does not" in rule
 
 
 def test_every_place_that_decides_a_pull_request_request_recognizes_plain_words() -> None:
@@ -71,7 +72,7 @@ def test_every_place_that_decides_a_pull_request_request_recognizes_plain_words(
     assert "plain-language intent to take the work through review and merge themselves IS that request" in requested
     assert "takes the handoff skill's requested pull request path" in tests_rule
     assert "choose the pull request. Run the handoff skill with that choice; ask nothing more." in ending
-    assert "only the orchestrator's `pull-request` turn carries the authority" in writer
+    assert "orchestrator's top-level turn envelope carries the authority" in writer
     assert "plain-language intent counts" in section(QUALITY.read_text(), "## One persistent writer and a serial queue")
     assert "in any plain words" in section(QUALITY.read_text(), "## Tests: repair, don't author")
 

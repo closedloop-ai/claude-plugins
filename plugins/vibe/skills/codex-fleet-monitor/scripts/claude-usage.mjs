@@ -7,16 +7,18 @@
 // not a watcher event. The command runs at most once per CLAUDE_USAGE_SECONDS (default 600); between runs
 // the last line is reused from <workDir>/claude-usage.txt.
 //
-// Usage: claude-usage.mjs <workDir> [label]   (CLAUDE_BIN overrides the claude binary)
+// Usage: claude-usage.mjs <workDir> [label] [--source <name>]   (CLAUDE_BIN overrides the claude binary)
 // The probe runs with --no-session-persistence: nobody resumes or analyzes it, and a saved transcript is
 // imported into the Codex app's sidebar as an "Imported session" chat (ISS-13279).
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 import { isEntryPoint } from './liveness.mjs';
 import { resolveWorkDir } from './work-dir.mjs';
 import { highUsagePercent, usageBand } from './ratelimit.mjs';
+import { recordUsageReading } from './usage-state.mjs';
 
 const LINE = /^\s*Current (session|week \(all models\)):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s+(.+?))?\s*$/gim;
 export const DEFAULT_INTERVAL_SECONDS = 600;
@@ -33,13 +35,14 @@ export function parseUsage(text) {
 }
 
 /** The monitor line for parsed usage. */
-export function claudeUsageLine(label, usage, high = highUsagePercent()) {
-  if (!usage) return `claude-usage ${label} unreadable READFAIL`;
+export function claudeUsageLine(label, usage, high = highUsagePercent(), metadata = null) {
+  const suffix = metadata ? ` read=${metadata.readAt} source=${metadata.source}` : '';
+  if (!usage) return `claude-usage ${label} unreadable READFAIL${suffix}`;
   const band = (part) => (part ? usageBand(part.used, high) : 'unknown');
   const high_ = (part) => part && part.used >= high;
   const when = high_(usage.session) ? usage.session.resets : high_(usage.week) ? usage.week.resets : null;
   const resets = when ? ` resets=${when.replace(/\s+/g, '_')}` : '';
-  return `claude-usage ${label} session=${band(usage.session)} week=${band(usage.week)}${resets}`;
+  return `claude-usage ${label} session=${band(usage.session)} week=${band(usage.week)}${resets}${suffix}`;
 }
 
 function cachedLine(file, maxAgeSeconds, now = Date.now()) {
@@ -50,12 +53,17 @@ function cachedLine(file, maxAgeSeconds, now = Date.now()) {
 }
 
 function main() {
-  const [workDir, label = 'local'] = process.argv.slice(2);
+  const { values, positionals } = parseArgs({
+    args: process.argv.slice(2), allowPositionals: true,
+    options: { source: { type: 'string' } },
+  });
+  const [workDir, label = 'local'] = positionals;
   if (!workDir) {
-    process.stderr.write('Usage: claude-usage.mjs <workDir> [label]\n');
+    process.stderr.write('Usage: claude-usage.mjs <workDir> [label] [--source <name>]\n');
     process.exit(2);
   }
-  const file = join(resolveWorkDir(workDir).dir, 'claude-usage.txt');
+  const resolved = resolveWorkDir(workDir).dir;
+  const file = join(resolved, 'claude-usage.txt');
   const interval = Number(process.env.CLAUDE_USAGE_SECONDS) > 0 ? Number(process.env.CLAUDE_USAGE_SECONDS) : DEFAULT_INTERVAL_SECONDS;
   let line = cachedLine(file, interval);
   if (!line) {
@@ -63,7 +71,11 @@ function main() {
     try {
       output = execFileSync(process.env.CLAUDE_BIN || 'claude', USAGE_ARGS, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 });
     } catch {}
-    line = claudeUsageLine(label, parseUsage(output));
+    const usage = parseUsage(output);
+    const readAt = new Date().toISOString();
+    const source = values.source ?? 'claude-usage';
+    line = claudeUsageLine(label, usage, highUsagePercent(), { readAt, source });
+    recordUsageReading(resolved, { runtime: 'claude', machine: label, source, status: usage ? 'ok' : 'readfail', readAt, line });
     writeFileSync(file, `${line}\n`);
   }
   console.log(line);

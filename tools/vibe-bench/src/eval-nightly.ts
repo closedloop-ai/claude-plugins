@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
@@ -44,10 +44,12 @@ export async function reportNightlyInfrastructureFailure(reason: string,
   reporter: Pick<SlackNightlyRegressionReporter, "reportInfrastructure"> =
     new SlackNightlyRegressionReporter(),
   writeError: (message: string) => unknown = (message) => process.stderr.write(message),
+  writeOutput: (message: string) => unknown = (message) => process.stdout.write(message),
 ): Promise<void> {
   writeError(`VIBE_NIGHTLY_INFRA_FAILURE ${reason}\n`);
   try {
     await reporter.reportInfrastructure({ reason, occurredAt: new Date().toISOString() });
+    writeOutput("VIBE_NIGHTLY_SLACK_POSTED\n");
   } catch (error) {
     writeError(`VIBE_NIGHTLY_SLACK_FAILURE ${errorReason(error)}\n`);
   }
@@ -84,22 +86,54 @@ export async function main(args: string[],
   }
 }
 
+/** Use a newly loaded child after fast-forward; SKIPPED only recovers prior durable RAN work. */
+export async function publishCompletedNightly(output: string, args: string[], runAt: string,
+  invoke: (args: string[]) => Promise<string> = (command) =>
+    new SystemNightlyCommands().node(command)): Promise<string> {
+  if (args.length !== 7) throw new Error("eval-publish-nightly-args-invalid");
+  const skipped = output.split(/\r?\n/).some((line) => line.startsWith("SKIPPED "));
+  const path = skipped ? "RECOVER" : output.trim().split(/\r?\n/).at(-1);
+  if (!path || (path !== "RECOVER" && (!isAbsolute(path) ||
+      !/^eval-t2-[a-zA-Z0-9.-]+\.json$/.test(path.split("/").at(-1)!)))) {
+    throw new Error("eval-publish-nightly-result-missing");
+  }
+  const cli = fileURLToPath(new URL("./cli.ts", import.meta.url));
+  try {
+    return await invoke(["--experimental-strip-types", cli, "eval-publish", args[0]!, args[1]!,
+      args[2]!, path, runAt, args[5]!, args[6]!]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    throw new Error(/^eval-publish-[a-z0-9-]+$/.test(message)
+      ? message : "eval-publish-input-invalid");
+  }
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  if (args[0] === "--notify-infra" && args.length === 2) {
-    new SlackNightlyRegressionReporter().reportInfrastructure({
-      reason: args[1], occurredAt: new Date().toISOString(),
-    }).catch((error) => {
+  const runAt = new Date().toISOString();
+  if (args[0] === "--notify-infra" && args.length === 3) {
+    new SlackNightlyRegressionReporter(args[1]).reportInfrastructure({
+      reason: args[2], occurredAt: new Date().toISOString(),
+    }).then(() => process.stdout.write("VIBE_NIGHTLY_SLACK_POSTED\n")).catch((error) => {
       process.stderr.write(`VIBE_NIGHTLY_SLACK_FAILURE ${errorReason(error)}\n`);
       process.exitCode = 1;
     });
   } else {
     main(args).then(
-      (output) => process.stdout.write(`${output}\n`),
+      async (output) => {
+        const publication = await publishCompletedNightly(output, args, runAt);
+        process.stdout.write(`${publication}\n${output}\n`);
+      },
       async (error) => {
-        await reportNightlyInfrastructureFailure(errorReason(error));
+        const claude = args.length === 7 ? args[3] : "claude";
+        await reportNightlyInfrastructureFailure(errorReason(error),
+          new SlackNightlyRegressionReporter(claude));
         process.exitCode = 1;
       },
-    );
+    ).catch(async (error) => {
+      await reportNightlyInfrastructureFailure(errorReason(error),
+        new SlackNightlyRegressionReporter(args[3] ?? "claude"));
+      process.exitCode = 1;
+    });
   }
 }

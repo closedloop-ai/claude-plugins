@@ -1,48 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
-
-const isFrozenStory = (text) => / v1\.0\//.test(text);
-
-function put(root, files) {
-  for (const [file, content] of Object.entries(files)) {
-    if (content === null) {
-      rmSync(path.join(root, file));
-      continue;
-    }
-    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-    writeFileSync(path.join(root, file), content);
-  }
-}
-
-/** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
-function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false }) {
-  const { root, home, cleanup } = makeHome("vibe-diff-rules-");
-  t.after(cleanup);
-  const checkout = path.join(root, "wt");
-  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
-  for (const step of history) {
-    put(checkout, step.files);
-    git(checkout, ["add", "-A"], home);
-    git(checkout, ["commit", "--quiet", "--allow-empty", "-m", step.message], home);
-  }
-  put(checkout, { "README.md": "seed\n", ...base });
-  git(checkout, ["add", "-A"], home);
-  git(checkout, ["commit", "--quiet", "-m", "base"], home);
-  const baseSha = git(checkout, ["rev-parse", "HEAD"], home);
-  put(checkout, head);
-  if (commit) {
-    git(checkout, ["add", "-A"], home);
-    git(checkout, ["commit", "--quiet", "-m", "session"], home);
-  }
-  writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), typeof changeLog === "function" ? changeLog({ checkout, base: baseSha }) : changeLog);
-  const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory });
-  return { ...result, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
-}
+import { isFrozenStory, put, run } from "./diff-rules-test-fixture.mjs";
 
 test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {
   const files = parseUnifiedDiff([
@@ -227,7 +189,7 @@ test("frozen stories include global styles, tokens, Tailwind config and Storyboo
     "apps/app/globals.css": "body { color: red; }\n",
     "packages/design-system/tokens/colors.json": "{\"text\":\"red\"}\n",
     "tailwind.config.ts": "export default { theme: {} };\n",
-    "apps/storybook/.storybook/preview.tsx": "export const decorators = [];\n",
+    "apps/storybook/.storybook/preview.tsx": "import \"../../app/globals.css\";\nexport const decorators = [];\n",
   };
   for (const [file, text] of Object.entries({
     "apps/app/globals.css": "body { color: blue; }\n",
@@ -677,6 +639,80 @@ test("a shared component's change requires every host's suites, in both flag sta
 
   const single = run(t, { base, head: { "packages/ui/only.tsx": "export const Only = 2;\n" }, commit: true });
   assert.deepEqual(single.requiredTests, [], "a component one host imports is not shared");
+});
+
+test("AC-001 DT-06: an Issue breadcrumb change requires a web and Desktop parity test", (t) => {
+  const web = "packages/app/documents/components/document-detail-header.tsx";
+  const desktop = "apps/desktop/src/renderer/navigation/breadcrumb-model.ts";
+  const parity = "apps/app/__tests__/issues-detail-host-capability-parity.test.ts";
+  const base = { [web]: "export const crumbs = [root, page];\n", [desktop]: "export const crumbs = [root, page];\n" };
+  const changed = { [web]: "export const crumbs = [root, page]; // changed\n" };
+  const missing = run(t, { base, head: changed });
+  assert.deepEqual(missing.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [web]);
+  const present = run(t, { base: { ...base, [parity]: "test('same Issue trail on web and Desktop', () => {});\n" }, head: changed });
+  assert.deepEqual(present.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  assert.ok(present.requiredTests.some((entry) => entry.path === parity));
+  const untracked = run(t, { base, head: { ...changed, [parity]: "test('same Issue trail on web and Desktop', () => {});\n" } });
+  assert.deepEqual(untracked.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  assert.ok(untracked.requiredTests.some((entry) => entry.path === parity));
+  const desktopOnly = run(t, { base, head: { [desktop]: "export const crumbs = [root, page]; // changed\n" } });
+  assert.deepEqual(desktopOnly.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [desktop]);
+  const unrelated = run(t, { base, head: { "packages/app/documents/components/unrelated.tsx": "export const unrelated = 1;\n" } });
+  assert.deepEqual(unrelated.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  const unrelatedHeaderBase = { ...base, [web]: `${base[web]}export const action = 1;\n` };
+  const unrelatedHeader = run(t, { base: unrelatedHeaderBase, head: { [web]: `${base[web]}export const action = 2;\n` } });
+  assert.deepEqual(unrelatedHeader.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+});
+
+test("R2 DT-06: a navigation target changed inside detailCrumbs needs host parity", (t) => {
+  const desktop = "apps/desktop/src/renderer/navigation/breadcrumb-model.ts";
+  const original = 'export function detailCrumbs() {\n  const href = "/old";\n  return [{ label: "Issue", href }];\n}\n';
+  const targetChanged = run(t, { base: { [desktop]: original }, head: { [desktop]: original.replace('/old', '/new') } });
+  assert.deepEqual(targetChanged.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [desktop]);
+  const otherBase = `${original}export function unrelated() { return 1; }\n`;
+  const otherChanged = run(t, { base: { [desktop]: otherBase }, head: { [desktop]: otherBase.replace('return 1', 'return 2') } });
+  assert.deepEqual(otherChanged.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+});
+
+test("R7 DT-06: DocumentDetailHeader breadcrumb input changes require parity without catching unrelated actions", (t) => {
+  const file = "packages/app/documents/components/document-detail-header.tsx";
+  const base = [
+    "export function DocumentDetailHeader() {",
+    "  const buildOrgPath = useOrgPath();",
+    "  const breadcrumbs = buildDocumentBreadcrumbs(document, buildOrgPath);",
+    "  const action = 1;",
+    "  return <Header breadcrumbs={breadcrumbs} action={action} />;",
+    "}",
+    "",
+  ].join("\n");
+  const changedInput = run(t, { base: { [file]: base }, head: { [file]: base.replace("useOrgPath()", "useOtherOrgPath()") } });
+  assert.deepEqual(changedInput.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [file]);
+  const unrelatedAction = run(t, { base: { [file]: base }, head: { [file]: base.replace("const action = 1", "const action = 2") } });
+  assert.deepEqual(unrelatedAction.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  const actionUrl = base.replace("const action = 1", 'const action = buildOrgPath("/settings")');
+  const changedActionUrl = run(t, { base: { [file]: actionUrl }, head: { [file]: actionUrl.replace('/settings', '/billing') } });
+  assert.deepEqual(changedActionUrl.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+});
+
+test("AC-001 DT-07: duplicate top-level helper bodies fail across the diff and base tree", (t) => {
+  const first = "packages/app/documents/components/first.tsx";
+  const second = "packages/app/issues/components/second.tsx";
+  const helper = 'function capitalize(value: string): string {\n  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;\n}\n';
+  const duplicated = run(t, { head: { [first]: helper, [second]: helper } });
+  assert.ok(duplicated.blocking.some((finding) => finding.rule === "duplicate-helper" && finding.file === second));
+  const copiedFromBase = run(t, { base: { [first]: helper }, head: { [second]: helper } });
+  assert.ok(copiedFromBase.blocking.some((finding) => finding.rule === "duplicate-helper" && finding.file === second));
+  const distinct = run(t, { base: { [first]: helper }, head: { [second]: helper.replace("value.slice(1)", "value.slice(2)") } });
+  assert.deepEqual(distinct.blocking.filter((finding) => finding.rule === "duplicate-helper"), []);
+});
+
+test("AC-001 DT-07: a new searchLabel needs a human source", (t) => {
+  const file = "packages/app/issues/components/issue-creation/issue-creation-fields.tsx";
+  const head = { [file]: 'export const field = { searchLabel: "Set team…" };\n' };
+  const missing = run(t, { head });
+  assert.ok(missing.blocking.some((finding) => finding.rule === "copy-provenance" && finding.problem.includes("Set team…")));
+  const sourced = run(t, { head, changeLog: 'Copy: "Set team…": ISS-1 AC2 requester wording\n' });
+  assert.deepEqual(sourced.blocking.filter((finding) => finding.rule === "copy-provenance"), []);
 });
 
 test("a change to a spec the base has needs a dated human source; a new spec or a test named .spec. does not (#8963)", (t) => {

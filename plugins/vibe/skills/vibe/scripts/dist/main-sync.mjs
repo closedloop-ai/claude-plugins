@@ -7251,7 +7251,7 @@ var require_public_api = __commonJS({
         return docs;
       return Object.assign([], { empty: true }, composer$1.streamInfo());
     }
-    function parseDocument(source, options = {}) {
+    function parseDocument2(source, options = {}) {
       const { lineCounter: lineCounter2, prettyErrors } = parseOptions(options);
       const parser$1 = new parser.Parser(lineCounter2?.addNewLine);
       const composer$1 = new composer.Composer(options);
@@ -7277,7 +7277,7 @@ var require_public_api = __commonJS({
       } else if (options === void 0 && reviver && typeof reviver === "object") {
         options = reviver;
       }
-      const doc = parseDocument(src, options);
+      const doc = parseDocument2(src, options);
       if (!doc)
         return null;
       doc.warnings.forEach((warning) => log.warn(doc.options.logLevel, warning));
@@ -7313,7 +7313,7 @@ var require_public_api = __commonJS({
     }
     exports.parse = parse5;
     exports.parseAllDocuments = parseAllDocuments;
-    exports.parseDocument = parseDocument;
+    exports.parseDocument = parseDocument2;
     exports.stringify = stringify;
   }
 });
@@ -14275,8 +14275,8 @@ ${lanes.join("\n")}
       });
       var perfHooks;
       var performanceImpl;
-      function createTimerIf(condition, measureName, startMarkName, endMarkName) {
-        return condition ? createTimer(measureName, startMarkName, endMarkName) : nullTimer;
+      function createTimerIf(condition2, measureName, startMarkName, endMarkName) {
+        return condition2 ? createTimer(measureName, startMarkName, endMarkName) : nullTimer;
       }
       function createTimer(measureName, startMarkName, endMarkName) {
         let enterCount = 0;
@@ -34294,18 +34294,18 @@ ${lanes.join("\n")}
         function parenthesizeExpressionOfComputedPropertyName(expression) {
           return isCommaSequence(expression) ? factory2.createParenthesizedExpression(expression) : expression;
         }
-        function parenthesizeConditionOfConditionalExpression(condition) {
+        function parenthesizeConditionOfConditionalExpression(condition2) {
           const conditionalPrecedence = getOperatorPrecedence(
             228,
             58
             /* QuestionToken */
           );
-          const emittedCondition = skipPartiallyEmittedExpressions(condition);
+          const emittedCondition = skipPartiallyEmittedExpressions(condition2);
           const conditionPrecedence = getExpressionPrecedence(emittedCondition);
           if (compareValues(conditionPrecedence, conditionalPrecedence) !== 1) {
-            return factory2.createParenthesizedExpression(condition);
+            return factory2.createParenthesizedExpression(condition2);
           }
-          return condition;
+          return condition2;
         }
         function parenthesizeBranchOfConditionalExpression(branch) {
           const emittedExpression = skipPartiallyEmittedExpressions(branch);
@@ -37185,12 +37185,12 @@ ${lanes.join("\n")}
         function updateBinaryExpression(node, left, operator, right) {
           return node.left !== left || node.operatorToken !== operator || node.right !== right ? update(createBinaryExpression(left, operator, right), node) : node;
         }
-        function createConditionalExpression(condition, questionToken, whenTrue, colonToken, whenFalse) {
+        function createConditionalExpression(condition2, questionToken, whenTrue, colonToken, whenFalse) {
           const node = createBaseNode(
             228
             /* ConditionalExpression */
           );
-          node.condition = parenthesizerRules().parenthesizeConditionOfConditionalExpression(condition);
+          node.condition = parenthesizerRules().parenthesizeConditionOfConditionalExpression(condition2);
           node.questionToken = questionToken ?? createToken(
             58
             /* QuestionToken */
@@ -37206,8 +37206,8 @@ ${lanes.join("\n")}
           node.flowNodeWhenTrue = void 0;
           return node;
         }
-        function updateConditionalExpression(node, condition, questionToken, whenTrue, colonToken, whenFalse) {
-          return node.condition !== condition || node.questionToken !== questionToken || node.whenTrue !== whenTrue || node.colonToken !== colonToken || node.whenFalse !== whenFalse ? update(createConditionalExpression(condition, questionToken, whenTrue, colonToken, whenFalse), node) : node;
+        function updateConditionalExpression(node, condition2, questionToken, whenTrue, colonToken, whenFalse) {
+          return node.condition !== condition2 || node.questionToken !== questionToken || node.whenTrue !== whenTrue || node.colonToken !== colonToken || node.whenFalse !== whenFalse ? update(createConditionalExpression(condition2, questionToken, whenTrue, colonToken, whenFalse), node) : node;
         }
         function createTemplateExpression(head, templateSpans) {
           const node = createBaseNode(
@@ -37562,13 +37562,13 @@ ${lanes.join("\n")}
         function updateWhileStatement(node, expression, statement) {
           return node.expression !== expression || node.statement !== statement ? update(createWhileStatement(expression, statement), node) : node;
         }
-        function createForStatement(initializer, condition, incrementor, statement) {
+        function createForStatement(initializer, condition2, incrementor, statement) {
           const node = createBaseNode(
             249
             /* ForStatement */
           );
           node.initializer = initializer;
-          node.condition = condition;
+          node.condition = condition2;
           node.incrementor = incrementor;
           node.statement = asEmbeddedStatement(statement);
           node.transformFlags |= propagateChildFlags(node.initializer) | propagateChildFlags(node.condition) | propagateChildFlags(node.incrementor) | propagateChildFlags(node.statement);
@@ -37578,8 +37578,8 @@ ${lanes.join("\n")}
           node.flowNode = void 0;
           return node;
         }
-        function updateForStatement(node, initializer, condition, incrementor, statement) {
-          return node.initializer !== initializer || node.condition !== condition || node.incrementor !== incrementor || node.statement !== statement ? update(createForStatement(initializer, condition, incrementor, statement), node) : node;
+        function updateForStatement(node, initializer, condition2, incrementor, statement) {
+          return node.initializer !== initializer || node.condition !== condition2 || node.incrementor !== incrementor || node.statement !== statement ? update(createForStatement(initializer, condition2, incrementor, statement), node) : node;
         }
         function createForInStatement(initializer, expression, statement) {
           const node = createBaseNode(
@@ -49190,7 +49190,7 @@ ${lanes.join("\n")}
               27
               /* SemicolonToken */
             );
-            const condition = token() !== 27 && token() !== 22 ? allowInAnd(parseExpression) : void 0;
+            const condition2 = token() !== 27 && token() !== 22 ? allowInAnd(parseExpression) : void 0;
             parseExpected(
               27
               /* SemicolonToken */
@@ -49200,7 +49200,7 @@ ${lanes.join("\n")}
               22
               /* CloseParenToken */
             );
-            node = factoryCreateForStatement(initializer, condition, incrementor, parseStatement());
+            node = factoryCreateForStatement(initializer, condition2, incrementor, parseStatement());
           }
           return withJSDoc(finishNode(node, pos), hasJSDoc);
         }
@@ -58511,20 +58511,20 @@ ${lanes.join("\n")}
           } else if (typeof target === "object" && target !== null) {
             if (!Array.isArray(target)) {
               traceIfEnabled(state, Diagnostics.Entering_conditional_exports);
-              for (const condition of getOwnKeys(target)) {
-                if (condition === "default" || state.conditions.includes(condition) || isApplicableVersionedTypesKey(state.conditions, condition)) {
-                  traceIfEnabled(state, Diagnostics.Matched_0_condition_1, isImports ? "imports" : "exports", condition);
-                  const subTarget = target[condition];
+              for (const condition2 of getOwnKeys(target)) {
+                if (condition2 === "default" || state.conditions.includes(condition2) || isApplicableVersionedTypesKey(state.conditions, condition2)) {
+                  traceIfEnabled(state, Diagnostics.Matched_0_condition_1, isImports ? "imports" : "exports", condition2);
+                  const subTarget = target[condition2];
                   const result = loadModuleFromTargetExportOrImport(subTarget, subpath, pattern, key);
                   if (result) {
-                    traceIfEnabled(state, Diagnostics.Resolved_under_condition_0, condition);
+                    traceIfEnabled(state, Diagnostics.Resolved_under_condition_0, condition2);
                     traceIfEnabled(state, Diagnostics.Exiting_conditional_exports);
                     return result;
                   } else {
-                    traceIfEnabled(state, Diagnostics.Failed_to_resolve_under_condition_0, condition);
+                    traceIfEnabled(state, Diagnostics.Failed_to_resolve_under_condition_0, condition2);
                   }
                 } else {
-                  traceIfEnabled(state, Diagnostics.Saw_non_matching_condition_0, condition);
+                  traceIfEnabled(state, Diagnostics.Saw_non_matching_condition_0, condition2);
                 }
               }
               traceIfEnabled(state, Diagnostics.Exiting_conditional_exports);
@@ -131428,11 +131428,11 @@ ${lanes.join("\n")}
         function emitBreak(label, location2) {
           emitWorker(3, [label], location2);
         }
-        function emitBreakWhenTrue(label, condition, location2) {
-          emitWorker(4, [label, condition], location2);
+        function emitBreakWhenTrue(label, condition2, location2) {
+          emitWorker(4, [label, condition2], location2);
         }
-        function emitBreakWhenFalse(label, condition, location2) {
-          emitWorker(5, [label, condition], location2);
+        function emitBreakWhenFalse(label, condition2, location2) {
+          emitWorker(5, [label, condition2], location2);
         }
         function emitYieldStar(expression, location2) {
           emitWorker(7, [expression], location2);
@@ -131793,11 +131793,11 @@ ${lanes.join("\n")}
             )
           );
         }
-        function writeBreakWhenTrue(label, condition, operationLocation) {
+        function writeBreakWhenTrue(label, condition2, operationLocation) {
           writeStatement(
             setEmitFlags(
               factory2.createIfStatement(
-                condition,
+                condition2,
                 setEmitFlags(
                   setTextRange(
                     factory2.createReturnStatement(
@@ -131820,11 +131820,11 @@ ${lanes.join("\n")}
             )
           );
         }
-        function writeBreakWhenFalse(label, condition, operationLocation) {
+        function writeBreakWhenFalse(label, condition2, operationLocation) {
           writeStatement(
             setEmitFlags(
               factory2.createIfStatement(
-                factory2.createLogicalNot(condition),
+                factory2.createLogicalNot(condition2),
                 setEmitFlags(
                   setTextRange(
                     factory2.createReturnStatement(
@@ -132587,14 +132587,14 @@ ${lanes.join("\n")}
               );
               statements.push(varStatement);
               addRange(statements, exportStatements);
-              const condition = visitNode(node.condition, visitor, isExpression);
+              const condition2 = visitNode(node.condition, visitor, isExpression);
               const incrementor = visitNode(node.incrementor, discardedValueVisitor, isExpression);
               const body = visitIterationBody(node.statement, isTopLevel ? topLevelNestedVisitor : visitor, context);
               statements.push(factory2.updateForStatement(
                 node,
                 /*initializer*/
                 void 0,
-                condition,
+                condition2,
                 incrementor,
                 body
               ));
@@ -134242,10 +134242,10 @@ ${lanes.join("\n")}
           const m = factory2.createIdentifier("m");
           const n = factory2.createIdentifier("n");
           const exports2 = factory2.createIdentifier("exports");
-          let condition = factory2.createStrictInequality(n, factory2.createStringLiteral("default"));
+          let condition2 = factory2.createStrictInequality(n, factory2.createStringLiteral("default"));
           if (localNames) {
-            condition = factory2.createLogicalAnd(
-              condition,
+            condition2 = factory2.createLogicalAnd(
+              condition2,
               factory2.createLogicalNot(
                 factory2.createCallExpression(
                   factory2.createPropertyAccessExpression(localNames, "hasOwnProperty"),
@@ -134297,7 +134297,7 @@ ${lanes.join("\n")}
                   factory2.createBlock([
                     setEmitFlags(
                       factory2.createIfStatement(
-                        condition,
+                        condition2,
                         factory2.createExpressionStatement(
                           factory2.createAssignment(
                             factory2.createElementAccessExpression(exports2, n),
@@ -168695,15 +168695,15 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         return isConditionalExpression(expression) ? getConditionalInfo(expression, checker) : getBinaryInfo(expression);
       }
       function getConditionalInfo(expression, checker) {
-        const condition = expression.condition;
+        const condition2 = expression.condition;
         const finalExpression = getFinalExpressionInChain(expression.whenTrue);
         if (!finalExpression || checker.isNullableType(checker.getTypeAtLocation(finalExpression))) {
           return { error: getLocaleSpecificMessage(Diagnostics.Could_not_find_convertible_access_expression) };
         }
-        if ((isPropertyAccessExpression(condition) || isIdentifier(condition)) && getMatchingStart(condition, finalExpression.expression)) {
-          return { finalExpression, occurrences: [condition], expression };
-        } else if (isBinaryExpression(condition)) {
-          const occurrences = getOccurrencesInExpression(finalExpression.expression, condition);
+        if ((isPropertyAccessExpression(condition2) || isIdentifier(condition2)) && getMatchingStart(condition2, finalExpression.expression)) {
+          return { finalExpression, occurrences: [condition2], expression };
+        } else if (isBinaryExpression(condition2)) {
+          const occurrences = getOccurrencesInExpression(finalExpression.expression, condition2);
           return occurrences ? { finalExpression, occurrences, expression } : { error: getLocaleSpecificMessage(Diagnostics.Could_not_find_matching_access_expressions) };
         }
       }
@@ -170859,8 +170859,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         if (typeIdx === 7 || typeIdx === 9 || typeIdx === 6) {
           const type = typeChecker.getTypeAtLocation(node);
           if (type) {
-            const test = (condition) => {
-              return condition(type) || type.isUnion() && type.types.some(condition);
+            const test = (condition2) => {
+              return condition2(type) || type.isUnion() && type.types.some(condition2);
             };
             if (typeIdx !== 6 && test((t) => t.getConstructSignatures().length > 0)) {
               return 0;
@@ -191379,9 +191379,9 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           return target;
         }
         if (target && typeof target === "object" && !isArray(target)) {
-          for (const condition in target) {
-            if (condition === "default" || conditions.includes(condition) || isApplicableVersionedTypesKey(conditions, condition)) {
-              const pattern = target[condition];
+          for (const condition2 in target) {
+            if (condition2 === "default" || conditions.includes(condition2) || isApplicableVersionedTypesKey(conditions, condition2)) {
+              const pattern = target[condition2];
               return getPatternFromFirstMatchingCondition(pattern, conditions);
             }
           }
@@ -219892,7 +219892,7 @@ import { spawnSync as spawnSync9 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { existsSync as existsSync12, lstatSync as lstatSync8, readFileSync as readFileSync18, realpathSync as realpathSync12 } from "node:fs";
 import { join as join19 } from "node:path";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -224207,6 +224207,14 @@ import { join as join2 } from "node:path";
 // src/plugin-root.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+var AgentRootError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+};
 var manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
 function readPluginManifest(root) {
   for (const relative9 of manifestPaths) {
@@ -224217,6 +224225,25 @@ function readPluginManifest(root) {
     }
   }
   throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
+}
+function installedPluginRoot(metaUrl) {
+  const entry = dirname(fileURLToPath(metaUrl));
+  for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
+    try {
+      const root = realpathSync(candidate);
+      if (isPluginRoot(root)) return root;
+    } catch {
+    }
+  }
+  throw new AgentRootError("AGENT_ROOT_INVALID", "The Claude worker entry is not inside the installed vibe plugin or its owning source tree");
+}
+function isPluginRoot(root) {
+  if (!existsSync2(join(root, "agents"))) return false;
+  try {
+    return readPluginManifest(root).name === "vibe";
+  } catch {
+    return false;
+  }
 }
 
 // src/definition.ts
@@ -224317,12 +224344,32 @@ function readWriterSummary(worktree) {
 }
 function recordedDefinitionState(ledger) {
   try {
-    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    if (observed === null) return "removed";
-    return observed === ledger.binding.digest ? "present" : "changed";
+    const evidence = definitionUpgradeEvidence(ledger, installedPluginRoot(import.meta.url));
+    if (evidence.observedDigest === null) return "removed";
+    if (evidence.observedDigest !== evidence.recordedDigest) return "changed";
+    if (evidence.sameRelease) return "present";
+    if (evidence.provenNewer) return evidence.installedDigest === evidence.recordedDigest ? "present" : "changed";
+    return "unreadable";
   } catch {
     return "unreadable";
   }
+}
+function definitionUpgradeEvidence(ledger, installedRoot) {
+  const { agentRoot, agentName, capabilities, digest: digest2 } = ledger.binding;
+  const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
+  const installed = readDefinition(installedRoot, agentName, capabilities);
+  const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
+  const cacheVersion = basename2(dirname2(agentRoot)) === "vibe" ? basename2(agentRoot) : void 0;
+  const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
+  return {
+    recordedRoot: agentRoot,
+    recordedDigest: digest2,
+    observedDigest,
+    installedDigest: installed.binding.digest,
+    sameRelease,
+    provenNewer
+  };
 }
 function verifySourceTurn(worktree, workerId, requestId, lease) {
   const place = location(worktree);
@@ -224333,6 +224380,15 @@ function verifySourceTurn(worktree, workerId, requestId, lease) {
     }
     return ledger.runtime;
   });
+}
+function isNewerRelease(current, previous) {
+  if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
+  const left = current.split(".").map(Number);
+  const right = previous.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return false;
 }
 function git2(cwd, args) {
   return execFileSync2("git", args, {
@@ -224456,6 +224512,7 @@ var recordContextSchema = external_exports.object({
     confirmed: external_exports.literal(true),
     branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
     liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/).optional(),
+    liveTicketCreatedBySession: external_exports.boolean(),
     operatorId: external_exports.string().min(1),
     operatorEmail: external_exports.string().email()
   }).strict().optional(),
@@ -224465,6 +224522,7 @@ var recordContextSchema = external_exports.object({
       discarded: external_exports.literal(true),
       branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
       liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/),
+      liveTicketCreatedBySession: external_exports.literal(true),
       operatorId: external_exports.string().min(1),
       operatorEmail: external_exports.string().email()
     }).strict() }).strict()
@@ -225000,6 +225058,104 @@ function apiText(root, path2, logs = false) {
   if (result.error || result.status !== 0) throw new MainSyncError("Real GitHub CI evidence could not be read; no coverage completion was issued");
   return result.stdout;
 }
+var workflowScalar = external_exports.union([external_exports.string(), external_exports.number().finite(), external_exports.boolean()]);
+var workflowRun = external_exports.object({ "working-directory": external_exports.string().optional(), shell: external_exports.string().optional() }).strict();
+var condition = external_exports.union([external_exports.string(), external_exports.boolean()]).refine((value) => {
+  if (typeof value === "boolean") return true;
+  let expression = value.trim();
+  if (expression.startsWith("${{") && expression.endsWith("}}")) expression = expression.slice(3, -2).trim();
+  return /^(?:true|false|always\(\)|success\(\)|failure\(\)|cancelled\(\))$/.test(expression) || /^github\.event_name\s*(?:==|!=)\s*(['"])[a-z_]+\1$/.test(expression);
+}, "unsupported workflow condition");
+var workflowStep = external_exports.object({
+  run: external_exports.string().min(1).optional(),
+  uses: external_exports.string().min(1).optional(),
+  with: external_exports.record(workflowScalar).optional(),
+  name: external_exports.string().optional(),
+  id: external_exports.string().optional(),
+  "working-directory": external_exports.string().optional(),
+  shell: external_exports.string().optional(),
+  env: external_exports.record(workflowScalar).optional(),
+  if: condition.optional(),
+  "timeout-minutes": external_exports.number().int().positive().optional(),
+  "continue-on-error": external_exports.boolean().optional()
+}).strict().refine((step) => Boolean(step.run) !== Boolean(step.uses), "step needs exactly one run or uses").refine((step) => !step.run || step.with === void 0, "run steps cannot have action inputs").refine((step) => !step.uses || step.shell === void 0 && step["working-directory"] === void 0, "action steps cannot have shell/cwd");
+var workflowJob = external_exports.object({
+  steps: external_exports.array(workflowStep).min(1),
+  env: external_exports.record(workflowScalar).optional(),
+  name: external_exports.string().optional(),
+  "runs-on": external_exports.union([external_exports.string().min(1), external_exports.array(external_exports.string().min(1)).min(1)]),
+  if: condition.optional(),
+  "timeout-minutes": external_exports.number().int().positive().optional(),
+  "continue-on-error": external_exports.boolean().optional(),
+  needs: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional(),
+  permissions: external_exports.union([external_exports.string(), external_exports.record(external_exports.string())]).optional(),
+  defaults: external_exports.object({ run: workflowRun.optional() }).strict().optional(),
+  strategy: external_exports.object({ matrix: external_exports.record(external_exports.unknown()).optional(), "fail-fast": external_exports.boolean().optional(), "max-parallel": external_exports.number().int().positive().optional() }).strict().optional()
+}).strict();
+var concurrency = external_exports.union([external_exports.string(), external_exports.object({ group: external_exports.string(), "cancel-in-progress": external_exports.boolean().optional() }).strict()]);
+var laneWorkflow = external_exports.object({
+  jobs: external_exports.record(workflowJob),
+  env: external_exports.record(workflowScalar).optional(),
+  name: external_exports.string().optional(),
+  on: external_exports.union([external_exports.string(), external_exports.array(external_exports.string()), external_exports.record(external_exports.unknown())]),
+  concurrency: concurrency.optional(),
+  permissions: external_exports.union([external_exports.string(), external_exports.record(external_exports.string())]).optional(),
+  "run-name": external_exports.string().optional(),
+  defaults: external_exports.object({ run: workflowRun.optional() }).strict().optional()
+}).strict();
+function workflowLaneDefinitions(source) {
+  const document = (0, import_yaml2.parseDocument)(source, { uniqueKeys: true });
+  if (document.errors.length || document.warnings.length) throw new Error("invalid/unsupported workflow YAML");
+  const workflow = laneWorkflow.parse(document.toJS({ maxAliasCount: 0 }));
+  const { jobs, ...globals } = workflow;
+  const canonical = (value) => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort().map(([key, item]) => [key, canonical(item)]));
+    if (value !== null && !["string", "boolean", "number"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value)) {
+      throw new Error("non-JSON workflow execution field");
+    }
+    return value;
+  };
+  const lanes = [];
+  for (const [job, value] of Object.entries(jobs)) {
+    const matrix = value.strategy?.matrix;
+    let rows = [{}];
+    if (matrix) {
+      if (Object.keys(matrix).length !== 1 || !Array.isArray(matrix.include)) throw new Error("unsupported workflow matrix; use literal include rows");
+      rows = external_exports.array(external_exports.record(workflowScalar)).min(1).max(100).parse(matrix.include);
+    }
+    for (const row of rows) {
+      const expand = (input, at = []) => {
+        if (Array.isArray(input)) return input.map((item, index) => expand(item, [...at, String(index)]));
+        if (input && typeof input === "object") return Object.fromEntries(Object.entries(input).map(([field, item]) => [field, expand(item, [...at, field])]));
+        if (typeof input !== "string") return input;
+        const text = input.replace(/\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (_, field) => {
+          if (row[field] === void 0) throw new Error("unknown workflow matrix operand");
+          return String(row[field]);
+        });
+        if (/\$\{\{/.test(text)) {
+          const run = at.length === 3 && at[0] === "steps" && at[2] === "run";
+          const predicate = at.length === 1 && at[0] === "if" || at.length === 3 && at[0] === "steps" && at[2] === "if";
+          if (!run && !predicate || run && [...text.matchAll(/\$\{\{(.*?)\}\}/g)].some((match) => match[1]?.trim() !== "github.event.pull_request.base.ref")) {
+            throw new Error("unsupported dynamic execution field");
+          }
+        }
+        return text;
+      };
+      const expanded = workflowJob.parse(expand(value));
+      const boundGlobals = { ...globals, ...globals.env ? { env: expand(globals.env, ["env"]) } : {}, ...globals.defaults ? { defaults: expand(globals.defaults, ["defaults"]) } : {} };
+      for (const step of expanded.steps) if (step.uses && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+@[A-Za-z0-9_./-]+$/.test(step.uses)) {
+        throw new Error("unsupported local/dynamic action reference");
+      }
+      const name = Object.keys(row).length ? `${job}[${JSON.stringify(row)}]` : job;
+      if (lanes.some((lane) => lane.name === name)) throw new Error("duplicate workflow lane");
+      lanes.push({ name, job, matrix: row, command: JSON.stringify(canonical({ version: 1, workflow: boundGlobals, job: expanded, matrix: row })) });
+      if (lanes.length > 200) throw new Error("workflow lane expansion bound exceeded");
+    }
+  }
+  if (!lanes.length) throw new Error("workflow has no lanes");
+  return lanes;
+}
 
 // src/main-sync-lanes.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
@@ -225041,11 +225197,11 @@ var import_typescript = __toESM(require_typescript(), 1);
 var import_picomatch = __toESM(require_picomatch2(), 1);
 import { existsSync as existsSync5, readFileSync as readFileSync7 } from "node:fs";
 import { dirname as dirname4, isAbsolute as isAbsolute2, join as join6, normalize, relative, resolve as resolve3 } from "node:path";
-import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
+import { fileURLToPath as fileURLToPath3, pathToFileURL } from "node:url";
 
 // ../../plugins/vibe/skills/vibe/scripts/local-plans.mjs
 import { realpathSync as realpathSync5 } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { parseArgs } from "node:util";
 var LOCAL_PLAN_PREFIX = ".closedloop-ai/vibe-plans/";
 function isLocalPlanPath(filePath) {
@@ -225054,7 +225210,7 @@ function isLocalPlanPath(filePath) {
 function committedLocalPlans(runGit) {
   return runGit(["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", LOCAL_PLAN_PREFIX.slice(0, -1)]).split("\0").filter((file) => file && isLocalPlanPath(file));
 }
-if (process.argv[1] && realpathSync5(fileURLToPath(import.meta.url)) === realpathSync5(process.argv[1])) {
+if (process.argv[1] && realpathSync5(fileURLToPath2(import.meta.url)) === realpathSync5(process.argv[1])) {
   try {
     const { values } = parseArgs({ options: { worktree: { type: "string" } } });
     if (!values.worktree) throw new Error("--worktree is required.");
@@ -225349,10 +225505,10 @@ function pathValue(expression, root, file, seen, collect) {
     return argument;
   }
   if (import_typescript.default.isConditionalExpression(expression) && environment) {
-    const condition = pathValue(expression.condition, root, file, seen, collect);
-    if (isIsolatedPath(condition)) return pathValue(expression.whenTrue, root, file, seen, collect);
-    if (condition === void 0 || typeof condition === "string" && !condition.includes(UNKNOWN)) {
-      return pathValue(condition ? expression.whenTrue : expression.whenFalse, root, file, seen, collect);
+    const condition2 = pathValue(expression.condition, root, file, seen, collect);
+    if (isIsolatedPath(condition2)) return pathValue(expression.whenTrue, root, file, seen, collect);
+    if (condition2 === void 0 || typeof condition2 === "string" && !condition2.includes(UNKNOWN)) {
+      return pathValue(condition2 ? expression.whenTrue : expression.whenFalse, root, file, seen, collect);
     }
     return UNKNOWN;
   }
@@ -225517,7 +225673,7 @@ function fsTarget(value) {
     unknownPrefix = true;
   }
   try {
-    return { path: fileURLToPath2(projected), possible, unknownPrefix };
+    return { path: fileURLToPath3(projected), possible, unknownPrefix };
   } catch {
     return possible ? { path: UNKNOWN, possible: true, unknownPrefix } : void 0;
   }
@@ -226759,8 +226915,8 @@ function expressionCall(statement) {
 }
 function optionalWrite(root, file, statement, scope, directory, target) {
   if (!import_typescript2.default.isIfStatement(statement) || statement.elseStatement || !import_typescript2.default.isBlock(statement.thenStatement) || statement.thenStatement.statements.length !== 1) return false;
-  const condition = import_typescript2.default.isBinaryExpression(statement.expression) ? statement.expression.left : statement.expression;
-  if (!import_typescript2.default.isIdentifier(condition) || !scope.parameters.some((parameter) => parameter === inputDeclaration(condition))) return false;
+  const condition2 = import_typescript2.default.isBinaryExpression(statement.expression) ? statement.expression.left : statement.expression;
+  if (!import_typescript2.default.isIdentifier(condition2) || !scope.parameters.some((parameter) => parameter === inputDeclaration(condition2))) return false;
   if (import_typescript2.default.isBinaryExpression(statement.expression) && (statement.expression.operatorToken.kind !== import_typescript2.default.SyntaxKind.ExclamationEqualsEqualsToken || statement.expression.right.kind !== import_typescript2.default.SyntaxKind.NullKeyword)) return false;
   const write = expressionCall(statement.thenStatement.statements[0]);
   if (!write || !nativeCall(write, "writeFileSync", "fs") || write.arguments.length !== 2) return false;
@@ -227160,7 +227316,7 @@ import { spawnSync as spawnSync4 } from "node:child_process";
 import { existsSync as existsSync8, mkdtempSync, realpathSync as realpathSync9, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join12 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // src/main-sync-validation-recipe.ts
 var MAIN_BOOTSTRAP_MS = 15 * 60 * 1e3;
@@ -227355,7 +227511,7 @@ var TIMED_OUT_MARKER = "run-bounded: stopped after";
 var WRAPPER_FAILED_EXIT = 2;
 var SPAWN_FAILURE = /^spawn \S+ E[A-Z]+\s*$/m;
 function runBoundedScript() {
-  const script = fileURLToPath3(new URL("../run-bounded.mjs", import.meta.url));
+  const script = fileURLToPath4(new URL("../run-bounded.mjs", import.meta.url));
   if (!existsSync8(script)) throw new MainSyncError("The plugin's run-bounded.mjs is missing; no comparison was run");
   return script;
 }
@@ -228207,7 +228363,7 @@ function prepareMainSync(raw) {
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
   }
-  const desktopScript = fileURLToPath4(new URL("../vibe-sessions.mjs", import.meta.url));
+  const desktopScript = fileURLToPath5(new URL("../vibe-sessions.mjs", import.meta.url));
   const desktop = spawnSync9(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
     encoding: "utf8",
     timeout: 3e4,
@@ -228572,7 +228728,8 @@ export {
   pushMainSync,
   readMainSyncInput,
   readMainSyncProvenance,
-  validateMainSync
+  validateMainSync,
+  workflowLaneDefinitions
 };
 /*! Bundled license information:
 

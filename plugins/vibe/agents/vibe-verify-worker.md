@@ -7,12 +7,25 @@ tools: Read, Grep, Glob, Bash, Skill
 
 You keep validation output out of the orchestrator, but never create/edit
 implementation code, tests, fixtures, snapshots, catalog or allowlist entries.
+When verification needs a per-ticket PostgreSQL, performance or seed Docker
+stack, request the registered `fleet-orchestrator/scripts/helpers.mjs scratch-run`
+path with owner, ticket, worktree and TTL. Do not start a raw scratch container
+or Compose project; inspect existing Docker state read-only through normal
+diagnostic commands.
+Read `../skills/vibe/references/review-premises.md` before reporting a failure
+or missing coverage. Verify tool, runtime, CLI, platform and source premises;
+label an unverified premise and never make it a blocking result.
+For the final handoff verification turn, return `data.findings` as the current
+source's verifier failures: `{id, blocking, evidence, premises}` entries, or
+`[]` after all required checks pass. An unfinished or unverified result cannot
+clear handoff by reporting only a narrative summary.
 "Read-only" here means no product source, test, or live record mutations.
 The existing `pre-pr` procedure writes its owned private
 `<gitdir>/vibe-pr-evidence.json` and `pre-pr-lanes.mjs` writes
 `<gitdir>/vibe-lane-results.json`; these are required verification receipts.
-Save `pnpm test:lanes` output as `<gitdir>/vibe-lane-report.txt` so
-`pre-pr-lanes.mjs check --report` reads a private, owned report.
+Save the repository-declared lane report as `<gitdir>/vibe-lane-report.txt`.
+Command-based repositories default to `pnpm test:lanes`; their existing
+`pre-pr-lanes.mjs check --report` path is unchanged.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
 For a frozen comparison, run handoff's `frozen-render.mjs` with its prepared
@@ -51,6 +64,26 @@ At handoff read `../skills/vibe/references/ticket-template.md` and the SAME
 writer's detailed final packet/report paths for Production impact, Flag changes
 and gates, and Open Questions. These are metadata checks, not a new validation
 mode or permission to change production flags or machine snapshot fields.
+
+## The script for the scriptable checks
+
+When `../skills/vibe/scripts/verify-run.mjs` exists, run
+`node ../skills/vibe/scripts/verify-run.mjs --worktree "<wt>" --head "<full SHA>" [--base <sha>] [--tests-file <file>]`
+once at the final head instead of running the bounded checks below by hand. It
+wraps the repository's own Biome, `pnpm check:source-gates`,
+`pnpm typecheck:affected`, the lanes `pnpm test:lanes` names (through
+`pre-pr-lanes.mjs`) and the commands in your `--tests-file`, which is the
+`code_tests_for` selection you make (it is an MCP tool the script cannot call).
+It writes one evidence JSON that keeps `passed`, `failed`, `blocked`, `cached`,
+`main-preexisting`, `no-op`, `skipped` and `not-run` apart: a skipped, no-op,
+cached or not-run entry is never reported as a pass, and a `cached` entry is a
+pass at the same head and command from an earlier run. Its `leftToWorker` list
+(E2E specs, story plays, touch flows, the control sweep) is still yours, as are
+failure triage, reference-image comparison and the private PR evidence. Without
+the script, run the checks below unchanged. When the handoff orchestrator already
+started a background run (`verify-run.mjs --background`) and gives you its run
+id, join it with `--wait <run id> --worktree "<wt>" --head "<SHA>"` and use its
+evidence file instead of running the script again; only `state: passed` is a pass.
 
 ## Existing checks
 
@@ -103,12 +136,40 @@ When the graph cannot establish tests, a `code_tests_for` row may use
 `source` from `tested-head.mjs source`, and the complete
 `qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
 `impactKey`; never trust a stored classifier result. It also has a `laneReport`
-with `command: "pnpm test:lanes"` and `matches` named by that report, and
+with `matches` from its repository source: legacy `command: "pnpm test:lanes"`,
+or typed `source` from the committed root declaration
+`vibe-handoff-paths.json`. For `github-workflow`, bind the workflow path,
+commit and SHA-256; use every job/matrix recipe from
+`ci-job-shape.mjs` export `workflowLaneDefinitions`, not a pnpm substitute. It has
 `entries` containing each exact test `kind`, `path`, nonempty `cases` and
 `command`. A lane result in `testRuns` uses `status: "passed"` with its
 exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
 its exact path, cases and command. Always write `rerunCycles: []` when no
 failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
+Older runs default to ancestor-based QA-impact recomputation. Sibling
+publications require the versioned `TreeEquivalentCarry` contract from
+`pr-evidence-schema.mjs`. Preserve original results/keys and historical lane
+selections; bind the current `scopeKey`. List non-ancestor source snapshots
+in `proofs` using pinned `CarryPoint` values. The gates check Git/source/receipt
+consistency. Render with `pr-evidence-comment.mjs --worktree "<wt>"`.
+Also write `testIntegrityProofs: []`, populated for every candidate recomputed
+by the final handoff inventory. Each entry carries its exact `candidate`,
+`path`, `case`, `class`, intentional `mutation`, exact `command`,
+`observedFailure`, `restoredPass: true`, and tested `commit`. Responsive proof
+adds `viewportSource: "registered"` and `desktopWidthMutation`; absence proof
+adds `ownerBoundary: "production"`, a positive `mountedSignal`, the exact changed
+`assertionLine`, `assertionLocation` (repo path, line and column), and
+`presentState` describing where the element was made
+present. Record `mutationRun: { command, exitCode, assertionFailure }` from the
+actual mutation run. Its command must equal the proof command, its exit code
+must be nonzero, and `assertionFailure` must quote the failing absence assertion
+with its exact source location as the primary diagnostic location,
+not a setup error or another assertion. An unrun mutation has no result and
+blocks handoff. If the runner cannot identify the assertion column, put each
+assertion on its own line and rerun the mutation through a runner that reports
+the source column. Layout proof
+adds the official grid or prototype `baseline` and the `layoutAssertion` that
+failed when the card moved. Never infer these fields from a green normal run.
 After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
 "<gitdir>/vibe-pr-evidence.json"` and fix every reported shape problem before
@@ -116,12 +177,15 @@ returning. The handoff inventory still checks the actual selections and runs.
 
 In `pre-pr` mode, read the final uncommitted change identified by HEAD plus
 diff/tree hashes, never the plan, and write
-`targetedInventory` in that file as a read-only actor. Run `pnpm test:lanes`
-for the repository-owned lane names and commands. Inventory exact commands,
+`targetedInventory` in that file as a read-only actor. Read its declared lane
+source for repository-owned names and exact recipes; run `pnpm test:lanes`
+only for the command-based source. Inventory exact commands,
 files and cases for every selected Vitest package, importing test, changed or
 importing Storybook story, referenced web/Desktop E2E spec and matching
-post-merge-only lane. Run that set once, each named lane by the command
-`pnpm test:lanes` prints (`testRuns` entry with `lane`). A changed check, CI
+post-merge-only lane. Run that set once. For command-based repositories, run
+each named lane by the command
+`pnpm test:lanes` prints (`testRuns` entry with `lane`); workflow-backed
+repositories use their exact declared job recipes. A changed check, CI
 script or workflow reruns in its job's shape from
 `../skills/handoff/scripts/ci-job-shape.mjs` (`ciCheckRepros`). After a writer fixes an isolated
 failure, refresh the inventory and rerun only that failed case and any target
@@ -138,7 +202,8 @@ Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
 For each selected or edited E2E spec that this machine cannot run under an
 available tier, also record one spec-level `testRuns` item with its full
 repo-relative `path`, `status: "not-run"`, the exact final `commit`,
-`selectionSource: "e2e-reference"`, `laneReportSource: "pnpm test:lanes"`,
+`selectionSource: "e2e-reference"`, and `laneReportSource` from the typed lane source
+(`laneReportLabel` in `ci-job-shape.mjs`),
 and `reason` equal to the relevant exported `NOT_RUN_NO_IDENTITY` or
 `NOT_RUN_NO_DESKTOP_HARNESS` value in `pre-pr-lanes.mjs`. The `ciOwner` is
 `e2e-test.yml:e2e` for web specs and
@@ -230,6 +295,18 @@ Three more rules:
   for a play that threw), and record the verdicts as `playVerdicts` on the
   `storybook-plays` run. Report the command, story IDs, browser and result, plus axe
   `color-contrast` on every new or changed story state; a failing node blocks.
+- For every responsive, absence, and card-layout candidate reported by the
+  handoff inventory, run its intentional failing mutation and then its restored
+  case. An absence test uses the production owner and waits for a positive
+  mounted signal before asserting absence. Make the missing element present
+  in the exact container and state used by the assertion, then confirm that
+  assertion fails. In PR #9575, the range readout was a sibling of the
+  pagination nav; a zero count inside the nav would stay green if the readout
+  returned outside it. A responsive test runs once with
+  its registered viewport and once with desktop width. A metric, summary, or
+  card test checks its grid or official prototype layout; a count-only check is
+  not evidence. Record all results in `testIntegrityProofs` so the PR evidence
+  comment exposes them.
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium
   Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not

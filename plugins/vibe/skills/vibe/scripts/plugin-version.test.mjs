@@ -5,16 +5,32 @@ import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { blockingProblem, compareVersions, markPending, updateCommands, versionsText } from "./plugin-version.mjs";
+import { blockingProblem, compareVersions, conversationRuntime, loadedSkillForCheck, loadedSkillProblem, markPending, updateCommands, versionsText } from "./plugin-version.mjs";
 import { readSessionRecord, writeSessionRecord } from "./session-record.mjs";
+import { LoadBasis, loadedSkillEvidence } from "./loaded-skill.mjs";
 import { makeHome } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "plugin-version.mjs");
+const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..", "..");
+const loaded = (actor = CONVERSATION, runtime = "claude") => loadedSkillEvidence(actor, runtime, PLUGIN_ROOT, "vibe", LoadBasis.HookObserved);
 // Nothing listens here, so the check can never reach a real marketplace.
 const UNREACHABLE = "http://127.0.0.1:9";
 const CONVERSATION = "conversation-1";
 // Only system tools: a real claude or codex on the developer's PATH must never be found.
 const SYSTEM_PATH = ["/usr/bin", "/bin"].join(path.delimiter);
+
+test("a same-conversation check preserves the release the skill loaded and detects an installed update", () => {
+  const previous = { conversation: CONVERSATION, checkedAt: "then", loadedSkill: { ...loaded(CONVERSATION, "codex"), version: "1.0.85" }, harnesses: [{ harness: "codex", plugins: [{ name: "vibe", version: "1.0.85" }] }] };
+  const current = { conversation: CONVERSATION, runtime: "codex", harnesses: [{ harness: "codex", plugins: [{ name: "vibe", version: "1.1.21" }] }] };
+  current.loadedSkill = loadedSkillForCheck(previous, current, CONVERSATION, "codex", new Date("2026-10-30T00:00:00Z"));
+  assert.equal(current.loadedSkill.version, "1.0.85");
+  assert.match(loadedSkillProblem(current), /reload the current vibe\/fleet skill/);
+  assert.match(blockingProblem(current), /loaded vibe 1\.0\.85/);
+  const fresh = loadedSkillForCheck(null, current, "new-conversation", "codex", new Date("2026-10-30T00:00:00Z"));
+  assert.equal(fresh, null, "a new actor needs a machine-observed Skill/UserPrompt load; installed version alone is not evidence");
+  assert.equal(conversationRuntime({ CLAUDE_CODE_SESSION_ID: "claude-1" }), "claude");
+  assert.equal(conversationRuntime({ CODEX_THREAD_ID: "codex-1" }), "codex");
+});
 
 /** A main branch whose marketplace files list `plugins` ({name: version}) under ./plugins/<name>. */
 function mainFiles(plugins) {
@@ -414,7 +430,9 @@ test("adopt moves the conversation's record onto a new session and refuses one n
   writeSessionRecord(worktree, { slug: "s" });
   const nothing = await run(home, ["adopt", "--worktree", worktree]);
   assert.deepEqual(nothing.result, { ok: true, pluginVersion: null });
-  await run(home, ["check", "--claude", claude.file, "--latest-base", main.url]);
+  mkdirSync(path.join(home, ".vibe-hook-scope"), { recursive: true });
+  writeFileSync(path.join(home, ".vibe-hook-scope", `${CONVERSATION}.json`), JSON.stringify({ sessionId: CONVERSATION, loadedSkill: loaded() }));
+  await run(home, ["check", "--runtime", "claude", "--claude", claude.file, "--latest-base", main.url]);
   const refused = await run(home, ["adopt", "--worktree", worktree]);
   assert.equal(refused.code, 1);
   assert.match(refused.result.error, /has not chosen to update or to proceed/);
@@ -433,7 +451,9 @@ test("a started session is pending until the check runs, and a later start keeps
   writeFileSync(path.join(home, ".codex", "vibe", "plugin-version", `${CONVERSATION}.json`), JSON.stringify({ status: "outdated", versions: "vibe: x", choice: { choice: "proceed" } }));
   assert.equal(markPending(CONVERSATION, home).choice.choice, "proceed");
   assert.equal(blockingProblem({ status: "outdated", versions: "vibe: x" }), "plugins are outdated (vibe: x) and the person has not chosen to update or to proceed");
-  assert.equal(blockingProblem({ status: "unknown" }), null);
+  assert.equal(blockingProblem({ status: "unknown" }), null, "no load-evidence source: the earlier behavior");
+  assert.equal(blockingProblem({ status: "unknown", loadedSkill: loaded() }), null);
+  assert.match(blockingProblem({ status: "unknown", loadedSkillRequired: true }), /recorded no load of the current vibe\/fleet skill/);
   assert.equal(blockingProblem(null), null);
   const cli = await run(home, ["pending", "--conversation", "other-conversation"]);
   assert.equal(cli.result.status, "pending");
@@ -514,7 +534,6 @@ test("the setup check block never claims versions it did not read, and refuses c
   }
 });
 
-const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "../../..");
 
 /** A vibe release in a fake plugin cache, carrying the real writer agent and the shipped writer-state command. */
 function cachedRelease(cache, version) {
@@ -665,4 +684,38 @@ test("check refuses connection states it was not told, like status", async (t) =
   const check = await run(home, ["check", "--latest-base", UNREACHABLE, "--graph", "yes", "--closedloop", "connected"]);
   assert.equal(check.result.status, "unknown");
   assert.match(check.result.reason, /must each be connected or not-connected/);
+});
+
+// PR #371 review: Codex installs plugin hooks untrusted, so no hook record exists and every new
+// Codex vibe session was refused for lacking evidence nothing could produce.
+test("without a hook record the loaded gate is not enforced; with one it is", async (t) => {
+  const { root, home } = sandbox(t);
+  const codexEnv = { CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: CONVERSATION };
+  const worktree = path.join(root, "worktree");
+  execFileSync("git", ["init", "--quiet", worktree]);
+  writeSessionRecord(worktree, { slug: "s" });
+  await run(home, ["check", "--runtime", "codex", "--latest-base", UNREACHABLE], codexEnv);
+  assert.equal(startup(home).loadedSkillRequired, undefined);
+  const untrusted = await run(home, ["loaded", "--runtime", "codex"], codexEnv);
+  assert.deepEqual([untrusted.code, untrusted.result.ok, untrusted.result.enforced], [0, true, false]);
+  assert.equal((await run(home, ["adopt", "--worktree", worktree], codexEnv)).code, 0, "a Codex session starts with untrusted hooks");
+
+  const hookFile = path.join(home, ".vibe-hook-scope", `${CONVERSATION}.json`);
+  mkdirSync(path.dirname(hookFile), { recursive: true });
+  writeFileSync(hookFile, JSON.stringify({ sessionId: CONVERSATION, skill: null }));
+  const unobserved = await run(home, ["loaded", "--runtime", "codex"], codexEnv);
+  assert.equal(unobserved.code, 1);
+  assert.match(unobserved.result.error, /has not observed this actor loading vibe or fleet/);
+  await run(home, ["check", "--runtime", "codex", "--latest-base", UNREACHABLE], codexEnv);
+  assert.equal(startup(home).loadedSkillRequired, true);
+  const second = path.join(root, "second");
+  execFileSync("git", ["init", "--quiet", second]);
+  writeSessionRecord(second, { slug: "t" });
+  const refused = await run(home, ["adopt", "--worktree", second], codexEnv);
+  assert.equal(refused.code, 1);
+  assert.match(refused.result.error, /recorded no load/);
+  writeFileSync(hookFile, JSON.stringify({ sessionId: CONVERSATION, skill: "vibe", loadedSkill: loaded(CONVERSATION, "codex") }));
+  const observed = await run(home, ["loaded", "--runtime", "codex"], codexEnv);
+  assert.deepEqual([observed.code, observed.result.enforced, observed.result.loadedSkill.basis], [0, true, "hook-observed"]);
+  assert.equal((await run(home, ["adopt", "--worktree", second], codexEnv)).code, 0);
 });

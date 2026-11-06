@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- `codex`, `node` and `gh` (authenticated) on every machine that hosts sessions or checks, and this plugin installed for Codex and Claude on every machine that hosts writers, since every writer is a vibe session; the closedloop-graph MCP server (from the closedloop-core plugin) connected on every machine that runs the orchestrator or writers; `jq` where codex-fleet-monitor runs.
+- `codex`, `node`, `jq` and `gh` (authenticated) on every machine that hosts sessions or checks, and this plugin installed for Codex and Claude on every machine that hosts writers, since every writer is a vibe session; the closedloop-graph MCP server (from the closedloop-core plugin) connected on every machine that runs the orchestrator or writers; `jq` also where codex-fleet-monitor runs. `fleet.sh ... session` reads the plugin version with `jq` on the orchestrating machine, and for a remote session runs `codex plugin list --json | jq` in the remote host's `REMOTE_SHELL`, so both must be on that shell's PATH; a missing `codex` there stops the command with exit 127 naming the host.
 - For more than one machine: ssh key auth from the orchestrating machine to each other machine, so `ssh <host> true` runs with no password prompt. That is the one thing this skill cannot set up for you.
 
 ## config.env
@@ -21,6 +21,7 @@ CODEX_EFFORT=<the high effort level, not the maximum>
 HEAVY_SLOTS=<concurrent heavy checks this machine can take>
 MAX_LOAD_PER_CORE=1.5                       # a heavy slot refuses this machine above this load per core
 MOVE_AT_PERCENT=<codex-usage band at which to move writers off a machine>
+USAGE_STALE_SECONDS=1800                   # reader freshness limit; absent defaults to 30 minutes
 
 # The target repo's own names for the program practices
 GREEN_REF=<the ref post-merge CI advances when main is healthy>
@@ -35,6 +36,11 @@ REMOTE_SHELL="zsh -lic"                     # a login shell there that puts node
 REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 REMOTE_MAX_LOAD_PER_CORE=1.5
 ```
+
+`FLEET_FORCE_HERE=1` and `FLEET_FORCE_REASON=<operator reason>` are per-command
+inputs read by `fleet.sh` and `load-check.sh`; only the operator sets them, and
+they are never stored in `config.env`. With either absent, heavy work uses the
+normal load routing and a busy machine is refused.
 
 Session, request and remote state dirs are derived per program. `fleet.sh` uses `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot and load keys, and the `REMOTE_*` keys. Vibe's worker-model policy owns sub-agent models. `MOVE_AT_PERCENT` is yours to compare with each `codex-usage` line.
 
@@ -64,10 +70,17 @@ Then set the slot counts from this machine's core count, write the file, and run
 
 1. Run `scripts/fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` ([layout](./state.md)) and write `<fleetHome>/config.env`.
 2. Fill `sessions.txt` and `prs.txt` as codex-fleet-monitor describes; a session started through `fleet.sh` is listed as `local|remote <name>`.
-3. For each other machine: create its fleet home the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex gh'"`, which must print three paths. Install this plugin there in a persistent path.
+3. For each other machine: create its fleet home the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex jq gh'"`, which must print four paths. Install this plugin there in a persistent path.
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
 5. On each machine, check closedloop-graph answers (its `sync_status` tool) from Claude Code and from Codex.
 6. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.
+7. On each Codex machine, open `/hooks` for the person to review and trust the
+   current vibe hook definition before relying on fleet's PreToolUse guards.
+   Plugin installation alone does not activate trusted hooks. Until a hook
+   has recorded the conversation, `plugin-version.mjs loaded` reports
+   `enforced: false` and the loaded-skill gate is not applied there. The current
+   official hooks documentation does not verify `request_user_input`
+   PreToolUse coverage; do not claim that question gate is enforced there.
 
 ## Desktop app sidebars
 

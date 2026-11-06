@@ -10,6 +10,7 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
   current                                                    the active program's slug
   programs/<slug>/
     sessions.txt  prs.txt  board.md  watcher and monitor files (codex-fleet-monitor)
+    usage-readings.json         bounded latest, last-good and recent Codex and Claude reads
     sessions/<name>.json        written by fleet.sh; a remote session leaves <name>.remote.json
     prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
     requests/  findings/  evidence/
@@ -46,7 +47,7 @@ Read it top to bottom after any restart or compaction before acting.
 
 ## Rulings
 
-`standing-rulings.md` holds operator rulings for every program (models, review rounds, test lanes); the program's `rulings.md` holds the rest, separate from the resume log. Each entry is `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`. `fleet.sh` mirrors both to every worker host; point every worker and QA-prep prompt at them. Per-ticket rulings still go through handoff's `rulings-check.mjs`.
+`standing-rulings.md` holds operator rulings for every program (models, review rounds, test lanes); the program's `rulings.md` holds the rest, separate from the resume log. Each entry is `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`. `fleet.sh` mirrors both to every worker host; point every worker and QA-prep prompt at them. Per-ticket rulings still go through handoff's `rulings-check.mjs`. A sequencing ruling is written only by that checker's `--record-sequencing` operation after it verifies the live blocker-to-blocked `BLOCKS` receipt; unresolved references and missing links refuse the write, and the status sweep flags later drift. Orchestrator-authored directions remain `(orchestrator)` operational notes, not entries in this file.
 
 ## Lessons ledger
 

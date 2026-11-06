@@ -4,14 +4,21 @@
 // and open children had no writer; the operator noticed each one first.
 // Run it at every merge and every writer assignment.
 //
-// Usage: status-audit.mjs --snapshot <snapshot.json>
+// Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report]
+//
+// `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default) prints
+// `status audit: skipped at report` and exits 0 without reading the snapshot, so the
+// audit runs at assignments and merges only. Without the variable, or at any other
+// point, it audits as before.
 //
 // snapshot.json, gathered from the ticket tool and the code host:
 //   {"prds": [{"slug", "children": [{"slug", "status", "writer": <name or null>,
 //     "pullRequests": [{"url", "state": "MERGED" | "OPEN" | "CLOSED"}],
 //     "body": "<the ticket's latest text>", "plans": [{"slug", "status"}],
 //     "absorbedBy": {"slug", "status"} (the umbrella ticket that absorbed it)}]}],
-//    "outOfScope": [{"slug", "reason": "<who ruled it out, and where>"}]}
+//    "outOfScope": [{"slug", "reason": "<who ruled it out, and where>"}],
+//    "programRulings": "<current rulings.md>", "pullRequestTickets": {"123": "ISS-1"},
+//    "artifactLinks": [{"source": "ISS-1", "target": "ISS-2", "linkType": "BLOCKS"}]}
 // For each child: a merged pull request means DONE; an open pull request or an
 // assigned writer means IN_PROGRESS or IN_REVIEW; not DONE or CANCELED with
 // neither means UNOWNED. A merged pull request is not DONE on its own: a child
@@ -32,16 +39,27 @@
 // umbrella that absorbed it closed; close those children in the same step as
 // the umbrella, with its merge as evidence. Plans stayed open behind DONE
 // tickets and absorbed children stayed IN_PROGRESS until the operator noticed.
+// It also prints SEQUENCING-UNRESOLVED or SEQUENCING-BLOCKS-MISSING when a
+// sourced human sequencing ruling cannot be resolved or lacks its graph edge.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ticketProblems } from "../../handoff/scripts/executed-check.mjs";
-import { rulingNamesScope } from "../../handoff/scripts/rulings-check.mjs";
+import { rulingNamesScope, sequencingRequirements } from "../../handoff/scripts/rulings-check.mjs";
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
 const PLAN_CLOSED = new Set(["EXECUTED", "OBSOLETE"]);
+
+export const TRIM_ENV = "FLEET_TRIM_STATUS_AUDIT";
+export const AuditPoint = Object.freeze({ Assignment: "assignment", Merge: "merge", Report: "report" });
+
+/** Whether this run is skipped: only a `report` run, and only with the trim switch on. */
+export function skipsAudit(at, env = process.env) {
+  if (at !== undefined && !Object.values(AuditPoint).includes(at)) throw new Error("--at must be assignment, merge or report");
+  return at === AuditPoint.Report && env[TRIM_ENV] === "1";
+}
 
 /** Plan and absorption drift for one child: its plans behind a DONE ticket, or an absorbed child left open. */
 export function sweepFindings(child) {
@@ -95,7 +113,7 @@ export function auditStatuses(snapshot) {
     .map((entry) => [entry.slug, entry.reason.trim()]));
   const children = (Array.isArray(snapshot?.prds) ? snapshot.prds : [])
     .flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []).map((child) => ({ child, prdSlug: prd?.slug })));
-  const findings = [];
+  const findings = sequencingFindings(snapshot);
   const outOfScope = [];
   for (const { child, prdSlug } of children) {
     findings.push(...sweepFindings(child).map((found) => ({ slug: child.slug, status: child.status, ...found })));
@@ -109,10 +127,28 @@ export function auditStatuses(snapshot) {
   return { children: children.length, findings, outOfScope };
 }
 
+/** Missing or unresolved BLOCKS edges implied by the program's recorded sequencing rulings. */
+function sequencingFindings(snapshot) {
+  if (typeof snapshot?.programRulings !== "string") return [];
+  const { edges, unresolved } = sequencingRequirements(snapshot.programRulings, snapshot.pullRequestTickets ?? {});
+  const links = new Set((Array.isArray(snapshot.artifactLinks) ? snapshot.artifactLinks : [])
+    .filter((link) => link?.linkType === "BLOCKS")
+    .map((link) => `${link.sourceSlug ?? link.source}>${link.targetSlug ?? link.target}`));
+  return [
+    ...unresolved.map((entry) => ({ kind: "SEQUENCING-UNRESOLVED", ...entry })),
+    ...edges.filter((edge) => !links.has(`${edge.blocker}>${edge.blocked}`))
+      .map((edge) => ({ kind: "SEQUENCING-BLOCKS-MISSING", ...edge })),
+  ];
+}
+
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { snapshot: { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { snapshot: { type: "string" }, at: { type: "string" } } });
   if (!values.snapshot) {
-    throw new Error("Usage: status-audit.mjs --snapshot <snapshot.json>");
+    throw new Error("Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report]");
+  }
+  if (skipsAudit(values.at)) {
+    process.stdout.write("status audit: skipped at report\n");
+    return 0;
   }
   const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")));
   const lines = {
@@ -123,6 +159,8 @@ function main(argv) {
     UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
     UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,
     MISMATCH: (finding) => `MISMATCH ${finding.slug} ${finding.status}, expected ${finding.expected} (${finding.evidence})`,
+    "SEQUENCING-UNRESOLVED": (finding) => `SEQUENCING-UNRESOLVED ${finding.reference}: cannot resolve the recorded ruling "${finding.ruling.slice(0, 160)}" to ticket dependencies`,
+    "SEQUENCING-BLOCKS-MISSING": (finding) => `SEQUENCING-BLOCKS-MISSING ${finding.blocker} blocks ${finding.blocked}: the recorded sequencing ruling has no matching BLOCKS link`,
   };
   for (const finding of findings) process.stdout.write(`${lines[finding.kind](finding)}\n`);
   for (const entry of outOfScope) process.stdout.write(`OUT-OF-SCOPE ${entry.slug}: ${entry.reason}\n`);

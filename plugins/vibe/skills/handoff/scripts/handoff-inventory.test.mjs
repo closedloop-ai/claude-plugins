@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, chmodSync, symlinkSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, makeCheckout, makeHome, mutationPreload, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeCheckout, makeHome, mutationPreload, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -16,11 +16,11 @@ const HEX = { rule: "no-hex-color-in-jsx-styling", file: "apps/app/b.tsx", finge
 const allowlist = (entries) =>
   `${JSON.stringify({ registeredRules: ["no-hand-rolled-focus-ring", "no-hex-color-in-jsx-styling"], entries }, null, 2)}\n`;
 
-function setup(t, slug, extraFiles = {}) {
+function setup(t, slug, extraFiles = {}, { repoName = "symphony-alpha", remoteUrl, declared = true } = {}) {
   const fixture = makeHome("handoff-inventory-");
   t.after(fixture.cleanup);
-  const checkout = path.join(fixture.home, "Documents", "Closedloop.ai - Active Work", "symphony-alpha");
-  makeCheckout({
+  const checkout = path.join(fixture.home, "Documents", "Closedloop.ai - Active Work", repoName);
+  const { origin } = makeCheckout({
     root: fixture.root,
     home: fixture.home,
     checkout,
@@ -33,8 +33,10 @@ function setup(t, slug, extraFiles = {}) {
       "apps/web/content/docs/meta.json": "{\"pages\":[]}\n",
       "docs/runbooks/bulk-actions.md": "Runbook.\n",
       [ALLOWLIST]: allowlist([FOCUS_RING, HEX]),
+      ...(declared ? { "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY } : {}),
       ...extraFiles,
     },
+    ...(remoteUrl ? { remoteUrl } : {}),
   });
   const created = runNode(
     SESSIONS,
@@ -42,8 +44,327 @@ function setup(t, slug, extraFiles = {}) {
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
-  return { ...fixture, worktree: created.json.session.worktree };
+  return { ...fixture, checkout, origin, worktree: created.json.session.worktree };
 }
+
+function useMasterDefault({ home, checkout, origin, worktree }) {
+  git(checkout, ["branch", "-m", "master"], home);
+  git(checkout, ["push", "origin", "master"], home);
+  git(origin, ["symbolic-ref", "HEAD", "refs/heads/master"], home);
+  git(checkout, ["push", "origin", "--delete", "main"], home);
+  git(worktree, ["fetch", "--prune", "origin"], home);
+  git(worktree, ["remote", "set-head", "origin", "-a"], home);
+}
+
+const PATH_POLICY = "vibe-handoff-paths.json";
+const CLAUDE_PLUGIN_POLICY = readFileSync(path.resolve(HERE, "../../../../..", PATH_POLICY), "utf8");
+
+test("target repository declaration admits claude-plugins source, tools, evals, changelog and docs", (t) => {
+  const { home, worktree } = setup(t, "claude-paths", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
+    repoName: "claude-plugins", remoteUrl: "git@github.com:closedloop-ai/claude-plugins.git", declared: false,
+  });
+  const paths = ["plugins/vibe/skills/handoff/scripts/handoff-inventory.mjs", "tools/vibe-workers/src/claude-worker.ts",
+    "evals/vibe/case.md", "CHANGELOG.md", "docs/vibe.md"];
+  for (const file of paths) write(worktree, file, "changed\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+  assert.equal(result.json.pathPolicyFile, PATH_POLICY);
+  assert.equal(result.json.pathPolicySource.kind, "base");
+  assert.deepEqual(result.json.forbidden, []);
+  assert.deepEqual(result.json.outsideAllowed, []);
+  write(worktree, "plugins/vibe/AGENTS.md", "changed\n");
+  const blocked = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
+  assert.equal(blocked.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(blocked.json.forbidden, [{ path: "plugins/vibe/AGENTS.md", status: "A" }]);
+});
+
+test("root declaration uses the verified origin default when the captured base lacks one", (t) => {
+  const { home, checkout, worktree } = setup(t, "claude-root-rollout", {}, {
+    repoName: "claude-plugins", declared: false,
+  });
+  write(worktree, "plugins/vibe/skills/handoff/scripts/allowed.mjs", "export {};");
+  write(checkout, PATH_POLICY, CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", PATH_POLICY], home);
+  git(checkout, ["commit", "-m", "Declare root handoff paths"], home);
+  git(checkout, ["push", "origin", "main"], home);
+  git(worktree, ["fetch", "origin", "main"], home);
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+  assert.equal(result.json.pathPolicyFile, PATH_POLICY);
+  assert.equal(result.json.pathPolicySource.kind, "origin-default");
+  assert.deepEqual(result.json.forbidden, []);
+  assert.deepEqual(result.json.outsideAllowed, []);
+});
+
+test("added, modified and deleted root declarations cannot self-authorize", (t) => {
+  const declared = setup(t, "claude-root-edit", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
+    repoName: "claude-plugins", declared: false,
+  });
+  const { home, worktree } = declared;
+  const expanded = JSON.stringify({ ...JSON.parse(CLAUDE_PLUGIN_POLICY), allowedPrefixes: ["plugins/", "tools/", "evals/", "docs/", "rogue/"] });
+  write(worktree, PATH_POLICY, expanded);
+  write(worktree, "rogue/escape.ts", "export {};");
+  const modified = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(modified.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(modified.json.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+  assert.deepEqual(modified.json.outsideAllowed, [{ path: "rogue/escape.ts", status: "A" }]);
+  git(worktree, ["rm", "-f", "-q", PATH_POLICY], home);
+  const deleted = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(deleted.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(deleted.json.forbidden, [{ path: PATH_POLICY, status: "D" }]);
+
+  const undeclared = setup(t, "claude-root-add", {}, {
+    repoName: "claude-plugins", declared: false,
+  });
+  write(undeclared.worktree, PATH_POLICY, CLAUDE_PLUGIN_POLICY);
+  write(undeclared.worktree, "plugins/vibe/allowed.mjs", "export {};");
+  const added = runNode(INVENTORY, ["--worktree", undeclared.worktree], undeclared.home);
+  assert.equal(added.json.blocking.forbiddenPaths, false);
+  assert.match(added.json.pathPolicyProblem, /Declare exactly one committed vibe-handoff-paths\.json/);
+  assert.deepEqual(added.json.forbidden, [{ path: PATH_POLICY, status: "A" }]);
+});
+
+test("a sole nested declaration fails closed and names the required root location", (t) => {
+  const { home, worktree } = setup(t, "nested-only-policy", {
+    "plugins/vibe/vibe-handoff-paths.json": CLAUDE_PLUGIN_POLICY,
+  }, { repoName: "claude-plugins", declared: false });
+  write(worktree, "plugins/vibe/allowed.mjs", "export {};\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.equal(result.json.pathPolicyFile, "plugins/vibe/vibe-handoff-paths.json");
+  assert.match(result.json.pathPolicyProblem, /repository root.*vibe-handoff-paths\.json|vibe-handoff-paths\.json.*repository root/);
+});
+
+test("a root declaration alongside a nested declaration fails closed as a duplicate", (t) => {
+  const { home, worktree } = setup(t, "root-and-nested-policy", {
+    [PATH_POLICY]: CLAUDE_PLUGIN_POLICY,
+    "plugins/vibe/vibe-handoff-paths.json": CLAUDE_PLUGIN_POLICY,
+  }, { repoName: "claude-plugins", declared: false });
+  write(worktree, "plugins/vibe/allowed.mjs", "export {};\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.match(result.json.pathPolicyProblem, /found 2/);
+});
+
+test("missing target declaration blocks even an otherwise allowed path and names the needed file", (t) => {
+  const { root, home, worktree } = setup(t, "undeclared-paths", {}, { declared: false });
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.match(result.json.pathPolicyProblem, /vibe-handoff-paths\.json/);
+  git(worktree, ["remote", "set-url", "origin", path.join(root, "missing-origin.git")], home);
+  const unavailable = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(unavailable.status, 1);
+  assert.match(unavailable.json.error, /Cannot verify.*vibe-handoff-paths\.json/);
+});
+
+test("an undeclared non-main default branch gives the policy diagnostic", (t) => {
+  const fixture = setup(t, "master-undeclared", {}, { declared: false });
+  const { home, worktree } = fixture;
+  useMasterDefault(fixture);
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.match(result.json.pathPolicyProblem, /vibe-handoff-paths\.json/);
+  assert.match(result.json.pathPolicyProblem, /origin\/master/);
+});
+
+test("a declared non-main default branch allows its repository paths", (t) => {
+  const fixture = setup(t, "master-declared");
+  const { home, worktree } = fixture;
+  useMasterDefault(fixture);
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+  git(worktree, ["config", "vibe.baseRef", "master"], home);
+  git(worktree, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], home);
+  const configured = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(configured.json.blocking.forbiddenPaths, true, JSON.stringify(configured.json));
+});
+
+test("a pre-declaration session reads the fetched default branch policy after its base lacks one", (t) => {
+  const { home, checkout, worktree } = setup(t, "declaration-rollout", {}, { declared: false });
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Declare unchanged handoff paths"], home);
+  git(checkout, ["push", "origin", "main"], home);
+  git(worktree, ["fetch", "origin", "main"], home);
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+  assert.equal(result.json.pathPolicySource.kind, "origin-default");
+  assert.equal(result.json.pathPolicySource.commit, git(worktree, ["rev-parse", "origin/main"], home));
+  git(worktree, ["update-ref", "refs/remotes/origin/main", result.json.baseCommit], home);
+  const staleTrackingRef = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(staleTrackingRef.status, 1);
+  assert.match(staleTrackingRef.json.error, /fetched origin\/main does not match the remote's advertised HEAD/);
+  git(worktree, ["config", "vibe.baseRef", "main"], home);
+  const staleFallback = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(staleFallback.json.blocking.forbiddenPaths, false);
+  assert.match(staleFallback.json.pathPolicyProblem, /does not match the remote's advertised HEAD/);
+});
+
+test("a nondefault comparison base cannot supply fallback policy", (t) => {
+  const { home, checkout, worktree } = setup(t, "nondefault-policy", {}, { declared: false });
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Declare default branch policy"], home);
+  git(checkout, ["push", "origin", "main"], home);
+  git(checkout, ["checkout", "-b", "preview"], home);
+  write(checkout, "vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Add divergent preview policy"], home);
+  git(checkout, ["push", "origin", "preview"], home);
+  git(worktree, ["fetch", "origin", "main", "preview"], home);
+  git(worktree, ["config", "vibe.baseRef", "preview"], home);
+  write(worktree, "tools/rogue.ts", "export {};\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.outsideAllowed, [{ path: "tools/rogue.ts", status: "A" }]);
+  assert.equal(result.json.pathPolicySource.kind, "origin-default");
+  assert.equal(result.json.pathPolicySource.commit, git(worktree, ["rev-parse", "origin/main"], home));
+  git(worktree, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/preview"], home);
+  const repointed = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(repointed.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(repointed.json.outsideAllowed, [{ path: "tools/rogue.ts", status: "A" }]);
+  assert.equal(repointed.json.pathPolicySource.commit, git(worktree, ["rev-parse", "origin/main"], home));
+});
+
+test("an unconfigured comparison base ignores a locally repointed origin HEAD", (t) => {
+  const { home, checkout, worktree } = setup(t, "repointed-comparison", {}, { declared: false });
+  const oldBase = git(worktree, ["rev-parse", "HEAD"], home);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Declare default policy"], home);
+  git(checkout, ["push", "origin", "main"], home);
+  git(checkout, ["checkout", "-b", "preview", oldBase], home);
+  write(checkout, "vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Declare permissive preview policy"], home);
+  git(checkout, ["push", "origin", "preview"], home);
+  git(worktree, ["fetch", "origin", "main", "preview"], home);
+  git(worktree, ["merge", "--ff-only", "origin/preview"], home);
+  git(worktree, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/preview"], home);
+  write(worktree, "tools/rogue.ts", "export {};\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.baseCommit, oldBase);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.outsideAllowed, [{ path: "tools/rogue.ts", status: "A" }]);
+  assert.equal(result.json.pathPolicySource.commit, git(worktree, ["rev-parse", "origin/main"], home));
+});
+
+test("remote default verification pins one commit despite a tracking-ref swap", (t) => {
+  const { root, home, checkout, worktree } = setup(t, "tracking-ref-race", {}, { declared: false });
+  const oldBase = git(worktree, ["rev-parse", "HEAD"], home);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Declare default policy"], home);
+  git(checkout, ["push", "origin", "main"], home);
+  const defaultSha = git(worktree, ["rev-parse", "origin/main"], home);
+  git(checkout, ["checkout", "-b", "preview", oldBase], home);
+  write(checkout, "vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Declare permissive preview policy"], home);
+  git(checkout, ["push", "origin", "preview"], home);
+  git(worktree, ["fetch", "origin", "main", "preview"], home);
+  git(worktree, ["merge", "--ff-only", "origin/preview"], home);
+  const previewSha = git(worktree, ["rev-parse", "origin/preview"], home);
+  const refFile = path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "refs/remotes/origin/main");
+  mkdirSync(path.dirname(refFile), { recursive: true });
+  const preload = path.join(root, "swap-tracking-ref.mjs");
+  writeFileSync(preload, `import childProcess from 'node:child_process';\nimport { writeFileSync } from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\nconst original = childProcess.execFileSync;\nlet swapped = false;\nchildProcess.execFileSync = function(command, args, ...rest) {\n  const result = original(command, args, ...rest);\n  if (!swapped && command === 'git' && JSON.stringify(args) === JSON.stringify(['rev-parse', 'refs/remotes/origin/main'])) {\n    swapped = true; writeFileSync(${JSON.stringify(refFile)}, ${JSON.stringify(`${previewSha}\n`)});\n  }\n  return result;\n};\nsyncBuiltinESMExports();\n`);
+  write(worktree, "tools/rogue.ts", "export {};\n");
+  const run = spawnSync(process.execPath, ["--import", preload, INVENTORY, "--worktree", worktree],
+    { encoding: "utf8", env: { ...process.env, HOME: home } });
+  assert.equal(run.status, 1, run.stdout || run.stderr);
+  const result = JSON.parse(run.stdout);
+  assert.equal(result.baseCommit, oldBase);
+  assert.equal(result.pathPolicySource.commit, defaultSha);
+  assert.deepEqual(result.outsideAllowed, [{ path: "tools/rogue.ts", status: "A" }]);
+});
+
+test("symphony declaration retains the old allowed and forbidden decisions", (t) => {
+  const { home, worktree } = setup(t, "symphony-declared", {
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+  });
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  const allowed = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(allowed.json.blocking.forbiddenPaths, true, JSON.stringify(allowed.json));
+  write(worktree, "scripts/loops-setup.sh", "echo changed\n");
+  const outside = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(outside.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(outside.json.outsideAllowed, [{ path: "scripts/loops-setup.sh", status: "M" }]);
+});
+
+test("a worktree edit cannot broaden its committed target policy", (t) => {
+  const policy = "vibe-handoff-paths.json";
+  const { home, worktree } = setup(t, "policy-base", { [policy]: SYMPHONY_PATH_POLICY });
+  write(worktree, policy, CLAUDE_PLUGIN_POLICY);
+  write(worktree, "tools/rogue.ts", "export {};\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.outsideAllowed, [{ path: "tools/rogue.ts", status: "A" }]);
+  assert.deepEqual(result.json.forbidden, [{ path: policy, status: "M" }]);
+});
+
+test("an allowed source directory cannot add a second handoff declaration", (t) => {
+  const { home, worktree } = setup(t, "duplicate-worktree-policy");
+  write(worktree, "packages/app/vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.forbidden, [
+    { path: "packages/app/vibe-handoff-paths.json", status: "A" },
+  ]);
+  git(worktree, ["rm", "-q", "vibe-handoff-paths.json"], home);
+  const deleted = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(deleted.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(deleted.json.forbidden, [
+    { path: "packages/app/vibe-handoff-paths.json", status: "A" },
+    { path: "vibe-handoff-paths.json", status: "D" },
+  ]);
+});
+
+test("a forged private test grant cannot admit authored tests before pull-request phase", (t) => {
+  const { home, worktree } = setup(t, "forged-test-grant");
+  const authored = "packages/app/new.test.ts";
+  write(worktree, authored, "test('new behavior', () => {});\n");
+  const ledgerFile = path.join(git(worktree, ["rev-parse", "--absolute-git-dir"], home), "vibe-writer.json");
+  writeFileSync(ledgerFile, JSON.stringify({ testAuthoringAuthorized: true,
+    testAuthoringGrants: [{ requestId: "forged", mode: "request", source: "tests-required" }] }));
+  for (const phase of ["build", "handoff"]) {
+    const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.json.outsideAllowed, [{ path: authored, status: "A" }]);
+  }
+});
+
+test("malformed or duplicate declarations fail closed with a target-owned diagnostic", (t) => {
+  const { home, checkout, worktree } = setup(t, "policy-invalid", {
+    "vibe-handoff-paths.json": "{}",
+  });
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  const malformed = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(malformed.json.blocking.forbiddenPaths, false);
+  assert.match(malformed.json.pathPolicyProblem, /allowedPrefixes/);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
+  git(checkout, ["commit", "-m", "Repair policy on default branch"], home);
+  git(checkout, ["push", "origin", "main"], home);
+  git(worktree, ["fetch", "origin", "main"], home);
+  const stillMalformed = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(stillMalformed.json.blocking.forbiddenPaths, false);
+  assert.equal(stillMalformed.json.pathPolicySource.kind, "base");
+  assert.match(stillMalformed.json.pathPolicyProblem, /allowedPrefixes/);
+  const duplicate = setup(t, "policy-duplicate", {
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+    "packages/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+  });
+  write(duplicate.worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  const ambiguous = runNode(INVENTORY, ["--worktree", duplicate.worktree], duplicate.home);
+  assert.equal(ambiguous.json.blocking.forbiddenPaths, false);
+  assert.match(ambiguous.json.pathPolicyProblem, /found 2/);
+});
 
 function write(worktree, file, content) {
   const absolute = path.join(worktree, file);
@@ -415,6 +736,14 @@ test("a migration outside the backend packages and a local-fix backend file coun
   assert.deepEqual(result.json.outsideAllowed, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
 });
 
+test("a desktop prisma file that is not .sql still counts as backend", (t) => {
+  const { home, worktree } = setup(t, "desktop-prisma-non-sql");
+  write(worktree, "apps/desktop/prisma/migrations/migration_lock.toml", 'provider = "sqlite"\n');
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.backendChanged, true);
+  assert.deepEqual(result.json.backendFiles, [{ path: "apps/desktop/prisma/migrations/migration_lock.toml", status: "A" }]);
+});
+
 // The story cases below run on a base with no story-group-order.ts, so the
 // version scheme (pre-#8867) applies; handoff-inventory-storybook-scheme.test.mjs
 // covers the lifecycle scheme and the move between them.
@@ -701,4 +1030,108 @@ test("a new comparator outside the pull-request phase clears with its tie test l
   assert.deepEqual(ties("build"), []);
   assert.deepEqual(ties("handoff"), []);
   assert.equal(ties("pull-request").length, 1, "the pull-request turn writes the tie test");
+});
+
+
+test("root lane metadata is typed without widening path permissions or accepting unknown declaration fields", t => {
+  for (const [name, patch] of [["invalid-source", { laneSource: { kind: "environment", name: "LANES" } }],
+    ["unknown-field", { laneSources: [] }]]) {
+    const policy = { ...JSON.parse(CLAUDE_PLUGIN_POLICY), ...patch };
+    const { home, worktree } = setup(t, `lane-${name}`, { [PATH_POLICY]: JSON.stringify(policy) }, {
+      repoName: "claude-plugins", declared: false,
+    });
+    const result = runNode(INVENTORY, ["--worktree", worktree], home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.match(result.json.pathPolicyProblem, /typed laneSource|expected fields/);
+  }
+});
+
+
+test("lane source bootstrap admits only metadata for the sole unchanged committed workflow", t => {
+  const before = JSON.parse(CLAUDE_PLUGIN_POLICY); delete before.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n";
+  const { home, worktree } = setup(t, "lane-source-bootstrap", { [PATH_POLICY]: JSON.stringify(before),
+    ".github/workflows/ci.yml": workflow }, { repoName: "claude-plugins", declared: false });
+  const after = { ...before, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } };
+  write(worktree, PATH_POLICY, JSON.stringify(after));
+  const inspect = () => runNode(INVENTORY, ["--worktree", worktree], home).json;
+  assert.equal(inspect().blocking.forbiddenPaths, true);
+  write(worktree, PATH_POLICY, JSON.stringify({ ...after, allowedPrefixes: [...before.allowedPrefixes, "rogue/"] }));
+  assert.equal(inspect().blocking.forbiddenPaths, false);
+  write(worktree, PATH_POLICY, JSON.stringify(after));
+  write(worktree, ".github/workflows/ci.yml", workflow.replace("node --test", "echo passed"));
+  assert.equal(inspect().blocking.forbiddenPaths, false);
+});
+
+
+test("lane source bootstrap rejects ambiguous workflows and replacement of an existing source", t => {
+  const legacy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete legacy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n";
+  for (const kind of ["ambiguous", "replacement", "command"]) {
+    const source = { kind: "github-workflow", path: ".github/workflows/ci.yml" };
+    const before = kind === "replacement" ? { ...legacy, laneSource: source } : legacy;
+    const files = { [PATH_POLICY]: JSON.stringify(before), ".github/workflows/ci.yml": workflow,
+      ...(kind === "ambiguous" ? { ".github/workflows/other.yml": workflow } : {}) };
+    const { home, worktree } = setup(t, `lane-bootstrap-${kind}`, files, { repoName: "claude-plugins", declared: false });
+    write(worktree, PATH_POLICY, JSON.stringify({ ...legacy, laneSource: kind === "command"
+      ? { kind: "command", command: "echo passed" } : kind === "replacement" ? { ...source, path: ".github/workflows/other.yml" } : source }));
+    const result = runNode(INVENTORY, ["--worktree", worktree], home).json;
+    assert.equal(result.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+  }
+});
+
+
+test("bootstrap refuses a workflow added on fetched main after the writer captured its base", t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, "lane-main-moved", { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  write(f.checkout, ".github/workflows/second.yml", workflow);
+  git(f.checkout, ["add", ".github/workflows/second.yml"], f.home);
+  git(f.checkout, ["commit", "--quiet", "-m", "parallel workflow"], f.home);
+  git(f.checkout, ["push", "origin", "main"], f.home);
+  git(f.worktree, ["fetch", "origin"], f.home);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home).json;
+  assert.equal(result.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+});
+
+
+test("metadata bootstrap freshly fetches a compatible moved merge target without relying on an old tracking ref", t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, "lane-fresh-target", { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  const old = git(f.worktree, ["rev-parse", "origin/main"], f.home);
+  write(f.checkout, "README.md", "unrelated main change\n");
+  git(f.checkout, ["commit", "--quiet", "-am", "advance main"], f.home); git(f.checkout, ["push", "origin", "main"], f.home);
+  const target = git(f.checkout, ["rev-parse", "HEAD"], f.home);
+  assert.notEqual(target, old);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, result.stderr);
+  assert.equal(git(f.worktree, ["rev-parse", "origin/main"], f.home), target);
+});
+
+for (const kind of ["bytes", "removed", "renamed", "permissions", "source", "mode", "symlink"]) test(`bootstrap rejects fetched target ${kind} changes`, t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, `lane-target-${kind}`, { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  const file = path.join(f.checkout, ".github/workflows/ci.yml");
+  if (kind === "bytes") writeFileSync(file, workflow.replace("echo pass", "echo changed"));
+  if (kind === "removed") git(f.checkout, ["rm", "-q", ".github/workflows/ci.yml"], f.home);
+  if (kind === "renamed") git(f.checkout, ["mv", ".github/workflows/ci.yml", ".github/workflows/renamed.yml"], f.home);
+  if (kind === "permissions") write(f.checkout, PATH_POLICY, JSON.stringify({ ...policy, rootTests: !policy.rootTests }));
+  if (kind === "source") write(f.checkout, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "command", command: "echo pass" } }));
+  if (kind === "mode") chmodSync(file, 0o755);
+  if (kind === "symlink") { unlinkSync(file); symlinkSync("../../README.md", file); }
+  git(f.checkout, ["add", "-A"], f.home); git(f.checkout, ["commit", "--quiet", "-m", `main ${kind}`], f.home);
+  git(f.checkout, ["push", "origin", "main"], f.home); git(f.worktree, ["fetch", "origin"], f.home);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home).json;
+  assert.equal(result.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
 });

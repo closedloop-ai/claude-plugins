@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { agentModels } from "./agent-models.ts";
 
 /** Run-owned bytes of the pinned main plugin and its declared core dependency. */
@@ -9,6 +9,97 @@ export interface PluginSnapshot {
   vibeDir: string;
   coreDir: string;
   agentModels: Record<string, string>;
+}
+
+/** Immutable released plugin bytes plus the cache-shaped root used by Claude. */
+export interface PluginReleaseArchive {
+  sha: string;
+  version: string;
+  archiveRoot: string;
+  vibeDir: string;
+  coreDir: string;
+  claudeVibeRoot: string;
+  claudeCoreRoot: string;
+}
+
+function manifestVersion(path: string): string {
+  const value = JSON.parse(readFileSync(path, "utf8")) as { name?: unknown; version?: unknown };
+  if (typeof value.version !== "string" || !/^\d+\.\d+\.\d+$/.test(value.version)) {
+    throw new Error("eval-release-version-invalid");
+  }
+  return value.version;
+}
+
+/** Archive one exact release and build the cache-shaped direct roots required by Claude migration. */
+export function archivePluginRelease(repo: string, ref: string, runRoot: string,
+  expectedVersion?: string): PluginReleaseArchive {
+  if (!/^[a-f0-9]{40}$/.test(ref) || existsSync(runRoot)) throw new Error("eval-release-input-invalid");
+  const sha = execFileSync("git", ["-C", repo, "rev-parse", `${ref}^{commit}`],
+    { encoding: "utf8" }).trim();
+  if (sha !== ref) throw new Error("eval-release-ref-mismatch");
+  mkdirSync(runRoot, { recursive: true });
+  const archive = execFileSync("git", ["-C", repo, "archive", "--format=tar", sha,
+    ".claude-plugin/marketplace.json", "plugins/vibe", "plugins/closedloop-core", "CHANGELOG.md"],
+  { maxBuffer: 80 * 1024 * 1024 });
+  const unpack = spawnSync("tar", ["-xf", "-"], { cwd: runRoot, input: archive, encoding: "utf8" });
+  if (unpack.status !== 0) throw new Error(`eval-release-archive-failed:${unpack.stderr ?? "unknown"}`);
+  const vibeDir = realpathSync(join(runRoot, "plugins/vibe"));
+  const coreDir = realpathSync(join(runRoot, "plugins/closedloop-core"));
+  const version = manifestVersion(join(vibeDir, ".claude-plugin/plugin.json"));
+  if (expectedVersion !== undefined && version !== expectedVersion) {
+    throw new Error("eval-release-version-mismatch");
+  }
+  const codexVersion = manifestVersion(join(vibeDir, ".codex-plugin/plugin.json"));
+  if (codexVersion !== version || !readFileSync(join(runRoot, "CHANGELOG.md"), "utf8")
+    .split("\n").includes(`### vibe v${version}`)) throw new Error("eval-release-contract-invalid");
+  const claudeVibeRoot = join(runRoot, "claude-cache", "vibe", version);
+  const coreVersion = manifestVersion(join(coreDir, ".claude-plugin/plugin.json"));
+  const claudeCoreRoot = join(runRoot, "claude-cache", "closedloop-core", coreVersion);
+  mkdirSync(join(claudeVibeRoot, ".."), { recursive: true });
+  mkdirSync(join(claudeCoreRoot, ".."), { recursive: true });
+  cpSync(vibeDir, claudeVibeRoot, { recursive: true, errorOnExist: true, force: false });
+  cpSync(coreDir, claudeCoreRoot, { recursive: true, errorOnExist: true, force: false });
+  if (realpathSync(join(claudeVibeRoot, "..")) !== realpathSync(join(runRoot, "claude-cache", "vibe")) ||
+      basename(realpathSync(claudeVibeRoot)) !== version) {
+    throw new Error("eval-release-root-layout-invalid");
+  }
+  return { sha, version, archiveRoot: realpathSync(runRoot), vibeDir, coreDir,
+    claudeVibeRoot: realpathSync(claudeVibeRoot), claudeCoreRoot: realpathSync(claudeCoreRoot) };
+}
+
+/** Use the sealed candidate plugin bytes only for the current transition target. */
+export function archiveSnapshotTarget(repo: string, ref: string, runRoot: string,
+  snapshot: PluginSnapshot, expectedVersion: string): PluginReleaseArchive {
+  if (snapshot.sha !== ref || snapshotPluginVersion(snapshot) !== expectedVersion) {
+    throw new Error("eval-current-snapshot-identity-invalid");
+  }
+  const release = archivePluginRelease(repo, ref, runRoot);
+  const coreVersion = manifestVersion(join(snapshot.coreDir, ".claude-plugin/plugin.json"));
+  const oldCoreVersion = manifestVersion(join(release.coreDir, ".claude-plugin/plugin.json"));
+  const claudeVibeRoot = join(runRoot, "claude-cache/vibe", expectedVersion);
+  const claudeCoreRoot = join(runRoot, "claude-cache/closedloop-core", coreVersion);
+  for (const [source, archive, cache] of [
+    [snapshot.vibeDir, release.vibeDir, claudeVibeRoot],
+    [snapshot.coreDir, release.coreDir, claudeCoreRoot],
+  ]) {
+    rmSync(archive, { recursive: true });
+    if (existsSync(cache)) rmSync(cache, { recursive: true });
+    cpSync(source, archive, { recursive: true, errorOnExist: true, force: false });
+    cpSync(source, cache, { recursive: true, errorOnExist: true, force: false });
+  }
+  if (release.version !== expectedVersion) rmSync(release.claudeVibeRoot, { recursive: true });
+  if (oldCoreVersion !== coreVersion) rmSync(release.claudeCoreRoot, { recursive: true });
+  return { ...release, version: expectedVersion, claudeVibeRoot: realpathSync(claudeVibeRoot),
+    claudeCoreRoot: realpathSync(claudeCoreRoot) };
+}
+
+/** Read the candidate version from its sealed plugin snapshot, not the older HEAD manifest. */
+export function snapshotPluginVersion(snapshot: PluginSnapshot): string {
+  const version = manifestVersion(join(snapshot.vibeDir, ".claude-plugin/plugin.json"));
+  if (manifestVersion(join(snapshot.vibeDir, ".codex-plugin/plugin.json")) !== version) {
+    throw new Error("eval-current-snapshot-version-mismatch");
+  }
+  return version;
 }
 
 function archivePlugins(repo: string, expectedSha: string, runRoot: string): PluginSnapshot {

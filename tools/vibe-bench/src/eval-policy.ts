@@ -1,8 +1,19 @@
+import { readFileSync } from "node:fs";
+
 /** Runtime names supported by the local vibe eval harness. */
 export type EvalRuntime = "claude" | "codex";
 
 /** Skill tags derived from the `vibe:<skill>` invocation in each case prompt. */
-export type EvalSkill = "vibe" | "handoff" | "fleet-orchestrator";
+export type EvalSkill = "vibe" | "handoff" | "fleet-orchestrator" | "pr-takeover";
+
+const sharedModel = JSON.parse(readFileSync(new URL(
+  "../../../plugins/vibe/evals/codex/model-policy.json", import.meta.url), "utf8")) as {
+  codexModel?: unknown;
+};
+if (typeof sharedModel.codexModel !== "string" ||
+    !/^gpt-[a-z0-9.-]+$/.test(sharedModel.codexModel)) {
+  throw new Error("eval-codex-model-policy-invalid");
+}
 
 /**
  * One reviewed policy for local nightly evaluation.
@@ -11,7 +22,7 @@ export type EvalSkill = "vibe" | "handoff" | "fleet-orchestrator";
 export const EVAL_POLICY = {
   claudeModel: "claude-sonnet-5-5",
   claudeJudgeModel: "claude-opus-5-5",
-  codexModel: "gpt-6-sol",
+  codexModel: sharedModel.codexModel,
   codexJudgeModel: "gpt-6-luna",
   failureReruns: 2,
   concurrency: 3,

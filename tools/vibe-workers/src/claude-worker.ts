@@ -1,17 +1,18 @@
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
-import { checkClaudeSignIn, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
+import { checkClaudeSignIn, checkClaudeSignInAsync, checkProtectedWriteSupportAsync, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
   SIGN_IN_PERSON_ACTION } from "./claude-preflight.js";
 import { runFromCanonicalEntry } from "./cli.js";
-import { capabilitiesSchema, identifierSchema, mcpToolAliases, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
+import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
-  registerWriter } from "./ledger.js";
-import { AgentRootError, installedPluginRoot, resolveAgentRoot } from "./plugin-root.js";
+  readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
+import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
+import { pluginScriptProblems } from "../../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs";
 import { isHandoverContext, isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
@@ -28,6 +29,10 @@ const launchSchema = recordContextSchema.extend({
   timeoutMs: z.number().int().min(1000).max(30 * 60 * 1000).default(15 * 60 * 1000),
   /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
   allowCredits: z.boolean().optional(),
+  /** Explicit top-level orchestrator requirement; raw brief text never grants test authoring. */
+  testsRequired: z.boolean().optional(),
+  previewRequirements: z.array(z.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
+  previewProducer: z.literal("runtime-provider").optional(),
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 type LaunchInput = z.infer<typeof launchSchema>;
 type Definition = ReturnType<typeof readDefinition>;
@@ -35,7 +40,8 @@ const resultSchema = z.object({ type: z.literal("result"), session_id: z.string(
   is_error: z.boolean().optional(), result: z.string().max(256 * 1024).optional(),
   structured_output: z.unknown().optional(),
 }).passthrough();
-const initSchema = z.object({ type: z.literal("system"), subtype: z.literal("init"), tools: z.array(z.string()) }).passthrough();
+const initSchema = z.object({ type: z.literal("system"), subtype: z.literal("init"), tools: z.array(z.string()),
+  mcp_servers: z.array(z.object({ name: z.string(), status: z.string() }).passthrough()).optional() }).passthrough();
 const workerResultSchema = z.object({ status: statusSchema, summary: z.string().max(4096),
   data: z.record(z.unknown()).optional() }).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024,
     "Worker status data exceeds the compact response limit");
@@ -48,6 +54,96 @@ const readerRoles = new Set([
   "vibe-requirements-worker", "vibe-backend-worker", "vibe-primitive-worker", "vibe-storybook-decomposer",
   "vibe-verify-worker",
 ]);
+const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
+const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
+const testAuthoringModes = new Set(["request", "fix", "handoff", "pull-request"]);
+const PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
+const MCP_READINESS_WINDOW_MS = 15_000;
+const MAX_MCP_STARTUP_ATTEMPTS = 3;
+const MCP_STARTUP_RETRY_DELAY_MS = 500;
+
+/** Only the persistent writer receives an explicit, mode-bounded test-authoring grant. */
+export function testAuthoringGranted(input: Pick<LaunchInput, "agentName" | "mode" | "testsRequired">): boolean {
+  return input.agentName === "vibe-change-worker" && (input.mode === "pull-request" ||
+    (input.testsRequired === true && testAuthoringModes.has(input.mode)));
+}
+
+/** Cap every startup retry by the original worker turn deadline. */
+export function remainingWorkerTurnBudget(input: { turnDeadline: number;
+  readinessDeadline: number; now: number }): { turnTimeoutMs: number; startupTimeoutMs: number } {
+  const turnTimeoutMs = Math.max(0, input.turnDeadline - input.now);
+  return { turnTimeoutMs,
+    startupTimeoutMs: Math.min(turnTimeoutMs, Math.max(0, input.readinessDeadline - input.now)) };
+}
+
+/** The first child may use any positive budget; retry delay is checked only after a pending init. */
+export function canStartWorkerAttempt(budget: { turnTimeoutMs: number;
+  startupTimeoutMs: number }): boolean {
+  return budget.turnTimeoutMs > 0 && budget.startupTimeoutMs > 0;
+}
+
+/** The first init has only the overall turn deadline; retries get a separate readiness timer. */
+export function armMcpInitWatchdog(startupTimeoutMs: number | null,
+  onTimeout: () => void): ReturnType<typeof setTimeout> | undefined {
+  return startupTimeoutMs === null ? undefined : setTimeout(onTimeout, startupTimeoutMs);
+}
+
+class PendingMcpError extends Error {
+  constructor(readonly servers: string[]) { super(`Granted MCP connections pending: ${servers.join(", ")}`); }
+}
+type PreviewProbeRunner = (command: string, args: string[], options: { encoding: "utf8" }) =>
+  { status: number | null; stdout?: string | null; stderr?: string | null };
+
+/** The persistent Claude writer's inline policy, never installed in plugin-wide hooks. */
+export function protectedWriteSettings(hookPath: string, worktree: string): string {
+  const handler = { type: "command", command: process.execPath, args: [hookPath, worktree],
+    timeout: PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS, onFailure: "block", statusMessage: "Protected write guard" };
+  return JSON.stringify({ hooks: {
+    PermissionRequest: [{ matcher: "Edit|Write", hooks: [handler] }],
+    PreToolUse: [{ matcher: "Edit|Write|Bash", hooks: [handler] }],
+  } });
+}
+
+/** Keep the writer's permission policy and unattended prompt target inseparable. */
+export function protectedWriteLaunchArgs(hookPath: string, worktree: string): string[] {
+  return ["--settings", protectedWriteSettings(hookPath, worktree), "--permission-prompts", "none"];
+}
+
+/** The exact installed definition root and referenced scripts bound to one Claude dispatch. */
+export function dispatchFreshnessProblem(agentRoot: string, installedRoot: string, worktree: string, text: string): string | null {
+  const root = realpathSync(agentRoot);
+  const installed = realpathSync(installedRoot);
+  const version = (dir: string) => readPluginManifest(dir).version;
+  if (version(root) !== version(installed)) return "Claude dispatch definition is from a stale installed plugin release; reload or migrate before launch";
+  return pluginScriptProblems(text, root, worktree)[0] ?? null;
+}
+
+/** Only a provider receipt verified outside the worker's prose can clear preview readiness. */
+export function checkPreviewResult(input: Pick<LaunchInput, "agentName" | "mode" | "recordAction" | "requestId" | "previewRequirements" | "previewProducer">,
+  output: { status: string; data?: Record<string, unknown> }, pluginRoot: string, worktree: string,
+  run: PreviewProbeRunner = spawnSync): void {
+  if (input.agentName !== "vibe-environment-worker" || input.mode !== "record"
+    || !previewActions.has(input.recordAction ?? "") || output.status !== "DONE") return;
+  if (!input.previewProducer && !input.previewRequirements) return;
+  if (input.previewProducer !== "runtime-provider") throw new Error("Preview requirements need an authoritative provider producer declaration");
+  if (!input.previewRequirements?.includes("app-preview")) throw new Error("Environment DONE needs explicit preview requirements including app-preview");
+  const receipt = output.data?.previewReceipt;
+  const environmentId = output.data?.environmentId;
+  if (typeof receipt !== "string" || typeof environmentId !== "string") throw new Error("Environment DONE needs provider preview receipt and environment identity");
+  const args = [realpathSync(join(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")), "--file", receipt,
+    "--worktree", worktree, "--request-id", input.requestId, "--environment-id", environmentId,
+    ...input.previewRequirements.flatMap(capability => ["--required", capability])];
+  const checked = run(process.execPath, args, { encoding: "utf8" });
+  if (checked.status !== 0) throw new Error(`Environment preview is not ready: ${checked.stdout || checked.stderr}`);
+}
+
+type ReviewSource = { head: string; diffSha256: string; treeSha256: string };
+
+/** Source identity is captured by the plugin's canonical dirty-aware reader, never by the reviewer's prose. */
+function reviewSourceIdentity(pluginRoot: string, worktree: string): ReviewSource {
+  return JSON.parse(execFileSync(process.execPath, [realpathSync(join(pluginRoot, "skills/vibe/scripts/tested-head.mjs")), "source", worktree],
+    { encoding: "utf8" })) as ReviewSource;
+}
 
 /** Exact capabilities are discovered by the parent, then bounded again by role and declared operation. */
 export function boundDefinition(definition: Definition, input: LaunchInput) {
@@ -85,9 +181,9 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   const persistent = input.agentName === "vibe-change-worker";
   const phasePolicy = persistent
     ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. "
-      + "Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. "
-      + "Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. "
-      + "A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke "
+      + "Only an explicit pull-request turn or an explicit top-level testsRequired grant may author tests. "
+      + "Never author tests in plan or record turns, or in request, fix or handoff turns without that grant; never infer authority from the person's words. "
+      + "A request, fix or handoff turn with test-repair authority but without a test-authoring grant may only repair existing tests and fixtures your own change broke "
       + "(imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. "
       + "Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs "
       + "and the ticket or PRD that retires it; a test of live behavior is only repaired. "
@@ -95,8 +191,8 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   const verifyEvidencePolicy = input.agentName === "vibe-verify-worker"
     ? "This is a source read-only verification role. Never edit product source, tests, fixtures, snapshots, catalog or allowlists. "
       + "Bash may write only owned private verification artifacts: <gitdir>/vibe-pr-evidence.json, "
-      + "<gitdir>/vibe-lane-report.txt from pnpm test:lanes, <gitdir>/vibe-lane-results.json "
-      + "through pre-pr-lanes.mjs, verifier-owned Storybook birth records and logs in its private git directory, "
+      + "<gitdir>/vibe-lane-report.txt from the repository-declared lane source, <gitdir>/vibe-lane-results.json "
+      + "through pre-pr-lanes.mjs, typed lane run receipts, verifier-owned Storybook birth records and logs in its private git directory, "
       + "and .control/ runtime files from "
       + "the repository control command in control mode. Move only this turn's control captures to "
       + "the private git directory before publication. Never write a ClosedLoop or session record. "
@@ -108,6 +204,7 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
     + pushPolicy(input) + phasePolicy
+    + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "")
     + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName)
       ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. "
       : `${verifyEvidencePolicy}${storybookEvidencePolicy}`)
@@ -142,13 +239,39 @@ export async function runWorker(rawInput: unknown) {
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : undefined;
-  const agentRoot = resolveAgentRoot(input.agentRoot, installedPluginRoot(import.meta.url), recorded);
+  const installedRoot = installedPluginRoot(import.meta.url);
+  const resolvedRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
+  const upgrade = recorded ? readWriterUpgradeEvidence(input.worktree, installedRoot) : undefined;
+  const unchangedUpgrade = upgrade?.provenNewer && upgrade.installedDigest === upgrade.recordedDigest;
+  const compatible = upgrade && upgrade.observedDigest === upgrade.recordedDigest
+    && (upgrade.sameRelease || unchangedUpgrade);
+  if (upgrade && !compatible) {
+    const command = `node ${join(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
+    const message = upgrade.provenNewer || upgrade.observedDigest === null
+      ? `Claude dispatch definition is from a stale installed plugin release; run ${command} with the recorded migration JSON on stdin`
+      : "Writer definition mismatch has no proven installed release upgrade; retain the original writer";
+    throw new AgentRootError("STALE_PLUGIN_ROOT", message);
+  }
+  const agentRoot = unchangedUpgrade && resolvedRoot === installedRoot ? recorded! : resolvedRoot;
+  const dispatchProblem = dispatchFreshnessProblem(unchangedUpgrade ? installedRoot : agentRoot,
+    installedRoot, input.worktree, input.input ?? input.continuation ?? "");
+  if (dispatchProblem) throw new Error(dispatchProblem);
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
-  checkClaudeSignIn();
-  const { place, target: discardPlace } = resolveRecordContext(input);
   const persistent = input.agentName === "vibe-change-worker";
+  if (!persistent) checkClaudeSignIn();
+  const { place, target: discardPlace } = resolveRecordContext(input);
+  const reviewSource = receiptRoles.has(input.agentName) ? reviewSourceIdentity(definition.root, place.root) : undefined;
+  let protectedArgs: string[] = [];
+  if (persistent) {
+    const [signIn, support] = await Promise.allSettled([
+      checkClaudeSignInAsync(), checkProtectedWriteSupportAsync(installedRoot),
+    ] as const);
+    if (signIn.status === "rejected") throw signIn.reason;
+    if (support.status === "rejected") throw support.reason;
+    protectedArgs = protectedWriteLaunchArgs(support.value, place.root);
+  }
   let workerId: string = randomUUID();
   let lease: string | undefined;
   let resume = false;
@@ -210,10 +333,11 @@ export async function runWorker(rawInput: unknown) {
           : "Agent,Task,EnterWorktree,ExitWorktree,NotebookEdit",
       "--permission-mode", "default",
       "--allowedTools", bound.tools.join(","),
+      ...protectedArgs,
       resume ? "--resume" : "--session-id", workerId,
       "--name", workerSessionName(input.agentName, place.branch, input.requestId)];
     const launch = launchProcess(args, bound.tools, place.root, JSON.stringify({ requestId: input.requestId,
-      mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "pull-request",
+      mode: input.mode, authority: { testAuthoringAuthorized: testAuthoringGranted(input),
         testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode) },
       ...(input.sessionless ? { sessionless: input.sessionless } : {}),
       ...(input.discardTarget ? { discardTarget: input.discardTarget } : {}),
@@ -226,9 +350,18 @@ export async function runWorker(rawInput: unknown) {
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
+    if (reviewSource && JSON.stringify(reviewSourceIdentity(definition.root, place.root)) !== JSON.stringify(reviewSource)) {
+      throw new Error("Reviewer source changed during its read-only turn; rerun on the settled source");
+    }
+    checkPreviewResult(input, output, definition.root, place.root);
     if (persistent && lease) changeWriter("finish", { worktree: input.worktree, workerId, requestId: input.requestId,
       lease, status: output.status, resultSummary: output.summary });
-    return { ...output, workerId, requestId: input.requestId, tracePath,
+    return { ...output, runtime: "claude", agentName: input.agentName, ...(reviewSource ? { source: reviewSource } : {}),
+      graphToolIdentities: input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read")
+        .map((capability) => mcpToolIdentity(capability.name)),
+      graphToolAliases: [...new Set(input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read")
+        .flatMap((capability) => mcpToolAliases(capability.name)))],
+      workerId, requestId: input.requestId, tracePath,
       writer: persistent ? readWriterSummary(input.worktree) : undefined };
   } catch (error) {
     cleanupBlocked = error instanceof OwnedCleanupError;
@@ -262,8 +395,9 @@ export async function runWorker(rawInput: unknown) {
 }
 
 /** Owns only the spawned child and its streams; bounded failure never falls back to another session. */
-async function launchProcess(args: string[], granted: readonly string[], cwd: string, input: string, timeoutMs: number, trace: number,
-  allowCredits: boolean, attach: (pid: number) => void) {
+async function launchProcessOnce(args: string[], granted: readonly string[], cwd: string, input: string,
+  timeoutMs: number, startupTimeoutMs: number | null, trace: number, allowCredits: boolean,
+  attach: (pid: number) => void) {
   return await new Promise<{ status: WorkerStatus; summary: string; data?: Record<string, unknown>; sessionId: string;
     rateLimit?: ClaudeRateLimit }>((resolve, reject) => {
     const child: ChildProcessWithoutNullStreams = spawn("claude", args, { cwd, detached: process.platform !== "win32",
@@ -282,19 +416,28 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
       killTimer ??= setTimeout(() => signalOwnedChild(child, "SIGKILL"), 1000);
     };
     const onSignal = () => stop(new Error("Owned worker turn canceled"));
-    // The init event lists the tools the worker really has; a granted connection that did not load stops it before work.
+    // The brief is already piped. An observed init with missing grants stops the child; pending grants may retry.
     const checkInit = (event: unknown) => {
       const init = initSchema.safeParse(event);
       if (!init.success) return;
+      if (initTimer) clearTimeout(initTimer);
       const missing = missingMcpTools(init.data.tools, granted);
       if (missing.length) {
-        stop(new LaunchPrecheckError("MCP_TOOLS_MISSING",
-          `The worker started without its granted connections: ${missingServers(missing).join(", ")}`));
+        const servers = missingServers(missing);
+        const statuses = new Map(init.data.mcp_servers?.map((server) => [server.name, server.status]));
+        if (servers.every((server) => statuses.get(server) === "pending")) {
+          stop(new PendingMcpError(servers));
+        } else {
+          stop(new LaunchPrecheckError("MCP_TOOLS_MISSING",
+            `The worker started without its granted connections: ${servers.join(", ")}`));
+        }
       }
     };
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
     const deadline = setTimeout(() => stop(new Error("Owned worker turn exceeded its deadline")), timeoutMs);
+    const initTimer = armMcpInitWatchdog(startupTimeoutMs, () => stop(new LaunchPrecheckError(
+      "MCP_TOOLS_MISSING", "The worker did not report its granted tools during bounded startup")));
     child.once("spawn", () => {
       try { if (child.pid) attach(child.pid); }
       catch { stop(new Error("Unable to bind the owned process to its writer turn")); }
@@ -338,6 +481,7 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
     });
     child.on("close", (code) => {
       clearTimeout(deadline);
+      if (initTimer) clearTimeout(initTimer);
       if (killTimer) clearTimeout(killTimer);
       process.removeListener("SIGTERM", onSignal);
       process.removeListener("SIGINT", onSignal);
@@ -361,6 +505,49 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
     });
     child.stdin.end(`${input}\n`);
   });
+}
+
+/** Retry only a pending MCP init, after owned cleanup, under the same worker identity and deadline. */
+async function launchProcess(args: string[], granted: readonly string[], cwd: string, input: string,
+  timeoutMs: number, trace: number, allowCredits: boolean, attach: (pid: number) => void) {
+  const started = Date.now();
+  const turnDeadline = started + timeoutMs;
+  let readinessDeadline: number | null = null;
+  let attemptArgs = args;
+  let lastPending: PendingMcpError | undefined;
+  for (let attempt = 1; attempt <= MAX_MCP_STARTUP_ATTEMPTS; attempt += 1) {
+    const budget = remainingWorkerTurnBudget({ turnDeadline,
+      readinessDeadline: readinessDeadline ?? turnDeadline, now: Date.now() });
+    if (!canStartWorkerAttempt(budget)) break;
+    try {
+      return await launchProcessOnce(attemptArgs, granted, cwd, input,
+        budget.turnTimeoutMs, readinessDeadline === null ? null : budget.startupTimeoutMs,
+        trace, allowCredits, attach);
+    } catch (error) {
+      if (!(error instanceof PendingMcpError)) throw error;
+      lastPending = error;
+      readinessDeadline ??= Math.min(turnDeadline, Date.now() + MCP_READINESS_WINDOW_MS);
+      writeSync(trace, `${JSON.stringify({ type: "mcp_startup_pending", attempt,
+        servers: error.servers })}\n`);
+      if (attempt === MAX_MCP_STARTUP_ATTEMPTS ||
+          readinessDeadline - Date.now() <= MCP_STARTUP_RETRY_DELAY_MS) break;
+      const sessionFlag = attemptArgs.indexOf("--session-id");
+      if (sessionFlag >= 0) {
+        attemptArgs = [...attemptArgs];
+        attemptArgs[sessionFlag] = "--resume";
+      }
+      await new Promise<void>((resolve, reject) => {
+        const cancel = () => { clearTimeout(timer); cleanup(); reject(new Error("Owned worker turn canceled")); };
+        const cleanup = () => { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); };
+        const timer = setTimeout(() => { cleanup(); resolve(); }, MCP_STARTUP_RETRY_DELAY_MS);
+        process.once("SIGINT", cancel);
+        process.once("SIGTERM", cancel);
+      });
+    }
+  }
+  if (!lastPending) throw new Error("Owned worker turn exceeded its deadline");
+  throw new LaunchPrecheckError("MCP_TOOLS_MISSING",
+    `The worker's granted connections stayed pending during bounded startup: ${lastPending?.servers.join(", ") ?? "unknown"}`);
 }
 
 class OwnedCleanupError extends Error {}

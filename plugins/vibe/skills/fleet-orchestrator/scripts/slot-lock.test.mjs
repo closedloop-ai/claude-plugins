@@ -60,16 +60,47 @@ test('runs the command with its stdin, returns its exit status and frees the slo
   const root = lockRoot();
   const ok = runSync(root, ['e2e', 'w1', 'sh', '-c', 'cat; ls "$1"', '_', join(root, 'e2e-1.lock')], 'piped\n');
   assert.equal(ok.status, 0, ok.stderr);
-  assert.equal(ok.stdout, 'piped\nowner\npid\n');
+  assert.equal(ok.stdout, 'piped\ncwd\nowner\npid\n');
   assert.equal(existsSync(join(root, 'e2e-1.lock')), false);
   assert.equal(runSync(root, ['e2e', 'w1', 'sh', '-c', 'exit 7']).status, 7);
   assert.equal(existsSync(join(root, 'e2e-1.lock')), false);
 });
 
+test('preflight executes after the slot is acquired and refuses the child on failure', TIMEOUT, () => {
+  const root = lockRoot();
+  const preflight = join(root, 'preflight.mjs');
+  const marker = join(root, 'child-ran');
+  writeFileSync(preflight, `import {existsSync} from 'node:fs';if(!existsSync(process.env.SLOT_LOCK_DIR+'/heavy-1.lock'))process.exit(9);process.exit(7);`);
+  const result = runSync(root, ['--preflight-node', preflight, 'heavy', 'writer', 'sh', '-c', `touch "${marker}"`]);
+  assert.equal(result.status, 78, 'disk admission has a distinct refusal status: ' + result.stderr);
+  assert.match(result.stderr, /disk admission refused/);
+  assert.equal(existsSync(marker), false, 'the refused child never starts');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), false, 'the slot is released');
+});
+
+test('queued free-space loss is checked after a held slot becomes available', TIMEOUT, async () => {
+  const root = lockRoot();
+  const held = holdSlot(root, 'heavy', 1);
+  const free = join(root, 'free-blocks');
+  const marker = join(root, 'child-ran');
+  writeFileSync(free, '62500000');
+  const preflight = join(root, 'check-free.mjs');
+  writeFileSync(preflight, `import {readFileSync} from 'node:fs';process.exit(Number(readFileSync(${JSON.stringify(free)},'utf8'))<62500000?4:0);`);
+  const queued = start(root, ['--preflight-node', preflight, 'heavy', 'writer', 'sh', '-c', `touch "${marker}"`]);
+  await queued.waitFor('stderr', 'slot-lock: heavy busy');
+  writeFileSync(free, '62499999');
+  spawnSync('rm', ['-rf', held]);
+  assert.deepEqual(await queued.exited, { code: 78, signal: null });
+  assert.equal(existsSync(marker), false);
+});
+
 test('records the owner label while the command runs', TIMEOUT, () => {
   const root = lockRoot();
-  const result = runSync(root, ['heavy', 'pr-42 typecheck', 'cat', join(root, 'heavy-1.lock', 'owner')]);
-  assert.match(result.stdout, /^pr-42 typecheck pid \d+ since \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n$/);
+  const result = runSync(root, ['heavy', 'pr-42 typecheck', 'sh', '-c',
+    `cat "${join(root, 'heavy-1.lock', 'owner')}"; cat "${join(root, 'heavy-1.lock', 'cwd')}"`]);
+  const lines = result.stdout.trim().split('\n');
+  assert.match(lines[0], /^pr-42 typecheck pid \d+ since \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  assert.equal(lines[1], process.cwd());
 });
 
 test('reclaims a slot whose holder pid is dead', TIMEOUT, () => {
