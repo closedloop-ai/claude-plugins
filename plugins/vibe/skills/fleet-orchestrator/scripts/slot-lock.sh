@@ -3,7 +3,7 @@
 #        slot-lock.sh --status <lockName>
 # Runs <command> once one of N slots named <lockName> is free on this machine (default 1), and frees the
 # slot when the command exits or this script is interrupted. A slot whose holder pid is dead is reclaimed.
-# Locks live in SLOT_LOCK_DIR (default ~/.local/state/fleet-orchestrator/locks); SLOT_LOCK_POLL_SECONDS
+# Locks live in absolute SLOT_LOCK_DIR (default ~/.local/state/fleet-orchestrator/locks); SLOT_LOCK_POLL_SECONDS
 # sets the wait between tries (default 20).
 set -u
 
@@ -61,8 +61,11 @@ acquire() {
 }
 
 child=
+admitting=
 release() {
   [ -n "$child" ] && kill "$child" 2>/dev/null
+  # Fence admission handles the signal and exits promptly; reap it before removing its record.
+  [ -n "$child" ] && [ -n "$admitting" ] && wait "$child" 2>/dev/null
   [ -n "$lock" ] && rm -rf "$lock"
 }
 trap release EXIT
@@ -73,6 +76,17 @@ until acquire; do
   echo "slot-lock: $name busy ($(holders "$name")); waiting ${poll}s" >&2
   sleep "$poll"
 done
+
+if [ "$name" = heavy ]; then
+  here=$(cd "$(dirname "$0")" && pwd)
+  admitting=1
+  node "$here/../../vibe/scripts/owned-state.mjs" admit-heavy "$lock" "$$" "$owner" </dev/null >/dev/null &
+  child=$!
+  wait "$child"
+  status=$?
+  child= admitting=
+  [ "$status" -eq 0 ] || exit "$status"
+fi
 
 # Admission is read only and executes while this slot is held, immediately
 # before the child. A failed probe releases the slot through the EXIT trap.

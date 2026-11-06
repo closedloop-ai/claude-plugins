@@ -15,8 +15,19 @@ remote_node() {
   e+=" RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${REMOTE_CONTINUE_PROMPT_FILE:-}"
   e+=" PASS_TIMEOUT_SECONDS=${PASS_TIMEOUT_SECONDS:-} LOG_MAX_BYTES=${LOG_MAX_BYTES:-} SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-}"
   e+=" CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-}"
-  COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs usage-state.mjs work-dir.mjs 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
-    ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL 'env $e node $d/$*'" 2>/dev/null
+  local invoke="env $e node $d/$*"
+  local freshness=()
+  if [ "$1" = skill-freshness.mjs ]; then
+    freshness=(-C $K/../.. fleet-orchestrator/scripts/skill-freshness.mjs codex-fleet-monitor/scripts/work-dir.mjs
+      vibe/scripts/loaded-skill.mjs vibe/scripts/plugin-script-references.mjs)
+    shift
+    # Resolve outside env: a bare `env VAR=...` would print the process environment.
+    invoke='root=$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1); test -n "$root" && '
+    invoke+="env $e node $d/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
+  fi
+  COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs usage-state.mjs work-dir.mjs \
+    "${freshness[@]}" 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+    ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL ${(q)invoke}" 2>/dev/null
 }
 # A failed gh call prints nothing; keep the last non-empty value for that key so a blip is not an event.
 zmodload zsh/datetime
@@ -40,12 +51,14 @@ fi
 if [ -n "${L// }" ]; then
   SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-} node $K/recover.mjs --report $LOCAL_STATE_DIR local
   CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-} node $K/liveness.mjs ${LOCAL_STATE_DIR:?set LOCAL_STATE_DIR} ${=L} | sed 's/^/local /' >> $W/live.txt
+  node $K/../../fleet-orchestrator/scripts/skill-freshness.mjs watch-lines $LOCAL_STATE_DIR ${=L}
 fi
 if [ -n "${R// }" ]; then
   out=$(remote_node recover.mjs --report $REMOTE_STATE_DIR remote); echo "${out:-recovery remote unreadable}"
   out=$(remote_node liveness.mjs $REMOTE_STATE_DIR $R)
   if [ -n "$out" ]; then echo "$out" | sed 's/^/remote /' >> $W/live.txt
   else echo "session remote $REMOTE_HOST UNREACHABLE"; fi
+  remote_node skill-freshness.mjs watch-lines $REMOTE_STATE_DIR $R
 fi
 # Record a transport failure that happened before ratelimit.mjs could return its own failed reading.
 record_usage_readfail() {
