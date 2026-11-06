@@ -313,6 +313,65 @@ test("extensionless preview imports resolve CSS separately before and after .ts/
   }
 });
 
+test("preview CSS @import url reaches every frozen story and both input digests (ISS-13752)", (t) => {
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const nested = "apps/storybook/.storybook/nested.css";
+  const original = ".nested { color: red; }\n";
+  const base = {
+    [first]: "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    [second]: "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+    "apps/storybook/.storybook/preview.tsx": 'import "./preview.css";\n',
+    "apps/storybook/.storybook/preview.css": '@import url("nested.css") screen;\n',
+    [nested]: original,
+  };
+  const result = run(t, { base, head: { [nested]: ".nested { color: blue; }\n" } });
+  const finding = result.blocking.find((entry) => entry.rule === "frozen-render");
+  assert.ok(finding);
+  assert.match(finding.problem, /2 frozen v1\.0 story files/);
+  for (const story of [first, second]) {
+    const changed = frozenInputs(result.checkout, result.baseSha, [story]);
+    writeFileSync(path.join(result.checkout, nested), original);
+    assert.notEqual(changed, frozenInputs(result.checkout, result.baseSha, [story]));
+    writeFileSync(path.join(result.checkout, nested), ".nested { color: blue; }\n");
+  }
+});
+
+test("commented preview imports leave unrelated CSS out of selection and digest (ISS-13752)", (t) => {
+  const story = "apps/storybook/stories/first.stories.tsx";
+  const unused = "apps/storybook/.storybook/unused.css";
+  const original = ".unused { color: red; }\n";
+  const result = run(t, { base: {
+    [story]: "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    "apps/storybook/.storybook/preview.tsx": [
+      '// import "./unused.css";',
+      'const example = \'import "./unused.css"\';',
+    ].join("\n"),
+    [unused]: original,
+  }, head: { [unused]: ".unused { color: blue; }\n" } });
+  assert.equal(result.blocking.some((entry) => entry.rule === "frozen-render"), false);
+  const unchanged = frozenInputs(result.checkout, result.baseSha, [story]);
+  writeFileSync(path.join(result.checkout, unused), original);
+  assert.equal(frozenInputs(result.checkout, result.baseSha, [story]), unchanged);
+});
+
+test("untracked Storybook globals select every frozen story and enter the input digest (ISS-13752)", (t) => {
+  const stories = {
+    "apps/storybook/stories/first.stories.tsx": "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    "apps/storybook/stories/second.stories.tsx": "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+  };
+  for (const file of ["apps/storybook/public/logo.svg", "apps/storybook/.storybook/preview-head.html"]) {
+    const result = run(t, { base: stories, head: { [file]: `<data>${file}</data>\n` } });
+    const finding = result.blocking.find((entry) => entry.rule === "frozen-render");
+    assert.ok(finding, file);
+    assert.match(finding.problem, /2 frozen v1\.0 story files/, file);
+    const story = Object.keys(stories)[0];
+    const changed = frozenInputs(result.checkout, result.baseSha, [story]);
+    rmSync(path.join(result.checkout, file));
+    assert.notEqual(changed, frozenInputs(result.checkout, result.baseSha, [story]), file);
+  }
+});
+
 test("each explicit global input and a lockfile-only diff select every frozen story (ISS-13752)", (t) => {
   const first = "apps/storybook/stories/first.stories.tsx";
   const second = "apps/storybook/stories/second.stories.tsx";

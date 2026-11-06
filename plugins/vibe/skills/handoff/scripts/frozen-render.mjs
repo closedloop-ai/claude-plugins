@@ -75,7 +75,7 @@ import { withVerifyStorybook } from "../../vibe/scripts/verify-storybook-process
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash, pngHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
-import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { importSpecifiers, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
@@ -117,8 +117,8 @@ export function storybookPreviewImportClosure(baseFiles, headFiles, baseTextAt, 
       if (closure.has(file)) continue;
       closure.add(file);
       if (!IMPORT_SOURCE.test(file)) continue;
-      for (const match of textAt(file)?.matchAll(IMPORT_SPECIFIER) ?? []) {
-        const target = resolveImport(file, match[1], files);
+      for (const specifier of importSpecifiers(file, textAt(file))) {
+        const target = resolveImport(file, specifier, files);
         if (target && !closure.has(target)) queue.push(target);
       }
     }
@@ -435,7 +435,10 @@ export function frozenInputs(repo, base, storyFiles = []) {
   const baseFiles = new Set(run(["ls-tree", "-r", "--name-only", base]).split("\n").filter(Boolean));
   const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter(Boolean));
   const allFiles = new Set([...baseFiles, ...headFiles]);
-  const changed = run(["diff", "--name-only", "--no-renames", base]).split("\n").filter(Boolean);
+  const changed = [...new Set([
+    ...run(["diff", "--name-only", "--no-renames", "-z", base]).split("\0"),
+    ...run(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
+  ].filter(Boolean))];
   const closure = new Set();
   const texts = new Map();
   const textAt = (file, ref) => {
@@ -466,8 +469,8 @@ export function frozenInputs(repo, base, storyFiles = []) {
     closure.add(file);
     if (!IMPORT_SOURCE.test(file)) continue;
     for (const text of [textAt(file, "base"), textAt(file, "head")]) {
-      for (const match of text?.matchAll(IMPORT_SPECIFIER) ?? []) {
-        const target = resolveImport(file, match[1], allFiles);
+      for (const specifier of importSpecifiers(file, text)) {
+        const target = resolveImport(file, specifier, allFiles);
         if (target && !closure.has(target)) queue.push(target);
       }
     }

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - Frozen-render story selection treats a stylesheet as a global input only when Storybook's preview entry reaches it through imports, on either side of the comparison. Component styles stay in their own story closure. Other global inputs are the preview entry, token and theme files, Tailwind config, Storybook's `preview-head.html`, `main.ts` and `public/` files, the Storybook, design-system and app `package.json` files, and `pnpm-lock.yaml`; a change to any of them selects every frozen story.
 - The frozen-input digest now follows imports into non-source global inputs and hashes their raw bytes, so a change to global HTML, config, manifests, the lockfile or public files changes the digest while unrelated CSS does not.
+- Frozen-render preview reachability now follows nested CSS `@import url()` references, ignores commented-out imports, and includes untracked Storybook global files in the frozen-input digest.
 - Because the inputs digest changes, previously recorded `Frozen render unchanged` change-log lines stop matching once; the next handoff re-runs the frozen render and records a fresh line.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.45 (no Markdown changed).
 

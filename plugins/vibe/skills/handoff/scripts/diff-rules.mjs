@@ -16,7 +16,7 @@ import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./r
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
-import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { escapeRegExp, importSpecifiers, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { frozenInputs, isFrozenGlobalInput, storybookPreviewImportClosure } from "./frozen-render.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
@@ -512,8 +512,8 @@ function checkFrozenRenders(files, repo, changeLog, add) {
     const texts = repo.baseBlobs(frontier);
     const next = new Set();
     for (const file of frontier) {
-      const targets = [...(texts.get(file) ?? "").matchAll(IMPORT_SPECIFIER)]
-        .map((found) => resolveImport(file, found[1], repo.baseFiles)).filter(Boolean);
+      const targets = importSpecifiers(file, texts.get(file))
+        .map((specifier) => resolveImport(file, specifier, repo.baseFiles)).filter(Boolean);
       imports.set(file, targets);
       targets.filter((target) => !imports.has(target)).forEach((target) => next.add(target));
     }
