@@ -2,11 +2,13 @@ import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "n
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const LOCAL_PATH = /(?:^|[\s("'=\[{`])\/(?!\/)[^\s"'<>]+|[A-Za-z]:\\|\\\\[^\s\\]+\\/i;
+const LOCAL_FILE_URI = /\bfile:(?:\/\/[^/\s"'<>]*\/|\/)[^\s"'<>]+/i;
 const CREDENTIAL = /(?:\bBearer\s+[A-Za-z0-9._~+\/-]{8,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\b(?:AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY)\s*[=:]\s*\S+|\b(?:sk_live|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{8,})/i;
 
 /** Classify private text that must never be copied into retained or published artifacts. */
 export function privateTextProblem(value: string): "local-path" | "credential" | null {
-  if (LOCAL_PATH.test(value) || /\b(?:laptop|localhost|local path)\b/i.test(value)) {
+  if (LOCAL_PATH.test(value) || LOCAL_FILE_URI.test(value) ||
+      /\b(?:laptop|localhost|local path)\b/i.test(value)) {
     return "local-path";
   }
   return CREDENTIAL.test(value) ? "credential" : null;

@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -21,6 +22,139 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC and SPEC.loader
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
+
+
+def eval_case(source_name: str) -> dict:
+    """Resolve one real case by its repository directory name."""
+    return next(case for case in runner.cases() if case["source"].name == source_name)
+
+
+def test_iss_13760_mapped_graders_use_shared_checker_and_nonmapped_regex_is_unchanged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    children = eval_case("pm-prd-children-are-scope")
+    good = (
+        "CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; "
+        "COMMENT: ISS-9000 coordinates this child\n"
+        "REPORT: ISS-9002 is active with another owner; exclude it from the build and report the overlap.\n"
+        "UNCOVERED: ISS-9003 is outside the request and remains untouched.\n"
+        "SUPERSEDE: None.\n\nGraph:\n"
+        "- ticket_detail ISS-9002: ISS-9002 active by another person"
+    )
+    bad = good.replace("ISS-9000 coordinates this child",
+        "ISS-9000 coordinates this child, actually")
+    good_checks, _ = runner.deterministic(children, good, tmp_path, [])
+    bad_checks, _ = runner.deterministic(children, bad, tmp_path, [])
+    assert next(check for check in good_checks if check["grader"] == "claims-untouched")["passed"]
+    assert not next(check for check in bad_checks if check["grader"] == "claims-untouched")["passed"]
+
+    monkeypatch.setattr(runner, "run_reply_checker", lambda *args: (_ for _ in ()).throw(
+        AssertionError("nonmapped grader invoked checker")))
+    duplicate = eval_case("pm-review-duplicate-helper-copy")
+    checks, _ = runner.deterministic(duplicate,
+        "blocking | artifact-creation-dialog.tsx:504 | capitalize duplicates "
+        "add-artifact-dialog.tsx:428 | same helper | Move capitalize into "
+        "generic-artifact-surface and remove the duplicate function",
+        tmp_path, [])
+    assert next(check for check in checks if check["grader"] == "both-sites")["passed"]
+
+
+@pytest.mark.parametrize("stdout,returncode,stderr", [
+    ("not json", 0, ""),
+    ('{"caseId":"wrong","graderName":"claims-untouched","passed":true,"reason":"x"}', 0, ""),
+    ('{"caseId":"pm-prd-children-are-scope","graderName":"claims-untouched",'
+     '"passed":true,"reason":"x"}', 2, "checker failed"),
+])
+def test_iss_13760_checker_protocol_fails_closed(
+    monkeypatch, stdout: str, returncode: int, stderr: str
+) -> None:
+    monkeypatch.setattr(runner.CHECKER_ADAPTER.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(runner.CHECKER_ADAPTER.subprocess, "run", lambda *args, **kwargs:
+        SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr))
+    with pytest.raises(RuntimeError, match="eval-checker-(?:execution-failed|output-invalid)"):
+        runner.run_reply_checker(Path(__file__), "pm-prd-children-are-scope",
+            "claims-untouched", "reply")
+
+
+@pytest.mark.parametrize("entries", [
+    [{"caseId": "pm-prd-children-are-scope", "graderName": "claims-untouched",
+      "checker": "iss-13760-reply-format.mjs"}],
+    [
+        {"caseId": "pm-prd-children-are-scope", "graderName": "claims-untouched",
+         "checker": "iss-13760-reply-format.mjs"},
+        {"caseId": "pm-prd-children-are-scope", "graderName": "no-supersession",
+         "checker": "iss-13760-reply-format.mjs"},
+        {"caseId": "extra", "graderName": "extra", "checker": "iss-13760-reply-format.mjs"},
+    ],
+    [
+        {"caseId": "pm-prd-children-are-scope", "graderName": "claims-untouched",
+         "checker": "iss-13760-reply-format.mjs"},
+        {"caseId": "pm-prd-children-are-scope", "graderName": "claims-untouched",
+         "checker": "iss-13760-reply-format.mjs"},
+    ],
+])
+def test_iss_13760_checker_manifest_requires_exact_mappings(
+    tmp_path: Path, monkeypatch, entries: list[dict[str, str]]
+) -> None:
+    root = tmp_path / "checkers"
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps({"schemaVersion": 1, "entries": entries}))
+    (root / "iss-13760-reply-format.mjs").write_text("process.stdout.write('{}')\n")
+    monkeypatch.setattr(runner.CHECKER_ADAPTER, "EVALS", tmp_path)
+    with pytest.raises(RuntimeError, match="eval-checker-manifest-invalid"):
+        runner.reply_checker("pm-prd-children-are-scope", "claims-untouched")
+
+
+@pytest.mark.parametrize("linked_component", ["evals", "checkers", "module"])
+def test_iss_13760_checker_rejects_symlinked_path_components(
+    tmp_path: Path, monkeypatch, linked_component: str
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    real_evals = real / "evals"
+    real_checkers = real_evals / "checkers"
+    real_checkers.mkdir(parents=True)
+    manifest = Path(__file__).parents[1] / "checkers/manifest.json"
+    module = Path(__file__).parents[1] / "checkers/iss-13760-reply-format.mjs"
+    (real_checkers / "manifest.json").write_bytes(manifest.read_bytes())
+    (real_checkers / "iss-13760-reply-format.mjs").write_bytes(module.read_bytes())
+    selected_evals = real_evals
+    if linked_component == "evals":
+        linked_root = tmp_path / "linked-root"
+        linked_root.mkdir()
+        (linked_root / "evals").symlink_to(real_evals, target_is_directory=True)
+        selected_evals = linked_root / "evals"
+    elif linked_component == "checkers":
+        selected_evals = tmp_path / "linked-evals"
+        selected_evals.mkdir()
+        (selected_evals / "checkers").symlink_to(real_checkers, target_is_directory=True)
+    else:
+        real_module = real / "iss-13760-reply-format.mjs"
+        (real_checkers / "iss-13760-reply-format.mjs").replace(real_module)
+        (real_checkers / "iss-13760-reply-format.mjs").symlink_to(real_module)
+    monkeypatch.setattr(runner.CHECKER_ADAPTER, "EVALS", selected_evals)
+    with pytest.raises(RuntimeError, match="eval-checker-(?:root|module)-invalid"):
+        runner.reply_checker("pm-prd-children-are-scope", "claims-untouched")
+
+
+def test_iss_13760_checker_fault_is_not_a_model_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    case = eval_case("pm-prd-children-are-scope")
+    output = tmp_path / "out"
+    output.mkdir()
+    def fake_command(*args, **kwargs) -> None:
+        (output / case["name"] / "reply.txt").write_text("reply")
+    monkeypatch.setattr(runner, "command", fake_command)
+    monkeypatch.setattr(runner, "read_events", lambda *args: [])
+    monkeypatch.setattr(runner, "trace_for", lambda *args: [])
+    monkeypatch.setattr(runner, "reply_checker", lambda *args: Path(__file__))
+    monkeypatch.setattr(runner, "run_reply_checker", lambda *args: (_ for _ in ()).throw(
+        runner.CheckerInfrastructureError("eval-checker-output-invalid")))
+    result = runner.run_case(case, output, {"CODEX_HOME": str(tmp_path)}, runner.Budget(10),
+        "model", "grader", True)
+    assert result["infrastructure_invalid"] == "eval-checker-output-invalid"
+    assert not any(check["grader"] == "execution" for check in result["checks"])
 
 
 def test_default_model_uses_shared_policy_at_low_effort(tmp_path: Path) -> None:

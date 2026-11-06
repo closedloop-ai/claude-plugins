@@ -233,8 +233,18 @@ test("ISS-13760 stateful Claude replies stay in reply.txt and out of evidence", 
     assert.equal(readFileSync(join(root,
       "claude/upgrade-resume-changed-definition/reply.txt"), "utf8"),
     "stateful final reply\n");
+    const trace = upgradeEval.statefulClaudeEvidenceTrace([
+      "stdout: stateful final reply",
+      "failure saved at file:///private/tmp/reply.txt",
+      "Bearer secret-token-value",
+    ], result.privateReply!);
+    assert.doesNotMatch(JSON.stringify(trace),
+      /stateful final reply|file:\/\/\/private|secret-token-value/);
     assert.throws(() => preserveStatefulClaudeReply(root,
       "upgrade-resume-unchanged-definition", "Bearer secret-token-value"),
+    /eval-private-reply-private-data/);
+    assert.throws(() => preserveStatefulClaudeReply(root,
+      "upgrade-resume-unchanged-definition", "saved at file:///private/tmp/reply.txt"),
     /eval-private-reply-private-data/);
     assert.equal(existsSync(join(root,
       "claude/upgrade-resume-unchanged-definition/reply.txt")), false);
@@ -514,10 +524,15 @@ test("B1 Codex auth uses a disposable link and fails closed when the source is a
 
 test("S8 mixed suite merge gives every selected case exactly one owner", () => {
   const ordinary = suite("claude", ["pm-ordinary"]);
+  ordinary.deterministicOverride = { sha256: "d".repeat(64),
+    graders: ["pm-prd-children-are-scope/claims-untouched"], checkerVersion: "1.1.49",
+    checkerSha256: "c".repeat(64) };
   const stateful = suite("claude", ["upgrade-resume-unchanged-definition"]);
   const selected = ["pm-ordinary", "upgrade-resume-unchanged-definition"];
   assert.deepEqual(mergeEvalSuiteResults(ordinary, stateful, selected)?.cases.map((item) => item.id),
     selected);
+  assert.deepEqual(mergeEvalSuiteResults(ordinary, stateful, selected)?.deterministicOverride,
+    ordinary.deterministicOverride);
   const unavailable = statefulSuite("claude", [{ ...evidence(null, 1),
     caseId: "upgrade-resume-unchanged-definition", passed: false,
     unavailableReason: "NO_VALID_PRIOR fixture", cliVersion: ordinary.cliVersion }]);
@@ -870,20 +885,6 @@ test("ISS-13563 AC3 historical expected failures stay separate from current pass
   assert.equal(api.scoreUpgradeTransitions!([{ ...historical,
     evidence: { ...historical.evidence, failureCode: "ORACLE_MISMATCH" } }, current]).passed,
   false, "a generic oracle failure is not an expected historical failure");
-});
-
-test("ISS-13563 AC3 Claude terminal transcript is retained beyond the init prefix", () => {
-  const api = upgradeEval as unknown as { recordClaudeTurnOutput?: (root: string,
-    label: string, result: { exitCode: number; stdout: string; stderr: string }) => string };
-  assert.equal(typeof api.recordClaudeTurnOutput, "function");
-  const root = mkdtempSync(join(tmpdir(), "vibe-claude-terminal-"));
-  try {
-    const result = { exitCode: 0, stdout: `${"i".repeat(5000)}\n{"type":"result","result":"Bash denied: Write unavailable"}\n`,
-      stderr: "permission diagnostic\n" };
-    const path = api.recordClaudeTurnOutput!(root, "turn-one", result);
-    assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), result);
-    assert.ok(readFileSync(path, "utf8").includes("Write unavailable"));
-  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("ISS-13563 AC3 Claude root gives the released launcher its CLI on PATH", () => {

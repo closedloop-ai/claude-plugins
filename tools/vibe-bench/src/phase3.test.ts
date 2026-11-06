@@ -129,7 +129,9 @@ test("ISS-13760 private reply policy rejects local paths and credential shapes",
   for (const value of ["/private/var/run", "/tmp/reply", "/Volumes/work", "/opt/tool",
     "/usr/local/bin/tool", "/etc/config", "/var/log/app.log", "/Applications/App.app",
     "C:\\Users\\person\\reply", "\\\\host\\share\\reply",
-    "saved at `/usr/local/share/reply.txt`", "[`/etc/config`]", "path=`/var/log/eval.log`"]) {
+    "saved at `/usr/local/share/reply.txt`", "[`/etc/config`]", "path=`/var/log/eval.log`",
+    "saved at file:///usr/local/share/reply.txt", "[file://localhost/etc/config]",
+    "file://fileserver/var/log/eval.log"]) {
     assert.equal(privateTextProblem(value), "local-path", value);
   }
   for (const value of ["Bearer secret-token-value", "AKIAIOSFODNN7EXAMPLE",
@@ -1060,7 +1062,7 @@ function claudeNative(vibePath = "/snapshot/vibe", corePath = "/snapshot/core", 
     ] }, cases: caseIds.map((name) => ({ name, runsPerCase: 1, arms: { with: [{ passed, error: null,
       costUsd: 0.1 / caseIds.length, judgeCostUsd: 0.02 / caseIds.length,
       skippedPaidGraders: false, graders: [{ name: "route", passed, scored: true }],
-      tracePath: undefined as string | undefined }] } })),
+      tracePath: "" }] } })),
     aggregates: { casesTotal: caseIds.length, casesPassed: passed ? caseIds.length : 0 },
   };
 }
@@ -1126,6 +1128,15 @@ test("collectors reject partial, duplicate, identity-drifted and dishonest artif
     cliVersion: "codex-cli 0.163.0", vibePath: "/wrong", deterministicOnly: true,
     model: EVAL_POLICY.codexModel, graderModel: "gpt-6-luna", wordingCases: [],
   }), /identity-mismatch/);
+  const infrastructureInvalid = codexNative();
+  Object.assign(infrastructureInvalid.cases[0], {
+    infrastructure_invalid: "eval-checker-output-invalid",
+  });
+  assert.throws(() => collectCodexEval(infrastructureInvalid, [CASE], {
+    sourceSha: "a".repeat(40), skillSha: "b".repeat(64), version: "1.2.3",
+    cliVersion: "codex-cli 0.163.0", vibePath: "/snapshot/vibe", deterministicOnly: true,
+    model: EVAL_POLICY.codexModel, graderModel: "gpt-6-luna", wordingCases: [],
+  }), /eval-checker-output-invalid/);
   const conflict = codexNative();
   conflict.cases[0].passed = true;
   conflict.cases[0].checks[0].passed = false;

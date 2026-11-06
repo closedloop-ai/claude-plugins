@@ -28,6 +28,8 @@ export interface EvalSuiteResult {
   costUsd: number | null;
   tokens: Record<string, number> | null;
   nativeHash: string;
+  deterministicOverride?: { sha256: string; graders: string[];
+    checkerVersion: string; checkerSha256: string };
 }
 
 /** One native process outcome, including invalid artifacts that must stay red. */
@@ -51,15 +53,18 @@ export interface LocalEvalResult {
   resultHash: string;
 }
 
-function object(value: unknown, reason: string): Record<string, unknown> {
+export function evalObject(value: unknown, reason: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(reason);
   return value as Record<string, unknown>;
 }
 
-function array(value: unknown, reason: string): unknown[] {
+export function evalArray(value: unknown, reason: string): unknown[] {
   if (!Array.isArray(value)) throw new Error(reason);
   return value;
 }
+
+const object = evalObject;
+const array = evalArray;
 
 function finite(value: unknown, reason: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(reason);
@@ -180,6 +185,12 @@ export function collectCodexEval(raw: unknown, expectedCases: string[], expected
     object(value, "eval-codex-case-invalid"));
   exactCoverage(native.map((item) => String(item.case ?? "")), expectedCases.map(codexCaseId));
   const cases = native.map((item): EvalCaseResult => {
+    if (typeof item.infrastructure_invalid === "string") {
+      if (!/^eval-checker-[a-z-]+$/.test(item.infrastructure_invalid)) {
+        throw new Error("eval-codex-infrastructure-invalid");
+      }
+      throw new Error(item.infrastructure_invalid);
+    }
     if (typeof item.passed !== "boolean") throw new Error("eval-codex-pass-missing");
     const checks = array(item.checks, "eval-codex-checks-missing").map((value) =>
       object(value, "eval-codex-check-invalid"));
@@ -225,6 +236,13 @@ export function finalizeLocalEval(input: Omit<LocalEvalResult, "schemaVersion" |
   const runtimes = [...input.runtimes].sort((left, right) => left.runtime.localeCompare(right.runtime));
   for (const record of runtimes) {
     if (record.result) {
+      const override = record.result.deterministicOverride;
+      if (override && (!/^[a-f0-9]{64}$/.test(override.sha256) ||
+          !/^\d+\.\d+\.\d+$/.test(override.checkerVersion) ||
+          !/^[a-f0-9]{64}$/.test(override.checkerSha256) || override.graders.length === 0 ||
+          new Set(override.graders).size !== override.graders.length)) {
+        throw new Error("eval-checker-provenance-invalid");
+      }
       if (record.result.runtime !== record.runtime || (record.invalidReason !== null &&
           !record.invalidReason.startsWith("eval-stateful-infrastructure:"))) {
         throw new Error("eval-runtime-record-conflict");
@@ -267,6 +285,8 @@ export function buildLocalEvalReport(result: LocalEvalResult): string {
     (item.result?.failed ?? 0) > 0);
   const hasUnavailable = result.runtimes.some((item) => (item.result?.unavailable ?? 0) > 0);
   const verdict = result.success ? "PASS" : hasUnavailable && !hasFailure ? "INCOMPLETE" : "FAIL";
+  const deterministicOverrides = result.runtimes.flatMap((record) =>
+    record.result?.deterministicOverride?.graders ?? []);
   const lines = [
     "# Vibe local model eval",
     "",
@@ -274,6 +294,9 @@ export function buildLocalEvalReport(result: LocalEvalResult): string {
     `Cases ${result.selectedCases.length}; wall ${result.wallMs} ms; ` +
       `Codex deterministic-only ${result.deterministicOnly ? "yes" : "no"}.`,
     `Verdict: ${verdict}.`,
+    ...(deterministicOverrides.length ? [
+      `Authoritative deterministic reply-format overrides: ${[...new Set(deterministicOverrides)].join(", ")}.`,
+    ] : []),
     "",
     "| runtime | model | status | passed | failed | unavailable | agent USD | judge USD | total USD | CLI | native hash |",
     "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",

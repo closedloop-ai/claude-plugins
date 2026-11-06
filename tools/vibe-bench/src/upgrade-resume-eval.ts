@@ -20,9 +20,15 @@ import { archivePluginRelease, archiveSnapshotTarget, snapshotPluginVersion } fr
 import type { PluginReleaseArchive } from "./plugin-snapshot.ts";
 import type { PluginSnapshot } from "./plugin-snapshot.ts";
 import { runOwnedProcess } from "./owned-process.ts";
-import { privateReplyDestination, writePrivateReply } from "./private-artifact.ts";
+import { privateReplyDestination, writePrivateReply } from
+  "./private-artifact.ts";
 import { writeBenchmarkSessionRecord } from "./session-preflight.ts";
 import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
+import { evidenceTrace as statefulClaudeEvidenceTrace,
+  failureDiagnostic as normalizedClaudeFailureDiagnostic,
+  recordTurnOutput, terminalEvidence } from "./stateful-claude-evidence.ts";
+
+export { statefulClaudeEvidenceTrace };
 
 export const STATEFUL_CLAUDE_ROOT_TIMEOUT_MS = 1_200_000;
 export const CLAUDE_WRITER_TIMEOUT_MS = 900_000;
@@ -364,6 +370,8 @@ export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
   const payload = { runtime: ordinary.runtime, cliVersion: ordinary.cliVersion,
     ...(ordinary.model ? { model: ordinary.model } : {}),
     ...(ordinary.judgeModel ? { judgeModel: ordinary.judgeModel } : {}), cases, passed,
+    ...(ordinary.deterministicOverride
+      ? { deterministicOverride: ordinary.deterministicOverride } : {}),
     failed, unavailable, wallMs: ordinary.wallMs + stateful.wallMs,
     agentCostUsd: nullableSum(ordinary.agentCostUsd, stateful.agentCostUsd),
     judgeCostUsd: nullableSum(ordinary.judgeCostUsd, stateful.judgeCostUsd),
@@ -535,6 +543,17 @@ export function classifyUpgradeFailure(error: unknown): UpgradeFailureCode {
   return "ORACLE_MISMATCH";
 }
 
+/** Retain only fixed metadata and normalized diagnostics from Claude JSONL. */
+export function statefulClaudeTerminalEvidence(stdout: string, exitCode: number | null): string {
+  return terminalEvidence(stdout, exitCode, classifyUpgradeFailure);
+}
+
+/** Write one stateful Claude turn artifact through the shared redaction policy. */
+export function recordClaudeTurnOutput(root: string, label: string,
+  result: { exitCode: number | null; stdout: string; stderr: string }): string {
+  return recordTurnOutput(root, label, result, classifyUpgradeFailure);
+}
+
 /** Use only the last completed native turn, so an earlier recovered capacity error cannot mask a later oracle failure. */
 export function codexServerFailure(trace: string[]): UpgradeFailureCode | null {
   for (let index = trace.length - 1; index >= 0; index -= 1) {
@@ -555,17 +574,6 @@ export function codexServerFailure(trace: string[]): UpgradeFailureCode | null {
 function boundedTrace(lines: string[], limit = 200, lineBytes = 4_000): string[] {
   return lines.slice(-limit).map((line) => Buffer.byteLength(line) <= lineBytes
     ? line : `${Buffer.from(line).subarray(0, lineBytes).toString("utf8")}…`);
-}
-
-/** Preserve the complete Claude process result before any bounded display trace is made. */
-export function recordClaudeTurnOutput(root: string, label: string,
-  result: { exitCode: number | null; stdout: string; stderr: string }): string {
-  if (!/^(turn-one|turn-two|stale-recovery)$/.test(label)) {
-    throw new Error("eval-stateful-claude-turn-label-invalid");
-  }
-  const path = join(root, `${label}.terminal.json`);
-  writeFileSync(path, `${JSON.stringify(result)}\n`, { flag: "wx", mode: 0o600 });
-  return path;
 }
 
 /** The released Claude launcher resolves `claude` on PATH inside its Bash child. */
@@ -1011,7 +1019,7 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       requestId: prepared.requestOne, marker: "turn-one", continuation: false,
       vibeRoot: prior.claudeVibeRoot, runtime: "claude" })}`, false);
     recordClaudeTurnOutput(input.root, "turn-one", first);
-    processTrace.push(`turn-one exit=${first.exitCode}\nstdout:\n${first.stdout}\nstderr:\n${first.stderr}`);
+    processTrace.push(`turn-one exit=${first.exitCode}`);
     const firstEvents = [...claudeEvents(first.stdout)];
     finalReply = nextClaudeTurnReply(finalReply, first.stdout);
     if (first.exitCode !== 0 || proofLines(prepared.worktree).join("\n") !== "turn-one") {
@@ -1030,7 +1038,7 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       ...(input.item.definition === "changed" ? { migration: {
         previousWorkerId: before.workerId, previousDigest: before.binding.digest } } : {}) })}`, true);
     recordClaudeTurnOutput(input.root, "turn-two", targetTurn);
-    processTrace.push(`turn-two exit=${targetTurn.exitCode}\nstdout:\n${targetTurn.stdout}\nstderr:\n${targetTurn.stderr}`);
+    processTrace.push(`turn-two exit=${targetTurn.exitCode}`);
     let after = writerLedger(prepared.worktree);
     let lines = proofLines(prepared.worktree);
     const targetEvents = [...claudeEvents(targetTurn.stdout)];
@@ -1045,8 +1053,7 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       targetTurn = await invoke(target, claudeStaleRecoveryPrompt({ requestId: prepared.requestTwo,
         sessionSlug: prepared.sessionSlug }), true);
       recordClaudeTurnOutput(input.root, "stale-recovery", targetTurn);
-      processTrace.push(`stale-recovery exit=${targetTurn.exitCode}\nstdout:\n${targetTurn.stdout}` +
-        `\nstderr:\n${targetTurn.stderr}`);
+      processTrace.push(`stale-recovery exit=${targetTurn.exitCode}`);
       targetEvents.push(...claudeEvents(targetTurn.stdout));
       after = writerLedger(prepared.worktree);
       lines = proofLines(prepared.worktree);
@@ -1073,8 +1080,7 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       target: input.transition.target, prior: input.transition.prior,
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: lines, rootSessionId,
       previousWriterId: before?.workerId ?? null, finalWriterId: after?.workerId ?? null,
-      migrationCount, trace: boundedTrace([...processTrace, ...events.flatMap((event) =>
-        event.type === "assistant" ? [JSON.stringify(event.message?.content ?? [])] : [])]),
+      migrationCount, trace: statefulClaudeEvidenceTrace(processTrace, finalReply),
       ...(finalReply ? { privateReply: finalReply } : {}) };
     await versionServer.close(); cleanupClaudeVersionRecords(input.root, rootSessionId);
     return evidence;
@@ -1089,7 +1095,8 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: proofLines(prepared.worktree),
       rootSessionId, previousWriterId: ledger?.workerId ?? null, finalWriterId: ledger?.workerId ?? null,
       migrationCount: Array.isArray(ledger?.migrations) ? ledger.migrations.length : 0,
-      trace: boundedTrace([...processTrace, error instanceof Error ? error.message : String(error)]),
+      trace: statefulClaudeEvidenceTrace(
+        [...processTrace, normalizedClaudeFailureDiagnostic(error, classifyUpgradeFailure)], finalReply),
       ...(finalReply ? { privateReply: finalReply } : {}) };
     await versionServer.close().catch(() => {}); cleanupClaudeVersionRecords(input.root, rootSessionId);
     return evidence;
