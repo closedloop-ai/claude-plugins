@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { observedCodexTurn, readCodexReviewTurn } from "./codex-review-runtime.mjs";
+import { graphAliases } from "./mcp-tool-names.mjs";
 
 test("managed Codex reviewer calls come only from its completed App Server turn items", async () => {
   const thread = { id: "thread-1", turns: [{ id: "turn-1", status: "completed", items: [
@@ -43,4 +44,29 @@ test("native reviewer receipt refuses absent items after a completed summary", a
     throw new Error(method);
   } };
   await assert.rejects(readCodexReviewTurn("thread-1", "turn-1", client), /no loaded completed/);
+});
+
+test("native MCP server separators match recorded aliases without trusting command text", () => {
+  const observed = observedCodexTurn({ id: "thread-1", turns: [{ id: "turn-1", status: "completed", items: [
+    { type: "mcpToolCall", server: "closedloop-graph", tool: "code_symbols", status: "completed" },
+    { type: "mcpToolCall", server: "closedloop_graph", tool: "code_importers", status: "completed" },
+    { type: "mcpToolCall", server: "closedloop-other", tool: "code_symbols", status: "completed" },
+    { type: "mcpToolCall", server: "closedloop-graph", tool: "code_callers", status: "failed" },
+    { type: "mcpToolCall", server: "closedloop-graph", tool: "code_symbols_extra", status: "completed" },
+    { type: "commandExecution", status: "completed", command: "tools.mcp__closedloop_graph__code_callers({})" },
+    { type: "agentMessage", text: "I used mcp__closedloop_graph__code_callers" },
+  ] }] }, "thread-1", "turn-1");
+  const aliases = graphAliases([
+    { name: "mcp__closedloop_graph__code_symbols", service: "graph", operation: "code_symbols", access: "read" },
+    { name: "mcp__closedloop_graph__code_importers", service: "graph", operation: "code_importers", access: "read" },
+    { name: "mcp__closedloop_graph__code_callers", service: "graph", operation: "code_callers", access: "read" },
+  ]);
+
+  assert.deepEqual(observed.toolCalls.filter(name => aliases.includes(name)), [
+    "mcp__closedloop_graph__code_symbols",
+    "mcp__closedloop_graph__code_importers",
+  ]);
+  assert.ok(!observed.toolCalls.includes("mcp__closedloop_graph__code_callers"), "failed calls and command text do not count");
+  assert.ok(observed.toolCalls.includes("mcp__closedloop_other__code_symbols"), "a different server remains distinct");
+  assert.ok(observed.toolCalls.includes("mcp__closedloop_graph__code_symbols_extra"), "a different operation remains distinct");
 });

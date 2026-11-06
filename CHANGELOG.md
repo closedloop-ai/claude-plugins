@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - PRD-child claim completeness and no-supersession use one versioned deterministic reply-format checker across Codex and Claude benchmark collection. It validates bounded machine fields, preserves the saved legacy reply forms, records checker provenance, and reports checker installation or protocol faults as infrastructure failures; the duplicate-helper grader remains regex-only with explicit shared-owner and copied-function targets.
 - The current PRD-child reply contract exposes placeholder-only fields with bounded `COMMENT`, `ACTION`, `REASON`, and `SUPERSEDE` tokens. Validation accepts optional terminal punctuation only, rejects extra fields and suffixes, and keeps natural-language compatibility confined to the saved legacy replies.
 - PRD children with real activity under another person are again reported and excluded from the build, never claimed, built, canceled or superseded.
+- Native Codex review receipts canonicalize hyphen separators in App Server MCP server names to the registered underscore form before capability matching. Only completed MCP items from the exact accepted turn count; operation names, other servers, failed calls, command text and reviewer summaries remain distinct.
 
 ### vibe v1.1.51
 
