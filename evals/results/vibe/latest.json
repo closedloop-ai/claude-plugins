@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "pluginVersion": "1.1.39",
-  "pluginSha": "bdc8ee86759ae6e36cfd2e00d31aceb52967fd53",
-  "runAt": "2026-11-04T23:12:00Z",
+  "pluginVersion": "1.1.51",
+  "pluginSha": "416b7d0138ae5f10e935b2054eba4abe1dface3d",
+  "runAt": "2026-11-06T07:59:52.247Z",
   "models": {
     "claude": "claude-sonnet-5-5",
     "claudeJudge": "claude-opus-5-5",
-    "codex": "gpt-6-sol",
+    "codex": "gpt-5.6-sol",
     "codexJudge": "gpt-6-luna"
   },
   "runtimes": [
     {
       "runtime": "claude",
-      "totalCostUsd": 55.68960840000001,
+      "totalCostUsd": 44.34673889999999,
       "cases": [
         {
           "id": "exec-asana-lacks-flow-checks-another-app",
@@ -116,8 +116,8 @@
         },
         {
           "id": "exec-sign-in-expired-is-one-plain-step",
-          "status": "pass",
-          "retryCount": 0
+          "status": "fail",
+          "retryCount": 2
         },
         {
           "id": "exec-version-proceed-does-not-wait",
@@ -152,7 +152,7 @@
         {
           "id": "exec-visual-qa-offered-without-criteria",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "orch-compaction-rereads-resume-log",
@@ -182,12 +182,12 @@
         {
           "id": "orch-pr-takeover-delivery",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 2
         },
         {
           "id": "orch-pr-takeover-e2e",
           "status": "pass",
-          "retryCount": 2
+          "retryCount": 1
         },
         {
           "id": "orch-pr-takeover-premises",
@@ -201,7 +201,7 @@
         },
         {
           "id": "orch-pr-takeover-stack",
-          "status": "fail",
+          "status": "pass",
           "retryCount": 2
         },
         {
@@ -217,7 +217,7 @@
         {
           "id": "orch-push-ready-grader-loop",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 2
         },
         {
           "id": "pm-agent-docs-draft-blocked",
@@ -317,12 +317,12 @@
         {
           "id": "pm-is-engineer-next-step",
           "status": "pass",
-          "retryCount": 2
+          "retryCount": 1
         },
         {
           "id": "pm-look-first-gets-clickable-links",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "pm-main-sync-capability-removal-blocks",
@@ -347,12 +347,12 @@
         {
           "id": "pm-nothing-running-offers-to-start",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "pm-orchestrator-direction-not-a-ruling",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "pm-outside-product-cards",
@@ -361,8 +361,8 @@
         },
         {
           "id": "pm-owned-lockfile-recovery",
-          "status": "fail",
-          "retryCount": 2
+          "status": "pass",
+          "retryCount": 1
         },
         {
           "id": "pm-pass-on-someone-else-finishes",
@@ -412,7 +412,7 @@
         {
           "id": "pm-real-engineering-blocker-handover",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "pm-real-exchange-get-the-pr-merged-with-name",
@@ -427,12 +427,12 @@
         {
           "id": "pm-requirements-overlap-shipped",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 2
         },
         {
           "id": "pm-resume-existing-ticket-plan",
-          "status": "pass",
-          "retryCount": 1
+          "status": "fail",
+          "retryCount": 2
         },
         {
           "id": "pm-resume-has-no-endings-line",
@@ -472,12 +472,12 @@
         {
           "id": "pm-review-paged-refetch",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "pm-review-pending-owner-value",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 2
         },
         {
           "id": "pm-sample-data-not-asked-for-a-restyle",
@@ -501,8 +501,8 @@
         },
         {
           "id": "pm-sign-in-expired-is-one-plain-step",
-          "status": "pass",
-          "retryCount": 0
+          "status": "fail",
+          "retryCount": 2
         },
         {
           "id": "pm-stale-story-id-blocks",
@@ -577,7 +577,7 @@
         {
           "id": "pm-unprompted-update-stays-plain",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 2
         },
         {
           "id": "pm-version-current-says-nothing",
@@ -626,7 +626,7 @@
         },
         {
           "id": "upgrade-resume-unchanged-definition",
-          "status": "pass",
+          "status": "unavailable",
           "retryCount": 0
         }
       ]
@@ -642,7 +642,7 @@
         {
           "id": "exec-closedloop-connection-lost-no-settings",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "exec-closedloop-sign-in-ran-out-mid-chat-new-chat",
@@ -692,7 +692,7 @@
         {
           "id": "exec-pass-on-send-to-design",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "exec-pending-question-not-repeated",
@@ -707,7 +707,7 @@
         {
           "id": "exec-polish-request-design-pack-without-criteria",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "exec-pr-intent-take-it-through-review",
@@ -737,7 +737,7 @@
         {
           "id": "exec-sign-in-expired-is-one-plain-step",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "exec-version-proceed-does-not-wait",
@@ -747,7 +747,7 @@
         {
           "id": "exec-version-sandboxed-runs-escalated",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "exec-version-unreachable-carries-on",
@@ -791,18 +791,18 @@
         },
         {
           "id": "orch-parallel-build-helpers",
-          "status": "fail",
-          "retryCount": 2
+          "status": "pass",
+          "retryCount": 0
         },
         {
           "id": "orch-parallel-e2e-queued",
           "status": "pass",
-          "retryCount": 2
+          "retryCount": 1
         },
         {
           "id": "orch-pr-takeover-delivery",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "orch-pr-takeover-e2e",
@@ -821,8 +821,8 @@
         },
         {
           "id": "orch-pr-takeover-stack",
-          "status": "pass",
-          "retryCount": 1
+          "status": "fail",
+          "retryCount": 2
         },
         {
           "id": "orch-pr-takeover-url-only",
@@ -847,7 +847,7 @@
         {
           "id": "pm-answered-question-not-asked-again",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "pm-asana-checked-before-asking",
@@ -897,12 +897,12 @@
         {
           "id": "pm-flag-key-sprawl-blocked",
           "status": "pass",
-          "retryCount": 2
+          "retryCount": 1
         },
         {
           "id": "pm-fleet-defaults-not-asked",
           "status": "pass",
-          "retryCount": 2
+          "retryCount": 1
         },
         {
           "id": "pm-fleet-no-writer-design-session",
@@ -927,7 +927,7 @@
         {
           "id": "pm-hardcoded-shadow-blocked-at-review",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "pm-held-flag-retirement-blocked",
@@ -937,7 +937,7 @@
         {
           "id": "pm-is-engineer-next-step",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "pm-look-first-gets-clickable-links",
@@ -947,7 +947,7 @@
         {
           "id": "pm-main-sync-capability-removal-blocks",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "pm-missing-tests-host-adapters",
@@ -972,17 +972,17 @@
         {
           "id": "pm-orchestrator-direction-not-a-ruling",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "pm-outside-product-cards",
-          "status": "fail",
-          "retryCount": 2
+          "status": "pass",
+          "retryCount": 1
         },
         {
           "id": "pm-owned-lockfile-recovery",
-          "status": "pass",
-          "retryCount": 0
+          "status": "fail",
+          "retryCount": 2
         },
         {
           "id": "pm-pass-on-someone-else-finishes",
@@ -1007,7 +1007,7 @@
         {
           "id": "pm-pr-intent-raise-a-pr",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 1
         },
         {
           "id": "pm-pr-intent-ship-it-myself",
@@ -1021,8 +1021,8 @@
         },
         {
           "id": "pm-prd-children-are-scope",
-          "status": "fail",
-          "retryCount": 2
+          "status": "pass",
+          "retryCount": 1
         },
         {
           "id": "pm-question-recorded-before-asking",
@@ -1042,7 +1042,7 @@
         {
           "id": "pm-reference-card",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "pm-requirements-overlap-shipped",
@@ -1051,8 +1051,8 @@
         },
         {
           "id": "pm-resume-existing-ticket-plan",
-          "status": "fail",
-          "retryCount": 2
+          "status": "pass",
+          "retryCount": 1
         },
         {
           "id": "pm-resume-has-no-endings-line",
@@ -1076,8 +1076,8 @@
         },
         {
           "id": "pm-review-duplicate-helper-copy",
-          "status": "fail",
-          "retryCount": 2
+          "status": "pass",
+          "retryCount": 0
         },
         {
           "id": "pm-review-flag-resolution",
@@ -1092,12 +1092,12 @@
         {
           "id": "pm-review-paged-refetch",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 0
         },
         {
           "id": "pm-review-pending-owner-value",
           "status": "pass",
-          "retryCount": 0
+          "retryCount": 2
         },
         {
           "id": "pm-sample-data-not-asked-for-a-restyle",
@@ -1186,13 +1186,13 @@
         },
         {
           "id": "pm-tooling-rerun-continues",
-          "status": "pass",
-          "retryCount": 1
+          "status": "fail",
+          "retryCount": 2
         },
         {
           "id": "pm-two-screenshot-page",
           "status": "pass",
-          "retryCount": 1
+          "retryCount": 2
         },
         {
           "id": "pm-unprompted-update-stays-plain",
@@ -1211,7 +1211,7 @@
         },
         {
           "id": "pm-version-keep-going-records-choice",
-          "status": "fail",
+          "status": "pass",
           "retryCount": 2
         },
         {
@@ -1246,7 +1246,7 @@
         },
         {
           "id": "upgrade-resume-unchanged-definition",
-          "status": "pass",
+          "status": "unavailable",
           "retryCount": 0
         }
       ]

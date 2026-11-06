@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -25,7 +25,7 @@ test("run ids are well formed and only well formed ids are read", () => {
   assert.equal(readRun({ gitDir: "/gd", id: "../x", fs: memory().fs }).state, RunState.Unknown);
 });
 
-test("starting in the background returns a run id at once and writes a running record; nothing waits for the run", () => {
+test("starting in the background returns a run id at once and stores its PID without rewriting the child record", () => {
   const m = memory();
   let spawned = null;
   const started = startBackground({ gitDir: "/gd", worktree: "/wt", head: HEAD, scriptPath: "/s/verify-run.mjs", passArgs: ["--no-cache"], fs: m.fs, now: () => 1000, newId: () => "vr-x1-0123abcd",
@@ -34,7 +34,24 @@ test("starting in the background returns a run id at once and writes a running r
   assert.equal(started.state, RunState.Running);
   assert.deepEqual(spawned.args.slice(0, 5), ["/s/verify-run.mjs", "--worktree", "/wt", "--head", HEAD]);
   assert.ok(spawned.args.includes("--run-id") && spawned.args.includes("--no-cache"));
-  assert.equal(JSON.parse(m.files.get(recordFile("/gd", started.id))).pid, 4242);
+  assert.equal(JSON.parse(m.files.get(recordFile("/gd", started.id))).state, "starting");
+  assert.equal(m.files.get(recordFile("/gd", started.id).replace(/\.json$/, ".pid")), "4242\n");
+  assert.equal(readRun({ gitDir: "/gd", id: started.id, fs: m.fs, alive: (pid) => pid === 4242 }).state, RunState.Running);
+});
+
+test("a child result written during spawn is not replaced by the starter's PID registration", () => {
+  const m = memory();
+  const id = "vr-x1-0123abcd";
+  const finishedAt = "2026-11-05T00:00:00.000Z";
+  startBackground({ gitDir: "/gd", worktree: "/wt", head: HEAD, scriptPath: "/s/verify-run.mjs", passArgs: [], fs: m.fs, now: () => 1000, newId: () => id,
+    spawnDetached: () => {
+      finish(m, id, { ok: false, progress: [{ stage: "checks", status: "failed" }], finishedAt });
+      return 4242;
+    } });
+  const run = readRun({ gitDir: "/gd", id, fs: m.fs, alive: () => false });
+  assert.equal(run.state, RunState.Failed, "the child-owned terminal result must survive the parent return");
+  assert.equal(run.finishedAt, finishedAt);
+  assert.deepEqual(run.progress, [{ stage: "checks", status: "failed" }]);
 });
 
 test("a running record with a live process is running; with a dead process it is orphaned, never passed", () => {
@@ -44,6 +61,27 @@ test("a running record with a live process is running; with a dead process it is
   const orphan = readRun({ gitDir: "/gd", id: "vr-x1-0123abcd", fs: m.fs, alive: () => false });
   assert.equal(orphan.state, RunState.Orphaned);
   assert.notEqual(RunExit[orphan.state], 0);
+});
+
+test("a result written during the liveness check is classified before wait returns", async () => {
+  const m = memory();
+  const id = "vr-x1-0123abcd";
+  const finishedAt = "2026-11-05T00:00:00.000Z";
+  writeRecord("/gd", id, { head: HEAD, state: "running", pid: 77 }, m.fs);
+  const run = await waitForRun({
+    read: () => readRun({ gitDir: "/gd", id, fs: m.fs, alive: () => {
+      finish(m, id, { ok: false, progress: [{ stage: "checks", status: "failed" }], finishedAt });
+      return false;
+    } }),
+    sleep: () => { throw new Error("the terminal result must not require another poll"); },
+  });
+  assert.equal(run.state, RunState.Failed);
+  assert.equal(run.finishedAt, finishedAt);
+  assert.deepEqual(run.progress, [{ stage: "checks", status: "failed" }]);
+
+  const dead = memory();
+  writeRecord("/gd", id, { head: HEAD, state: "running", pid: 77 }, dead.fs);
+  assert.equal(readRun({ gitDir: "/gd", id, fs: dead.fs, alive: () => false }).state, RunState.Orphaned);
 });
 
 test("only a finished, ok run at the head under review is passed; failed, pending and moved heads are not", () => {
@@ -103,9 +141,10 @@ test("a real background run returns before it finishes, can be joined with --wai
   try {
     const started = spawnSync(process.execPath, [SCRIPT, "--background", "--worktree", dir, "--head", head, "--no-lanes", "--no-cache"], { encoding: "utf8", timeout: 30_000 });
     assert.equal(started.status, 0, started.stderr);
-    const { id } = JSON.parse(started.stdout);
+    const { id, logFile } = JSON.parse(started.stdout);
     const joined = spawnSync(process.execPath, [SCRIPT, "--wait", id, "--worktree", dir, "--head", head, "--wait-seconds", "60"], { encoding: "utf8", timeout: 90_000 });
     const run = JSON.parse(joined.stdout);
+    if (run.state !== RunState.Failed) process.stderr.write(`child log:\n${readFileSync(logFile, "utf8")}\n`);
     assert.equal(run.state, RunState.Failed, joined.stdout);
     assert.equal(joined.status, RunExit[RunState.Failed]);
     assert.ok(run.progress.length >= 1, "progress was written as it ran");

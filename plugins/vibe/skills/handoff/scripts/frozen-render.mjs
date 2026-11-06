@@ -75,7 +75,7 @@ import { withVerifyStorybook } from "../../vibe/scripts/verify-storybook-process
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash, pngHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
-import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { createImportClosure, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
@@ -99,11 +99,28 @@ const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head"
 export const CONFIRM_RENDERS = 2;
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
-const FROZEN_GLOBAL_INPUT = /\.(?:css|scss|sass|less)$|(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)|(?:^|\/)tailwind\.config\.[cm]?[jt]s$|(?:^|\/)\.storybook\/preview\.[cm]?[jt]sx?$/i;
+const STYLESHEET = /\.(?:css|scss|sass|less)$/i;
+const PREVIEW_ENTRY = /^apps\/storybook\/\.storybook\/preview\.[cm]?[jt]sx?$/i;
+const TOKEN_OR_THEME = /(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)/i;
+const TAILWIND_CONFIG = /(?:^|\/)tailwind\.config\.[cm]?[jt]s$/i;
+const STORYBOOK_GLOBAL = /^apps\/storybook\/(?:\.storybook\/(?:preview-head\.html|main\.ts)$|public\/)/;
+const GLOBAL_MANIFESTS = new Set(["apps/storybook/package.json", "packages/design-system/package.json", "packages/app/package.json", "pnpm-lock.yaml"]);
 
-/** Global inputs that can affect every frozen story without a direct import. */
-export function isFrozenGlobalInput(file) {
-  return FROZEN_GLOBAL_INPUT.test(file);
+/** Preview dependencies from both revisions, with extension resolution confined to each revision's files. */
+export function storybookPreviewImportClosure(baseFiles, headFiles, baseTextAt, headTextAt) {
+  const walk = (files, textAt) => {
+    const closure = createImportClosure(files, (paths) => new Map(paths.map((file) => [file, textAt(file)])));
+    return closure([...files].filter((file) => PREVIEW_ENTRY.test(file)));
+  };
+  return new Set([...walk(baseFiles, baseTextAt), ...walk(headFiles, headTextAt)]);
+}
+
+/** Global inputs that can affect every frozen story without a direct story import. */
+export function isFrozenGlobalInput(file, previewClosure = new Set()) {
+  // Storybook's static build has no manualChunks; one would load CSS outside its importer's graph.
+  return PREVIEW_ENTRY.test(file) || TOKEN_OR_THEME.test(file) || TAILWIND_CONFIG.test(file)
+    || STORYBOOK_GLOBAL.test(file) || GLOBAL_MANIFESTS.has(file)
+    || (STYLESHEET.test(file) && previewClosure.has(file));
 }
 
 /** Pick separate loopback ports; the verifier still refuses a port already recorded by a peer. */
@@ -403,40 +420,44 @@ export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
  */
 export function frozenInputs(repo, base, storyFiles = []) {
   const run = (args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
-  const baseFiles = new Set(run(["ls-tree", "-r", "--name-only", base]).split("\n").filter((file) => SOURCE_FILE.test(file)));
-  const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter((file) => SOURCE_FILE.test(file)));
-  const allFiles = new Set([...baseFiles, ...headFiles]);
-  const changed = run(["diff", "--name-only", "--no-renames", base]).split("\n").filter((file) => SOURCE_FILE.test(file));
-  const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(isFrozenGlobalInput)])];
-  const closure = new Set();
-  const queue = [...new Set(roots)];
+  const baseFiles = new Set(run(["ls-tree", "-r", "--name-only", base]).split("\n").filter(Boolean));
+  const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter(Boolean));
+  const changed = [...new Set([
+    ...run(["diff", "--name-only", "--no-renames", "-z", base]).split("\0"),
+    ...run(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
+  ].filter(Boolean))];
+  const texts = new Map();
   const textAt = (file, ref) => {
+    const key = `${ref}:${file}`;
+    if (texts.has(key)) return texts.get(key);
+    let text;
     if (ref === "head") {
       const absolute = path.join(repo, file);
-      return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
-    }
-    try {
-      return run(["show", `${base}:${file}`]);
-    } catch {
-      return null;
-    }
-  };
-  while (queue.length) {
-    const file = queue.shift();
-    if (!SOURCE_FILE.test(file) || closure.has(file)) continue;
-    closure.add(file);
-    for (const text of [textAt(file, "base"), textAt(file, "head")]) {
-      for (const match of text?.matchAll(IMPORT_SPECIFIER) ?? []) {
-        const target = resolveImport(file, match[1], allFiles);
-        if (target && !closure.has(target)) queue.push(target);
+      text = existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
+    } else {
+      try {
+        text = run(["show", `${base}:${file}`]);
+      } catch {
+        text = null;
       }
     }
-  }
+    texts.set(key, text);
+    return text;
+  };
+  const previewClosure = storybookPreviewImportClosure(baseFiles, headFiles,
+    (file) => textAt(file, "base"), (file) => textAt(file, "head"));
+  const globalInput = (file) => isFrozenGlobalInput(file, previewClosure);
+  const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(globalInput)])];
+  const walk = (files, ref) => createImportClosure(files,
+    (paths) => new Map(paths.map((file) => [file, textAt(file, ref)])),
+    (file) => SOURCE_FILE.test(file) || globalInput(file))(roots);
+  const closure = new Set([...walk(baseFiles, "base"), ...walk(headFiles, "head")]);
   const hash = createHash("sha256");
   for (const file of [...closure].sort()) {
-    const text = textAt(file, "head");
-    const semantic = semanticSourceText(file, text) ?? text;
-    hash.update(`${file}\0${semantic === null ? "deleted" : createHash("sha256").update(semantic).digest("hex")}\n`);
+    const absolute = path.join(repo, file);
+    const bytes = existsSync(absolute) ? readFileSync(absolute) : null;
+    const semantic = bytes && semanticSourceText(file, bytes.toString("utf8"));
+    hash.update(`${file}\0${bytes === null ? "deleted" : createHash("sha256").update(semantic ?? bytes).digest("hex")}\n`);
   }
   return hash.digest("hex").slice(0, 16);
 }

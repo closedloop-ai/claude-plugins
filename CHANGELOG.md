@@ -4,17 +4,43 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.49
+### vibe v1.1.52
 
 #### Changed
 - The private nightly run tree keeps each Claude case's final reply as the same per-case `reply.txt` artifact Codex writes, then removes the retained native temp trace. Published baseline results keep their existing allowlisted schema and never include reply text or local paths.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 82 words longer than in 1.1.45 (origin/main at the merge).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 82 words longer than in 1.1.51 (origin/main at the merge).
 
 #### Fixed
 - Four always-failing eval cases now distinguish correct wording variants from real omissions: duplicate-helper remedies and touch-device findings are order-independent, host-adapter coverage requires the Desktop criterion and its owning lane, and PRD-child replies accept bare no-supersession/link wording only while keeping every claim mutation mandatory.
 - PRD-child claim completeness and no-supersession use one versioned deterministic reply-format checker across Codex and Claude benchmark collection. It validates bounded machine fields, preserves the saved legacy reply forms, records checker provenance, and reports checker installation or protocol faults as infrastructure failures; the duplicate-helper grader remains regex-only with explicit shared-owner and copied-function targets.
 - The current PRD-child reply contract exposes placeholder-only fields with bounded `COMMENT`, `ACTION`, `REASON`, and `SUPERSEDE` tokens. Validation accepts optional terminal punctuation only, rejects extra fields and suffixes, and keeps natural-language compatibility confined to the saved legacy replies.
 - PRD children with real activity under another person are again reported and excluded from the build, never claimed, built, canceled or superseded.
+
+### vibe v1.1.51
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.47; the README version update does not change the net word count.
+
+#### Fixed
+- Background verify runs now keep the parent-written PID in a separate sidecar so it cannot overwrite a child-written result. Status also re-reads the run record after a failed liveness check, preserving a result the child finished during that check.
+
+### vibe v1.1.47
+
+#### Changed
+- Frozen-render story selection treats a stylesheet as a global input only when Storybook's preview entry reaches it through imports, on either side of the comparison. Component styles stay in their own story closure. Other global inputs are the preview entry, token and theme files, Tailwind config, Storybook's `preview-head.html`, `main.ts` and `public/` files, the Storybook, design-system and app `package.json` files, and `pnpm-lock.yaml`; a change to any of them selects every frozen story.
+- The frozen-input digest now follows imports into non-source global inputs and hashes their raw bytes, so a change to global HTML, config, manifests, the lockfile or public files changes the digest while unrelated CSS does not.
+- Frozen-render preview reachability now follows nested CSS `@import url()` references, ignores commented-out imports, and includes untracked Storybook global files in the frozen-input digest.
+- Frozen-story input digests now resolve base and head import closures separately, Storybook preview selection includes untracked imported CSS, and Sass `@use`/`@forward` reach local partial and index stylesheets.
+- Sass `@import` preview dependencies now include every comma-separated local stylesheet, including the unquoted indented Sass syntax; CSS URL, external and media imports remain classified as CSS.
+- Frozen-render story selection in `diff-rules.mjs` now walks each story's head import closure as well as its base closure, so a head-only module (for example a new `.ts` file that shadows an unchanged `.tsx`) and the stylesheets it imports select the story and make a recorded `Frozen render unchanged` line stale.
+- Story selection, the Storybook preview closure and the frozen-input digest now share one import walker, `createImportClosure` in `source-imports.mjs`. An import closure over 20,000 files now fails with an error instead of being silently truncated during story selection.
+- Because the inputs digest changes, previously recorded `Frozen render unchanged` change-log lines stop matching once; the next handoff re-runs the frozen render and records a fresh line.
+- Frozen-render regression tests moved from `diff-rules.test.mjs` into a focused `diff-rules-frozen-render.test.mjs`, and both suites now share the Git checkout fixture (`put`, `run`, `isFrozenStory`) from `diff-rules-test-fixture.mjs`, keeping `diff-rules.test.mjs` under its file size ceiling.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.45 (no Markdown changed).
+
+#### Fixed
+- Native Codex reviewer receipts in the handoff's `codex-review-runtime.mjs` now load when the completed turn summary from `thread/turns/list` says its items are not loaded but the separate `thread/items/list` pages return them: the summary's `itemsView: "notLoaded"` marker is dropped once those pages are read. A completed turn with absent items (no item array, an empty one, or one still marked not loaded) is still refused.
+- Pull-request template discovery in the handoff's `pr-facts.mjs` now lists the four candidate template paths on the base with one `git ls-tree` call and reads only the first one present, instead of trying `git show` on each path and swallowing its failure. A base with none of the four templates no longer prints fatal Git errors on stderr and adds no body problems; a present template still has its headings enforced, and a real Git failure (for example an unreadable base) now surfaces instead of being treated as no template.
 
 ### vibe v1.1.45
 

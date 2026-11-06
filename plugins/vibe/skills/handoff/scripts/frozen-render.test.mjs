@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, rebuildStatic, runOwnedFrozenComparison, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, isFrozenGlobalInput, prepareBase, rebuildStatic, runOwnedFrozenComparison, storybookPreviewImportClosure, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome, mutateSourceRead } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -663,4 +663,63 @@ test("a recorded line survives unrelated commits and clears only proven unchange
   writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
     "a rendered dependency change invalidates the recorded states");
+});
+
+test("preview reachability includes imports added or removed across the comparison (ISS-13752)", () => {
+  const preview = "apps/storybook/.storybook/preview.tsx";
+  const oldCss = "apps/storybook/.storybook/old.css";
+  const newCss = "apps/storybook/.storybook/new.css";
+  const closure = storybookPreviewImportClosure(new Set([preview, oldCss]), new Set([preview, newCss]),
+    (file) => file === preview ? 'import "./old.css";' : null,
+    (file) => file === preview ? 'import "./new.css";' : null);
+  assert.equal(isFrozenGlobalInput(oldCss, closure), true);
+  assert.equal(isFrozenGlobalInput(newCss, closure), true);
+  assert.equal(isFrozenGlobalInput("apps/storybook/.storybook/unrelated.css", closure), false);
+});
+
+test("frozen input digests include global HTML, config, manifests, lockfile and public bytes but exclude unrelated CSS (ISS-13752)", (t) => {
+  const fixture = makeHome("vibe-frozen-inputs-");
+  t.after(fixture.cleanup);
+  const checkout = path.join(fixture.root, "wt");
+  git(fixture.root, ["init", "--quiet", "--initial-branch=main", checkout], fixture.home);
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const localCss = "packages/design-system/components/first.css";
+  const previewCss = "apps/storybook/.storybook/preview.css";
+  const globalFiles = ["apps/storybook/.storybook/preview-head.html", "apps/storybook/.storybook/main.ts",
+    "apps/storybook/public/fonts/ui.woff2", "apps/storybook/package.json", "packages/design-system/package.json",
+    "packages/app/package.json", "pnpm-lock.yaml", "packages/design-system/styles/theme.css", previewCss];
+  const originals = {
+    [first]: 'import "@repo/design-system/components/first";\nexport default { title: "Composites v1.0/First" };\nexport const Default = {};\n',
+    [second]: 'export default { title: "Composites v1.0/Second" };\nexport const Default = {};\n',
+    "packages/design-system/components/first.tsx": 'import "./first.css";\n',
+    [localCss]: ".first { color: red; }\n",
+    "apps/storybook/.storybook/preview.tsx": 'import "./preview.css";\n',
+    "packages/design-system/components/unrelated.css": ".unrelated { color: red; }\n",
+    ...Object.fromEntries(globalFiles.map((file) => [file, `original ${file}\n`])),
+  };
+  for (const [file, content] of Object.entries(originals)) {
+    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+    writeFileSync(path.join(checkout, file), content);
+  }
+  git(checkout, ["add", "-A"], fixture.home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], fixture.home);
+  const base = git(checkout, ["rev-parse", "HEAD"], fixture.home);
+  const beforeFirst = frozenInputs(checkout, base, [first]);
+  const beforeSecond = frozenInputs(checkout, base, [second]);
+  for (const file of globalFiles) {
+    const changed = file.endsWith("woff2") ? Buffer.from([0xff, 0x00, 0xfd]) : `changed ${file}\n`;
+    writeFileSync(path.join(checkout, file), changed);
+    assert.notEqual(frozenInputs(checkout, base, [first]), beforeFirst, file);
+    assert.notEqual(frozenInputs(checkout, base, [second]), beforeSecond, file);
+    writeFileSync(path.join(checkout, file), originals[file]);
+  }
+  writeFileSync(path.join(checkout, localCss), ".first { color: blue; }\n");
+  assert.notEqual(frozenInputs(checkout, base, [first]), beforeFirst);
+  assert.equal(frozenInputs(checkout, base, [second]), beforeSecond);
+  writeFileSync(path.join(checkout, localCss), originals[localCss]);
+  const unrelated = "packages/design-system/components/unrelated.css";
+  writeFileSync(path.join(checkout, unrelated), ".unrelated { color: blue; }\n");
+  assert.equal(frozenInputs(checkout, base, [first]), beforeFirst);
+  assert.equal(frozenInputs(checkout, base, [second]), beforeSecond);
 });
