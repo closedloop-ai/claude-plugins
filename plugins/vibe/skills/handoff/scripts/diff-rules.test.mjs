@@ -448,6 +448,54 @@ test("transitive Sass @use and @forward imports reach every frozen story and dig
   }
 });
 
+test("the second Sass @import item reaches preview selection and both digests (ISS-13752)", (t) => {
+  const firstStory = "apps/storybook/stories/first.stories.tsx";
+  const secondStory = "apps/storybook/stories/second.stories.tsx";
+  const stories = {
+    [firstStory]: "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    [secondStory]: "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+  };
+  for (const extension of ["scss", "sass"]) {
+    const preview = `apps/storybook/.storybook/preview.${extension}`;
+    const first = `apps/storybook/.storybook/_first.${extension}`;
+    const second = `apps/storybook/.storybook/_second.${extension}`;
+    const original = extension === "sass" ? ".second\n  color: red\n" : ".second { color: red; }\n";
+    const changedText = extension === "sass" ? ".second\n  color: blue\n" : ".second { color: blue; }\n";
+    const result = run(t, { base: {
+      ...stories,
+      "apps/storybook/.storybook/preview.tsx": `import "./preview.${extension}";\n`,
+      [preview]: extension === "sass" ? "@import first, second\n" : '@import "first", "second";\n',
+      [first]: extension === "sass" ? ".first\n  color: red\n" : ".first { color: red; }\n",
+      [second]: original,
+    }, head: { [second]: changedText } });
+    const finding = result.blocking.find((entry) => entry.rule === "frozen-render");
+    assert.ok(finding, extension);
+    assert.match(finding.problem, /2 frozen v1\.0 story files/, extension);
+    for (const story of [firstStory, secondStory]) {
+      const changed = frozenInputs(result.checkout, result.baseSha, [story]);
+      writeFileSync(path.join(result.checkout, second), original);
+      assert.notEqual(changed, frozenInputs(result.checkout, result.baseSha, [story]), `${extension}: ${story}`);
+      writeFileSync(path.join(result.checkout, second), changedText);
+    }
+  }
+});
+
+test("a Sass media import does not promote an unrelated partial to preview-global (ISS-13752)", (t) => {
+  const story = "apps/storybook/stories/one.stories.tsx";
+  const partial = "apps/storybook/.storybook/_layout.scss";
+  const original = ".layout { color: red; }\n";
+  const result = run(t, { base: {
+    [story]: "export default { title: \"Composites v1.0/One\" };\nexport const Default = {};\n",
+    "apps/storybook/.storybook/preview.tsx": 'import "./preview.scss";\n',
+    "apps/storybook/.storybook/preview.scss": '@import "layout" screen;\n',
+    [partial]: original,
+  }, head: { [partial]: ".layout { color: blue; }\n" } });
+  assert.equal(result.blocking.some((entry) => entry.rule === "frozen-render"), false);
+  const digest = frozenInputs(result.checkout, result.baseSha, [story]);
+  writeFileSync(path.join(result.checkout, partial), original);
+  assert.equal(frozenInputs(result.checkout, result.baseSha, [story]), digest);
+});
+
 test("each explicit global input and a lockfile-only diff select every frozen story (ISS-13752)", (t) => {
   const first = "apps/storybook/stories/first.stories.tsx";
   const second = "apps/storybook/stories/second.stories.tsx";

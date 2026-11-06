@@ -48,7 +48,10 @@ function trivia(source, start, css = false) {
 
 function cssImport(source, start) {
   let index = trivia(source, start, true);
-  if (source[index] === '"' || source[index] === "'") return quoted(source, index);
+  if (source[index] === '"' || source[index] === "'") {
+    const found = quoted(source, index);
+    return found && { ...found, form: "quoted" };
+  }
   if (source.slice(index, index + 3).toLowerCase() !== "url" || IDENTIFIER.test(source[index + 3] ?? "")) return null;
   index = trivia(source, index + 3, true);
   if (source[index] !== "(") return null;
@@ -56,10 +59,64 @@ function cssImport(source, start) {
   if (source[index] === '"' || source[index] === "'") {
     const found = quoted(source, index);
     if (!found || source[trivia(source, found.end, true)] !== ")") return null;
-    return { value: found.value, end: trivia(source, found.end, true) + 1 };
+    return { value: found.value, end: trivia(source, found.end, true) + 1, form: "url" };
   }
   const end = source.indexOf(")", index);
-  return end < 0 ? null : { value: source.slice(index, end).trim(), end: end + 1 };
+  return end < 0 ? null : { value: source.slice(index, end).trim(), end: end + 1, form: "url" };
+}
+
+function sassImportTrivia(source, start, indented, afterComma = false) {
+  let index = start;
+  for (;;) {
+    while (/\s/.test(source[index] ?? "")) {
+      if (indented && source[index] === "\n" && !afterComma) return index;
+      index += 1;
+    }
+    if (source.startsWith("//", index)) {
+      const newline = source.indexOf("\n", index + 2);
+      if (!afterComma) return newline < 0 ? source.length : newline;
+      index = newline < 0 ? source.length : newline + 1;
+    } else if (source.startsWith("/*", index)) {
+      const end = source.indexOf("*/", index + 2);
+      if (end < 0) return source.length;
+      const newline = source.indexOf("\n", index + 2);
+      if (indented && !afterComma && newline >= 0 && newline < end) return newline;
+      index = end + 2;
+    } else {
+      return index;
+    }
+  }
+}
+
+/** Sass @import allows comma-separated URLs, and its indented form allows bare URLs. */
+function sassImports(source, start, indented) {
+  const values = [];
+  let index = start;
+  let afterComma = false;
+  for (;;) {
+    index = sassImportTrivia(source, index, indented, afterComma);
+    if (index >= source.length || source[index] === ";" || source[index] === "\n") break;
+    let item = cssImport(source, index);
+    if (!item && indented) {
+      const end = index + (source.slice(index).match(/^[^\s,;]+/)?.[0].length ?? 0);
+      if (end > index) item = { value: source.slice(index, end), end, form: "bare" };
+    }
+    if (!item) break;
+    index = sassImportTrivia(source, item.end, indented);
+    const separator = source[index];
+    const hasMedia = separator !== "," && separator !== ";" && separator !== "\n" && index < source.length;
+    const cssFile = /\.css(?:[?#]|$)/i.test(item.value);
+    // A media query or url() without a .css file is a runtime CSS import, not a Sass module.
+    if ((!hasMedia && item.form !== "url") || cssFile) values.push(item.value);
+    if (hasMedia) {
+      const end = indented ? source.indexOf("\n", index) : source.indexOf(";", index);
+      return { values, end: end < 0 ? source.length : end + 1 };
+    }
+    if (separator !== ",") break;
+    index += 1;
+    afterComma = true;
+  }
+  return { values, end: index + (source[index] === ";" ? 1 : 0) };
 }
 
 function regexEnd(source, start) {
@@ -158,6 +215,12 @@ export function importSpecifiers(file, source) {
         continue;
       }
     } else if (css && source.slice(index, index + 7).toLowerCase() === "@import" && !IDENTIFIER.test(source[index + 7] ?? "")) {
+      if (sass) {
+        const imported = sassImports(source, index + 7, /\.sass$/i.test(file));
+        found.push(...imported.values);
+        index = Math.max(index + 7, imported.end);
+        continue;
+      }
       const imported = cssImport(source, index + 7);
       if (imported) {
         found.push(imported.value);
@@ -194,6 +257,7 @@ export function importSpecifiers(file, source) {
 /** Sass's local module lookup tries direct/partial files, then index files, and rejects ambiguity. */
 function sassModule(stem, specifier, from, files) {
   const extension = /\.(?:sass|scss|css)$/i.exec(stem)?.[0] ?? "";
+  if (extension === ".css") return files.has(stem) ? stem : undefined;
   const base = extension ? stem.slice(0, -extension.length) : stem;
   const basename = path.posix.basename(base);
   const partial = basename.startsWith("_") ? null : path.posix.join(path.posix.dirname(base), `_${basename}`);

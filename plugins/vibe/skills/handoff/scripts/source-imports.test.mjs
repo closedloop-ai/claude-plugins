@@ -60,3 +60,35 @@ test("Sass @use and @forward resolve local partials and directory indexes withou
   assert.equal(resolveImport(from, "sass:color", files), undefined);
   assert.throws(() => resolveImport(from, "palette", new Set([...files, "apps/storybook/.storybook/palette.scss"])), /ambiguous Sass module/);
 });
+
+test("Sass @import reads every list item, including bare indented URLs, without promoting CSS media imports", () => {
+  const scss = "apps/storybook/.storybook/preview.scss";
+  const sass = "apps/storybook/.storybook/preview.sass";
+  assert.deepEqual(importSpecifiers(scss, [
+    '@import "first", "second";',
+    '@import url("local.css") screen;',
+    '@import "layout" screen;',
+    '@import url(remote);',
+    '@import "https://example.com/font.css";',
+    '// @import "commented";',
+    '.example::before { content: "@import \\"quoted\\""; }',
+  ].join("\n")), ["first", "second", "local.css", "https://example.com/font.css"]);
+  assert.deepEqual(importSpecifiers(sass, '@import first, second\n// @import missing\n@import "third", fourth'),
+    ["first", "second", "third", "fourth"]);
+  assert.deepEqual(importSpecifiers(scss, '@import "first", /* between items */ "second";\n@use "third";'),
+    ["first", "second", "third"]);
+  assert.deepEqual(importSpecifiers(scss, '@import "first", // between items\n "second";\n@use "third";'),
+    ["first", "second", "third"]);
+  assert.deepEqual(importSpecifiers(sass, '@import first, second // after the list\n@use "third"'),
+    ["first", "second", "third"]);
+  const files = new Set([
+    "apps/storybook/.storybook/_first.scss",
+    "apps/storybook/.storybook/_second.scss",
+    "apps/storybook/.storybook/local.css",
+    "apps/storybook/.storybook/_local.css",
+  ]);
+  assert.equal(resolveImport(scss, "first", files), "apps/storybook/.storybook/_first.scss");
+  assert.equal(resolveImport(scss, "second", files), "apps/storybook/.storybook/_second.scss");
+  assert.equal(resolveImport(scss, "local.css", files), "apps/storybook/.storybook/local.css");
+  assert.equal(resolveImport(scss, "https://example.com/font.css", files), undefined);
+});
