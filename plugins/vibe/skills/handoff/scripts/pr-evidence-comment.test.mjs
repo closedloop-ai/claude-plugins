@@ -85,7 +85,7 @@ test("qa-impact PR evidence comment needs the exact owned worktree", (t) => {
   const request = { lastQa: { boundary }, evidence: { screens: [] }, graphImporters: { importers: { [file]: [] } },
     featureMap: { entries: [] }, laneSelections: { files: { [file]: [command] } } };
   const impact = qaImpactRequest(worktree, request);
-  const evidence = { source: sourceIdentity(worktree), qaImpactRequest: request, testSelection: [], testIntegrityProofs: [], rerunCycles: [],
+  const evidence = { baseCommit: boundary, source: sourceIdentity(worktree), qaImpactRequest: request, testSelection: [], testIntegrityProofs: [], rerunCycles: [],
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, impactKey: impact.laneKey,
       laneReport: { command: "qa-impact.mjs", matches: [{ name: "node", command, reason: impact.reason }] },
       entries: [], noTestsReason: "lane only" },

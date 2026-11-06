@@ -305,6 +305,9 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
   return withStableSource(worktree, current => {
     let testedCommit = commit;
     const bindingProblems = [];
+    if (runs?.baseCommit !== undefined && runs.baseCommit !== base) {
+      bindingProblems.push("verifier captured baseCommit differs from the inventory base");
+    }
     if (runs?.source !== undefined) {
       const source = runs.source;
       let ancestor = false;
@@ -512,7 +515,7 @@ function e2eCarriedForCi(evidence, selection, spec, commit) {
 }
 
 /** The target's existing lane reporter decides which evidence contract applies. */
-function hasTestLanesScript(worktree) {
+function hasTestLanesScript(worktree, baseCommit) {
   const manifest = path.join(worktree, "package.json");
   const declares = (text) => {
     if (text === null) return false;
@@ -522,12 +525,13 @@ function hasTestLanesScript(worktree) {
     return typeof packageJson?.scripts?.["test:lanes"] === "string" && packageJson.scripts["test:lanes"].trim() !== "";
   };
   if (existsSync(manifest) && declares(readFileSync(manifest, "utf8"))) return true;
+  if (!SHA.test(baseCommit ?? "")) throw new Error("captured main baseCommit is required to verify the lane source");
   const options = { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] };
   try {
-    execFileSync("git", ["-C", worktree, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}"], options);
-    const entry = execFileSync("git", ["-C", worktree, "ls-tree", "refs/remotes/origin/main", "--", "package.json"], options);
+    execFileSync("git", ["-C", worktree, "cat-file", "-e", `${baseCommit}^{commit}`], options);
+    const entry = execFileSync("git", ["-C", worktree, "ls-tree", baseCommit, "--", "package.json"], options);
     if (!entry.trim()) return false; // A verified captured main truly has no root package manifest.
-    return declares(execFileSync("git", ["-C", worktree, "show", "refs/remotes/origin/main:package.json"], options));
+    return declares(execFileSync("git", ["-C", worktree, "show", `${baseCommit}:package.json`], options));
   } catch {
     throw new Error("captured main package.json is unreadable; lane source cannot be verified");
   }
@@ -538,7 +542,7 @@ function laneSourceEvidence(runsFile, inventory, worktree) {
   const kind = inventory.laneReport?.command;
   if (!worktree) return { problems: kind === "qa-impact.mjs" ? ["qa-impact lane evidence needs the target worktree"] : [], impact: null };
   let ownsReporter;
-  try { ownsReporter = hasTestLanesScript(worktree); }
+  try { ownsReporter = hasTestLanesScript(worktree, runsFile?.baseCommit); }
   catch (error) { return { problems: [error.message], impact: null }; }
   if (ownsReporter) return { problems: kind === "pnpm test:lanes" ? [] : ["target repository declares test:lanes; qa-impact cannot replace its CI-equivalent report"], impact: null };
   if (kind !== "qa-impact.mjs") return { problems: ["target repository has no test:lanes; use its source-bound qa-impact lane selection"], impact: null };

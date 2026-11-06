@@ -6,7 +6,8 @@
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
-const RESPONSIVE_NAME = /(?:narrow|mobile)/i;
+const RESPONSIVE_NAME = /\b(?:narrow|mobile)\b/i;
+const RESPONSIVE_EVIDENCE = /\b(?:setViewportSize|viewport\s*:|matchMedia\s*\(|innerWidth|screen\.width|(?:sm|md|lg):(?:hidden|block|flex|grid)\b)|@media\b/i;
 const ABSENCE_ASSERTION = /toHaveCount\(\s*0\s*\)|\.not\s*\.\s*(?:toBeInTheDocument|toBeVisible|toBeAttached|toExist)\s*\(|\.\s*(?:toBeNull|toBeHidden)\s*\(/;
 const ABSENCE_MATCHER = /^\s*(\.not\s*)?\.\s*(toHaveCount|toBeInTheDocument|toBeVisible|toBeAttached|toExist|toBeNull|toBeHidden)\s*\(/;
 const ASSERTION_FAILURE = /\bAssertionError\b|\bexpect\s*\(|\bExpected(?: count)?:|\bReceived(?: count)?:/i;
@@ -156,9 +157,10 @@ export function testIntegrityCandidates(files, read) {
     for (const entry of changedLines) {
       const context = nearby(sourceLines, entry.line, 4);
       const caseName = nearestCase(sourceLines, entry.line);
-      if (!STORY_FILE.test(file.path) && RESPONSIVE_NAME.test(entry.text) && /\b(?:it|test)\b/.test(nearby(sourceLines, entry.line))) {
+      if (!STORY_FILE.test(file.path) && (RESPONSIVE_NAME.test(caseName) || RESPONSIVE_EVIDENCE.test(entry.text))
+        && /\b(?:it|test)\b/.test(nearby(sourceLines, entry.line))) {
         found.push(candidate("responsive", file.path, entry.line, caseName,
-          "changed test names a narrow or mobile state"));
+          "changed test covers a narrow or mobile state"));
       }
       const inParsedAssertion = absenceMatches.some((match) => entry.line >= match.line && entry.line <= match.endLine);
       if (!inParsedAssertion && (ABSENCE_ASSERTION.test(entry.text)

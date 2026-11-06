@@ -104,6 +104,30 @@ test("responsive, mocked-owner absence, premature absence, and count-only layout
   assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: mockedOwner }).join("\n"), /ownerBoundary: "production"/);
 });
 
+test("responsive candidates ignore reviewer wording but retain mobile cases and viewport setup", () => {
+  const fixtures = [
+    changed("review-summary.test.ts", [
+      'test("describes the review", () => {',
+      '  expect(summary).toContain("use a narrower scope");',
+      "});",
+    ].join("\n"), ["narrower"]),
+    changed("mobile-layout.test.ts", [
+      'test("mobile layout", () => {',
+      '  expect(panel).toBeVisible();',
+      "});",
+    ].join("\n"), ["toBeVisible"]),
+    changed("viewport-layout.test.ts", [
+      'test("layout at the breakpoint", async ({ page }) => {',
+      '  await page.setViewportSize({ width: 390, height: 844 });',
+      "});",
+    ].join("\n"), ["setViewportSize"]),
+  ];
+  const sources = new Map(fixtures.map(({ file, source }) => [file.path, source]));
+  const candidates = testIntegrityCandidates(fixtures.map(({ file }) => file), (file) => sources.get(file));
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "responsive").map(({ path }) => path).sort(),
+    ["mobile-layout.test.ts", "viewport-layout.test.ts"]);
+});
+
 test("AC-4 absence assertions reject missing or unrun proof and accept an executed failure", () => {
   const fixture = changed(
     "apps/desktop/test/e2e/branches-page.spec.ts",

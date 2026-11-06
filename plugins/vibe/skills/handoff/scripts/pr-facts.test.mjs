@@ -34,6 +34,9 @@ test('dirty precommit evidence cannot bind unchanged HEAD and binds only after t
   git(wt, ['add', '.'], home);
   git(wt, ['commit', '--quiet', '-m', 'one push-ready commit'], home);
   assert.deepEqual(gate(), [], 'only identical content can carry the accepted source evidence');
+  evidence.baseCommit = 'f'.repeat(40);
+  assert.match(gate().join('\n'), /captured baseCommit differs from the inventory base/);
+  delete evidence.baseCommit;
   assert.equal(evidence.targetedInventory.commit, base);
   assert.equal(evidence.source.head, base);
   writeFileSync(path.join(wt, 'notes.md'), 'unchecked post-verification change');
@@ -415,7 +418,7 @@ test("qa-impact lane evidence binds Python, Node and bench commands without repl
   assert.deepEqual(impact.lanes, commands);
   const matches = commands.map((command, index) => ({ name: ["python", "node", "bench"][index], command, reason: impact.reason }));
   const runs = matches.map((lane) => ({ lane: lane.name, command: lane.command, status: "passed", commit, laneKey: impact.laneKey }));
-  const evidence = { qaImpactRequest: request, testSelection: [], targetedInventory: { actor: "read-only", source: "final-committed-diff",
+  const evidence = { baseCommit: boundary, qaImpactRequest: request, testSelection: [], targetedInventory: { actor: "read-only", source: "final-committed-diff",
     commit, impactKey: impact.laneKey, laneReport: { command: "qa-impact.mjs", matches }, entries: [], noTestsReason: "lane-only" },
   testRuns: runs, rerunCycles: [] };
   const problems = (input) => targetedEvidenceProblems(input, commit, worktree).join("\n");
@@ -435,23 +438,31 @@ test("qa-impact lane evidence binds Python, Node and bench commands without repl
   assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory,
     laneReport: { command: "pnpm test:lanes", matches: [] } } }), /has no test:lanes/);
   git(worktree, ["update-ref", "-d", "refs/remotes/origin/main"], fixture.home);
-  assert.match(problems(evidence), /captured main package.json is unreadable/, "missing captured main cannot downgrade its reporter");
+  assert.equal(problems(evidence), "", "a captured base stays readable after the moving ref disappears");
+  assert.match(problems({ ...evidence, baseCommit: undefined }), /captured main baseCommit is required/);
   git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], fixture.home);
   writeFileSync(path.join(worktree, "package.json"), "{bad json");
   git(worktree, ["add", "package.json"], fixture.home);
   git(worktree, ["commit", "--quiet", "-m", "unreadable main manifest"], fixture.home);
-  git(worktree, ["update-ref", "refs/remotes/origin/main", "HEAD"], fixture.home);
+  const unreadableBase = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", unreadableBase], fixture.home);
   git(worktree, ["reset", "--hard", commit], fixture.home);
-  assert.match(problems(evidence), /captured main package.json is unreadable/, "unreadable main manifest cannot downgrade its reporter");
+  assert.match(problems({ ...evidence, baseCommit: unreadableBase }), /captured main package.json is unreadable/,
+    "unreadable captured main manifest cannot downgrade its reporter");
+  assert.equal(problems(evidence), "", "moving origin/main to a malformed manifest does not change the captured base");
   git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], fixture.home);
   writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: { "test:lanes": "fixture" } }));
   assert.match(problems(evidence), /declares test:lanes/);
   git(worktree, ["add", "package.json"], fixture.home);
   git(worktree, ["commit", "--quiet", "-m", "repository lane script"], fixture.home);
-  git(worktree, ["update-ref", "refs/remotes/origin/main", "HEAD"], fixture.home);
+  const reporterBase = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", reporterBase], fixture.home);
   writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: {} }));
   git(worktree, ["commit", "--quiet", "-am", "removed script on branch"], fixture.home);
-  assert.match(problems(evidence), /declares test:lanes/, "a branch cannot remove main's reporter to downgrade lane evidence");
+  const capturedReporter = { ...evidence, baseCommit: reporterBase };
+  assert.match(problems(capturedReporter), /declares test:lanes/, "a branch cannot remove captured main's reporter");
+  git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], fixture.home);
+  assert.match(problems(capturedReporter), /declares test:lanes/, "moving origin/main cannot downgrade the captured reporter");
 });
 
 test("the inventory reports the facts and gates only the pull-request phase", (t) => {

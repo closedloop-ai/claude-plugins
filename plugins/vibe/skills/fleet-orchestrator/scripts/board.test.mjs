@@ -29,7 +29,7 @@ const receipt = (source, lanes = [{ command: 'pnpm test', reason: 'changed sourc
   source,
   firstCandidateSource: source,
   phase: 'followup',
-  selection: { kind: 'code-tests', key: 'a'.repeat(64) },
+  selection: { kind: 'qa-impact', key: 'a'.repeat(64) },
   lanes,
 });
 

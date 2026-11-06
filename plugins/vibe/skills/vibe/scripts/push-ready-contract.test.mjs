@@ -48,7 +48,7 @@ test('criteria audit, rulings, rollout, independent review and verification prec
   const beforeCommit = handoff.slice(0, commit);
   assert.ok(beforeCommit.includes('`pre-pr-lanes.mjs check` requires a source-bound receipt'));
   assert.ok(beforeCommit.includes('full CI-equivalent `--phase first-candidate --report`'));
-  assert.ok(beforeCommit.includes('follow-ups use `--phase followup --impact` or `--code-tests`'));
+  assert.ok(beforeCommit.includes('follow-ups use the current recomputed `--phase followup --impact`'));
   assert.match(handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.')), /discovered after publication[\s\S]*new-commit[\s\S]*never amend a pushed/i);
   const monitor = read('../../codex-fleet-monitor/SKILL.md');
   assert.doesNotMatch(monitor, /add the new PR to `prs.txt` and start its review/);

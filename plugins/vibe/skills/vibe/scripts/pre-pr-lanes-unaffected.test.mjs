@@ -4,8 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { lanesTouchedSince, readLaneSelectionReceipt } from "./pre-pr-lanes.mjs";
-import { sourceIdentity } from "./tested-head.mjs";
+import { lanesTouchedSince } from "./pre-pr-lanes.mjs";
 import { git, makeHome, mockLaneReporter } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-pr-lanes.mjs");
@@ -32,21 +31,11 @@ function fixture(t) {
   const reporter = mockLaneReporter(root, REPORT);
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home, PATH: reporter.path } });
   const request = (boundary, files) => {
-    const file = path.join(root, "impact.json");
+    const file = path.join(root, `impact-${boundary.slice(0, 12)}.json`);
     writeFileSync(file, JSON.stringify({ lastQa: { boundary }, evidence: { screens: [] }, laneSelections: { files } }));
     return file;
   };
-  const codeTests = () => {
-    const file = path.join(root, "code-tests.json");
-    const boundary = readLaneSelectionReceipt(worktree).firstCandidateSource.head;
-    const changed = git(worktree, ["diff", "--name-only", boundary, "HEAD"], home).split("\n").filter(Boolean);
-    writeFileSync(file, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
-      producer: "code_tests_for_changes", boundary,
-      fileCoverage: changed.map((changedFile) => ({ file: changedFile, status: "tests_found", tests: ["fixture.test.mjs"], commands: [UNIT, LINT] })),
-      lanes: [UNIT, LINT].map((command) => ({ command, reason: "focused test selection" })) }));
-    return file;
-  };
-  return { root, home, worktree, commit, report, run, request, codeTests };
+  return { root, home, worktree, commit, report, run, request };
 }
 
 function mkdirpSync(dir) {
@@ -54,18 +43,20 @@ function mkdirpSync(dir) {
 }
 
 test("a lane the changes since an earlier fresh pass do not touch is reused as cached, never as a pass", (t) => {
-  const { worktree, commit, report, run, request, codeTests } = fixture(t);
-  const first = commit("base", { "README.md": "docs\n", "apps/api/a.ts": "export const a = 1;\n", "apps/web/b.ts": "export const b = 1;\n" });
+  const { worktree, commit, report, run, request } = fixture(t);
+  const prebase = commit("prebase", { "README.md": "docs\n" });
+  const first = commit("base", { "apps/api/a.ts": "export const a = 1;\n", "apps/web/b.ts": "export const b = 1;\n" });
   for (const lane of [UNIT, LINT]) assert.equal(run("record", "--phase", "first-candidate", "--worktree", worktree, "--head", first, "--command", lane, "--result", "pass", "--report", report).status, 0);
   assert.equal(run("check", "--phase", "first-candidate", "--worktree", worktree, "--report", report).status, 0);
   commit("docs only", { "README.md": "more docs\n" });
   const selections = { "README.md": [LINT], "apps/api/a.ts": [UNIT], "apps/web/b.ts": [LINT] };
 
-  const off = run("check", "--phase", "followup", "--worktree", worktree, "--code-tests", codeTests());
+  const selected = request(prebase, selections);
+  const off = run("check", "--phase", "followup", "--worktree", worktree, "--impact", selected);
   assert.equal(off.status, 1, "off by default: a new tree has no record");
   assert.match(off.stdout, /^MISSING-LANE /m);
 
-  const reused = run("check", "--phase", "followup", "--worktree", worktree, "--code-tests", codeTests(), "--reuse-unaffected", request(first, selections));
+  const reused = run("check", "--phase", "followup", "--worktree", worktree, "--impact", selected, "--reuse-unaffected", request(first, selections));
   assert.equal(reused.status, 0, reused.stdout + reused.stderr);
   assert.equal([...reused.stdout.matchAll(/^CACHED-LANE /gm)].length, 2, "a docs-only change touches no lane");
   assert.match(reused.stdout, /not a fresh run/);
@@ -73,33 +64,36 @@ test("a lane the changes since an earlier fresh pass do not touch is reused as c
   const cached = records.filter((record) => record.unaffectedSince);
   assert.deepEqual(cached.map((record) => record.result), ["cached", "cached"]);
   assert.ok(cached.every((record) => record.unaffectedSince === first && record.reusedFrom.head === first));
-  assert.equal(run("check", "--phase", "followup", "--worktree", worktree, "--code-tests", codeTests(), "--reuse-unaffected", request(first, selections)).status, 0, "idempotent on a second check");
+  assert.equal(run("check", "--phase", "followup", "--worktree", worktree, "--impact", selected, "--reuse-unaffected", request(first, selections)).status, 0, "idempotent on a second check");
 });
 
 test("a lane a changed file names is not reused, and neither is any lane when a changed file names none", (t) => {
-  const { worktree, commit, report, run, request, codeTests } = fixture(t);
-  const first = commit("base", { "README.md": "docs\n", "apps/api/a.ts": "export const a = 1;\n", "apps/web/b.ts": "export const b = 1;\n" });
+  const { worktree, commit, report, run, request } = fixture(t);
+  const prebase = commit("prebase", { "README.md": "docs\n" });
+  const first = commit("base", { "apps/api/a.ts": "export const a = 1;\n", "apps/web/b.ts": "export const b = 1;\n" });
   for (const lane of [UNIT, LINT]) run("record", "--phase", "first-candidate", "--worktree", worktree, "--head", first, "--command", lane, "--result", "pass", "--report", report);
   assert.equal(run("check", "--phase", "first-candidate", "--worktree", worktree, "--report", report).status, 0);
   commit("api change", { "apps/api/a.ts": "export const a = 2;\n" });
   const selections = { "README.md": [LINT], "apps/api/a.ts": [UNIT], "apps/web/b.ts": [LINT] };
-  const partial = run("check", "--phase", "followup", "--worktree", worktree, "--code-tests", codeTests(), "--reuse-unaffected", request(first, selections));
+  const partial = run("check", "--phase", "followup", "--worktree", worktree, "--impact", request(prebase, selections), "--reuse-unaffected", request(first, selections));
   assert.equal(partial.status, 1);
   assert.match(partial.stdout, new RegExp(`^MISSING-LANE ${UNIT.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}`, "m"));
   assert.match(partial.stdout, new RegExp(`^CACHED-LANE ${LINT}`, "m"));
 });
 
 test("only a pass recorded at the boundary commit is reused, not one recorded at another head", (t) => {
-  const { worktree, commit, report, run, request, codeTests } = fixture(t);
-  const first = commit("base", { "README.md": "docs\n", "apps/api/a.ts": "export const a = 1;\n" });
+  const { worktree, commit, report, run, request } = fixture(t);
+  const prebase = commit("prebase", { "README.md": "docs\n" });
+  const first = commit("base", { "apps/api/a.ts": "export const a = 1;\n" });
   const second = commit("docs", { "README.md": "docs 2\n" });
   const selections = { "README.md": [LINT], "apps/api/a.ts": [UNIT] };
   for (const lane of [UNIT, LINT]) run("record", "--phase", "first-candidate", "--worktree", worktree, "--head", second, "--command", lane, "--result", "pass", "--report", report);
   assert.equal(run("check", "--phase", "first-candidate", "--worktree", worktree, "--report", report).status, 0);
   commit("docs 3", { "README.md": "docs 3\n" });
-  const atOtherHead = run("check", "--phase", "followup", "--worktree", worktree, "--code-tests", codeTests(), "--reuse-unaffected", request(first, selections));
+  const selected = request(prebase, selections);
+  const atOtherHead = run("check", "--phase", "followup", "--worktree", worktree, "--impact", selected, "--reuse-unaffected", request(first, selections));
   assert.equal(atOtherHead.status, 1, "the pass was at the second commit, not the boundary");
-  const atBoundary = run("check", "--phase", "followup", "--worktree", worktree, "--code-tests", codeTests(), "--reuse-unaffected", request(second, selections));
+  const atBoundary = run("check", "--phase", "followup", "--worktree", worktree, "--impact", selected, "--reuse-unaffected", request(second, selections));
   assert.equal(atBoundary.status, 0);
 });
 

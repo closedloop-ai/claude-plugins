@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { CACHED_RESULT, cachedRecord, findReusable, laneCacheKey, Provenance, scopeHash } from "./lane-cache.mjs";
 import { STAGING_IDENTITY_KEY } from "./pre-pr-lanes.mjs";
-import { sourceIdentity } from "./tested-head.mjs";
 import { git, makeHome, mockLaneReporter } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-pr-lanes.mjs");
@@ -120,7 +119,9 @@ test("both reuse modes retain their cached lanes and an unavailable E2E record",
   writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 2 lane(s).\n    pnpm test:lane\n    ${lint}\n`);
   writeFileSync(s.reporter.canonical, readFileSync(report, "utf8"));
   writeFileSync(path.join(s.worktree, "README.md"), "docs before\n");
-  git(s.worktree, ["add", "README.md"], s.home);
+  mkdirSync(path.join(s.worktree, "apps/api"), { recursive: true });
+  writeFileSync(path.join(s.worktree, "apps/api/a.ts"), "export const a = 1;\n");
+  git(s.worktree, ["add", "README.md", "apps/api/a.ts"], s.home);
   git(s.worktree, ["commit", "--quiet", "-m", "docs before"], s.home);
   const first = s.head();
   for (const command of ["pnpm test:lane", lint]) assert.equal(s.run("record", "--phase", "first-candidate", "--worktree", s.worktree,
@@ -129,22 +130,21 @@ test("both reuse modes retain their cached lanes and an unavailable E2E record",
   writeFileSync(path.join(s.worktree, "README.md"), "docs after\n");
   git(s.worktree, ["add", "README.md"], s.home);
   git(s.worktree, ["commit", "--quiet", "-m", "docs only"], s.home);
-  const source = sourceIdentity(s.worktree);
   const selected = (name, commands) => {
     const file = path.join(s.root, name);
-    writeFileSync(file, JSON.stringify({ schemaVersion: 1, source, producer: "code_tests_for_changes", boundary: first,
-      fileCoverage: [{ file: "README.md", status: "tests_found", tests: ["README.test.mjs"], commands }],
-      lanes: commands.map((command) => ({ command, reason: `selected ${command}` })) }));
+    writeFileSync(file, JSON.stringify({ lastQa: { boundary: s.base }, evidence: { screens: [] },
+      laneSelections: { files: { "apps/api/a.ts": commands, "README.md": commands, "b.txt": commands } } }));
     return file;
   };
   const priorSelection = selected("prior-selection.json", ["pnpm test:lane"]);
-  assert.equal(s.run("record", "--phase", "followup", "--worktree", s.worktree, "--head", s.head(),
-    "--command", "pnpm test:lane", "--result", "pass", "--code-tests", priorSelection, "--base", s.base).status, 0);
+  const priorPass = s.run("record", "--phase", "followup", "--worktree", s.worktree, "--head", s.head(),
+    "--command", "pnpm test:lane", "--result", "pass", "--impact", priorSelection, "--base", s.base);
+  assert.equal(priorPass.status, 0, priorPass.stderr);
   const impact = path.join(s.root, "impact.json");
   writeFileSync(impact, JSON.stringify({ lastQa: { boundary: first }, evidence: { screens: [] },
-    laneSelections: { files: { "README.md": [lint] } } }));
+    laneSelections: { files: { "README.md": ["pnpm test:lane"] } } }));
   const checked = s.run("check", "--phase", "followup", "--worktree", s.worktree,
-    "--code-tests", selected("selected.json", ["pnpm test:lane", lint, web]),
+    "--impact", selected("selected.json", ["pnpm test:lane", lint, web]),
     "--reuse-cache", "--base", s.base, "--reuse-unaffected", impact);
   assert.equal(checked.status, 0, checked.stdout + checked.stderr);
   assert.equal([...checked.stdout.matchAll(/^CACHED-LANE /gm)].length, 2);

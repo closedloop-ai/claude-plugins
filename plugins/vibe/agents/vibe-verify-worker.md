@@ -131,8 +131,8 @@ test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
 When the graph cannot establish tests, a `code_tests_for` row may use
 `tests: null` only with the repository's `related` selection for that file.
 `targetedInventory` has `actor: "read-only"`,
-`source: "working-tree"`, the actual tested HEAD as `commit`, top-level
-`source` from `tested-head.mjs source`, and the complete
+`source: "working-tree"`, tested HEAD as `commit`, top-level
+`source` from `tested-head.mjs source`, exact `baseCommit` from inventory, and
 `qaImpactRequest` inputs. Recompute it and copy its `laneKey` to `impactKey`;
 never trust a stored result. `laneReport` uses `pnpm test:lanes` when declared,
 else `qa-impact.mjs` with recomputed matches/reasons. `entries` name each exact

@@ -586,7 +586,7 @@ and flag arms. Later changes use `scripts/qa-impact.mjs` with that evidence,
 importers, FEATURE_MAP and lane report; run selected scope; re-audit affected
 criteria. CI remains per push.
 
-`pre-pr-lanes.mjs check` requires a source-bound receipt: first candidates use full CI-equivalent `--phase first-candidate --report`; follow-ups use `--phase followup --impact` or `--code-tests`.
+`pre-pr-lanes.mjs check` requires a source-bound receipt: first candidates use full CI-equivalent `--phase first-candidate --report`; follow-ups use the current recomputed `--phase followup --impact`.
 Changed checks/CI scripts run in affected jobs' checkout depth, runtime/toolchain, install, matrix, build and generated-dist shape; inspect with `scripts/ci-job-shape.mjs`; record `ciCheckRepros`.
 
 On a requested pull request, skip assign mode: the ticket stays with the

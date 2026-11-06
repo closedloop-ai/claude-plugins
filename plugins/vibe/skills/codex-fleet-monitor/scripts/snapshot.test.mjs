@@ -243,7 +243,7 @@ test('board lines are snapshot lines: a scope change the writer has not acknowle
     source,
     firstCandidateSource: source,
     phase: 'followup',
-    selection: { kind: 'code-tests', key: 'a'.repeat(64) },
+    selection: { kind: 'qa-impact', key: 'a'.repeat(64) },
     lanes: [{ command: 'node --test snapshot.test.mjs', reason: 'changed board selected this snapshot test' }],
   }));
   assert.equal(boardRun('writer', 'w1', '--ready', git('rev-parse', 'HEAD')).status, 0);

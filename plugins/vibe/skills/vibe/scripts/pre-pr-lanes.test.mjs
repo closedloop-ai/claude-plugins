@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, readLaneSelectionReceipt, reportLanes } from "./pre-pr-lanes.mjs";
+import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, laneSelectionReceiptProblems, missingLanes, notRunLanes, readLaneSelectionReceipt, reportLanes } from "./pre-pr-lanes.mjs";
 import { git, makeHome, mockLaneReporter } from "./test-fixtures.mjs";
 import { sourceIdentity } from "./tested-head.mjs";
+import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { spawnSync } from "node:child_process";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-pr-lanes.mjs");
@@ -52,7 +52,8 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   t.after(cleanup);
   const worktree = path.join(root, "wt");
   git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
-  writeFileSync(path.join(worktree, "a.txt"), "base\n");
+  mkdirSync(path.join(worktree, "src"), { recursive: true });
+  writeFileSync(path.join(worktree, "src/a.mjs"), "export const value = 1;\n");
   git(worktree, ["add", "."], home);
   git(worktree, ["commit", "--quiet", "-m", "base"], home);
   const first = 'node -e "0"';
@@ -81,8 +82,8 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   writeFileSync(premature, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
     lanes: [{ command: first, reason: "changed unit maps to this lane" }] }));
   const prematureFollowup = run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", premature);
-  assert.equal(prematureFollowup.status, 2, "followup cannot bypass the full first-candidate lane set");
-  assert.match(prematureFollowup.stderr, /successful first-candidate receipt/);
+  assert.equal(prematureFollowup.status, 2, "caller-authored code-test evidence cannot bypass the canonical selector");
+  assert.match(prematureFollowup.stderr, /no verifiable producer/);
   const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
   for (const command of [first, second]) {
     assert.equal(run("record", "--worktree", worktree, "--head", head, "--phase", "first-candidate",
@@ -96,65 +97,39 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   assert.equal(run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", report).status, 2,
     "a successful first candidate is declared once");
 
-  writeFileSync(path.join(worktree, "a.txt"), "followup\n");
+  writeFileSync(path.join(worktree, "src/a.mjs"), "export const value = 2;\n");
   git(worktree, ["add", "."], home);
   git(worktree, ["commit", "--quiet", "-m", "followup"], home);
   const followHead = git(worktree, ["rev-parse", "HEAD"], home).trim();
-  const selected = path.join(root, "code-tests.json");
-  const selectedBytes = JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
-    producer: "code_tests_for_changes", boundary: head,
-    fileCoverage: [{ file: "a.txt", status: "tests_found", tests: ["a.test.mjs"], commands: [first] }],
-    lanes: [{ command: first, reason: "changed unit maps to this lane" }] });
-  const selectedKey = createHash("sha256").update(selectedBytes).digest("hex");
-  writeFileSync(selected, selectedBytes);
-  const absentProducer = path.join(root, "code-tests-absent-producer.json");
-  writeFileSync(absentProducer, JSON.stringify({ ...JSON.parse(selectedBytes), producer: undefined }));
-  assert.match(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", absentProducer).stderr,
-    /normalized code_tests_for_changes/);
-  const incompleteCoverage = path.join(root, "code-tests-incomplete.json");
-  writeFileSync(incompleteCoverage, JSON.stringify({ ...JSON.parse(selectedBytes), fileCoverage: [] }));
-  assert.match(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", incompleteCoverage).stderr,
-    /complete changed-file coverage/);
-  const extra = run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", selected,
+  const impact = path.join(root, "impact.json");
+  const request = { lastQa: { boundary: head }, evidence: { screens: [] }, featureMap: { entries: [] },
+    laneSelections: { files: { "src/a.mjs": [first] } } };
+  writeFileSync(impact, JSON.stringify(request));
+  const selection = qaImpactRequest(worktree, request);
+  assert.deepEqual(selection.lanes, [first]);
+  const forgedNone = path.join(root, "forged-code-tests-none.json");
+  writeFileSync(forgedNone, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree), producer: "code_tests_for_changes",
+    boundary: head, fileCoverage: [{ file: "src/a.mjs", status: "confirmed_none", reason: "caller says none" }], lanes: [] }));
+  assert.match(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", forgedNone).stderr,
+    /no verifiable producer/, "a claimed graph result cannot issue a zero-lane receipt");
+  const extra = run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--impact", impact,
     "--command", second, "--result", "pass");
   assert.equal(extra.status, 2, "an unselected extra lane is refused");
-  assert.match(extra.stderr, /--code-tests must select this lane exactly once/);
-  assert.equal(run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", selected,
+  assert.match(extra.stderr, /--impact must select this lane/);
+  assert.equal(run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--impact", impact,
     "--command", first, "--result", "pass").status, 0);
   const laneRows = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
-  const selectedRow = laneRows.find((row) => row.command === first && row.laneKey === selectedKey);
-  assert.deepEqual(selectedRow.selection, { kind: "code-tests", key: selectedKey, reason: "changed unit maps to this lane" });
-  writeFileSync(selected, selectedBytes.replace("changed unit", "tampered unit"));
-  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", selected).status, 1,
-    "changing the evidence bytes changes the selection key and invalidates its run");
-  writeFileSync(selected, selectedBytes);
-  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", selected).status, 0);
+  const selectedRow = laneRows.find((row) => row.command === first && row.laneKey === selection.laneKey);
+  assert.deepEqual(selectedRow.selection, { kind: "qa-impact", key: selection.laneKey,
+    reason: `qa-impact ${selection.outcome}: ${selection.reason}` });
+  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--impact", impact).status, 0);
   const followup = readLaneSelectionReceipt(worktree);
-  assert.deepEqual(followup.selection, { kind: "code-tests", key: selectedKey });
-  assert.equal(followup.lanes[0].reason, "changed unit maps to this lane");
+  assert.deepEqual(followup.selection, { kind: "qa-impact", key: selection.laneKey });
+  assert.match(followup.lanes[0].reason, /qa-impact Lanes only/);
   assert.equal(run("check", "--worktree", worktree, "--phase", "first-candidate", "--report", report).status, 2,
     "followup receipts retain that the first candidate already ran");
-
-  const none = path.join(root, "code-tests-none.json");
-  writeFileSync(none, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree), producer: "code_tests_for_changes", boundary: head,
-    fileCoverage: [{ file: "a.txt", status: "confirmed_none", reason: "graph confirms no affected test", tests: [], commands: [] }], lanes: [] }));
-  const unsupportedNone = path.join(root, "code-tests-unsupported-none.json");
-  writeFileSync(unsupportedNone, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree), producer: "code_tests_for_changes", boundary: head,
-    fileCoverage: [{ file: "a.txt", status: "tests_found", tests: ["a.test.mjs"], commands: [] }], lanes: [] }));
-  assert.match(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", unsupportedNone).stderr,
-    /selected commands/);
-  const noneRun = run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", none,
-    "--command", first, "--result", "pass");
-  assert.equal(noneRun.status, 2, "None selection permits no heavy run");
-  assert.match(noneRun.stderr, /--code-tests must select this lane exactly once/);
-  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", none).status, 0);
-  assert.deepEqual(readLaneSelectionReceipt(worktree).lanes, []);
-  const stale = path.join(root, "code-tests-stale.json");
-  writeFileSync(stale, JSON.stringify({ schemaVersion: 1,
-    source: { ...sourceIdentity(worktree), head: "0".repeat(40) }, producer: "code_tests_for_changes", boundary: head,
-    fileCoverage: [{ file: "a.txt", status: "confirmed_none", reason: "graph confirms no affected test" }], lanes: [] }));
-  assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", stale).status, 2,
-    "stale source-bound code-test evidence is refused");
+  const unsupportedReceipt = { ...followup, selection: { kind: "code-tests", key: "a".repeat(64) }, lanes: [] };
+  assert.match(laneSelectionReceiptProblems(unsupportedReceipt, sourceIdentity(worktree)).join("\n"), /selection kind/);
 });
 
 test("the PR-open check refuses a diff naming desktop-renderer with no recorded run (pre-PR Vitest lanes ruling)", (t) => {
