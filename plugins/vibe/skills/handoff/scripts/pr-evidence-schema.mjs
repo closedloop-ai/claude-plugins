@@ -50,6 +50,7 @@ export function prEvidenceShapeProblems(evidence) {
   const problems = [
     ...readTestSelection(evidence).problems,
     ...testIntegrityProofShapeProblems(evidence),
+    ...(evidence?.treeEquivalentCarry === undefined ? [] : treeEquivalentCarryShapeProblems(evidence.treeEquivalentCarry)),
   ];
   const inventory = evidence?.targetedInventory;
   if (evidence?.source !== undefined && !validSourceIdentity(evidence.source)) problems.push('source identity needs HEAD plus full diff/tree hashes');
@@ -66,9 +67,7 @@ export function prEvidenceShapeProblems(evidence) {
       && (!/^[a-f0-9]{16}$/.test(evidence.qaImpact?.laneKey ?? "") || inventory.impactKey !== evidence.qaImpact.laneKey)) {
       problems.push("targetedInventory must name qaImpact.laneKey as its changed-file scope");
     }
-    if (inventory.laneReport?.command !== "pnpm test:lanes" || !Array.isArray(inventory.laneReport?.matches)) {
-      problems.push("targetedInventory.laneReport needs pnpm test:lanes and exact matching lane commands");
-    }
+    problems.push(...laneReportShapeProblems(inventory.laneReport));
     if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {
       problems.push("targetedInventory needs exact entries with paths, cases and commands, or a noTestsReason");
     } else for (const [index, entry] of inventory.entries.entries()) {
@@ -82,6 +81,66 @@ export function prEvidenceShapeProblems(evidence) {
   }
   if (!Array.isArray(evidence?.testRuns)) problems.push("testRuns must be an array of exact runs");
   if (!Array.isArray(evidence?.rerunCycles)) problems.push("rerunCycles must record isolated reruns, or [] when none failed");
+  return problems;
+}
+
+/** @typedef {{kind: "command", command: string} | {kind: "github-workflow", path: string}} RepositoryLaneSource */
+/** @typedef {{ref: string, commit: string, gitTree: string, source: {head: string, diffSha256: string, treeSha256: string}}} CarryPoint */
+/** @typedef {{kind: "tree-equivalent", version: 1, proof: CarryPoint, published: CarryPoint, laneKey: string,
+ * runs: Array<{scopeKey: string, result: {lane: string, command: string, commit: string, laneKey?: string, status: "passed", exitCode: 0},
+ * coveredFiles: Array<{path: string, sha256: string}>, receipt: {path: string, sha256: string}}>}} TreeEquivalentCarry */
+const HASH = /^[a-f0-9]{64}$/;
+const COMMIT = /^[a-f0-9]{40}$/;
+const LANE_KEY = /^[a-f0-9]{16}$/;
+const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+const exactKeys = (value, keys) => object(value) && Object.keys(value).sort().join("|") === [...keys].sort().join("|");
+/** Literal repository-relative regular-file operands; never traversal, Git options or control characters. */
+export function evidencePath(value) {
+  return typeof value === "string" && value.length > 0 && !/[\\\x00-\x1f]/.test(value)
+    && !value.startsWith("/") && !value.startsWith("-") && value.split("/").every(part => part && ![".", "..", ".git"].includes(part));
+}
+/** Validate the shared declaration shape, with immutable definition identity required on a workflow report. */
+export function laneSourceShapeProblems(source, report = false) {
+  if (source?.kind === "command" && exactKeys(source, ["kind", "command"]) && typeof source.command === "string" && source.command.trim()) return [];
+  if (source?.kind === "github-workflow" && exactKeys(source, report ? ["kind", "path", "commit", "sha256"] : ["kind", "path"])
+    && evidencePath(source.path) && /^\.github\/workflows\/[^/]+\.ya?ml$/.test(source.path)
+    && (!report || COMMIT.test(source.commit ?? "") && HASH.test(source.sha256 ?? ""))) return [];
+  return ["repository lane source needs a typed command or immutable github-workflow definition"];
+}
+/** One structural owner for both gate and comment consumers; legacy pnpm evidence remains compatible. */
+export function laneReportShapeProblems(report) {
+  const source = report?.source ?? { kind: "command", command: report?.command };
+  const problems = laneSourceShapeProblems(source, true);
+  if (!report?.source && report?.command !== "pnpm test:lanes") problems.push("legacy lane report needs pnpm test:lanes");
+  if (!Array.isArray(report?.matches)) problems.push("lane report needs exact matching lane commands");
+  return problems;
+}
+/** Machine-checkable carry shape; semantic authority is checked against Git and durable receipts by pr-facts. */
+export function treeEquivalentCarryShapeProblems(carry) {
+  const problems = [];
+  if (!exactKeys(carry, ["kind", "version", "proof", "published", "laneKey", "runs"]) || carry.kind !== "tree-equivalent" || carry.version !== 1) {
+    return ["tree-equivalent carry needs its complete versioned contract"];
+  }
+  for (const name of ["proof", "published"]) {
+    const point = carry[name];
+    if (!exactKeys(point, ["ref", "commit", "gitTree", "source"]) || !/^refs\/(?:heads|remotes)\/[A-Za-z0-9_./-]+$/.test(point?.ref ?? "")
+      || !COMMIT.test(point?.commit ?? "") || !COMMIT.test(point?.gitTree ?? "") || !validSourceIdentity(point?.source)
+      || point.source.head !== point.commit) problems.push(`tree carry ${name} needs a verified ref/commit/Git tree/source identity`);
+  }
+  if (!LANE_KEY.test(carry.laneKey ?? "")) problems.push("tree carry needs a lane key");
+  if (!Array.isArray(carry.runs) || !carry.runs.length) return [...problems, "tree carry needs recorded run receipts"];
+  for (const record of carry.runs) {
+    const result = record?.result;
+    if (!exactKeys(record, ["scopeKey", "result", "coveredFiles", "receipt"]) || !LANE_KEY.test(record.scopeKey ?? "") || !object(result) || typeof result.lane !== "string" || !result.lane
+      || typeof result.command !== "string" || !result.command || !COMMIT.test(result.commit ?? "") || (result.laneKey !== undefined && !LANE_KEY.test(result.laneKey))
+      || result.status !== "passed" || result.exitCode !== 0) problems.push("tree carry needs a complete passing recorded run result");
+    if (!exactKeys(record?.receipt, ["path", "sha256"]) || !evidencePath(record.receipt.path) || !HASH.test(record.receipt.sha256 ?? "")) {
+      problems.push("tree carry needs an immutable receipt path/hash");
+    }
+    if (!Array.isArray(record?.coveredFiles) || !record.coveredFiles.length
+      || record.coveredFiles.some(file => !exactKeys(file, ["path", "sha256"]) || !evidencePath(file.path) || !HASH.test(file.sha256 ?? ""))
+      || new Set(record.coveredFiles.map(file => file.path)).size !== record.coveredFiles.length) problems.push("tree carry needs immutable covered-file hashes");
+  }
   return problems;
 }
 

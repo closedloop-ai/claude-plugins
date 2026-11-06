@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -7,8 +8,10 @@ import { fileURLToPath } from "node:url";
 import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
-import { qaImpactRequest } from "./qa-impact.mjs";
-import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
+import { workflowLaneDefinitions } from "./ci-job-shape.mjs";
+import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
+import { qaImpact, qaImpactRequest } from "./qa-impact.mjs";
+import { sourceIdentity, committedSourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 
 test('dirty precommit evidence cannot bind unchanged HEAD and binds only after the candidate is committed', t => {
   const { root, home, cleanup } = makeHome('precommit-evidence-binding-');
@@ -446,6 +449,21 @@ test("edited web and Desktop e2e specs can be carried only by exact not-run CI e
   const check = (candidate) => selectionProblems(candidate, changed, [], commit);
   assert.deepEqual(check(evidence), []);
   assert.deepEqual(targetedEvidenceProblems({ ...evidence, rerunCycles: [] }, commit), []);
+  const typedCommand = structuredClone(evidence);
+  typedCommand.targetedInventory.laneReport.source = { kind: "command", command: "pnpm test:lanes" };
+  delete typedCommand.targetedInventory.laneReport.command;
+  assert.deepEqual(targetedEvidenceProblems({ ...typedCommand, rerunCycles: [] }, commit), []);
+  const workflowLabel = structuredClone(evidence);
+  workflowLabel.targetedInventory.laneReport.source = { kind: "github-workflow", path: ".github/workflows/ci.yml", commit, sha256: "a".repeat(64) };
+  delete workflowLabel.targetedInventory.laneReport.command;
+  for (const run of workflowLabel.testRuns.filter(run => run.path)) run.laneReportSource = ".github/workflows/ci.yml";
+  assert.deepEqual(check(workflowLabel), []);
+  const foreignCommand = structuredClone(workflowLabel);
+  foreignCommand.targetedInventory.laneReport.source = { kind: "command", command: "node other-lanes.mjs" };
+  for (const run of foreignCommand.testRuns.filter(run => run.path)) run.laneReportSource = "node other-lanes.mjs";
+  assert.notDeepEqual(check(foreignCommand), [], "command-based E2E provider semantics remain unchanged");
+
+
   assert.match(targetedEvidenceProblems({ ...evidence, rerunCycles: [], testRuns: evidence.testRuns.filter((run) => run.path !== web) }, commit).join(),
     /unavailable E2E needs an exact not-run spec record/);
   for (const changedEvidence of [
@@ -676,4 +694,161 @@ test("the web e2e lane is not required locally when every changed spec is left f
   assert.deepEqual(evidenceProblems({ ...file, e2eCapability: { ...capability, unavailableSpecs: [] } }, [spec], commit), ["e2e: no run recorded"]);
   const docker = { ...capability, container: { ...capability.container, dockerPresent: true, dockerReachable: true, memoryGiB: 24, diskGiB: 80 } };
   assert.deepEqual(evidenceProblems({ ...file, e2eCapability: docker }, [spec], commit), ["e2e: no run recorded"], "a machine that can run it runs it");
+});
+
+
+/** Sibling publication: the repaired proof descends from QA, publication descends from base. */
+function siblingCarry(t, extraJob = "", laterBoundary = false) {
+  const f = makeHome("sibling-lane-carry-"); t.after(f.cleanup);
+  const wt = path.join(f.root, "wt");
+  const workflowPath = ".github/workflows/ci.yml";
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test fixture.test.mjs\n" + extraJob;
+  const command = workflowLaneDefinitions(workflow)[0].command;
+  makeCheckout({ ...f, checkout: wt, files: { "service.mjs": "export const value = 1;\n",
+    [workflowPath]: workflow, "vibe-handoff-paths.json": JSON.stringify({ ...JSON.parse(SYMPHONY_PATH_POLICY),
+      laneSource: { kind: "github-workflow", path: workflowPath } }) } });
+  const g = (...args) => git(wt, args, f.home);
+  const base = g("rev-parse", "HEAD");
+  g("commit", "--quiet", "--allow-empty", "-m", "QA snapshot");
+  const earliest = g("rev-parse", "HEAD");
+  if (laterBoundary) g("commit", "--quiet", "--allow-empty", "-m", "later QA milestone");
+  const boundary = g("rev-parse", "HEAD");
+  writeFileSync(path.join(wt, "service.mjs"), "export const value = 2;\n");
+  g("commit", "--quiet", "-am", "repaired proof");
+  const proof = g("rev-parse", "HEAD"); const tree = g("rev-parse", "HEAD^{tree}");
+  const proofSource = sourceIdentity(wt);
+  const proofRef = "refs/heads/proof/snapshot-1"; g("update-ref", proofRef, proof);
+  const published = g("commit-tree", tree, "-p", base, "-m", "publication");
+  g("reset", "--hard", published);
+  const publishedSource = sourceIdentity(wt);
+  const request = { lastQa: { boundary }, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: { "service.mjs": ["test"] } }, config: { docs: [] } };
+  // The ordinary classifier supplies fixture scope; expected gate verdicts below remain literal.
+  const impact = qaImpact({ worktree: wt, since: boundary, ...request });
+  const laneKey = impact.laneKey;
+  const result = { lane: "test", command, status: "passed", exitCode: 0, commit: proof, laneKey };
+  const coveredFiles = ["service.mjs", workflowPath, "vibe-handoff-paths.json"].map(file => ({ path: file,
+    sha256: createHash("sha256").update(readFileSync(path.join(wt, file))).digest("hex") }));
+  const receiptText = JSON.stringify({ version: 1, source: proofSource, result, coveredFiles });
+  const receiptFile = path.join(g("rev-parse", "--absolute-git-dir"), "lane-result.json");
+  writeFileSync(receiptFile, receiptText);
+  const carry = { kind: "tree-equivalent", version: 1,
+    proof: { ref: proofRef, commit: proof, gitTree: tree, source: proofSource },
+    published: { ref: "refs/heads/main", commit: published, gitTree: tree, source: publishedSource }, laneKey,
+    runs: [{ scopeKey: laneKey, result: structuredClone(result), coveredFiles, receipt: { path: "lane-result.json",
+      sha256: createHash("sha256").update(receiptText).digest("hex") } }] };
+  const evidence = { source: publishedSource, testSelection: [], qaImpact: impact, qaImpactRequest: request,
+    treeEquivalentCarry: carry, targetedInventory: { actor: "read-only", source: "final-committed-diff", commit: published, impactKey: laneKey,
+      laneReport: { source: { kind: "github-workflow", path: workflowPath, commit: published,
+        sha256: createHash("sha256").update(workflow).digest("hex") }, matches: [{ name: "test", command }] },
+      entries: [], noTestsReason: "workflow lane" }, testRuns: [result], rerunCycles: [] };
+  return { wt, g, evidence: JSON.parse(JSON.stringify(evidence)), published, proof, boundary, earliest, receiptFile };
+}
+
+test("sibling QA proof carries only through a verified equal-tree publication receipt", t => {
+  const f = siblingCarry(t);
+  assert.throws(() => qaImpactRequest(f.wt, f.evidence.qaImpactRequest), /ancestor/);
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
+  const noCarry = structuredClone(f.evidence); delete noCarry.treeEquivalentCarry;
+  assert.match(targetedEvidenceProblems(noCarry, f.published, f.wt).join(), /recomputed|ancestor/);
+});
+
+test("workflow lane evidence is checked against its committed repository declaration", t => {
+  const f = siblingCarry(t);
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
+  const subset = structuredClone(f.evidence); subset.targetedInventory.laneReport.matches = [];
+  assert.match(targetedEvidenceProblems(subset, f.published, f.wt).join(), /workflow.*lane|lane.*workflow/);
+  const invented = structuredClone(f.evidence); invented.targetedInventory.laneReport.matches[0].command = "echo passed";
+  assert.match(targetedEvidenceProblems(invented, f.published, f.wt).join(), /workflow.*lane|lane.*workflow/);
+});
+
+for (const [name, mutate] of [
+  ["Git tree mismatch", f => { f.evidence.treeEquivalentCarry.proof.gitTree = "0".repeat(40); }],
+  ["source mismatch", f => { f.evidence.treeEquivalentCarry.proof.source.treeSha256 = "0".repeat(64); }],
+  ["moved proof ref", f => { f.g("update-ref", f.evidence.treeEquivalentCarry.proof.ref, f.boundary); }],
+  ["moved publication ref", f => { f.g("update-ref", "refs/heads/other", f.boundary); f.evidence.treeEquivalentCarry.published.ref = "refs/heads/other"; }],
+  ["covered file mismatch", f => { f.evidence.treeEquivalentCarry.runs[0].coveredFiles[0].sha256 = "0".repeat(64); }],
+  ["lane key mismatch", f => { f.evidence.treeEquivalentCarry.laneKey = "0".repeat(16); }],
+  ["scope binding mismatch", f => { f.evidence.treeEquivalentCarry.runs[0].scopeKey = "0".repeat(16); }],
+  ["incomplete receipt", f => { delete f.evidence.treeEquivalentCarry.runs[0].receipt; }],
+  ["unverified commit", f => { f.evidence.treeEquivalentCarry.proof.commit = "0".repeat(40); }],
+  ["altered recorded result", f => { f.evidence.treeEquivalentCarry.runs[0].result.exitCode = 9; }],
+  ["altered receipt bytes", f => { writeFileSync(f.receiptFile, "{}"); }],
+]) test(`tree carry refuses ${name}`, t => {
+  const f = siblingCarry(t);
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), [], "positive control");
+  mutate(f);
+  assert.notDeepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
+});
+
+
+test("tree carry rejects actual unequal trees, dirty covered bytes and a self-consistent forged scope", t => {
+  const f = siblingCarry(t);
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
+  const changed = structuredClone(f.evidence);
+  changed.treeEquivalentCarry.proof.commit = f.boundary;
+  changed.treeEquivalentCarry.proof.gitTree = f.g("rev-parse", `${f.boundary}^{tree}`);
+  changed.treeEquivalentCarry.proof.source = committedSourceIdentity(f.wt, f.boundary);
+  f.g("update-ref", changed.treeEquivalentCarry.proof.ref, f.boundary);
+  assert.match(targetedEvidenceProblems(changed, f.published, f.wt).join(), /equal Git\/source/);
+  f.g("update-ref", changed.treeEquivalentCarry.proof.ref, f.proof);
+  writeFileSync(path.join(f.wt, "service.mjs"), "unchecked covered bytes");
+  assert.match(targetedEvidenceProblems(f.evidence, f.published, f.wt).join(), /clean equal/);
+  f.g("checkout", "--", "service.mjs");
+  const forged = structuredClone(f.evidence);
+  forged.treeEquivalentCarry.laneKey = forged.qaImpact.laneKey = forged.targetedInventory.impactKey = "0".repeat(16);
+  forged.testRuns[0].laneKey = forged.treeEquivalentCarry.runs[0].result.laneKey = "0".repeat(16);
+  assert.match(targetedEvidenceProblems(forged, f.published, f.wt).join(), /recomputed proof scope/);
+  const wrongSource = structuredClone(f.evidence); wrongSource.source.diffSha256 = "0".repeat(64);
+  assert.match(targetedEvidenceProblems(wrongSource, f.published, f.wt).join(), /clean equal/);
+});
+
+test("current-head workflow lanes cannot fall back to pnpm or an unverified workflow definition", t => {
+  const f = siblingCarry(t); const evidence = structuredClone(f.evidence);
+  delete evidence.treeEquivalentCarry; delete evidence.qaImpactRequest;
+  evidence.testRuns[0].commit = f.published;
+  assert.deepEqual(targetedEvidenceProblems(evidence, f.published, f.wt), []);
+  const fallback = structuredClone(evidence); fallback.targetedInventory.laneReport.source = undefined;
+  fallback.targetedInventory.laneReport.command = "pnpm test:lanes";
+  assert.match(targetedEvidenceProblems(fallback, f.published, f.wt).join(), /repository-declared/);
+  const wrongHash = structuredClone(evidence); wrongHash.targetedInventory.laneReport.source.sha256 = "0".repeat(64);
+  assert.match(targetedEvidenceProblems(wrongHash, f.published, f.wt).join(), /definition hash/);
+  assert.match(targetedEvidenceProblems(evidence, f.published).join(), /verified repository/);
+});
+
+test("a tree carry never accepts an old passing result for a lane changed after its QA boundary", t => {
+  const f = siblingCarry(t); const e = f.evidence;
+  assert.deepEqual(targetedEvidenceProblems(e, f.published, f.wt), []);
+  e.testRuns[0].commit = f.boundary;
+  e.treeEquivalentCarry.runs[0].result.commit = f.boundary;
+  assert.match(targetedEvidenceProblems(e, f.published, f.wt).join(), /scope includes this lane/);
+});
+
+
+test("unchanged lanes retain the older QA-boundary result through the repaired proof and sibling publication", t => {
+  const f = siblingCarry(t, "  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node lint.mjs\n", true);
+  const command = workflowLaneDefinitions(readFileSync(path.join(f.wt, ".github/workflows/ci.yml"), "utf8")).find(lane => lane.name === "lint").command;
+  const result = { lane: "lint", command, status: "passed", exitCode: 0, commit: f.earliest, laneKey: "9".repeat(16) };
+  const coveredFiles = f.evidence.treeEquivalentCarry.runs[0].coveredFiles.filter(file => file.path !== "service.mjs");
+  const source = committedSourceIdentity(f.wt, f.earliest);
+  const bytes = JSON.stringify({ version: 1, source, result, coveredFiles });
+  const file = path.join(f.g("rev-parse", "--absolute-git-dir"), "lint-result.json"); writeFileSync(file, bytes);
+  f.evidence.targetedInventory.laneReport.matches.push({ name: "lint", command });
+  f.evidence.testRuns.push(result);
+  f.evidence.treeEquivalentCarry.runs.push({ scopeKey: f.evidence.qaImpact.laneKey, result: structuredClone(result), coveredFiles,
+    receipt: { path: "lint-result.json", sha256: createHash("sha256").update(bytes).digest("hex") } });
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
+  f.evidence.treeEquivalentCarry.runs.pop();
+  assert.match(targetedEvidenceProblems(f.evidence, f.published, f.wt).join(), /lane lint: no passing run/);
+});
+
+
+test("the comment adapter verifies workflow/tree carry through the same gate and names the source honestly", t => {
+  const f = siblingCarry(t);
+  f.evidence.e2eCapability = { selectedTier: null, container: { dockerPresent: false, dockerReachable: false,
+    memoryGiB: 0, diskGiB: 0, minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "fixture probe" },
+    native: { available: false, forbidden: false }, remote: { available: false } };
+  const text = renderEvidenceComment(f.evidence, f.wt);
+  assert.ok(text.includes(f.published)); assert.ok(text.includes(".github/workflows/ci.yml"));
+  assert.throws(() => renderEvidenceComment(f.evidence), /incomplete/);
 });

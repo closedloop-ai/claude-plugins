@@ -87,6 +87,44 @@ export function sourceIdentity(worktree, intended = git(worktree, ['rev-parse', 
   return source;
 }
 
+/** Read one regular committed file by literal path, rejecting links, gitlinks and unverified commits. */
+export function committedFile(worktree, commit, file) {
+  if (!/^[a-f0-9]{40}$/.test(commit ?? "") || typeof file !== 'string' || !file || file.includes('\0')) throw new Error('unverified committed file');
+  const run = args => execFileSync('git', ['-C', worktree, ...args], { maxBuffer: 128 * 1024 * 1024, timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run(['rev-parse', '--verify', `${commit}^{commit}`]).toString().trim() !== commit) throw new Error('unverified commit');
+  const entry = run(['ls-tree', '-z', commit, '--', `:(literal)${file}`]).toString();
+  const match = /^(100644|100755) blob ([a-f0-9]{40})\t([^\0]+)\0$/.exec(entry);
+  if (!match || match[3] !== file) throw new Error('committed file is missing or not regular');
+  return run(['cat-file', 'blob', match[2]]);
+}
+
+/** Fingerprint immutable Git blobs using exactly the working-source framing, without checkout or index mutation. */
+export function committedSourceIdentity(worktree, commit) {
+  if (!/^[a-f0-9]{40}$/.test(commit ?? "")) throw new Error("a verified full commit SHA is required");
+  const run = args => execFileSync('git', ['-C', worktree, ...args], { maxBuffer: 128 * 1024 * 1024, timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run(['rev-parse', '--verify', `${commit}^{commit}`]).toString().trim() !== commit) throw new Error('unverified commit');
+  const entries = run(['ls-tree', '-rz', '--full-tree', commit]).toString().split('\0').filter(Boolean).map(line => {
+    const match = /^(100644|100755|120000) blob ([a-f0-9]{40})\t(.+)$/.exec(line);
+    if (!match) throw new Error('unsupported committed source entry');
+    return { mode: match[1], oid: match[2], file: match[3] };
+  }).sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
+  const objects = execFileSync('git', ['-C', worktree, 'cat-file', '--batch'], {
+    input: entries.length ? entries.map(entry => entry.oid).join('\n') + '\n' : '', maxBuffer: 128 * 1024 * 1024, timeout: 30_000,
+  });
+  const hash = createHash('sha256'); let offset = 0;
+  for (const entry of entries) {
+    const end = objects.indexOf(10, offset);
+    const [oid, kind, size] = objects.subarray(offset, end).toString().split(' ');
+    if (oid !== entry.oid || kind !== 'blob' || !/^\d+$/.test(size)) throw new Error('unverified committed blob');
+    offset = end + 1;
+    const content = objects.subarray(offset, offset + Number(size)); offset += Number(size);
+    if (content.length !== Number(size) || objects[offset++] !== 10) throw new Error('incomplete committed blob');
+    field(hash, entry.file); field(hash, entry.mode === '120000' ? 'symlink' : entry.mode === '100755' ? '73' : '0'); field(hash, content);
+  }
+  if (offset !== objects.length) throw new Error('unexpected committed blob data');
+  return { head: commit, diffSha256: createHash('sha256').digest('hex'), treeSha256: hash.digest('hex') };
+}
+
 /** Resolve a named HEAD and return its complete dirty-aware source identity. */
 export function testedSource(worktree, intended) {
   return sourceIdentity(worktree, intended);

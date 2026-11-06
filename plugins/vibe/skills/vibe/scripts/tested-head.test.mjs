@@ -183,3 +183,20 @@ if (process.argv.includes('--mutate')) fs.writeFileSync('vibe/input.md', 'invali
   assert.match(invalid.stderr, /SOURCE-MOVED/);
   assert.equal(JSON.parse(readFileSync(path.join(invalidOut, 'result.json'), 'utf8')).unchanged, false);
 });
+
+
+test('immutable committed fingerprints match clean source and ignore later dirty bytes without touching the index', t => {
+  const { source, home } = snapshotFixture(t);
+  const commit = git(source, ['rev-parse', 'HEAD'], home);
+  const index = path.join(git(source, ['rev-parse', '--absolute-git-dir'], home), 'index');
+  const before = readFileSync(index);
+  const clean = sourceIdentity(source);
+  assert.deepEqual(identity.committedSourceIdentity(source, commit), clean);
+  writeFileSync(path.join(source, 'plugins/vibe/input.md'), 'different dirty source');
+  assert.deepEqual(identity.committedSourceIdentity(source, commit), clean);
+  assert.deepEqual(readFileSync(index), before);
+  assert.throws(() => identity.committedSourceIdentity(source, '0'.repeat(40)));
+  assert.throws(() => identity.committedSourceIdentity(source, 'HEAD'), /verified full commit/);
+  assert.equal(identity.committedFile(source, commit, 'plugins/vibe/input.md').toString(), 'selected input');
+  assert.throws(() => identity.committedFile(source, commit, 'missing'));
+});

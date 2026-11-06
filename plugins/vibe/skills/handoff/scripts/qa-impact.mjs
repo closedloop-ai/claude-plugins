@@ -237,10 +237,10 @@ function differsBetween(worktree, from, to, file) {
 }
 
 /** Files changed by branch commits versus files arriving only through main merges. */
-export function changeOrigins(worktree, since) {
+export function changeOrigins(worktree, since, head = "HEAD") {
   const ownFiles = new Set();
   const mergeFiles = new Set();
-  for (const row of lines(git(worktree, ["rev-list", "--first-parent", "--reverse", "--parents", `${since}..HEAD`]))) {
+  for (const row of lines(git(worktree, ["rev-list", "--first-parent", "--reverse", "--parents", `${since}..${head}`]))) {
     const [commit, firstParent, secondParent] = row.split(/\s+/);
     if (!firstParent) continue;
     if (!secondParent) {
@@ -270,7 +270,8 @@ function rawEntries(worktree, refs) {
   return result;
 }
 
-function changedEntries(worktree, since) {
+function changedEntries(worktree, since, atCommit) {
+  if (atCommit) return rawEntries(worktree, [since, atCommit]);
   const result = rawEntries(worktree, [since]);
   // A gitlink can leave a regular file on disk; preserve the committed type change.
   for (const entry of rawEntries(worktree, [since, 'HEAD']).filter(entry => entry.newMode === '160000')) {
@@ -398,17 +399,17 @@ export function classifyQaImpact({ files, before, after, changes = new Map(), im
 }
 
 /** Classify the current working tree against a recorded QA boundary, with exact input evidence. */
-export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneSelections, config }) {
+export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneSelections, config, atCommit }) {
   return withStableSource(worktree, () => {
     const problems = evidenceProblems(evidence);
     if (problems.length) throw new Error(problems.join("; "));
-    const entries = changedEntries(worktree, since);
+    const entries = changedEntries(worktree, since, atCommit);
     const files = entries.map((entry) => entry.path);
     const before = new Map(files.map((file) => [file, readAt(worktree, since, file)]));
-    const after = new Map(files.map((file) => [file, readHead(worktree, file)]));
-    const origins = changeOrigins(worktree, since);
-    for (const file of [...git(worktree, ['diff', '--name-only', '-z', 'HEAD']).split('\0'),
-      ...git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0')].filter(Boolean)) {
+    const after = new Map(files.map((file) => [file, (atCommit ? readAt(worktree, atCommit, file) : readHead(worktree, file))]));
+    const origins = changeOrigins(worktree, since, atCommit ?? "HEAD");
+    for (const file of (atCommit ? [] : [...git(worktree, ['diff', '--name-only', '-z', 'HEAD']).split('\0'),
+      ...git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0')]).filter(Boolean)) {
       origins.ownFiles.add(file);
       origins.mergeFiles.delete(file);
     }
@@ -428,11 +429,21 @@ export function qaImpact({ worktree, since, evidence, graphImporters, featureMap
 
 /** Recomputes a caller's impact request in the current worktree. */
 export function qaImpactRequest(worktree, request) {
+  return impactRequestAt(worktree, request);
+}
+
+/** Recompute from immutable proof objects; ancestry is still mandatory at that exact proof. */
+export function qaImpactRequestAtCommit(worktree, request, commit) {
+  if (!/^[a-f0-9]{40}$/.test(commit ?? "") || git(worktree, ["rev-parse", "--verify", `${commit}^{commit}`]) !== commit) throw new Error("unverified proof commit");
+  return impactRequestAt(worktree, request, commit);
+}
+
+function impactRequestAt(worktree, request, atCommit) {
   const since = request?.lastQa?.boundary;
   if (typeof since !== "string" || !since.trim() || (request.since !== undefined && request.since !== since)) {
     throw new Error("impact request needs lastQa.boundary as its recorded last-QA point");
   }
-  const head = git(worktree, ["rev-parse", "HEAD"]);
+  const head = atCommit ?? git(worktree, ["rev-parse", "HEAD"]);
   let boundary;
   try {
     boundary = git(worktree, ["rev-parse", "--verify", `${since}^{commit}`]);
@@ -440,10 +451,10 @@ export function qaImpactRequest(worktree, request) {
   } catch {
     throw new Error("lastQa.boundary must resolve to an ancestor of HEAD");
   }
-  if (boundary === head && !git(worktree, ["status", "--porcelain"])) throw new Error("lastQa.boundary must precede HEAD");
+  if (boundary === head && (atCommit || !git(worktree, ["status", "--porcelain"]))) throw new Error("lastQa.boundary must precede HEAD");
   const laneMap = normalizeLaneSelections(request.laneSelections);
   if (!laneMap?.size || ![...laneMap.values()].some((lanes) => lanes.length > 0)) throw new Error("impact request needs non-empty laneSelections");
-  return qaImpact({ worktree, since: boundary, evidence: request.evidence, graphImporters: request.graphImporters,
+  return qaImpact({ worktree, since: boundary, atCommit, evidence: request.evidence, graphImporters: request.graphImporters,
     featureMap: request.featureMap, laneSelections: request.laneSelections, config: request.config });
 }
 
