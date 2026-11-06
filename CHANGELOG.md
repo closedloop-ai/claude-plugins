@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Native Codex reviewer receipts in the handoff's `codex-review-runtime.mjs` now load when the completed turn summary from `thread/turns/list` says its items are not loaded but the separate `thread/items/list` pages return them: the summary's `itemsView: "notLoaded"` marker is dropped once those pages are read. A completed turn with absent items (no item array, an empty one, or one still marked not loaded) is still refused.
+- Pull-request template discovery in the handoff's `pr-facts.mjs` now lists the four candidate template paths on the base with one `git ls-tree` call and reads only the first one present, instead of trying `git show` on each path and swallowing its failure. A base with none of the four templates no longer prints fatal Git errors on stderr and adds no body problems; a present template still has its headings enforced, and a real Git failure (for example an unreadable base) now surfaces instead of being treated as no template.
 
 ### vibe v1.1.45
 
