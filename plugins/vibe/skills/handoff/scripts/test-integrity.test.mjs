@@ -135,8 +135,8 @@ test("responsive candidates ignore reviewer wording but retain mobile cases and 
     "the checker's synthetic source is not an executable responsive boundary");
 });
 
-test("MobileCard and NarrowLayout story plays require proof, while NarrowerLayout does not", () => {
-  const fixtures = ["MobileCard", "NarrowLayout", "NarrowerLayout"].map((name) => changed(
+test("lower-camel and Pascal responsive story plays require proof, while NarrowerLayout does not", () => {
+  const fixtures = ["mobileCard", "narrowLayout", "MobileCard", "NarrowLayout", "NarrowerLayout"].map((name) => changed(
     `packages/app/${name}.stories.tsx`, [
       `export const ${name}: Story = {`,
       "  play: async () => { await expect(card).toBeVisible(); },",
@@ -146,9 +146,36 @@ test("MobileCard and NarrowLayout story plays require proof, while NarrowerLayou
   const files = fixtures.map(({ file }) => file);
   const read = (file) => sources.get(file) ?? null;
   const missing = testIntegrityProblems({ testIntegrityProofs: [] }, files, read, COMMIT).join("\n");
+  assert.match(missing, /responsive:packages\/app\/mobileCard\.stories\.tsx/);
+  assert.match(missing, /responsive:packages\/app\/narrowLayout\.stories\.tsx/);
   assert.match(missing, /responsive:packages\/app\/MobileCard\.stories\.tsx/);
   assert.match(missing, /responsive:packages\/app\/NarrowLayout\.stories\.tsx/);
   assert.doesNotMatch(missing, /NarrowerLayout/);
+});
+
+test("responsive setup ignores quoted and commented tokens but keeps executable calls and assertions", () => {
+  const fixture = (name, body, needle) => changed(`packages/app/${name}.test.tsx`, [
+    'test("reviews the layout", async ({ page }) => {',
+    ...body,
+    "});",
+  ].join("\n"), [needle]);
+  const fixtures = [
+    fixture("quoted", ['  const note = "page.setViewportSize({ width: 390 })";'], "setViewportSize"),
+    fixture("quoted-breakpoint", ['  const note = "expect(panel).toHaveClass(\'md:hidden\')";'], "toHaveClass"),
+    fixture("line-comment", ["  // await page.setViewportSize({ width: 390 });"], "setViewportSize"),
+    fixture("block-comment", ["  /*", "  await page.setViewportSize({ width: 390 });", "  */"], "setViewportSize"),
+    fixture("commented-assertion", ['  expect(enabled).toBe(true); // expect(panel).toHaveClass("md:hidden");'], "toHaveClass"),
+    fixture("real-viewport", ["  await page.setViewportSize({ width: 390, height: 844 });"], "setViewportSize"),
+    fixture("real-breakpoint", ['  expect(panel).toHaveClass("md:hidden");'], "toHaveClass"),
+  ];
+  const sources = new Map(fixtures.map(({ file, source }) => [file.path, source]));
+  const candidates = testIntegrityCandidates(fixtures.map(({ file }) => file), (file) => sources.get(file));
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "responsive").map(({ path }) => path).sort(),
+    ["packages/app/real-breakpoint.test.tsx", "packages/app/real-viewport.test.tsx"]);
+  for (const name of ["quoted", "quoted-breakpoint", "line-comment", "block-comment", "commented-assertion"]) {
+    const item = fixtures.find(({ file }) => file.path === `packages/app/${name}.test.tsx`);
+    assert.deepEqual(testIntegrityProblems({}, [item.file], () => item.source, COMMIT), [], name);
+  }
 });
 
 test("responsive test names accept spaced and camel tokens but not ordinary narrower wording", () => {

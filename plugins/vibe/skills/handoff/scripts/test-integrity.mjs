@@ -8,7 +8,8 @@ import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
 const CHECKER_FIXTURE = "plugins/vibe/skills/handoff/scripts/test-integrity.test.mjs";
 const RESPONSIVE_TOKEN = /^(?:narrow|mobile)$/i;
-const RESPONSIVE_EVIDENCE = /\b(?:setViewportSize|viewport\s*:|matchMedia\s*\(|innerWidth|screen\.width|(?:sm|md|lg):(?:hidden|block|flex|grid)\b)|@media\b/i;
+const RESPONSIVE_CODE = /\b(?:setViewportSize|matchMedia)\s*\(|\bviewport\s*:|\b(?:innerWidth|screen\.width)\b/i;
+const RESPONSIVE_ASSERTION = /\.toHaveClass\s*\(\s*['"`][^'"`]*(?:sm|md|lg):(?:hidden|block|flex|grid)\b|\.to(?:Contain|Match)\s*\(\s*['"`][^'"`]*@media\b/i;
 const ABSENCE_ASSERTION = /toHaveCount\(\s*0\s*\)|\.not\s*\.\s*(?:toBeInTheDocument|toBeVisible|toBeAttached|toExist)\s*\(|\.\s*(?:toBeNull|toBeHidden)\s*\(/;
 const ABSENCE_MATCHER = /^\s*(\.not\s*)?\.\s*(toHaveCount|toBeInTheDocument|toBeVisible|toBeAttached|toExist|toBeNull|toBeHidden)\s*\(/;
 const ASSERTION_FAILURE = /\bAssertionError\b|\bexpect\s*\(|\bExpected(?: count)?:|\bReceived(?: count)?:/i;
@@ -24,6 +25,40 @@ const SHA = /^[a-f0-9]{40}$/;
 function hasResponsiveName(name) {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
     .split(/[^A-Za-z0-9]+/).some((part) => RESPONSIVE_TOKEN.test(part));
+}
+
+/** Keep executable text through a line, excluding strings and comments. */
+function codeAtLine(lines, target) {
+  let quoted = null;
+  let escaped = false;
+  let blockComment = false;
+  let code = "";
+  for (let line = 0; line < target; line += 1) {
+    code = "";
+    const text = lines[line] ?? "";
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      const next = text[index + 1];
+      if (blockComment) {
+        if (char === "*" && next === "/") { blockComment = false; index += 1; }
+      } else if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === quoted) quoted = null;
+      } else if (char === "/" && next === "/") break;
+      else if (char === "/" && next === "*") { blockComment = true; index += 1; }
+      else if (char === "'" || char === '"' || char === "`") quoted = char;
+      else code += char;
+    }
+  }
+  return code;
+}
+
+function hasResponsiveSyntax(lines, line) {
+  const executable = codeAtLine(lines, line);
+  return RESPONSIVE_CODE.test(executable)
+    || (/\bexpect\s*\(/.test(executable) && /\.to(?:HaveClass|Contain|Match)\s*\(/.test(executable)
+      && RESPONSIVE_ASSERTION.test(lines[line - 1] ?? ""));
 }
 
 function addedLines(file) {
@@ -82,7 +117,7 @@ function matchingParenthesis(source, open) {
 function responsiveStoryCandidates(file, source, changedLines) {
   if (!STORY_FILE.test(file.path)) return [];
   const candidates = [];
-  const exported = /\bexport\s+const\s+([A-Z][\w$]*)[^=]*=\s*\{/g;
+  const exported = /\bexport\s+const\s+([A-Za-z][\w$]*)[^=]*=\s*\{/g;
   for (const match of source.matchAll(exported)) {
     const name = match[1];
     if (!hasResponsiveName(name)) continue;
@@ -165,7 +200,7 @@ export function testIntegrityCandidates(files, read) {
     for (const entry of changedLines) {
       const context = nearby(sourceLines, entry.line, 4);
       const caseName = nearestCase(sourceLines, entry.line);
-      if (!STORY_FILE.test(file.path) && (hasResponsiveName(caseName) || RESPONSIVE_EVIDENCE.test(entry.text))
+      if (!STORY_FILE.test(file.path) && (hasResponsiveName(caseName) || hasResponsiveSyntax(sourceLines, entry.line))
         && /\b(?:it|test)\b/.test(nearby(sourceLines, entry.line))) {
         found.push(candidate("responsive", file.path, entry.line, caseName,
           "changed test covers a narrow or mobile state"));
