@@ -345,6 +345,36 @@ test("a body that drops a heading of the repo's pull request template is refused
   assert.match(facts(s, { body: COMPLETE_BODY, template }).prBodyProblems.join(), /template heading "## Summary" is missing/);
 });
 
+test("pull-request inventory treats missing base templates as optional and enforces a present one", (t) => {
+  const inventory = (templates) => {
+    const fixture = makeHome("pr-template-inventory-");
+    t.after(fixture.cleanup);
+    const checkout = path.join(fixture.root, "symphony-alpha");
+    makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: {
+      "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+      "apps/app/page.tsx": "export const page = 1;\n",
+      ...templates,
+    } });
+    git(checkout, ["checkout", "-b", "vibe/no-template"], fixture.home);
+    writeFileSync(path.join(checkout, "apps/app/page.tsx"), "export const page = 2;\n");
+    const body = path.join(fixture.root, "body.md");
+    const prs = path.join(fixture.root, "prs.json");
+    writeFileSync(body, "page changed.\n");
+    writeFileSync(prs, "[]\n");
+    return runNode(INVENTORY, ["--worktree", checkout, "--phase", "pull-request", "--body", body, "--prs-json", prs], fixture.home);
+  };
+  const absent = inventory({});
+  assert.equal(absent.status, 0, JSON.stringify(absent.json));
+  assert.equal(absent.json.ok, true);
+  assert.equal(absent.stderr, "", "four absent optional candidates must emit no fatal Git stderr");
+  assert.deepEqual(absent.json.prBodyProblems, [], JSON.stringify(absent.json));
+  const present = inventory({ ".github/pull_request_template.md": "## Required heading\n",
+    "docs/pull_request_template.md": "## Lower-priority heading\n" });
+  assert.equal(present.status, 1);
+  assert.equal(present.stderr, "");
+  assert.deepEqual(present.json.prBodyProblems, ['template heading "## Required heading" is missing']);
+});
+
 test("test selection covers the whole branch diff, and every selected, required or edited test passed on the commit (#8963)", (t) => {
   const s = session(t);
   const commit = "a".repeat(40);

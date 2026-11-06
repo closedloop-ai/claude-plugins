@@ -7,7 +7,7 @@ import { connectViaProxy, daemonSocket } from "../../codex-fleet-monitor/scripts
 export function observedCodexTurn(thread, sessionId, turnId) {
   if (thread?.id !== sessionId) throw new Error("App Server returned another native reviewer thread");
   const turn = Array.isArray(thread.turns) ? thread.turns.find(item => item?.id === turnId) : null;
-  if (turn?.status !== "completed" || !Array.isArray(turn.items) || turn.itemsView === "notLoaded") {
+  if (turn?.status !== "completed" || !Array.isArray(turn.items) || turn.items.length === 0 || turn.itemsView === "notLoaded") {
     throw new Error("App Server has no loaded completed reviewer turn and items");
   }
   const toolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "completed"
@@ -37,6 +37,9 @@ export async function readCodexReviewTurn(sessionId, turnId, client) {
       items.push(...(page?.data ?? []).map(entry => entry?.item).filter(Boolean));
       cursor = page?.nextCursor ?? null;
     } while (cursor);
-    return observedCodexTurn({ ...thread, turns: [{ ...turn, items }] }, sessionId, turnId);
+    // The summary marker describes thread/turns/list, before these item pages were loaded.
+    const loadedTurn = { ...turn, items };
+    delete loadedTurn.itemsView;
+    return observedCodexTurn({ ...thread, turns: [loadedTurn] }, sessionId, turnId);
   } finally { if (!client) owned.close(); }
 }
