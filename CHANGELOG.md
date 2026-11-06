@@ -7,11 +7,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.1.59
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54; the README version update does not change the net word count.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.57 (origin/main at this merge, 68a756870fef); only the README version line changed.
 
 #### Fixed
 - The Claude worker launcher passes both underscore and hyphen spellings of MCP server names, so restored Claude source writers launched by Codex receive their granted `closedloop-graph` tools while the startup check still rejects a genuinely missing connection.
 - MCP tool identity canonicalizes hyphens to underscores in the server name as well as the operation, so a capability list that grants the same tool under two server spellings is rejected as a duplicate, and the Claude startup check reports and matches pending servers under one canonical name whichever spelling Claude Code returns.
+
+### vibe v1.1.57
+
+#### Fixed
+- In-place skill reload in `codex-session.mjs` now accepts a page acknowledgement whose agent message, with surrounding whitespace trimmed, is exactly `VIBE_SKILL_RELOAD_ACK v1 <nonce>`. A reply that ended with trailing newlines never advanced its page, so every `reload` and `--retry` call waited for an acknowledgement that had already arrived. One shared matcher, `isReloadAck`, serves both the receipt scan and the acknowledgement check; extra words or another nonce still never acknowledge a page.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.55 (origin/main at the merge, 7ffa4aee44f8); only the README version line changed.
+
+### vibe v1.1.55
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54 (origin/main at this merge, 16c854310eac).
+
+#### Fixed
+- Handoff admits `pnpm-lock.yaml` changes only when changed importer and resolved package entries follow dependency edits in package manifests allowed by the target repository; malformed or unexplained entries are named when refusing the handoff.
+- Lockfile evidence parsing rejects malformed manifest dependency maps and keeps its regression coverage in focused test files.
+- Manifest dependency evidence uses own string-map fields, including explicit-null rejection, and its lockfile regressions stay split into focused suites.
 
 ### vibe v1.1.54
 

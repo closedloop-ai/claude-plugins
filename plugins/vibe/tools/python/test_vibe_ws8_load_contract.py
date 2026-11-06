@@ -153,6 +153,8 @@ def test_current_version_and_prior_release_notes() -> None:
     assert "Version `1.1.59`" in (PLUGIN_ROOT / "README.md").read_text()
     changelog = (PLUGIN_ROOT.parents[1] / "CHANGELOG.md").read_text()
     assert "### vibe v1.1.59" in changelog
+    assert "### vibe v1.1.57" in changelog
+    assert "### vibe v1.1.54" in changelog
     assert "Load-aware execution" in changelog
     assert "### vibe v1.1.45" in changelog
     assert "raw PNG bytes" in changelog
