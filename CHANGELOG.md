@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 1,177 words longer than in 1.1.45 (origin/main at the merge). Nightly eval fixtures account for the growth; loaded instruction text is unchanged in total.
 - Generated fleet board lane receipt lines now separate each command and reason with `: `.
 - Published-source handoff evidence resolves the target repository and checks its selected Python, Node, and bench lanes while retaining existing `test:lanes` gates.
+- Semantic and wording graders share one tool-disabled paid JSON executor while keeping separate prompts and verdict names.
 
 #### Fixed
 - Pre-PR lane runs declare first-candidate or follow-up phase and persist one source-bound selection receipt. First candidates require every CI-equivalent report lane; follow-ups require recomputed QA-impact selection and record why each selected lane ran. Fleet ready and push checks reject missing or stale receipts and show those reasons.

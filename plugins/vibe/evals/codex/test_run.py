@@ -710,7 +710,7 @@ def test_paid_semantic_grade_uses_verbatim_criteria_and_structured_result(
     calls = []
 
     def fake_command(args, cwd, env, budget, seconds, output):
-        calls.append(args)
+        calls.append((args, cwd, seconds, output))
         Path(args[args.index("-o") + 1]).write_text(
             json.dumps({"passed": passed, "reason": "semantic verdict"})
         )
@@ -733,7 +733,10 @@ def test_paid_semantic_grade_uses_verbatim_criteria_and_structured_result(
         "reason": "semantic verdict",
     }
     assert len(calls) == 1
-    args = calls[0]
+    args, cwd, seconds, output = calls[0]
+    assert cwd == tmp_path / "grade"
+    assert seconds == 90
+    assert output == cwd / "events.jsonl"
     prompt = args[-1]
     assert args[-2] == "--"
     assert criteria in prompt
@@ -745,6 +748,24 @@ def test_paid_semantic_grade_uses_verbatim_criteria_and_structured_result(
     schema = json.loads(Path(args[args.index("--output-schema") + 1]).read_text())
     assert schema["required"] == ["passed", "reason"]
     assert schema["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("failure", ["timeout", "bad-json"])
+def test_paid_json_grader_preserves_timeout_and_parse_errors(
+    tmp_path: Path, monkeypatch, failure: str
+) -> None:
+    def fake_command(args, cwd, env, budget, seconds, output):
+        assert seconds == 90
+        if failure == "timeout":
+            raise RuntimeError("time cap reached after 60.0s; process group stopped")
+        Path(args[args.index("-o") + 1]).write_text("not json")
+
+    monkeypatch.setattr(runner, "command", fake_command)
+    with pytest.raises(RuntimeError if failure == "timeout" else json.JSONDecodeError):
+        runner.run_paid_json_grader(
+            "plain-language", "Grade wording", tmp_path / "grade", {},
+            runner.Budget(60), "grader-model", "codex",
+        )
 
 
 @pytest.mark.parametrize("passed", [True, False])
@@ -853,11 +874,13 @@ def test_wording_model_only_runs_after_deterministic_pass(
 ) -> None:
     case = next(c for c in runner.cases() if c["name"] == "executive-done-asks-two-way")
     calls = []
+    paid_calls = []
 
     def fake_command(args, cwd, env, budget, seconds, output):
         calls.append(args)
         final = Path(args[args.index("-o") + 1])
         if final.name == "reply.json":
+            paid_calls.append((args, cwd, seconds, output))
             final.write_text(json.dumps({"passed": True, "reason": "plain"}))
         else:
             final.write_text(
@@ -899,6 +922,22 @@ def test_wording_model_only_runs_after_deterministic_pass(
     assert result["usage"]["input_tokens"] == (20 if valid else 10)
     assert all("allow_login_shell=false" in args for args in calls)
     assert all(args[-2] == "--" for args in calls)
+    if valid:
+        assert len(paid_calls) == 1
+        args, cwd, seconds, output = paid_calls[0]
+        assert cwd == tmp_path / case["name"] / "wording"
+        assert seconds == 90
+        assert output == cwd / "events.jsonl"
+        assert args[-1].startswith("Grade plain-language wording only.")
+        assert "Rules:\n" in args[-1]
+        assert 'plugins."vibe@vibe-eval".enabled=false' in args
+        assert 'plugins."closedloop-core@vibe-eval".enabled=false' in args
+        schema = json.loads(Path(args[args.index("--output-schema") + 1]).read_text())
+        assert schema["required"] == ["passed", "reason"]
+        assert schema["additionalProperties"] is False
+        assert any(item["grader"] == "plain-language" and item["passed"] for item in result["checks"])
+    else:
+        assert paid_calls == []
 
 
 @pytest.mark.parametrize("valid", [True, False])
