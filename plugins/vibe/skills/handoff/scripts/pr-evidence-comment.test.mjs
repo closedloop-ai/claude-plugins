@@ -7,11 +7,22 @@ import { fileURLToPath } from "node:url";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { qaImpactRequest } from "./qa-impact.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 
-test("the PR comment lists the final SHA, exact cases, command, tier and result SHA", () => {
-  const commit = "f".repeat(40);
+test("the PR comment lists the final SHA, exact cases, command, tier and result SHA", (t) => {
+  const { root, home, cleanup } = makeHome("pr-evidence-comment-");
+  t.after(cleanup);
+  const worktree = path.join(root, "worktree");
+  mkdirSync(worktree);
+  git(worktree, ["init", "--quiet"], home);
+  writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: { "test:lanes": "node lanes.mjs" } }));
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "candidate"], home);
+  const source = sourceIdentity(worktree);
+  const commit = source.head;
   const command = "pnpm --filter app exec vitest run src/list.test.ts -t search";
   const evidence = {
+    source,
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit,
       laneReport: { command: "pnpm test:lanes", matches: [{ name: "Browser E2E", command: "pnpm test:browser-e2e" }] },
       entries: [{ kind: "vitest", path: "src/list.test.ts", cases: ["search"], command }] },
@@ -28,25 +39,29 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
     e2eCapability: { selectedTier: "A", container: { dockerPresent: true, dockerReachable: true, memoryGiB: 24, diskGiB: 80,
       minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "repo probe" }, native: { available: true, forbidden: false }, remote: { available: false } },
   };
-  const comment = renderEvidenceComment(evidence);
+  const comment = renderEvidenceComment(evidence, worktree);
   for (const value of [commit, "src/list.test.ts", "search", command, "E2E tier: A", `passed at \`${commit}\``, "Browser E2E", "pnpm test:browser-e2e", "Test integrity mutations", "restore the stale row", "Expected null but found the stale row (exit 1)"]) assert.ok(comment.includes(value), value);
-  assert.throws(() => renderEvidenceComment({}), /targeted inventory/);
+  assert.throws(() => renderEvidenceComment({}, worktree), /targeted inventory/);
   assert.throws(() => renderEvidenceComment({
     ...evidence,
     testIntegrityProofs: [{ ...evidence.testIntegrityProofs[0], mutationRun: undefined }],
-  }), /absence proof needs a mutation run/);
+  }, worktree), /absence proof needs a mutation run/);
   const multiline = renderEvidenceComment({
     ...evidence,
     testIntegrityProofs: [{ ...evidence.testIntegrityProofs[0],
       mutationRun: { command, exitCode: 1,
         assertionFailure: "AssertionError: expect(screen.queryByRole).toBeNull failed at src/list.test.ts:4:1\nExpected: null | Received: row" } }],
-  });
+  }, worktree);
   assert.ok(multiline.includes("src/list.test.ts:4:1<br>Expected: null \\| Received: row"));
   assert.equal(multiline.split("\n").filter((line) => line.startsWith("| absence |")).length, 1);
   assert.throws(() => renderEvidenceComment({
     ...evidence,
     testSelection: { codeTestsFor: { "src/list.ts": ["list.test.ts"] } },
-  }), /testSelection must be an array/);
+  }, worktree), /testSelection must be an array/);
+  assert.throws(() => renderEvidenceComment({ ...evidence, targetedInventory: { ...evidence.targetedInventory, commit: "f".repeat(40) } }, worktree), /inventory commit differs/);
+  assert.throws(() => renderEvidenceComment({ ...evidence, source: { ...source, treeSha256: "0".repeat(64) } }, worktree), /evidence source differs/);
+  writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: { "test:lanes": "node other-lanes.mjs" } }));
+  assert.throws(() => renderEvidenceComment({ ...evidence, source: sourceIdentity(worktree) }, worktree), /clean published worktree/);
 });
 
 test("qa-impact PR evidence comment needs the exact owned worktree", (t) => {
@@ -59,6 +74,7 @@ test("qa-impact PR evidence comment needs the exact owned worktree", (t) => {
   git(worktree, ["add", "."], home);
   git(worktree, ["commit", "--quiet", "-m", "base"], home);
   const boundary = git(worktree, ["rev-parse", "HEAD"], home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], home);
   mkdirSync(path.join(worktree, "src"));
   const file = "src/check.mjs";
   writeFileSync(path.join(worktree, file), "export const checked = true;\n");
@@ -69,7 +85,7 @@ test("qa-impact PR evidence comment needs the exact owned worktree", (t) => {
   const request = { lastQa: { boundary }, evidence: { screens: [] }, graphImporters: { importers: { [file]: [] } },
     featureMap: { entries: [] }, laneSelections: { files: { [file]: [command] } } };
   const impact = qaImpactRequest(worktree, request);
-  const evidence = { qaImpactRequest: request, testSelection: [], testIntegrityProofs: [], rerunCycles: [],
+  const evidence = { source: sourceIdentity(worktree), qaImpactRequest: request, testSelection: [], testIntegrityProofs: [], rerunCycles: [],
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, impactKey: impact.laneKey,
       laneReport: { command: "qa-impact.mjs", matches: [{ name: "node", command, reason: impact.reason }] },
       entries: [], noTestsReason: "lane only" },
@@ -81,7 +97,10 @@ test("qa-impact PR evidence comment needs the exact owned worktree", (t) => {
   const wrong = path.join(root, "wrong");
   mkdirSync(wrong);
   git(wrong, ["init", "--quiet"], home);
-  assert.throws(() => renderEvidenceComment(evidence, wrong), /could not be recomputed/);
+  writeFileSync(path.join(wrong, "README.md"), "other repository\n");
+  git(wrong, ["add", "."], home);
+  git(wrong, ["commit", "--quiet", "-m", "other"], home);
+  assert.throws(() => renderEvidenceComment(evidence, wrong), /evidence source differs/);
   const input = path.join(root, "evidence.json");
   const output = path.join(root, "comment.md");
   writeFileSync(input, JSON.stringify(evidence));

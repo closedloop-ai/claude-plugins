@@ -270,7 +270,8 @@ function rawEntries(worktree, refs) {
   return result;
 }
 
-function changedEntries(worktree, since) {
+/** All committed, dirty and untracked files changed since an exact QA boundary. */
+export function changedEntries(worktree, since) {
   const result = rawEntries(worktree, [since]);
   // A gitlink can leave a regular file on disk; preserve the committed type change.
   for (const entry of rawEntries(worktree, [since, 'HEAD']).filter(entry => entry.newMode === '160000')) {

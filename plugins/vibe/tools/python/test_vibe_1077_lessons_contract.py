@@ -25,8 +25,10 @@ def test_vibe_worktrees_refuse_long_foreground_waits() -> None:
 
 
 def test_every_pr_open_step_requires_the_lanes_ci_would_run() -> None:
-    for path in (PLUGIN / "agents" / "vibe-environment-worker.md", PLUGIN / "skills" / "handoff" / "SKILL.md", FLEET / "SKILL.md"):
+    for path in (PLUGIN / "agents" / "vibe-environment-worker.md", PLUGIN / "skills" / "handoff" / "SKILL.md"):
         assert "pre-pr-lanes.mjs check" in _text(path), path.name
+    fleet = _text(FLEET / "SKILL.md")
+    assert "source-bound lane-selection receipt" in fleet and "`pre-pr-lanes.mjs`" in fleet
 
 
 def test_green_watch_triages_each_lane_and_mocks_per_block() -> None:

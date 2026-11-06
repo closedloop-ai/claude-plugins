@@ -367,6 +367,7 @@ test("older lane and inventory evidence requires a recomputed impact key", (t) =
   git(worktree, ["add", "-A"], fixture.home);
   git(worktree, ["commit", "--quiet", "-m", "base"], fixture.home);
   const boundary = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], fixture.home);
   writeFileSync(path.join(worktree, spec), "export const value = 2;\n");
   git(worktree, ["commit", "--quiet", "-am", "change spec"], fixture.home);
   const final = git(worktree, ["rev-parse", "HEAD"], fixture.home);
@@ -400,6 +401,7 @@ test("qa-impact lane evidence binds Python, Node and bench commands without repl
   git(worktree, ["add", "."], fixture.home);
   git(worktree, ["commit", "--quiet", "-m", "base"], fixture.home);
   const boundary = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], fixture.home);
   mkdirSync(path.join(worktree, "src"));
   const changed = "src/check.mjs";
   writeFileSync(path.join(worktree, changed), "export const checked = true;\n");
@@ -432,6 +434,16 @@ test("qa-impact lane evidence binds Python, Node and bench commands without repl
   assert.match(problems({ ...evidence, testRuns: [{ ...runs[0], laneKey: "0".repeat(16) }, ...runs.slice(1)] }), /lane python: no passing run/);
   assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory,
     laneReport: { command: "pnpm test:lanes", matches: [] } } }), /has no test:lanes/);
+  git(worktree, ["update-ref", "-d", "refs/remotes/origin/main"], fixture.home);
+  assert.match(problems(evidence), /captured main package.json is unreadable/, "missing captured main cannot downgrade its reporter");
+  git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], fixture.home);
+  writeFileSync(path.join(worktree, "package.json"), "{bad json");
+  git(worktree, ["add", "package.json"], fixture.home);
+  git(worktree, ["commit", "--quiet", "-m", "unreadable main manifest"], fixture.home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", "HEAD"], fixture.home);
+  git(worktree, ["reset", "--hard", commit], fixture.home);
+  assert.match(problems(evidence), /captured main package.json is unreadable/, "unreadable main manifest cannot downgrade its reporter");
+  git(worktree, ["update-ref", "refs/remotes/origin/main", boundary], fixture.home);
   writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: { "test:lanes": "fixture" } }));
   assert.match(problems(evidence), /declares test:lanes/);
   git(worktree, ["add", "package.json"], fixture.home);

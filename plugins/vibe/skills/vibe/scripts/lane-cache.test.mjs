@@ -132,7 +132,8 @@ test("both reuse modes retain their cached lanes and an unavailable E2E record",
   const source = sourceIdentity(s.worktree);
   const selected = (name, commands) => {
     const file = path.join(s.root, name);
-    writeFileSync(file, JSON.stringify({ schemaVersion: 1, source,
+    writeFileSync(file, JSON.stringify({ schemaVersion: 1, source, producer: "code_tests_for_changes", boundary: first,
+      fileCoverage: [{ file: "README.md", status: "tests_found", tests: ["README.test.mjs"], commands }],
       lanes: commands.map((command) => ({ command, reason: `selected ${command}` })) }));
     return file;
   };

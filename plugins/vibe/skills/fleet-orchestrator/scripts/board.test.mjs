@@ -414,6 +414,24 @@ test('a ready declaration without a worktree receipt fails closed', (t) => {
   assert.match(refused.stderr, /worktree lane-selection receipt/);
 });
 
+test('push-check requires the declared ready head and an unambiguous prefix', (t) => {
+  const dir = tempDir(t);
+  const wt = gitRepo(t);
+  assert.equal(spawnSync('git', ['-C', wt, '-c', 'user.name=Test', '-c', 'user.email=test',
+    'commit', '--quiet', '--allow-empty', '-m', 'ready candidate']).status, 0);
+  const head = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const other = '5ec6633da7ff';
+  assert.equal(run([dir, 'writer', 'w1', '--head', head, '--worktree', wt]).status, 0);
+  assert.equal(run([dir, 'push-check', 'w1', '--head', head]).status, 1);
+  writeLaneReceipt(wt, head);
+  const ready = run([dir, 'writer', 'w1', '--ready', head]);
+  assert.equal(ready.status, 0, ready.stderr);
+  assert.equal(run([dir, 'push-check', 'w1', '--head', other]).status, 1, 'the committed head is not the ready one');
+  assert.equal(run([dir, 'push-check', 'w1', '--head', head.slice(0, 7)]).status, 0);
+  assert.equal(run([dir, 'push-check', 'w1', '--head', head.slice(0, 3)]).status, 1, 'a short prefix proves nothing');
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), new RegExp(`\\| w1 \\|  \\| ${head} \\| ${head} \\|`));
+});
+
 test('status fails on state outside the fleet home: a flat watched dir, and a session not started through fleet.sh', (t) => {
   const flat = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-flat-'));
   t.after(() => rmSync(flat, { recursive: true, force: true }));

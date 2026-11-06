@@ -102,9 +102,19 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   const followHead = git(worktree, ["rev-parse", "HEAD"], home).trim();
   const selected = path.join(root, "code-tests.json");
   const selectedBytes = JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
+    producer: "code_tests_for_changes", boundary: head,
+    fileCoverage: [{ file: "a.txt", status: "tests_found", tests: ["a.test.mjs"], commands: [first] }],
     lanes: [{ command: first, reason: "changed unit maps to this lane" }] });
   const selectedKey = createHash("sha256").update(selectedBytes).digest("hex");
   writeFileSync(selected, selectedBytes);
+  const absentProducer = path.join(root, "code-tests-absent-producer.json");
+  writeFileSync(absentProducer, JSON.stringify({ ...JSON.parse(selectedBytes), producer: undefined }));
+  assert.match(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", absentProducer).stderr,
+    /normalized code_tests_for_changes/);
+  const incompleteCoverage = path.join(root, "code-tests-incomplete.json");
+  writeFileSync(incompleteCoverage, JSON.stringify({ ...JSON.parse(selectedBytes), fileCoverage: [] }));
+  assert.match(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", incompleteCoverage).stderr,
+    /complete changed-file coverage/);
   const extra = run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", selected,
     "--command", second, "--result", "pass");
   assert.equal(extra.status, 2, "an unselected extra lane is refused");
@@ -126,7 +136,13 @@ test("phase receipts refuse full followups and incomplete first candidates, then
     "followup receipts retain that the first candidate already ran");
 
   const none = path.join(root, "code-tests-none.json");
-  writeFileSync(none, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree), lanes: [] }));
+  writeFileSync(none, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree), producer: "code_tests_for_changes", boundary: head,
+    fileCoverage: [{ file: "a.txt", status: "confirmed_none", reason: "graph confirms no affected test", tests: [], commands: [] }], lanes: [] }));
+  const unsupportedNone = path.join(root, "code-tests-unsupported-none.json");
+  writeFileSync(unsupportedNone, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree), producer: "code_tests_for_changes", boundary: head,
+    fileCoverage: [{ file: "a.txt", status: "tests_found", tests: ["a.test.mjs"], commands: [] }], lanes: [] }));
+  assert.match(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", unsupportedNone).stderr,
+    /selected commands/);
   const noneRun = run("record", "--worktree", worktree, "--head", followHead, "--phase", "followup", "--code-tests", none,
     "--command", first, "--result", "pass");
   assert.equal(noneRun.status, 2, "None selection permits no heavy run");
@@ -135,7 +151,8 @@ test("phase receipts refuse full followups and incomplete first candidates, then
   assert.deepEqual(readLaneSelectionReceipt(worktree).lanes, []);
   const stale = path.join(root, "code-tests-stale.json");
   writeFileSync(stale, JSON.stringify({ schemaVersion: 1,
-    source: { ...sourceIdentity(worktree), head: "0".repeat(40) }, lanes: [] }));
+    source: { ...sourceIdentity(worktree), head: "0".repeat(40) }, producer: "code_tests_for_changes", boundary: head,
+    fileCoverage: [{ file: "a.txt", status: "confirmed_none", reason: "graph confirms no affected test" }], lanes: [] }));
   assert.equal(run("check", "--worktree", worktree, "--phase", "followup", "--code-tests", stale).status, 2,
     "stale source-bound code-test evidence is refused");
 });

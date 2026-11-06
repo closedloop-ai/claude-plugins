@@ -522,11 +522,15 @@ function hasTestLanesScript(worktree) {
     return typeof packageJson?.scripts?.["test:lanes"] === "string" && packageJson.scripts["test:lanes"].trim() !== "";
   };
   if (existsSync(manifest) && declares(readFileSync(manifest, "utf8"))) return true;
-  let mainManifest;
-  try { mainManifest = execFileSync("git", ["-C", worktree, "show", "refs/remotes/origin/main:package.json"],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
-  catch { return false; }
-  return declares(mainManifest);
+  const options = { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] };
+  try {
+    execFileSync("git", ["-C", worktree, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}"], options);
+    const entry = execFileSync("git", ["-C", worktree, "ls-tree", "refs/remotes/origin/main", "--", "package.json"], options);
+    if (!entry.trim()) return false; // A verified captured main truly has no root package manifest.
+    return declares(execFileSync("git", ["-C", worktree, "show", "refs/remotes/origin/main:package.json"], options));
+  } catch {
+    throw new Error("captured main package.json is unreadable; lane source cannot be verified");
+  }
 }
 
 /** Recompute an alternative lane selection; a target with test:lanes keeps that stronger contract. */

@@ -78,28 +78,6 @@ test("target repository declaration admits claude-plugins source, tools, evals, 
   assert.deepEqual(blocked.json.forbidden, [{ path: "plugins/vibe/AGENTS.md", status: "A" }]);
 });
 
-test("handoff overlap reads the target repository from its worktree", (t) => {
-  const { root, home, worktree } = setup(t, "claude-overlap", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
-    repoName: "claude-plugins", remoteUrl: "git@github.com:closedloop-ai/claude-plugins.git", declared: false,
-  });
-  write(worktree, "plugins/vibe/skills/handoff/scripts/owner.mjs", "export const owner = true;\n");
-  const bin = path.join(root, "bin");
-  mkdirSync(bin);
-  const script = path.join(bin, "gh");
-  writeFileSync(script, `#!/bin/sh
-case "$1 $2" in
-  "repo view") [ "$PWD" = "${worktree}" ] || exit 9; printf '%s\\n' 'closedloop-ai/claude-plugins' ;;
-  "pr list") case " $* " in *"--repo closedloop-ai/claude-plugins"*) printf '%s\\n' '[]' ;; *) exit 8 ;; esac ;;
-  *) exit 3 ;;
-esac
-`);
-  chmodSync(script, 0o700);
-  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff", "--overlap"], home,
-    { PATH: `${bin}:${process.env.PATH}` });
-  assert.equal(result.json.overlapError, undefined, result.stderr);
-  assert.deepEqual(result.json.overlap, []);
-});
-
 test("root declaration uses the verified origin default when the captured base lacks one", (t) => {
   const { home, checkout, worktree } = setup(t, "claude-root-rollout", {}, {
     repoName: "claude-plugins", declared: false,

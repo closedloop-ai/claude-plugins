@@ -16,7 +16,8 @@ def read(path: str) -> str:
 
 def test_targeted_tests_are_the_lanes_test_lanes_names() -> None:
     verify = read("agents/vibe-verify-worker.md")
-    assert "each named lane by the command\n`pnpm test:lanes` prints" in verify
+    assert "Run `pnpm test:lanes` when\ndeclared; otherwise use `qaImpactRequest`" in verify
+    assert "Run that set once, each named lane by the command\nthe source selects" in verify
     assert "a whole lane or package suite locally" not in verify
     assert "ci-job-shape.mjs" in verify
     assert "capability ledger or\nparity test listing a sibling prop" in read("agents/vibe-change-worker.md")

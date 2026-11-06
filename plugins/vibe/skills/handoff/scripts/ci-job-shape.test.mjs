@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -30,6 +30,10 @@ concurrency: x
 const TIERS = "| Job | Tier | Responsibility |\n| --- | --- | --- |\n| `storybook-build` | `batch-only` | lane |\n| `lint` | `merge-group-only` | lane |\n";
 
 test("a check inside a batch-only depth-1 job reports that shape (#9230)", () => {
+  const instructions = readFileSync(path.resolve(path.dirname(SCRIPT), "../SKILL.md"), "utf8");
+  for (const requirement of ["checkout depth", "runtime/toolchain", "install", "matrix", "build", "generated-dist", "ciCheckRepros"]) {
+    assert.ok(instructions.includes(requirement), `handoff retains the ${requirement} job-shape requirement`);
+  }
   assert.deepEqual(workflowJobs(WORKFLOW).map((job) => job.job), ["storybook-build", "lint"]);
   assert.equal(tierOf(TIERS, "storybook-build"), "batch-only");
   assert.equal(tierOf(TIERS, "build"), "unlisted");
@@ -40,6 +44,8 @@ test("a check inside a batch-only depth-1 job reports that shape (#9230)", () =>
   assert.equal(storybook.fetchDepth, 1);
   assert.match(storybook.checkout, /no origin\/main/);
   assert.match(storybook.if, /pull_request/);
+  assert.notDeepEqual({ tier: storybook.tier, fetchDepth: storybook.fetchDepth }, { tier: "pull-request", fetchDepth: 0 },
+    "a batch-only depth-1 job cannot be represented by a full-history pull-request checkout");
   assert.equal(lint.fetchDepth, 0);
   assert.deepEqual(lint.env, ["CI_DIFF_BASE_REF"]);
   assert.deepEqual(missing, ["check:nothing"]);

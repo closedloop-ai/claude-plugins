@@ -74,7 +74,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { changedEntries, qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
 import { git } from "./session-record.mjs";
 import { testedHead, testedSource, sourceIdentity, sameSource, validSourceIdentity, withStableSource } from "./tested-head.mjs";
@@ -300,7 +300,7 @@ function reuseUnaffectedLanes(values, lanes, records, selected, already) {
 }
 
 /** Absolute canonical source-bound lane-selection receipt path for a worktree. */
-export function laneSelectionReceiptFile(worktree) {
+function laneSelectionReceiptFile(worktree) {
   return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), RECEIPT_FILE);
 }
 
@@ -403,6 +403,34 @@ function selectedScope(values, command, source) {
     });
     const lanes = [...new Set(rows.map((lane) => lane.command))];
     if (lanes.length !== rows.length || (command && !lanes.includes(command))) throw new Error("--code-tests must select this lane exactly once");
+    const boundary = priorReceipt.firstCandidateSource.head;
+    if (evidence.producer !== "code_tests_for_changes" || evidence.boundary !== boundary) {
+      throw new Error("--code-tests needs normalized code_tests_for_changes evidence from the prior receipt boundary");
+    }
+    try { git(values.worktree, ["merge-base", "--is-ancestor", boundary, "HEAD"]); }
+    catch { throw new Error("--code-tests boundary must be an ancestor of HEAD"); }
+    const changed = changedEntries(values.worktree, boundary).map((entry) => entry.path).sort();
+    const coverage = evidence.fileCoverage;
+    if (!changed.length || !Array.isArray(coverage) || coverage.length !== changed.length
+      || coverage.some((entry) => typeof entry?.file !== "string")
+      || coverage.map((entry) => entry.file).sort().some((file, index) => file !== changed[index])) {
+      throw new Error("--code-tests needs complete changed-file coverage from code_tests_for_changes");
+    }
+    const coveredCommands = new Set();
+    for (const entry of coverage) {
+      if (entry.status === "tests_found") {
+        if (!Array.isArray(entry.tests) || !entry.tests.length || !entry.tests.every((test) => typeof test === "string" && test.trim())
+          || !Array.isArray(entry.commands) || !entry.commands.length
+          || !entry.commands.every((selected) => typeof selected === "string" && lanes.includes(selected))) {
+          throw new Error(`--code-tests ${entry.file} needs normalized test paths and selected commands`);
+        }
+        for (const selected of entry.commands) coveredCommands.add(selected);
+      } else if (entry.status !== "confirmed_none" || typeof entry.reason !== "string" || !entry.reason.trim()
+        || entry.tests?.length || entry.commands?.length) {
+        throw new Error(`--code-tests ${entry.file} needs tests_found or explicit confirmed_none coverage`);
+      }
+    }
+    if (coveredCommands.size !== lanes.length) throw new Error("--code-tests lanes differ from normalized changed-file coverage");
     const key = createHash("sha256").update(rawEvidence).digest("hex");
     return { lanes, laneKey: key, impact: null, selection: { kind: "code-tests", key },
       reasons: Object.fromEntries(rows.map((lane) => [lane.command, lane.reason])) };

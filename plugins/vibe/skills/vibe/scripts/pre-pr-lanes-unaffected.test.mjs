@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { lanesTouchedSince } from "./pre-pr-lanes.mjs";
+import { lanesTouchedSince, readLaneSelectionReceipt } from "./pre-pr-lanes.mjs";
 import { sourceIdentity } from "./tested-head.mjs";
 import { git, makeHome, mockLaneReporter } from "./test-fixtures.mjs";
 
@@ -38,7 +38,11 @@ function fixture(t) {
   };
   const codeTests = () => {
     const file = path.join(root, "code-tests.json");
+    const boundary = readLaneSelectionReceipt(worktree).firstCandidateSource.head;
+    const changed = git(worktree, ["diff", "--name-only", boundary, "HEAD"], home).split("\n").filter(Boolean);
     writeFileSync(file, JSON.stringify({ schemaVersion: 1, source: sourceIdentity(worktree),
+      producer: "code_tests_for_changes", boundary,
+      fileCoverage: changed.map((changedFile) => ({ file: changedFile, status: "tests_found", tests: ["fixture.test.mjs"], commands: [UNIT, LINT] })),
       lanes: [UNIT, LINT].map((command) => ({ command, reason: "focused test selection" })) }));
     return file;
   };

@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Pre-PR lane runs declare first-candidate or follow-up phase and persist one source-bound selection receipt. First candidates require every CI-equivalent report lane; follow-ups require QA-impact or code-test provenance and record why each selected lane ran. Fleet ready and push checks reject missing or stale receipts and show those reasons.
+- Published-source handoff comments reject stale evidence, and follow-up lane receipts require complete changed-file test provenance; the handoff check also retains CI job-shape verification.
 
 ### vibe v1.1.45
 

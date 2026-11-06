@@ -579,15 +579,15 @@ verification, audit the uncommitted candidate:
 `../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
-Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific
-human ruling. The ticket carries every ruling and amended criterion; no plan
-excludes scope without human authority. QA evidence names screen, host, state and
-flag arm. Later changes use `scripts/qa-impact.mjs` with importers, FEATURE_MAP,
-lane report and that evidence; `None` runs no local lane, screenshot, audit or
-critic, otherwise only its scope. CI remains per push. Re-audit only criteria
-on affected screens.
+Record rollout requirements as `Rollout: <id>:` with code or a ticket/PRD-specific
+human ruling. The ticket carries rulings and criteria; no plan
+excludes scope without human authority. QA evidence records screen, host, state
+and flag arms. Later changes use `scripts/qa-impact.mjs` with that evidence,
+importers, FEATURE_MAP and lane report; run selected scope; re-audit affected
+criteria. CI remains per push.
 
-`pre-pr-lanes.mjs check` is the source-bound push-ready receipt gate: first candidates use the full CI-equivalent `--phase first-candidate --report`; later diffs use `--phase followup --impact` or `--code-tests` selection.
+`pre-pr-lanes.mjs check` requires a source-bound receipt: first candidates use full CI-equivalent `--phase first-candidate --report`; follow-ups use `--phase followup --impact` or `--code-tests`.
+Changed checks/CI scripts run in affected jobs' checkout depth, runtime/toolchain, install, matrix, build and generated-dist shape; inspect with `scripts/ci-job-shape.mjs`; record `ciCheckRepros`.
 
 On a requested pull request, skip assign mode: the ticket stays with the
 person, In Progress. Before dispatch, require the refreshed pinned-base
