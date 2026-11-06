@@ -85,8 +85,7 @@ import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
-import { laneSelectionReceiptProblems, readLaneSelectionReceipt } from "../../vibe/scripts/pre-pr-lanes.mjs";
-import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
+import { laneSelectionReceiptProblems, localLaneSelectionEvidence } from "../../vibe/scripts/pre-pr-lanes.mjs";
 
 const STATE = "board.json";
 const PAGE = "board.md";
@@ -317,20 +316,19 @@ function pairs(texts, flag) {
 function readyLaneSelection(row, ready, receiptFile) {
   let receipt;
   let source;
+  let problems;
   if (row.where === "remote") {
     if (receiptFile && existsSync(receiptFile)) receipt = JSON.parse(readFileSync(receiptFile, "utf8"));
     else if (row.laneSelection) receipt = row.laneSelection;
     else throw new Error("a remote ready declaration needs --lane-receipt <source-bound receipt JSON>");
     source = receipt?.source;
     if (!source?.head?.startsWith(ready) && !ready.startsWith(source?.head ?? "")) throw new Error("lane receipt source head does not match the remote ready SHA");
+    problems = laneSelectionReceiptProblems(receipt, source);
   } else {
     if (!row.worktree) throw new Error("a local ready declaration needs its recorded worktree");
-    receipt = readLaneSelectionReceipt(row.worktree);
-    const current = repositoryGit(row.worktree, ["rev-parse", "HEAD"]);
-    source = current === ready ? sourceIdentity(row.worktree, ready) : receipt?.source;
+    ({ receipt, source, problems } = localLaneSelectionEvidence(row.worktree, ready));
     if (!source?.head?.startsWith(ready) && !ready.startsWith(source?.head ?? "")) throw new Error("lane receipt source head does not match the ready SHA");
   }
-  const problems = laneSelectionReceiptProblems(receipt, source, row.where === "remote" ? undefined : row.worktree);
   if (problems.length) throw new Error(`lane-selection receipt refused: ${problems.join("; ")}`);
   return receipt;
 }

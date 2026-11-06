@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { recordUsageReading } from '../../codex-fleet-monitor/scripts/usage-state.mjs';
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
+import { mockLaneReporter } from '../../vibe/scripts/test-fixtures.mjs';
+import { NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY } from '../../vibe/scripts/pre-pr-lanes.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -39,8 +42,13 @@ function writeLaneReceipt(worktree, head = null, lanes) {
   const source = head && head !== current
     ? { head, diffSha256: '0'.repeat(64), treeSha256: '1'.repeat(64) }
     : sourceIdentity(worktree);
-  const file = path.join(git('rev-parse', '--absolute-git-dir'), 'vibe-lane-selection.json');
-  writeFileSync(file, JSON.stringify(receipt(source, lanes)));
+  const gitDir = git('rev-parse', '--absolute-git-dir');
+  const file = path.join(gitDir, 'vibe-lane-selection.json');
+  const selected = receipt(source, lanes);
+  writeFileSync(file, JSON.stringify(selected));
+  writeFileSync(path.join(gitDir, 'vibe-lane-results.json'), JSON.stringify(selected.lanes.map(({ command }) => ({
+    command, head: source.head, source, laneKey: selected.selection.key, result: 'pass', provenance: 'fresh',
+  }))));
   return file;
 }
 
@@ -189,10 +197,94 @@ test('ready and push-check require the matching source receipt and render every 
   assert.match(page, /receipt-w: pnpm test:unit: qa-impact selected changed unit coverage/);
   assert.match(page, /receipt-w: pnpm test:e2e: changed route selected browser boundary coverage/);
   assert.equal(run([dir, 'push-check', 'receipt-w', '--head', head]).status, 0);
+  const recordsFile = path.join(spawnSync('git', ['-C', wt, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).stdout.trim(), 'vibe-lane-results.json');
+  const validRecords = readFileSync(recordsFile, 'utf8');
+  writeFileSync(recordsFile, '[]');
+  const missingRun = run([dir, 'push-check', 'receipt-w', '--head', head]);
+  assert.equal(missingRun.status, 1);
+  assert.match(missingRun.stdout, /no current passing, accepted cached, main-preexisting or not-run record/);
+  writeFileSync(recordsFile, validRecords);
+  assert.equal(run([dir, 'push-check', 'receipt-w', '--head', head]).status, 0);
   writeFileSync(path.join(wt, 'filters.ts'), 'export const quickFilters = false;\n');
   const stale = run([dir, 'push-check', 'receipt-w', '--head', head]);
   assert.equal(stale.status, 1);
   assert.match(stale.stdout, /^LANE-RECEIPT receipt-w: .*stale/m);
+});
+
+test('a failed selected rerun invalidates the receipt and local ready and push-check refuse it', (t) => {
+  const dir = tempDir(t);
+  const wt = gitRepo(t);
+  const first = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const lane = 'node -e "0"';
+  const report = path.join(dir, 'lanes.txt');
+  writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${lane}\n`);
+  const reporter = mockLaneReporter(dir, readFileSync(report, 'utf8'));
+  const prepr = (...args) => spawnSync(process.execPath,
+    [path.join(HERE, '../../vibe/scripts/pre-pr-lanes.mjs'), ...args],
+    { encoding: 'utf8', env: { ...process.env, PATH: reporter.path } });
+  assert.equal(prepr('record', '--phase', 'first-candidate', '--worktree', wt, '--head', first,
+    '--command', lane, '--result', 'pass', '--report', report).status, 0);
+  assert.equal(prepr('check', '--phase', 'first-candidate', '--worktree', wt, '--report', report).status, 0);
+  writeFileSync(path.join(wt, 'filters.ts'), 'export const quickFilters = false;\n');
+  assert.equal(spawnSync('git', ['-C', wt, 'add', 'filters.ts']).status, 0);
+  assert.equal(spawnSync('git', ['-C', wt, '-c', 'user.name=Test', '-c', 'user.email=test',
+    'commit', '--quiet', '-m', 'followup']).status, 0);
+  const head = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const impact = path.join(dir, 'impact.json');
+  writeFileSync(impact, JSON.stringify({ lastQa: { boundary: first }, evidence: { screens: [] },
+    featureMap: { entries: [] }, laneSelections: { files: { 'filters.ts': [lane] } } }));
+  const record = (result) => prepr('record', '--phase', 'followup', '--worktree', wt, '--head', head,
+    '--command', lane, '--result', result, '--impact', impact);
+  assert.equal(record('pass').status, 0);
+  assert.equal(prepr('check', '--phase', 'followup', '--worktree', wt, '--impact', impact).status, 0);
+  const receiptFile = path.join(spawnSync('git', ['-C', wt, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).stdout.trim(), 'vibe-lane-selection.json');
+  assert.equal(run([dir, 'writer', 'lane-w', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
+  assert.equal(run([dir, 'push-check', 'lane-w', '--head', head]).status, 0);
+  assert.equal(record('fail').status, 1);
+  assert.equal(existsSync(receiptFile), true, 'first-candidate history remains available for recovery');
+  assert.equal(JSON.parse(readFileSync(receiptFile, 'utf8')).invalidatedBy.command, lane,
+    'a failed same-source run revokes the successful receipt');
+  const refused = run([dir, 'push-check', 'lane-w', '--head', head]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stdout, /LANE-RECEIPT lane-w:/);
+  assert.equal(run([dir, 'writer', 'lane-w', '--ready', head]).status, 2);
+  assert.equal(record('pass').status, 0);
+  assert.equal(prepr('check', '--phase', 'followup', '--worktree', wt, '--impact', impact).status, 0);
+  assert.equal(run([dir, 'writer', 'lane-w', '--ready', head]).status, 0);
+  assert.equal(run([dir, 'push-check', 'lane-w', '--head', head]).status, 0);
+});
+
+test('local push-check keeps accepted main, cached, not-run and ruled skip results', (t) => {
+  const dir = tempDir(t);
+  const wt = gitRepo(t);
+  assert.equal(spawnSync('git', ['-C', wt, '-c', 'user.name=Test', '-c', 'user.email=test',
+    'commit', '--quiet', '--allow-empty', '-m', 'ready candidate']).status, 0);
+  const head = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const parent = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD^'], { encoding: 'utf8' }).stdout.trim();
+  const receiptFile = writeLaneReceipt(wt, head, [
+    { command: 'pnpm test:unit', reason: 'selected unit coverage' },
+    { command: 'pnpm test:e2e', reason: 'selected web coverage' },
+  ]);
+  const recordsFile = path.join(path.dirname(receiptFile), 'vibe-lane-results.json');
+  const validReceipt = JSON.parse(readFileSync(receiptFile, 'utf8'));
+  const [unit, web] = JSON.parse(readFileSync(recordsFile, 'utf8'));
+  assert.equal(run([dir, 'writer', 'status-w', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
+  const push = () => run([dir, 'push-check', 'status-w', '--head', head], { [STAGING_IDENTITY_KEY]: '' });
+  const write = (records, receipt = validReceipt) => {
+    writeFileSync(recordsFile, JSON.stringify(records));
+    writeFileSync(receiptFile, JSON.stringify(receipt));
+    assert.equal(push().status, 0);
+  };
+  write([{ ...unit, result: 'main-preexisting', mainSha: parent }, web]);
+  const cacheKey = 'c'.repeat(64);
+  const earlier = { ...unit, head: parent, source: { ...unit.source, head: parent,
+    diffSha256: createHash('sha256').digest('hex'), treeSha256: '0'.repeat(64) },
+    laneKey: 'old-key', cacheKey };
+  const cached = { ...unit, result: 'cached', provenance: 'cached', cacheKey, reusedFrom: { head: parent } };
+  write([earlier, cached, web]);
+  write([{ ...earlier, cacheKey: undefined }, { ...cached, unaffectedSince: parent }, web]);
+  write([unit, { ...web, result: 'not-run', reason: NOT_RUN_NO_IDENTITY }]);
+  write([web], { ...validReceipt, skipped: [{ command: unit.command, ruling: 'Daniel 2026-11-06 deadline mode' }] });
 });
 
 test('the pushed head is read from gh for a row with a PR and repo', (t) => {

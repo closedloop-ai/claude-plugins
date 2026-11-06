@@ -313,6 +313,7 @@ export function readLaneSelectionReceipt(worktree) {
 /** Shape and exact-source problems; lane-selection semantics remain owned by this script. */
 export function laneSelectionReceiptProblems(receipt, source, worktree) {
   const problems = [];
+  if (receipt && Object.hasOwn(receipt, "invalidatedBy")) problems.push("lane receipt was invalidated by a failed selected rerun");
   if (receipt?.schemaVersion !== RECEIPT_SCHEMA_VERSION) problems.push("lane receipt schemaVersion must be 1");
   if (!validSourceIdentity(receipt?.source)) problems.push("lane receipt source identity is invalid");
   else if (!sameSource(receipt.source, source)) problems.push("lane receipt source identity is stale");
@@ -340,10 +341,55 @@ export function laneSelectionReceiptProblems(receipt, source, worktree) {
       commands.add(lane.command);
     }
   }
+  if (receipt?.skipped !== undefined && (!Array.isArray(receipt.skipped)
+    || receipt.skipped.some((item) => !Array.isArray(receipt.lanes) || !receipt.lanes.some((lane) => lane.command === item?.command)
+      || typeof item?.ruling !== "string" || !item.ruling.trim())
+    || new Set(receipt.skipped.map((item) => item.command)).size !== receipt.skipped.length)) {
+    problems.push("lane receipt skipped rows need unique selected commands and operator rulings");
+  }
   return problems;
 }
 
-function writeLaneSelectionReceipt(worktree, source, phase, selected) {
+/** Current selected-lane results behind the same records lock used by writers. */
+function selectedLaneRecordProblems(receipt, records, worktree) {
+  const selected = { laneKey: receipt.selection.key, source: receipt.source };
+  const skipped = new Set((receipt.skipped ?? []).map((item) => item.command));
+  const capability = { identity: hasStagingE2eIdentity(worktree), harness: hasDisplaylessElectronHarness() };
+  const problems = [];
+  for (const { command: lane } of receipt.lanes) {
+    if (skipped.has(lane)) continue;
+    const matches = records.filter((record) => record.command === lane && sameSelection(record, selected));
+    if (matches.some((record) => record.result === "fail")) {
+      problems.push(`lane ${lane}: latest selected run failed`);
+      continue;
+    }
+    if (missingLanes([lane], records, selected).length === 0) continue;
+    const cached = matches.some((record) => record.result === CACHED_RESULT && records.some((earlier) => earlier.command === lane
+      && earlier.result === "pass" && earlier.provenance !== Provenance.Cached && earlier.head === record.reusedFrom?.head
+      && (record.unaffectedSince
+        ? record.unaffectedSince === earlier.head && earlier.source?.diffSha256 === NO_DIFF
+        : Boolean(record.cacheKey) && record.cacheKey === earlier.cacheKey)));
+    if (cached) continue;
+    const left = notRunLanes([lane], records, selected, capability);
+    if (matches.some((record) => record.result === "not-run" && left.some((item) => item.reason === record.reason))) continue;
+    problems.push(`lane ${lane}: no current passing, accepted cached, main-preexisting or not-run record`);
+  }
+  return problems;
+}
+
+/** Read and validate a local receipt and its live records atomically for fleet ready/push-check. */
+export function localLaneSelectionEvidence(worktree, ready) {
+  return withRecordsLock(worktree, () => {
+    const receipt = readLaneSelectionReceipt(worktree);
+    const current = git(worktree, ["rev-parse", "HEAD"]);
+    const source = current === ready ? sourceIdentity(worktree, ready) : receipt?.source;
+    const problems = laneSelectionReceiptProblems(receipt, source, worktree);
+    if (problems.length === 0) problems.push(...selectedLaneRecordProblems(receipt, readRecords(worktree), worktree));
+    return { receipt, source, problems };
+  });
+}
+
+function writeLaneSelectionReceipt(worktree, source, phase, selected, skipped = []) {
   const prior = readLaneSelectionReceipt(worktree);
   const receipt = {
     schemaVersion: RECEIPT_SCHEMA_VERSION,
@@ -351,6 +397,7 @@ function writeLaneSelectionReceipt(worktree, source, phase, selected) {
     phase,
     selection: selected.selection,
     lanes: selected.lanes.map((command) => ({ command, reason: selected.reasons[command] })),
+    ...(skipped.length ? { skipped } : {}),
     ...(phase === "first-candidate" ? { firstCandidateSource: source }
       : prior?.firstCandidateSource ? { firstCandidateSource: prior.firstCandidateSource } : {}),
   };
@@ -361,6 +408,14 @@ function writeLaneSelectionReceipt(worktree, source, phase, selected) {
   writeFileSync(temp, `${JSON.stringify(receipt, null, 2)}\n`);
   renameSync(temp, file);
   return receipt;
+}
+
+/** Keep first-candidate lineage but revoke a successful receipt before writing its failed record. */
+function invalidateLaneSelectionReceipt(worktree, receipt, command) {
+  const file = laneSelectionReceiptFile(worktree);
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify({ ...receipt, invalidatedBy: { command, at: new Date().toISOString() } }, null, 2)}\n`);
+  renameSync(temp, file);
 }
 
 function selectedScope(values, command, source) {
@@ -461,6 +516,14 @@ function main(argv) {
     // A lane result retains both the exact selection and main's fresh/cache provenance.
     withRecordsLock(values.worktree, () => {
       const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
+      if (result === "fail") {
+        const receipt = readLaneSelectionReceipt(values.worktree);
+        if (receipt && sameSource(receipt.source, source)
+          && receipt.selection?.kind === selected.selection.kind && receipt.selection.key === selected.selection.key
+          && receipt.lanes?.some((lane) => lane.command === values.command.trim())) {
+          invalidateLaneSelectionReceipt(values.worktree, receipt, values.command.trim());
+        }
+      }
       records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey,
         selection: { ...selected.selection, reason: selected.reasons[values.command.trim()] },
         result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}),
@@ -491,7 +554,8 @@ function main(argv) {
         { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness() });
       const notRun = left.map((item) => item.lane);
       const lanes = named.filter((lane) => !skip?.test(lane) && !notRun.includes(lane));
-      for (const lane of named.filter((lane) => skip?.test(lane))) process.stdout.write(`SKIPPED-LANE ${lane} (${values["skip-ruling"].trim()})\n`);
+      const skipped = named.filter((lane) => skip?.test(lane)).map((command) => ({ command, ruling: values["skip-ruling"].trim() }));
+      for (const { command: lane, ruling } of skipped) process.stdout.write(`SKIPPED-LANE ${lane} (${ruling})\n`);
       if (notRun.length) {
         const kept = records.filter((record) => !(notRun.includes(record.command) && sameSelection(record, selected)));
         const at = new Date().toISOString();
@@ -513,7 +577,7 @@ function main(argv) {
       const selector = selected.selection.kind === "qa-impact" ? "--impact <qa-impact JSON>" : "--report <lane report>";
       for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --phase ${values.phase} --head <HEAD> --command "${lane}" ${selector}\n`);
       process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] || values["reuse-unaffected"] ? `, ${covered.length + unaffected.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
-      if (missing.length === 0) writeLaneSelectionReceipt(values.worktree, source, values.phase, selected);
+      if (missing.length === 0) writeLaneSelectionReceipt(values.worktree, source, values.phase, selected, skipped);
       return { exitCode: missing.length === 0 ? 0 : 1 };
       });
     }).exitCode;
