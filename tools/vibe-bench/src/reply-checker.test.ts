@@ -12,7 +12,7 @@ const caseId = "pm-prd-children-are-scope";
 const vibeRoot = join(import.meta.dirname, "../../../plugins/vibe");
 const coreRoot = join(import.meta.dirname, "../../../plugins/closedloop-core");
 const goodReply = "CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; " +
-  "LINK: ISS-9000; COMMENT: ISS-9000 coordinates this child\n" +
+  "LINK: ISS-9000; COMMENT:ISS-9000_COORDINATOR\n" +
   "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER\n" +
   "UNCOVERED: ISS-9003; ACTION:LEAVE_UNCOVERED\n" +
   "SUPERSEDE: None\n\nGraph:\n" +
@@ -38,8 +38,7 @@ const expected = { version: "1.1.49", coreVersion: "1.6.2", cliVersion: "2.1.316
 
 test("ISS-13760 Claude overrides are mapped-only and preserve native provenance", () => {
   const original = native(true);
-  const badReply = goodReply.replace("ISS-9000 coordinates this child",
-    "ISS-9000 coordinates this child but will not assign it");
+  const badReply = goodReply.replace("ISS-9000_COORDINATOR", "ISS-9000_COORDINATOR_EXTRA");
   const nativeCollected = collectClaudeEval(original, [caseId], expected);
   const overridden = applyClaudeReplyCheckers(original, [caseId],
     new Map([[caseId, badReply]]));

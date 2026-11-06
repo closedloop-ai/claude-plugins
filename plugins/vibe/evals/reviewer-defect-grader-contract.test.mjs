@@ -215,11 +215,11 @@ test("ISS-13760 AC-006: child grading accepts bare none and complete link wordin
   const prompt = readFileSync(path.join(root, "pm-prd-children-are-scope/prompt.md"), "utf8");
   const format = prompt.split("\n").find((line) => line.startsWith("Return exactly four lines"));
   assert.ok(format);
-  for (const field of ["CLAIM: <child>; ASSIGN:<assignee>; STATUS:<status>; LINK:<parent>; COMMENT:<note>",
+  for (const field of ["CLAIM: <child>; ASSIGN:<assignee>; STATUS:<status>; LINK:<parent>; COMMENT:<comment-state>",
     "REPORT: <child>; ACTION:<decision>; REASON:<reason>",
     "UNCOVERED: <child>; ACTION:<decision>", "SUPERSEDE: <decision>"]) assert.ok(format.includes(field));
   for (const leaked of [/ACTION:EXCLUDE/, /ACTIVE_OTHER_OWNER/, /LEAVE_UNCOVERED/,
-    /COMMENT:ISS-9000 coordinates this child/, /SUPERSEDE: None/]) assert.doesNotMatch(format, leaked);
+    /ISS-9000_COORDINATOR/, /SUPERSEDE: None/]) assert.doesNotMatch(format, leaked);
   assert.match(prompt,
-    /Allowed tokens: `ACTION = EXCLUDE \| LEAVE_UNCOVERED`; `REASON = ACTIVE_OTHER_OWNER \| NONE`; `SUPERSEDE = None`\./);
+    /Allowed tokens: `COMMENT = ISS-9000_COORDINATOR`; `ACTION = EXCLUDE \| LEAVE_UNCOVERED`; `REASON = ACTIVE_OTHER_OWNER \| NONE`; `SUPERSEDE = None`\./);
 });

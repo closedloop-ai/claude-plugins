@@ -35,14 +35,13 @@ def test_iss_13760_mapped_graders_use_shared_checker_and_nonmapped_regex_is_unch
     children = eval_case("pm-prd-children-are-scope")
     good = (
         "CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; "
-        "COMMENT: ISS-9000 coordinates this child\n"
+        "COMMENT:ISS-9000_COORDINATOR\n"
         "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER\n"
         "UNCOVERED: ISS-9003; ACTION:LEAVE_UNCOVERED\n"
         "SUPERSEDE: None\n\nGraph:\n"
         "- ticket_detail ISS-9002: ISS-9002 active by another person"
     )
-    bad = good.replace("ISS-9000 coordinates this child",
-        "ISS-9000 coordinates this child, actually")
+    bad = good.replace("ISS-9000_COORDINATOR", "ISS-9000_COORDINATOR_EXTRA")
     good_checks, _ = runner.deterministic(children, good, tmp_path, [])
     bad_checks, _ = runner.deterministic(children, bad, tmp_path, [])
     assert next(check for check in good_checks if check["grader"] == "claims-untouched")["passed"]

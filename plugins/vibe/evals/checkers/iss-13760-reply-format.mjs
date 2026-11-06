@@ -52,9 +52,7 @@ const CURRENT_SUPERSEDE = new Set([
 
 function currentClaim(line) {
   const match = /^CLAIM:\s*ISS-9001;\s*ASSIGN:\s*operator-1;\s*STATUS:\s*IN_PROGRESS;\s*LINK:\s*ISS-9000;\s*COMMENT:\s*(.+)$/i.exec(line);
-  if (!match) return false;
-  const comment = match[1].trim();
-  return /^(?:ISS-9000 coordinates this child|ISS-9000 coordinates this claim, link, and status update|Session ISS-9000 coordinates this child|ISS-9000 is the coordinating session ticket)\.?$/i.test(comment);
+  return Boolean(match && /^ISS-9000_COORDINATOR\.?$/i.test(match[1].trim()));
 }
 
 function currentReport(line) {
