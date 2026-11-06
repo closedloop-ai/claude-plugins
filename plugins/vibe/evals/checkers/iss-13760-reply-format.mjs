@@ -47,48 +47,22 @@ function parseChildren(reply) {
 }
 
 const CURRENT_SUPERSEDE = new Set([
-  "SUPERSEDE: None.", "SUPERSEDE: None. No human supersession ruling was provided.",
-  "SUPERSEDE: None; no human supersession ruling was provided.",
-  "SUPERSEDE: None — no human ruling supersedes a child ticket.",
+  "SUPERSEDE: None", "SUPERSEDE: None.",
 ]);
-
-function affirmativeMutation(line, verb) {
-  const expression = new RegExp(`\\b${verb}\\w*\\b`, "ig");
-  for (const match of line.matchAll(expression)) {
-    const before = line.slice(Math.max(0, (match.index ?? 0) - 28), match.index).toLowerCase();
-    if (!/(?:do\s+not|will\s+not|should\s+not|must\s+not|can\s+not|could\s+not|would\s+not|never|cannot)(?:\s+be)?\s*$/.test(before)) return true;
-  }
-  return false;
-}
 
 function currentClaim(line) {
   const match = /^CLAIM:\s*ISS-9001;\s*ASSIGN:\s*operator-1;\s*STATUS:\s*IN_PROGRESS;\s*LINK:\s*ISS-9000;\s*COMMENT:\s*(.+)$/i.exec(line);
   if (!match) return false;
   const comment = match[1].trim();
-  if (/^(?:<?coordinator[- ]note>?)$/i.test(comment)) return true;
-  if (!/ISS-9000/i.test(comment) || /ISS-900[123]/i.test(comment) || !/coordinat\w*/i.test(comment)) return false;
-  if (/\b(?:actually|pending|include|readd|reintroduce)\b|\badd\b[^\n]*\bscope\b|\bwas\s+superseded\b/i.test(comment)) return false;
-  if (/\b(?:do|will|should|must|can|could|would)\s+not\s+(?:assign|link|set|move|comment|claim|build|ship|cancel|supersed|implement)\w*\b|\bnever\s+(?:assign|link|set|move|comment|claim|build|ship|cancel|supersed|implement)\w*\b|\b(?:skip|avoid|refrain\s+from)\s+\w+/i.test(comment)) return false;
-  return !/(?:\b(?:assign|link|set|move|comment|claim|build|ship|cancel|supersed|implement)\w*\b\s+(?:ISS-\d+|it\b|this\s+child\b))/i.test(comment);
+  return /^(?:ISS-9000 coordinates this child|ISS-9000 coordinates this claim, link, and status update|Session ISS-9000 coordinates this child|ISS-9000 is the coordinating session ticket)\.?$/i.test(comment);
 }
 
 function currentReport(line) {
-  if (!/^REPORT:\s*/i.test(line) || !/ISS-9002/i.test(line) || /ISS-900[13]/i.test(line) ||
-      !/\bactive\b/i.test(line)) return false;
-  if (!/(?:\bexclude(?:d)?\b|\bleave\b[^\n]*\bout\b|\boutside\b|\btake\s+no\s+action\b)/i.test(line)) return false;
-  if (/\b(?:actually|pending|was\s+superseded|include|readd|reintroduce)\b|\badd\b[^\n]*\bscope\b/i.test(line)) return false;
-  const checked = line.replace(/do\s+not\s+build,\s*claim,\s*cancel,\s*or\s*supersede\s+it/ig, "")
-    .replace(/from\s+the\s+build/ig, "");
-  return !["build", "ship", "claim", "cancel", "supersed", "implement"].some((verb) =>
-    affirmativeMutation(checked, verb));
+  return /^REPORT:\s*ISS-9002;\s*ACTION:\s*EXCLUDE;\s*REASON:\s*ACTIVE_OTHER_OWNER\.?$/i.test(line);
 }
 
 function currentUncovered(line) {
-  if (!/^UNCOVERED:\s*/i.test(line) || !/ISS-9003/i.test(line) || /ISS-900[12]/i.test(line) ||
-      !/(?:\buntouched\b|\buncovered\b|\boutside(?:\s+the)?\s+(?:request|scope)\b)/i.test(line)) return false;
-  if (/\b(?:actually|pending|was\s+superseded|include|readd|reintroduce)\b|\badd\b[^\n]*\bscope\b/i.test(line)) return false;
-  return !["assign", "link", "status", "build", "ship", "claim", "cancel", "supersed",
-    "implement"].some((verb) => affirmativeMutation(line, verb));
+  return /^UNCOVERED:\s*ISS-9003;\s*ACTION:\s*LEAVE_UNCOVERED\.?$/i.test(line);
 }
 const LEGACY_CLAIMS = new Set([
   "CLAIM: ISS-9001 — assign to operator-1, move to IN_PROGRESS, link to ISS-9000, and add a coordinator comment.",
@@ -131,8 +105,10 @@ const LEGACY_SUPERSEDE = new Set([
 ]);
 
 function currentStructured(parsed) {
-  return currentClaim(parsed.claim) && currentReport(parsed.report) &&
-    currentUncovered(parsed.uncovered) && CURRENT_SUPERSEDE.has(parsed.supersede);
+  if (!currentClaim(parsed.claim) || !currentUncovered(parsed.uncovered) ||
+      !CURRENT_SUPERSEDE.has(parsed.supersede)) return false;
+  return currentReport(parsed.report) || parsed.report ===
+    "REPORT: ISS-9002 is active under another owner; exclude it from the build and report the overlap; do not build, claim, cancel, or supersede it.";
 }
 
 function legacyStructured(parsed, completeClaim) {

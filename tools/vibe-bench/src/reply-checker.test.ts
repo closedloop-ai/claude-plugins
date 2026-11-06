@@ -13,9 +13,9 @@ const vibeRoot = join(import.meta.dirname, "../../../plugins/vibe");
 const coreRoot = join(import.meta.dirname, "../../../plugins/closedloop-core");
 const goodReply = "CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; " +
   "LINK: ISS-9000; COMMENT: ISS-9000 coordinates this child\n" +
-  "REPORT: ISS-9002 is active with another owner; exclude it from the build and report the overlap.\n" +
-  "UNCOVERED: ISS-9003 is outside the request and remains untouched.\n" +
-  "SUPERSEDE: None.\n\nGraph:\n" +
+  "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER\n" +
+  "UNCOVERED: ISS-9003; ACTION:LEAVE_UNCOVERED\n" +
+  "SUPERSEDE: None\n\nGraph:\n" +
   "- ticket_detail ISS-9002: ISS-9002 active by another person";
 
 function native(passed: boolean, vibePath = vibeRoot, vibeVersion = "1.1.49") {

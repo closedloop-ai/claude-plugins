@@ -8,10 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - The private nightly run tree keeps each Claude case's final reply as the same per-case `reply.txt` artifact Codex writes, then removes the retained native temp trace. Published baseline results keep their existing allowlisted schema and never include reply text or local paths.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 60 words longer than in 1.1.45 (origin/main at the merge).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 79 words longer than in 1.1.45 (origin/main at the merge).
 
 #### Fixed
 - Four always-failing eval cases now distinguish correct wording variants from real omissions: duplicate-helper remedies and touch-device findings are order-independent, host-adapter coverage requires the Desktop criterion and its owning lane, and PRD-child replies accept bare no-supersession/link wording only while keeping every claim mutation mandatory.
+- PRD-child claim completeness and no-supersession use one versioned deterministic reply-format checker across Codex and Claude benchmark collection. It validates bounded machine fields, preserves the saved legacy reply forms, records checker provenance, and reports checker installation or protocol faults as infrastructure failures; the duplicate-helper grader remains regex-only with explicit shared-owner and copied-function targets.
 - PRD children with real activity under another person are again reported and excluded from the build, never claimed, built, canceled or superseded.
 
 ### vibe v1.1.45
