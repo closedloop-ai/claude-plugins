@@ -105,8 +105,18 @@ def test_overlapping_live_children_require_explicit_reconciliation() -> None:
 def test_source_prd_children_are_scope_units_claimed_and_closed_with_evidence() -> None:
     skill = flat((VIBE / "SKILL.md").read_text())
     ticket = flat(agent("vibe-ticket-worker"))
+    requirements = flat(agent("vibe-requirements-worker"))
     assert "existing children are the scope units" in skill
     assert "the ticket worker claims or reports them" in skill
+    active_child_rule = (
+        "A child with real activity by another person is reported and excluded from the build, "
+        "never claimed, built, canceled or superseded."
+    )
+    assert active_child_rule in ticket
+    assert active_child_rule in requirements
+    initial_classification = ticket.index("Use the requirements brief's classification")
+    race_check = ticket.index("only if still untouched with no other person's real activity")
+    assert initial_classification < race_check
     for phrase in (
         "assign it to the session operator",
         "create one `RELATES_TO` link",
@@ -131,7 +141,7 @@ def test_existing_children_are_never_agent_superseded() -> None:
     requirements = flat(agent("vibe-requirements-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
     gate = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
-    assert "no agent decides that one is superseded" in requirements
+    assert "never claimed, built, canceled or superseded" in requirements
     assert "any supersession that is not a human ruling outside this session's ticket and plan" in ticket
     assert "cites the session's own ticket, plan or table as the supersession ruling" in gate
 

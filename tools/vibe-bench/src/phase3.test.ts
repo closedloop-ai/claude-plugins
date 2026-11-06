@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync,
-  rmSync, writeFileSync } from "node:fs";
+  rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -22,7 +22,7 @@ import type { EvalCommands } from "./eval-driver.ts";
 import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegressions,
   deterministicNightlyFailures, evalCaseIds,
   deliverPendingRegressionReports, evalModelProcessEnv, failedCases,
-  recoverPendingNightlyPublications,
+  preserveClaudeReplies, recoverPendingNightlyPublications,
   runLocalEvals, runT2Evals,
   stageFocusedClaudeEvalCases, unavailableNightlyCases } from "./eval-driver.ts";
 import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
@@ -37,6 +37,7 @@ import { slackToolGateDecision } from "./slack-tool-gate.ts";
 import { statefulSuite } from "./upgrade-resume-eval.ts";
 import type { UpgradeCaseEvidence, UpgradeFailureCode, UpgradeResumeRunInput,
   UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
+import { privateTextProblem } from "./private-artifact.ts";
 
 const CASE = "pm-new-session-first-reply";
 const REPO_ROOT = realpathSync(join(import.meta.dirname, "../../.."));
@@ -69,6 +70,74 @@ test("model processes inherit only the explicit environment allow-list", () => {
   assert.deepEqual(inherited, { PATH: "/bin" });
   assert.throws(() => evalModelProcessEnv({ PATH: "/bin", ANTHROPIC_API_KEY: "secret" }),
     /eval-model-api-credential-forbidden:ANTHROPIC_API_KEY/);
+});
+
+test("ISS-13760 AC-003 Claude final replies use the private Codex case shape and clean temp traces", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-claude-replies-"));
+  const trace = (name: string, events: unknown[]): string => {
+    const file = join(root, name, "out", "trace.jsonl");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+    return file;
+  };
+  const item = (name: string, tracePath: string) => ({ name, arms: { with: [{ tracePath }] } });
+  try {
+    const output = join(root, "claude");
+    mkdirSync(output);
+    const firstTrace = trace("e-first", [
+      { type: "assistant", message: { role: "assistant",
+        content: [{ type: "text", text: "draft" }, { type: "tool_use", name: "Read" }] } },
+      { type: "result", result: "Missing tests: Desktop AC-3 in its owning lane." },
+    ]);
+    preserveClaudeReplies({ cases: [item("pm-missing-tests-host-adapters", firstTrace)] },
+      output, ["pm-missing-tests-host-adapters"], root);
+    const reply = join(output, "product-manager-missing-tests-host-adapters", "reply.txt");
+    assert.equal(readFileSync(reply, "utf8"),
+      "Missing tests: Desktop AC-3 in its owning lane.\n");
+    assert.equal(statSync(reply).mode & 0o777, 0o600);
+    assert.equal(existsSync(join(root, "e-first")), true);
+
+    const missingTrace = trace("e-missing", [{ type: "system", message: "no assistant text" }]);
+    mkdirSync(join(root, "missing-output"));
+    assert.throws(() => preserveClaudeReplies({
+      cases: [item("pm-card-touch-device-coverage", missingTrace)],
+    }, join(root, "missing-output"), ["pm-card-touch-device-coverage"], root),
+    /eval-claude-reply-missing/);
+    assert.equal(existsSync(join(root, "e-missing")), true);
+
+    const privateTrace = trace("e-private", [{ type: "result",
+      result: "saved at /Users/example/private/reply.txt" }]);
+    mkdirSync(join(root, "private-output"));
+    assert.throws(() => preserveClaudeReplies({
+      cases: [item("pm-prd-children-are-scope", privateTrace)],
+    }, join(root, "private-output"), ["pm-prd-children-are-scope"], root),
+    /eval-private-reply-private-data/);
+    assert.equal(existsSync(join(root, "e-private")), true);
+
+    const unsafe = join(root, "trace.jsonl");
+    writeFileSync(unsafe, `${JSON.stringify({ type: "result", result: "reply" })}\n`);
+    mkdirSync(join(root, "unsafe-output"));
+    assert.throws(() => preserveClaudeReplies({
+      cases: [item("pm-review-duplicate-helper-copy", unsafe)],
+    }, join(root, "unsafe-output"), ["pm-review-duplicate-helper-copy"], root),
+    /eval-claude-reply-trace-path-invalid/);
+    assert.equal(existsSync(unsafe), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13760 private reply policy rejects local paths and credential shapes", () => {
+  for (const value of ["/private/var/run", "/tmp/reply", "/Volumes/work", "/opt/tool",
+    "/usr/local/bin/tool", "/etc/config", "/var/log/app.log", "/Applications/App.app",
+    "C:\\Users\\person\\reply", "\\\\host\\share\\reply",
+    "saved at `/usr/local/share/reply.txt`", "[`/etc/config`]", "path=`/var/log/eval.log`"]) {
+    assert.equal(privateTextProblem(value), "local-path", value);
+  }
+  for (const value of ["Bearer secret-token-value", "AKIAIOSFODNN7EXAMPLE",
+    "AWS_SECRET_ACCESS_KEY=secret-value", "xoxb-secret-value"]) {
+    assert.equal(privateTextProblem(value), "credential", value);
+  }
+  assert.equal(privateTextProblem("plugins/vibe/evals/case/reply.txt"), null);
+  assert.equal(privateTextProblem("https://example.com/evals/reply.txt"), null);
 });
 
 function comparisonEval(sha: string, states: Record<string, boolean>,
@@ -990,7 +1059,8 @@ function claudeNative(vibePath = "/snapshot/vibe", corePath = "/snapshot/core", 
       { name: "closedloop-core", version: coreVersion, path: corePath },
     ] }, cases: caseIds.map((name) => ({ name, runsPerCase: 1, arms: { with: [{ passed, error: null,
       costUsd: 0.1 / caseIds.length, judgeCostUsd: 0.02 / caseIds.length,
-      skippedPaidGraders: false, graders: [{ name: "route", passed, scored: true }] }] } })),
+      skippedPaidGraders: false, graders: [{ name: "route", passed, scored: true }],
+      tracePath: undefined as string | undefined }] } })),
     aggregates: { casesTotal: caseIds.length, casesPassed: passed ? caseIds.length : 0 },
   };
 }
@@ -1088,10 +1158,16 @@ test("Codex deterministic-only artifacts record exactly the expected wording ski
 });
 
 class FakeCommands implements EvalCommands {
-  readonly localModelExecution = false;
+  readonly localModelExecution: boolean;
+  private readonly claudeMode: "valid" | "missing" | "malformed" | "schema" | "case" |
+    "traversal" | "symlink" | "clobber" | "private";
   calls: Array<{ command: string; args: string[]; deadline: number | null }> = [];
+  constructor(localModelExecution = false, claudeMode: FakeCommands["claudeMode"] = "valid") {
+    this.localModelExecution = localModelExecution;
+    this.claudeMode = claudeMode;
+  }
   async run(command: string, args: string[], _cwd?: string, _options?: {
-    deadline: number; signal?: AbortSignal;
+    deadline: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv;
   }): Promise<{
     status: number; stdout: string; stderr: string;
   }> {
@@ -1112,8 +1188,39 @@ class FakeCommands implements EvalCommands {
         .version as string;
       const coreVersion = JSON.parse(readFileSync(join(corePath, ".claude-plugin/plugin.json"), "utf8"))
         .version as string;
-      writeFileSync(resultFile, JSON.stringify(claudeNative(vibePath, join(dirname(vibePath),
-        "closedloop-core"), true, caseIds, version, coreVersion)));
+      if (this.claudeMode === "missing") return { status: 0, stdout: "", stderr: "" };
+      if (this.claudeMode === "malformed") {
+        writeFileSync(resultFile, "{");
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      const native = claudeNative(vibePath, join(dirname(vibePath),
+        "closedloop-core"), true, caseIds, version, coreVersion);
+      if (this.claudeMode === "schema") native.partial = true;
+      if (this.claudeMode === "case") native.cases[0]!.name = "pm-substituted-case";
+      if (this.localModelExecution) {
+        const temp = _options?.env?.TMPDIR;
+        assert.equal(typeof temp, "string");
+        for (const [index, item] of native.cases.entries()) {
+          const traceRoot = this.claudeMode === "traversal" ? join(_cwd!, "outside-temp") :
+            join(temp!, `e-${index}`);
+          const tracePath = join(traceRoot, "out", "trace.jsonl");
+          mkdirSync(dirname(tracePath), { recursive: true });
+          const reply = this.claudeMode === "private" ?
+            "Bearer secret-token-value at /private/var/eval/reply" : "fixture final reply";
+          writeFileSync(tracePath, `${JSON.stringify({ type: "result", result: reply })}\n`);
+          item.arms.with[0]!.tracePath = tracePath;
+        }
+        const caseDir = join(dirname(resultFile), codexCaseId(caseIds[0]!));
+        if (this.claudeMode === "symlink") {
+          const outside = join(_cwd!, "outside-case");
+          mkdirSync(outside);
+          symlinkSync(outside, caseDir);
+        } else if (this.claudeMode === "clobber") {
+          mkdirSync(caseDir);
+          writeFileSync(join(caseDir, "reply.txt"), "existing\n");
+        }
+      }
+      writeFileSync(resultFile, JSON.stringify(native));
       return { status: 0, stdout: "", stderr: "" };
     }
     const vibePath = args[args.indexOf("--plugin") + 1];
@@ -1132,6 +1239,18 @@ class FakeCommands implements EvalCommands {
     native.run.skill_sha256 = skillSha;
     writeFileSync(join(output, "results.json"), JSON.stringify(native));
     return { status: 0, stdout: "", stderr: "" };
+  }
+}
+
+class RejectingSiblingCommands extends FakeCommands {
+  constructor() { super(true); }
+  override async run(command: string, args: string[], cwd: string, options: {
+    deadline: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv;
+  }) {
+    if (command.includes("uv") && !args.includes("--version")) {
+      throw new Error("fixture sibling launch rejection");
+    }
+    return await super.run(command, args, cwd, options);
   }
 }
 
@@ -1329,7 +1448,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
       "user.email=fixture@invalid.local", "commit", "-m", "fixture"], { stdio: "ignore" });
     const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", sha]);
-    const commands = new FakeCommands();
+    const commands = new FakeCommands(true);
     const statefulRunner = new FakeStatefulRunner();
     const output = await runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "run"),
       outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
@@ -1350,16 +1469,17 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     assert.ok(output.result.runtimes.every((item) => item.result?.cases.length === 2));
     assert.equal(modelCalls.find((call) => call.command.includes("claude"))!.args[
       modelCalls.find((call) => call.command.includes("claude"))!.args.indexOf("--concurrency") + 1], "3");
-    assert.equal(modelCalls.find((call) => call.command.includes("uv"))!.args[
-      modelCalls.find((call) => call.command.includes("uv"))!.args.indexOf("--concurrency") + 1], "2");
+    assert.equal(modelCalls.find((call) => call.command.endsWith("fixture-uv"))!.args[
+      modelCalls.find((call) => call.command.endsWith("fixture-uv"))!.args.indexOf("--concurrency") + 1], "2");
     const claudeCall = modelCalls.find((call) => call.command.includes("claude"))!;
     assert.equal(claudeCall.args[2].endsWith("/plugin-snapshot/plugins"), true);
     assert.equal(claudeCall.args[2], realpathSync(claudeCall.args[2]));
     assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals-focused");
     assert.deepEqual(claudeCall.args.slice(claudeCall.args.indexOf("--allow-tools") + 1,
       claudeCall.args.indexOf("--trust-plugin")), ["Bash", "Write", "Edit"]);
+    assert.equal(claudeCall.args.includes("--keep-temp"), true);
     assert.equal(claudeCall.args.includes("--case"), false);
-    const codexCall = modelCalls.find((call) => call.command.includes("uv"))!;
+    const codexCall = modelCalls.find((call) => call.command.endsWith("fixture-uv"))!;
     assert.deepEqual(codexCall.args.slice(0, 6),
       ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python"]);
     assert.equal(codexCall.args[6], codexEvalRunnerPath());
@@ -1367,6 +1487,34 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     assert.equal(codexCall.args[codexCall.args.indexOf("--model") + 1], EVAL_POLICY.codexModel);
     assert.equal(codexCall.args[codexCall.args.indexOf("--grader-model") + 1],
       EVAL_POLICY.codexJudgeModel);
+    const reply = join(root, "run/claude", codexCaseId(CASE), "reply.txt");
+    assert.equal(readFileSync(reply, "utf8"), "fixture final reply\n");
+    assert.equal(existsSync(join(root, "run/claude-temp")), false);
+    assert.doesNotMatch(JSON.stringify(output.result), /fixture final reply|reply\.txt/);
+
+    for (const mode of ["missing", "malformed", "schema", "case", "traversal", "symlink",
+      "clobber", "private"] as const) {
+      const runRoot = join(root, `run-${mode}`);
+      const invalid = await runLocalEvals({ repo, pluginSha: sha, runRoot,
+        outputDir: join(root, `results-${mode}`), claudeExecutable: "fixture-claude",
+        codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
+        deterministicOnly: true, selectedCases: [CASE], runtimes: ["claude", "codex"] },
+      new FakeCommands(true, mode));
+      const claude = invalid.result.runtimes.find((item) => item.runtime === "claude")!;
+      const codex = invalid.result.runtimes.find((item) => item.runtime === "codex")!;
+      assert.match(claude.invalidReason ?? "", /^eval-(?:case|claude|private|native)-/);
+      assert.ok(codex.result, `${mode} lost usable Codex settlement`);
+      assert.equal(existsSync(join(runRoot, "claude-temp")), false);
+      assert.equal(existsSync(join(runRoot, "claude", codexCaseId(CASE), "reply.txt")),
+        mode === "clobber", `${mode} unexpectedly retained a new reply`);
+    }
+    const rejectedRoot = join(root, "run-sibling-rejected");
+    await assert.rejects(() => runLocalEvals({ repo, pluginSha: sha, runRoot: rejectedRoot,
+      outputDir: join(root, "results-sibling-rejected"), claudeExecutable: "fixture-claude",
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
+      deterministicOnly: true, selectedCases: [CASE], runtimes: ["claude", "codex"] },
+    new RejectingSiblingCommands()), /fixture sibling launch rejection/);
+    assert.equal(existsSync(join(rejectedRoot, "claude-temp")), false);
     const failing = new FailingSiblingCommands();
     await assert.rejects(() => runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "failed-run"),
       outputDir: join(root, "failed-results"), claudeExecutable: "fixture-claude",

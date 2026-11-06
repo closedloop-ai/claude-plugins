@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync,
-  unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync,
+  renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLocalEvalReport, codexCaseId, collectClaudeEval, collectCodexEval,
   finalizeLocalEval } from "./eval-collector.ts";
@@ -26,6 +26,7 @@ import { mergeEvalSuiteResults, statefulInfrastructureInvalidReason,
   SystemUpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 import type { UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
+import { privateReplyDestination, privateTextProblem, writePrivateReply } from "./private-artifact.ts";
 
 /** Explicit inputs for a local-only dual-runtime model eval. */
 export interface LocalEvalOptions {
@@ -53,6 +54,7 @@ export interface EvalCommands {
   run(command: string, args: string[], cwd: string, options: {
     deadline: number;
     signal?: AbortSignal;
+    env?: NodeJS.ProcessEnv;
   }): Promise<{ status: number; stdout: string; stderr: string }>;
 }
 
@@ -75,6 +77,7 @@ class SystemEvalCommands implements EvalCommands {
   async run(command: string, args: string[], cwd: string, options: {
     deadline: number;
     signal?: AbortSignal;
+    env?: NodeJS.ProcessEnv;
   }) {
     const abort = new AbortController();
     const onAbort = () => abort.abort();
@@ -84,7 +87,8 @@ class SystemEvalCommands implements EvalCommands {
     process.once("SIGTERM", onSignal);
     try {
       const result = await runOwnedProcess(command, args, { cwd, deadline: options.deadline,
-        signal: abort.signal, maxBuffer: 16 * 1024 * 1024, env: evalModelProcessEnv() });
+        signal: abort.signal, maxBuffer: 16 * 1024 * 1024,
+        env: { ...evalModelProcessEnv(), ...options.env } });
       return { status: result.exitCode ?? 128, stdout: result.stdout, stderr: result.stderr };
     } finally {
       options.signal?.removeEventListener("abort", onAbort);
@@ -100,6 +104,16 @@ function json(path: string): unknown {
   catch { throw new Error("eval-native-artifact-malformed"); }
 }
 
+function nativeObject(value: unknown, reason: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(reason);
+  return value as Record<string, unknown>;
+}
+
+function nativeArray(value: unknown, reason: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(reason);
+  return value;
+}
+
 function stableReason(error: unknown, runtime: "claude" | "codex"): string {
   const message = error instanceof Error ? error.message : "";
   return /^eval-[a-z0-9:-]+$/.test(message) ? message : `eval-${runtime}-artifact-invalid`;
@@ -111,6 +125,67 @@ function manifestVersion(pluginDir: string): string {
   };
   if (typeof manifest.version !== "string") throw new Error("eval-plugin-version-invalid");
   return manifest.version;
+}
+
+function claudeReplyText(tracePath: string, allowedTempParent: string): string {
+  const canonicalTrace = realpathSync(tracePath);
+  const outputDir = dirname(canonicalTrace);
+  const tempRoot = dirname(outputDir);
+  if (lstatSync(tracePath).isSymbolicLink() || basename(canonicalTrace) !== "trace.jsonl" ||
+      basename(outputDir) !== "out" || !/^e-[a-zA-Z0-9_-]+$/.test(basename(tempRoot)) ||
+      realpathSync(dirname(tempRoot)) !== realpathSync(allowedTempParent)) {
+    throw new Error("eval-claude-reply-trace-path-invalid");
+  }
+  let reply = "";
+  for (const line of readFileSync(canonicalTrace, "utf8").split(/\r?\n/).filter(Boolean)) {
+    let event: Record<string, unknown>;
+    try { event = nativeObject(JSON.parse(line) as unknown, "eval-claude-reply-trace-invalid"); }
+    catch { throw new Error("eval-claude-reply-trace-invalid"); }
+    if (event.type === "result" && typeof event.result === "string" && event.result.trim()) {
+      reply = event.result;
+      continue;
+    }
+    if (event.type !== "assistant") continue;
+    const message = nativeObject(event.message, "eval-claude-reply-trace-invalid");
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    const text = message.content.flatMap((block) => {
+      const item = nativeObject(block, "eval-claude-reply-trace-invalid");
+      return item.type === "text" && typeof item.text === "string" ? [item.text] : [];
+    }).join("\n");
+    if (text.trim()) reply = text;
+  }
+  if (!reply.trim()) throw new Error("eval-claude-reply-missing");
+  return reply;
+}
+
+/** Materialize every validated Claude final reply in the same private case shape as Codex. */
+export function preserveClaudeReplies(raw: unknown, outputDir: string,
+  expectedCases: string[], allowedTempParent: string): void {
+  const root = nativeObject(raw, "eval-claude-json-invalid");
+  const cases = nativeArray(root.cases, "eval-claude-cases-invalid");
+  const actual = cases.map((rawCase) => {
+    const item = nativeObject(rawCase, "eval-claude-case-invalid");
+    if (typeof item.name !== "string") throw new Error("eval-claude-case-invalid");
+    return item.name;
+  });
+  if (new Set(actual).size !== actual.length || actual.slice().sort().join("\0") !==
+      expectedCases.slice().sort().join("\0")) throw new Error("eval-claude-reply-coverage-mismatch");
+  const replies = cases.map((rawCase) => {
+    const item = nativeObject(rawCase, "eval-claude-case-invalid");
+    const arms = nativeObject(item.arms, "eval-claude-arms-invalid");
+    const runs = nativeArray(arms.with, "eval-claude-runs-invalid");
+    if (runs.length !== 1) throw new Error("eval-claude-runs-invalid");
+    const run = nativeObject(runs[0], "eval-claude-run-invalid");
+    if (typeof run.tracePath !== "string") throw new Error("eval-claude-reply-trace-missing");
+    const caseId = codexCaseId(item.name as string);
+    const reply = claudeReplyText(run.tracePath, allowedTempParent);
+    if (privateTextProblem(reply)) throw new Error("eval-private-reply-private-data");
+    return { destination: privateReplyDestination(outputDir, caseId),
+      reply };
+  });
+  for (const item of replies) {
+    writePrivateReply(item.destination, item.reply);
+  }
 }
 
 /** Require T2 to measure one exact clean main commit. */
@@ -256,8 +331,12 @@ export async function runLocalEvals(options: LocalEvalOptions,
   const codexVersion = runtimes.includes("codex")
     ? await version(commands, options.codexExecutable, options.runRoot, "codex", deadline, options.signal) : null;
   const claudeOutput = join(options.runRoot, "claude");
+  const claudeTemp = join(options.runRoot, "claude-temp");
   const codexOutput = join(options.runRoot, "codex");
-  if (runtimes.includes("claude") && partition.ordinary.length) mkdirSync(claudeOutput);
+  if (runtimes.includes("claude") && partition.ordinary.length) {
+    mkdirSync(claudeOutput);
+    mkdirSync(claudeTemp, { mode: 0o700 });
+  }
   const claudeJson = join(claudeOutput, "result.json");
   const claudeEvalDir = runtimes.includes("claude") && partition.ordinary.length
     ? stageFocusedClaudeEvalCases(snapshot.vibeDir, partition.ordinary) : null;
@@ -273,7 +352,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
     "--judge-model", EVAL_POLICY.claudeJudgeModel,
     "--runs", "1", "--threshold", "1", "--concurrency", String(concurrency), "--scaffold",
     // The operator grant only unlocks gated tools that each case also declares.
-    "--allow-tools", "Bash", "Write", "Edit", "--trust-plugin", "--no-publish"];
+    "--allow-tools", "Bash", "Write", "Edit", "--trust-plugin", "--no-publish", "--keep-temp"];
   // The native runner documents these isolated Python dependencies. Provision
   // them through uv instead of relying on the developer's system Python.
   const codexArgs = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",
@@ -284,6 +363,12 @@ export async function runLocalEvals(options: LocalEvalOptions,
     "--grader-model", EVAL_POLICY.codexJudgeModel];
   if (options.deterministicOnly) codexArgs.push("--deterministic-only");
   for (const id of partition.ordinary) codexArgs.push("--case", codexCaseId(id));
+  const vibeVersion = manifestVersion(snapshot.vibeDir);
+  const coreVersion = manifestVersion(snapshot.coreDir);
+  const wordingCases = wordingCaseIds(snapshot.vibeDir, partition.ordinary);
+  const skillSha = createHash("sha256").update(
+    readFileSync(join(snapshot.vibeDir, "skills/vibe/SKILL.md"))).digest("hex");
+  const ordinaryRecords: EvalRuntimeRecord[] = [];
   let claudeProcess: { status: number; stdout: string; stderr: string } | null = null;
   let codexProcess: { status: number; stdout: string; stderr: string } | null = null;
   const siblings = new AbortController();
@@ -294,7 +379,8 @@ export async function runLocalEvals(options: LocalEvalOptions,
     const launches = [
       runtimes.includes("claude") && partition.ordinary.length
         ? commands.run(isolatedClaude!.executable, claudeArgs, options.runRoot,
-          { deadline, signal: siblings.signal }) : Promise.resolve(null),
+          { deadline, signal: siblings.signal,
+            env: { TMPDIR: claudeTemp, TMP: claudeTemp, TEMP: claudeTemp } }) : Promise.resolve(null),
       runtimes.includes("codex") && partition.ordinary.length
         ? commands.run(options.uvExecutable, codexArgs, options.runRoot,
           { deadline, signal: siblings.signal }) : Promise.resolve(null),
@@ -307,33 +393,34 @@ export async function runLocalEvals(options: LocalEvalOptions,
     if (failure) throw failure.reason;
     [claudeProcess, codexProcess] = settled.map((item) =>
       (item as PromiseFulfilledResult<{ status: number; stdout: string; stderr: string } | null>).value);
+    if (claudeProcess) writeProcessLog(join(options.runRoot, "claude-process.log"), claudeProcess);
+    if (codexProcess) writeProcessLog(join(options.runRoot, "codex-process.log"), codexProcess);
+    if (claudeProcess && claudeVersion) ordinaryRecords.push(
+      record("claude", claudeProcess.status, () => {
+        const claudeNative = json(claudeJson);
+        const collected = collectClaudeEval(claudeNative, partition.ordinary, {
+          version: vibeVersion, coreVersion, cliVersion: claudeVersion,
+          vibePath: snapshot.vibeDir, corePath: snapshot.coreDir,
+          model: EVAL_POLICY.claudeModel, runs: 1,
+        });
+        if (commands.localModelExecution) {
+          preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp);
+        }
+        return collected;
+      }));
+    if (codexProcess && codexVersion) ordinaryRecords.push(record("codex", codexProcess.status,
+      () => collectCodexEval(json(join(codexOutput, "results.json")), partition.ordinary, {
+        sourceSha: options.pluginSha, skillSha, version: vibeVersion, cliVersion: codexVersion,
+        vibePath: snapshot.vibeDir, deterministicOnly: options.deterministicOnly ?? false,
+        model: EVAL_POLICY.codexModel, graderModel: EVAL_POLICY.codexJudgeModel, wordingCases,
+      })));
   } finally {
     options.signal?.removeEventListener("abort", forwardAbort);
     // The Python runner also removes this copy in its finally block. The
     // parent independently removes it so an interrupt cannot retain a credential file.
     rmSync(join(codexOutput, "home/auth.json"), { force: true });
+    rmSync(claudeTemp, { recursive: true, force: true });
   }
-  if (claudeProcess) writeProcessLog(join(options.runRoot, "claude-process.log"), claudeProcess);
-  if (codexProcess) writeProcessLog(join(options.runRoot, "codex-process.log"), codexProcess);
-
-  const vibeVersion = manifestVersion(snapshot.vibeDir);
-  const coreVersion = manifestVersion(snapshot.coreDir);
-  const wordingCases = wordingCaseIds(snapshot.vibeDir, partition.ordinary);
-  const skillSha = createHash("sha256").update(
-    readFileSync(join(snapshot.vibeDir, "skills/vibe/SKILL.md"))).digest("hex");
-  const ordinaryRecords: EvalRuntimeRecord[] = [];
-  if (claudeProcess && claudeVersion) ordinaryRecords.push(
-    record("claude", claudeProcess.status, () => collectClaudeEval(json(claudeJson), partition.ordinary, {
-      version: vibeVersion, coreVersion, cliVersion: claudeVersion,
-      vibePath: snapshot.vibeDir, corePath: snapshot.coreDir,
-      model: EVAL_POLICY.claudeModel, runs: 1,
-    })));
-  if (codexProcess && codexVersion) ordinaryRecords.push(record("codex", codexProcess.status, () => collectCodexEval(
-      json(join(codexOutput, "results.json")), partition.ordinary, {
-        sourceSha: options.pluginSha, skillSha, version: vibeVersion, cliVersion: codexVersion,
-        vibePath: snapshot.vibeDir, deterministicOnly: options.deterministicOnly ?? false,
-        model: EVAL_POLICY.codexModel, graderModel: EVAL_POLICY.codexJudgeModel, wordingCases,
-      })));
   const statefulSuites = partition.stateful.length ? await (options.statefulRunner ??
     new SystemUpgradeResumeRunner()).run({ repo: options.repo, pluginSha: options.pluginSha,
       currentSnapshot: snapshot,

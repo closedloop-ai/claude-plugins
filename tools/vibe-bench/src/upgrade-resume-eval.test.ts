@@ -20,7 +20,8 @@ import * as pluginSnapshots from "./plugin-snapshot.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
 import { EVAL_POLICY } from "./eval-policy.ts";
 import * as upgradeEval from "./upgrade-resume-eval.ts";
-import type { UpgradeCaseEvidence, UpgradeFailureCode } from "./upgrade-resume-eval.ts";
+import type { UpgradeCaseEvidence, UpgradeCellRunner, UpgradeFailureCode } from
+  "./upgrade-resume-eval.ts";
 import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuiteResults,
   appServerTokenUsage, appServerTurn, resumeStatefulCodexThread,
   claudeStaleRecoveryEligible, claudeStaleRecoveryPrompt,
@@ -29,7 +30,10 @@ import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuit
   classifyUpgradeFailure, codexStoppedTurn, enqueueUpgradeRequest, heldCodexWriter,
   holdStatusText, linkCodexAuth,
   prepareClaudeVersionRecord, STATEFUL_CLAUDE_ROOT_TIMEOUT_MS, UPGRADE_GRAPH_CAPABILITIES,
-  STATEFUL_INFRASTRUCTURE_RETRIES, runUpgradeCellWithRetry, assertUpgradeDefinitionPremise,
+  STATEFUL_INFRASTRUCTURE_RETRIES, runUpgradeCellWithRetry, preserveStatefulClaudeReply,
+  runUpgradeResumeCases,
+  claudeTerminalReply, nextClaudeTurnReply, nextPlannedClaudeReply, statefulReplyFailureCode,
+  assertUpgradeDefinitionPremise,
   requireIdleCodexLedger, targetMigrationChild, upgradeCasePasses, validateClaudeVersionRecord,
   validateClaudeLoadContract, validateUpgradeCapabilities,
   validateCodexInstalledPlugin, statefulInfrastructureInvalidReason,
@@ -130,6 +134,50 @@ function evidence(failureCode: UpgradeFailureCode | null,
     migrationCount: 1, trace: [`attempt-${attempt}`] };
 }
 
+function injectedCell(input: Parameters<UpgradeCellRunner>[0],
+  failureCode: UpgradeFailureCode | null, privateReply?: string):
+  UpgradeCaseEvidence & { privateReply?: string } {
+  const expectedHistoricalFailure = input.role === "historical" && input.expected === "fail";
+  const failed = failureCode !== null;
+  return { caseId: input.item.id, runtime: input.runtime, passed: !failed, failureCode,
+    wallMs: 1, agentCostUsd: input.runtime === "claude" ? 0.01 : null,
+    tokens: input.runtime === "codex" ? {} : null, cliVersion: "2.1.318",
+    target: input.transition.target, prior: input.transition.prior, oldArchiveRetained: true,
+    proofLines: expectedHistoricalFailure ? ["turn-one"] : failed ? [] : ["turn-one", "turn-two"],
+    rootSessionId: input.attemptRoot, previousWriterId: "writer-1",
+    finalWriterId: failed ? null : "writer-2", migrationCount: expectedHistoricalFailure ? 0 : 1,
+    trace: [`${input.role}:${failureCode ?? "complete"}`],
+    ...(privateReply ? { privateReply } : {}) };
+}
+
+async function runInjectedClaudeBoundary(root: string, currentFailure: UpgradeFailureCode | null,
+  currentTrace: string, currentTurnStreams: string[] = []) {
+  const item = evalCaseCatalog(join(REPO, "plugins/vibe"))
+    .find((candidate) => candidate.id === "upgrade-resume-changed-definition");
+  assert.ok(item);
+  const pluginSha = execFileSync("git", ["-C", REPO, "rev-parse", "HEAD"],
+    { encoding: "utf8" }).trim();
+  const cellRunner: UpgradeCellRunner = async (input) => {
+    if (input.role === "historical") {
+      return injectedCell(input, input.expected === "fail" ? "MODEL_BLOCK" : null,
+        "historical reply");
+    }
+    let privateReply = "";
+    for (const stream of currentTurnStreams) {
+      privateReply = nextClaudeTurnReply(privateReply, stream);
+    }
+    return { ...injectedCell(input, currentFailure, privateReply || undefined),
+      trace: [currentTrace] };
+  };
+  const runRoot = join(root, "run");
+  const suites = await runUpgradeResumeCases({ repo: REPO, pluginSha,
+    currentSnapshot: { sha: pluginSha, vibeDir: realpathSync(join(REPO, "plugins/vibe")),
+      coreDir: realpathSync(join(REPO, "plugins/closedloop-core")), agentModels: {} },
+    runRoot, claudeExecutable: "unused-claude", codexExecutable: "unused-codex",
+    cases: [item], runtimes: ["claude"], cellRunner });
+  return { runRoot, suite: suites.claude! };
+}
+
 test("ISS-13743 stateful-only and combined Codex suites retain the observed model", () => {
   const cell: UpgradeCaseEvidence = { ...evidence(null, 1), runtime: "codex",
     model: EVAL_POLICY.codexModel, cliVersion: "codex-cli 0.163.0",
@@ -169,6 +217,96 @@ test("ISS-13743 stateful attempt evidence records the validated Codex model", as
     assert.equal(written.model, EVAL_POLICY.codexModel);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("ISS-13760 stateful Claude replies stay in reply.txt and out of evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-stateful-reply-"));
+  try {
+    const transition = join(root, "transition");
+    const result = await runUpgradeCellWithRetry({ transitionRoot: transition,
+      run: async () => ({ ...evidence(null, 1), runtime: "claude" as const,
+        privateReply: "stateful final reply" }) });
+    assert.equal(result.privateReply, "stateful final reply");
+    assert.doesNotMatch(readFileSync(join(transition, "attempts/1/evidence.json"), "utf8"),
+      /stateful final reply|privateReply/);
+    mkdirSync(join(root, "claude/upgrade-resume-changed-definition"), { recursive: true });
+    preserveStatefulClaudeReply(root, "upgrade-resume-changed-definition", result.privateReply!);
+    assert.equal(readFileSync(join(root,
+      "claude/upgrade-resume-changed-definition/reply.txt"), "utf8"),
+    "stateful final reply\n");
+    assert.throws(() => preserveStatefulClaudeReply(root,
+      "upgrade-resume-unchanged-definition", "Bearer secret-token-value"),
+    /eval-private-reply-private-data/);
+    assert.equal(existsSync(join(root,
+      "claude/upgrade-resume-unchanged-definition/reply.txt")), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13760 stateful reply selection never falls back to an earlier turn or transition", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-stateful-no-stale-reply-"));
+  try {
+  const turnOne = `${JSON.stringify({ type: "result", result: "turn-one reply" })}\n`;
+  const turnTwoNoResult = `${JSON.stringify({ type: "assistant",
+    message: { role: "assistant", content: [{ type: "text", text: "working" }] } })}\n`;
+  assert.equal(claudeTerminalReply(turnOne), "turn-one reply");
+  assert.equal(claudeTerminalReply(turnTwoNoResult), "");
+  let caseReply = nextPlannedClaudeReply("historical reply");
+  caseReply = nextPlannedClaudeReply(undefined);
+  assert.equal(caseReply, "", "current transition cannot inherit historical text");
+  mkdirSync(join(root, "claude/upgrade-resume-changed-definition"), { recursive: true });
+  if (caseReply) preserveStatefulClaudeReply(root, "upgrade-resume-changed-definition", caseReply);
+  assert.equal(existsSync(join(root,
+    "claude/upgrade-resume-changed-definition/reply.txt")), false);
+  assert.equal(statefulReplyFailureCode("AUTH_UNAVAILABLE", true), "AUTH_UNAVAILABLE");
+  assert.equal(statefulReplyFailureCode("TIMEOUT", true), "TIMEOUT");
+  assert.equal(statefulReplyFailureCode(null, true), "ORACLE_MISMATCH");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13760 runUpgradeResumeCases never writes a historical reply for a replyless current transition",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "vibe-stateful-historical-reply-"));
+    try {
+      const { runRoot, suite } = await runInjectedClaudeBoundary(root, null,
+        "current-terminal-no-result");
+      assert.deepEqual(suite.cases[0]?.failedGraders, ["ORACLE_MISMATCH"]);
+      assert.equal(existsSync(join(runRoot, "claude/upgrade-resume-changed-definition/reply.txt")),
+        false);
+      assert.doesNotMatch(readFileSync(join(runRoot,
+        "claude/upgrade-resume-changed-definition/evidence.json"), "utf8"),
+      /historical reply|privateReply/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+test("ISS-13760 runUpgradeResumeCases never falls back to turn one after terminal stale recovery",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "vibe-stateful-terminal-reply-"));
+    try {
+      const turnOne = `${JSON.stringify({ type: "result", result: "turn-one reply" })}\n`;
+      const noResult = (turn: string) => `${JSON.stringify({ type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: turn }] } })}\n`;
+      const { runRoot, suite } = await runInjectedClaudeBoundary(root, null,
+        "turn-one-result:terminal-stale-recovery-no-result",
+        [turnOne, noResult("turn-two no result"), noResult("stale recovery no result")]);
+      assert.deepEqual(suite.cases[0]?.failedGraders, ["ORACLE_MISMATCH"]);
+      assert.equal(existsSync(join(runRoot, "claude/upgrade-resume-changed-definition/reply.txt")),
+        false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+for (const failureCode of ["AUTH_UNAVAILABLE", "TIMEOUT"] as const) {
+  test(`ISS-13760 runUpgradeResumeCases retains terminal ${failureCode} without stale reply`, async () => {
+    const root = mkdtempSync(join(tmpdir(), `vibe-stateful-${failureCode.toLowerCase()}-`));
+    try {
+      const { runRoot, suite } = await runInjectedClaudeBoundary(root, failureCode,
+        `current-terminal:${failureCode}:no-result`);
+      assert.deepEqual(suite.cases[0]?.failedGraders, [failureCode]);
+      assert.equal(statefulInfrastructureInvalidReason(suite),
+        `eval-stateful-infrastructure:${failureCode}:upgrade-resume-changed-definition`);
+      assert.equal(existsSync(join(runRoot, "claude/upgrade-resume-changed-definition/reply.txt")),
+        false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 test("ISS-13720 isolated Claude MCP config contains only granted local graph tools", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-eval-mcp-isolation-"));
