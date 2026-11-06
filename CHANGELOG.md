@@ -10,7 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - In-place skill reload in `codex-session.mjs` now accepts a page acknowledgement whose agent message, with surrounding whitespace trimmed, is exactly `VIBE_SKILL_RELOAD_ACK v1 <nonce>`. A reply that ended with trailing newlines never advanced its page, so every `reload` and `--retry` call waited for an acknowledgement that had already arrived. One shared matcher, `isReloadAck`, serves both the receipt scan and the acknowledgement check; extra words or another nonce still never acknowledge a page.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54 (origin/main at the merge, 16c854310eac); only the README version line changed.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.55 (origin/main at the merge, 7ffa4aee44f8); only the README version line changed.
+
+### vibe v1.1.55
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54 (origin/main at this merge, 16c854310eac).
+
+#### Fixed
+- Handoff admits `pnpm-lock.yaml` changes only when changed importer and resolved package entries follow dependency edits in package manifests allowed by the target repository; malformed or unexplained entries are named when refusing the handoff.
+- Lockfile evidence parsing rejects malformed manifest dependency maps and keeps its regression coverage in focused test files.
+- Manifest dependency evidence uses own string-map fields, including explicit-null rejection, and its lockfile regressions stay split into focused suites.
 
 ### vibe v1.1.54
 
