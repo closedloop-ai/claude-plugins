@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Frozen-render story selection in `diff-rules.mjs` now walks each story's head import closure as well as its base closure, so a head-only module (for example a new `.ts` file that shadows an unchanged `.tsx`) and the stylesheets it imports select the story and make a recorded `Frozen render unchanged` line stale.
 - Story selection, the Storybook preview closure and the frozen-input digest now share one import walker, `createImportClosure` in `source-imports.mjs`. An import closure over 20,000 files now fails with an error instead of being silently truncated during story selection.
 - Because the inputs digest changes, previously recorded `Frozen render unchanged` change-log lines stop matching once; the next handoff re-runs the frozen render and records a fresh line.
+- Frozen-render regression tests moved from `diff-rules.test.mjs` into a focused `diff-rules-frozen-render.test.mjs`, and both suites now share the Git checkout fixture (`put`, `run`, `isFrozenStory`) from `diff-rules-test-fixture.mjs`, keeping `diff-rules.test.mjs` under its file size ceiling.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.45 (no Markdown changed).
 
 ### vibe v1.1.45
