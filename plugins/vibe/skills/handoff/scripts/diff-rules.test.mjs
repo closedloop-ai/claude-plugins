@@ -41,7 +41,7 @@ function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = f
   }
   writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), typeof changeLog === "function" ? changeLog({ checkout, base: baseSha }) : changeLog);
   const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory });
-  return { ...result, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
+  return { ...result, checkout, baseSha, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
 }
 
 test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {
@@ -227,7 +227,7 @@ test("frozen stories include global styles, tokens, Tailwind config and Storyboo
     "apps/app/globals.css": "body { color: red; }\n",
     "packages/design-system/tokens/colors.json": "{\"text\":\"red\"}\n",
     "tailwind.config.ts": "export default { theme: {} };\n",
-    "apps/storybook/.storybook/preview.tsx": "export const decorators = [];\n",
+    "apps/storybook/.storybook/preview.tsx": "import \"../../app/globals.css\";\nexport const decorators = [];\n",
   };
   for (const [file, text] of Object.entries({
     "apps/app/globals.css": "body { color: blue; }\n",
@@ -238,6 +238,111 @@ test("frozen stories include global styles, tokens, Tailwind config and Storyboo
     const result = run(t, { base, head: { [file]: text } });
     assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
   }
+});
+
+test("component styles stay in their story closure while preview styles reach every frozen story (ISS-13752)", (t) => {
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const componentCss = "packages/design-system/components/first.css";
+  const previewCss = "apps/storybook/.storybook/preview.css";
+  const base = {
+    [first]: "import { First } from \"@repo/design-system/components/first\";\nexport default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    [second]: "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+    "packages/design-system/components/first.tsx": "import \"./first.css\";\nexport const First = 1;\n",
+    [componentCss]: ".first { color: red; }\n",
+    "apps/storybook/.storybook/preview.tsx": "import \"./shared\";\n",
+    "apps/storybook/.storybook/shared.ts": "import \"./preview.css\";\n",
+    [previewCss]: ":root { color: red; }\n",
+    "packages/design-system/components/unrelated.css": ".unrelated { color: red; }\n",
+  };
+  const frozen = (file, value) => run(t, { base, head: { [file]: value } }).blocking.filter((finding) => finding.rule === "frozen-render");
+  const component = frozen(componentCss, ".first { color: blue; }\n");
+  assert.equal(component.length, 1);
+  assert.match(component[0].problem, /1 frozen v1\.0 story files/);
+  assert.match(component[0].problem, /first\.stories\.tsx/);
+  assert.doesNotMatch(component[0].problem, /second\.stories\.tsx/);
+  const preview = frozen(previewCss, ":root { color: blue; }\n");
+  assert.equal(preview.length, 1);
+  assert.match(preview[0].problem, /2 frozen v1\.0 story files/);
+  assert.match(preview[0].problem, /first\.stories\.tsx.*second\.stories\.tsx/);
+  assert.deepEqual(frozen("packages/design-system/components/unrelated.css", ".unrelated { color: blue; }\n"), []);
+});
+
+test("extensionless preview imports resolve CSS separately before and after .ts/.tsx swaps (ISS-13752)", (t) => {
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const preview = "apps/storybook/.storybook/preview.tsx";
+  const oldCss = "apps/storybook/.storybook/old.css";
+  const newCss = "apps/storybook/.storybook/new.css";
+  const stories = {
+    [first]: "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    [second]: "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+    [preview]: 'import "./shared";\n',
+  };
+  for (const [baseExtension, headExtension] of [["ts", "tsx"], ["tsx", "ts"]]) {
+    const oldModule = `apps/storybook/.storybook/shared.${baseExtension}`;
+    const newModule = `apps/storybook/.storybook/shared.${headExtension}`;
+    const reverse = baseExtension === "tsx";
+    const base = {
+      ...stories,
+      [oldModule]: 'import "./old.css";\n',
+      [oldCss]: ".old { color: red; }\n",
+      ...(reverse ? { [newCss]: ".new { color: red; }\n" } : {}),
+    };
+    const head = {
+      [oldModule]: null,
+      [newModule]: 'import "./new.css";\n',
+      ...(reverse ? { [oldCss]: null } : { [newCss]: ".new { color: blue; }\n" }),
+    };
+    const result = run(t, { base, head, commit: true });
+    const finding = result.blocking.find((entry) => entry.rule === "frozen-render");
+    assert.ok(finding, `${baseExtension} → ${headExtension}`);
+    assert.match(finding.problem, /2 frozen v1\.0 story files/);
+    assert.match(finding.problem, /first\.stories\.tsx.*second\.stories\.tsx/);
+    const controlHead = reverse ? { ...head, [oldCss]: base[oldCss] }
+      : { ...head, [newCss]: ".new { color: green; }\n" };
+    const control = run(t, { base, head: controlHead, commit: true });
+    for (const story of [first, second]) {
+      assert.notEqual(frozenInputs(result.checkout, result.baseSha, [story]),
+        frozenInputs(control.checkout, control.baseSha, [story]), `${baseExtension} → ${headExtension}: ${story} digest`);
+    }
+    if (reverse) {
+      assert.equal(control.blocking.some((entry) => entry.rule === "frozen-render"), false,
+        "retaining the old CSS leaves the module swap outside story closures");
+    }
+  }
+});
+
+test("each explicit global input and a lockfile-only diff select every frozen story (ISS-13752)", (t) => {
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const globalFiles = [
+    "apps/storybook/.storybook/preview-head.html",
+    "apps/storybook/.storybook/main.ts",
+    "apps/storybook/public/fonts/ui.woff2",
+    "apps/storybook/package.json",
+    "packages/design-system/package.json",
+    "packages/app/package.json",
+    "pnpm-lock.yaml",
+    "packages/design-system/styles/theme.css",
+    "packages/design-system/tokens/colors.json",
+    "tailwind.config.ts",
+  ];
+  const base = {
+    [first]: "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    [second]: "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+    ...Object.fromEntries(globalFiles.map((file) => [file, `original ${file}\n`])),
+    "packages/other/package.json": "original other\n",
+  };
+  for (const file of globalFiles) {
+    const result = run(t, { base, head: { [file]: `changed ${file}\n` } });
+    const finding = result.blocking.find((entry) => entry.rule === "frozen-render");
+    assert.ok(finding, file);
+    assert.match(finding.problem, /2 frozen v1\.0 story files/, file);
+    assert.match(finding.problem, /first\.stories\.tsx.*second\.stories\.tsx/, file);
+  }
+  const unrelated = run(t, { base, head: { "packages/other/package.json": "changed other\n" } });
+  assert.equal(unrelated.blocking.some((entry) => entry.rule === "frozen-render"), false);
 });
 
 test("routes, GridTableV2 and story titles require the tests the graph does not map", (t) => {
