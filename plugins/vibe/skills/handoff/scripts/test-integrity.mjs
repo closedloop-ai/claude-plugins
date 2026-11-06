@@ -6,6 +6,7 @@
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
+const CHECKER_FIXTURE = "plugins/vibe/skills/handoff/scripts/test-integrity.test.mjs";
 const RESPONSIVE_NAME = /\b(?:narrow|mobile)\b/i;
 const RESPONSIVE_EVIDENCE = /\b(?:setViewportSize|viewport\s*:|matchMedia\s*\(|innerWidth|screen\.width|(?:sm|md|lg):(?:hidden|block|flex|grid)\b)|@media\b/i;
 const ABSENCE_ASSERTION = /toHaveCount\(\s*0\s*\)|\.not\s*\.\s*(?:toBeInTheDocument|toBeVisible|toBeAttached|toExist)\s*\(|\.\s*(?:toBeNull|toBeHidden)\s*\(/;
@@ -137,7 +138,8 @@ function candidate(kind, path, line, caseName, claim, assertionLine, suffix = ""
 /** Candidates in changed test/story code that need failing-mutation proof. */
 export function testIntegrityCandidates(files, read) {
   const found = [];
-  for (const file of files.filter((entry) => entry.status !== "D" && (isTestFile(entry.path) || STORY_FILE.test(entry.path)))) {
+  for (const file of files.filter((entry) => entry.status !== "D" && entry.path !== CHECKER_FIXTURE
+    && (isTestFile(entry.path) || STORY_FILE.test(entry.path)))) {
     const source = read(file.path) ?? "";
     const sourceLines = source.split("\n");
     const changedLines = addedLines(file);

@@ -126,6 +126,13 @@ test("responsive candidates ignore reviewer wording but retain mobile cases and 
   const candidates = testIntegrityCandidates(fixtures.map(({ file }) => file), (file) => sources.get(file));
   assert.deepEqual(candidates.filter(({ kind }) => kind === "responsive").map(({ path }) => path).sort(),
     ["mobile-layout.test.ts", "viewport-layout.test.ts"]);
+  const meta = changed("plugins/vibe/skills/handoff/scripts/test-integrity.test.mjs", [
+    'test("mobile viewport classifier fixture", () => {',
+    '  const source = "await page.setViewportSize({ width: 390 })";',
+    "});",
+  ].join("\n"), ["setViewportSize"]);
+  assert.deepEqual(testIntegrityCandidates([meta.file], () => meta.source), [],
+    "the checker's synthetic source is not an executable responsive boundary");
 });
 
 test("AC-4 absence assertions reject missing or unrun proof and accept an executed failure", () => {
