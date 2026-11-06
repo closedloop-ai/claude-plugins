@@ -16,8 +16,8 @@ import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./r
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
-import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
-import { frozenInputs, isFrozenGlobalInput } from "./frozen-render.mjs";
+import { createImportClosure, escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
+import { frozenInputs, isFrozenGlobalInput, storybookPreviewImportClosure } from "./frozen-render.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
@@ -61,7 +61,6 @@ const STORY_VERSION_FILE = "apps/storybook/package.json";
 const STORY_COMPONENT = /\bcomponent:\s*([A-Z]\w*)/;
 const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
 const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
-const CLOSURE_LIMIT = 20000;
 const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
 const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
 const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
@@ -506,33 +505,16 @@ function checkFrozenRenders(files, repo, changeLog, add) {
   if (stories.length === 0) {
     return;
   }
-  const imports = new Map();
-  let frontier = stories;
-  while (frontier.length && imports.size < CLOSURE_LIMIT) {
-    const texts = repo.baseBlobs(frontier);
-    const next = new Set();
-    for (const file of frontier) {
-      const targets = [...(texts.get(file) ?? "").matchAll(IMPORT_SPECIFIER)]
-        .map((found) => resolveImport(file, found[1], repo.baseFiles)).filter(Boolean);
-      imports.set(file, targets);
-      targets.filter((target) => !imports.has(target)).forEach((target) => next.add(target));
-    }
-    frontier = [...next];
-  }
-  const globalChanged = [...changed].some(isFrozenGlobalInput);
+  const baseClosure = createImportClosure(repo.baseFiles, repo.baseBlobs);
+  const headFiles = new Set(repo.headFiles);
+  const headClosure = createImportClosure(headFiles,
+    (paths) => new Map(paths.map((file) => [file, repo.head(file)])));
+  const previewClosure = storybookPreviewImportClosure(repo.baseFiles, headFiles, repo.base, repo.head);
+  const globalChanged = [...changed].some((file) => isFrozenGlobalInput(file, previewClosure));
   const affected = stories.filter((story) => {
     if (globalChanged) return true;
-    const seen = new Set([story]);
-    const queue = [story];
-    while (queue.length) {
-      for (const target of imports.get(queue.shift()) ?? []) {
-        if (!seen.has(target)) {
-          seen.add(target);
-          queue.push(target);
-        }
-      }
-    }
-    return [...seen].some((file) => file !== story && changed.has(file));
+    return [...baseClosure([story]), ...headClosure([story])]
+      .some((file) => file !== story && changed.has(file));
   });
   // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion (ISS-13291).
   // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317). It names the
@@ -775,7 +757,7 @@ export function sidebarOrderTests(files, repo) {
 
 function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   let deepened = 0;
-  const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
+  const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
   const blobs = new Map();
   const baseBlobs = (paths) => {

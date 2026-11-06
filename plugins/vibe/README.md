@@ -254,6 +254,13 @@ turn that failed
 on a transient provider error after a backoff, and `supervise.sh` runs that
 recovery on each host with no orchestrator awake.
 
+### Internal pipeline skills
+
+`vibe-pipeline-backend`, `vibe-pipeline-docs-config`,
+`vibe-pipeline-trivial-ui` and `vibe-pipeline-ui-feature` load the build and
+handoff rules for the class selected by a session's triage manifest. They are
+internal parts of `$vibe`, not separate entry points.
+
 ### ClosedLoop ticket skills
 
 `cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`,

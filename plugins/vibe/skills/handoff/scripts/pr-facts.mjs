@@ -729,15 +729,11 @@ function finalFileHash(inventory, worktree, file) {
   return inventory.fileHashes?.[file];
 }
 
+/** Read the first existing base template; absence is optional, but Git failures still propagate. */
 function readTemplate(worktree, base) {
-  for (const file of TEMPLATE_PATHS) {
-    try {
-      return git(worktree, ["show", `${base}:${file}`]);
-    } catch {
-      // Not at this path; try the next one.
-    }
-  }
-  return "";
+  const present = new Set(git(worktree, ["ls-tree", "-r", "--name-only", base, "--", ...TEMPLATE_PATHS]).split("\n").filter(Boolean));
+  const file = TEMPLATE_PATHS.find((candidate) => present.has(candidate));
+  return file ? git(worktree, ["show", `${base}:${file}`]) : "";
 }
 
 function text(value) {

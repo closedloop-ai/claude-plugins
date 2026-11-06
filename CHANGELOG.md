@@ -16,7 +16,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Reload publishes an exclusive canonical-worktree fence in the existing machine slot locks and retains it through page acknowledgements and evidence completion. E2E and heavy admission register their ownership before checking the same fence; jobs that arrive during App Server awaits cannot start mid-reload. Confirmed interruption and completion release the fence; interrupted pumps retain durable actor ownership for retry, while proven orphans recover without signaling processes.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 122 words longer than in 1.1.44 (the branch base).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 122 words longer than in 1.1.51 (origin/main at this merge, 4ead9634c5d2).
+
+### vibe v1.1.51
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.47; the README version update does not change the net word count.
+
+#### Fixed
+- Background verify runs now keep the parent-written PID in a separate sidecar so it cannot overwrite a child-written result. Status also re-reads the run record after a failed liveness check, preserving a result the child finished during that check.
+
+### vibe v1.1.47
+
+#### Changed
+- Frozen-render story selection treats a stylesheet as a global input only when Storybook's preview entry reaches it through imports, on either side of the comparison. Component styles stay in their own story closure. Other global inputs are the preview entry, token and theme files, Tailwind config, Storybook's `preview-head.html`, `main.ts` and `public/` files, the Storybook, design-system and app `package.json` files, and `pnpm-lock.yaml`; a change to any of them selects every frozen story.
+- The frozen-input digest now follows imports into non-source global inputs and hashes their raw bytes, so a change to global HTML, config, manifests, the lockfile or public files changes the digest while unrelated CSS does not.
+- Frozen-render preview reachability now follows nested CSS `@import url()` references, ignores commented-out imports, and includes untracked Storybook global files in the frozen-input digest.
+- Frozen-story input digests now resolve base and head import closures separately, Storybook preview selection includes untracked imported CSS, and Sass `@use`/`@forward` reach local partial and index stylesheets.
+- Sass `@import` preview dependencies now include every comma-separated local stylesheet, including the unquoted indented Sass syntax; CSS URL, external and media imports remain classified as CSS.
+- Frozen-render story selection in `diff-rules.mjs` now walks each story's head import closure as well as its base closure, so a head-only module (for example a new `.ts` file that shadows an unchanged `.tsx`) and the stylesheets it imports select the story and make a recorded `Frozen render unchanged` line stale.
+- Story selection, the Storybook preview closure and the frozen-input digest now share one import walker, `createImportClosure` in `source-imports.mjs`. An import closure over 20,000 files now fails with an error instead of being silently truncated during story selection.
+- Because the inputs digest changes, previously recorded `Frozen render unchanged` change-log lines stop matching once; the next handoff re-runs the frozen render and records a fresh line.
+- Frozen-render regression tests moved from `diff-rules.test.mjs` into a focused `diff-rules-frozen-render.test.mjs`, and both suites now share the Git checkout fixture (`put`, `run`, `isFrozenStory`) from `diff-rules-test-fixture.mjs`, keeping `diff-rules.test.mjs` under its file size ceiling.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.45 (no Markdown changed).
+
+#### Fixed
+- Native Codex reviewer receipts in the handoff's `codex-review-runtime.mjs` now load when the completed turn summary from `thread/turns/list` says its items are not loaded but the separate `thread/items/list` pages return them: the summary's `itemsView: "notLoaded"` marker is dropped once those pages are read. A completed turn with absent items (no item array, an empty one, or one still marked not loaded) is still refused.
+- Pull-request template discovery in the handoff's `pr-facts.mjs` now lists the four candidate template paths on the base with one `git ls-tree` call and reads only the first one present, instead of trying `git show` on each path and swallowing its failure. A base with none of the four templates no longer prints fatal Git errors on stderr and adds no body problems; a present template still has its headings enforced, and a real Git failure (for example an unreadable base) now surfaces instead of being treated as no template.
+
+### vibe v1.1.45
+
+#### Changed
+- Frozen-render results record per-render phase timings. The gate hashes raw PNG bytes before decoding, skips decode for byte-identical screenshots, and preserves decoded-pixel comparison for differently encoded screenshots.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.44 (origin/main at the merge).
 
 ### vibe v1.1.44
 
