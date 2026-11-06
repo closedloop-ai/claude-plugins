@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.48
+
+#### Fixed
+- Stale fleet writers accept one exact reload-only envelope without appended provenance. Direct session commands verify the host's installed root. Reload waits for owned heavy-slot jobs and E2E holders or acquisition waiters to release, sends bounded skill pages through App Server, and requires acknowledgements from the recorded actor and turn before refreshing evidence. Receipt scans persist their cursors across bounded pumps; explicit retry clears an invalid cursor while retaining the nonce and text. Retained briefs remain durable until confirmed delivery, with lost-reply reconciliation.
+- An idle stale writer's next turn reloads in place and retains its requested brief, thread, worktree, branch, session record and board row. `codex-session.mjs interrupt` records a reason, interrupts the active turn through the App Server, and confirms it stopped without archiving the thread.
+- Existing local and remote watcher snapshots report `SKILL-STALE <writer> <loaded> -> <installed>`; coordinator instructions queue reload at the next milestone and reserve interrupt for reloads that cannot wait.
+- Session control locks use process birth/command witnesses, clean failed ownership writes, and recover old ownerless or reused-PID records without signaling processes. Remote usage polling ships no freshness modules when no writer is watched.
+- Reload publishes an exclusive canonical-worktree fence in the existing machine slot locks and retains it through page acknowledgements and evidence completion. E2E and heavy admission register their ownership before checking the same fence; jobs that arrive during App Server awaits cannot start mid-reload. Confirmed interruption and completion release the fence; interrupted pumps retain durable actor ownership for retry, while proven orphans recover without signaling processes.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 20 words shorter than in 1.1.44 (the branch base).
+
 ### vibe v1.1.44
 
 #### Changed

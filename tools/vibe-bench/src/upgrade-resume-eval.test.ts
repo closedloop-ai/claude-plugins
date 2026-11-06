@@ -149,7 +149,7 @@ test("ISS-13743 stateful-only and combined Codex suites retain the observed mode
     ] });
   const baseline = buildEvalBaseline({ results: [run], catalog: [{ id: cell.caseId,
     skill: "vibe", kind: "upgrade-resume", deterministic: true, contentHash: "b".repeat(64) }],
-  pluginVersion: "1.1.44" });
+  pluginVersion: "1.1.48" });
   assert.equal(baseline.models.codex, EVAL_POLICY.codexModel);
   assert.throws(() => statefulSuite("codex", [{ ...cell, model: "different-codex-model" }]),
     /eval-stateful-codex-model-mismatch/);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +9,11 @@ import {
   assertVibeSession, lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, requireResumeSession, run, saveState,
 } from './codex-session.mjs';
 import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import * as sessions from './codex-session.mjs';
+import { writeRemoteCodexStub } from './fleet-test-support.mjs';
+import { readProcessIdentity } from '../../../shared/process-identity.mjs';
+import * as ownership from '../../vibe/scripts/owned-state.mjs';
 
 // A writer recorded its parent orchestrator's capacity stop as a human ruling (2026-10-26); every turn and steer
 // this client sends says who it is from.
@@ -369,4 +375,739 @@ test('a new session without --ticket starts and its thread is named by the sessi
   assert.deepEqual(client.calls.find((call) => call.method === 'thread/name/set').params, { threadId: 'T1', name: 'w1' });
   assert.ok(client.calls.some((call) => call.method === 'thread/section/move'));
   assert.equal(loadState(dir, 'w1').ticket, undefined);
+});
+
+/** A real file-backed actor and installed release, with no daemon or signal-sending child. */
+function reloadFixture(t) {
+  const { dir, promptFile } = workDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', '-b', 'vibe/original', dir]);
+  writeFileSync(join(dir, '.git/vibe-session.json'), JSON.stringify({ status: 'active', branch: 'vibe/original', slug: 'original', summary: 'Original',
+    operator: { id: 'operator' }, baseCommit: 'a'.repeat(40), createdAt: '2026-11-05T12:00:00Z' }));
+  const pluginRoot = join(dir, 'plugin');
+  mkdirSync(join(pluginRoot, '.codex-plugin'), { recursive: true });
+  mkdirSync(join(pluginRoot, 'skills/vibe'), { recursive: true });
+  writeFileSync(join(pluginRoot, '.codex-plugin/plugin.json'), JSON.stringify({ name: 'vibe', version: '1.1.48' }));
+  writeFileSync(join(pluginRoot, 'skills/vibe/SKILL.md'), Array.from({ length: 205 }, (_, n) => `skill line ${n + 1}`).join('\n'));
+  const loadedSkill = { ...loadedSkillEvidence('T1', 'codex', pluginRoot, 'vibe', LoadBasis.InstalledAtSpawn), version: '1.1.38' };
+  const saved = { threadId: 'T1', cwd: dir, model: 'm', effort: 'high', turns: [], loadedSkill,
+    custom: { retained: true }, ticket: 'fixture-ticket' };
+  saveState(dir, 'w1', saved);
+  const options = (command) => ({ ...parseCli([command, dir, 'w1', '--prompt-file', promptFile]), pluginRoot });
+  const idle = () => reloadServer({ dir, pluginRoot, lockDirs }).client;
+  const lockDirs = { slotRoot: join(dir, 'slots'), e2eLockDir: join(dir, 'e2e') };
+  return { dir, promptFile, pluginRoot, saved, options, idle, lockDirs };
+}
+
+/** Strict App Server fixture: input receipt and actor acknowledgement are separate observable events. */
+function reloadServer(f) {
+  let turnId = 'U1'; let status = 'completed'; let count = 1; let failure;
+  const items = new Map(); const sent = [];
+  const receive = (params) => {
+    assert.equal(params.threadId, 'T1');
+    if (failure === 'before') { failure = null; throw new Error('delivery rejected'); }
+    sent.push(params.input[0].text);
+    items.set(turnId, [...(items.get(turnId) ?? []), { type: 'userMessage', content: params.input }]);
+    if (failure === 'after') { failure = null; throw new Error('response lost'); }
+  };
+  const client = stubClient({
+    'thread/read': () => ({ thread: { id: 'T1', status: { type: status === 'inProgress' ? 'active' : 'idle' }, turns: [{ id: turnId, status }] } }),
+    'thread/turns/list': () => ({ data: [{ id: turnId, status }] }),
+    'thread/items/list': params => {
+      assert.equal(params.threadId, 'T1');
+      return { data: (items.get(params.turnId) ?? []).map(item => ({ item })) };
+    },
+    'thread/resume': {},
+    'thread/archive': {}, 'thread/unarchive': {},
+    'turn/start': params => { turnId = `U${++count}`; status = 'inProgress'; receive(params); return { turn: { id: turnId } }; },
+    'turn/steer': params => { assert.equal(params.expectedTurnId, turnId); receive(params); return { turnId }; },
+    'turn/interrupt': () => { status = 'interrupted'; return {}; },
+  });
+  return { client, sent: () => sent, turn: () => turnId,
+    finish: () => { status = 'completed'; },
+    ack: (turn = turnId, nonce = loadState(f.dir, 'w1').reload.delivery.nonce) => {
+      items.set(turn, [...(items.get(turn) ?? []), { type: 'agentMessage', text: `VIBE_SKILL_RELOAD_ACK v1 ${nonce}` }]);
+    },
+    failBefore: () => { failure = 'before'; }, failAfter: () => { failure = 'after'; },
+    pump: (retry = false) => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot, retry }, { client, ...f.lockDirs }),
+  };
+}
+
+/** Long exact-turn receipt history with a real opaque-cursor continuation boundary. */
+function receiptHistory(server, turnId, receipt) {
+  const history = [...Array.from({ length: 600 }, (_, index) => ({ type: 'agentMessage', text: `unrelated ${index}` })), receipt];
+  const cursors = []; let invalid;
+  const client = { request: async (method, params) => {
+    if (method !== 'thread/items/list') return server.client.request(method, params);
+    assert.equal(params.threadId, 'T1'); assert.equal(params.turnId, turnId); assert.equal(params.limit, 100);
+    cursors.push(params.cursor ?? null);
+    if (invalid && params.cursor === invalid) throw new Error('invalid receipt cursor');
+    const offset = params.cursor ? Number(params.cursor) : 0;
+    return { data: history.slice(offset, offset + 100).map(item => ({ item })),
+      nextCursor: offset + 100 < history.length ? String(offset + 100) : null };
+  } };
+  return { client, cursors, invalidate: cursor => { invalid = cursor; } };
+}
+
+/** An actual job checkout, separate from the actor/skill fixture so receipts never change its tested source. */
+function admissionFixture(t) {
+  const f = reloadFixture(t); const worktree = join(f.dir, 'job-worktree'); mkdirSync(worktree);
+  const git = args => execFileSync('git', ['-C', worktree, ...args], { encoding: 'utf8', timeout: 5000,
+    env: { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'fixture', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'fixture' } }).trim();
+  git(['init', '-q', '-b', 'vibe/job']); git(['commit', '-q', '--allow-empty', '-m', 'fixture']);
+  const head = git(['rev-parse', 'HEAD']);
+  f.saved.cwd = worktree; saveState(f.dir, 'w1', f.saved);
+  const docker = join(f.dir, 'no-docker'); writeFileSync(docker, '#!/bin/sh\nexit 1\n'); chmodSync(docker, 0o700);
+  return { ...f, worktree, head, docker, marker: join(f.dir, 'job-started') };
+}
+
+/** Wait for a filesystem admission barrier, not an assumed scheduling delay. */
+async function admissionBarrier(condition) {
+  const end = Date.now() + 10_000;
+  while (Date.now() < end) { if (condition()) return; await delay(10); }
+  throw new Error('admission barrier timed out');
+}
+
+test('stale running writer accepts only reload steer and stays stale until delivery', async (t) => {
+  const f = reloadFixture(t);
+  const active = stubClient({ 'thread/read': { thread: { turns: [{ id: 'U1', status: 'inProgress' }] } }, 'turn/steer': { turnId: 'U1' } });
+  await assert.rejects(run(active, f.options('steer')), /loaded 1\.1\.38/);
+  assert.equal(active.calls.length, 0);
+  for (const text of ['VIBE_SKILL_RELOAD v1\ncontinue', 'VIBE_SKILL_RELOAD v1 ']) {
+    writeFileSync(f.promptFile, text);
+    await assert.rejects(run(active, f.options('steer')), /loaded 1\.1\.38/);
+  }
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  assert.equal(await run(active, f.options('steer')), 'w1 steer T1 U1');
+  const sent = active.calls.find(c => c.method === 'turn/steer').params.input[0].text;
+  assert.equal(sent, 'VIBE_SKILL_RELOAD v1');
+  assert.deepEqual(active.calls.find(c => c.method === 'turn/steer').params.input,
+    [{ type: 'text', text: 'VIBE_SKILL_RELOAD v1', text_elements: [] }]);
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.38');
+  writeFileSync(f.promptFile, 'continue');
+  await assert.rejects(run(active, f.options('steer')), /loaded 1\.1\.38/);
+});
+
+test('idle migration requires actor acknowledgements and replays the retained brief through App Server', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(join(f.dir, 'board.json'), '{"w1":"unchanged"}');
+  const sessionBefore = readFileSync(join(f.dir, '.git/vibe-session.json'), 'utf8');
+  writeFileSync(f.promptFile, 'Original requested work');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  assert.equal(server.sent()[0], 'VIBE_SKILL_RELOAD v1');
+  assert.equal(server.sent().length, 2, 'the idle next turn starts its first installed page immediately');
+  const output = [];
+  mkdirSync(join(f.lockDirs.slotRoot, 'heavy-1.lock'), { recursive: true });
+  writeFileSync(join(f.lockDirs.slotRoot, 'heavy-1.lock/cwd'), f.dir);
+  await assert.rejects(server.pump(), /heavy/);
+  assert.equal(server.sent().length, 2);
+  rmSync(f.lockDirs.slotRoot, { recursive: true });
+  mkdirSync(f.lockDirs.e2eLockDir);
+  writeFileSync(join(f.lockDirs.e2eLockDir, 'owner.json'), JSON.stringify({ worktree: f.dir }));
+  await assert.rejects(server.pump(), /e2e/);
+  rmSync(f.lockDirs.e2eLockDir, { recursive: true });
+  await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0, 'delivery alone cannot advance evidence');
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.38');
+  assert.doesNotMatch(server.sent().join(''), /Original requested work/);
+  server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.38');
+  server.ack(); const result = await server.pump();
+  assert.equal(result.complete, true);
+  const saved = loadState(f.dir, 'w1');
+  assert.equal(saved.loadedSkill.version, '1.1.48');
+  assert.equal(saved.loadedSkill.basis, 'reload-acknowledged');
+  assert.equal(saved.reload, undefined);
+  assert.match(server.sent().at(-1), /^Original requested work\nVIBE_RETAINED_BRIEF v1 /);
+  assert.equal(saved.reloadReceipt.turnId, server.turn());
+  assert.deepEqual(saved.custom, { retained: true });
+  assert.equal(readFileSync(join(f.dir, 'board.json'), 'utf8'), '{"w1":"unchanged"}');
+  assert.equal(readFileSync(join(f.dir, '.git/vibe-session.json'), 'utf8'), sessionBefore);
+  assert.equal(assertVibeSession(f.dir).branch, 'vibe/original');
+});
+
+test('page delivery rejection preserves stale evidence and retries the same nonce', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  server.failBefore();
+  await assert.rejects(server.pump(), /delivery rejected/);
+  const before = loadState(f.dir, 'w1');
+  assert.equal(before.loadedSkill.version, '1.1.38');
+  assert.equal(before.reload.cursor, 0);
+  await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.delivery.nonce, before.reload.delivery.nonce);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+});
+
+test('interrupt confirms stop, records reason and resumes the same thread', async () => {
+  const { dir, promptFile } = workDir();
+  saveState(dir, 'w1', { threadId: 'T1', cwd: '/wt', turns: [], custom: 'kept' });
+  let stopped = false;
+  const client = stubClient({
+    'thread/read': { thread: { id: 'T1', status: { type: 'active' } } },
+    'thread/turns/list': () => ({ data: [{ id: 'U1', status: stopped ? 'interrupted' : 'inProgress' }] }),
+    'turn/interrupt': params => {
+      assert.deepEqual(params, { threadId: 'T1', turnId: 'U1' });
+      assert.equal(loadState(dir, 'w1').interrupt.reason, 'reload cannot wait: priority lock yield');
+      stopped = true; return {};
+    },
+  });
+  assert.equal(await run(client, parseCli(['interrupt', dir, 'w1', '--reason', 'reload cannot wait: priority lock yield'])), 'w1 interrupted T1 U1');
+  assert.ok(loadState(dir, 'w1').interrupt.completedAt);
+  assert.equal(loadState(dir, 'w1').ended, undefined);
+  await run(stubClient({ 'thread/resume': {}, 'turn/start': { turn: { id: 'U2' } } }), parseCli(['turn', dir, 'w1', '--prompt-file', promptFile]));
+  assert.equal(loadState(dir, 'w1').custom, 'kept');
+  assert.equal(loadState(dir, 'w1').interrupt.reason, 'reload cannot wait: priority lock yield');
+});
+
+test('interrupt rejects blank reason and preserves failed request evidence', async () => {
+  for (const args of [[], ['--reason', ''], ['--reason', '  '], ['--reason']]) {
+    assert.throws(() => parseCli(['interrupt', 'state', 'w1', ...args]), /reason|argument/);
+  }
+  const { dir } = workDir();
+  saveState(dir, 'w1', { threadId: 'T1', cwd: '/wt', turns: [] });
+  await assert.rejects(run(endClient('inProgress', { 'turn/interrupt': () => { throw new Error('RPC failed'); } }),
+    parseCli(['interrupt', dir, 'w1', '--reason', 'reload cannot wait'])), /RPC failed/);
+  assert.equal(loadState(dir, 'w1').interrupt.reason, 'reload cannot wait');
+  assert.equal(loadState(dir, 'w1').interrupt.completedAt, undefined);
+});
+
+test('a stale running turn and a wrong actor cannot start idle migration', async (t) => {
+  const f = reloadFixture(t);
+  await assert.rejects(run(endClient('inProgress'), f.options('turn')), /running writer needs a mechanical reload steer/);
+  assert.deepEqual(loadState(f.dir, 'w1'), f.saved);
+  saveState(f.dir, 'w1', { ...f.saved, loadedSkill: { ...f.saved.loadedSkill, actorId: 'another-thread' } });
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  const client = stubClient({});
+  await assert.rejects(run(client, f.options('steer')), /no recorded loaded skill evidence/);
+  assert.equal(client.calls.length, 0);
+});
+
+test('exact page envelope excludes provenance and wrong-turn acknowledgements do not advance evidence', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs); await server.pump();
+  const state = loadState(f.dir, 'w1'); const page = state.reload.delivery;
+  const expected = 'VIBE_SKILL_RELOAD v1\n' + JSON.stringify({ kind: 'page', threadId: 'T1', nonce: page.nonce,
+    definition: 'skills/vibe/SKILL.md', definitionSha256: state.reload.target.definitionSha256,
+    start: 1, end: 160, total: 205, content: Array.from({ length: 160 }, (_, n) => 'skill line ' + (n + 1)).join('\n'),
+    instruction: 'Read this installed skill page and its required references. Run no other work until all pages are acknowledged.',
+    acknowledge: 'VIBE_SKILL_RELOAD_ACK v1 ' + page.nonce });
+  assert.deepEqual(server.client.calls.findLast(c => c.method === 'turn/steer').params.input,
+    [{ type: 'text', text: expected, text_elements: [] }]);
+  server.ack('wrong-turn');
+  const callsBefore = server.sent().length;
+  await server.pump();
+  assert.equal(server.sent().length, callsBefore);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  server.ack(undefined, 'wrong nonce'); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+});
+
+test('a changed installation refuses the old cursor then a new reload retains the original brief', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'retained work');
+  await run(server.client, f.options('turn'), f.lockDirs); await server.pump();
+  writeFileSync(join(f.pluginRoot, 'skills/vibe/SKILL.md'), '# replacement skill\n');
+  await assert.rejects(server.pump(), /target changed/);
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.38');
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  await run(server.client, f.options('steer'), f.lockDirs);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  assert.equal(loadState(f.dir, 'w1').reload.pendingPrompt, 'retained work');
+  assert.equal(ownership.reloadFenceStatus(f.dir, { ...f.lockDirs, identityOf: () => null }).held, true,
+    'definition migration preserves the durable reload identity between CLI pumps');
+  await server.pump(); server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.48');
+});
+
+test('reload dispatch failure keeps queued recovery and refuses ordinary work on retry', async (t) => {
+  const f = reloadFixture(t);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  const client = stubClient({ 'thread/read': { thread: { turns: [{ id: 'U1', status: 'inProgress' }] } },
+    'turn/steer': () => { throw new Error('delivery rejected'); } });
+  await assert.rejects(run(client, f.options('steer')), /delivery rejected/);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.38');
+  writeFileSync(f.promptFile, 'continue');
+  await assert.rejects(run(client, f.options('steer')), /loaded 1\.1\.38/);
+});
+
+test('unconfirmed interrupt is bounded and never claims a completed stop', async () => {
+  const { dir } = workDir();
+  saveState(dir, 'w1', { threadId: 'T1', cwd: '/wt', turns: [] });
+  const client = endClient('inProgress', { 'turn/interrupt': {} });
+  await assert.rejects(run(client, parseCli(['interrupt', dir, 'w1', '--reason', 'reload cannot wait']),
+    { attempts: 2, wait: async () => {} }), /stop is unconfirmed/);
+  assert.equal(client.calls.filter(c => c.method === 'thread/turns/list').length, 3);
+  assert.equal(loadState(dir, 'w1').interrupt.completedAt, undefined);
+});
+
+test('safe-point ownership handles foreign, subdirectory and incomplete records conservatively', (t) => {
+  const f = reloadFixture(t);
+  mkdirSync(join(f.lockDirs.slotRoot, 'heavy-1.lock'), { recursive: true });
+  assert.deepEqual(sessions.reloadBlockers(f.saved, f.lockDirs), ['heavy slot heavy-1.lock']);
+  writeFileSync(join(f.lockDirs.slotRoot, 'heavy-1.lock/cwd'), join(f.dir, 'nested'));
+  assert.deepEqual(sessions.reloadBlockers(f.saved, f.lockDirs), ['heavy slot heavy-1.lock']);
+  writeFileSync(join(f.lockDirs.slotRoot, 'heavy-1.lock/cwd'), '/other/worktree');
+  assert.deepEqual(sessions.reloadBlockers(f.saved, f.lockDirs), []);
+  mkdirSync(f.lockDirs.e2eLockDir);
+  assert.deepEqual(sessions.reloadBlockers(f.saved, f.lockDirs), ['e2e lock']);
+  writeFileSync(join(f.lockDirs.e2eLockDir, 'owner.json'), JSON.stringify({ worktree: '/other/worktree' }));
+  assert.deepEqual(sessions.reloadBlockers(f.saved, f.lockDirs), []);
+});
+
+test('direct CLI refuses a caller old root against the verified host installation', (t) => {
+  const f = reloadFixture(t);
+  const bin = join(f.dir, 'bin'); mkdirSync(bin);
+  writeRemoteCodexStub(bin, f.pluginRoot);
+  const oldRoot = join(f.dir, 'old-root');
+  mkdirSync(join(oldRoot, '.codex-plugin'), { recursive: true }); mkdirSync(join(oldRoot, 'skills/vibe'), { recursive: true });
+  writeFileSync(join(oldRoot, '.codex-plugin/plugin.json'), JSON.stringify({ name: 'vibe', version: '1.1.38' }));
+  writeFileSync(join(oldRoot, 'skills/vibe/SKILL.md'), '# old vibe');
+  const saved = { ...f.saved, loadedSkill: loadedSkillEvidence('T1', 'codex', oldRoot, 'vibe', LoadBasis.InstalledAtSpawn) };
+  saveState(f.dir, 'w1', saved);
+  const result = spawnSync(process.execPath, [new URL('./codex-session.mjs', import.meta.url).pathname,
+    'steer', f.dir, 'w1', '--prompt-file', f.promptFile, '--plugin-root', oldRoot], {
+    encoding: 'utf8', timeout: 5000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /verified installed root/);
+  assert.deepEqual(loadState(f.dir, 'w1'), saved);
+  assert.equal(sessions.verifiedPluginRoot(f.pluginRoot, { list: () => ({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: f.pluginRoot } }] }) }),
+    saved.loadedSkill.pluginRoot.replace(/old-root$/, 'plugin'), 'the legitimate internal binding remains accepted');
+});
+
+test('recovery stdout cannot advance another actor load or consume its retained brief', async (t) => {
+  const f = reloadFixture(t);
+  await run(f.idle(), f.options('turn'), f.lockDirs);
+  const before = loadState(f.dir, 'w1');
+  await assert.rejects(Promise.resolve().then(() => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot },
+    { ...f.lockDirs, emit: () => {} })), /App Server/);
+  assert.deepEqual(loadState(f.dir, 'w1'), before);
+});
+
+test('full App Server reload input is the exact closed envelope without provenance', async (t) => {
+  const f = reloadFixture(t);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  const client = f.idle();
+  await run(client, f.options('turn'));
+  assert.deepEqual(client.calls.find(call => call.method === 'turn/start').params.input,
+    [{ type: 'text', text: 'VIBE_SKILL_RELOAD v1', text_elements: [] }]);
+});
+
+test('old ownerless control lock is reclaimed instead of permanently stranding the writer', async (t) => {
+  const f = reloadFixture(t);
+  const lock = join(f.dir, 'w1.json.control'); mkdirSync(lock);
+  utimesSync(lock, new Date(0), new Date(0));
+  await run(stubClient({ 'thread/read': { thread: { turns: [] } } }), parseCli(['last', f.dir, 'w1']));
+  assert.deepEqual(loadState(f.dir, 'w1'), f.saved);
+});
+
+test('initial ownership-write failure cleans the lock and a reused PID is reclaimed without signaling', async (t) => {
+  const f = reloadFixture(t); const options = parseCli(['last', f.dir, 'w1']);
+  const client = stubClient({ 'thread/read': { thread: { turns: [] } } });
+  await assert.rejects(Promise.resolve().then(() => run(client, options, { control: {
+    identityOf: () => 'self', writeOwner: () => { throw new Error('ownership write failed'); },
+  } })), /ownership write failed/);
+  assert.equal(readdirSync(f.dir).includes('w1.json.control'), false);
+  const lock = join(f.dir, 'w1.json.control'); mkdirSync(lock);
+  writeFileSync(join(lock, 'owner.json'), JSON.stringify({ pid: 987654, identity: 'prior birth', token: 'prior' }));
+  const observed = [];
+  await run(client, options, { control: { identityOf: pid => { observed.push(pid); return pid === process.pid ? 'self' : 'new birth'; } } });
+  assert.deepEqual(observed, [process.pid, 987654]);
+  assert.equal(readdirSync(f.dir).includes('w1.json.control'), false);
+});
+
+test('a live exact process witness and a fresh ownerless creation remain protected', async (t) => {
+  const f = reloadFixture(t); const options = parseCli(['last', f.dir, 'w1']);
+  const lock = join(f.dir, 'w1.json.control'); mkdirSync(lock);
+  await assert.rejects(Promise.resolve().then(() => run(stubClient({}), options)), /session control busy/);
+  writeFileSync(join(lock, 'owner.json'), JSON.stringify({ pid: 987654, identity: 'live birth', token: 'live' }));
+  await assert.rejects(Promise.resolve().then(() => run(stubClient({}), options, { control: {
+    identityOf: pid => pid === process.pid ? 'self' : 'live birth',
+  } })), /session control busy/);
+  assert.equal(JSON.parse(readFileSync(join(lock, 'owner.json'))).token, 'live');
+});
+
+test('retained work survives rejected delivery and a lost successful reply reconciles without duplicate replay', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'durable requested work');
+  await run(server.client, f.options('turn'), f.lockDirs); await server.pump();
+  server.ack(); await server.pump(); server.ack();
+  server.failBefore(); await assert.rejects(server.pump(), /delivery rejected/);
+  assert.equal(loadState(f.dir, 'w1').reload.pendingPrompt, 'durable requested work');
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.48');
+  const nonce = loadState(f.dir, 'w1').reload.delivery.nonce;
+  server.failAfter(); await assert.rejects(server.pump(), /response lost/);
+  assert.equal(loadState(f.dir, 'w1').reload.delivery.nonce, nonce);
+  const before = server.sent().length;
+  assert.equal((await server.pump()).complete, true);
+  assert.equal(server.sent().length, before, 'receipt reconciliation never replays already delivered work');
+  assert.equal(loadState(f.dir, 'w1').reload, undefined);
+});
+
+test('lost page-start reply binds the observed turn; only its actor acknowledgement advances the page', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs); await server.pump(); server.ack(); server.finish();
+  server.failAfter(); await assert.rejects(server.pump(), /response lost/);
+  const before = server.sent().length;
+  await server.pump();
+  assert.equal(server.sent().length, before);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+  server.ack(); server.finish(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.48');
+});
+
+test('explicit page retry keeps one nonce and wrong App Server actor never changes evidence', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs); await server.pump();
+  const before = loadState(f.dir, 'w1');
+  const wrong = { request: async (method, params) => method === 'thread/read'
+    ? { thread: { id: 'T-other', status: { type: 'active' } } } : server.client.request(method, params) };
+  await assert.rejects(sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot }, { client: wrong, ...f.lockDirs }), /actor is unverified/);
+  assert.deepEqual(loadState(f.dir, 'w1'), before);
+  const sent = server.sent().length;
+  await server.pump(true);
+  assert.equal(server.sent().length, sent + 1);
+  assert.equal(loadState(f.dir, 'w1').reload.delivery.nonce, before.reload.delivery.nonce);
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.38');
+});
+
+test('shared process-identity reads retain the raw witness and bound ps without signaling', () => {
+  const calls = [];
+  assert.equal(readProcessIdentity(987654, { env: {}, run: (...args) => {
+    calls.push(args); return { status: 0, stdout: 'Mon Nov  2 12:00:00 2026 node worker\n' };
+  } }), 'Mon Nov  2 12:00:00 2026 node worker');
+  assert.deepEqual(calls, [['ps', ['-o', 'lstart=,command=', '-p', '987654'], { encoding: 'utf8', env: { LC_ALL: 'C' }, timeout: 5000 }]]);
+  assert.equal(readProcessIdentity(987654, { run: () => ({ status: 1, stdout: '' }) }), null);
+});
+
+test('cursor moves only after the exact acknowledgement on its recorded actor turn', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  server.ack('wrong-turn');
+  await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0, 'another turn cannot acknowledge this page');
+  server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+});
+
+test('direct reload CLI with no actor connection cannot promote evidence or consume work', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'keep this work durable');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const before = loadState(f.dir, 'w1');
+  const bin = join(f.dir, 'bin'); mkdirSync(bin); writeRemoteCodexStub(bin, f.pluginRoot);
+  const result = spawnSync(process.execPath, [new URL('./codex-session.mjs', import.meta.url).pathname,
+    'reload', f.dir, 'w1', '--plugin-root', f.pluginRoot], {
+    encoding: 'utf8', timeout: 5000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /App Server connection closed/);
+  assert.doesNotMatch(result.stdout, /skill line|keep this work durable/);
+  assert.deepEqual(loadState(f.dir, 'w1'), before);
+});
+
+test('receipt scans stop on current actor evidence and checkpoint older history across bounded pumps', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const before = loadState(f.dir, 'w1'); let scans = 0;
+  const missing = { request: async (method, params) => method === 'thread/items/list'
+    ? (scans++, { data: [], nextCursor: `page-${scans}` }) : server.client.request(method, params) };
+  const result = await sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot }, { client: missing, ...f.lockDirs });
+  assert.equal(result.waitingFor, 'receipt scan');
+  assert.equal(scans, 5);
+  assert.deepEqual(loadState(f.dir, 'w1').reload.delivery.scan, { turnId: server.turn(), cursor: 'page-5' });
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, before.reload.cursor);
+  assert.deepEqual(loadState(f.dir, 'w1').loadedSkill, before.loadedSkill);
+  server.ack(); scans = 0;
+  const current = { request: async (method, params) => {
+    const result = await server.client.request(method, params);
+    return method === 'thread/items/list' ? (scans++, { ...result, nextCursor: 'older-history' }) : result;
+  } };
+  await sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot }, { client: current, ...f.lockDirs });
+  assert.equal(scans, 1, 'a valid current ACK never walks old proof-run history');
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+});
+
+test('a live canonical writer waiter behind a foreign holder blocks reload until its E2E run releases', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  mkdirSync(f.lockDirs.e2eLockDir);
+  writeFileSync(join(f.lockDirs.e2eLockDir, 'owner.json'), JSON.stringify({ worktree: '/foreign/worktree', name: 'foreign' }));
+  const waiters = `${f.lockDirs.e2eLockDir}.waiters`; mkdirSync(waiters);
+  const waiter = { pid: process.pid, identity: readProcessIdentity(process.pid), token: 'waiting',
+    worktree: realpathSync(f.dir), name: 'w1' };
+  writeFileSync(join(waiters, 'waiting.json'), JSON.stringify(waiter));
+  await run(server.client, f.options('turn'), f.lockDirs);
+  assert.deepEqual(server.sent(), ['VIBE_SKILL_RELOAD v1'], 'waiting E2E run prevents even the automatic first page');
+  await assert.rejects(server.pump(), /e2e waiter/);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  writeFileSync(join(f.lockDirs.e2eLockDir, 'owner.json'), JSON.stringify(waiter));
+  rmSync(join(waiters, 'waiting.json'));
+  await assert.rejects(server.pump(), /e2e lock/);
+  rmSync(f.lockDirs.e2eLockDir, { recursive: true });
+  await server.pump();
+  assert.equal(server.sent().length, 2, 'page delivery starts only after the owned run releases');
+});
+
+test('exact actor ACK beyond 500 newer items completes across bounded resumable pumps without replay duplication', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'retained original work');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const pending = loadState(f.dir, 'w1').reload.delivery;
+  const history = receiptHistory(server, pending.turnId, { type: 'agentMessage', text: `VIBE_SKILL_RELOAD_ACK v1 ${pending.nonce}` });
+  const pump = () => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot }, { client: history.client, ...f.lockDirs });
+  const sentBefore = server.sent().length;
+  assert.equal((await pump()).waitingFor, 'receipt scan');
+  assert.equal(history.cursors.length, 5);
+  assert.deepEqual(loadState(f.dir, 'w1').reload.delivery.scan, { turnId: pending.turnId, cursor: '500' });
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.38');
+  assert.equal(server.sent().length, sentBefore);
+  const requestsBefore = history.cursors.length;
+  await pump();
+  assert.ok(history.cursors.length - requestsBefore <= 5);
+  assert.ok(history.cursors.slice(requestsBefore).includes('500'));
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+  server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload, undefined);
+  assert.equal(server.sent().filter(text => text.startsWith('retained original work\n')).length, 1);
+});
+
+test('invalid receipt cursor remains retryable with identical nonce/text and no evidence advancement', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const pending = loadState(f.dir, 'w1').reload.delivery;
+  const history = receiptHistory(server, pending.turnId, { type: 'agentMessage', text: 'not an acknowledgement' });
+  const pump = retry => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot, retry },
+    { client: history.client, ...f.lockDirs });
+  await pump(false); history.invalidate('500');
+  const before = loadState(f.dir, 'w1');
+  await assert.rejects(pump(false), /invalid receipt cursor/);
+  assert.deepEqual(loadState(f.dir, 'w1'), before);
+  const sentBefore = server.sent().length;
+  await pump(true);
+  const retried = loadState(f.dir, 'w1');
+  assert.equal(retried.reload.delivery.scan, undefined);
+  assert.equal(retried.reload.delivery.nonce, pending.nonce);
+  assert.equal(retried.reload.delivery.text, pending.text);
+  assert.equal(retried.reload.cursor, 0);
+  assert.equal(retried.loadedSkill.version, '1.1.38');
+  assert.equal(server.sent().length, sentBefore + 1);
+  assert.equal(server.sent().at(-1), pending.text);
+  server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+});
+
+test('waiter ownership handles same-name, foreign, reused and unreadable records conservatively', (t) => {
+  const f = reloadFixture(t); const waiters = `${f.lockDirs.e2eLockDir}.waiters`; mkdirSync(waiters);
+  const file = join(waiters, 'waiter.json');
+  const gate = identityOf => sessions.reloadBlockers({ ...f.saved, name: 'w1' }, { ...f.lockDirs, identityOf });
+  writeFileSync(file, JSON.stringify({ name: 'w1', worktree: '/another/worktree', pid: 987654, identity: 'birth' }));
+  assert.deepEqual(gate(() => 'birth'), ['e2e waiter'], 'same name is relevant even with a different worktree spelling');
+  assert.deepEqual(gate(() => 'reused birth'), [], 'another process holding that PID is not this waiter');
+  assert.deepEqual(gate(() => null), ['e2e waiter'], 'unreadable relevant identity cannot establish safe release');
+  writeFileSync(file, JSON.stringify({ name: 'foreign', worktree: '/foreign/worktree', pid: 987654, identity: 'birth' }));
+  assert.deepEqual(gate(() => { throw new Error('foreign identity must not be probed'); }), []);
+  writeFileSync(file, JSON.stringify({ worktree: f.dir, pid: 1 }));
+  assert.deepEqual(gate(() => { throw new Error('invalid PID must not be probed'); }), ['e2e waiter']);
+  writeFileSync(file, 'incomplete JSON');
+  assert.deepEqual(gate(() => 'birth'), ['e2e waiter']);
+  rmSync(file); mkdirSync(file);
+  assert.deepEqual(gate(() => 'birth'), ['e2e waiter'], 'non-file ownership is not silently discarded');
+  rmSync(file, { recursive: true });
+  const staging = `${file}.00000000-0000-0000-0000-000000000000.tmp`;
+  writeFileSync(staging, 'incomplete atomic write');
+  assert.deepEqual(gate(() => 'birth'), [], 'only canonical waiter records participate before final job admission');
+  writeFileSync(file, 'incomplete canonical waiter');
+  assert.deepEqual(gate(() => 'birth'), ['e2e waiter'], 'an incomplete canonical ownership record still blocks');
+});
+
+test('an aged retained-brief delivery receipt reconciles across pumps without resending work', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'one retained operation');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  server.ack(); await server.pump(); server.ack();
+  server.failAfter(); await assert.rejects(server.pump(), /response lost/);
+  const pending = loadState(f.dir, 'w1').reload.delivery;
+  assert.equal(pending.kind, 'brief');
+  const history = receiptHistory(server, server.turn(), { type: 'userMessage', content: [{ type: 'text', text: pending.text }] });
+  const pump = () => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot }, { client: history.client, ...f.lockDirs });
+  const sent = server.sent().length;
+  assert.equal((await pump()).waitingFor, 'receipt scan');
+  assert.equal(loadState(f.dir, 'w1').reload.pendingPrompt, 'one retained operation');
+  assert.equal((await pump()).complete, true);
+  assert.equal(server.sent().length, sent);
+  assert.equal(loadState(f.dir, 'w1').reload, undefined);
+});
+
+for (const kind of ['e2e', 'heavy']) test(`late ${kind} admission cannot start a job during reload dispatch or acknowledgement`, { timeout: 30_000 }, async (t) => {
+  const f = admissionFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1'); await run(server.client, f.options('turn'), f.lockDirs);
+  const markerCode = 'require("node:fs").writeFileSync(process.argv[1], "started")';
+  let child; let exited; let launched = false; let stderr = '';
+  const client = { request: async (method, params) => {
+    if (method === 'thread/read' && !launched) {
+      launched = true;
+      const command = kind === 'e2e' ? process.execPath : 'bash';
+      const args = kind === 'e2e'
+        ? [new URL('../../vibe/scripts/e2e-lock.mjs', import.meta.url).pathname, 'run', '--head', f.head, '--wait-seconds', '15',
+          '--lock-dir', f.lockDirs.e2eLockDir, '--owner', 'w1', process.execPath, '-e', markerCode, f.marker]
+        : [new URL('./slot-lock.sh', import.meta.url).pathname, 'heavy', 'w1', process.execPath, '-e', markerCode, f.marker];
+      child = spawn(command, args, { cwd: f.worktree, env: { ...process.env, SLOT_LOCK_DIR: f.lockDirs.slotRoot,
+        SLOT_LOCK_POLL_SECONDS: '0.01', VIBE_E2E_DOCKER: f.docker, VIBE_E2E_FOREIGN_COMPOSE: '', COMPOSE_PROJECT_NAME: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      child.stderr.on('data', data => { stderr += data; }); child.stdout.resume();
+      exited = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })); });
+      await admissionBarrier(() => {
+        if (existsSync(f.marker)) return true; // pre-fix path: reproduce the actual overlap before dispatch
+        const records = kind === 'e2e' ? ownership.readE2eWaiters(f.lockDirs.e2eLockDir)
+          : [{ owner: (() => { try { return ownership.regularJson(join(f.lockDirs.slotRoot, 'heavy-1.lock/admission.json')); } catch { return null; } })() }];
+        return records.some(({ owner }) => owner?.admission === 'reload-wait');
+      });
+    }
+    if (['turn/steer', 'turn/start'].includes(method)) assert.equal(existsSync(f.marker), false, 'late job must not start before reload/evidence completion');
+    return server.client.request(method, params);
+  } };
+  try {
+    await sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot }, { client, ...f.lockDirs });
+    assert.equal(existsSync(f.marker), false);
+    assert.ok(loadState(f.dir, 'w1').reload.fence, 'fence remains durable while the actor reads its page');
+    server.ack(); await server.pump();
+    assert.equal(existsSync(f.marker), false);
+    server.ack(); await server.pump();
+    assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.48');
+  } finally {
+    const fence = loadState(f.dir, 'w1')?.reload?.fence;
+    if (fence && ownership.releaseReloadFence) ownership.releaseReloadFence(fence);
+    if (exited) assert.deepEqual(await exited, { code: 0, signal: null }, stderr);
+  }
+  assert.equal(readFileSync(f.marker, 'utf8'), 'started');
+});
+
+test('pre-existing jobs and pre-delivery errors release only the prepared fence', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1'); await run(server.client, f.options('turn'), f.lockDirs);
+  mkdirSync(join(f.lockDirs.slotRoot, 'heavy-1.lock'), { recursive: true });
+  writeFileSync(join(f.lockDirs.slotRoot, 'heavy-1.lock/cwd'), f.dir);
+  await assert.rejects(server.pump(), /release heavy slot/);
+  assert.equal(loadState(f.dir, 'w1').reload.fence, undefined);
+  assert.equal(ownership.reloadFenceStatus(f.dir, f.lockDirs).held, false);
+  rmSync(join(f.lockDirs.slotRoot, 'heavy-1.lock'), { recursive: true });
+  const failing = { request: async () => { throw new Error('daemon read failed'); } };
+  await assert.rejects(sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot }, { client: failing, ...f.lockDirs }), /daemon read failed/);
+  assert.equal(ownership.reloadFenceStatus(f.dir, f.lockDirs).held, false);
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0);
+  assert.deepEqual(server.sent(), ['VIBE_SKILL_RELOAD v1']);
+});
+
+test('uncertain delivery retains a recoverable actor fence through later pumps', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1'); await run(server.client, f.options('turn'), f.lockDirs);
+  server.failAfter(); await assert.rejects(server.pump(), /response lost/);
+  const fence = loadState(f.dir, 'w1').reload.fence;
+  assert.equal(fence.started, true);
+  assert.equal(ownership.reloadFenceStatus(f.dir, { ...f.lockDirs, identityOf: () => null }).held, true,
+    'a short-lived pump exiting is not authority to release the still-pending actor');
+  server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').reload.fence.token, fence.token);
+  server.ack(); await server.pump();
+  assert.equal(ownership.reloadFenceStatus(f.dir, f.lockDirs).held, false);
+  assert.equal(existsSync(fence.file), false);
+});
+
+test('confirmed interruption releases the fence and reload resumes on the same thread', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const original = loadState(f.dir, 'w1').reload.fence;
+  await run(server.client, parseCli(['interrupt', f.dir, 'w1', '--reason', 'reload cannot wait']), f.lockDirs);
+  assert.equal(existsSync(original.file), false);
+  assert.equal(loadState(f.dir, 'w1').reload.fence, undefined);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  await server.pump(true);
+  assert.notEqual(loadState(f.dir, 'w1').reload.fence.token, original.token);
+  server.ack(); await server.pump(); server.ack(); await server.pump();
+  assert.equal(loadState(f.dir, 'w1').threadId, 'T1');
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.48');
+  assert.equal(ownership.reloadFenceStatus(f.dir, f.lockDirs).held, false);
+});
+
+test('fence recovery is identity checked and exclusive publication never clobbers another owner', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const state = loadState(f.dir, 'w1'); const fence = state.reload.fence;
+  assert.throws(() => ownership.writeAtomic(fence.file, { token: 'foreign' }, { exclusive: true }), /EEXIST/);
+  assert.equal(ownership.regularJson(fence.file).token, fence.token);
+  ownership.writeAtomic(join(f.dir, 'w1.json'), {});
+  assert.equal(ownership.reloadFenceStatus(f.dir, { ...f.lockDirs, identityOf: () => 'reused process birth' }).held, true,
+    'missing actor authority is not proof that an App Server skill read stopped');
+  saveState(f.dir, 'w1', state);
+  ownership.releaseReloadFence(fence); // simulate a lost physical fence in this fake actor fixture
+  await server.pump();
+  assert.notEqual(loadState(f.dir, 'w1').reload.fence.token, fence.token, 'republication cannot reuse an old job-wait generation');
+  delete state.reload; saveState(f.dir, 'w1', state);
+  assert.equal(ownership.reloadFenceStatus(f.dir, { ...f.lockDirs, identityOf: () => 'reused process birth' }).held, false);
+  assert.equal(existsSync(fence.file), true, 'job readers never unlink a fence from a stale ownership snapshot');
+  state.reload = { id: 'next-reload', fence: { ...fence, reloadId: 'next-reload', started: false } };
+  saveState(f.dir, 'w1', state);
+  const recovered = ownership.ensureReloadFence(state.reload.fence, { ...f.lockDirs, identityOf: () => 'new process birth' });
+  assert.notEqual(recovered.token, fence.token, 'serialized reload recovery publishes a fresh generation');
+  ownership.releaseReloadFence(recovered);
+  ownership.writeAtomic(fence.file, { kind: 'foreign', token: 'foreign' });
+  assert.equal(ownership.reloadFenceStatus(f.dir, f.lockDirs).held, true);
+  assert.equal(ownership.releaseReloadFence(fence), false);
+  assert.equal(ownership.regularJson(fence.file).token, 'foreign');
+});
+
+test('admission waiting is bounded and abortable without releasing the actor fence', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const fence = loadState(f.dir, 'w1').reload.fence;
+  const owner = { pid: process.pid, identity: readProcessIdentity(process.pid), token: 'job', worktree: realpathSync(f.dir) };
+  const recordFile = join(f.dir, 'admission.json');
+  const result = await ownership.waitForReloadFence(f.dir, { recordFile, owner, slotRoot: f.lockDirs.slotRoot, deadline: Date.now() });
+  assert.equal(result.ready, false);
+  assert.equal(ownership.regularJson(recordFile).reloadFence, fence.token);
+  const abort = new AbortController();
+  const waiting = ownership.waitForReloadFence(f.dir, { recordFile, owner, slotRoot: f.lockDirs.slotRoot, signal: abort.signal });
+  abort.abort(); await assert.rejects(waiting, /aborted/i);
+  assert.equal(ownership.reloadFenceStatus(f.dir, f.lockDirs).held, true);
+  assert.equal(ownership.regularJson(fence.file).token, fence.token);
+  await assert.rejects(ownership.waitForReloadFence(f.dir, { recordFile, owner: { ...owner, identity: 'prior birth' },
+    slotRoot: f.lockDirs.slotRoot, identityOf: () => 'reused birth' }), /ownership is unverified/);
+  const removedDirectory = join(f.dir, 'already-cleaned-slot');
+  await assert.rejects(ownership.waitForReloadFence(f.dir, { recordFile: join(removedDirectory, 'admission.json'), owner,
+    slotRoot: f.lockDirs.slotRoot, deadline: Date.now() }), /ENOENT/);
+  assert.equal(existsSync(removedDirectory), false, 'an interrupted admission cannot recreate a removed slot');
+  const previous = { slot: process.env.SLOT_LOCK_DIR, xdg: process.env.XDG_STATE_HOME };
+  try {
+    process.env.SLOT_LOCK_DIR = ''; process.env.XDG_STATE_HOME = '';
+    assert.ok(ownership.machineSlotLockDir().startsWith('/'), 'empty optional keys use the same absolute default as slot-lock.sh');
+    process.env.SLOT_LOCK_DIR = 'relative-locks';
+    assert.throws(() => ownership.machineSlotLockDir(), /must be absolute/);
+  } finally {
+    if (previous.slot === undefined) delete process.env.SLOT_LOCK_DIR; else process.env.SLOT_LOCK_DIR = previous.slot;
+    if (previous.xdg === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previous.xdg;
+  }
+});
+
+test('an ended actor cannot reopen a reload behind its released fence', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f);
+  await run(server.client, f.options('turn'), f.lockDirs);
+  server.finish();
+  await run(server.client, parseCli(['end', f.dir, 'w1', '--reason', 'stopped']), f.lockDirs);
+  assert.equal(ownership.reloadFenceStatus(f.dir, f.lockDirs).held, false);
+  const sent = server.sent().length;
+  await assert.rejects(server.pump(), /session ended; use turn to reopen/);
+  assert.equal(server.sent().length, sent);
+  writeFileSync(f.promptFile, 'VIBE_SKILL_RELOAD v1');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  await server.pump(true);
+  assert.equal(loadState(f.dir, 'w1').threadId, 'T1');
+  assert.equal(ownership.reloadFenceStatus(f.dir, { ...f.lockDirs, identityOf: () => null }).held, true);
 });

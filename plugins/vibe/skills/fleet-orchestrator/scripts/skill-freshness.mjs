@@ -4,24 +4,16 @@
 // installed plugin. This is the single preflight used by Codex fleet turns and
 // Claude reviewer/verifier helper briefs.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { loadedSkillEvidenceProblem, loadedSkillRequired } from "../../vibe/scripts/loaded-skill.mjs";
+import { compareSkillVersions, isSkillReload, loadedSkillEvidenceProblem, loadedSkillRequired, reloadableSkill, SKILL_RELOAD } from "../../vibe/scripts/loaded-skill.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { installedPluginVersion, pluginScriptProblems } from "../../vibe/scripts/plugin-script-references.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const INSTALLED_PLUGIN_ROOT = path.resolve(HERE, "..", "..", "..");
-const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
-
-function compareVersions(left, right) {
-  const a = VERSION.exec(left ?? ""); const b = VERSION.exec(right ?? "");
-  if (!a || !b) return null;
-  for (let index = 1; index < 4; index += 1) if (Number(a[index]) !== Number(b[index])) return Number(a[index]) < Number(b[index]) ? -1 : 1;
-  return 0;
-}
 
 function readJson(file) {
   try { return JSON.parse(readFileSync(file, "utf8")); }
@@ -41,13 +33,21 @@ export function skillFreshnessProblem(record, { pluginRoot = INSTALLED_PLUGIN_RO
 /** Complete prompt preflight for one program state and installed plugin root. */
 export function promptProblems(record, text, options = {}) {
   const freshness = skillFreshnessProblem(record, options);
-  return [...(freshness ? [freshness] : []), ...pluginScriptProblems(text, options.pluginRoot ?? INSTALLED_PLUGIN_ROOT, options.worktree)];
+  const reload = isSkillReload(text) && reloadableSkill(record?.loadedSkill, {
+    actorId: options.actorId ?? record?.loadedSkill?.actorId, pluginRoot: options.pluginRoot ?? INSTALLED_PLUGIN_ROOT,
+  });
+  return [...(freshness && !reload ? [freshness] : []), ...pluginScriptProblems(text, options.pluginRoot ?? INSTALLED_PLUGIN_ROOT, options.worktree)];
 }
 
 async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
-    runtime: { type: "string" }, actor: { type: "string" }, "plugin-root": { type: "string" }, worktree: { type: "string" }, "actor-state": { type: "string" }, bootstrap: { type: "boolean" }, "expected-version": { type: "string" },
+    runtime: { type: "string" }, actor: { type: "string" }, "plugin-root": { type: "string" }, worktree: { type: "string" }, "actor-state": { type: "string" }, bootstrap: { type: "boolean" }, "expected-version": { type: "string" }, command: { type: "string" },
   } });
+  if (positionals[0] === 'watch-lines') {
+    const [, stateDir, ...specs] = positionals;
+    if (!stateDir) throw new Error('watch-lines needs a session state directory');
+    return skillStaleLines(stateDir, specs, values['plugin-root'] ?? INSTALLED_PLUGIN_ROOT);
+  }
   const [workDir, promptFile, ...extra] = positionals;
   if (!workDir || !promptFile || extra.length) throw new Error("Usage: skill-freshness.mjs <orchDir> <prompt-file> [--runtime codex|claude]");
   const program = values["actor-state"] ? null : resolveWorkDir(workDir).dir;
@@ -61,18 +61,38 @@ async function main(argv) {
   const legacyThread = Boolean(actorState) && !actorState.loadedSkill;
   if (legacyThread) process.stderr.write(`skill-freshness: ${path.resolve(values["actor-state"])} predates loaded-skill evidence (vibe before 1.1.23); its loaded skill is not checked\n`);
   const targetVersion = installedPluginVersion(values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT);
-  const expectedOrder = values["expected-version"] ? compareVersions(targetVersion, values["expected-version"]) : 0;
+  const expectedOrder = values["expected-version"] ? compareSkillVersions(targetVersion, values["expected-version"]) : 0;
+  const actorId = values.actor ?? actorState?.threadId;
+  // Preflight delegates the idle check to codex-session; it must dispatch only a reload turn,
+  // retaining this brief until the current definition has actually been delivered.
+  const migration = values.command === 'turn' && !actorState?.reload && reloadableSkill(record?.loadedSkill, {
+    actorId, pluginRoot: values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT,
+  });
   const problems = [
     ...(values["expected-version"] && (expectedOrder === null || expectedOrder < 0)
       ? [`target host has vibe ${targetVersion ?? "unknown"}, expected at least ${values["expected-version"]}`] : []),
-    ...(bootstrap || legacyThread ? [] : [skillFreshnessProblem(record, { pluginRoot: values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT, actorId: values.actor })].filter(Boolean)),
-    ...pluginScriptProblems(prompt, values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT, values.worktree),
+    ...(bootstrap || legacyThread ? pluginScriptProblems(prompt, values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT, values.worktree)
+      : promptProblems(record, migration ? SKILL_RELOAD : prompt, { pluginRoot: values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT, actorId, worktree: values.worktree })),
+    ...(migration ? pluginScriptProblems(prompt, values['plugin-root'] ?? INSTALLED_PLUGIN_ROOT, values.worktree) : []),
   ];
   if (problems.length) throw new Error(problems.join("; "));
   return { ok: true, loaded: record?.loadedSkill?.version ?? null, installed: targetVersion, loadedSkillChecked: !bootstrap && !legacyThread, prompt: path.resolve(promptFile) };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  try { process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)))}\n`); }
+/** Snapshot lines use each writer's saved evidence, including label=threadId monitor entries. */
+export function skillStaleLines(stateDir, specs, pluginRoot = INSTALLED_PLUGIN_ROOT) {
+  const installed = installedPluginVersion(pluginRoot);
+  return specs.flatMap(spec => {
+    const [writer, threadId] = spec.split('=');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(writer)) return [];
+    const actor = readJson(path.join(stateDir, `${writer}.json`));
+    const evidence = actor?.loadedSkill;
+    if (!actor?.threadId || (threadId && threadId !== actor.threadId) || actor.ended || evidence?.actorId !== actor.threadId) return [];
+    return compareSkillVersions(evidence?.version, installed) === -1 ? [`SKILL-STALE ${writer} ${evidence.version} -> ${installed}`] : [];
+  });
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+  try { const result = await main(process.argv.slice(2)); process.stdout.write(Array.isArray(result) ? result.map(line => `${line}\n`).join('') : `${JSON.stringify(result)}\n`); }
   catch (error) { process.stderr.write(`skill-freshness: ${error.message}\n`); process.exitCode = 2; }
 }

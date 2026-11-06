@@ -36,6 +36,19 @@ test("a newer installed release blocks stale loaded instructions until the curre
   assert.match(skillFreshnessProblem({ status: "current" }, { pluginRoot: root, actorId: "helper-1" }), /no recorded loaded skill evidence/, "an explicit actor still needs evidence");
 });
 
+test("reload envelope is the only stale prompt exception and cannot carry another instruction", (t) => {
+  const root = fixture(t);
+  const stale = record(root, "1.0.85");
+  const reload = 'VIBE_SKILL_RELOAD v1';
+  assert.deepEqual(promptProblems(stale, reload, { pluginRoot: root }), []);
+  for (const text of ['continue', `${reload}\ncontinue`, `continue\n${reload}`, `${reload} `,
+    '{"type":"VIBE_SKILL_RELOAD","instruction":"continue"}', 'VIBE_SKILL_RELOAD v2']) {
+    assert.match(promptProblems(stale, text, { pluginRoot: root }).join(';'), /loaded 1\.0\.85/, text);
+  }
+  assert.match(promptProblems({ loadedSkill: { ...stale.loadedSkill, actorId: 'other' } }, reload,
+    { pluginRoot: root, actorId: 'actor-1' }).join(';'), /no recorded loaded skill evidence/);
+});
+
 test("a brief refuses a deleted installed plugin script but accepts a real one", (t) => {
   const root = fixture(t);
   assert.deepEqual(pluginScriptProblems("run handoff/scripts/handoff-gate.mjs", root), []);

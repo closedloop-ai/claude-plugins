@@ -54,6 +54,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { setTimeout as pause } from 'node:timers/promises';
 import { imageProblem, recordImages } from "./image-head.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { testedSource, sameSource, withStableSource } from "./tested-head.mjs";
@@ -64,7 +65,7 @@ import { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetir
   registerWorktreeRetirement, remainingCleanupBudget, sweepOwnedCleanups } from './owned-cleanup.mjs';
 import { captureOwnedDockerResources, plannedLocalTags, reconcileGeneratedE2E, recordE2EChild,
   removeOwnedDockerResources, reserveGeneratedE2E } from './owned-docker.mjs';
-import { writeAtomic } from './owned-state.mjs';
+import { e2eWaitersDir, readE2eWaiters, waitForReloadFence, writeAtomic } from './owned-state.mjs';
 
 export { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
 export { installOwnedBuildShim, ownedBuildEnvironment, prepareRunOwnedBuild, recordBuiltTags } from './owned-builder.mjs';
@@ -126,40 +127,23 @@ export function release(lockDir, owner) {
 }
 
 /** Waits for the lock up to `waitSeconds`, polling every `pollMs`. */
-export async function acquire(lockDir, owner, { waitSeconds = DEFAULT_WAIT_SECONDS, pollMs = POLL_MS } = {}) {
+export async function acquire(lockDir, owner, { waitSeconds = DEFAULT_WAIT_SECONDS, pollMs = POLL_MS, signal } = {}) {
   const deadline = Date.now() + waitSeconds * 1000;
   for (;;) {
+    signal?.throwIfAborted();
     const attempt = tryAcquire(lockDir, owner);
     if (attempt.acquired || Date.now() >= deadline) {
       return attempt;
     }
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(1, deadline - Date.now()))));
+    await pause(Math.min(pollMs, Math.max(1, deadline - Date.now())), undefined, { signal });
   }
 }
 
 /** A live holder or waiter of the lock started from `worktree`, or null. */
 export function sameWorktreeEntry(lockDir, worktree) {
-  const entries = [readHolder(lockDir), ...readWaiters(lockDir)];
+  const entries = [readHolder(lockDir), ...readE2eWaiters(lockDir).map(record => record.owner)
+    .filter(waiter => Number.isSafeInteger(waiter?.pid))];
   return entries.find((entry) => entry && (entry.worktree ?? entry.cwd) === worktree && isAlive(entry.pid)) ?? null;
-}
-
-function waitersDir(lockDir) {
-  return `${lockDir}.waiters`;
-}
-
-function readWaiters(lockDir) {
-  try {
-    return readdirSync(waitersDir(lockDir)).map((name) => {
-      try {
-        const waiter = JSON.parse(readFileSync(path.join(waitersDir(lockDir), name), "utf8"));
-        return Number.isSafeInteger(waiter?.pid) ? waiter : null;
-      } catch {
-        return null;
-      }
-    });
-  } catch {
-    return [];
-  }
 }
 
 function worktreeOf(cwd) {
@@ -359,14 +343,19 @@ async function main(argv) {
   }
   const foreign = [...values["foreign-compose"], ...(process.env.VIBE_E2E_FOREIGN_COMPOSE ?? "").split(",")]
     .map((name) => name.trim()).filter(Boolean);
-  const waiter = path.join(waitersDir(lockDir), `${owner.token}.json`);
-  mkdirSync(waitersDir(lockDir), { recursive: true });
-  writeFileSync(waiter, JSON.stringify(owner), { mode: 0o600 });
+  const waiter = path.join(e2eWaitersDir(lockDir), `${owner.token}.json`);
   const deadline = Date.now() + waitSeconds * 1000;
   let attempt;
+  const abort = new AbortController();
+  const interrupted = () => abort.abort(new Error('e2e admission interrupted'));
+  process.once('SIGINT', interrupted); process.once('SIGTERM', interrupted);
   try {
+    mkdirSync(e2eWaitersDir(lockDir), { recursive: true });
+    writeFileSync(waiter, JSON.stringify(owner), { mode: 0o600 });
     for (;;) {
-      attempt = await acquire(lockDir, owner, { waitSeconds: Math.max(0, (deadline - Date.now()) / 1000) });
+      const admission = await waitForReloadFence(worktree, { recordFile: waiter, owner, deadline, signal: abort.signal });
+      if (!admission.ready) { attempt = { acquired: false, holder: { reloadFence: admission.fence } }; break; }
+      attempt = await acquire(lockDir, owner, { waitSeconds: Math.max(0, (deadline - Date.now()) / 1000), signal: abort.signal });
       if (!attempt.acquired) {
         break;
       }
@@ -379,10 +368,15 @@ async function main(argv) {
       if (Date.now() >= deadline) {
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, Math.max(1, deadline - Date.now()))));
+      await pause(Math.min(POLL_MS, Math.max(1, deadline - Date.now())), undefined, { signal: abort.signal });
     }
+    abort.signal.throwIfAborted();
+  } catch (error) {
+    if (attempt?.acquired) release(lockDir, owner);
+    throw error;
   } finally {
     rmSync(waiter, { force: true });
+    process.off('SIGINT', interrupted); process.off('SIGTERM', interrupted);
   }
   if (!attempt.acquired) {
     process.stdout.write(`${JSON.stringify({ status: "busy", holder: attempt.holder })}\n`);
