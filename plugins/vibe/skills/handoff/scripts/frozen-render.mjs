@@ -75,7 +75,7 @@ import { withVerifyStorybook } from "../../vibe/scripts/verify-storybook-process
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash, pngHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
-import { importSpecifiers, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { createImportClosure, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
@@ -100,7 +100,6 @@ export const CONFIRM_RENDERS = 2;
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 const STYLESHEET = /\.(?:css|scss|sass|less)$/i;
-const IMPORT_SOURCE = /\.(?:[cm]?[jt]sx?|css|scss|sass|less)$/i;
 const PREVIEW_ENTRY = /^apps\/storybook\/\.storybook\/preview\.[cm]?[jt]sx?$/i;
 const TOKEN_OR_THEME = /(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)/i;
 const TAILWIND_CONFIG = /(?:^|\/)tailwind\.config\.[cm]?[jt]s$/i;
@@ -110,19 +109,8 @@ const GLOBAL_MANIFESTS = new Set(["apps/storybook/package.json", "packages/desig
 /** Preview dependencies from both revisions, with extension resolution confined to each revision's files. */
 export function storybookPreviewImportClosure(baseFiles, headFiles, baseTextAt, headTextAt) {
   const walk = (files, textAt) => {
-    const closure = new Set();
-    const queue = [...files].filter((file) => PREVIEW_ENTRY.test(file));
-    while (queue.length) {
-      const file = queue.shift();
-      if (closure.has(file)) continue;
-      closure.add(file);
-      if (!IMPORT_SOURCE.test(file)) continue;
-      for (const specifier of importSpecifiers(file, textAt(file))) {
-        const target = resolveImport(file, specifier, files);
-        if (target && !closure.has(target)) queue.push(target);
-      }
-    }
-    return closure;
+    const closure = createImportClosure(files, (paths) => new Map(paths.map((file) => [file, textAt(file)])));
+    return closure([...files].filter((file) => PREVIEW_ENTRY.test(file)));
   };
   return new Set([...walk(baseFiles, baseTextAt), ...walk(headFiles, headTextAt)]);
 }
@@ -460,21 +448,9 @@ export function frozenInputs(repo, base, storyFiles = []) {
     (file) => textAt(file, "base"), (file) => textAt(file, "head"));
   const globalInput = (file) => isFrozenGlobalInput(file, previewClosure);
   const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(globalInput)])];
-  const walk = (files, ref) => {
-    const closure = new Set();
-    const queue = roots.filter((file) => files.has(file));
-    while (queue.length) {
-      const file = queue.shift();
-      if ((!SOURCE_FILE.test(file) && !globalInput(file)) || closure.has(file)) continue;
-      closure.add(file);
-      if (!IMPORT_SOURCE.test(file)) continue;
-      for (const specifier of importSpecifiers(file, textAt(file, ref))) {
-        const target = resolveImport(file, specifier, files);
-        if (target && !closure.has(target)) queue.push(target);
-      }
-    }
-    return closure;
-  };
+  const walk = (files, ref) => createImportClosure(files,
+    (paths) => new Map(paths.map((file) => [file, textAt(file, ref)])),
+    (file) => SOURCE_FILE.test(file) || globalInput(file))(roots);
   const closure = new Set([...walk(baseFiles, "base"), ...walk(headFiles, "head")]);
   const hash = createHash("sha256");
   for (const file of [...closure].sort()) {

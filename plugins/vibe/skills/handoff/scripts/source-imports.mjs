@@ -7,7 +7,9 @@ export const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|css|scss|sass|less|json|s
 export const IMPORT_SPECIFIER = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
 const STYLESHEET = /\.(?:css|scss|sass|less)$/i;
 const SASS_SOURCE = /\.(?:scss|sass)$/i;
+const IMPORT_SOURCE = /\.(?:[cm]?[jt]sx?|css|scss|sass|less)$/i;
 const IDENTIFIER = /[\w$]/;
+const CLOSURE_LIMIT = 20000;
 const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".mjs", ".css", ".scss", ".sass", ".less", ".json", ".svg",
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".eot", "/index.ts", "/index.tsx"];
 
@@ -300,6 +302,32 @@ export function resolveImport(from, specifier, files) {
   }
   return stems.map((stem) => stem.replace(/\.js$/, "")).flatMap((stem) => SOURCE_EXTENSIONS.map((extension) => `${stem}${extension}`))
     .find((candidate) => files.has(candidate) && SOURCE_FILE.test(candidate));
+}
+
+/** Build a reusable import walker for one revision's file set and source reader. */
+export function createImportClosure(files, readMany, include = () => true) {
+  const imports = new Map();
+  return (roots) => {
+    const closure = new Set();
+    let frontier = [...new Set(roots)].filter((file) => files.has(file));
+    while (frontier.length) {
+      const fresh = frontier.filter((file) => !closure.has(file) && include(file));
+      if (closure.size + fresh.length > CLOSURE_LIMIT) throw new Error("source import closure exceeds 20000 files");
+      const unread = fresh.filter((file) => IMPORT_SOURCE.test(file) && !imports.has(file));
+      const texts = readMany(unread);
+      for (const file of unread) {
+        imports.set(file, importSpecifiers(file, texts.get(file))
+          .map((specifier) => resolveImport(file, specifier, files)).filter(Boolean));
+      }
+      const next = new Set();
+      for (const file of fresh) {
+        closure.add(file);
+        for (const target of imports.get(file) ?? []) if (!closure.has(target)) next.add(target);
+      }
+      frontier = [...next];
+    }
+    return closure;
+  };
 }
 
 export function escapeRegExp(text) {

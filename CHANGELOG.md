@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Frozen-render preview reachability now follows nested CSS `@import url()` references, ignores commented-out imports, and includes untracked Storybook global files in the frozen-input digest.
 - Frozen-story input digests now resolve base and head import closures separately, Storybook preview selection includes untracked imported CSS, and Sass `@use`/`@forward` reach local partial and index stylesheets.
 - Sass `@import` preview dependencies now include every comma-separated local stylesheet, including the unquoted indented Sass syntax; CSS URL, external and media imports remain classified as CSS.
+- Frozen-render story selection in `diff-rules.mjs` now walks each story's head import closure as well as its base closure, so a head-only module (for example a new `.ts` file that shadows an unchanged `.tsx`) and the stylesheets it imports select the story and make a recorded `Frozen render unchanged` line stale.
+- Story selection, the Storybook preview closure and the frozen-input digest now share one import walker, `createImportClosure` in `source-imports.mjs`. An import closure over 20,000 files now fails with an error instead of being silently truncated during story selection.
 - Because the inputs digest changes, previously recorded `Frozen render unchanged` change-log lines stop matching once; the next handoff re-runs the frozen render and records a fresh line.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.45 (no Markdown changed).
 

@@ -342,6 +342,29 @@ test("a recorded frozen line goes stale when CSS behind a story .ts/.tsx swap ch
   }
 });
 
+test("head .ts shadows an unchanged .tsx in frozen selection and makes a recorded line stale (ISS-13752)", (t) => {
+  const story = "apps/storybook/stories/one.stories.tsx";
+  const headCss = "apps/storybook/stories/head.css";
+  const result = run(t, { base: {
+    [story]: 'import "./shared";\nexport default { title: "Composites v1.0/One" };\nexport const Default = {};\n',
+    "apps/storybook/stories/shared.tsx": 'import "./base.css";\n',
+    "apps/storybook/stories/base.css": ".base { color: red; }\n",
+  }, head: {
+    "apps/storybook/stories/shared.ts": 'import "./head.css";\n',
+    [headCss]: ".head { color: red; }\n",
+  }, commit: true });
+  const findings = () => runDiffRules({ worktree: result.checkout, base: result.baseSha, isFrozenStory })
+    .blocking.filter((entry) => entry.rule === "frozen-render");
+  assert.equal(findings().length, 1, "head-only .ts and CSS must select the frozen story");
+  const inputs = frozenInputs(result.checkout, result.baseSha, [story]);
+  const line = `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${result.baseSha} --story-file ${story}: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states ${storyId("Composites v1.0/One", "Default")}; inputs ${inputs}; out/results.json\n`;
+  writeFileSync(path.join(result.checkout, ".git", "vibe-changes.md"), line);
+  assert.deepEqual(findings(), [], "the exact current line is accepted");
+  writeFileSync(path.join(result.checkout, headCss), ".head { color: blue; }\n");
+  assert.notEqual(frozenInputs(result.checkout, result.baseSha, [story]), inputs, "head-only CSS changes the digest");
+  assert.equal(findings().length, 1, "the line is stale after head-only CSS changes");
+});
+
 test("preview CSS @import url reaches every frozen story and both input digests (ISS-13752)", (t) => {
   const first = "apps/storybook/stories/first.stories.tsx";
   const second = "apps/storybook/stories/second.stories.tsx";
