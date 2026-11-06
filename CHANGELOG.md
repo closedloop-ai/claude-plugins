@@ -10,7 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - In-place skill reload in `codex-session.mjs` now accepts a page acknowledgement whose agent message, with surrounding whitespace trimmed, is exactly `VIBE_SKILL_RELOAD_ACK v1 <nonce>`. A reply that ended with trailing newlines never advanced its page, so every `reload` and `--retry` call waited for an acknowledgement that had already arrived. One shared matcher, `isReloadAck`, serves both the receipt scan and the acknowledgement check; extra words or another nonce still never acknowledge a page.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.53 (origin/main at this change, 83ad4d96e805); only the README version line changed.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54 (origin/main at the merge, 16c854310eac); only the README version line changed.
+
+### vibe v1.1.54
+
+#### Changed
+- The private nightly run tree keeps each Claude case's final reply as the same per-case `reply.txt` artifact Codex writes, then removes the retained native temp trace. Published baseline results keep their existing allowlisted schema and never include reply text or local paths.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 82 words longer than in 1.1.53 (origin/main at the merge).
+
+#### Fixed
+- Four always-failing eval cases now distinguish correct wording variants from real omissions: duplicate-helper remedies and touch-device findings are order-independent, host-adapter coverage requires the Desktop criterion and its owning lane, and PRD-child replies accept bare no-supersession/link wording only while keeping every claim mutation mandatory.
+- PRD-child claim completeness and no-supersession use one versioned deterministic reply-format checker across Codex and Claude benchmark collection. It validates bounded machine fields, preserves the saved legacy reply forms, records checker provenance, and reports checker installation or protocol faults as infrastructure failures; the duplicate-helper grader remains regex-only with explicit shared-owner and copied-function targets.
+- The current PRD-child reply contract exposes placeholder-only fields with bounded `COMMENT`, `ACTION`, `REASON`, and `SUPERSEDE` tokens. Validation accepts optional terminal punctuation only, rejects extra fields and suffixes, and keeps natural-language compatibility confined to the saved legacy replies.
+- PRD children with real activity under another person are again reported and excluded from the build, never claimed, built, canceled or superseded.
+- Native Codex review receipts canonicalize hyphen separators in App Server MCP server names to the registered underscore form before capability matching. Only completed MCP items from the exact accepted turn count; operation names, other servers, failed calls, command text and reviewer summaries remain distinct.
+- Deterministic checker provenance records the current driver plugin version while old-subject parity uses an explicit driver fixture with identical checker bytes. The local eval harness separately declares model execution and Claude trace artifacts, keeping deterministic CI model-free, and Codex manifest keys narrow to strings before typed lookup.
 
 ### vibe v1.1.53
 

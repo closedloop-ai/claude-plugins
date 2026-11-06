@@ -3,6 +3,10 @@
 // https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/thread_history.rs
 import { connectViaProxy, daemonSocket } from "../../codex-fleet-monitor/scripts/liveness.mjs";
 
+function nativeMcpName(item) {
+  return `mcp__${item.server.replaceAll("-", "_")}__${item.tool}`;
+}
+
 /** Completed turn and machine-observed successful MCP calls, or a refusal. */
 export function observedCodexTurn(thread, sessionId, turnId) {
   if (thread?.id !== sessionId) throw new Error("App Server returned another native reviewer thread");
@@ -12,7 +16,7 @@ export function observedCodexTurn(thread, sessionId, turnId) {
   }
   const toolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "completed"
     && typeof item.server === "string" && typeof item.tool === "string")
-    .map(item => `mcp__${item.server}__${item.tool}`);
+    .map(nativeMcpName);
   return { sessionId, turnId, status: "completed", toolCalls };
 }
 
