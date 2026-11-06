@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "caseId": "pm-prd-children-are-scope",
+      "graderName": "claims-untouched",
+      "checker": "iss-13760-reply-format.mjs"
+    },
+    {
+      "caseId": "pm-prd-children-are-scope",
+      "graderName": "no-supersession",
+      "checker": "iss-13760-reply-format.mjs"
+    }
+  ]
+}

@@ -209,7 +209,9 @@ F. Status. The PLN's status follows the work:
    `search_nodes` with the summary; mention overlapping open tickets under
    What this is. When the source is a PRD, fetch every child and its comments,
    assignee, status, branch and pull request evidence. Use the requirements
-   brief's classification, but recheck it live before any mutation.
+   brief's classification, but recheck it live before any mutation. A child
+   with real activity by another person is reported and excluded from the
+   build, never claimed, built, canceled or superseded.
 3. Body from the template: What this is, Scope and acceptance criteria
    (quoted from the brief and the originating ticket, never invented, with the
    brief's Newest ruling and Prior removal lines; an item the person still has to state is
@@ -231,9 +233,9 @@ F. Status. The PLN's status follows the work:
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <slug> --created-live-ticket`.
 6. Link the source document to the ticket ("Source link and session plan",
    step A). The session has no plan yet; plan mode publishes it.
-7. For every open source-PRD child classified untouched, reread it and claim
-   it only if it still has no other person's activity: assign it to the
-   session operator, set it `IN_PROGRESS`, create one `RELATES_TO` link with
+7. Reread each open source-PRD child classified untouched. Claim it only if
+   still untouched with no other person's real activity:
+   assign it to the session operator, set it `IN_PROGRESS`, create one `RELATES_TO` link with
    the session live ticket, and add one short comment naming that session
    ticket as the coordinator. Confirm the assignee, status and link. List
    untouched children outside the requested outcome as uncovered instead of

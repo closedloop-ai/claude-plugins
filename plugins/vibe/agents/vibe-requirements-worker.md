@@ -85,9 +85,11 @@ must not be written as if it had been made. Without the script, work as below.
    with its source, and an unratified or conflicting one as not settled.
    When the source is a PRD, load every child before defining scope. List each
    open child as a scope unit and classify it as untouched, active by someone
-   else, delivered, superseded by a cited human ruling, or uncovered. Existing children are never declared "not reused" and no agent
-   decides that one is superseded. Never narrow the targets a PRD names; list
-   each one the request will not build as unadopted.
+   else, delivered, superseded by a cited human ruling, or uncovered. Existing
+   children are never declared "not reused". A child with real activity by another person
+   is reported and excluded from the build, never claimed, built, canceled or
+   superseded. Never narrow the targets a PRD names; list each one the request
+   will not build as unadopted.
 2. Overlap: for a ticket or a description, run `query_collisions` with the
    title and request text, then `search_nodes` and `fts_search` on its key
    terms. Inspect every matching PRD even when it is `EXECUTED`: report its

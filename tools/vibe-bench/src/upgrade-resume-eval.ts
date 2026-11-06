@@ -20,8 +20,15 @@ import { archivePluginRelease, archiveSnapshotTarget, snapshotPluginVersion } fr
 import type { PluginReleaseArchive } from "./plugin-snapshot.ts";
 import type { PluginSnapshot } from "./plugin-snapshot.ts";
 import { runOwnedProcess } from "./owned-process.ts";
+import { privateReplyDestination, writePrivateReply } from
+  "./private-artifact.ts";
 import { writeBenchmarkSessionRecord } from "./session-preflight.ts";
 import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
+import { evidenceTrace as statefulClaudeEvidenceTrace,
+  failureDiagnostic as normalizedClaudeFailureDiagnostic,
+  recordTurnOutput, terminalEvidence } from "./stateful-claude-evidence.ts";
+
+export { statefulClaudeEvidenceTrace };
 
 export const STATEFUL_CLAUDE_ROOT_TIMEOUT_MS = 1_200_000;
 export const CLAUDE_WRITER_TIMEOUT_MS = 900_000;
@@ -102,6 +109,8 @@ export interface UpgradeCaseEvidence {
   attemptResults?: UpgradeAttemptEvidence[];
 }
 
+type PrivateUpgradeCaseEvidence = UpgradeCaseEvidence & { privateReply?: string };
+
 /** Distinguish a fixed historical proof from the release currently under test. */
 interface UpgradeTransitionResult {
   role: "historical" | "current";
@@ -123,7 +132,19 @@ export interface UpgradeResumeRunInput {
   runtimes: EvalRuntime[];
   targetRef?: string;
   signal?: AbortSignal;
+  cellRunner?: UpgradeCellRunner;
 }
+
+/** Injectable stateful cell boundary used by focused production-path fixtures. */
+export type UpgradeCellRunner = (input: {
+  runtime: EvalRuntime;
+  role: "historical" | "current";
+  expected: "pass" | "fail";
+  item: EvalCaseDefinition;
+  transition: UpgradeTransition;
+  attemptRoot: string;
+  currentSnapshot?: PluginSnapshot;
+}) => Promise<PrivateUpgradeCaseEvidence>;
 
 export interface UpgradeResumeRunner {
   run(input: UpgradeResumeRunInput): Promise<Partial<Record<EvalRuntime, EvalSuiteResult>>>;
@@ -215,35 +236,41 @@ function nullableAttemptSum(values: Array<number | null>): number | null {
 
 /** Retry one infrastructure-failed stateful cell once and retain every attempt. */
 export async function runUpgradeCellWithRetry(input: { transitionRoot: string;
-  run(attemptRoot: string): Promise<UpgradeCaseEvidence> }): Promise<UpgradeCaseEvidence> {
-  const attempts: UpgradeCaseEvidence[] = [];
+  run(attemptRoot: string): Promise<PrivateUpgradeCaseEvidence> }): Promise<PrivateUpgradeCaseEvidence> {
+  const attempts: Array<{ evidence: UpgradeCaseEvidence; privateReply?: string }> = [];
   for (let attempt = 1; attempt <= 1 + STATEFUL_INFRASTRUCTURE_RETRIES; attempt += 1) {
     const attemptRoot = join(input.transitionRoot, "attempts", String(attempt));
     mkdirSync(attemptRoot, { recursive: true, mode: 0o700 });
-    const evidence = await input.run(attemptRoot);
+    const { privateReply, ...evidence } = await input.run(attemptRoot);
     writeFileSync(join(attemptRoot, "evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`,
       { mode: 0o600 });
-    attempts.push(evidence);
+    attempts.push({ evidence, ...(privateReply ? { privateReply } : {}) });
     if (evidence.failureCode === null || !INFRASTRUCTURE_FAILURE_CODES.has(evidence.failureCode)) break;
   }
   const final = attempts.at(-1);
   if (!final) throw new Error("eval-stateful-attempt-missing");
-  const tokenKeys = [...new Set(attempts.flatMap((item) => Object.keys(item.tokens ?? {})))];
-  const tokens = attempts.every((item) => item.tokens !== null)
+  const tokenKeys = [...new Set(attempts.flatMap((item) => Object.keys(item.evidence.tokens ?? {})))];
+  const tokens = attempts.every((item) => item.evidence.tokens !== null)
     ? Object.fromEntries(tokenKeys.map((key) => [key,
-      attempts.reduce((sum, item) => sum + (item.tokens?.[key] ?? 0), 0)])) : null;
-  return { ...final,
-    wallMs: attempts.reduce((sum, item) => sum + item.wallMs, 0),
-    agentCostUsd: nullableAttemptSum(attempts.map((item) => item.agentCostUsd)), tokens,
+      attempts.reduce((sum, item) => sum + (item.evidence.tokens?.[key] ?? 0), 0)])) : null;
+  return { ...final.evidence,
+    wallMs: attempts.reduce((sum, item) => sum + item.evidence.wallMs, 0),
+    agentCostUsd: nullableAttemptSum(attempts.map((item) => item.evidence.agentCostUsd)), tokens,
     trace: attempts.flatMap((item, index) => [
-      `attempt=${index + 1} failure=${item.failureCode ?? "none"}`,
-      ...item.trace,
+      `attempt=${index + 1} failure=${item.evidence.failureCode ?? "none"}`,
+      ...item.evidence.trace,
     ]),
     attemptResults: attempts.map((item, index) => ({ attempt: index + 1,
-      passed: item.passed, failureCode: item.failureCode, wallMs: item.wallMs,
-      rootSessionId: item.rootSessionId,
-      ...(item.model ? { model: item.model } : {}), trace: item.trace })),
+      passed: item.evidence.passed, failureCode: item.evidence.failureCode,
+      wallMs: item.evidence.wallMs, rootSessionId: item.evidence.rootSessionId,
+      ...(item.evidence.model ? { model: item.evidence.model } : {}), trace: item.evidence.trace })),
+    ...(final.privateReply ? { privateReply: final.privateReply } : {}),
   };
+}
+
+/** Preserve one stateful Claude case's final reply without adding it to evidence JSON. */
+export function preserveStatefulClaudeReply(runRoot: string, caseId: string, reply: string): void {
+  writePrivateReply(privateReplyDestination(join(runRoot, "claude"), caseId), reply);
 }
 
 function writerDefinitionDigest(vibeRoot: string): string {
@@ -343,6 +370,8 @@ export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
   const payload = { runtime: ordinary.runtime, cliVersion: ordinary.cliVersion,
     ...(ordinary.model ? { model: ordinary.model } : {}),
     ...(ordinary.judgeModel ? { judgeModel: ordinary.judgeModel } : {}), cases, passed,
+    ...(ordinary.deterministicOverride
+      ? { deterministicOverride: ordinary.deterministicOverride } : {}),
     failed, unavailable, wallMs: ordinary.wallMs + stateful.wallMs,
     agentCostUsd: nullableSum(ordinary.agentCostUsd, stateful.agentCostUsd),
     judgeCostUsd: nullableSum(ordinary.judgeCostUsd, stateful.judgeCostUsd),
@@ -514,6 +543,17 @@ export function classifyUpgradeFailure(error: unknown): UpgradeFailureCode {
   return "ORACLE_MISMATCH";
 }
 
+/** Retain only fixed metadata and normalized diagnostics from Claude JSONL. */
+export function statefulClaudeTerminalEvidence(stdout: string, exitCode: number | null): string {
+  return terminalEvidence(stdout, exitCode, classifyUpgradeFailure);
+}
+
+/** Write one stateful Claude turn artifact through the shared redaction policy. */
+export function recordClaudeTurnOutput(root: string, label: string,
+  result: { exitCode: number | null; stdout: string; stderr: string }): string {
+  return recordTurnOutput(root, label, result, classifyUpgradeFailure);
+}
+
 /** Use only the last completed native turn, so an earlier recovered capacity error cannot mask a later oracle failure. */
 export function codexServerFailure(trace: string[]): UpgradeFailureCode | null {
   for (let index = trace.length - 1; index >= 0; index -= 1) {
@@ -534,17 +574,6 @@ export function codexServerFailure(trace: string[]): UpgradeFailureCode | null {
 function boundedTrace(lines: string[], limit = 200, lineBytes = 4_000): string[] {
   return lines.slice(-limit).map((line) => Buffer.byteLength(line) <= lineBytes
     ? line : `${Buffer.from(line).subarray(0, lineBytes).toString("utf8")}…`);
-}
-
-/** Preserve the complete Claude process result before any bounded display trace is made. */
-export function recordClaudeTurnOutput(root: string, label: string,
-  result: { exitCode: number | null; stdout: string; stderr: string }): string {
-  if (!/^(turn-one|turn-two|stale-recovery)$/.test(label)) {
-    throw new Error("eval-stateful-claude-turn-label-invalid");
-  }
-  const path = join(root, `${label}.terminal.json`);
-  writeFileSync(path, `${JSON.stringify(result)}\n`, { flag: "wx", mode: 0o600 });
-  return path;
 }
 
 /** The released Claude launcher resolves `claude` on PATH inside its Bash child. */
@@ -623,6 +652,28 @@ function claudeEvents(stdout: string): Record<string, any>[] {
     try { return JSON.parse(line) as Record<string, any>; }
     catch { throw new Error("eval-stateful-claude-stream-invalid"); }
   });
+}
+
+/** Read only the terminal result of one Claude turn; an earlier turn never fills a missing result. */
+export function claudeTerminalReply(stdout: string): string {
+  return claudeEvents(stdout).flatMap((event) => event.type === "result" &&
+    typeof event.result === "string" ? [event.result] : []).at(-1) ?? "";
+}
+
+/** Replace the retained reply at every turn, including when the newest turn has no result. */
+export function nextClaudeTurnReply(_previous: string, stdout: string): string {
+  return claudeTerminalReply(stdout);
+}
+
+/** The newest planned transition owns the case reply, including an explicit missing result. */
+export function nextPlannedClaudeReply(observed: string | undefined): string {
+  return observed ?? "";
+}
+
+/** Missing reply evidence never hides a more specific current infrastructure failure. */
+export function statefulReplyFailureCode(original: UpgradeFailureCode | null,
+  replyMissing: boolean): UpgradeFailureCode | null {
+  return replyMissing ? original ?? "ORACLE_MISMATCH" : original;
 }
 
 /** Accept only the released launcher's exact stale refusal for this queued request. */
@@ -935,7 +986,7 @@ export function cleanupClaudeVersionRecords(root: string, rootSessionId: string,
 async function runClaudeCase(input: { repo: string; root: string; item: EvalCaseDefinition;
   transition: UpgradeTransition; claudeExecutable: string; pluginSha: string;
   currentSnapshot?: PluginSnapshot;
-  signal?: AbortSignal }): Promise<UpgradeCaseEvidence> {
+  signal?: AbortSignal }): Promise<PrivateUpgradeCaseEvidence> {
   const started = Date.now();
   const prior = archivePluginRelease(input.repo, input.transition.prior.ref,
     join(input.root, "prior"), input.transition.prior.version);
@@ -950,6 +1001,7 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
   const settings = writeClaudeRootSettings(input.root, prepared.worktree, [prior, target]);
   const rootSessionId = randomUUID();
   const processTrace: string[] = [];
+  let finalReply = "";
   const isolation = createClaudeEvalIsolation(join(input.root, "isolated-mcp"),
     input.claudeExecutable, UPGRADE_GRAPH_CAPABILITIES);
   const env = claudeRootEnvironment(isolation.executable);
@@ -967,7 +1019,9 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       requestId: prepared.requestOne, marker: "turn-one", continuation: false,
       vibeRoot: prior.claudeVibeRoot, runtime: "claude" })}`, false);
     recordClaudeTurnOutput(input.root, "turn-one", first);
-    processTrace.push(`turn-one exit=${first.exitCode}\nstdout:\n${first.stdout}\nstderr:\n${first.stderr}`);
+    processTrace.push(`turn-one exit=${first.exitCode}`);
+    const firstEvents = [...claudeEvents(first.stdout)];
+    finalReply = nextClaudeTurnReply(finalReply, first.stdout);
     if (first.exitCode !== 0 || proofLines(prepared.worktree).join("\n") !== "turn-one") {
       throw new Error(claudeTurnFailureText(first) || "MODEL_BLOCKED first turn did not complete");
     }
@@ -984,12 +1038,12 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       ...(input.item.definition === "changed" ? { migration: {
         previousWorkerId: before.workerId, previousDigest: before.binding.digest } } : {}) })}`, true);
     recordClaudeTurnOutput(input.root, "turn-two", targetTurn);
-    processTrace.push(`turn-two exit=${targetTurn.exitCode}\nstdout:\n${targetTurn.stdout}\nstderr:\n${targetTurn.stderr}`);
+    processTrace.push(`turn-two exit=${targetTurn.exitCode}`);
     let after = writerLedger(prepared.worktree);
     let lines = proofLines(prepared.worktree);
     const targetEvents = [...claudeEvents(targetTurn.stdout)];
-    let terminalText = targetEvents.flatMap((event) => event.type === "result" &&
-      typeof event.result === "string" ? [event.result] : []).at(-1) ?? "";
+    let terminalText = claudeTerminalReply(targetTurn.stdout);
+    finalReply = nextClaudeTurnReply(finalReply, targetTurn.stdout);
     if (claudeStaleRecoveryEligible({ exitCode: targetTurn.exitCode, terminalText,
       requestId: prepared.requestTwo, oldWriterId: before.workerId, proofLines: lines,
       oldArchiveRetained: existsSync(prior.archiveRoot),
@@ -999,15 +1053,14 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       targetTurn = await invoke(target, claudeStaleRecoveryPrompt({ requestId: prepared.requestTwo,
         sessionSlug: prepared.sessionSlug }), true);
       recordClaudeTurnOutput(input.root, "stale-recovery", targetTurn);
-      processTrace.push(`stale-recovery exit=${targetTurn.exitCode}\nstdout:\n${targetTurn.stdout}` +
-        `\nstderr:\n${targetTurn.stderr}`);
+      processTrace.push(`stale-recovery exit=${targetTurn.exitCode}`);
       targetEvents.push(...claudeEvents(targetTurn.stdout));
       after = writerLedger(prepared.worktree);
       lines = proofLines(prepared.worktree);
-      terminalText = targetEvents.flatMap((event) => event.type === "result" &&
-        typeof event.result === "string" ? [event.result] : []).at(-1) ?? "";
+      terminalText = claudeTerminalReply(targetTurn.stdout);
+      finalReply = nextClaudeTurnReply(finalReply, targetTurn.stdout);
     }
-    const events = [...claudeEvents(first.stdout), ...targetEvents];
+    const events = [...firstEvents, ...targetEvents];
     const costs = events.flatMap((event) => event.type === "result" &&
       typeof event.total_cost_usd === "number" ? [event.total_cost_usd] : []);
     const migrationCount = Array.isArray(after?.migrations) ? after.migrations.length : 0;
@@ -1027,13 +1080,13 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       target: input.transition.target, prior: input.transition.prior,
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: lines, rootSessionId,
       previousWriterId: before?.workerId ?? null, finalWriterId: after?.workerId ?? null,
-      migrationCount, trace: boundedTrace([...processTrace, ...events.flatMap((event) =>
-        event.type === "assistant" ? [JSON.stringify(event.message?.content ?? [])] : [])]) };
+      migrationCount, trace: statefulClaudeEvidenceTrace(processTrace, finalReply),
+      ...(finalReply ? { privateReply: finalReply } : {}) };
     await versionServer.close(); cleanupClaudeVersionRecords(input.root, rootSessionId);
     return evidence;
   } catch (error) {
     const ledger = writerLedger(prepared.worktree);
-    const evidence: UpgradeCaseEvidence = { caseId: input.item.id, runtime: "claude", passed: false,
+    const evidence: PrivateUpgradeCaseEvidence = { caseId: input.item.id, runtime: "claude", passed: false,
       failureCode: classifyUpgradeFailure(error),
       wallMs: Date.now() - started, agentCostUsd: null, tokens: null,
       cliVersion: execFileSync(input.claudeExecutable, ["--version"], { encoding: "utf8" })
@@ -1042,7 +1095,9 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: proofLines(prepared.worktree),
       rootSessionId, previousWriterId: ledger?.workerId ?? null, finalWriterId: ledger?.workerId ?? null,
       migrationCount: Array.isArray(ledger?.migrations) ? ledger.migrations.length : 0,
-      trace: boundedTrace([...processTrace, error instanceof Error ? error.message : String(error)]) };
+      trace: statefulClaudeEvidenceTrace(
+        [...processTrace, normalizedClaudeFailureDiagnostic(error, classifyUpgradeFailure)], finalReply),
+      ...(finalReply ? { privateReply: finalReply } : {}) };
     await versionServer.close().catch(() => {}); cleanupClaudeVersionRecords(input.root, rootSessionId);
     return evidence;
   }
@@ -1568,31 +1623,50 @@ export async function runUpgradeResumeCases(input: UpgradeResumeRunInput): Promi
       }
       const observations: Array<{ role: "historical" | "current"; expected: "pass" | "fail";
         evidence: UpgradeCaseEvidence }> = [];
+      let privateReply = "";
       for (const planned of upgradeTransitionPlan(item, runtime, subject,
         input.targetRef, input.pluginSha)) {
         const transitionRoot = join(caseRoot, planned.role === "current" ? "current" :
           join("historical", planned.transition.target.version));
-        const result = await runUpgradeCellWithRetry({ transitionRoot, run: async (attemptRoot) =>
-          runtime === "claude"
+        const privateResult = await runUpgradeCellWithRetry({ transitionRoot, run: async (attemptRoot) => {
+          const currentSnapshot = planned.role === "current" ? input.currentSnapshot : undefined;
+          if (input.cellRunner) return await input.cellRunner({ runtime, role: planned.role,
+            expected: planned.expected, item, transition: planned.transition, attemptRoot,
+            ...(currentSnapshot ? { currentSnapshot } : {}) });
+          return runtime === "claude"
             ? await runClaudeCase({ repo: input.repo, root: attemptRoot, item,
               transition: planned.transition, claudeExecutable: input.claudeExecutable,
               pluginSha: input.pluginSha, signal: input.signal,
-              ...(planned.role === "current" ? { currentSnapshot: input.currentSnapshot } : {}) })
+              ...(currentSnapshot ? { currentSnapshot } : {}) })
             : await runCodexCase({ repo: input.repo, root: attemptRoot, item,
               transition: planned.transition, codexExecutable: input.codexExecutable,
-              ...(planned.role === "current" ? { currentSnapshot: input.currentSnapshot } : {}) }) });
+              ...(currentSnapshot ? { currentSnapshot } : {}) });
+        } });
+        const { privateReply: observedReply, ...result } = privateResult;
+        privateReply = nextPlannedClaudeReply(observedReply);
         observations.push({ role: planned.role, expected: planned.expected, evidence: result });
         writeFileSync(join(transitionRoot, "evidence.json"), `${JSON.stringify(result, null, 2)}\n`,
           { mode: 0o600 });
         if (result.failureCode !== null && INFRASTRUCTURE_FAILURE_CODES.has(result.failureCode)) break;
       }
       const scored = scoreUpgradeTransitions(observations);
+      let replyFailure = false;
+      if (runtime === "claude") {
+        try {
+          if (!privateReply) throw new Error("eval-stateful-claude-reply-missing");
+          preserveStatefulClaudeReply(input.runRoot, item.id, privateReply);
+        } catch {
+          replyFailure = true;
+        }
+      }
       const representative = observations.find((item) => item.role === "current")?.evidence ??
         observations.at(-1)!.evidence;
       const agentCosts = observations.map((item) => item.evidence.agentCostUsd);
       const allTokens = observations.map((item) => item.evidence.tokens);
-      const combined: UpgradeCaseEvidence = { ...representative, passed: scored.passed,
-        failureCode: scored.failureCode, transitionResults: scored.transitions,
+      const combined: UpgradeCaseEvidence = { ...representative,
+        passed: scored.passed && !replyFailure,
+        failureCode: statefulReplyFailureCode(scored.failureCode, replyFailure),
+        transitionResults: scored.transitions,
         wallMs: observations.reduce((sum, item) => sum + item.evidence.wallMs, 0),
         agentCostUsd: agentCosts.every((value) => value !== null)
           ? agentCosts.reduce((sum, value) => sum + (value ?? 0), 0) : null,
