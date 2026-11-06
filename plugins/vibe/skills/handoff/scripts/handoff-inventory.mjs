@@ -86,6 +86,8 @@
 // Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff|pull-request]
 //   [--ticket <file>] [--overlap] [--prs-json <file>] [--body <file>] [--runs <file> --commit <sha>]
 
+import { laneSourceBootstrap } from "./ci-job-shape.mjs";
+import { laneSourceShapeProblems } from "./pr-evidence-schema.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -372,10 +374,12 @@ const result = withStableSource(worktree, () => {
   /** Reject partial or permissive policy shapes before any path classification. */
   function pathPolicyProblemFor(policy) {
     const keys = ["version", "allowedPrefixes", "allowedFiles", "forbiddenPrefixes", "forbiddenBasenames", "rootTests"];
+    if (policy?.laneSource !== undefined) keys.push("laneSource");
     if (!policy || typeof policy !== "object" || Array.isArray(policy) ||
       Object.keys(policy).sort().join("|") !== keys.sort().join("|")) {
       return `expected fields ${keys.join(", ")}`;
     }
+    if (policy.laneSource !== undefined && laneSourceShapeProblems(policy.laneSource).length) return "invalid typed laneSource";
     if (policy.version !== 1 || typeof policy.rootTests !== "boolean") {
       return "version must be 1 and rootTests must be a boolean";
     }
@@ -419,6 +423,12 @@ const result = withStableSource(worktree, () => {
   }
 
   function classifyPath(file) {
+    if (file.path === PATH_POLICY_BASENAME && file.status === "M") {
+      try {
+        const target = advertisedRemoteDefault({ fresh: true, branch: getComparison().branch });
+        if (laneSourceBootstrap(worktree, baseCommit, target.commit)) return { disposition: PathDisposition.Allowed, reason: "lane-source-bootstrap" };
+      } catch { /* Unverified target never authorizes a protected declaration edit. */ }
+    }
     return classifyHandoffPath({
       file,
       phase: values.phase,
@@ -467,12 +477,19 @@ const result = withStableSource(worktree, () => {
   }
 
   function comparisonBase() {
+    let bootstrap = false;
     try {
-      const configured = git(["config", "--get", "vibe.baseRef"]);
-      if (configured) return { branch: configured, operand: `origin/${configured}` };
-    } catch {}
+      const after = JSON.parse(readFileSync(path.join(worktree, PATH_POLICY_BASENAME), "utf8"));
+      if (after.laneSource?.kind === "github-workflow" && /^[a-f0-9]{40}$/.test(record.baseCommit ?? "")) {
+        const before = JSON.parse(git(["show", `${record.baseCommit}:${PATH_POLICY_BASENAME}`]));
+        bootstrap = !Object.hasOwn(before, "laneSource");
+      }
+    } catch { /* Normal repositories keep their existing comparison path. */ }
+    let configured;
+    try { configured = git(["config", "--get", "vibe.baseRef"]); } catch {}
+    if (configured && !bootstrap) return { branch: configured, operand: `origin/${configured}` };
     try {
-      const advertised = advertisedRemoteDefault();
+      const advertised = advertisedRemoteDefault({ fresh: bootstrap, branch: configured });
       return { branch: advertised.branch, operand: advertised.commit };
     } catch (error) {
       const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
@@ -480,20 +497,26 @@ const result = withStableSource(worktree, () => {
     }
   }
 
-  /** Verify the remote-advertised default and its commit before trusting a fetched tracking ref. */
-  function advertisedRemoteDefault() {
-    if (verifiedDefault) return verifiedDefault;
-    const lines = git(["ls-remote", "--symref", "origin", "HEAD"], 15_000).split("\n");
-    const symbolic = lines.map((line) => /^ref: refs\/heads\/([^\s]+)\tHEAD$/.exec(line)).find(Boolean);
-    const commit = lines.map((line) => /^([a-f0-9]{40,64})\tHEAD$/.exec(line)).find(Boolean)?.[1];
-    if (!symbolic || !commit) throw new Error("origin did not advertise a branch HEAD and commit");
-    const branch = symbolic[1];
-    git(["check-ref-format", "--branch", branch]);
-    const fetched = git(["rev-parse", `refs/remotes/origin/${branch}`]);
-    if (fetched !== commit) {
-      throw new Error(`fetched origin/${branch} does not match the remote's advertised HEAD; fetch origin first`);
+  /** Reuse the comparison owner; metadata migration additionally fetches and rechecks the exact merge target. */
+  function advertisedRemoteDefault({ fresh = false, branch: chosen } = {}) {
+    if (verifiedDefault && (!chosen || chosen === verifiedDefault.branch) && (!fresh || verifiedDefault.freshlyFetched)) return verifiedDefault;
+    if (chosen) git(["check-ref-format", "--branch", chosen]);
+    const advertised = () => {
+      const lines = git(["ls-remote", "--symref", "origin", chosen ? `refs/heads/${chosen}` : "HEAD"], 15_000).split("\n");
+      const branch = chosen ?? lines.map(line => /^ref: refs\/heads\/([^\s]+)\tHEAD$/.exec(line)).find(Boolean)?.[1];
+      const ref = chosen ? `refs/heads/${chosen}` : "HEAD";
+      const commit = lines.map(line => line.split("\t")).find(([sha, name]) => /^[a-f0-9]{40,64}$/.test(sha) && name === ref)?.[0];
+      if (!branch || !commit) throw new Error("origin did not advertise the merge target branch and commit");
+      git(["check-ref-format", "--branch", branch]);
+      return { branch, commit };
+    };
+    const target = advertised();
+    if (fresh) git(["fetch", "--no-tags", "origin", `refs/heads/${target.branch}:refs/remotes/origin/${target.branch}`], 30_000);
+    const fetched = git(["rev-parse", `refs/remotes/origin/${target.branch}`]);
+    if (fetched !== target.commit || fresh && JSON.stringify(advertised()) !== JSON.stringify(target)) {
+      throw new Error(`fetched origin/${target.branch} does not match the remote's advertised HEAD; fetch origin first`);
     }
-    verifiedDefault = { branch, commit };
+    verifiedDefault = { ...target, freshlyFetched: fresh };
     return verifiedDefault;
   }
 

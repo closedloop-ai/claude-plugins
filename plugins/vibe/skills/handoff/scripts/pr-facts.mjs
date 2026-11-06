@@ -3,11 +3,13 @@
 // files), assertion and export changes, new apps/api refusals, ticket asks and
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
 
-import { withStableSource, validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
+import { withStableSource, validSourceIdentity, committedSourceIdentity, committedFile } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { repositoryLaneReportProblems, laneReportLabel } from "./ci-job-shape.mjs";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
 import { DESKTOP_HOST, UI_PREFIXES as UI } from "../../vibe/scripts/area-paths.mjs";
@@ -16,8 +18,8 @@ import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/tes
 import { REQUIRED_CONTAINER_IDENTITY, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { prBodyClaimProblems } from "./pr-body-claims.mjs";
-import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS } from "./pr-evidence-schema.mjs";
-import { qaImpactRequest } from "./qa-impact.mjs";
+import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
+import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { testIntegrityProblems } from "./test-integrity.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
@@ -205,15 +207,104 @@ function e2eLeftForCi(runsFile, changed, commit) {
     && specs.every((spec) => e2eCarriedForCi(runsFile, selection.entries, spec, commit));
 }
 
-function recomputedImpact(runsFile, worktree) {
-  if (!worktree || !runsFile?.qaImpactRequest) return { problem: "older lane evidence needs a qaImpactRequest recomputed in the worktree" };
-  try {
+/** Immutable carry is an explicit alternate authority, never a weaker interpretation of a failed ancestry check. */
+function verifiedCarryImpact(runsFile, worktree, commit) {
+  const carry = runsFile.treeEquivalentCarry;
+  const shape = treeEquivalentCarryShapeProblems(carry);
+  if (shape.length) throw new Error(shape.join("; "));
+  if (!worktree || commit !== carry.published.commit) throw new Error("tree carry needs the verified published commit/worktree");
+  return withStableSource(worktree, current => {
+    const sourceCache = new Map();
+    const fileHashes = new Map();
+    const hashAt = (sha, file) => {
+      const key = JSON.stringify([sha, file]);
+      if (!fileHashes.has(key)) fileHashes.set(key, createHash("sha256").update(committedFile(worktree, sha, file)).digest("hex"));
+      return fileHashes.get(key);
+    };
+    const sourceAt = sha => {
+      if (!sourceCache.has(sha)) sourceCache.set(sha, committedSourceIdentity(worktree, sha));
+      return sourceCache.get(sha);
+    };
+    const verifyPoint = point => {
+      if (git(worktree, ["rev-parse", "--verify", `${point.ref}^{commit}`]) !== point.commit
+        || git(worktree, ["rev-parse", "--verify", `${point.commit}^{tree}`]) !== point.gitTree
+        || !isDeepStrictEqual(sourceAt(point.commit), point.source)) throw new Error("tree carry ref, Git tree or source identity changed");
+    };
+    const points = [carry.proof, carry.published, ...(carry.proofs ?? [])];
+    for (const point of points) verifyPoint(point);
+    const byCommit = new Map(points.map(point => [point.commit, point]));
+    const scopes = new Map(); // All records from one immutable proof share one classification in this validation pass.
+    const scopeFrom = boundary => {
+      if (scopes.has(boundary)) return scopes.get(boundary);
+      const request = { ...runsFile.qaImpactRequest, lastQa: { boundary } };
+      delete request.since;
+      let ancestor = false;
+      try { git(worktree, ["merge-base", "--is-ancestor", boundary, carry.proof.commit]); ancestor = true; } catch { /* Explicit binding is required below. */ }
+      if (!ancestor && !byCommit.has(boundary)) throw new Error("non-ancestor scope needs a pinned proof point");
+      const scope = ancestor && carry.proofs === undefined ? qaImpactRequestAtCommit(worktree, request, carry.proof.commit)
+        : qaImpactDirectCommitScope(worktree, request, carry.proof.commit);
+      scopes.set(boundary, scope);
+      return scope;
+    };
+    if (!isDeepStrictEqual(runsFile.source, carry.published.source) || current.head !== commit || current.treeSha256 !== carry.published.source.treeSha256
+      || git(worktree, ["status", "--porcelain", "--untracked-files=all"]) !== ""
+      || carry.proof.gitTree !== carry.published.gitTree || carry.proof.source.treeSha256 !== carry.published.source.treeSha256) {
+      throw new Error("tree carry needs clean equal Git/source trees at proof and publication");
+    }
+    if (runsFile.qaImpactRequest?.since !== undefined && runsFile.qaImpactRequest.since !== runsFile.qaImpactRequest?.lastQa?.boundary) throw new Error("carry scope boundary differs from request");
+    const impact = scopeFrom(runsFile.qaImpactRequest?.lastQa?.boundary);
+    if (carry.laneKey !== impact.laneKey || carry.laneKey !== runsFile.targetedInventory?.impactKey
+      || carry.laneKey !== runsFile.qaImpact?.laneKey) throw new Error("tree carry lane key differs from recomputed proof scope");
+    const allRuns = [...(runsFile.testRuns ?? []), ...(runsFile.runs ?? [])];
+    const metadata = realpathSync(git(worktree, ["rev-parse", "--absolute-git-dir"]));
+    for (const record of carry.runs) {
+      const result = record.result;
+      if (runsFile.targetedInventory?.laneReport?.source?.kind === "github-workflow"
+        && !runsFile.targetedInventory.laneReport.matches?.some(lane => lane.name === result.lane && lane.command === result.command)) {
+        throw new Error("tree carry result is not an exact declared workflow lane");
+      }
+      if (record.scopeKey !== carry.laneKey || !allRuns.some(run => isDeepStrictEqual(run, result))) throw new Error("tree carry recorded run or lane key changed");
+      if (result.commit !== carry.proof.commit) {
+        const intervening = scopeFrom(result.commit);
+        if (impact.lanes.includes(result.lane) || intervening.lanes.includes(result.lane)) throw new Error("tree carry scope includes this lane; original result is not reusable");
+      }
+      const file = path.join(metadata, record.receipt.path);
+      const stat = lstatSync(file);
+      if (!stat.isFile() || stat.size > 4 * 1024 * 1024 || realpathSync(file) !== file) throw new Error("tree carry receipt is not a bounded regular private file");
+      const bytes = readFileSync(file);
+      if (createHash("sha256").update(bytes).digest("hex") !== record.receipt.sha256) throw new Error("tree carry receipt hash changed");
+      const receipt = JSON.parse(bytes);
+      if (Object.keys(receipt).sort().join("|") !== "coveredFiles|result|source|version" || receipt.version !== 1
+        || !isDeepStrictEqual(receipt.source, sourceAt(result.commit)) || !isDeepStrictEqual(receipt.result, result)
+        || !isDeepStrictEqual(receipt.coveredFiles, record.coveredFiles)) throw new Error("tree carry receipt is incomplete or its recorded result/source changed");
+      const coveredPaths = new Set(record.coveredFiles.map(item => item.path));
+      const laneSource = runsFile.targetedInventory?.laneReport?.source;
+      if (laneSource?.kind === "github-workflow" && !coveredPaths.has(laneSource.path)) {
+        throw new Error("tree carry must cover the immutable workflow definition");
+      }
+      const selected = runsFile.qaImpactRequest?.laneSelections?.files ?? runsFile.qaImpactRequest?.laneSelections ?? {};
+      if (impact.changedFiles.some(file => selected[file]?.includes(result.lane) && !coveredPaths.has(file))) throw new Error("tree carry omits a changed covered file");
+      for (const covered of record.coveredFiles) for (const sha of new Set([result.commit, carry.proof.commit, commit])) {
+        if (hashAt(sha, covered.path) !== covered.sha256) throw new Error(`${covered.path}: tree carry covered file changed`);
+      }
+    }
+    // Recheck refs after all receipts/object reads, not only before the scan.
+    for (const point of points) verifyPoint(point);
+    return { impact, allowedRuns: carry.runs.map(record => record.result) };
+  });
+}
+
+function recomputedImpact(runsFile, worktree, commit) {
+  let normal;
+  if (!worktree || !runsFile?.qaImpactRequest) normal = { problem: "older lane evidence needs a qaImpactRequest recomputed in the worktree" };
+  else try {
     const impact = qaImpactRequest(worktree, runsFile.qaImpactRequest);
-    if (!/^[a-f0-9]{16}$/.test(impact.laneKey ?? "")) return { problem: "recomputed QA impact has no laneKey" };
-    return { impact };
-  } catch (error) {
-    return { problem: `QA impact could not be recomputed: ${error instanceof Error ? error.message : String(error)}` };
-  }
+    normal = /^[a-f0-9]{16}$/.test(impact.laneKey ?? "") ? { impact } : { problem: "recomputed QA impact has no laneKey" };
+  } catch (error) { normal = { problem: `QA impact could not be recomputed: ${error.message}` }; }
+  if (runsFile?.treeEquivalentCarry === undefined) return normal;
+  try {
+    return verifiedCarryImpact(runsFile, worktree, commit);
+  } catch (error) { return { problem: `tree-equivalent carry refused: ${error.message}` }; }
 }
 
 /** Every required lane finished and passed for its recomputed changed-file scope. */
@@ -223,7 +314,7 @@ export function evidenceProblems(runsFile, changed, commit, worktree) {
   }
   const allRuns = Array.isArray(runsFile?.runs) ? runsFile.runs : [];
   const older = Boolean(commit) && allRuns.some((run) => run?.commit && run.commit !== commit);
-  const recomputed = older ? recomputedImpact(runsFile, worktree) : null;
+  const recomputed = older || runsFile?.treeEquivalentCarry !== undefined ? recomputedImpact(runsFile, worktree, commit) : null;
   if (recomputed?.problem) return [recomputed.problem];
   const impactKey = recomputed?.impact?.laneKey;
   return requiredLanes(changed, runsFile.touchFlows).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit))).flatMap((lane) => {
@@ -232,7 +323,8 @@ export function evidenceProblems(runsFile, changed, commit, worktree) {
     return runs.flatMap((run) => [
       ...(passedOrMainPreexisting(run) ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
-      ...(impactKey && run.commit !== commit && run.laneKey !== impactKey ? [`${lane}: changed-file scope ${run.laneKey ?? "missing"} does not match recomputed ${impactKey}`] : []),
+      ...(impactKey && run.commit !== commit && run.laneKey !== impactKey && !recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)) ? [`${lane}: changed-file scope ${run.laneKey ?? "missing"} does not match recomputed ${impactKey}`] : []),
+      ...(run.commit !== commit && recomputed?.allowedRuns && !recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)) ? [`${lane}: no verified tree carry receipt for the recorded run`] : []),
       ...(lane === "storybook-plays" ? playVerdictProblems(run) : []),
     ]);
   });
@@ -478,12 +570,14 @@ function e2eCarriedForCi(evidence, selection, spec, commit) {
   const desktop = spec.startsWith("apps/desktop/");
   const reason = desktop ? NOT_RUN_NO_DESKTOP_HARNESS : NOT_RUN_NO_IDENTITY;
   const ciOwner = desktop ? E2E_CI_OWNER.desktop : E2E_CI_OWNER.web;
+  const laneReport = evidence?.targetedInventory?.laneReport;
   if (!Array.isArray(capability.ciCoverage) || !capability.ciCoverage.includes(ciOwner)
-    || evidence?.targetedInventory?.laneReport?.command !== "pnpm test:lanes") return false;
+    || laneReportShapeProblems(laneReport).length !== 0
+    || laneReport?.source?.kind !== "github-workflow" && laneReportLabel(laneReport) !== "pnpm test:lanes") return false;
   const runs = Array.isArray(evidence.testRuns) ? evidence.testRuns : [];
   const own = runs.some((run) => run?.path === spec && run.status === "not-run" && run.commit === commit
     && run.reason === reason && run.ciOwner === ciOwner && run.selectionSource === "e2e-reference"
-    && run.laneReportSource === "pnpm test:lanes" && (limitation.tier === null
+    && run.laneReportSource === laneReportLabel(evidence?.targetedInventory?.laneReport) && (limitation.tier === null
       ? run.selectedTier === undefined || run.selectedTier === null
       : run.selectedTier === limitation.tier && (limitation.kind === "displayless"
         ? run.displaylessLimitation === limitation.displaylessLimitation && run.missingPrerequisites === undefined
@@ -509,7 +603,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   const laneRuns = runs.filter((run) => run?.lane);
   const older = Boolean(commit) && (inventory.commit !== commit || laneRuns.some((run) => run?.commit && run.commit !== commit));
-  const recomputed = older ? recomputedImpact(runsFile, worktree) : null;
+  const recomputed = older || runsFile?.treeEquivalentCarry !== undefined ? recomputedImpact(runsFile, worktree, commit) : null;
   if (recomputed?.problem) problems.push(recomputed.problem);
   const impactKey = recomputed?.impact?.laneKey;
   if (inventory.actor !== "read-only") problems.push("targeted inventory must come from a read-only subagent");
@@ -517,14 +611,14 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   if (impactKey && inventory.impactKey !== impactKey) {
     problems.push("targeted inventory does not name recomputed qa-impact.mjs changed-file scope");
   }
-  if (inventory.laneReport?.command !== "pnpm test:lanes") problems.push("targeted inventory must use pnpm test:lanes as the repository lane source");
-  if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list the post-merge lane matches from pnpm test:lanes");
+  problems.push(...repositoryLaneReportProblems(inventory.laneReport, worktree, commit));
   const laneMatches = Array.isArray(inventory.laneReport?.matches) ? inventory.laneReport.matches : [];
   for (const lane of laneMatches) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command
-        && (!impactKey || run.commit === commit || run.laneKey === impactKey)
+        && (!impactKey || run.commit === commit || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
+        && (!recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
       problems.push(`lane ${lane.name}: no passing run of its test:lanes command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
     }

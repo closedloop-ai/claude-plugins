@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - The private nightly run tree keeps each Claude case's final reply as the same per-case `reply.txt` artifact Codex writes, then removes the retained native temp trace. Published baseline results keep their existing allowlisted schema and never include reply text or local paths.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 82 words longer than in 1.1.51 (origin/main at the merge).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 82 words longer than in 1.1.53 (origin/main at the merge).
 
 #### Fixed
 - Four always-failing eval cases now distinguish correct wording variants from real omissions: duplicate-helper remedies and touch-device findings are order-independent, host-adapter coverage requires the Desktop criterion and its owning lane, and PRD-child replies accept bare no-supersession/link wording only while keeping every claim mutation mandatory.
@@ -17,6 +17,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - PRD children with real activity under another person are again reported and excluded from the build, never claimed, built, canceled or superseded.
 - Native Codex review receipts canonicalize hyphen separators in App Server MCP server names to the registered underscore form before capability matching. Only completed MCP items from the exact accepted turn count; operation names, other servers, failed calls, command text and reviewer summaries remain distinct.
 - Deterministic checker provenance records the current driver plugin version while old-subject parity uses an explicit driver fixture with identical checker bytes. The local eval harness separately declares model execution and Claude trace artifacts, keeping deterministic CI model-free, and Codex manifest keys narrow to strings before typed lookup.
+
+### vibe v1.1.53
+
+#### Fixed
+- Release comparisons break numeric ties by exact spelling; immutable source fingerprints break path ties by blob identity and mode. Internal interrupt, stale-line, evidence-path helpers and workflow-lane types no longer expose unused public exports.
+- Explicit carry can bind multiple immutable sibling proofs. Direct tree deltas preserve unaffected workflow results across the one-time full sweep and selective repairs; impacted lanes require final-proof results. Ordinary evidence still requires ancestry.
+- Handoff carry binds equal Git/source trees and receipt consistency. Workflow lane recipes include actions, setup/runtime inputs, runners, conditions and timeouts; unsupported execution shapes fail closed. The protected lane-source bootstrap verifies the same sole workflow and permissions across the base, freshly fetched merge target and final candidate. Evidence comments receive the exact worktree, and workflow E2E labels use the declared lane source.
+- Stale fleet writers accept one exact reload-only envelope without appended provenance. Direct session commands verify the host's installed root. Reload waits for owned heavy-slot jobs and E2E holders or acquisition waiters to release, sends bounded skill pages through App Server, and requires acknowledgements from the recorded actor and turn before refreshing evidence. Receipt scans persist their cursors across bounded pumps; explicit retry clears an invalid cursor while retaining the nonce and text. Retained briefs remain durable until confirmed delivery, with lost-reply reconciliation.
+- An idle stale writer's next turn reloads in place and retains its requested brief, thread, worktree, branch, session record and board row. `codex-session.mjs interrupt` records a reason, interrupts the active turn through the App Server, and confirms it stopped without archiving the thread.
+- Existing local and remote watcher snapshots report `SKILL-STALE <writer> <loaded> -> <installed>`; coordinator instructions queue reload at the next milestone and reserve interrupt for reloads that cannot wait.
+- Session control locks use process birth/command witnesses, clean failed ownership writes, and recover old ownerless or reused-PID records without signaling processes. Remote usage polling ships no freshness modules when no writer is watched.
+- Reload publishes an exclusive canonical-worktree fence in the existing machine slot locks and retains it through page acknowledgements and evidence completion. E2E and heavy admission register their ownership before checking the same fence; jobs that arrive during App Server awaits cannot start mid-reload. Confirmed interruption and completion release the fence; interrupted pumps retain durable actor ownership for retry, while proven orphans recover without signaling processes.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 122 words longer than in 1.1.51 (origin/main at this merge, 4ead9634c5d2).
 
 ### vibe v1.1.51
 

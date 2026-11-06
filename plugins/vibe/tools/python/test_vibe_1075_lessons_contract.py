@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from skill_split import assembled
 from vibe_contract_text import flat
 
 
@@ -59,10 +60,10 @@ def test_the_watcher_flags_model_drift_wider_questions_and_a_second_copy() -> No
 
 
 def test_fleet_orchestrator_runs_each_new_check() -> None:
-    skill = _text(FLEET / "SKILL.md")
+    skill = flat(assembled(FLEET / "SKILL.md"))
     for wired in (
         "checked in code: <file>:<line>",
-        "refuses to start without a model or an effort",
+        "New sessions require `$vibe`, a model and effort",
         "`MODEL(...)`",
         "resets=<n>",
         "move its busiest writers to Claude writers",

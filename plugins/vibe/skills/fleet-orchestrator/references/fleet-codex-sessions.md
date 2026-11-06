@@ -10,12 +10,15 @@ scripts/fleet.sh <orchDir> local|remote session turn  <name> --prompt-file <file
 scripts/fleet.sh <orchDir> local|remote session steer <name> --prompt-file <file>
 scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|merged
+scripts/fleet.sh <orchDir> local|remote session interrupt <name> --reason <why-reload-cannot-wait>
+scripts/fleet.sh <orchDir> local|remote session reload <name> [--retry]
 ```
 
-- `turn` binds a new thread to `--cwd` (refusing another later), resumes it afterwards and starts a turn. `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`; a new session refuses to start without a model or an effort, or with a prompt not starting with `$vibe`. Its thread is named `<name> · <ticket>` (just `<name>` without `--ticket`), moved into the Codex app's "Fleet workers" sidebar section, and started with `threadSource: "chatgpt_hidden"`. Today that marker does not keep workers out of the app, because `thread/list` does not return it; workers drop out once a server returns it. The CLI ignores it. Start every Codex writer this way; restart a thread the watcher marks `MODEL(...)` on the configured model.
-- `steer` adds to the active turn and fails when none is running; `last` prints the monitor's status line and the last agent messages.
-- `end` once a writer's PR is merged or you stop the writer: it records that in the session's state file, then archives the thread so it leaves the operator's chat list. It refuses a thread with a running turn; never end a live writer. A later `turn` unarchives the thread first, and the recovery supervisor skips an ended session.
-- Run Codex at high effort, never the maximum (it burns the limit for little gain), and never name a sub-agent model in a prompt; vibe's policy picks them.
-- No computer use in Codex (browser, in-app browser, desktop app UI, screenshots): it is the fastest drain. Code host work goes through its CLI.
-- Visual work is a request file a Codex session writes only through `scripts/request-visual.mjs` ([template](./templates.md#visual-request)); a Claude worker does it and you steer the findings back as text.
+- `turn` starts/resumes one thread bound to its original worktree. New sessions require `$vibe`, a model and effort (defaults: `CODEX_MODEL`, `CODEX_EFFORT`). They join "Fleet workers" as `<name> · <ticket>` with `threadSource: "chatgpt_hidden"`; older servers still show them. A `MODEL(...)` watcher line requires the configured model.
+- `steer` requires a running turn; `last` prints status and recent agent messages.
+- On `SKILL-STALE <writer> <loaded> -> <installed>`, queue that writer's reload at its next milestone. Send `steer --prompt-file <file>` containing exactly `VIBE_SKILL_RELOAD v1` (one final newline allowed). No other instruction fits this envelope. Ordinary stale steers remain refused. An idle writer's next `turn` starts reload in place and retains its brief until loading finishes.
+- `reload` fences the canonical worktree in existing machine slot locks through evidence completion. Jobs register before checking that fence; admitted jobs block reload. Heavy admission waits at most 60 seconds; E2E keeps its wait budget. Receipt scans resume; `--retry` preserves nonce/text. Retained work stays durable until confirmed delivery. Thread, worktree, branch, session record and board row survive.
+- Use `interrupt` only when reload cannot wait. It records the reason, sends `turn/interrupt`, and confirms the turn stopped; unconfirmed stops remain visible failures. Resume with `turn`; never archive or replace the writer for reload.
+- `end` records stopped/merged and archives only an idle thread; `turn` reopens it. Recovery skips ended sessions.
+- Run high effort, never maximum; vibe chooses sub-agent models. No Codex computer use: use the code host CLI and `request-visual.mjs` ([template](./templates.md#visual-request)) for Claude visual checks.
 <!-- end: codex-sessions-rules -->

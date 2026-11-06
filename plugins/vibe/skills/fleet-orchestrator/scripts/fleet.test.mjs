@@ -6,7 +6,7 @@ import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
-import { writeRemoteCodexStub } from './fleet-test-support.mjs';
+import { writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
@@ -28,9 +28,9 @@ function fixture(config) {
   mkdirSync(bin);
   if (config !== undefined) writeFileSync(join(orch, 'config.env'), config);
   writeFileSync(join(orch, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: loadEvidence(), harnesses: [] }));
-  // work-dir.mjs resolves the orchestration dir with the real node; every other node call is recorded.
-  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
-  writeFileSync(join(bin, 'ssh'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${root}/ssh-args\nexec bash -c "\${@: -1}"\n`);
+  // Resolution, freshness and owned admission use real Node; other operational calls remain recorded.
+  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeLoopbackSsh(bin, join(root, 'ssh-args'));
   writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_LOAD:-0}"\n');
   writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "${FLEET_TEST_LOAD:-0}"\n');
   writeFileSync(join(bin, 'getconf'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_CORES:-8}"\n');
@@ -78,16 +78,29 @@ test('turn takes model and effort from config unless given; other commands get n
   mkdirSync(join(f.root, 'state'), { recursive: true });
   writeFileSync(join(f.root, 'state', 'w1.json'), JSON.stringify({ threadId: 'test', cwd: '/wt', loadedSkill: loadEvidence('test') }));
   const steer = f.argv(f.run(['local', 'session', 'steer', 'w1', '--prompt-file', f.prompt]));
-  assert.deepEqual(steer.slice(4), ['--prompt-file', f.prompt]);
+  assert.deepEqual(steer.slice(4), ['--prompt-file', f.prompt, '--plugin-root', PLUGIN_ROOT]);
 });
 
-test('prompt preflight refuses a stale loaded skill and a deleted plugin script', TIMEOUT, () => {
+test('prompt preflight delegates stale turns to checked idle migration, admits reload-only steers and refuses deleted scripts', TIMEOUT, () => {
   const f = fixture('CODEX_MODEL=m\nCODEX_EFFORT=high\n');
   mkdirSync(join(f.orch, 'sessions'), { recursive: true });
   writeFileSync(join(f.orch, 'sessions', 'w1.json'), JSON.stringify({ threadId: 'same-chat', cwd: '/wt', loadedSkill: { ...loadEvidence('same-chat'), version: '1.0.85' } }));
-  let result = f.run(['local', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/wt']);
+  let result = f.run(['local', 'session', 'steer', 'w1', '--prompt-file', f.prompt]);
   assert.equal(result.status, 2, result.stdout + result.stderr);
   assert.match(result.stderr, /loaded 1\.0\.85/);
+  writeFileSync(f.prompt, 'VIBE_SKILL_RELOAD v1\ncontinue');
+  result = f.run(['local', 'session', 'steer', 'w1', '--prompt-file', f.prompt]);
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  writeFileSync(f.prompt, 'VIBE_SKILL_RELOAD v1');
+  result = f.run(['local', 'session', 'steer', 'w1', '--prompt-file', f.prompt]);
+  assert.equal(result.status, 0, result.stderr);
+  writeFileSync(f.prompt, '$vibe ISS-1\n');
+  result = f.run(['local', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/wt']);
+  assert.equal(result.status, 0, result.stderr); // Idle migration replaces blanket stale-turn refusal.
+  assert.ok(f.argv(result).includes('--plugin-root'));
+  result = f.run(['local', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--plugin-root', '/old/release']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /bound to the target host installation/);
   writeFileSync(join(f.orch, 'sessions', 'w1.json'), JSON.stringify({ threadId: 'reloaded', cwd: '/wt', loadedSkill: loadEvidence('reloaded') }));
   writeFileSync(f.prompt, '$vibe ISS-1\nRun handoff/scripts/qa-merge-order.mjs.\n');
   result = f.run(['local', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/wt']);
@@ -105,12 +118,12 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   assert.equal(result.status, 0, result.stderr);
   const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
   assert.deepEqual(f.argv(result), [
-    join(shipped, 'fleet-orchestrator/scripts/codex-session.mjs'), 'turn', join(f.root, 'remote', 'sessions'), 'w1',
+    join(shipped, 'skills/fleet-orchestrator/scripts/codex-session.mjs'), 'turn', join(f.root, 'remote', 'sessions'), 'w1',
     '--prompt-file', join(shipped, 'w1-01-start.md'), '--cwd', '/remote wt', '--effort', 'high',
       '--plugin-root', PLUGIN_ROOT,
   ]);
   for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs']) {
-    assert.ok(existsSync(join(shipped, file)), file);
+    assert.ok(existsSync(join(shipped, "skills", file)), file);
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), '$vibe ISS-1\n');
   assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /^-o\nConnectTimeout=10\n-o\nServerAliveInterval=15\nbox\n/);
@@ -184,8 +197,8 @@ test('a remote session ships every module codex-session.mjs and skill-freshness.
   const result = f.run(['remote', 'session', 'last', 'w1']);
   assert.equal(result.status, 0, result.stderr);
   const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
-  const skills = join(SCRIPTS, '..', '..');
-  const pending = ['fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/skill-freshness.mjs'];
+  const skills = join(SCRIPTS, '..', '..', '..');
+  const pending = ['skills/fleet-orchestrator/scripts/codex-session.mjs', 'skills/fleet-orchestrator/scripts/skill-freshness.mjs'];
   const seen = new Set();
   while (pending.length) {
     const file = pending.pop();
@@ -196,7 +209,7 @@ test('a remote session ships every module codex-session.mjs and skill-freshness.
       pending.push(relative(skills, join(skills, dirname(file), spec)));
     }
   }
-  assert.ok(seen.has('codex-fleet-monitor/scripts/thread-sidebar.mjs'));
+  assert.ok(seen.has('skills/codex-fleet-monitor/scripts/thread-sidebar.mjs'));
 });
 
 test('remote without REMOTE_HOST fails and names the missing key', TIMEOUT, () => {

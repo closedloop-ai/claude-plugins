@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 
@@ -41,4 +42,12 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
     ...evidence,
     testSelection: { codeTestsFor: { "src/list.ts": ["list.test.ts"] } },
   }), /testSelection must be an array/);
+});
+
+
+test("the production environment worker passes its exact worktree to evidence-comment validation", () => {
+  const worker = readFileSync(new URL("../../../agents/vibe-environment-worker.md", import.meta.url), "utf8");
+  const command = worker.match(/`node \.\.\/skills\/handoff\/scripts\/pr-evidence-comment\.mjs[^`]+`/);
+  assert.ok(command, "actual production invocation");
+  assert.match(command[0], /--worktree "<wt>"/);
 });

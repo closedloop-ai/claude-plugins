@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, chmodSync, symlinkSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -1030,4 +1030,108 @@ test("a new comparator outside the pull-request phase clears with its tie test l
   assert.deepEqual(ties("build"), []);
   assert.deepEqual(ties("handoff"), []);
   assert.equal(ties("pull-request").length, 1, "the pull-request turn writes the tie test");
+});
+
+
+test("root lane metadata is typed without widening path permissions or accepting unknown declaration fields", t => {
+  for (const [name, patch] of [["invalid-source", { laneSource: { kind: "environment", name: "LANES" } }],
+    ["unknown-field", { laneSources: [] }]]) {
+    const policy = { ...JSON.parse(CLAUDE_PLUGIN_POLICY), ...patch };
+    const { home, worktree } = setup(t, `lane-${name}`, { [PATH_POLICY]: JSON.stringify(policy) }, {
+      repoName: "claude-plugins", declared: false,
+    });
+    const result = runNode(INVENTORY, ["--worktree", worktree], home);
+    assert.equal(result.json.blocking.forbiddenPaths, false);
+    assert.match(result.json.pathPolicyProblem, /typed laneSource|expected fields/);
+  }
+});
+
+
+test("lane source bootstrap admits only metadata for the sole unchanged committed workflow", t => {
+  const before = JSON.parse(CLAUDE_PLUGIN_POLICY); delete before.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n";
+  const { home, worktree } = setup(t, "lane-source-bootstrap", { [PATH_POLICY]: JSON.stringify(before),
+    ".github/workflows/ci.yml": workflow }, { repoName: "claude-plugins", declared: false });
+  const after = { ...before, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } };
+  write(worktree, PATH_POLICY, JSON.stringify(after));
+  const inspect = () => runNode(INVENTORY, ["--worktree", worktree], home).json;
+  assert.equal(inspect().blocking.forbiddenPaths, true);
+  write(worktree, PATH_POLICY, JSON.stringify({ ...after, allowedPrefixes: [...before.allowedPrefixes, "rogue/"] }));
+  assert.equal(inspect().blocking.forbiddenPaths, false);
+  write(worktree, PATH_POLICY, JSON.stringify(after));
+  write(worktree, ".github/workflows/ci.yml", workflow.replace("node --test", "echo passed"));
+  assert.equal(inspect().blocking.forbiddenPaths, false);
+});
+
+
+test("lane source bootstrap rejects ambiguous workflows and replacement of an existing source", t => {
+  const legacy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete legacy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n";
+  for (const kind of ["ambiguous", "replacement", "command"]) {
+    const source = { kind: "github-workflow", path: ".github/workflows/ci.yml" };
+    const before = kind === "replacement" ? { ...legacy, laneSource: source } : legacy;
+    const files = { [PATH_POLICY]: JSON.stringify(before), ".github/workflows/ci.yml": workflow,
+      ...(kind === "ambiguous" ? { ".github/workflows/other.yml": workflow } : {}) };
+    const { home, worktree } = setup(t, `lane-bootstrap-${kind}`, files, { repoName: "claude-plugins", declared: false });
+    write(worktree, PATH_POLICY, JSON.stringify({ ...legacy, laneSource: kind === "command"
+      ? { kind: "command", command: "echo passed" } : kind === "replacement" ? { ...source, path: ".github/workflows/other.yml" } : source }));
+    const result = runNode(INVENTORY, ["--worktree", worktree], home).json;
+    assert.equal(result.blocking.forbiddenPaths, false);
+    assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+  }
+});
+
+
+test("bootstrap refuses a workflow added on fetched main after the writer captured its base", t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, "lane-main-moved", { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  write(f.checkout, ".github/workflows/second.yml", workflow);
+  git(f.checkout, ["add", ".github/workflows/second.yml"], f.home);
+  git(f.checkout, ["commit", "--quiet", "-m", "parallel workflow"], f.home);
+  git(f.checkout, ["push", "origin", "main"], f.home);
+  git(f.worktree, ["fetch", "origin"], f.home);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home).json;
+  assert.equal(result.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+});
+
+
+test("metadata bootstrap freshly fetches a compatible moved merge target without relying on an old tracking ref", t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, "lane-fresh-target", { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  const old = git(f.worktree, ["rev-parse", "origin/main"], f.home);
+  write(f.checkout, "README.md", "unrelated main change\n");
+  git(f.checkout, ["commit", "--quiet", "-am", "advance main"], f.home); git(f.checkout, ["push", "origin", "main"], f.home);
+  const target = git(f.checkout, ["rev-parse", "HEAD"], f.home);
+  assert.notEqual(target, old);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, result.stderr);
+  assert.equal(git(f.worktree, ["rev-parse", "origin/main"], f.home), target);
+});
+
+for (const kind of ["bytes", "removed", "renamed", "permissions", "source", "mode", "symlink"]) test(`bootstrap rejects fetched target ${kind} changes`, t => {
+  const policy = JSON.parse(CLAUDE_PLUGIN_POLICY); delete policy.laneSource;
+  const workflow = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo pass\n";
+  const f = setup(t, `lane-target-${kind}`, { [PATH_POLICY]: JSON.stringify(policy), ".github/workflows/ci.yml": workflow },
+    { repoName: "claude-plugins", declared: false });
+  write(f.worktree, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "github-workflow", path: ".github/workflows/ci.yml" } }));
+  const file = path.join(f.checkout, ".github/workflows/ci.yml");
+  if (kind === "bytes") writeFileSync(file, workflow.replace("echo pass", "echo changed"));
+  if (kind === "removed") git(f.checkout, ["rm", "-q", ".github/workflows/ci.yml"], f.home);
+  if (kind === "renamed") git(f.checkout, ["mv", ".github/workflows/ci.yml", ".github/workflows/renamed.yml"], f.home);
+  if (kind === "permissions") write(f.checkout, PATH_POLICY, JSON.stringify({ ...policy, rootTests: !policy.rootTests }));
+  if (kind === "source") write(f.checkout, PATH_POLICY, JSON.stringify({ ...policy, laneSource: { kind: "command", command: "echo pass" } }));
+  if (kind === "mode") chmodSync(file, 0o755);
+  if (kind === "symlink") { unlinkSync(file); symlinkSync("../../README.md", file); }
+  git(f.checkout, ["add", "-A"], f.home); git(f.checkout, ["commit", "--quiet", "-m", `main ${kind}`], f.home);
+  git(f.checkout, ["push", "origin", "main"], f.home); git(f.worktree, ["fetch", "origin"], f.home);
+  const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home).json;
+  assert.equal(result.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
 });

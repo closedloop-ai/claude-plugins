@@ -246,6 +246,7 @@ describe("production Claude CLI adapter", () => {
       expect(bound.agent.prompt).toContain("vibe-pr-evidence.json");
       expect(bound.agent.prompt).toContain("vibe-lane-results.json");
       expect(bound.agent.prompt).toContain("vibe-lane-report.txt");
+      expect(bound.agent.prompt).toContain("typed lane run receipts");
       expect(bound.agent.prompt).toContain(".control/");
       expect(bound.agent.prompt).toContain("Never edit product source, tests, fixtures, snapshots, catalog or allowlists");
       expect(bound.agent.prompt).not.toContain("never mutate files or records");

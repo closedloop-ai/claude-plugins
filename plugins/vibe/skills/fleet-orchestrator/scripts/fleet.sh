@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end> <name> [codex-session.mjs options]
+# Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end|interrupt|reload> <name> [codex-session.mjs options]
 #        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> <command...>
 #        fleet.sh <orchDir> <local|remote> cleanup
 # A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE.
@@ -32,14 +32,15 @@ case "$where" in
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/skill-freshness.mjs vibe/scripts/plugin-script-references.mjs vibe/scripts/session-record.mjs vibe/scripts/loaded-skill.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
+ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/skill-freshness.mjs vibe/scripts/plugin-script-references.mjs vibe/scripts/session-record.mjs vibe/scripts/loaded-skill.mjs vibe/scripts/owned-state.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
+ship=("${ship[@]/#/skills/}" shared/process-identity.mjs)
 extra=()
 
 # Runs a shell command line on REMOTE_HOST after unpacking the shipped scripts (and `extra`) into remote_dir.
 run_remote() {
   local outer
   outer="mkdir -p $(printf %q "$remote_dir") && tar -C $(printf %q "$remote_dir") -xf - && ${REMOTE_SHELL:-zsh -lic} $(printf %q "$1")"
-  COPYFILE_DISABLE=1 tar -cf - -C "$skills" "${ship[@]}" ${extra[@]+"${extra[@]}"} |
+  COPYFILE_DISABLE=1 tar -cf - -C "$skills/.." "${ship[@]}" ${extra[@]+"${extra[@]}"} |
     ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 "$REMOTE_HOST" "$outer"
 }
 
@@ -69,6 +70,10 @@ session() {
     esac
   done
   plugin_root=$(cd "$skills/.." && pwd)
+  if has_option --plugin-root; then
+    echo "fleet: --plugin-root is bound to the target host installation, not a session override" >&2
+    exit 2
+  fi
   expected_version=$(jq -er '.version' "$plugin_root/.codex-plugin/plugin.json")
   if [ "$where" = local ]; then
     local state=${LOCAL_STATE_DIR:-$orch/sessions}
@@ -77,9 +82,9 @@ session() {
       [ -f "$prompt" ] || { echo "fleet: no prompt file $prompt" >&2; exit 2; }
       local bootstrap=()
       if [ "$command" = turn ]; then bootstrap=(--bootstrap); fi
-      node "$here/skill-freshness.mjs" "$orch" "$prompt" --runtime codex --actor-state "$state/$name.json" --plugin-root "$plugin_root" --worktree "${target_cwd:-$orch}" ${bootstrap[@]+"${bootstrap[@]}"} >/dev/null
+      node "$here/skill-freshness.mjs" "$orch" "$prompt" --runtime codex --command "$command" --actor-state "$state/$name.json" --plugin-root "$plugin_root" --worktree "${target_cwd:-$orch}" ${bootstrap[@]+"${bootstrap[@]}"} >/dev/null
     fi
-    if [ "$command" = turn ] && ! has_option --plugin-root; then args+=(--plugin-root "$plugin_root"); fi
+    if [ "$command" = turn ] || [ "$command" = steer ]; then args+=(--plugin-root "$plugin_root"); fi
     exec node "$here/codex-session.mjs" "$command" "$state" "$name" ${args[@]+"${args[@]}"}
   fi
   # fleet-home.mjs check reports a remote session in sessions.txt without this marker as started outside fleet.sh.
@@ -110,11 +115,11 @@ session() {
   if [ -n "$prompt" ]; then
     local remote_bootstrap=
     if [ "$command" = turn ]; then remote_bootstrap=--bootstrap; fi
-    preflight="test -n \"\$remote_root\" && node $(printf %q "$remote_dir/fleet-orchestrator/scripts/skill-freshness.mjs") remote $(printf %q "$remote_dir/$(basename "$prompt")") --runtime codex --actor-state $(printf %q "$REMOTE_STATE_DIR/$name.json") --plugin-root \"\$remote_root\" --expected-version $(printf %q "$expected_version") --worktree $(printf %q "${target_cwd:-$orch}") $remote_bootstrap && "
+    preflight="test -n \"\$remote_root\" && node $(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/skill-freshness.mjs") remote $(printf %q "$remote_dir/$(basename "$prompt")") --runtime codex --command $(printf %q "$command") --actor-state $(printf %q "$REMOTE_STATE_DIR/$name.json") --plugin-root \"\$remote_root\" --expected-version $(printf %q "$expected_version") --worktree $(printf %q "${target_cwd:-$orch}") $remote_bootstrap && "
   fi
   local plugin_arg=
-  if [ "$command" = turn ]; then plugin_arg=' --plugin-root "$remote_root"'; fi
-  run_remote "${codex_check}remote_root=$remote_root; ${preflight}$(printf '%q ' node "$remote_dir/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
+  if [ "$command" = turn ] || [ "$command" = steer ]; then plugin_arg=' --plugin-root "$remote_root"'; fi
+  run_remote "${codex_check}remote_root=$remote_root; ${preflight}$(printf '%q ' node "$remote_dir/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
 }
 
 slot() {
@@ -141,7 +146,7 @@ slot() {
     exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@"
   fi
   local gate=
-  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/fleet-orchestrator/scripts/load-check.sh") && "; fi
+  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/load-check.sh") && "; fi
   local slot_args=(--slots "$slots")
   if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
   if [ -n "$preflight" ]; then
@@ -149,9 +154,9 @@ slot() {
     expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
     remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
     remote_gate="command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") || { printf 'fleet: remote vibe plugin is missing or not version %s; heavy build not started\\n' $(printf %q "$expected_version") >&2; exit 78; }; "
-    run_remote "${remote_gate}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
+    run_remote "${remote_gate}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
   else
-    run_remote "cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
+    run_remote "cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
   fi
 }
 

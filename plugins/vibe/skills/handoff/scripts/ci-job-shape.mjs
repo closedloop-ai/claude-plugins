@@ -14,10 +14,16 @@
 // script as a needle too). The tier comes from `.github/pr-test-event-tiers.md`, else
 // "unlisted". Exits 2 on bad usage. Changes nothing.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, lstatSync } from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
+import { parseArgs, isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
+import { committedFile } from "../../vibe/scripts/tested-head.mjs";
+import { workflowLaneDefinitions } from "../../vibe/scripts/dist/main-sync.mjs";
+import { laneSourceShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
+export { workflowLaneDefinitions };
 
 const JOB_KEY = /^ {2}([A-Za-z0-9_-]+):\s*$/;
 const TOP_KEY = /^\S/;
@@ -63,6 +69,76 @@ export function jobShapes(workflows, tiers, needles) {
     }
   }
   return { shapes, missing: needles.filter((needle) => !found.has(needle)) };
+}
+
+/** Exact repository lane source and matching commands, read from immutable declared workflow bytes. */
+export function repositoryLaneReportProblems(report, worktree, commit) {
+  const problems = laneReportShapeProblems(report);
+  if (problems.length) return problems;
+  const source = report.source ?? { kind: "command", command: report.command };
+  let declared;
+  if (worktree) {
+    let content;
+    try { content = committedFile(worktree, commit, "vibe-handoff-paths.json"); }
+    catch { if (source.kind !== "command" || source.command !== "pnpm test:lanes") return ["workflow lane source needs a verified committed root declaration"]; }
+    if (content) try { declared = JSON.parse(content).laneSource; }
+    catch { return ["invalid committed repository lane declaration JSON"]; }
+  }
+  if (declared !== undefined && laneSourceShapeProblems(declared).length) return ["invalid repository lane source declaration"];
+  if (source.kind === "command") {
+    if (declared && !isDeepStrictEqual(declared, source)) return ["lane report differs from the repository-declared lane source"];
+    return source.command === "pnpm test:lanes" || declared ? [] : ["undeclared repository lane command"];
+  }
+  if (!worktree || source.commit !== commit || !isDeepStrictEqual(declared, { kind: source.kind, path: source.path })) {
+    return ["workflow lane source differs from the verified repository declaration/commit"];
+  }
+  try {
+    const content = committedFile(worktree, commit, source.path);
+    if (createHash("sha256").update(content).digest("hex") !== source.sha256) return ["workflow lane definition hash changed"];
+    const lanes = workflowLaneDefinitions(content.toString("utf8"));
+    if (report.matches.length !== lanes.length || report.matches.some((lane, index) => lane.name !== lanes[index].name || lane.command !== lanes[index].command
+      || lane.mentionOnly !== undefined || lane.notRunReason !== undefined)) return ["workflow lane report must contain every exact workflow job/matrix recipe in declaration order"];
+    return [];
+  } catch (error) { return [`workflow lane source could not be verified: ${error.message}`]; }
+}
+
+/** One-time metadata migration only when base, freshly fetched target and candidate have the same sole regular workflow. */
+export function laneSourceBootstrap(worktree, base, mergeTarget) {
+  try {
+    const run = args => execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8", timeout: 30_000,
+      maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+    const file = "vibe-handoff-paths.json";
+    const before = JSON.parse(committedFile(worktree, base, file));
+    const target = JSON.parse(committedFile(worktree, mergeTarget, file));
+    if (Object.hasOwn(before, "laneSource") || Object.hasOwn(target, "laneSource") || !isDeepStrictEqual(before, target)) return null;
+    for (const commit of [base, mergeTarget]) if (run(["ls-tree", "--format=%(objectmode)", commit, "--", file]).trim() !== "100644") return null;
+    const absolute = path.join(worktree, file); const stat = lstatSync(absolute);
+    if (!stat.isFile() || (stat.mode & 0o7777) !== 0o644) return null;
+    const bytes = readFileSync(absolute);
+    const { laneSource, ...permissions } = JSON.parse(bytes);
+    if (!isDeepStrictEqual(permissions, before) || laneSourceShapeProblems(laneSource).length || laneSource.kind !== "github-workflow") return null;
+    const workflowsAt = commit => run(["ls-tree", "-rz", "--full-tree", commit, "--", ".github/workflows"]).split("\0").filter(Boolean)
+      .map(line => { const tab = line.indexOf("\t"); return { path: line.slice(tab + 1), mode: line.slice(0, tab).split(" ")[0] }; })
+      .filter(entry => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(entry.path));
+    const original = workflowsAt(base); const fetched = workflowsAt(mergeTarget);
+    if (original.length !== 1 || !isDeepStrictEqual(original, fetched) || original[0].path !== laneSource.path
+      || !["100644", "100755"].includes(original[0].mode)) return null;
+    for (const directory of [".github", ".github/workflows"]) if (!lstatSync(path.join(worktree, directory)).isDirectory()) return null;
+    const candidate = readdirSync(path.join(worktree, ".github/workflows")).filter(name => /\.ya?ml$/.test(name)).map(name => `.github/workflows/${name}`);
+    if (candidate.length !== 1 || candidate[0] !== laneSource.path) return null;
+    const workflow = path.join(worktree, laneSource.path); const currentMode = lstatSync(workflow);
+    if (!currentMode.isFile() || (currentMode.mode & 0o7777) !== (original[0].mode === "100755" ? 0o755 : 0o644)) return null;
+    const definition = committedFile(worktree, base, laneSource.path);
+    if (!definition.equals(committedFile(worktree, mergeTarget, laneSource.path)) || !definition.equals(readFileSync(workflow))) return null;
+    workflowLaneDefinitions(definition.toString("utf8"));
+    return { base, mergeTarget, workflow: laneSource.path, workflowSha256: createHash("sha256").update(definition).digest("hex"),
+      declarationSha256: createHash("sha256").update(bytes).digest("hex") };
+  } catch { return null; }
+}
+
+/** Human-readable source identity without pretending a workflow is a pnpm command. */
+export function laneReportLabel(report) {
+  return report?.source?.kind === "github-workflow" ? report.source.path : report?.source?.command ?? report?.command;
 }
 
 function main(argv) {
