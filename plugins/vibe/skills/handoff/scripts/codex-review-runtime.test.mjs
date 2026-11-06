@@ -17,7 +17,7 @@ test("managed Codex reviewer calls come only from its completed App Server turn 
     calls.push([method, args]);
     if (method === "thread/read") return { thread: { id: "thread-1" } };
     if (method === "thread/turns/list" && turnPages++ === 0) return { data: [{ id: "other", status: "completed" }], nextCursor: "turn-next" };
-    if (method === "thread/turns/list") return { data: [{ id: "turn-1", status: "completed" }] };
+    if (method === "thread/turns/list") return { data: [{ id: "turn-1", status: "completed", itemsView: "notLoaded" }] };
     if (method === "thread/items/list" && !args.cursor) return { data: [{ item: thread.turns[0].items[0] }], nextCursor: "next" };
     if (method === "thread/items/list") return { data: thread.turns[0].items.slice(1).map(item => ({ item })) };
     throw new Error(method);
@@ -29,4 +29,18 @@ test("managed Codex reviewer calls come only from its completed App Server turn 
   assert.throws(() => observedCodexTurn(thread, "other", "turn-1"), /another native reviewer thread/);
   assert.throws(() => observedCodexTurn({ ...thread, turns: [{ ...thread.turns[0], status: "inProgress" }] }, "thread-1", "turn-1"), /no loaded completed/);
   assert.throws(() => observedCodexTurn({ ...thread, turns: [{ ...thread.turns[0], items: [], itemsView: "notLoaded" }] }, "thread-1", "turn-1"), /no loaded completed/);
+});
+
+test("native reviewer receipt refuses absent items after a completed summary", async () => {
+  const summary = { id: "turn-1", status: "completed", itemsView: "notLoaded" };
+  const thread = { id: "thread-1", turns: [summary] };
+  assert.throws(() => observedCodexTurn(thread, "thread-1", "turn-1"), /no loaded completed/);
+  assert.throws(() => observedCodexTurn({ ...thread, turns: [{ ...summary, items: [{ type: "agentMessage" }] }] }, "thread-1", "turn-1"), /no loaded completed/);
+  const client = { request: async (method) => {
+    if (method === "thread/read") return { thread: { id: "thread-1" } };
+    if (method === "thread/turns/list") return { data: [summary] };
+    if (method === "thread/items/list") return { data: [] };
+    throw new Error(method);
+  } };
+  await assert.rejects(readCodexReviewTurn("thread-1", "turn-1", client), /no loaded completed/);
 });

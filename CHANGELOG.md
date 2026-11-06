@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Pre-PR lane runs declare first-candidate or follow-up phase and persist one source-bound selection receipt. First candidates require every CI-equivalent report lane; follow-ups require recomputed QA-impact selection and record why each selected lane ran. Fleet ready and push checks reject missing or stale receipts and show those reasons.
-- Published-source handoff comments reject stale evidence, and follow-up lane receipts require recomputed changed-file QA-impact selection; the handoff check also retains CI job-shape verification.
+- Published-source comments reject stale evidence; Codex reviewer receipts accept paged items while refusing unloaded ones; lanes keep recomputed QA-impact and CI job-shape checks.
 - Follow-up lane receipts now use recomputed QA-impact selection, and reporter checks read the captured main commit rather than a moving remote-tracking ref.
 - Follow-up receipts require first-candidate ancestry, invalidate failed reruns, and snapshot fixtures record lane passes.
 
