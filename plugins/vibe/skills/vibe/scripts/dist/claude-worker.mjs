@@ -11475,14 +11475,19 @@ var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
 function mcpToolIdentity(name) {
   if (!capabilityName.test(name)) return null;
   const boundary = name.lastIndexOf("__");
-  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
+  const server = name.slice("mcp__".length, boundary).replaceAll("-", "_");
+  const operation = name.slice(boundary + 2).replaceAll("-", "_");
+  return `mcp__${server}__${operation}`;
 }
 function mcpToolAliases(name) {
   const identity = mcpToolIdentity(name);
   if (!identity) return [name];
   const boundary = identity.lastIndexOf("__");
-  const hyphenated = `${identity.slice(0, boundary)}__${identity.slice(boundary + 2).replaceAll("_", "-")}`;
-  return [.../* @__PURE__ */ new Set([name, identity, hyphenated])];
+  const server = identity.slice("mcp__".length, boundary);
+  const operation = identity.slice(boundary + 2);
+  const servers = [server, server.replaceAll("_", "-")];
+  const operations = [operation, operation.replaceAll("_", "-")];
+  return [.../* @__PURE__ */ new Set([name, ...servers.flatMap((serverAlias) => operations.map((operationAlias) => `mcp__${serverAlias}__${operationAlias}`))])];
 }
 var capabilitySchema = external_exports.object({
   name: external_exports.string().regex(capabilityName),
@@ -11730,7 +11735,7 @@ function missingMcpTools(initTools, granted) {
   });
 }
 function missingServers(missing) {
-  return [...new Set(missing.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
+  return [...new Set(missing.map((name) => name.slice("mcp__".length, name.lastIndexOf("__")).replaceAll("-", "_")))];
 }
 
 // src/cli.ts
@@ -13309,7 +13314,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
       const missing = missingMcpTools(init.data.tools, granted);
       if (missing.length) {
         const servers = missingServers(missing);
-        const statuses = new Map(init.data.mcp_servers?.map((server) => [server.name, server.status]));
+        const statuses = new Map(init.data.mcp_servers?.map((server) => [server.name.replaceAll("-", "_"), server.status]));
         if (servers.every((server) => statuses.get(server) === "pending")) {
           stop(new PendingMcpError(servers));
         } else {

@@ -11493,7 +11493,9 @@ var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
 function mcpToolIdentity(name) {
   if (!capabilityName.test(name)) return null;
   const boundary = name.lastIndexOf("__");
-  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
+  const server = name.slice("mcp__".length, boundary).replaceAll("-", "_");
+  const operation = name.slice(boundary + 2).replaceAll("-", "_");
+  return `mcp__${server}__${operation}`;
 }
 var capabilitySchema = external_exports.object({
   name: external_exports.string().regex(capabilityName),

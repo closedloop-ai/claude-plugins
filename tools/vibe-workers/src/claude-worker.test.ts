@@ -672,7 +672,7 @@ describe("production Claude CLI adapter", () => {
     expect(proof?.args[proof.args.indexOf("--name") + 1]).toBe("vibe guardrails reviewer · test · first");
     expect(proof?.args).not.toContain("--no-session-persistence");
     expect(proof?.definition["vibe:vibe-guardrails-reviewer"]?.tools).toEqual(["Read", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "StructuredOutput", graph[0]?.name,
-      "mcp__custom_graph__sync-status"]);
+      "mcp__custom_graph__sync-status", "mcp__custom-graph__sync_status", "mcp__custom-graph__sync-status"]);
     expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", capabilities: [...graph, recordWrite] }).status).toBe(1);
     expect(readProof(value.metadata)).toHaveLength(1);
   });

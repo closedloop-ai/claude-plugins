@@ -66,6 +66,13 @@ describe("launcher agent root (operator ruling, 2026-10-15)", () => {
     const proof = readProof(value.metadata);
     expect(proof[1]?.args).toContain("--resume");
     expect(proof[1]?.definition["vibe:vibe-change-worker"]?.prompt).toContain("Canonical fixture prompt for vibe-change-worker");
+    const resumeArgs = proof[1]?.args ?? [];
+    for (const option of ["--tools", "--allowedTools"]) {
+      const tools = resumeArgs[resumeArgs.indexOf(option) + 1]?.split(",") ?? [];
+      for (const capability of graph) {
+        expect(tools).toContain(capability.name.replace("mcp__custom_graph__", "mcp__custom-graph__"));
+      }
+    }
   }, 20000);
   it("resolves the same way for the Codex writer registration (writer-state)", () => {
     const value = setup();

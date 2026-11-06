@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { capabilitiesSchema, type Capability } from "./contracts.js";
-import { missingMcpTools } from "./claude-preflight.js";
+import { capabilitiesSchema, mcpToolAliases, type Capability } from "./contracts.js";
+import { missingMcpTools, missingServers } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { recordModes } from "./record-context.js";
 import { bundleDirectory, fixture } from "./test-fixtures.js";
@@ -73,12 +73,26 @@ describe("vibe worker cross-runtime tool contract", () => {
     }
   });
 
-  it("treats hyphenated and underscored operation aliases as the same granted MCP tool", () => {
+  it("treats hyphenated and underscored server and operation aliases as the same granted MCP tool", () => {
     expect(missingMcpTools(["mcp__closedloop__create-document"],
       ["mcp__closedloop__create_document"])).toEqual([]);
+    expect(missingMcpTools(["mcp__closedloop-graph__ticket-detail"],
+      ["mcp__closedloop_graph__ticket_detail"])).toEqual([]);
+    expect(mcpToolAliases("mcp__closedloop_graph__ticket_detail")).toEqual(expect.arrayContaining([
+      "mcp__closedloop_graph__ticket_detail",
+      "mcp__closedloop_graph__ticket-detail",
+      "mcp__closedloop-graph__ticket_detail",
+      "mcp__closedloop-graph__ticket-detail",
+    ]));
+    expect(missingServers(mcpToolAliases("mcp__closedloop_graph__ticket_detail")))
+      .toEqual(["closedloop_graph"]);
     expect(capabilitiesSchema.safeParse([
       { name: "mcp__closedloop__get_document", service: "closedloop", operation: "get_document", access: "read" },
       { name: "mcp__closedloop__get-document", service: "closedloop", operation: "get_document", access: "read" },
+    ]).success).toBe(false);
+    expect(capabilitiesSchema.safeParse([
+      { name: "mcp__closedloop_graph__ticket_detail", service: "graph", operation: "ticket_detail", access: "read" },
+      { name: "mcp__closedloop-graph__ticket-detail", service: "graph", operation: "ticket_detail", access: "read" },
     ]).success).toBe(false);
   });
 

@@ -15,20 +15,26 @@ export const liveReadOperations = new Set([
 ]);
 const capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
 
-/** Runtime-neutral identity for an MCP tool whose operation may use underscores or hyphens. */
+/** Runtime-neutral identity for an MCP tool whose server or operation may use underscores or hyphens. */
 export function mcpToolIdentity(name: string): string | null {
   if (!capabilityName.test(name)) return null;
   const boundary = name.lastIndexOf("__");
-  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
+  const server = name.slice("mcp__".length, boundary).replaceAll("-", "_");
+  const operation = name.slice(boundary + 2).replaceAll("-", "_");
+  return `mcp__${server}__${operation}`;
 }
 
-/** Exact spellings accepted by Codex and Claude Code for one canonical MCP operation. */
+/** Exact server and operation spellings accepted by Codex and Claude Code for one MCP tool. */
 export function mcpToolAliases(name: string): string[] {
   const identity = mcpToolIdentity(name);
   if (!identity) return [name];
   const boundary = identity.lastIndexOf("__");
-  const hyphenated = `${identity.slice(0, boundary)}__${identity.slice(boundary + 2).replaceAll("_", "-")}`;
-  return [...new Set([name, identity, hyphenated])];
+  const server = identity.slice("mcp__".length, boundary);
+  const operation = identity.slice(boundary + 2);
+  const servers = [server, server.replaceAll("_", "-")];
+  const operations = [operation, operation.replaceAll("_", "-")];
+  return [...new Set([name, ...servers.flatMap((serverAlias) =>
+    operations.map((operationAlias) => `mcp__${serverAlias}__${operationAlias}`))])];
 }
 export const capabilitySchema = z.object({
   name: z.string().regex(capabilityName),

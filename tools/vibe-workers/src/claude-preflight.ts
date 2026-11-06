@@ -126,5 +126,6 @@ export function missingMcpTools(initTools: readonly string[], granted: readonly 
 
 /** Names the connections behind missing tools, for the parent's diagnosis (never shown to the person). */
 export function missingServers(missing: readonly string[]): string[] {
-  return [...new Set(missing.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
+  return [...new Set(missing.map((name) =>
+    name.slice("mcp__".length, name.lastIndexOf("__")).replaceAll("-", "_")))];
 }

@@ -424,7 +424,8 @@ async function launchProcessOnce(args: string[], granted: readonly string[], cwd
       const missing = missingMcpTools(init.data.tools, granted);
       if (missing.length) {
         const servers = missingServers(missing);
-        const statuses = new Map(init.data.mcp_servers?.map((server) => [server.name, server.status]));
+        const statuses = new Map(init.data.mcp_servers?.map((server) =>
+          [server.name.replaceAll("-", "_"), server.status]));
         if (servers.every((server) => statuses.get(server) === "pending")) {
           stop(new PendingMcpError(servers));
         } else {

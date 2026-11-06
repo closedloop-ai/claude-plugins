@@ -67,8 +67,10 @@ const pending = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1'
   || (process.env.FAKE_CLAUDE_PENDING_ONCE === '1' && starts === 0);
 const failedServer = process.env.FAKE_CLAUDE_FAILED_SERVER === '1';
 if (trackStartup) fs.appendFileSync(startsFile, JSON.stringify({ id, pending, failedServer }) + '\n');
+const mcpServer = tool => tool.startsWith('mcp__')
+  ? tool.slice('mcp__'.length, tool.lastIndexOf('__')).replaceAll('-', '_') : '';
 let initTools = (option('--tools') || '').split(',').filter(tool =>
-  !(pending || failedServer || dropped.includes('custom_graph')) || !tool.startsWith('mcp__custom_graph__'));
+  !(pending || failedServer || dropped.includes('custom_graph')) || mcpServer(tool) !== 'custom_graph');
 if (process.env.FAKE_CLAUDE_HYPHENATE_MCP === '1') {
   initTools = [...new Set(initTools.map(tool => tool.startsWith('mcp__')
     ? tool.slice(0, tool.lastIndexOf('__') + 2) + tool.slice(tool.lastIndexOf('__') + 2).replaceAll('_', '-')

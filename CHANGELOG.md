@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.59
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54; the README version update does not change the net word count.
+
+#### Fixed
+- The Claude worker launcher passes both underscore and hyphen spellings of MCP server names, so restored Claude source writers launched by Codex receive their granted `closedloop-graph` tools while the startup check still rejects a genuinely missing connection.
+- MCP tool identity canonicalizes hyphens to underscores in the server name as well as the operation, so a capability list that grants the same tool under two server spellings is rejected as a duplicate, and the Claude startup check reports and matches pending servers under one canonical name whichever spelling Claude Code returns.
+
 ### vibe v1.1.54
 
 #### Changed
