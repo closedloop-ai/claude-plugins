@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Frozen-render regression tests moved from `diff-rules.test.mjs` into a focused `diff-rules-frozen-render.test.mjs`, and both suites now share the Git checkout fixture (`put`, `run`, `isFrozenStory`) from `diff-rules-test-fixture.mjs`, keeping `diff-rules.test.mjs` under its file size ceiling.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.45 (no Markdown changed).
 
+#### Fixed
+- Native Codex reviewer receipts in the handoff's `codex-review-runtime.mjs` now load when the completed turn summary from `thread/turns/list` says its items are not loaded but the separate `thread/items/list` pages return them: the summary's `itemsView: "notLoaded"` marker is dropped once those pages are read. A completed turn with absent items (no item array, an empty one, or one still marked not loaded) is still refused.
+
 ### vibe v1.1.45
 
 #### Changed
