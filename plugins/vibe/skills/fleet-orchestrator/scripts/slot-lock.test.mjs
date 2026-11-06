@@ -14,7 +14,7 @@ function lockRoot() {
 }
 
 function env(root) {
-  return { ...process.env, SLOT_LOCK_DIR: root, SLOT_LOCK_POLL_SECONDS: '0.1' };
+  return { ...process.env, SLOT_LOCK_DIR: root, SLOT_LOCK_POLL_SECONDS: '0.1', SLOT_LOCK_HELD_PATH: '', SLOT_LOCK_HELD_PID: '' };
 }
 
 function runSync(root, args, input) {
@@ -22,8 +22,8 @@ function runSync(root, args, input) {
 }
 
 /** Spawns the script and resolves `waitFor(stream, text)` once that text appears on the stream. */
-function start(root, args) {
-  const child = spawn('bash', [SCRIPT, ...args], { env: env(root) });
+function start(root, args, envOverrides = {}) {
+  const child = spawn('bash', [SCRIPT, ...args], { env: { ...env(root), ...envOverrides } });
   const seen = { stdout: '', stderr: '' };
   const waiters = [];
   for (const stream of ['stdout', 'stderr']) {
@@ -121,6 +121,66 @@ test('takes a free slot of N without waiting and reports holders with --status',
   assert.equal(result.stderr, '');
   assert.match(result.stdout, /heavy-2\.lock/);
   assert.equal(runSync(root, ['--status', 'heavy']).stdout, 'w1 vitest\n');
+});
+
+test('a nested request reuses its process tree heavy slot while the other slot is held', TIMEOUT, async () => {
+  const root = lockRoot();
+  holdSlot(root, 'heavy', 2, 'other writer');
+  const nested = start(root, ['--slots', '2', 'heavy', 'outer writer',
+    'bash', SCRIPT, '--slots', '1', 'heavy', 'frozen-render', 'echo', 'nested ran']);
+  await nested.waitFor('stdout', 'nested ran');
+  assert.deepEqual(await nested.exited, { code: 0, signal: null });
+  assert.doesNotMatch(nested.seen.stderr, /slot-lock: heavy busy/);
+});
+
+test('an unrelated process still waits when every heavy slot is held', TIMEOUT, async () => {
+  const root = lockRoot();
+  const first = holdSlot(root, 'heavy', 1, 'first writer');
+  holdSlot(root, 'heavy', 2, 'second writer');
+  const unrelated = start(root, ['--slots', '2', 'heavy', 'unrelated writer', 'echo', 'unrelated ran']);
+  await unrelated.waitFor('stderr', 'slot-lock: heavy busy');
+  assert.equal(unrelated.seen.stdout, '');
+  spawnSync('rm', ['-rf', first]);
+  assert.deepEqual(await unrelated.exited, { code: 0, signal: null });
+  assert.equal(unrelated.seen.stdout, 'unrelated ran\n');
+});
+
+test('does not reuse a held slot from a hyphen-suffixed lock name', TIMEOUT, async () => {
+  const root = lockRoot();
+  const held = holdSlot(root, 'heavy', 1, 'real holder');
+  const lookalike = holdSlot(root, 'heavy-x', 1, 'lookalike holder');
+  const request = start(root, ['heavy', 'nested writer', 'echo', 'nested ran'], {
+    SLOT_LOCK_HELD_PATH: lookalike,
+    SLOT_LOCK_HELD_PID: `${process.pid}`,
+  });
+  await request.waitFor('stderr', 'slot-lock: heavy busy');
+  assert.equal(request.seen.stdout, '');
+  spawnSync('rm', ['-rf', held]);
+  assert.deepEqual(await request.exited, { code: 0, signal: null });
+  assert.equal(request.seen.stdout, 'nested ran\n');
+});
+
+test('does not reuse an exact held slot owned by a live non-ancestor sibling', TIMEOUT, async () => {
+  const root = lockRoot();
+  const sibling = spawn('sleep', ['30']);
+  const siblingExited = new Promise((resolve) => sibling.on('exit', resolve));
+  try {
+    const lookalike = holdSlot(root, 'heavy', 1, 'sibling holder');
+    writeFileSync(join(lookalike, 'pid'), `${sibling.pid}\n`);
+    holdSlot(root, 'heavy', 2, 'other holder');
+    const request = start(root, ['--slots', '2', 'heavy', 'nested writer', 'echo', 'nested ran'], {
+      SLOT_LOCK_HELD_PATH: lookalike,
+      SLOT_LOCK_HELD_PID: `${sibling.pid}`,
+    });
+    await request.waitFor('stderr', 'slot-lock: heavy busy');
+    assert.equal(request.seen.stdout, '');
+    sibling.kill('SIGTERM');
+    await siblingExited;
+    assert.deepEqual(await request.exited, { code: 0, signal: null });
+    assert.equal(request.seen.stdout, 'nested ran\n');
+  } finally {
+    if (sibling.exitCode === null) sibling.kill('SIGKILL');
+  }
 });
 
 test('waits while every slot is held by a live process, then runs once one frees', TIMEOUT, async () => {

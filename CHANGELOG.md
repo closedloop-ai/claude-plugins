@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.58
+
+#### Fixed
+- Nested heavy slot requests now reuse the live slot inherited from their process tree instead of waiting for another machine slot. Unrelated processes still obey the configured slot cap.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 38 words longer than in 1.1.54 (origin/main at the merge).
+
 ### vibe v1.1.54
 
 #### Changed

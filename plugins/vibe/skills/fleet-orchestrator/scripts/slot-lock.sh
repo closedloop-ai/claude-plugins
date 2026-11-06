@@ -5,6 +5,8 @@
 # slot when the command exits or this script is interrupted. A slot whose holder pid is dead is reclaimed.
 # Locks live in absolute SLOT_LOCK_DIR (default ~/.local/state/fleet-orchestrator/locks); SLOT_LOCK_POLL_SECONDS
 # sets the wait between tries (default 20).
+# SLOT_LOCK_HELD_PATH and SLOT_LOCK_HELD_PID identify the one live slot exported to descendants so a nested
+# request for that same lock name reuses it. Only one held slot is remembered: heavy -> e2e -> heavy waits.
 set -u
 
 usage() {
@@ -44,6 +46,42 @@ case "$admission_note" in *$'\n'*) usage ;; esac
 
 mkdir -p "$lock_root"
 lock=
+reused=
+held_lock=${SLOT_LOCK_HELD_PATH:-}
+held_pid=${SLOT_LOCK_HELD_PID:-}
+
+is_process_ancestor() {
+  local candidate=$1 current=$$ parent seen=' ' steps=0
+  case "$candidate" in '' | *[!0-9]* | 0 | 1) return 1 ;; esac
+  while [ "$steps" -lt 64 ]; do
+    case "$current" in 0 | 1) return 1 ;; esac
+    case "$seen" in *" $current "*) return 1 ;; esac
+    seen="$seen$current "
+    parent=$(ps -o ppid= -p "$current" 2>/dev/null) || return 1
+    parent=${parent#"${parent%%[![:space:]]*}"}
+    parent=${parent%"${parent##*[![:space:]]}"}
+    case "$parent" in '' | *[!0-9]*) return 1 ;; esac
+    [ "$parent" = "$candidate" ] && return 0
+    current=$parent
+    steps=$((steps + 1))
+  done
+  return 1
+}
+
+held_slot=${held_lock#"$lock_root/$name-"}
+held_slot=${held_slot%.lock}
+if [ "$held_lock" = "$lock_root/$name-$held_slot.lock" ]; then
+  case "$held_slot" in
+    '' | *[!0-9]*) ;;
+    *)
+      if [ -n "$held_pid" ] && [ -f "$held_lock/pid" ] &&
+        [ "$(cat "$held_lock/pid")" = "$held_pid" ] && kill -0 "$held_pid" 2>/dev/null &&
+        is_process_ancestor "$held_pid"; then
+        reused=1
+      fi
+      ;;
+  esac
+fi
 acquire() {
   local n candidate
   for n in $(seq 1 "$slots"); do
@@ -72,12 +110,14 @@ trap release EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-until acquire; do
-  echo "slot-lock: $name busy ($(holders "$name")); waiting ${poll}s" >&2
-  sleep "$poll"
-done
+if [ -z "$reused" ]; then
+  until acquire; do
+    echo "slot-lock: $name busy ($(holders "$name")); waiting ${poll}s" >&2
+    sleep "$poll"
+  done
+fi
 
-if [ "$name" = heavy ]; then
+if [ "$name" = heavy ] && [ -z "$reused" ]; then
   here=$(cd "$(dirname "$0")" && pwd)
   admitting=1
   node "$here/../../vibe/scripts/owned-state.mjs" admit-heavy "$lock" "$$" "$owner" </dev/null >/dev/null &
@@ -101,6 +141,9 @@ fi
 
 # The command runs in the background so a signal reaches the traps at once instead of after it exits;
 # the explicit <&0 keeps its stdin, which bash would otherwise point at /dev/null for a background job.
+if [ -z "$reused" ]; then
+  export SLOT_LOCK_HELD_PATH=$lock SLOT_LOCK_HELD_PID=$$
+fi
 "$@" <&0 &
 child=$!
 wait "$child"
