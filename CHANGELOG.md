@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.52
+### vibe v1.1.53
 
 #### Fixed
 - Release comparisons break numeric ties by exact spelling; immutable source fingerprints break path ties by blob identity and mode. Internal interrupt, stale-line, evidence-path helpers and workflow-lane types no longer expose unused public exports.
