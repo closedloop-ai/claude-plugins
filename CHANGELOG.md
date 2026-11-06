@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.57
+
+#### Fixed
+- In-place skill reload in `codex-session.mjs` now accepts a page acknowledgement whose agent message, with surrounding whitespace trimmed, is exactly `VIBE_SKILL_RELOAD_ACK v1 <nonce>`. A reply that ended with trailing newlines never advanced its page, so every `reload` and `--retry` call waited for an acknowledgement that had already arrived. One shared matcher, `isReloadAck`, serves both the receipt scan and the acknowledgement check; extra words or another nonce still never acknowledge a page.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.53 (origin/main at this change, 83ad4d96e805); only the README version line changed.
+
 ### vibe v1.1.53
 
 #### Fixed

@@ -428,6 +428,7 @@ function reloadServer(f) {
     ack: (turn = turnId, nonce = loadState(f.dir, 'w1').reload.delivery.nonce) => {
       items.set(turn, [...(items.get(turn) ?? []), { type: 'agentMessage', text: `VIBE_SKILL_RELOAD_ACK v1 ${nonce}` }]);
     },
+    reply: (text, turn = turnId) => { items.set(turn, [...(items.get(turn) ?? []), { type: 'agentMessage', text }]); },
     failBefore: () => { failure = 'before'; }, failAfter: () => { failure = 'after'; },
     pump: (retry = false) => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot, retry }, { client, ...f.lockDirs }),
   };
@@ -525,6 +526,58 @@ test('idle migration requires actor acknowledgements and replays the retained br
   assert.equal(readFileSync(join(f.dir, 'board.json'), 'utf8'), '{"w1":"unchanged"}');
   assert.equal(readFileSync(join(f.dir, '.git/vibe-session.json'), 'utf8'), sessionBefore);
   assert.equal(assertVibeSession(f.dir).branch, 'vibe/original');
+});
+
+/** App Server answers as a live daemon does: a not-loaded turn summary, then newest-first item pages for that turn. */
+function realShapedReload(server) {
+  return { request: async (method, params) => {
+    const result = await server.client.request(method, params);
+    if (method === 'thread/turns/list') return { ...result, data: result.data.map(turn => ({ ...turn, items: [], itemsView: 'notLoaded' })), nextCursor: null, backwardsCursor: null };
+    if (method !== 'thread/items/list') return result;
+    assert.equal(params.sortDirection, 'desc');
+    return { data: [...result.data].reverse().map(row => ({ turnId: params.turnId, item: row.item, startedAtMs: null, completedAtMs: null })), nextCursor: null, backwardsCursor: null };
+  } };
+}
+
+// 2026-11-06: a stale writer's real ACK item ended with "\n\n" and strict equality never advanced its page.
+test('a page acknowledged with trailing whitespace advances every page and replays the brief; other text never does', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f); const client = realShapedReload(server);
+  const pump = (retry = false) => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot, retry }, { client, ...f.lockDirs });
+  writeFileSync(f.promptFile, 'retained brief after reload');
+  await run(server.client, f.options('turn'), f.lockDirs);
+  const first = loadState(f.dir, 'w1').reload.delivery.nonce;
+  server.reply(`VIBE_SKILL_RELOAD_ACK v1 ${first} and more`);
+  server.reply(`VIBE_SKILL_RELOAD_ACK v1 ${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}\n\n`);
+  server.reply(`Done VIBE_SKILL_RELOAD_ACK v1 ${first}`);
+  server.finish();
+  assert.equal((await pump()).waitingFor, 'actor acknowledgement');
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 0, 'extra words or another nonce never acknowledge a page');
+  server.reply(`VIBE_SKILL_RELOAD_ACK v1 ${first}\n\n`); server.finish();
+  const second = await pump();
+  assert.equal(loadState(f.dir, 'w1').reload.cursor, 160);
+  assert.notEqual(second.turnId, 'U2', 'the next page starts a turn on the completed one');
+  server.reply(`\nVIBE_SKILL_RELOAD_ACK v1 ${loadState(f.dir, 'w1').reload.delivery.nonce}\n\n`); server.finish();
+  assert.equal((await pump()).complete, true);
+  const saved = loadState(f.dir, 'w1');
+  assert.equal(saved.reload, undefined);
+  assert.equal(saved.loadedSkill.version, '1.1.48');
+  assert.equal(saved.loadedSkill.basis, 'reload-acknowledged');
+  assert.match(server.sent().at(-1), /^retained brief after reload\nVIBE_RETAINED_BRIEF v1 /);
+});
+
+test('retry after a lost page reply keeps the nonce and binds a whitespace-padded ACK without resending', async (t) => {
+  const f = reloadFixture(t); const server = reloadServer(f); const client = realShapedReload(server);
+  const pump = (retry = false) => sessions.deliverReload({ stateDir: f.dir, name: 'w1', pluginRoot: f.pluginRoot, retry }, { client, ...f.lockDirs });
+  await run(server.client, f.options('turn'), f.lockDirs); await pump(); server.ack(); server.finish();
+  server.failAfter(); await assert.rejects(pump(), /response lost/);
+  const lost = loadState(f.dir, 'w1').reload.delivery;
+  assert.equal(lost.sent, undefined);
+  server.reply(`VIBE_SKILL_RELOAD_ACK v1 ${lost.nonce}\n\n`); server.finish();
+  const before = server.sent().length;
+  await pump(true);
+  assert.equal(server.sent().length, before + 1, 'retry sends only the retained brief, never the acknowledged page again');
+  assert.equal(loadState(f.dir, 'w1').loadedSkill.version, '1.1.48');
+  assert.equal(loadState(f.dir, 'w1').reload, undefined);
 });
 
 test('page delivery rejection preserves stale evidence and retries the same nonce', async (t) => {
