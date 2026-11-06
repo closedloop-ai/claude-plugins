@@ -179,8 +179,8 @@ test('ready and push-check require the matching source receipt and render every 
   ]);
   assert.equal(run([dir, 'writer', 'receipt-w', '--ready', head]).status, 0);
   const page = readFileSync(path.join(dir, 'board.md'), 'utf8');
-  assert.match(page, /receipt-w: pnpm test:unit — qa-impact selected changed unit coverage/);
-  assert.match(page, /receipt-w: pnpm test:e2e — changed route selected browser boundary coverage/);
+  assert.match(page, /receipt-w: pnpm test:unit: qa-impact selected changed unit coverage/);
+  assert.match(page, /receipt-w: pnpm test:e2e: changed route selected browser boundary coverage/);
   assert.equal(run([dir, 'push-check', 'receipt-w', '--head', head]).status, 0);
   writeFileSync(path.join(wt, 'filters.ts'), 'export const quickFilters = false;\n');
   const stale = run([dir, 'push-check', 'receipt-w', '--head', head]);

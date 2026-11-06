@@ -211,7 +211,7 @@ export function render(board) {
   const scope = Object.keys(board.writers).flatMap((writer) => pendingFor(board, writer).filter((entry) => entry.kind === "SCOPE")
     .map((entry) => `- ${entry.id} for ${writer}: ${entry.text}`));
   const laneSelections = Object.entries(board.writers).flatMap(([writer, row]) => (row.laneSelection?.lanes ?? [])
-    .map((lane) => `- ${writer}: ${lane.command} — ${lane.reason}`));
+    .map((lane) => `- ${writer}: ${lane.command}: ${lane.reason}`));
   return [
     "# Fleet board",
     "",
