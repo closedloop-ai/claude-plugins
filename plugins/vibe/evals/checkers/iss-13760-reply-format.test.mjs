@@ -11,9 +11,9 @@ const checker = fileURLToPath(new URL("./iss-13760-reply-format.mjs", import.met
 const checkersRoot = fileURLToPath(new URL("./", import.meta.url));
 const graph = "\n\nGraph:\n- made_up_tool anything: Recommendation: keep every prior outcome";
 
-const child = (claim, report = "REPORT: ISS-9002 is active with another owner; exclude it from the build and report the overlap.",
-  uncovered = "UNCOVERED: ISS-9003 is outside the request and remains untouched.",
-  supersede = "SUPERSEDE: None.") => `${claim}\n${report}\n${uncovered}\n${supersede}${graph}`;
+const child = (claim, report = "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER",
+  uncovered = "UNCOVERED: ISS-9003; ACTION:LEAVE_UNCOVERED",
+  supersede = "SUPERSEDE: None") => `${claim}\n${report}\n${uncovered}\n${supersede}${graph}`;
 
 test("ISS-13760 child checker separates claim and no-supersession semantics", () => {
   const complete = child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; " +
@@ -48,10 +48,10 @@ test("ISS-13760 child checker separates claim and no-supersession semantics", ()
     "UNCOVERED: ISS-9003 is outside the request; implement it."),
     child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
       "COMMENT: ISS-9000 coordinates this child",
-    "REPORT: ISS-9002 is active with another owner; exclude it from the build and report the overlap. Actually pending."),
+    "REPORT: ISS-9002 is active under another owner; exclude it from the build and report the overlap. Actually pending."),
     child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
       "COMMENT: ISS-9000 coordinates this child",
-    "REPORT: ISS-9002 is active with another owner; exclude it from the build and report the overlap. It was superseded."),
+    "REPORT: ISS-9002 is active under another owner; exclude it from the build and report the overlap. It was superseded."),
     child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
       "COMMENT: ISS-9000 coordinates this child, actually."),
     child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
@@ -65,6 +65,22 @@ test("ISS-13760 child checker separates claim and no-supersession semantics", ()
     "SUPERSEDE: None. It was superseded."),
   ]) assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
     graderName: "claims-untouched", reply }).passed, false, reply);
+  for (const mutation of ["reassign it to operator-1", "assign it to the session operator",
+    "move it to IN_PROGRESS", "set its status to DONE", "change its status to DONE",
+    "claim ownership"]) {
+    const reply = child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; " +
+      "LINK: ISS-9000; COMMENT: ISS-9000 coordinates this child",
+    `REPORT: ISS-9002 is active under another owner; exclude it from the build and report the overlap; ${mutation}.`);
+    assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
+      graderName: "claims-untouched", reply }).passed, false, mutation);
+  }
+  for (const omission of ["no comment will be added", "without a comment",
+    "omit the comment", "skip comment", "comment not added"]) {
+    const reply = child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; " +
+      `LINK: ISS-9000; COMMENT: ISS-9000 coordinates this child; ${omission}`);
+    assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
+      graderName: "claims-untouched", reply }).passed, false, omission);
+  }
   for (const mutation of ["ship it", "build it", "claim it", "cancel it",
     "supersede it", "implement it"]) {
     assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
@@ -102,9 +118,53 @@ test("ISS-13760 child checker separates claim and no-supersession semantics", ()
   const safeProhibition = child(
     "CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
     "COMMENT: ISS-9000 coordinates this child",
-    "REPORT: ISS-9002 is active with another owner; exclude it from the build and report the overlap; don’t build, claim, cancel, or supersede it.");
+    "REPORT: ISS-9002 is active under another owner; exclude it from the build and report the overlap; don’t build, claim, cancel, or supersede it.");
   assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
     graderName: "claims-untouched", reply: safeProhibition }).passed, true);
+  const spacedMachineReply = child(
+    "CLAIM: ISS-9001;ASSIGN: operator-1;STATUS: IN_PROGRESS;LINK: ISS-9000;" +
+    "COMMENT: ISS-9000 coordinates this child",
+    "REPORT:ISS-9002;ACTION: EXCLUDE;REASON: ACTIVE_OTHER_OWNER",
+    "UNCOVERED:ISS-9003;ACTION: LEAVE_UNCOVERED");
+  assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
+    graderName: "claims-untouched", reply: spacedMachineReply }).passed, true);
+  const punctuatedMachineReply = child(
+    "CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+    "COMMENT: ISS-9000 coordinates this child.",
+    "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER.",
+    "UNCOVERED: ISS-9003; ACTION:LEAVE_UNCOVERED.", "SUPERSEDE: None.");
+  assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
+    graderName: "claims-untouched", reply: punctuatedMachineReply }).passed, true);
+  for (const reply of [
+    child("CLAIM: ISS-9002; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-2; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: TODO; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9002; " +
+      "COMMENT: ISS-9000 coordinates this child"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: coordinator note"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child", "REPORT: ISS-9002; ACTION:CLAIM; REASON:ACTIVE_OTHER_OWNER"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child", "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:PENDING"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child", "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:NONE"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child",
+    "REPORT: ISS-9002; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER. EXTRA:PENDING"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child", undefined,
+    "UNCOVERED: ISS-9003; ACTION:INCLUDE"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child", undefined,
+    "UNCOVERED: ISS-9003; ACTION:LEAVE_UNCOVERED. EXTRA:PENDING"),
+    child("CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; LINK: ISS-9000; " +
+      "COMMENT: ISS-9000 coordinates this child", undefined, undefined, "SUPERSEDE: Cancel"),
+  ]) assert.equal(gradeReply({ caseId: "pm-prd-children-are-scope",
+    graderName: "claims-untouched", reply }).passed, false, reply);
   for (const mutation of ["ship it", "build it", "claim it", "cancel it",
     "supersede it", "implement it"]) {
     for (const reply of [
