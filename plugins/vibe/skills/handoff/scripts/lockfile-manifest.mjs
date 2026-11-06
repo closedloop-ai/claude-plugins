@@ -448,7 +448,15 @@ function entryScalar(block) {
 
 function manifestDependencies(text) {
   const manifest = text === null ? {} : JSON.parse(text);
-  return Object.fromEntries([...DEPENDENCY_FIELDS].map((field) => [field, manifest[field] ?? {}]));
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) throw new Error("manifest must be an object");
+  return Object.fromEntries([...DEPENDENCY_FIELDS].map((field) => {
+    const dependencies = Object.hasOwn(manifest, field) ? manifest[field] : {};
+    if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies) ||
+        Object.values(dependencies).some((specifier) => typeof specifier !== "string")) {
+      throw new Error(`${field} must be a string map`);
+    }
+    return [field, dependencies];
+  }));
 }
 
 function importerForManifest(file) {
@@ -584,8 +592,10 @@ function unexplainedDocumentEntries({ before, after, manifests }) {
       const changes = changedDependencies.get(importerForManifest(file)) ?? new Map();
       for (const field of DEPENDENCY_FIELDS) {
         for (const name of keysOf(new Map(Object.entries(oldDeps[field])), new Map(Object.entries(newDeps[field])))) {
-          if (oldDeps[field][name] !== newDeps[field][name]) changes.set(`${field}/${name}`, {
-            before: oldDeps[field][name] ?? null, after: newDeps[field][name] ?? null,
+          const before = Object.hasOwn(oldDeps[field], name) ? oldDeps[field][name] : null;
+          const after = Object.hasOwn(newDeps[field], name) ? newDeps[field][name] : null;
+          if (before !== after) changes.set(`${field}/${name}`, {
+            before, after,
           });
         }
       }

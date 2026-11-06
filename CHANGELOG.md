@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Handoff admits `pnpm-lock.yaml` changes only when changed importer and resolved package entries follow dependency edits in package manifests allowed by the target repository; malformed or unexplained entries are named when refusing the handoff.
+- Lockfile evidence parsing rejects malformed manifest dependency maps and keeps its regression coverage in focused test files.
 
 ### vibe v1.1.53
 
