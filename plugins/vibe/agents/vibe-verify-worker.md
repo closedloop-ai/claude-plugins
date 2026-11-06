@@ -149,7 +149,8 @@ failure was rerun. Clean historical evidence may retain `source: "final-committe
 Older runs default to ancestor-based QA-impact recomputation. Sibling
 publications require the versioned `TreeEquivalentCarry` contract from
 `pr-evidence-schema.mjs`. Preserve original results/keys and historical lane
-selections; bind the current `scopeKey`. The gates check Git/source/receipt
+selections; bind the current `scopeKey`. List non-ancestor source snapshots
+in `proofs` using pinned `CarryPoint` values. The gates check Git/source/receipt
 consistency. Render with `pr-evidence-comment.mjs --worktree "<wt>"`.
 Also write `testIntegrityProofs: []`, populated for every candidate recomputed
 by the final handoff inventory. Each entry carries its exact `candidate`,

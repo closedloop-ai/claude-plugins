@@ -19,7 +19,7 @@ import { REQUIRED_CONTAINER_IDENTITY, specExecutionLimitation, tierEvidenceProbl
 import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
-import { qaImpactRequest, qaImpactRequestAtCommit } from "./qa-impact.mjs";
+import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { testIntegrityProblems } from "./test-integrity.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
@@ -230,13 +230,29 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
         || git(worktree, ["rev-parse", "--verify", `${point.commit}^{tree}`]) !== point.gitTree
         || !isDeepStrictEqual(sourceAt(point.commit), point.source)) throw new Error("tree carry ref, Git tree or source identity changed");
     };
-    verifyPoint(carry.proof); verifyPoint(carry.published);
+    const points = [carry.proof, carry.published, ...(carry.proofs ?? [])];
+    for (const point of points) verifyPoint(point);
+    const byCommit = new Map(points.map(point => [point.commit, point]));
+    const scopes = new Map(); // All records from one immutable proof share one classification in this validation pass.
+    const scopeFrom = boundary => {
+      if (scopes.has(boundary)) return scopes.get(boundary);
+      const request = { ...runsFile.qaImpactRequest, lastQa: { boundary } };
+      delete request.since;
+      let ancestor = false;
+      try { git(worktree, ["merge-base", "--is-ancestor", boundary, carry.proof.commit]); ancestor = true; } catch { /* Explicit binding is required below. */ }
+      if (!ancestor && !byCommit.has(boundary)) throw new Error("non-ancestor scope needs a pinned proof point");
+      const scope = ancestor && carry.proofs === undefined ? qaImpactRequestAtCommit(worktree, request, carry.proof.commit)
+        : qaImpactDirectCommitScope(worktree, request, carry.proof.commit);
+      scopes.set(boundary, scope);
+      return scope;
+    };
     if (!isDeepStrictEqual(runsFile.source, carry.published.source) || current.head !== commit || current.treeSha256 !== carry.published.source.treeSha256
       || git(worktree, ["status", "--porcelain", "--untracked-files=all"]) !== ""
       || carry.proof.gitTree !== carry.published.gitTree || carry.proof.source.treeSha256 !== carry.published.source.treeSha256) {
       throw new Error("tree carry needs clean equal Git/source trees at proof and publication");
     }
-    const impact = qaImpactRequestAtCommit(worktree, runsFile.qaImpactRequest, carry.proof.commit);
+    if (runsFile.qaImpactRequest?.since !== undefined && runsFile.qaImpactRequest.since !== runsFile.qaImpactRequest?.lastQa?.boundary) throw new Error("carry scope boundary differs from request");
+    const impact = scopeFrom(runsFile.qaImpactRequest?.lastQa?.boundary);
     if (carry.laneKey !== impact.laneKey || carry.laneKey !== runsFile.targetedInventory?.impactKey
       || carry.laneKey !== runsFile.qaImpact?.laneKey) throw new Error("tree carry lane key differs from recomputed proof scope");
     const allRuns = [...(runsFile.testRuns ?? []), ...(runsFile.runs ?? [])];
@@ -248,13 +264,9 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
         throw new Error("tree carry result is not an exact declared workflow lane");
       }
       if (record.scopeKey !== carry.laneKey || !allRuns.some(run => isDeepStrictEqual(run, result))) throw new Error("tree carry recorded run or lane key changed");
-      git(worktree, ["merge-base", "--is-ancestor", result.commit, carry.proof.commit]);
       if (result.commit !== carry.proof.commit) {
-        // A run can precede several QA milestones. Recompute its entire intervening scope, retaining its original result/key.
-        const request = { ...runsFile.qaImpactRequest, lastQa: { boundary: result.commit } };
-        delete request.since;
-        const intervening = qaImpactRequestAtCommit(worktree, request, carry.proof.commit);
-        if (intervening.lanes.includes(result.lane)) throw new Error("tree carry scope includes this lane; original result is not reusable");
+        const intervening = scopeFrom(result.commit);
+        if (impact.lanes.includes(result.lane) || intervening.lanes.includes(result.lane)) throw new Error("tree carry scope includes this lane; original result is not reusable");
       }
       const file = path.join(metadata, record.receipt.path);
       const stat = lstatSync(file);
@@ -277,7 +289,7 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
       }
     }
     // Recheck refs after all receipts/object reads, not only before the scan.
-    verifyPoint(carry.proof); verifyPoint(carry.published);
+    for (const point of points) verifyPoint(point);
     return { impact, allowedRuns: carry.runs.map(record => record.result) };
   });
 }
@@ -291,8 +303,7 @@ function recomputedImpact(runsFile, worktree, commit) {
   } catch (error) { normal = { problem: `QA impact could not be recomputed: ${error.message}` }; }
   if (runsFile?.treeEquivalentCarry === undefined) return normal;
   try {
-    const carried = verifiedCarryImpact(runsFile, worktree, commit);
-    return normal.problem ? carried : { ...normal, allowedRuns: carried.allowedRuns };
+    return verifiedCarryImpact(runsFile, worktree, commit);
   } catch (error) { return { problem: `tree-equivalent carry refused: ${error.message}` }; }
 }
 
@@ -607,7 +618,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command
         && (!impactKey || run.commit === commit || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
-        && (run.commit === commit || !recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
+        && (!recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
       problems.push(`lane ${lane.name}: no passing run of its test:lanes command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
     }

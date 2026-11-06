@@ -852,3 +852,101 @@ test("the comment adapter verifies workflow/tree carry through the same gate and
   assert.ok(text.includes(f.published)); assert.ok(text.includes(".github/workflows/ci.yml"));
   assert.throws(() => renderEvidenceComment(f.evidence), /incomplete/);
 });
+
+
+/** Actual one-sweep topology: full -> repair, publication -> two sibling proofs -> final publication. */
+function multiProofCarry(t) {
+  const f = makeHome("multi-proof-carry-"); t.after(f.cleanup);
+  const wt = path.join(f.root, "wt"); const workflowPath = ".github/workflows/ci.yml";
+  const workflow = readFileSync(new URL("../../../../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const lanes = workflowLaneDefinitions(workflow); assert.equal(lanes.length, 12);
+  const worker = lanes.find(lane => lane.job === "tools-ts" && lane.matrix.tool === "vibe-workers").name;
+  makeCheckout({ ...f, checkout: wt, files: { [workflowPath]: workflow,
+    "vibe-handoff-paths.json": JSON.stringify({ ...JSON.parse(SYMPHONY_PATH_POLICY), laneSource: { kind: "github-workflow", path: workflowPath } }),
+    "node.mjs": "export const n=0;", "worker.ts": "export const w=0;", "contract.py": "value=0", "stable.txt": "stable" } });
+  const g = (...args) => git(wt, args, f.home);
+  const base = g("rev-parse", "HEAD");
+  const snapshot = (name, parent) => { const sha = g("commit-tree", g("write-tree"), "-p", parent, "-m", name); g("update-ref", `refs/heads/proof/${name}`, sha); return sha; };
+  const full = snapshot("full", base);
+  writeFileSync(path.join(wt, "node.mjs"), "export const n=1;"); writeFileSync(path.join(wt, "contract.py"), "value=1"); g("add", ".");
+  const repaired = snapshot("repaired", full);
+  const interim = g("commit-tree", g("write-tree"), "-p", base, "-m", "intermediate publication");
+  writeFileSync(path.join(wt, "node.mjs"), "export const n=2;"); writeFileSync(path.join(wt, "worker.ts"), "export const w=1;"); g("add", ".");
+  const scoped = snapshot("scoped", interim);
+  writeFileSync(path.join(wt, "contract.py"), "value=2"); g("add", ".");
+  const final = snapshot("final", interim);
+  const published = g("commit-tree", g("write-tree"), "-p", interim, "-m", "final publication"); g("reset", "--hard", published);
+  const point = (commit, ref) => ({ ref, commit, gitTree: g("rev-parse", `${commit}^{tree}`), source: committedSourceIdentity(wt, commit) });
+  const finalLanes = ["lint", "typecheck", "test"]; const scopedLanes = ["node-tests", worker];
+  const stableLanes = lanes.filter(lane => ![...finalLanes, ...scopedLanes].includes(lane.name)).map(lane => lane.name); assert.equal(stableLanes.length, 7);
+  const request = { lastQa: { boundary: scoped }, evidence: { screens: [] }, featureMap: { entries: [] }, graphImporters: { importers: {} },
+    laneSelections: { files: { "node.mjs": ["node-tests"], "worker.ts": [worker], "contract.py": finalLanes, "stable.txt": stableLanes } }, config: { docs: [] } };
+  const impact = qaImpact({ worktree: wt, since: scoped, ...request });
+  const run = (lane, commit, status = "passed") => ({ lane: lane.name, command: lane.command, commit, status, exitCode: status === "passed" ? 0 : 1, laneKey: "9".repeat(16) });
+  const history = lanes.map(lane => run(lane, full, ["node-tests", "test"].includes(lane.name) ? "failed" : "passed"));
+  history.push(...lanes.filter(lane => ["node-tests", ...finalLanes].includes(lane.name)).map(lane => run(lane, repaired)));
+  const records = lanes.map((lane, index) => {
+    const origin = finalLanes.includes(lane.name) ? final : scopedLanes.includes(lane.name) ? scoped : full;
+    const result = run(lane, origin); const input = finalLanes.includes(lane.name) ? "contract.py" : lane.name === "node-tests" ? "node.mjs" : lane.name === worker ? "worker.ts" : "stable.txt";
+    const coveredFiles = [workflowPath, input].map(file => ({ path: file, sha256: createHash("sha256").update(readFileSync(path.join(wt, file))).digest("hex") }));
+    const bytes = JSON.stringify({ version: 1, source: committedSourceIdentity(wt, origin), result, coveredFiles });
+    const receipt = { path: `lane-${index}.json`, sha256: createHash("sha256").update(bytes).digest("hex") };
+    writeFileSync(path.join(g("rev-parse", "--absolute-git-dir"), receipt.path), bytes);
+    return { scopeKey: impact.laneKey, result, coveredFiles, receipt };
+  });
+  const carry = { kind: "tree-equivalent", version: 1, proof: point(final, "refs/heads/proof/final"), published: point(published, "refs/heads/main"),
+    proofs: [point(full, "refs/heads/proof/full"), point(scoped, "refs/heads/proof/scoped")], laneKey: impact.laneKey, runs: records };
+  const evidence = { source: sourceIdentity(wt), testSelection: [], qaImpact: impact, qaImpactRequest: request, treeEquivalentCarry: carry,
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit: published, impactKey: impact.laneKey,
+      laneReport: { source: { kind: "github-workflow", path: workflowPath, commit: published, sha256: createHash("sha256").update(workflow).digest("hex") },
+        matches: lanes.map(({ name, command }) => ({ name, command })) }, entries: [], noTestsReason: "all twelve declared workflow recipes" },
+    testRuns: [...history, ...records.map(record => record.result)], rerunCycles: [] };
+  return { wt, g, evidence: JSON.parse(JSON.stringify(evidence)), published, full, repaired, scoped, final, finalLanes, scopedLanes, stableLanes };
+}
+
+test("all twelve recipes survive the real multi-proof sibling chain without another full sweep", t => {
+  const f = multiProofCarry(t);
+  assert.throws(() => qaImpactRequest(f.wt, f.evidence.qaImpactRequest), /ancestor/);
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
+  const origins = f.evidence.treeEquivalentCarry.runs.map(record => record.result.commit);
+  assert.equal(origins.filter(commit => commit === f.full).length, 7);
+  assert.equal(origins.filter(commit => commit === f.scoped).length, 2);
+  assert.equal(origins.filter(commit => commit === f.final).length, 3);
+});
+
+
+for (const [name, mutate] of [
+  ["moved older ref", f => f.g("update-ref", f.evidence.treeEquivalentCarry.proofs[0].ref, f.scoped)],
+  ["wrong older Git tree", f => { f.evidence.treeEquivalentCarry.proofs[0].gitTree = "0".repeat(40); }],
+  ["wrong older source tree", f => { f.evidence.treeEquivalentCarry.proofs[0].source.treeSha256 = "0".repeat(64); }],
+  ["changed workflow recipe", f => { f.evidence.treeEquivalentCarry.runs[0].result.command = "echo hand-picked"; }],
+  ["forged direct lane key", f => { const e=f.evidence; e.treeEquivalentCarry.laneKey=e.targetedInventory.impactKey=e.qaImpact.laneKey="0".repeat(16); }],
+  ["omitted unchanged recipe", f => { f.evidence.treeEquivalentCarry.runs = f.evidence.treeEquivalentCarry.runs.filter(record => record.result.lane !== f.stableLanes[0]); }],
+  ["changed covered file", f => { f.evidence.treeEquivalentCarry.runs.find(record => record.result.commit===f.full).coveredFiles[1].sha256="0".repeat(64); }],
+  ["impacted sibling result", f => { const e=f.evidence; const record=e.treeEquivalentCarry.runs.find(record=>record.result.lane==="test"); e.testRuns=e.testRuns.filter(run=>run!==record.result); record.result.commit=f.scoped; e.testRuns.push(record.result); }],
+  ["unbound sibling point", f => { f.evidence.treeEquivalentCarry.proofs = []; }],
+  ["ordinary sibling evidence", f => { delete f.evidence.treeEquivalentCarry; }],
+]) test(`multi-proof carry fails closed on ${name}`, t => {
+  const f=multiProofCarry(t);
+  assert.deepEqual(targetedEvidenceProblems(f.evidence,f.published,f.wt),[],"all twelve positive control");
+  mutate(f);
+  assert.notDeepEqual(targetedEvidenceProblems(f.evidence,f.published,f.wt),[]);
+});
+
+
+test("direct sibling scope rejects an impacted older passing lane even with consistent unchanged covered hashes", t => {
+  const f=multiProofCarry(t); const e=f.evidence;
+  assert.deepEqual(targetedEvidenceProblems(e,f.published,f.wt),[]);
+  const old=e.testRuns.find(run=>run.lane==="node-tests"&&run.commit===f.repaired&&run.status==="passed");
+  assert.ok(old, "actual earlier repair pass in fixture history");
+  const record=e.treeEquivalentCarry.runs.find(item=>item.result.lane==="node-tests");
+  record.result=structuredClone(old);
+  e.treeEquivalentCarry.proofs.push({ ref:"refs/heads/proof/repaired", commit:f.repaired,
+    gitTree:f.g("rev-parse",`${f.repaired}^{tree}`), source:committedSourceIdentity(f.wt,f.repaired) });
+  record.coveredFiles=[".github/workflows/ci.yml","stable.txt"].map(file=>({path:file,
+    sha256:createHash("sha256").update(readFileSync(path.join(f.wt,file))).digest("hex")}));
+  const bytes=JSON.stringify({version:1,source:committedSourceIdentity(f.wt,f.repaired),result:record.result,coveredFiles:record.coveredFiles});
+  writeFileSync(path.join(f.g("rev-parse","--absolute-git-dir"),record.receipt.path),bytes);
+  record.receipt.sha256=createHash("sha256").update(bytes).digest("hex");
+  assert.match(targetedEvidenceProblems(e,f.published,f.wt).join(),/scope includes this lane/);
+});

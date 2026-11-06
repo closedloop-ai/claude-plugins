@@ -86,7 +86,7 @@ export function prEvidenceShapeProblems(evidence) {
 
 /** @typedef {{kind: "command", command: string} | {kind: "github-workflow", path: string}} RepositoryLaneSource */
 /** @typedef {{ref: string, commit: string, gitTree: string, source: {head: string, diffSha256: string, treeSha256: string}}} CarryPoint */
-/** @typedef {{kind: "tree-equivalent", version: 1, proof: CarryPoint, published: CarryPoint, laneKey: string,
+/** @typedef {{kind: "tree-equivalent", version: 1, proof: CarryPoint, published: CarryPoint, proofs?: CarryPoint[], laneKey: string,
  * runs: Array<{scopeKey: string, result: {lane: string, command: string, commit: string, laneKey?: string, status: "passed", exitCode: 0},
  * coveredFiles: Array<{path: string, sha256: string}>, receipt: {path: string, sha256: string}}>}} TreeEquivalentCarry */
 const HASH = /^[a-f0-9]{64}$/;
@@ -118,11 +118,19 @@ export function laneReportShapeProblems(report) {
 /** Machine-checkable carry shape; semantic authority is checked against Git and durable receipts by pr-facts. */
 export function treeEquivalentCarryShapeProblems(carry) {
   const problems = [];
-  if (!exactKeys(carry, ["kind", "version", "proof", "published", "laneKey", "runs"]) || carry.kind !== "tree-equivalent" || carry.version !== 1) {
+  const keys = ["kind", "version", "proof", "published", "laneKey", "runs"];
+  if (object(carry) && Object.hasOwn(carry, "proofs")) keys.push("proofs");
+  if (!exactKeys(carry, keys) || carry.kind !== "tree-equivalent" || carry.version !== 1) {
     return ["tree-equivalent carry needs its complete versioned contract"];
   }
-  for (const name of ["proof", "published"]) {
-    const point = carry[name];
+  if (carry.proofs !== undefined && (!Array.isArray(carry.proofs) || carry.proofs.length > 100)) return ["tree carry proofs must be a bounded list of pinned points"];
+  const points = [["proof", carry.proof], ["published", carry.published], ...(carry.proofs ?? []).map((point, index) => [`proofs[${index}]`, point])];
+  const commits = new Set([carry.proof?.commit, carry.published?.commit]);
+  for (const point of carry.proofs ?? []) {
+    if (commits.has(point?.commit)) problems.push("tree carry proof commits must be unambiguous");
+    commits.add(point?.commit);
+  }
+  for (const [name, point] of points) {
     if (!exactKeys(point, ["ref", "commit", "gitTree", "source"]) || !/^refs\/(?:heads|remotes)\/[A-Za-z0-9_./-]+$/.test(point?.ref ?? "")
       || !COMMIT.test(point?.commit ?? "") || !COMMIT.test(point?.gitTree ?? "") || !validSourceIdentity(point?.source)
       || point.source.head !== point.commit) problems.push(`tree carry ${name} needs a verified ref/commit/Git tree/source identity`);

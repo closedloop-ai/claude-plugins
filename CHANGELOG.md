@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.1.48
 
 #### Fixed
+- Explicit carry can bind multiple immutable sibling proofs. Direct tree deltas preserve unaffected workflow results across the one-time full sweep and selective repairs; impacted lanes require final-proof results. Ordinary evidence still requires ancestry.
 - Handoff carry binds equal Git/source trees and receipt consistency. Workflow lane recipes include actions, setup/runtime inputs, runners, conditions and timeouts; unsupported execution shapes fail closed. The protected lane-source bootstrap verifies the same sole workflow and permissions across the base, freshly fetched merge target and final candidate. Evidence comments receive the exact worktree, and workflow E2E labels use the declared lane source.
 - Stale fleet writers accept one exact reload-only envelope without appended provenance. Direct session commands verify the host's installed root. Reload waits for owned heavy-slot jobs and E2E holders or acquisition waiters to release, sends bounded skill pages through App Server, and requires acknowledgements from the recorded actor and turn before refreshing evidence. Receipt scans persist their cursors across bounded pumps; explicit retry clears an invalid cursor while retaining the nonce and text. Retained briefs remain durable until confirmed delivery, with lost-reply reconciliation.
 - An idle stale writer's next turn reloads in place and retains its requested brief, thread, worktree, branch, session record and board row. `codex-session.mjs interrupt` records a reason, interrupts the active turn through the App Server, and confirms it stopped without archiving the thread.
@@ -15,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Reload publishes an exclusive canonical-worktree fence in the existing machine slot locks and retains it through page acknowledgements and evidence completion. E2E and heavy admission register their ownership before checking the same fence; jobs that arrive during App Server awaits cannot start mid-reload. Confirmed interruption and completion release the fence; interrupted pumps retain durable actor ownership for retry, while proven orphans recover without signaling processes.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 112 words longer than in 1.1.44 (the branch base).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 122 words longer than in 1.1.44 (the branch base).
 
 ### vibe v1.1.44
 

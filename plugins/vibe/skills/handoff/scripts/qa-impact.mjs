@@ -399,7 +399,7 @@ export function classifyQaImpact({ files, before, after, changes = new Map(), im
 }
 
 /** Classify the current working tree against a recorded QA boundary, with exact input evidence. */
-export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneSelections, config, atCommit }) {
+export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneSelections, config, atCommit, directTree = false }) {
   return withStableSource(worktree, () => {
     const problems = evidenceProblems(evidence);
     if (problems.length) throw new Error(problems.join("; "));
@@ -407,7 +407,7 @@ export function qaImpact({ worktree, since, evidence, graphImporters, featureMap
     const files = entries.map((entry) => entry.path);
     const before = new Map(files.map((file) => [file, readAt(worktree, since, file)]));
     const after = new Map(files.map((file) => [file, (atCommit ? readAt(worktree, atCommit, file) : readHead(worktree, file))]));
-    const origins = changeOrigins(worktree, since, atCommit ?? "HEAD");
+    const origins = directTree ? { ownFiles: new Set(files), mergeFiles: new Set() } : changeOrigins(worktree, since, atCommit ?? "HEAD");
     for (const file of (atCommit ? [] : [...git(worktree, ['diff', '--name-only', '-z', 'HEAD']).split('\0'),
       ...git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0')]).filter(Boolean)) {
       origins.ownFiles.add(file);
@@ -438,7 +438,15 @@ export function qaImpactRequestAtCommit(worktree, request, commit) {
   return impactRequestAt(worktree, request, commit);
 }
 
-function impactRequestAt(worktree, request, atCommit) {
+/** Classify a direct immutable tree delta; only the carry validator authorizes non-ancestor evidence. */
+export function qaImpactDirectCommitScope(worktree, request, commit) {
+  for (const sha of [request?.lastQa?.boundary, commit]) {
+    if (!/^[a-f0-9]{40}$/.test(sha ?? "") || git(worktree, ["rev-parse", "--verify", `${sha}^{commit}`]) !== sha) throw new Error("direct scope needs verified full commit SHAs");
+  }
+  return impactRequestAt(worktree, request, commit, true);
+}
+
+function impactRequestAt(worktree, request, atCommit, directTree = false) {
   const since = request?.lastQa?.boundary;
   if (typeof since !== "string" || !since.trim() || (request.since !== undefined && request.since !== since)) {
     throw new Error("impact request needs lastQa.boundary as its recorded last-QA point");
@@ -447,14 +455,14 @@ function impactRequestAt(worktree, request, atCommit) {
   let boundary;
   try {
     boundary = git(worktree, ["rev-parse", "--verify", `${since}^{commit}`]);
-    execFileSync("git", ["-C", worktree, "merge-base", "--is-ancestor", boundary, head], { stdio: "ignore" });
+    if (!directTree) execFileSync("git", ["-C", worktree, "merge-base", "--is-ancestor", boundary, head], { stdio: "ignore" });
   } catch {
     throw new Error("lastQa.boundary must resolve to an ancestor of HEAD");
   }
   if (boundary === head && (atCommit || !git(worktree, ["status", "--porcelain"]))) throw new Error("lastQa.boundary must precede HEAD");
   const laneMap = normalizeLaneSelections(request.laneSelections);
   if (!laneMap?.size || ![...laneMap.values()].some((lanes) => lanes.length > 0)) throw new Error("impact request needs non-empty laneSelections");
-  return qaImpact({ worktree, since: boundary, atCommit, evidence: request.evidence, graphImporters: request.graphImporters,
+  return qaImpact({ worktree, since: boundary, atCommit, directTree, evidence: request.evidence, graphImporters: request.graphImporters,
     featureMap: request.featureMap, laneSelections: request.laneSelections, config: request.config });
 }
 
