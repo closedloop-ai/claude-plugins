@@ -23,8 +23,8 @@ clear handoff by reporting only a narrative summary.
 The existing `pre-pr` procedure writes its owned private
 `<gitdir>/vibe-pr-evidence.json` and `pre-pr-lanes.mjs` writes
 `<gitdir>/vibe-lane-results.json`; these are required verification receipts.
-Save `pnpm test:lanes` output as `<gitdir>/vibe-lane-report.txt` so
-`pre-pr-lanes.mjs check` uses the matching source-bound phase and selection receipt.
+If the target declares `test:lanes`, save its report at
+`<gitdir>/vibe-lane-report.txt` and check its receipt; otherwise keep `qaImpactRequest`.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
 For a frozen comparison, run handoff's `frozen-render.mjs` with its prepared
@@ -66,7 +66,7 @@ mode or permission to change production flags or machine snapshot fields.
 
 ## The script for the scriptable checks
 
-When `../skills/vibe/scripts/verify-run.mjs` exists, run
+Run `../skills/vibe/scripts/verify-run.mjs` only with all declared target checks:
 `node ../skills/vibe/scripts/verify-run.mjs --worktree "<wt>" --head "<full SHA>" [--base <sha>] [--tests-file <file>]`
 once at the final head instead of running the bounded checks below by hand. It
 wraps the repository's own Biome, `pnpm check:source-gates`,
@@ -106,8 +106,8 @@ automatic technical approval question for the vibe coder. Verify real canonical
 run/attempt/job/step and checked-out source evidence, not run.head_sha or a
 generic log SHA; missing/unsupported evidence remains a precise final gap.
 
-Validation is targeted. Run nonwriting Biome on changed files, source gates
-and `pnpm typecheck:affected`. Only the tests closedloop-graph's
+Validation is targeted. Run nonwriting target lint, source gates and affected
+typecheck. Only the tests closedloop-graph's
 `code_tests_for` returns for each changed file, plus
 `diffRules.requiredTests` and `requiredChecks`, through their owning package
 commands. Run a required
@@ -133,11 +133,10 @@ When the graph cannot establish tests, a `code_tests_for` row may use
 `targetedInventory` has `actor: "read-only"`,
 `source: "working-tree"`, the actual tested HEAD as `commit`, top-level
 `source` from `tested-head.mjs source`, and the complete
-`qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
-`impactKey`; never trust a stored classifier result. It also has a `laneReport`
-with `command: "pnpm test:lanes"` and `matches` named by that report, and
-`entries` containing each exact test `kind`, `path`, nonempty `cases` and
-`command`. A lane result in `testRuns` uses `status: "passed"` with its
+`qaImpactRequest` inputs. Recompute it and copy its `laneKey` to `impactKey`;
+never trust a stored result. `laneReport` uses `pnpm test:lanes` when declared,
+else `qa-impact.mjs` with recomputed matches/reasons. `entries` name each exact
+test `kind`, `path`, nonempty `cases` and `command`. A lane result in `testRuns` uses `status: "passed"` with its
 exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
 its exact path, cases and command. Always write `rerunCycles: []` when no
 failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
@@ -166,12 +165,12 @@ returning. The handoff inventory still checks the actual selections and runs.
 
 In `pre-pr` mode, read the final uncommitted change identified by HEAD plus
 diff/tree hashes, never the plan, and write
-`targetedInventory` in that file as a read-only actor. Run `pnpm test:lanes`
-for the repository-owned lane names and commands. Inventory exact commands,
+`targetedInventory` in that file as a read-only actor. Run `pnpm test:lanes` when
+declared; otherwise use `qaImpactRequest` for Python/Node/bench lane commands. Inventory exact commands,
 files and cases for every selected Vitest package, importing test, changed or
 importing Storybook story, referenced web/Desktop E2E spec and matching
 post-merge-only lane. Run that set once, each named lane by the command
-`pnpm test:lanes` prints (`testRuns` entry with `lane`). A changed check, CI
+the source selects (`testRuns` entry with `lane` and `qa-impact.mjs` `laneKey`). A changed check, CI
 script or workflow reruns in its job's shape from
 `../skills/handoff/scripts/ci-job-shape.mjs` (`ciCheckRepros`). After a writer fixes an isolated
 failure, refresh the inventory and rerun only that failed case and any target

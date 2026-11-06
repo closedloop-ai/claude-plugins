@@ -16,6 +16,7 @@ test('dirty precommit evidence cannot bind unchanged HEAD and binds only after t
   const wt = path.join(root, 'repo');
   mkdirSync(wt);
   writeFileSync(path.join(wt, 'notes.md'), 'base');
+  writeFileSync(path.join(wt, 'package.json'), JSON.stringify({ scripts: { 'test:lanes': 'fixture' } }));
   git(wt, ['init', '--quiet'], home);
   git(wt, ['add', '.'], home);
   git(wt, ['commit', '--quiet', '-m', 'base'], home);
@@ -45,8 +46,9 @@ test('precommit evidence cannot bind to a commit that omitted an untracked input
   const wt = path.join(root, 'repo');
   mkdirSync(wt);
   writeFileSync(path.join(wt, 'a.txt'), 'base\n');
+  writeFileSync(path.join(wt, 'package.json'), JSON.stringify({ scripts: { 'test:lanes': 'fixture' } }));
   git(wt, ['init', '--quiet'], home);
-  git(wt, ['add', 'a.txt'], home);
+  git(wt, ['add', 'a.txt', 'package.json'], home);
   git(wt, ['commit', '--quiet', '-m', 'base'], home);
   const base = git(wt, ['rev-parse', 'HEAD'], home);
   writeFileSync(path.join(wt, 'a.txt'), 'candidate\n');
@@ -72,6 +74,7 @@ const SESSIONS = path.join(HERE, "..", "..", "vibe", "scripts", "vibe-sessions.m
 const ROUTE = "apps/api/app/links/route.ts";
 const TEST = "packages/api/src/links.test.ts";
 const BASE = {
+  "package.json": JSON.stringify({ scripts: { "test:lanes": "fixture" } }),
   [ROUTE]: "export async function POST() {\n  return Response.json({ ok: true });\n}\n",
   "packages/api/src/types/links.ts": "export type LinkKind = \"a\";\nexport const LINK_LIMIT = 10;\n",
   [TEST]: "it(\"limits\", () => {\n  expect(limit()).toBe(10);\n  expect(kind()).toBe(\"a\");\n});\n",
@@ -153,11 +156,14 @@ test("facts name overlap by shared and imported file, assertion and export chang
 test("overlap retrieves a complete file list when gh pr diff rejects a large PR", (t) => {
   const fixture = makeHome("pr-overlap-large-");
   t.after(fixture.cleanup);
+  git(fixture.root, ["init", "--quiet"], fixture.home);
+  git(fixture.root, ["remote", "add", "origin", "git@github.com:closedloop-ai/symphony-alpha.git"], fixture.home);
   const bin = path.join(fixture.root, "bin");
   mkdirSync(bin);
   const script = path.join(bin, "gh");
   writeFileSync(script, `#!/bin/sh
 case "$1 $2" in
+  "repo view") [ "$3" = 'git@github.com:closedloop-ai/symphony-alpha.git' ] || exit 9; printf '%s\\n' 'closedloop-ai/symphony-alpha' ;;
   "pr list") printf '%s\\n' '[{"number":9191,"title":"Large PR","headRefName":"feature/large","files":${JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ path: `src/file-${i}.ts` })))} }]' ;;
   "pr diff") echo 'HTTP 422: diff exceeds 300 files' >&2; exit 1 ;;
   "api repos/closedloop-ai/symphony-alpha/pulls/9191") printf '%s\\n' '320' ;;
@@ -181,6 +187,76 @@ esac
   assert.equal(capped.status, 0, capped.stderr);
   assert.deepEqual(JSON.parse(capped.stdout).prs[0].files, []);
   assert.equal(JSON.parse(capped.stdout).prs[0].unavailableReason, "GitHub file API exposes 3000 of 3205 changed files");
+});
+
+test("overlap resolves the target worktree's repository for list and file API reads", (t) => {
+  const fixture = makeHome("pr-overlap-target-");
+  t.after(fixture.cleanup);
+  const target = path.join(fixture.root, "target");
+  const bin = path.join(fixture.root, "bin");
+  mkdirSync(target);
+  git(target, ["init", "--quiet"], fixture.home);
+  git(target, ["remote", "add", "origin", "git@github.com:closedloop-ai/claude-plugins.git"], fixture.home);
+  mkdirSync(bin);
+  const script = path.join(bin, "gh");
+  const files = JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ path: `src/file-${i}.ts` })));
+  writeFileSync(script, `#!/bin/sh
+case "$1 $2" in
+  "repo view") [ "$PWD" = "${target}" ] && [ "$3" = 'git@github.com:closedloop-ai/claude-plugins.git' ] && [ -z "$GH_REPO" ] || exit 9; printf '%s\\n' 'closedloop-ai/claude-plugins' ;;
+  "pr list") case " $* " in *"--repo closedloop-ai/claude-plugins"*) printf '%s\\n' '[{"number":41,"title":"Target PR","headRefName":"topic","files":${files}}]' ;; *) exit 8 ;; esac ;;
+  "api repos/closedloop-ai/claude-plugins/pulls/41") printf '%s\\n' '100' ;;
+  "api --paginate") i=0; while [ "$i" -lt 100 ]; do printf 'src/file-%s.ts\\n' "$i"; i=$((i+1)); done ;;
+  *) exit 3 ;;
+esac
+`);
+  chmodSync(script, 0o700);
+  const code = `import { loadOpenPrs } from ${JSON.stringify(new URL("./pr-facts.mjs", import.meta.url).href)}; console.log(JSON.stringify(loadOpenPrs(${JSON.stringify(target)})));`;
+  const run = () => spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: fixture.root, encoding: "utf8", env: { ...process.env, GH_REPO: "closedloop-ai/symphony-alpha", PATH: `${bin}:${process.env.PATH}` },
+  });
+  const correct = run();
+  assert.equal(correct.status, 0, correct.stderr);
+  assert.equal(JSON.parse(correct.stdout)[0].files.length, 100);
+  writeFileSync(script, "#!/bin/sh\nprintf '%s\\n' 'not-a-repo'\n", { mode: 0o700 });
+  const invalid = run();
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /target GitHub repository could not be resolved/);
+});
+
+test("open PR listing reaches item 201 and refuses an unresolved cap", (t) => {
+  const fixture = makeHome("pr-overlap-pages-");
+  t.after(fixture.cleanup);
+  git(fixture.root, ["init", "--quiet"], fixture.home);
+  git(fixture.root, ["remote", "add", "origin", "git@github.com:closedloop-ai/claude-plugins.git"], fixture.home);
+  const bin = path.join(fixture.root, "bin");
+  mkdirSync(bin);
+  const script = path.join(bin, "gh");
+  const source = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "repo" && args[1] === "view") {
+  if (args[2] !== "git@github.com:closedloop-ai/claude-plugins.git") process.exit(9);
+  process.stdout.write("closedloop-ai/claude-plugins\\n");
+} else if (args[0] === "pr" && args[1] === "list") {
+  const limit = Number(args[args.indexOf("--limit") + 1]);
+  if (!args.includes("--repo") || args[args.indexOf("--repo") + 1] !== "closedloop-ai/claude-plugins") process.exit(8);
+  const count = Math.min(limit, 201);
+  process.stdout.write(JSON.stringify(Array.from({ length: count }, (_, i) => ({ number: i + 1, title: "PR", headRefName: "topic", files: [] }))));
+} else process.exit(3);
+`;
+  writeFileSync(script, source, { mode: 0o700 });
+  const code = `import { loadOpenPrs } from ${JSON.stringify(new URL("./pr-facts.mjs", import.meta.url).href)}; console.log(JSON.stringify(loadOpenPrs()));`;
+  const run = () => spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: fixture.root, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+  const complete = run();
+  assert.equal(complete.status, 0, complete.stderr);
+  const prs = JSON.parse(complete.stdout);
+  assert.equal(prs.length, 201);
+  assert.equal(prs.at(-1).number, 201);
+  writeFileSync(script, source.replace("Math.min(limit, 201)", "limit"), { mode: 0o700 });
+  const capped = run();
+  assert.notEqual(capped.status, 0);
+  assert.match(capped.stderr, /open PR list reached 3200; overlap is unverified/);
 });
 
 test("an API-capped overlap is disclosed without claiming no overlap", (t) => {
@@ -287,6 +363,7 @@ test("older lane and inventory evidence requires a recomputed impact key", (t) =
   mkdirSync(path.join(worktree, "e2e"), { recursive: true });
   const spec = "e2e/changed.spec.ts";
   writeFileSync(path.join(worktree, spec), "export const value = 1;\n");
+  writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: { "test:lanes": "fixture" } }));
   git(worktree, ["add", "-A"], fixture.home);
   git(worktree, ["commit", "--quiet", "-m", "base"], fixture.home);
   const boundary = git(worktree, ["rev-parse", "HEAD"], fixture.home);
@@ -311,6 +388,58 @@ test("older lane and inventory evidence requires a recomputed impact key", (t) =
   assert.deepEqual(targetedEvidenceProblems(targeted, final, worktree), []);
   const trustedOnly = { ...targeted, qaImpactRequest: undefined };
   assert.match(targetedEvidenceProblems(trustedOnly, final, worktree).join(), /recomputed/);
+});
+
+test("qa-impact lane evidence binds Python, Node and bench commands without replacing a target test:lanes script", (t) => {
+  const fixture = makeHome("pr-plugin-lanes-");
+  t.after(fixture.cleanup);
+  const worktree = path.join(fixture.root, "repo");
+  mkdirSync(worktree);
+  git(worktree, ["init", "--quiet"], fixture.home);
+  writeFileSync(path.join(worktree, "README.md"), "base\n");
+  git(worktree, ["add", "."], fixture.home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], fixture.home);
+  const boundary = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  mkdirSync(path.join(worktree, "src"));
+  const changed = "src/check.mjs";
+  writeFileSync(path.join(worktree, changed), "export const checked = true;\n");
+  git(worktree, ["add", changed], fixture.home);
+  git(worktree, ["commit", "--quiet", "-m", "plugin change"], fixture.home);
+  const commit = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  const commands = ["uv run pytest plugins/", "node --test plugins/vibe/**/*.test.mjs", "node --experimental-strip-types --test tools/vibe-bench/src/phase3.test.ts"];
+  const request = { lastQa: { boundary }, evidence: { screens: [] }, graphImporters: { importers: { [changed]: [] } },
+    featureMap: { entries: [] }, laneSelections: { files: { [changed]: commands } } };
+  const impact = qaImpactRequest(worktree, request);
+  assert.deepEqual(impact.lanes, commands);
+  const matches = commands.map((command, index) => ({ name: ["python", "node", "bench"][index], command, reason: impact.reason }));
+  const runs = matches.map((lane) => ({ lane: lane.name, command: lane.command, status: "passed", commit, laneKey: impact.laneKey }));
+  const evidence = { qaImpactRequest: request, testSelection: [], targetedInventory: { actor: "read-only", source: "final-committed-diff",
+    commit, impactKey: impact.laneKey, laneReport: { command: "qa-impact.mjs", matches }, entries: [], noTestsReason: "lane-only" },
+  testRuns: runs, rerunCycles: [] };
+  const problems = (input) => targetedEvidenceProblems(input, commit, worktree).join("\n");
+  assert.equal(problems(evidence), "");
+  assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory,
+    laneReport: { command: "qa-impact.mjs", matches: matches.slice(1) } } }), /matches differ/);
+  assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory,
+    laneReport: { command: "qa-impact.mjs", matches: [...matches, { name: "extra", command: "pnpm test:all", reason: impact.reason }] } } }), /matches differ/);
+  assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory, impactKey: "0".repeat(16) } }), /laneKey differs/);
+  assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory,
+    laneReport: { command: "qa-impact.mjs", matches: [{ ...matches[0], reason: "invented" }, ...matches.slice(1)] } } }), /reason differs/);
+  assert.match(problems({ ...evidence, testRuns: runs.slice(1) }), /lane python: no passing run/);
+  assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory,
+    laneReport: { command: "qa-impact.mjs", matches: [{ ...matches[0], mentionOnly: true, notRunReason: "by reference" }, ...matches.slice(1)] } },
+    testRuns: runs.slice(1) }), /lane python: no passing run/, "qa-impact cannot waive a selected lane as mention-only");
+  assert.match(problems({ ...evidence, testRuns: [{ ...runs[0], laneKey: "0".repeat(16) }, ...runs.slice(1)] }), /lane python: no passing run/);
+  assert.match(problems({ ...evidence, targetedInventory: { ...evidence.targetedInventory,
+    laneReport: { command: "pnpm test:lanes", matches: [] } } }), /has no test:lanes/);
+  writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: { "test:lanes": "fixture" } }));
+  assert.match(problems(evidence), /declares test:lanes/);
+  git(worktree, ["add", "package.json"], fixture.home);
+  git(worktree, ["commit", "--quiet", "-m", "repository lane script"], fixture.home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", "HEAD"], fixture.home);
+  writeFileSync(path.join(worktree, "package.json"), JSON.stringify({ scripts: {} }));
+  git(worktree, ["commit", "--quiet", "-am", "removed script on branch"], fixture.home);
+  assert.match(problems(evidence), /declares test:lanes/, "a branch cannot remove main's reporter to downgrade lane evidence");
 });
 
 test("the inventory reports the facts and gates only the pull-request phase", (t) => {

@@ -66,8 +66,12 @@ export function prEvidenceShapeProblems(evidence) {
       && (!/^[a-f0-9]{16}$/.test(evidence.qaImpact?.laneKey ?? "") || inventory.impactKey !== evidence.qaImpact.laneKey)) {
       problems.push("targetedInventory must name qaImpact.laneKey as its changed-file scope");
     }
-    if (inventory.laneReport?.command !== "pnpm test:lanes" || !Array.isArray(inventory.laneReport?.matches)) {
-      problems.push("targetedInventory.laneReport needs pnpm test:lanes and exact matching lane commands");
+    if (!["pnpm test:lanes", "qa-impact.mjs"].includes(inventory.laneReport?.command)
+      || !Array.isArray(inventory.laneReport?.matches)) {
+      problems.push("targetedInventory.laneReport needs a recognized repository lane source and exact matching commands");
+    }
+    if (inventory.laneReport?.command === "qa-impact.mjs" && !evidence?.qaImpactRequest) {
+      problems.push("qa-impact lane evidence needs its recomputable qaImpactRequest");
     }
     if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {
       problems.push("targetedInventory needs exact entries with paths, cases and commands, or a noTestsReason");

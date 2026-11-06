@@ -3,7 +3,7 @@
 // files), assertion and export changes, new apps/api refusals, ticket asks and
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
 
-import { withStableSource, validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
+import { withStableSource, validSourceIdentity, sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -20,9 +20,10 @@ import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS } from "./pr
 import { qaImpactRequest } from "./qa-impact.mjs";
 import { testIntegrityProblems } from "./test-integrity.mjs";
 
-const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
 const GH_LIST_FILE_CAP = 100;
+const OPEN_PR_START = 200;
+const OPEN_PR_CAP = 3200;
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const ASSERTION = /\b(?:expect|assert)\s*[.(]|\.(?:toBe|toEqual|toStrictEqual|toMatch|toThrow|toContain|toHave\w*)\b/;
 const SKIP = /\b(?:it|test|describe)\.(?:skip|todo|only)\s*\(/;
@@ -266,13 +267,25 @@ export function bodyProblems(body, facts, files, prBase, template = "", runsFile
 }
 
 /** Every open PR's complete file list; GitHub's diff endpoint caps large patches at 300 files. */
-export function loadOpenPrs() {
-  const prs = JSON.parse(gh(["pr", "list", "--repo", REPO, "--state", "open", "--limit", "200", "--json", "number,title,headRefName,files"]));
+/** Read open PRs and complete file lists from the GitHub repository owning this worktree. */
+export function loadOpenPrs(worktree = process.cwd()) {
+  const origin = git(worktree, ["config", "--get", "remote.origin.url"]);
+  const repo = gh(["repo", "view", origin, "--json", "nameWithOwner", "--jq", ".nameWithOwner"], worktree);
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("target GitHub repository could not be resolved from the worktree");
+  let limit = OPEN_PR_START;
+  let prs;
+  for (;;) {
+    prs = JSON.parse(gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", String(limit), "--json", "number,title,headRefName,files"], worktree));
+    if (!Array.isArray(prs) || prs.length > limit) throw new Error("open PR list returned an invalid page");
+    if (prs.length < limit) break;
+    if (limit === OPEN_PR_CAP) throw new Error(`open PR list reached ${OPEN_PR_CAP}; overlap is unverified`);
+    limit = Math.min(limit * 2, OPEN_PR_CAP);
+  }
   return prs.map(({ files, ...pr }) => {
     if (files.length < GH_LIST_FILE_CAP) return { ...pr, files: files.map((file) => file.path) };
-    const endpoint = `repos/${REPO}/pulls/${pr.number}`;
-    const count = Number(gh(["api", endpoint, "--jq", ".changed_files"]));
-    const names = gh(["api", "--paginate", `${endpoint}/files?per_page=100`, "--jq", ".[].filename"]).split("\n").filter(Boolean);
+    const endpoint = `repos/${repo}/pulls/${pr.number}`;
+    const count = Number(gh(["api", endpoint, "--jq", ".changed_files"], worktree));
+    const names = gh(["api", "--paginate", `${endpoint}/files?per_page=100`, "--jq", ".[].filename"], worktree).split("\n").filter(Boolean);
     if (!Number.isSafeInteger(count) || count < GH_LIST_FILE_CAP || names.length > count) {
       throw new Error(`PR #${pr.number} returned an invalid changed-file count`);
     }
@@ -394,8 +407,10 @@ function git(worktree, args) {
   return execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8", maxBuffer: MAX_BUFFER }).trim();
 }
 
-function gh(args) {
-  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: MAX_BUFFER }).trim();
+function gh(args, worktree = process.cwd()) {
+  const env = { ...process.env };
+  delete env.GH_REPO;
+  return execFileSync("gh", args, { cwd: worktree, env, encoding: "utf8", maxBuffer: MAX_BUFFER }).trim();
 }
 
 /**
@@ -496,6 +511,49 @@ function e2eCarriedForCi(evidence, selection, spec, commit) {
     && run.status === "not-run" && run.commit === commit && run.reason === reason);
 }
 
+/** The target's existing lane reporter decides which evidence contract applies. */
+function hasTestLanesScript(worktree) {
+  const manifest = path.join(worktree, "package.json");
+  const declares = (text) => {
+    if (text === null) return false;
+    let packageJson;
+    try { packageJson = JSON.parse(text); }
+    catch { throw new Error("target package.json is unreadable; lane source cannot be verified"); }
+    return typeof packageJson?.scripts?.["test:lanes"] === "string" && packageJson.scripts["test:lanes"].trim() !== "";
+  };
+  if (existsSync(manifest) && declares(readFileSync(manifest, "utf8"))) return true;
+  let mainManifest;
+  try { mainManifest = execFileSync("git", ["-C", worktree, "show", "refs/remotes/origin/main:package.json"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
+  catch { return false; }
+  return declares(mainManifest);
+}
+
+/** Recompute an alternative lane selection; a target with test:lanes keeps that stronger contract. */
+function laneSourceEvidence(runsFile, inventory, worktree) {
+  const kind = inventory.laneReport?.command;
+  if (!worktree) return { problems: kind === "qa-impact.mjs" ? ["qa-impact lane evidence needs the target worktree"] : [], impact: null };
+  let ownsReporter;
+  try { ownsReporter = hasTestLanesScript(worktree); }
+  catch (error) { return { problems: [error.message], impact: null }; }
+  if (ownsReporter) return { problems: kind === "pnpm test:lanes" ? [] : ["target repository declares test:lanes; qa-impact cannot replace its CI-equivalent report"], impact: null };
+  if (kind !== "qa-impact.mjs") return { problems: ["target repository has no test:lanes; use its source-bound qa-impact lane selection"], impact: null };
+  let impact;
+  try { impact = qaImpactRequest(worktree, runsFile.qaImpactRequest); }
+  catch (error) { return { problems: [`qa-impact lane selection could not be recomputed: ${error.message}`], impact: null }; }
+  const matches = inventory.laneReport.matches;
+  const commands = Array.isArray(matches) ? matches.map((entry) => entry?.command) : [];
+  const problems = [];
+  if (!sameSource(impact.source, sourceIdentity(worktree))) problems.push("qa-impact lane selection source differs from current worktree");
+  if (commands.length !== impact.lanes.length || new Set(commands).size !== commands.length
+    || commands.some((command) => !impact.lanes.includes(command))) problems.push("qa-impact lane matches differ from recomputed selected commands");
+  if (Array.isArray(matches) && matches.some((entry) => entry?.reason !== impact.reason)) problems.push("qa-impact lane reason differs from recomputed selection");
+  if (impact.lanes.length && (!/^[a-f0-9]{16}$/.test(impact.laneKey ?? "") || inventory.impactKey !== impact.laneKey)) {
+    problems.push("qa-impact laneKey differs from recomputed changed-file scope");
+  }
+  return { problems, impact };
+}
+
 /**
  * A PR is gated on a read-only inventory of its final committed diff. Every
  * inventory row names exact cases and a command, and has a passing result at
@@ -506,6 +564,8 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
   const { entries: selection } = readTestSelection(runsFile);
   const problems = [...prEvidenceShapeProblems(runsFile)];
+  const laneSource = laneSourceEvidence(runsFile, inventory, worktree);
+  problems.push(...laneSource.problems);
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   const laneRuns = runs.filter((run) => run?.lane);
   const older = Boolean(commit) && (inventory.commit !== commit || laneRuns.some((run) => run?.commit && run.commit !== commit));
@@ -517,16 +577,16 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   if (impactKey && inventory.impactKey !== impactKey) {
     problems.push("targeted inventory does not name recomputed qa-impact.mjs changed-file scope");
   }
-  if (inventory.laneReport?.command !== "pnpm test:lanes") problems.push("targeted inventory must use pnpm test:lanes as the repository lane source");
-  if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list the post-merge lane matches from pnpm test:lanes");
+  if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list exact lane matches from its repository source");
   const laneMatches = Array.isArray(inventory.laneReport?.matches) ? inventory.laneReport.matches : [];
   for (const lane of laneMatches) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
-    else if (!(lane.mentionOnly === true && text(lane.notRunReason))
+    else if (!(inventory.laneReport.command === "pnpm test:lanes" && lane.mentionOnly === true && text(lane.notRunReason))
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command
         && (!impactKey || run.commit === commit || run.laneKey === impactKey)
+        && (inventory.laneReport.command !== "qa-impact.mjs" || run.laneKey === laneSource.impact?.laneKey)
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
-      problems.push(`lane ${lane.name}: no passing run of its test:lanes command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
+      problems.push(`lane ${lane.name}: no passing run of its selected command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
     }
   }
   if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {

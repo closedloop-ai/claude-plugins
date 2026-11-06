@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
+import { qaImpactRequest } from "./qa-impact.mjs";
+import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
 test("the PR comment lists the final SHA, exact cases, command, tier and result SHA", () => {
   const commit = "f".repeat(40);
@@ -41,4 +47,47 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
     ...evidence,
     testSelection: { codeTestsFor: { "src/list.ts": ["list.test.ts"] } },
   }), /testSelection must be an array/);
+});
+
+test("qa-impact PR evidence comment needs the exact owned worktree", (t) => {
+  const { root, home, cleanup } = makeHome("pr-evidence-comment-source-");
+  t.after(cleanup);
+  const worktree = path.join(root, "worktree");
+  mkdirSync(worktree);
+  git(worktree, ["init", "--quiet"], home);
+  writeFileSync(path.join(worktree, "README.md"), "base\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], home);
+  const boundary = git(worktree, ["rev-parse", "HEAD"], home);
+  mkdirSync(path.join(worktree, "src"));
+  const file = "src/check.mjs";
+  writeFileSync(path.join(worktree, file), "export const checked = true;\n");
+  git(worktree, ["add", file], home);
+  git(worktree, ["commit", "--quiet", "-m", "checked"], home);
+  const commit = git(worktree, ["rev-parse", "HEAD"], home);
+  const command = "node --test plugins/vibe/skills/handoff/scripts/pr-facts.test.mjs";
+  const request = { lastQa: { boundary }, evidence: { screens: [] }, graphImporters: { importers: { [file]: [] } },
+    featureMap: { entries: [] }, laneSelections: { files: { [file]: [command] } } };
+  const impact = qaImpactRequest(worktree, request);
+  const evidence = { qaImpactRequest: request, testSelection: [], testIntegrityProofs: [], rerunCycles: [],
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, impactKey: impact.laneKey,
+      laneReport: { command: "qa-impact.mjs", matches: [{ name: "node", command, reason: impact.reason }] },
+      entries: [], noTestsReason: "lane only" },
+    testRuns: [{ lane: "node", command, status: "passed", commit, laneKey: impact.laneKey }],
+    e2eCapability: { selectedTier: "A", container: { dockerPresent: true, dockerReachable: true, memoryGiB: 24, diskGiB: 80,
+      minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "repo probe" }, native: { available: true, forbidden: false }, remote: { available: false } } };
+  assert.match(renderEvidenceComment(evidence, worktree), /Matching post-merge lanes: node:/);
+  assert.throws(() => renderEvidenceComment(evidence), /target worktree/);
+  const wrong = path.join(root, "wrong");
+  mkdirSync(wrong);
+  git(wrong, ["init", "--quiet"], home);
+  assert.throws(() => renderEvidenceComment(evidence, wrong), /could not be recomputed/);
+  const input = path.join(root, "evidence.json");
+  const output = path.join(root, "comment.md");
+  writeFileSync(input, JSON.stringify(evidence));
+  const cli = fileURLToPath(new URL("./pr-evidence-comment.mjs", import.meta.url));
+  const run = (args) => spawnSync(process.execPath, [cli, "--evidence", input, "--output", output, ...args], { encoding: "utf8" });
+  assert.equal(run(["--worktree", worktree]).status, 0);
+  assert.match(readFileSync(output, "utf8"), /Matching post-merge lanes: node:/);
+  assert.notEqual(run([]).status, 0, "the CLI cannot publish qa-impact evidence without a worktree");
 });

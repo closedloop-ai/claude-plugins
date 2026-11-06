@@ -18,10 +18,13 @@ def test_handoff_requires_final_diff_inventory_before_pr_creation() -> None:
     environment = read("agents/vibe-environment-worker.md")
     assert "`pre-pr` mode on the candidate\nHEAD plus diff/tree hashes" in handoff
     assert "read the final uncommitted change identified by HEAD plus\ndiff/tree hashes, never the plan" in verify
-    assert "Run `pnpm test:lanes`" in verify
+    assert "`pnpm test:lanes` when declared" in verify
+    assert "Recompute it and copy its `laneKey` to `impactKey`" in verify
+    assert "otherwise use `qaImpactRequest` for Python/Node/bench lane commands" in verify
     assert "post-merge-only lane" in verify
     assert "rerun only that failed case" in verify
     assert "pr-evidence-comment.mjs" in environment
+    assert 'pr-evidence-comment.mjs --worktree "<wt>"' in environment
     assert "blocking.prEvidence" in environment
 
 
