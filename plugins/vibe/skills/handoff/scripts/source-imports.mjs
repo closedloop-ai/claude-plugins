@@ -6,6 +6,7 @@ import path from "node:path";
 export const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|css|scss|sass|less|json|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot)$/;
 export const IMPORT_SPECIFIER = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
 const STYLESHEET = /\.(?:css|scss|sass|less)$/i;
+const SASS_SOURCE = /\.(?:scss|sass)$/i;
 const IDENTIFIER = /[\w$]/;
 const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".mjs", ".css", ".scss", ".sass", ".less", ".json", ".svg",
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".eot", "/index.ts", "/index.tsx"];
@@ -114,10 +115,11 @@ function templateImports(file, source, start) {
 export function importSpecifiers(file, source) {
   if (!source) return [];
   const css = STYLESHEET.test(file);
+  const sass = SASS_SOURCE.test(file);
   const found = [];
   let previous = "";
   for (let index = 0; index < source.length;) {
-    const next = trivia(source, index, css);
+    const next = trivia(source, index, css && !sass);
     if (next !== index) {
       index = next;
       continue;
@@ -145,7 +147,17 @@ export function importSpecifiers(file, source) {
         continue;
       }
     }
-    if (css && source.slice(index, index + 7).toLowerCase() === "@import" && !IDENTIFIER.test(source[index + 7] ?? "")) {
+    const sassRule = sass && (source.slice(index, index + 4).toLowerCase() === "@use" && !IDENTIFIER.test(source[index + 4] ?? "")
+      ? 4 : source.slice(index, index + 8).toLowerCase() === "@forward" && !IDENTIFIER.test(source[index + 8] ?? "") ? 8 : 0);
+    if (sassRule) {
+      const valueAt = trivia(source, index + sassRule, false);
+      const imported = source[valueAt] === '"' || source[valueAt] === "'" ? quoted(source, valueAt) : null;
+      if (imported) {
+        found.push(imported.value);
+        index = imported.end;
+        continue;
+      }
+    } else if (css && source.slice(index, index + 7).toLowerCase() === "@import" && !IDENTIFIER.test(source[index + 7] ?? "")) {
       const imported = cssImport(source, index + 7);
       if (imported) {
         found.push(imported.value);
@@ -179,6 +191,26 @@ export function importSpecifiers(file, source) {
   return found;
 }
 
+/** Sass's local module lookup tries direct/partial files, then index files, and rejects ambiguity. */
+function sassModule(stem, specifier, from, files) {
+  const extension = /\.(?:sass|scss|css)$/i.exec(stem)?.[0] ?? "";
+  const base = extension ? stem.slice(0, -extension.length) : stem;
+  const basename = path.posix.basename(base);
+  const partial = basename.startsWith("_") ? null : path.posix.join(path.posix.dirname(base), `_${basename}`);
+  const extensions = extension ? [extension] : [".sass", ".scss", ".css"];
+  const matches = [...new Set(extensions.flatMap((suffix) => [
+    `${base}${suffix}`,
+    ...(partial ? [`${partial}${suffix}`] : []),
+  ]))].filter((candidate) => files.has(candidate));
+  if (matches.length > 1) throw new Error(`ambiguous Sass module ${specifier} from ${from}: ${matches.join(", ")}`);
+  if (matches.length) return matches[0];
+  if (extension) return undefined;
+  const indexes = ["index.sass", "index.scss", "_index.sass", "_index.scss"]
+    .map((name) => path.posix.join(stem, name)).filter((candidate) => files.has(candidate));
+  if (indexes.length > 1) throw new Error(`ambiguous Sass module ${specifier} from ${from}: ${indexes.join(", ")}`);
+  return indexes[0];
+}
+
 /** An import specifier resolved to a file in `files` (relative or `@repo/`), or undefined. */
 export function resolveImport(from, specifier, files) {
   const target = STYLESHEET.test(from) ? specifier.split(/[?#]/, 1)[0] : specifier;
@@ -196,6 +228,11 @@ export function resolveImport(from, specifier, files) {
     stems = [path.posix.join(path.posix.dirname(from), target)];
   } else {
     return undefined;
+  }
+  if (SASS_SOURCE.test(from)) {
+    const resolved = stems.map((stem) => sassModule(stem, specifier, from, files)).filter(Boolean);
+    if (resolved.length > 1) throw new Error(`ambiguous Sass module ${specifier} from ${from}: ${resolved.join(", ")}`);
+    return resolved[0];
   }
   return stems.map((stem) => stem.replace(/\.js$/, "")).flatMap((stem) => SOURCE_EXTENSIONS.map((extension) => `${stem}${extension}`))
     .find((candidate) => files.has(candidate) && SOURCE_FILE.test(candidate));

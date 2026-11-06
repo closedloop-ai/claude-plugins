@@ -37,3 +37,26 @@ test("CSS imports include quoted and url forms without reading comments or decla
   assert.equal(resolveImport("apps/storybook/.storybook/preview.css", "plain.css", files), "apps/storybook/.storybook/plain.css");
   assert.equal(resolveImport("apps/storybook/.storybook/preview.css", "https://example.com/nested.css", files), undefined);
 });
+
+test("Sass @use and @forward resolve local partials and directory indexes without reading comments", () => {
+  const from = "apps/storybook/.storybook/preview.scss";
+  assert.deepEqual(importSpecifiers(from, [
+    '@use "palette" as colors;',
+    '@forward "themes" show theme;',
+    '// @use "unused";',
+    '/* @forward "blocked"; */',
+    '.example::before { content: "@use \\"text\\""; }',
+  ].join("\n")), ["palette", "themes"]);
+  assert.deepEqual(importSpecifiers("apps/storybook/.storybook/preview.sass", '@use "palette"\n// @forward "unused"\n@forward "themes"'),
+    ["palette", "themes"]);
+  const files = new Set([
+    "apps/storybook/.storybook/_palette.scss",
+    "apps/storybook/.storybook/themes/_index.scss",
+    "apps/storybook/.storybook/explicit.sass",
+  ]);
+  assert.equal(resolveImport(from, "palette", files), "apps/storybook/.storybook/_palette.scss");
+  assert.equal(resolveImport(from, "themes", files), "apps/storybook/.storybook/themes/_index.scss");
+  assert.equal(resolveImport(from, "explicit.sass", files), "apps/storybook/.storybook/explicit.sass");
+  assert.equal(resolveImport(from, "sass:color", files), undefined);
+  assert.throws(() => resolveImport(from, "palette", new Set([...files, "apps/storybook/.storybook/palette.scss"])), /ambiguous Sass module/);
+});

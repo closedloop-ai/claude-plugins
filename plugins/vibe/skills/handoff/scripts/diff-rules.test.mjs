@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
+import { parseUnifiedDiff, runDiffRules, storyId, transactionBodies } from "./diff-rules.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -313,6 +313,35 @@ test("extensionless preview imports resolve CSS separately before and after .ts/
   }
 });
 
+test("a recorded frozen line goes stale when CSS behind a story .ts/.tsx swap changes (ISS-13752)", (t) => {
+  const story = "apps/storybook/stories/one.stories.tsx";
+  const oldCss = "apps/storybook/stories/old.css";
+  const newCss = "apps/storybook/stories/new.css";
+  for (const [baseExtension, headExtension] of [["ts", "tsx"], ["tsx", "ts"]]) {
+    const oldModule = `apps/storybook/stories/shared.${baseExtension}`;
+    const newModule = `apps/storybook/stories/shared.${headExtension}`;
+    const base = {
+      [story]: 'import "./shared";\nexport default { title: "Composites v1.0/One" };\nexport const Default = {};\n',
+      [oldModule]: 'import "./old.css";\n',
+      [oldCss]: ".old { color: red; }\n",
+    };
+    const result = run(t, { base, head: {
+      [oldModule]: null,
+      [newModule]: 'import "./new.css";\n',
+      [newCss]: ".new { color: red; }\n",
+    }, commit: true });
+    const inputs = frozenInputs(result.checkout, result.baseSha, [story]);
+    const line = `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${result.baseSha} --story-file ${story}: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states ${storyId("Composites v1.0/One", "Default")}; inputs ${inputs}; out/results.json\n`;
+    writeFileSync(path.join(result.checkout, ".git", "vibe-changes.md"), line);
+    const findings = () => runDiffRules({ worktree: result.checkout, base: result.baseSha, isFrozenStory }).blocking.filter((entry) => entry.rule === "frozen-render");
+    assert.deepEqual(findings(), [], `${baseExtension} → ${headExtension}: original line is current`);
+    const changedCss = baseExtension === "ts" ? newCss : oldCss;
+    writeFileSync(path.join(result.checkout, changedCss), ".changed { color: blue; }\n");
+    assert.notEqual(frozenInputs(result.checkout, result.baseSha, [story]), inputs, `${baseExtension} → ${headExtension}: digest moves`);
+    assert.equal(findings().length, 1, `${baseExtension} → ${headExtension}: stale line is refused`);
+  }
+});
+
 test("preview CSS @import url reaches every frozen story and both input digests (ISS-13752)", (t) => {
   const first = "apps/storybook/stories/first.stories.tsx";
   const second = "apps/storybook/stories/second.stories.tsx";
@@ -369,6 +398,53 @@ test("untracked Storybook globals select every frozen story and enter the input 
     const changed = frozenInputs(result.checkout, result.baseSha, [story]);
     rmSync(path.join(result.checkout, file));
     assert.notEqual(changed, frozenInputs(result.checkout, result.baseSha, [story]), file);
+  }
+});
+
+test("a preview-only helper reaches an untracked stylesheet for selection and digest (ISS-13752)", (t) => {
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const helper = "apps/storybook/.storybook/helper.ts";
+  const fresh = "apps/storybook/.storybook/fresh.css";
+  const result = run(t, { base: {
+    [first]: "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    [second]: "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+    "apps/storybook/.storybook/preview.tsx": 'import "./helper";\n',
+    [helper]: "export const ready = true;\n",
+  }, head: {
+    [helper]: 'import "./fresh.css";\nexport const ready = true;\n',
+    [fresh]: ".fresh { color: blue; }\n",
+  } });
+  const finding = result.blocking.find((entry) => entry.rule === "frozen-render");
+  assert.ok(finding);
+  assert.match(finding.problem, /2 frozen v1\.0 story files/);
+  const changed = frozenInputs(result.checkout, result.baseSha, [first]);
+  rmSync(path.join(result.checkout, fresh));
+  assert.notEqual(changed, frozenInputs(result.checkout, result.baseSha, [first]));
+});
+
+test("transitive Sass @use and @forward imports reach every frozen story and digest (ISS-13752)", (t) => {
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const palette = "apps/storybook/.storybook/_palette.scss";
+  const index = "apps/storybook/.storybook/sets/_index.scss";
+  const original = ".theme { color: red; }\n";
+  const result = run(t, { base: {
+    [first]: "export default { title: \"Composites v1.0/First\" };\nexport const Default = {};\n",
+    [second]: "export default { title: \"Composites v1.0/Second\" };\nexport const Default = {};\n",
+    "apps/storybook/.storybook/preview.tsx": 'import "./preview.scss";\n',
+    "apps/storybook/.storybook/preview.scss": '@use "palette";\n',
+    [palette]: '@forward "sets";\n',
+    [index]: original,
+  }, head: { [index]: ".theme { color: blue; }\n" } });
+  const finding = result.blocking.find((entry) => entry.rule === "frozen-render");
+  assert.ok(finding);
+  assert.match(finding.problem, /2 frozen v1\.0 story files/);
+  for (const story of [first, second]) {
+    const changed = frozenInputs(result.checkout, result.baseSha, [story]);
+    writeFileSync(path.join(result.checkout, index), original);
+    assert.notEqual(changed, frozenInputs(result.checkout, result.baseSha, [story]));
+    writeFileSync(path.join(result.checkout, index), ".theme { color: blue; }\n");
   }
 });
 

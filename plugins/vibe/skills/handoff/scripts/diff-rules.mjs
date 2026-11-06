@@ -776,7 +776,7 @@ export function sidebarOrderTests(files, repo) {
 
 function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   let deepened = 0;
-  const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
+  const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
   const blobs = new Map();
   const baseBlobs = (paths) => {

@@ -434,12 +434,10 @@ export function frozenInputs(repo, base, storyFiles = []) {
   const run = (args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
   const baseFiles = new Set(run(["ls-tree", "-r", "--name-only", base]).split("\n").filter(Boolean));
   const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter(Boolean));
-  const allFiles = new Set([...baseFiles, ...headFiles]);
   const changed = [...new Set([
     ...run(["diff", "--name-only", "--no-renames", "-z", base]).split("\0"),
     ...run(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
   ].filter(Boolean))];
-  const closure = new Set();
   const texts = new Map();
   const textAt = (file, ref) => {
     const key = `${ref}:${file}`;
@@ -462,19 +460,22 @@ export function frozenInputs(repo, base, storyFiles = []) {
     (file) => textAt(file, "base"), (file) => textAt(file, "head"));
   const globalInput = (file) => isFrozenGlobalInput(file, previewClosure);
   const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(globalInput)])];
-  const queue = [...roots];
-  while (queue.length) {
-    const file = queue.shift();
-    if ((!SOURCE_FILE.test(file) && !globalInput(file)) || closure.has(file)) continue;
-    closure.add(file);
-    if (!IMPORT_SOURCE.test(file)) continue;
-    for (const text of [textAt(file, "base"), textAt(file, "head")]) {
-      for (const specifier of importSpecifiers(file, text)) {
-        const target = resolveImport(file, specifier, allFiles);
+  const walk = (files, ref) => {
+    const closure = new Set();
+    const queue = roots.filter((file) => files.has(file));
+    while (queue.length) {
+      const file = queue.shift();
+      if ((!SOURCE_FILE.test(file) && !globalInput(file)) || closure.has(file)) continue;
+      closure.add(file);
+      if (!IMPORT_SOURCE.test(file)) continue;
+      for (const specifier of importSpecifiers(file, textAt(file, ref))) {
+        const target = resolveImport(file, specifier, files);
         if (target && !closure.has(target)) queue.push(target);
       }
     }
-  }
+    return closure;
+  };
+  const closure = new Set([...walk(baseFiles, "base"), ...walk(headFiles, "head")]);
   const hash = createHash("sha256");
   for (const file of [...closure].sort()) {
     const absolute = path.join(repo, file);
