@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.51
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.47; the README version update does not change the net word count.
+
+#### Fixed
+- Background verify runs now keep the parent-written PID in a separate sidecar so it cannot overwrite a child-written result. Status also re-reads the run record after a failed liveness check, preserving a result the child finished during that check.
+
 ### vibe v1.1.47
 
 #### Changed

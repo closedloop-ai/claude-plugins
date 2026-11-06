@@ -4,7 +4,9 @@
 // reads the result. verify-run.mjs wires these into `--background`, `--status <id>` and `--wait <id>`.
 //
 // A run record lives in the session's git dir (`vibe-verify-runs/<id>.json`): the intended head,
-// the worker pid, progress as lanes finish, and the result. A record that still says `running`
+// progress as lanes finish, and the result. The starter stores the worker pid beside it until the
+// child records its own pid; this keeps parent and child from racing to replace the same JSON.
+// A record that still says `running`
 // whose process is gone is `orphaned`, never read as passed. The join says `passed` only when the
 // run finished with `ok`, its evidence head is the head under review, and the worktree is still at
 // that head; anything else is not a pass.
@@ -28,6 +30,7 @@ export function runDir(gitDir) {
 }
 
 export const recordFile = (gitDir, id) => path.join(runDir(gitDir), `${id}.json`);
+const pidFileFor = (gitDir, id) => path.join(runDir(gitDir), `${id}.pid`);
 export const evidenceFileFor = (gitDir, id) => path.join(runDir(gitDir), `${id}.evidence.json`);
 export const isRunId = (id) => RUN_ID.test(String(id));
 
@@ -60,14 +63,14 @@ export function writeRecord(gitDir, id, patch, fs = realFs) {
   fs.write(file, `${JSON.stringify({ schema: RUN_SCHEMA, ...current, ...patch, id }, null, 2)}\n`);
 }
 
-/** Starts `verify-run.mjs` detached with `--run-id`, writes the record, and returns at once. */
+/** Starts `verify-run.mjs` detached with `--run-id`; the child alone updates the JSON after spawn. */
 export function startBackground({ gitDir, worktree, head, scriptPath, passArgs, now = () => Date.now(), spawnDetached = defaultSpawn, fs = realFs, newId = newRunId }) {
   const id = newId(now());
   const evidenceFile = evidenceFileFor(gitDir, id);
   const logFile = path.join(runDir(gitDir), `${id}.log`);
   writeRecord(gitDir, id, { worktree, head, startedAt: new Date(now()).toISOString(), state: "starting", evidenceFile, logFile }, fs);
   const pid = spawnDetached(process.execPath, [scriptPath, "--worktree", worktree, "--head", head, ...passArgs, "--run-id", id, "--out", evidenceFile], { logFile });
-  writeRecord(gitDir, id, { pid, state: "running" }, fs);
+  fs.write(pidFileFor(gitDir, id), `${pid}\n`);
   return { id, pid, statusFile: recordFile(gitDir, id), evidenceFile, logFile, state: RunState.Running };
 }
 
@@ -87,19 +90,31 @@ export function readRun({ gitDir, id, currentHead, expectedHead, fs = realFs, al
   if (!fs.exists(file)) return { id, state: RunState.Unknown, reason: "no record of this run in this worktree" };
   const record = parseJson(fs.read(file), null);
   if (!record) return { id, state: RunState.Unknown, reason: "the run record is unreadable" };
-  const base = { id, head: record.head, evidenceHead: record.evidenceHead ?? null, startedAt: record.startedAt, finishedAt: record.finishedAt ?? null, progress: record.progress ?? [], evidenceFile: record.evidenceFile, statusFile: file };
-  if (record.state === "finished") {
-    if (!record.ok) return { ...base, state: RunState.Failed, summary: record.summary ?? null, reason: record.reason ?? "at least one required check did not pass" };
-    const wanted = (expectedHead ?? record.head ?? "").toLowerCase();
-    const matches = (head) => Boolean(head) && Boolean(wanted) && (head.startsWith(wanted) || wanted.startsWith(head));
-    if (!matches(record.evidenceHead) || (currentHead !== undefined && !matches(currentHead))) {
-      return { ...base, state: RunState.HeadMoved, summary: record.summary ?? null, reason: `the result is for ${String(record.evidenceHead).slice(0, 12)}, the head under review is ${String(currentHead ?? expectedHead).slice(0, 12)}` };
+  const classify = (observed) => {
+    const base = { id, head: observed.head, evidenceHead: observed.evidenceHead ?? null, startedAt: observed.startedAt, finishedAt: observed.finishedAt ?? null, progress: observed.progress ?? [], evidenceFile: observed.evidenceFile, statusFile: file };
+    if (observed.state === "finished") {
+      if (!observed.ok) return { base, terminal: { ...base, state: RunState.Failed, summary: observed.summary ?? null, reason: observed.reason ?? "at least one required check did not pass" } };
+      const wanted = (expectedHead ?? observed.head ?? "").toLowerCase();
+      const matches = (head) => Boolean(head) && Boolean(wanted) && (head.startsWith(wanted) || wanted.startsWith(head));
+      if (!matches(observed.evidenceHead) || (currentHead !== undefined && !matches(currentHead))) {
+        return { base, terminal: { ...base, state: RunState.HeadMoved, summary: observed.summary ?? null, reason: `the result is for ${String(observed.evidenceHead).slice(0, 12)}, the head under review is ${String(currentHead ?? expectedHead).slice(0, 12)}` } };
+      }
+      return { base, terminal: { ...base, state: RunState.Passed, summary: observed.summary ?? null } };
     }
-    return { ...base, state: RunState.Passed, summary: record.summary ?? null };
+    if (observed.state === "error") return { base, terminal: { ...base, state: RunState.Failed, reason: observed.error ?? "the run stopped with an error" } };
+    return { base, terminal: null };
+  };
+  const first = classify(record);
+  if (first.terminal) return first.terminal;
+  const pid = record.pid ?? (fs.exists(pidFileFor(gitDir, id)) ? Number(fs.read(pidFileFor(gitDir, id)).trim()) : undefined);
+  if (!alive(pid, id)) {
+    // The child may have finished after the first read but before the liveness check returned.
+    const latest = parseJson(fs.read(file), null);
+    const fresh = latest ? classify(latest) : first;
+    if (fresh.terminal) return fresh.terminal;
+    return { ...fresh.base, state: RunState.Orphaned, reason: "the run's process is gone and it never wrote a result; this is not a pass" };
   }
-  if (record.state === "error") return { ...base, state: RunState.Failed, reason: record.error ?? "the run stopped with an error" };
-  if (!alive(record.pid, id)) return { ...base, state: RunState.Orphaned, reason: "the run's process is gone and it never wrote a result; this is not a pass" };
-  return { ...base, state: RunState.Running };
+  return { ...first.base, state: RunState.Running };
 }
 
 /** Polls `readRun` until the run is not running, or `waitSeconds` pass (then it is still `running`). */
