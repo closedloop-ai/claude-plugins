@@ -238,14 +238,22 @@ test('board lines are snapshot lines: a scope change the writer has not acknowle
   git('commit', '--quiet', '--allow-empty', '-m', 'undeclared grader tweak');
   assert.match(f.run('ok'), /^board UNREADY-COMMIT w1 /m);
   const source = sourceIdentity(tree);
-  writeFileSync(join(git('rev-parse', '--absolute-git-dir'), 'vibe-lane-selection.json'), JSON.stringify({
+  const gitDir = git('rev-parse', '--absolute-git-dir');
+  const lane = 'node --test snapshot.test.mjs';
+  const laneKey = 'a'.repeat(64);
+  writeFileSync(join(gitDir, 'vibe-lane-selection.json'), JSON.stringify({
     schemaVersion: 1,
     source,
     firstCandidateSource: source,
     phase: 'followup',
-    selection: { kind: 'qa-impact', key: 'a'.repeat(64) },
-    lanes: [{ command: 'node --test snapshot.test.mjs', reason: 'changed board selected this snapshot test' }],
+    selection: { kind: 'qa-impact', key: laneKey },
+    lanes: [{ command: lane, reason: 'changed board selected this snapshot test' }],
   }));
+  writeFileSync(join(gitDir, 'vibe-lane-results.json'), JSON.stringify([{
+    command: lane, head: source.head, source, laneKey, result: 'pass', provenance: 'fresh',
+    selection: { kind: 'qa-impact', key: laneKey, reason: 'changed board selected this snapshot test' },
+    at: new Date().toISOString(),
+  }]));
   assert.equal(boardRun('writer', 'w1', '--ready', git('rev-parse', 'HEAD')).status, 0);
   assert.doesNotMatch(f.run('ok'), /^board /m);
 });
