@@ -124,7 +124,7 @@ const laneWorkflow = z.object({ jobs: z.record(workflowJob), env: z.record(workf
   name: z.string().optional(), on: z.union([z.string(), z.array(z.string()), z.record(z.unknown())]), concurrency: concurrency.optional(), permissions: z.union([z.string(), z.record(z.string())]).optional(),
   "run-name": z.string().optional(), defaults: z.object({ run: workflowRun.optional() }).strict().optional(),
 }).strict();
-export type WorkflowLane = { name: string; job: string; matrix: Record<string, string | number | boolean>; command: string };
+type WorkflowLane = { name: string; job: string; matrix: Record<string, string | number | boolean>; command: string };
 
 /** Bind the entire supported declared execution shape, not just shell steps. This identifies a definition, not proof of execution. */
 export function workflowLaneDefinitions(source: string): WorkflowLane[] {

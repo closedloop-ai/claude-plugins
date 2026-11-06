@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { promptProblems, skillFreshnessProblem } from "./skill-freshness.mjs";
 import { pluginScriptProblems } from "../../vibe/scripts/plugin-script-references.mjs";
-import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
+import { LoadBasis, loadedSkillEvidence, compareSkillVersions } from "../../vibe/scripts/loaded-skill.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "skill-freshness-"));
@@ -99,4 +99,19 @@ test("repository skill scripts and other plugins' scripts are never vibe plugin 
   assert.match(pluginScriptProblems(`run ${path.join(root, "skills", "handoff", "scripts", "removed.mjs")}:12`, root, worktree)[0] ?? "", /removed\.mjs: plugin script does not exist/,
     "an absolute path into a vibe plugin root is still checked against the installed release");
   assert.deepEqual(pluginScriptProblems(`run ${path.join(root, "skills", "handoff", "scripts", "handoff-gate.mjs")}`, root, worktree), []);
+});
+
+
+test("release comparison keeps numeric precedence and orders distinct numeric ties consistently", () => {
+  const tied = ['1.01.0', '1.1.0', '01.1.0'];
+  const expected = ['01.1.0', '1.01.0', '1.1.0'];
+  assert.deepEqual([...tied].sort(compareSkillVersions), expected);
+  assert.deepEqual([...tied].reverse().sort(compareSkillVersions), expected);
+  for (const left of tied) for (const right of tied) {
+    assert.equal(compareSkillVersions(left, right) === 0, left === right);
+    if (left !== right) assert.equal(compareSkillVersions(left, right), -compareSkillVersions(right, left));
+  }
+  assert.equal(compareSkillVersions('1.9.0', '1.10.0'), -1);
+  assert.equal(compareSkillVersions('2.0.0', '1.99.99'), 1);
+  assert.equal(compareSkillVersions('invalid', '1.0.0'), null);
 });

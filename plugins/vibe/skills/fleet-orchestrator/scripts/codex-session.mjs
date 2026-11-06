@@ -466,7 +466,7 @@ async function deliverReloadFenced(client, options, dependencies) {
 }
 
 /** Interrupt through the owned protocol, persist why before dispatch, and confirm the exact turn stopped. */
-export async function interruptSession(client, options, state, { wait = delay, attempts = 20 } = {}) {
+async function interruptSession(client, options, state, { wait = delay, attempts = 20 } = {}) {
   if (!options.reason?.trim() || options.reason.length > 1000) throw new Error('interrupt needs a nonempty --reason');
   if (state.ended) throw new Error('cannot interrupt an ended session');
   const current = await readThreadState(client, state.threadId);

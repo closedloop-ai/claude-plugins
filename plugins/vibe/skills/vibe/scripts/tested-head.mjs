@@ -103,11 +103,13 @@ export function committedSourceIdentity(worktree, commit) {
   if (!/^[a-f0-9]{40}$/.test(commit ?? "")) throw new Error("a verified full commit SHA is required");
   const run = args => execFileSync('git', ['-C', worktree, ...args], { maxBuffer: 128 * 1024 * 1024, timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
   if (run(['rev-parse', '--verify', `${commit}^{commit}`]).toString().trim() !== commit) throw new Error('unverified commit');
+  // Path remains primary; blob identity and mode also order duplicate-path tree entries.
   const entries = run(['ls-tree', '-rz', '--full-tree', commit]).toString().split('\0').filter(Boolean).map(line => {
     const match = /^(100644|100755|120000) blob ([a-f0-9]{40})\t(.+)$/.exec(line);
     if (!match) throw new Error('unsupported committed source entry');
     return { mode: match[1], oid: match[2], file: match[3] };
-  }).sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
+  }).sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1
+    : a.oid < b.oid ? -1 : a.oid > b.oid ? 1 : a.mode < b.mode ? -1 : a.mode > b.mode ? 1 : 0);
   const objects = execFileSync('git', ['-C', worktree, 'cat-file', '--batch'], {
     input: entries.length ? entries.map(entry => entry.oid).join('\n') + '\n' : '', maxBuffer: 128 * 1024 * 1024, timeout: 30_000,
   });

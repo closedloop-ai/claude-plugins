@@ -95,7 +95,7 @@ const LANE_KEY = /^[a-f0-9]{16}$/;
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const exactKeys = (value, keys) => object(value) && Object.keys(value).sort().join("|") === [...keys].sort().join("|");
 /** Literal repository-relative regular-file operands; never traversal, Git options or control characters. */
-export function evidencePath(value) {
+function evidencePath(value) {
   return typeof value === "string" && value.length > 0 && !/[\\\x00-\x1f]/.test(value)
     && !value.startsWith("/") && !value.startsWith("-") && value.split("/").every(part => part && ![".", "..", ".git"].includes(part));
 }

@@ -80,7 +80,7 @@ async function main(argv) {
 }
 
 /** Snapshot lines use each writer's saved evidence, including label=threadId monitor entries. */
-export function skillStaleLines(stateDir, specs, pluginRoot = INSTALLED_PLUGIN_ROOT) {
+function skillStaleLines(stateDir, specs, pluginRoot = INSTALLED_PLUGIN_ROOT) {
   const installed = installedPluginVersion(pluginRoot);
   return specs.flatMap(spec => {
     const [writer, threadId] = spec.split('=');

@@ -200,3 +200,29 @@ test('immutable committed fingerprints match clean source and ignore later dirty
   assert.equal(identity.committedFile(source, commit, 'plugins/vibe/input.md').toString(), 'selected input');
   assert.throws(() => identity.committedFile(source, commit, 'missing'));
 });
+
+
+test('immutable source ordering breaks path ties by blob identity and mode', t => {
+  const { source, home } = snapshotFixture(t);
+  const blob = file => git(source, ['rev-parse', `HEAD:${file}`], home);
+  // Real immutable trees can encode duplicate paths; never depend on their traversal order.
+  const first = blob('.gitignore');
+  const second = blob('plugins/vibe/input.md');
+  const entries = [
+    { mode: '100644', oid: first },
+    { mode: '100755', oid: first },
+    { mode: '100644', oid: second },
+  ];
+  const fingerprint = rows => {
+    const bytes = Buffer.concat(rows.map(({ mode, oid }) =>
+      Buffer.concat([Buffer.from(`${mode} tied.txt\0`), Buffer.from(oid, 'hex')])));
+    const stored = spawnSync('git', ['-C', source, 'hash-object', '--literally', '-w', '-t', 'tree', '--stdin'],
+      { input: bytes, encoding: 'utf8', timeout: 10_000 });
+    assert.equal(stored.status, 0, stored.stderr);
+    const commit = git(source, ['commit-tree', stored.stdout.trim(), '-m', 'tied immutable entries'], home);
+    assert.equal(git(source, ['ls-tree', '-r', commit], home).split('\n').length, 3);
+    return identity.committedSourceIdentity(source, commit).treeSha256;
+  };
+  assert.equal(fingerprint(entries), fingerprint([...entries].reverse()));
+  assert.equal(fingerprint(entries), fingerprint([entries[1], entries[2], entries[0]]));
+});

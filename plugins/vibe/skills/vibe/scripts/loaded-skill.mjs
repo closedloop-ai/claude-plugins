@@ -27,13 +27,13 @@ export function skillReloadPage({ threadId, nonce, definition, definitionSha256,
     acknowledge: `VIBE_SKILL_RELOAD_ACK v1 ${nonce}` })}`;
 }
 
-/** Compare strict release versions; unknown values never establish an upgrade. */
+/** Compare release components numerically, then exact spelling for ties; unknown values never establish an upgrade. */
 export function compareSkillVersions(left, right) {
   const version = /^(\d+)\.(\d+)\.(\d+)$/;
   const a = version.exec(left ?? ''); const b = version.exec(right ?? '');
   if (!a || !b) return null;
   for (let i = 1; i < 4; i += 1) if (Number(a[i]) !== Number(b[i])) return Number(a[i]) < Number(b[i]) ? -1 : 1;
-  return 0;
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /** Only an authentic-shaped older actor binding qualifies for in-place recovery, never a wrong actor. */
