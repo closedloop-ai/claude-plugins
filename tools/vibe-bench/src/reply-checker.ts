@@ -122,11 +122,11 @@ export function validateReplyCheckerInstallation(vibeDir: string,
 
 /** Apply only the exact manifest-mapped checker verdicts to a cloned Claude aggregate. */
 export function applyClaudeReplyCheckers(raw: unknown, expectedCases: string[],
-  replies: Map<string, string>): {
+  replies: Map<string, string>, driverVibeDir = DRIVER_VIBE_DIR): {
     raw: unknown; changed: boolean; overrideHash: string; provenance: string[];
     checkerVersion: string; checkerSha256: string;
   } {
-  const installation = checkerInstallation(DRIVER_VIBE_DIR, expectedCases);
+  const installation = checkerInstallation(driverVibeDir, expectedCases);
   const entries = installation.entries;
   if (!entries.length) return { raw, changed: false, overrideHash: "", provenance: [],
     checkerVersion: "", checkerSha256: "" };

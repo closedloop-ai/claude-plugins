@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.52
+### vibe v1.1.54
 
 #### Changed
 - The private nightly run tree keeps each Claude case's final reply as the same per-case `reply.txt` artifact Codex writes, then removes the retained native temp trace. Published baseline results keep their existing allowlisted schema and never include reply text or local paths.
@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The current PRD-child reply contract exposes placeholder-only fields with bounded `COMMENT`, `ACTION`, `REASON`, and `SUPERSEDE` tokens. Validation accepts optional terminal punctuation only, rejects extra fields and suffixes, and keeps natural-language compatibility confined to the saved legacy replies.
 - PRD children with real activity under another person are again reported and excluded from the build, never claimed, built, canceled or superseded.
 - Native Codex review receipts canonicalize hyphen separators in App Server MCP server names to the registered underscore form before capability matching. Only completed MCP items from the exact accepted turn count; operation names, other servers, failed calls, command text and reviewer summaries remain distinct.
+- Deterministic checker provenance records the current driver plugin version while old-subject parity uses an explicit driver fixture with identical checker bytes. The local eval harness separately declares model execution and Claude trace artifacts, keeping deterministic CI model-free, and Codex manifest keys narrow to strings before typed lookup.
 
 ### vibe v1.1.51
 

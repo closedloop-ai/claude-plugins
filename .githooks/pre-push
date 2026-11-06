@@ -1,9 +1,18 @@
 #!/bin/bash
-# Pre-push hook: Require changelog updates when modifying plugins in plugins/
+# Pre-push hook: Require changelog updates when modifying plugins in plugins/,
+# and run CI's Ruff and Pyright checks when Python changes are pushed.
 #
 # This script checks if any files in plugins/ are being pushed and ensures
 # that the repository changelog (or a plugin-local changelog, if present) is
 # also being modified.
+#
+# When the pushed commits change a Python file or Python config, it then runs
+# the commands of CI's Lint and Type Check jobs (.github/workflows/ci.yml)
+# against a snapshot of each pushed commit, with uv and the job's Python
+# version, and refuses the push if either fails. Requires uv.
+#
+# Bypass the Ruff and Pyright checks for one push (the CHANGELOG check still
+# runs): SKIP_PYTHON_CHECKS=1 git push
 
 set -e
 
@@ -12,6 +21,9 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+PYTHON_PATHS_RE='(\.pyi?|(^|/)(pyproject\.toml|uv\.lock|pyrightconfig\.json|\.?ruff\.toml))$'
+python_check_shas=""
 
 # Read the push information from stdin
 # Format: <local ref> <local sha> <remote ref> <remote sha>
@@ -36,6 +48,10 @@ while read -r -t 5 local_ref local_sha remote_ref remote_sha; do
 
     if [ -z "$changed_files" ]; then
         continue
+    fi
+
+    if echo "$changed_files" | grep -qE "$PYTHON_PATHS_RE"; then
+        python_check_shas="${python_check_shas}${local_sha}"$'\n'
     fi
 
     # Check for changes in plugins/ (excluding plugin-local CHANGELOG.md files)
@@ -75,4 +91,77 @@ while read -r -t 5 local_ref local_sha remote_ref remote_sha; do
     fi
 done
 
+if [ -z "$python_check_shas" ]; then
+    echo "Ruff and Pyright skipped: no Python file or Python config changed in the pushed commits"
+    exit 0
+fi
+
+if [ "${SKIP_PYTHON_CHECKS:-}" = "1" ]; then
+    echo -e "${YELLOW}Ruff and Pyright skipped: SKIP_PYTHON_CHECKS=1${NC}"
+    exit 0
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: uv is required to run CI's Ruff and Pyright checks before pushing Python changes${NC}"
+    echo "Install uv (https://docs.astral.sh/uv/), or bypass once with SKIP_PYTHON_CHECKS=1 git push"
+    exit 1
+fi
+
+# Prints the setup-uv python-version of one job in the snapshot's ci.yml.
+ci_python_version() {
+    awk -v job="  $2:" '
+        $0 == job { in_job = 1; next }
+        in_job && /^  [^ ]/ { exit }
+        in_job && $1 == "python-version:" { gsub(/"/, "", $2); print $2; exit }
+    ' "$1/.github/workflows/ci.yml"
+}
+
+# Runs one CI job's commands in the snapshot: uv sync, then the check.
+# Arguments: snapshot dir, ci.yml job id, CI job name, check command...
+run_ci_job() {
+    local snapshot="$1" job_id="$2" job_name="$3" python_version log
+    shift 3
+    python_version=$(ci_python_version "$snapshot" "$job_id")
+    if [ -z "$python_version" ]; then
+        echo -e "${RED}✗ ${job_name}: no python-version for job '${job_id}' in .github/workflows/ci.yml${NC}"
+        return 1
+    fi
+    log="$snapshot/.pre-push-${job_id}.log"
+    if (cd "$snapshot" && UV_PYTHON="$python_version" uv sync --frozen --group dev && UV_PYTHON="$python_version" "$@") >"$log" 2>&1; then
+        echo -e "${GREEN}✓ ${job_name} passed ($*)${NC}"
+        return 0
+    fi
+    cat "$log"
+    echo -e "${RED}✗ ${job_name} failed ($*)${NC}"
+    return 1
+}
+
+started_at=$SECONDS
+snapshot_dir=""
+trap 'if [ -n "$snapshot_dir" ]; then rm -rf "$snapshot_dir" "$snapshot_dir.tar"; fi' EXIT
+failed_jobs=""
+
+for sha in $(printf '%s' "$python_check_shas" | sort -u); do
+    echo "Running CI's Lint and Type Check jobs on ${sha:0:12}..."
+    snapshot_dir=$(mktemp -d "${TMPDIR:-/tmp}/claude-plugins-pre-push.XXXXXX")
+    git archive --format=tar -o "$snapshot_dir.tar" "$sha"
+    tar -x -f "$snapshot_dir.tar" -C "$snapshot_dir"
+    # Same commands as the lint and typecheck jobs in .github/workflows/ci.yml.
+    if ! run_ci_job "$snapshot_dir" lint "Lint" uv run ruff check .; then
+        failed_jobs="${failed_jobs:+$failed_jobs, }Lint"
+    fi
+    if ! run_ci_job "$snapshot_dir" typecheck "Type Check" uv run pyright; then
+        failed_jobs="${failed_jobs:+$failed_jobs, }Type Check"
+    fi
+    rm -rf "$snapshot_dir" "$snapshot_dir.tar"
+    snapshot_dir=""
+done
+
+if [ -n "$failed_jobs" ]; then
+    echo -e "${RED}ERROR: push refused, CI job(s) failed: ${failed_jobs}${NC}"
+    echo "Fix the errors above, or bypass once with SKIP_PYTHON_CHECKS=1 git push"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Ruff and Pyright passed in $((SECONDS - started_at))s${NC}"
 exit 0

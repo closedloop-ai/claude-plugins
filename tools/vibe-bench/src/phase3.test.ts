@@ -1169,12 +1169,15 @@ test("Codex deterministic-only artifacts record exactly the expected wording ski
 });
 
 class FakeCommands implements EvalCommands {
-  readonly localModelExecution: boolean;
+  readonly localModelExecution = false;
+  readonly providesClaudeTraceArtifacts: boolean;
+  private readonly writeReplyTraces: boolean;
   private readonly claudeMode: "valid" | "missing" | "malformed" | "schema" | "case" |
     "traversal" | "symlink" | "clobber" | "private";
   calls: Array<{ command: string; args: string[]; deadline: number | null }> = [];
-  constructor(localModelExecution = false, claudeMode: FakeCommands["claudeMode"] = "valid") {
-    this.localModelExecution = localModelExecution;
+  constructor(writeReplyTraces = false, claudeMode: FakeCommands["claudeMode"] = "valid") {
+    this.writeReplyTraces = writeReplyTraces;
+    this.providesClaudeTraceArtifacts = writeReplyTraces;
     this.claudeMode = claudeMode;
   }
   async run(command: string, args: string[], _cwd?: string, _options?: {
@@ -1208,7 +1211,7 @@ class FakeCommands implements EvalCommands {
         "closedloop-core"), true, caseIds, version, coreVersion);
       if (this.claudeMode === "schema") native.partial = true;
       if (this.claudeMode === "case") native.cases[0]!.name = "pm-substituted-case";
-      if (this.localModelExecution) {
+      if (this.writeReplyTraces) {
         const temp = _options?.env?.TMPDIR;
         assert.equal(typeof temp, "string");
         for (const [index, item] of native.cases.entries()) {

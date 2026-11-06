@@ -23,6 +23,8 @@ pytest plugins/code/tools/python/test_count_tokens.py -k test_name  # single tes
 # divergence can mask reportOptionalMemberAccess and similar diagnostics)
 uv run ruff check .
 uv run pyright
+# .githooks/pre-push runs both on the pushed commit when it changes Python;
+# SKIP_PYTHON_CHECKS=1 git push bypasses them for one push
 
 # TypeScript tool scripts (toolchain lives at tools/design-inventory; bundles committed into plugin)
 cd tools/design-inventory

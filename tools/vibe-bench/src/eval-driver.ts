@@ -53,6 +53,7 @@ export interface LocalEvalOptions {
 /** Process boundary injected by tests so no model command is launched there. */
 export interface EvalCommands {
   readonly localModelExecution: boolean;
+  readonly providesClaudeTraceArtifacts: boolean;
   run(command: string, args: string[], cwd: string, options: {
     deadline: number;
     signal?: AbortSignal;
@@ -76,6 +77,7 @@ export function evalModelProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJ
 
 class SystemEvalCommands implements EvalCommands {
   readonly localModelExecution = true;
+  readonly providesClaudeTraceArtifacts = true;
   async run(command: string, args: string[], cwd: string, options: {
     deadline: number;
     signal?: AbortSignal;
@@ -414,7 +416,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
       } else {
         try {
           const mapped = hasMappedReplyCheckers(partition.ordinary);
-          const replies = commands.localModelExecution || mapped
+          const replies = commands.providesClaudeTraceArtifacts || mapped
             ? preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp)
             : new Map<string, string>();
           if (!mapped) {

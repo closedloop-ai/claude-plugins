@@ -70,14 +70,18 @@ def reply_checker(case_id: str, grader_name: str) -> Path | None:
     for item in manifest["entries"]:
         if not isinstance(item, dict) or set(item) != {"caseId", "graderName", "checker"}:
             raise CheckerInfrastructureError("eval-checker-manifest-invalid")
-        entry_key = (item.get("caseId"), item.get("graderName"))
+        case_id_value = item.get("caseId")
+        grader_name_value = item.get("graderName")
         checker = item.get("checker")
         if (
-            not all(isinstance(value, str) for value in entry_key)
+            not isinstance(case_id_value, str)
+            or not isinstance(grader_name_value, str)
             or not isinstance(checker, str)
             or not re.fullmatch(r"[a-z0-9-]+\.mjs", checker)
-            or entry_key in mappings
         ):
+            raise CheckerInfrastructureError("eval-checker-manifest-invalid")
+        entry_key: tuple[str, str] = (case_id_value, grader_name_value)
+        if entry_key in mappings:
             raise CheckerInfrastructureError("eval-checker-manifest-invalid")
         mappings[entry_key] = checker
     if key not in mappings:

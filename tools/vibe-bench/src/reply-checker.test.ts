@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync,
+  writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 
 import { collectClaudeEval } from "./eval-collector.ts";
 import { applyClaudeReplyCheckers, deterministicClaudeRecord,
@@ -36,12 +37,25 @@ function native(passed: boolean, vibePath = vibeRoot, vibeVersion = "1.1.49") {
 const expected = { version: "1.1.49", coreVersion: "1.6.2", cliVersion: "2.1.316",
   vibePath: vibeRoot, corePath: coreRoot, model: "claude-sonnet-5-5", runs: 1 };
 
-test("ISS-13760 Claude overrides are mapped-only and preserve native provenance", () => {
+function checkerDriverFixture(t: TestContext): string {
+  const root = mkdtempSync(join(tmpdir(), "vibe-checker-driver-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, ".claude-plugin"));
+  mkdirSync(join(root, "evals/checkers"), { recursive: true });
+  writeFileSync(join(root, ".claude-plugin/plugin.json"), JSON.stringify({ version: "1.1.49" }));
+  for (const file of ["manifest.json", "iss-13760-reply-format.mjs"]) {
+    cpSync(join(vibeRoot, "evals/checkers", file), join(root, "evals/checkers", file));
+  }
+  return root;
+}
+
+test("ISS-13760 Claude overrides are mapped-only and preserve native provenance", (t) => {
+  const checkerDriver = checkerDriverFixture(t);
   const original = native(true);
   const badReply = goodReply.replace("ISS-9000_COORDINATOR", "ISS-9000_COORDINATOR_EXTRA");
   const nativeCollected = collectClaudeEval(original, [caseId], expected);
   const overridden = applyClaudeReplyCheckers(original, [caseId],
-    new Map([[caseId, badReply]]));
+    new Map([[caseId, badReply]]), checkerDriver);
   assert.equal(overridden.changed, true);
   assert.deepEqual(original, native(true), "native aggregate remains immutable");
   const semantic = collectClaudeEval(overridden.raw, [caseId], expected);
@@ -67,13 +81,14 @@ test("ISS-13760 Claude overrides are mapped-only and preserve native provenance"
     result: nativeCollected, invalidReason: null }, semantic, overridden), /native-provenance-invalid/);
 });
 
-test("ISS-13760 old subject snapshots use the driver checker revision", () => {
+test("ISS-13760 old subject snapshots use the driver checker revision", (t) => {
+  const checkerDriver = checkerDriverFixture(t);
   const oldSubject = "/released/vibe/1.1.45-without-checkers";
   const raw = native(true, oldSubject, "1.1.45");
   const oldExpected = { ...expected, version: "1.1.45", vibePath: oldSubject };
   const nativeCollected = collectClaudeEval(raw, [caseId], oldExpected);
   const overridden = applyClaudeReplyCheckers(raw, [caseId],
-    new Map([[caseId, goodReply]]));
+    new Map([[caseId, goodReply]]), checkerDriver);
   const semantic = collectClaudeEval(overridden.raw, [caseId], oldExpected);
   const record = deterministicClaudeRecord({ runtime: "claude", exitCode: 0,
     result: nativeCollected, invalidReason: null }, semantic, overridden);
@@ -81,6 +96,21 @@ test("ISS-13760 old subject snapshots use the driver checker revision", () => {
   assert.equal(record.result?.deterministicOverride?.checkerSha256,
     validateReplyCheckerInstallation(vibeRoot, [caseId]).sha256);
   assert.equal(record.result?.cases[0]?.passed, true);
+});
+
+test("ISS-13760 production default records current driver provenance", () => {
+  const currentVersion = "1.1.54";
+  const raw = native(true, vibeRoot, currentVersion);
+  const currentExpected = { ...expected, version: currentVersion };
+  const nativeCollected = collectClaudeEval(raw, [caseId], currentExpected);
+  const overridden = applyClaudeReplyCheckers(raw, [caseId],
+    new Map([[caseId, goodReply]]));
+  const semantic = collectClaudeEval(overridden.raw, [caseId], currentExpected);
+  const record = deterministicClaudeRecord({ runtime: "claude", exitCode: 0,
+    result: nativeCollected, invalidReason: null }, semantic, overridden);
+  const installation = validateReplyCheckerInstallation(vibeRoot, [caseId]);
+  assert.equal(record.result?.deterministicOverride?.checkerVersion, currentVersion);
+  assert.equal(record.result?.deterministicOverride?.checkerSha256, installation.sha256);
 });
 
 test("ISS-13760 Claude checker manifest and module boundaries fail closed", () => {
