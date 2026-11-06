@@ -27,6 +27,8 @@ import { mergeEvalSuiteResults, statefulInfrastructureInvalidReason,
 import type { UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
 import { privateReplyDestination, privateTextProblem, writePrivateReply } from "./private-artifact.ts";
+import { applyClaudeReplyCheckers, deterministicClaudeRecord,
+  hasMappedReplyCheckers } from "./reply-checker.ts";
 
 /** Explicit inputs for a local-only dual-runtime model eval. */
 export interface LocalEvalOptions {
@@ -100,13 +102,13 @@ class SystemEvalCommands implements EvalCommands {
 
 function json(path: string): unknown {
   if (!existsSync(path)) throw new Error("eval-native-artifact-missing");
-  try { return JSON.parse(readFileSync(path, "utf8")) as unknown; }
+  try { return JSON.parse(readFileSync(path, "utf8")); }
   catch { throw new Error("eval-native-artifact-malformed"); }
 }
 
 function nativeObject(value: unknown, reason: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(reason);
-  return value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(value));
 }
 
 function nativeArray(value: unknown, reason: string): unknown[] {
@@ -120,9 +122,8 @@ function stableReason(error: unknown, runtime: "claude" | "codex"): string {
 }
 
 function manifestVersion(pluginDir: string): string {
-  const manifest = JSON.parse(readFileSync(join(pluginDir, ".claude-plugin/plugin.json"), "utf8")) as {
-    version?: unknown;
-  };
+  const manifest = nativeObject(JSON.parse(readFileSync(
+    join(pluginDir, ".claude-plugin/plugin.json"), "utf8")), "eval-plugin-manifest-invalid");
   if (typeof manifest.version !== "string") throw new Error("eval-plugin-version-invalid");
   return manifest.version;
 }
@@ -139,7 +140,7 @@ function claudeReplyText(tracePath: string, allowedTempParent: string): string {
   let reply = "";
   for (const line of readFileSync(canonicalTrace, "utf8").split(/\r?\n/).filter(Boolean)) {
     let event: Record<string, unknown>;
-    try { event = nativeObject(JSON.parse(line) as unknown, "eval-claude-reply-trace-invalid"); }
+    try { event = nativeObject(JSON.parse(line), "eval-claude-reply-trace-invalid"); }
     catch { throw new Error("eval-claude-reply-trace-invalid"); }
     if (event.type === "result" && typeof event.result === "string" && event.result.trim()) {
       reply = event.result;
@@ -160,7 +161,7 @@ function claudeReplyText(tracePath: string, allowedTempParent: string): string {
 
 /** Materialize every validated Claude final reply in the same private case shape as Codex. */
 export function preserveClaudeReplies(raw: unknown, outputDir: string,
-  expectedCases: string[], allowedTempParent: string): void {
+  expectedCases: string[], allowedTempParent: string): Map<string, string> {
   const root = nativeObject(raw, "eval-claude-json-invalid");
   const cases = nativeArray(root.cases, "eval-claude-cases-invalid");
   const actual = cases.map((rawCase) => {
@@ -177,15 +178,17 @@ export function preserveClaudeReplies(raw: unknown, outputDir: string,
     if (runs.length !== 1) throw new Error("eval-claude-runs-invalid");
     const run = nativeObject(runs[0], "eval-claude-run-invalid");
     if (typeof run.tracePath !== "string") throw new Error("eval-claude-reply-trace-missing");
-    const caseId = codexCaseId(item.name as string);
+    if (typeof item.name !== "string") throw new Error("eval-claude-case-invalid");
+    const caseId = codexCaseId(item.name);
     const reply = claudeReplyText(run.tracePath, allowedTempParent);
     if (privateTextProblem(reply)) throw new Error("eval-private-reply-private-data");
-    return { destination: privateReplyDestination(outputDir, caseId),
-      reply };
+    return { caseId: item.name,
+      destination: privateReplyDestination(outputDir, caseId), reply };
   });
   for (const item of replies) {
     writePrivateReply(item.destination, item.reply);
   }
+  return new Map(replies.map((item) => [item.caseId, item.reply]));
 }
 
 /** Require T2 to measure one exact clean main commit. */
@@ -395,19 +398,38 @@ export async function runLocalEvals(options: LocalEvalOptions,
       (item as PromiseFulfilledResult<{ status: number; stdout: string; stderr: string } | null>).value);
     if (claudeProcess) writeProcessLog(join(options.runRoot, "claude-process.log"), claudeProcess);
     if (codexProcess) writeProcessLog(join(options.runRoot, "codex-process.log"), codexProcess);
-    if (claudeProcess && claudeVersion) ordinaryRecords.push(
-      record("claude", claudeProcess.status, () => {
-        const claudeNative = json(claudeJson);
-        const collected = collectClaudeEval(claudeNative, partition.ordinary, {
-          version: vibeVersion, coreVersion, cliVersion: claudeVersion,
-          vibePath: snapshot.vibeDir, corePath: snapshot.coreDir,
-          model: EVAL_POLICY.claudeModel, runs: 1,
-        });
-        if (commands.localModelExecution) {
-          preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp);
+    if (claudeProcess && claudeVersion) {
+      let claudeNative: unknown;
+      const expected = {
+        version: vibeVersion, coreVersion, cliVersion: claudeVersion,
+        vibePath: snapshot.vibeDir, corePath: snapshot.coreDir,
+        model: EVAL_POLICY.claudeModel, runs: 1,
+      };
+      const nativeRecord = record("claude", claudeProcess.status, () => {
+        claudeNative = json(claudeJson);
+        return collectClaudeEval(claudeNative, partition.ordinary, expected);
+      });
+      if (nativeRecord.invalidReason || !nativeRecord.result) {
+        ordinaryRecords.push(nativeRecord);
+      } else {
+        try {
+          const mapped = hasMappedReplyCheckers(partition.ordinary);
+          const replies = commands.localModelExecution || mapped
+            ? preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp)
+            : new Map<string, string>();
+          if (!mapped) {
+            ordinaryRecords.push(nativeRecord);
+          } else {
+            const overridden = applyClaudeReplyCheckers(claudeNative, partition.ordinary, replies);
+            const semantic = collectClaudeEval(overridden.raw, partition.ordinary, expected);
+            ordinaryRecords.push(deterministicClaudeRecord(nativeRecord, semantic, overridden));
+          }
+        } catch (error) {
+          ordinaryRecords.push({ runtime: "claude", exitCode: claudeProcess.status, result: null,
+            invalidReason: stableReason(error, "claude") });
         }
-        return collected;
-      }));
+      }
+    }
     if (codexProcess && codexVersion) ordinaryRecords.push(record("codex", codexProcess.status,
       () => collectCodexEval(json(join(codexOutput, "results.json")), partition.ordinary, {
         sourceSha: options.pluginSha, skillSha, version: vibeVersion, cliVersion: codexVersion,
