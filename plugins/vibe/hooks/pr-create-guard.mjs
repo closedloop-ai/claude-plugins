@@ -5,6 +5,7 @@ import { commandSegments } from "./command-segments.mjs";
 import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { inVibeSession } from "./foreground-guard.mjs";
 import { handoffGateProblem } from "../skills/handoff/scripts/handoff-gate.mjs";
+import { cloudPrProblem } from "../skills/vibe/scripts/cloud-worker.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import os from "node:os";
 
@@ -342,6 +343,8 @@ export function prCreateGuard(event, home = os.homedir()) {
       if (vibeWorktree(call.cwd) === false) continue;
       return deny("gh pr create refused: no vibe session record in the command worktree");
     }
+    const cloudProblem = cloudPrProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile });
+    if (cloudProblem) return deny(`gh pr create refused: ${cloudProblem}`);
     const problem = handoffGateProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile });
     if (problem) return deny(`gh pr create refused: ${problem}; run the final handoff gate on the published source`);
   }

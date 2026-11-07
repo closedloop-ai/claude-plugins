@@ -27,6 +27,7 @@ import { parseArgs } from "node:util";
 import { UsageState } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
 import { DEFAULT_STALE_SECONDS } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { CLASSES, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
+import { decideCloudPlacement } from "./cloud-placement.mjs";
 
 export const DISPATCH_ROUTE_SCHEMA = "vibe.fleet-dispatch-route/1";
 export const SWITCH_ENV = "FLEET_CLASS_ROUTING";
@@ -78,29 +79,35 @@ export function routeClass({ manifestClass, codexIsHigh = null, claudeIsHigh = n
 }
 
 /** The whole decision; anything short of an enabled switch, a valid manifest and a decided class is today's behavior. */
-export function chooseDispatch({ enabled, manifest, codexUsage, claudeUsage, codexReadAt, claudeReadAt, now, staleSeconds }) {
+export function chooseDispatch({ enabled, manifest, codexUsage, claudeUsage, codexReadAt, claudeReadAt, now, staleSeconds, placementInput }) {
   const bound = { now, staleSeconds };
-  const today = (reason) => ({ routed: false, class: null, runtime: null, qaGuide: QaGuide.Launch, reason });
+  const placement = decideCloudPlacement(placementInput);
+  const today = (reason) => ({ routed: false, class: null, runtime: null, qaGuide: QaGuide.Launch, reason, placement });
   if (!enabled) return today("class routing switch is off");
   let checked;
   try { checked = validateManifest(manifest); } catch (error) { return today(error.message); }
   if (checked.class === CLASSES.Unknown) return today("class unknown: the evidence did not decide one");
   const decision = routeClass({ manifestClass: checked.class, codexIsHigh: codexHigh(freshReading(codexUsage, codexReadAt, bound)), claudeIsHigh: claudeHigh(freshReading(claudeUsage, claudeReadAt, bound)) });
-  return { routed: true, class: checked.class, ...decision };
+  return { routed: true, class: checked.class, ...decision, placement };
 }
 
 function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
     manifest: { type: "string" }, "codex-usage": { type: "string" }, "claude-usage": { type: "string" }, "codex-read-at": { type: "string" }, "claude-read-at": { type: "string" },
-    "stale-seconds": { type: "string" }, enable: { type: "boolean" },
+    "stale-seconds": { type: "string" }, "placement-file": { type: "string" }, enable: { type: "boolean" },
   } });
   if (!values.manifest) throw new Error("--manifest is required");
   let manifest = null;
   try { manifest = JSON.parse(readFileSync(values.manifest, "utf8")); } catch { /* missing or unreadable: today's behavior */ }
+  let placementInput = null;
+  if (values["placement-file"]) {
+    try { placementInput = JSON.parse(readFileSync(values["placement-file"], "utf8")); }
+    catch { /* invalid evidence is local-only */ }
+  }
   const enabled = Boolean(values.enable) || process.env[SWITCH_ENV] === "1";
   const decision = chooseDispatch({ enabled, manifest, codexUsage: values["codex-usage"], claudeUsage: values["claude-usage"],
     codexReadAt: values["codex-read-at"], claudeReadAt: values["claude-read-at"],
-    ...(values["stale-seconds"] ? { staleSeconds: Number(values["stale-seconds"]) } : {}) });
+    ...(values["stale-seconds"] ? { staleSeconds: Number(values["stale-seconds"]) } : {}), placementInput });
   process.stdout.write(`${JSON.stringify({ schema: DISPATCH_ROUTE_SCHEMA, ...decision })}\n`);
   return 0;
 }
