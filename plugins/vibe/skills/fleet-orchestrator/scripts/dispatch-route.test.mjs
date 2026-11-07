@@ -95,3 +95,14 @@ test('the CLI honours the environment switch and reads the manifest file', () =>
   assert.equal(missing.routed, false);
   assert.equal(run([]).status, 2);
 });
+
+test('the route CLI reports cloud placement from the shared policy file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'route-placement-'));
+  const manifest = join(dir, 'triage.json');
+  const placement = join(dir, 'placement.json');
+  writeFileSync(manifest, JSON.stringify(manifestFor('fix the copy on the pricing page', ['apps/app/pricing.tsx'])));
+  writeFileSync(placement, JSON.stringify({ codeOnly: true, needsRunningApp: false, localEvidence: [] }));
+  const result = spawnSync(process.execPath, [SCRIPT, '--manifest', manifest, '--placement-file', placement], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).placement.placement, 'cloud');
+});

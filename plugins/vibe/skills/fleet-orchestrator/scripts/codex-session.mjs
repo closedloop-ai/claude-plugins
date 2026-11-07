@@ -334,6 +334,15 @@ async function reloadItems(client, threadId, turnId, matches, scan, checkpoint) 
   return { items, more: true };
 }
 
+/**
+ * The actor's exact page acknowledgement. A model reply may end with whitespace (a real ACK arrived as
+ * `VIBE_SKILL_RELOAD_ACK v1 <nonce>\n\n` on 2026-11-06), so only surrounding whitespace is ignored; any other
+ * text or another nonce is not an acknowledgement.
+ */
+export function isReloadAck(item, nonce) {
+  return item?.type === 'agentMessage' && typeof item.text === 'string' && item.text.trim() === `VIBE_SKILL_RELOAD_ACK v1 ${nonce}`;
+}
+
 function userText(item) {
   return item?.type === 'userMessage' ? (item.content ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n') : null;
 }
@@ -387,7 +396,7 @@ async function deliverReloadFenced(client, options, dependencies) {
     const checkpoint = scan => { if (scan) pending.scan = scan; else delete pending.scan; persist(); };
     try {
       receipt = await reloadItems(client, state.threadId, turnId, item =>
-        (item?.type === 'agentMessage' && item.text === `VIBE_SKILL_RELOAD_ACK v1 ${pending.nonce}`)
+        isReloadAck(item, pending.nonce)
         || (pending.kind === 'brief' && userText(item) === pending.text), pending.scan, checkpoint);
     } catch (error) {
       if (!options.retry || !pending.scan) throw error;
@@ -395,7 +404,7 @@ async function deliverReloadFenced(client, options, dependencies) {
       receipt = { items: [], more: false };
     }
     const { items } = receipt;
-    const acknowledged = items.some(item => item?.type === 'agentMessage' && item.text === `VIBE_SKILL_RELOAD_ACK v1 ${pending.nonce}`);
+    const acknowledged = items.some(item => isReloadAck(item, pending.nonce));
     const replayed = items.some(item => userText(item) === pending.text);
     if (!pending.turnId && (acknowledged || replayed)) {
       pending.turnId = turnId;

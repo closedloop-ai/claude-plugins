@@ -101,6 +101,7 @@ import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
+import { unexplainedLockfileEntries } from "./lockfile-manifest.mjs";
 import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
 import { buildInventoryBundle } from "./inventory-bundle.mjs";
@@ -194,10 +195,24 @@ const result = withStableSource(worktree, () => {
   const shrinkOnlyPaths = new Set(shrinkOnlyAllowlists.map((file) => file.path));
   const classifications = new Map(changedFiles.map((file) => [file.path, classifyPath(file)]));
   const testRepairs = changedFiles.filter((file) => classifications.get(file.path)?.reason === "test-repair");
+  const lockfile = changedFiles.find((file) => file.path === "pnpm-lock.yaml");
+  const unexplainedLockfile = lockfile
+    ? unexplainedLockfileEntries({
+      before: readBaseFile(lockfile.path) ?? null,
+      after: readWorktreeFile(lockfile.path) ?? null,
+      manifests: changedFiles.filter((file) => path.posix.basename(file.path) === "package.json" &&
+        classifications.get(file.path)?.disposition === PathDisposition.Allowed).map((file) => ({
+          file: file.path,
+          before: readBaseFile(file.path) ?? null,
+          after: readWorktreeFile(file.path) ?? null,
+        })),
+    }) : [];
+  const explainedLockfile = lockfile && unexplainedLockfile.length === 0;
   const forbidden = changedFiles.filter((file) =>
     classifications.get(file.path)?.disposition === PathDisposition.Forbidden && !shrinkOnlyPaths.has(file.path));
   const outsideAllowed = changedFiles.filter(
-    (file) => classifications.get(file.path)?.disposition === PathDisposition.Outside && !shrinkOnlyPaths.has(file.path)
+    (file) => classifications.get(file.path)?.disposition === PathDisposition.Outside &&
+      !shrinkOnlyPaths.has(file.path) && !(file === lockfile && explainedLockfile)
   );
   const backendFiles = changedFiles.filter((file) => isBackend(file.path));
   const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
@@ -216,7 +231,7 @@ const result = withStableSource(worktree, () => {
   const diffRulesBlocking = diffRules.blocking.filter((finding) => !deferredToHandoff.includes(finding));
 
   const blocking = {
-    forbiddenPaths: !pathPolicyProblem && forbidden.length === 0 && outsideAllowed.length === 0,
+    forbiddenPaths: !pathPolicyProblem && forbidden.length === 0 && outsideAllowed.length === 0 && unexplainedLockfile.length === 0,
     hasChanges: changedFiles.length > 0,
     storiesInV2Taxonomy: v1Stories.length === 0,
     existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
@@ -253,6 +268,7 @@ const result = withStableSource(worktree, () => {
     trackedLocalPlans,
     forbidden,
     outsideAllowed,
+    unexplainedLockfileEntries: unexplainedLockfile,
     shrinkOnlyAllowlists,
     testRepairs,
     retiredTests,

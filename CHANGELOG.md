@@ -9,6 +9,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Added
 - New `closedloop-core:agent-qa` skill (`/closedloop-core:agent-qa` in Claude Code, `$agent-qa` in Codex) for selected web/mobile tests, saved-run evidence review and memidex knowledge provenance. Preserves recorded verdicts, matches the requested target and build, and separates historical knowledge use from current status. Its instructions ship under Apache-2.0; the separately licensed agent-qa runtime is not bundled.
 
+### vibe v1.1.61
+
+#### Added
+- Fleet cloud dispatch now applies one code-only placement policy, generates a Vibe brief from locked criteria and digest-bound local graph evidence, and starts Claude RemoteTrigger or legacy Codex Cloud tasks noninteractively. It clears Claude's auto-attached connectors before execution, keeps run and session IDs distinct, bounds polling, records wall time, and wraps Claude follow-ups.
+- Cloud results import into a canonical Vibe-created worktree as uncommitted changes with a provider/result/source witness. Claude branch import checks the operator's commit author; every Codex invocation removes only its own `error.log`. The existing PR guard now rejects an unimported or stale cloud result and requires the current handoff gate, opposite-harness review and operator-authored local commit.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 98 words longer than in 1.1.57 (origin/main at the build, 68a756870fef53bfebb0b8f3e4b218ea455b5f7a).
+
+### vibe v1.1.57
+
+#### Fixed
+- In-place skill reload in `codex-session.mjs` now accepts a page acknowledgement whose agent message, with surrounding whitespace trimmed, is exactly `VIBE_SKILL_RELOAD_ACK v1 <nonce>`. A reply that ended with trailing newlines never advanced its page, so every `reload` and `--retry` call waited for an acknowledgement that had already arrived. One shared matcher, `isReloadAck`, serves both the receipt scan and the acknowledgement check; extra words or another nonce still never acknowledge a page.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.55 (origin/main at the merge, 7ffa4aee44f8); only the README version line changed.
+
+### vibe v1.1.55
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.54 (origin/main at this merge, 16c854310eac).
+
+#### Fixed
+- Handoff admits `pnpm-lock.yaml` changes only when changed importer and resolved package entries follow dependency edits in package manifests allowed by the target repository; malformed or unexplained entries are named when refusing the handoff.
+- Lockfile evidence parsing rejects malformed manifest dependency maps and keeps its regression coverage in focused test files.
+- Manifest dependency evidence uses own string-map fields, including explicit-null rejection, and its lockfile regressions stay split into focused suites.
+
 ### vibe v1.1.54
 
 #### Changed

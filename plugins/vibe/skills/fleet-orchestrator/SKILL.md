@@ -169,6 +169,10 @@ Pushback applies principle 2; more patterns: [references/judgment.md](./referenc
 - Repo knowledge: a repo fact a worker learns goes into the team's repo memory (`REPO_MEMORY_CMD`), and into the nearest `AGENTS.md` through that worker's PR when it binds code.
 - Deadline mode, only when the operator rules it (record it in `rulings.md` with its end): no pre-merge e2e (`pre-pr-lanes.mjs --skip <lanes> --skip-ruling <the ruling>`), follow-up pushes run focused tests plus the affected typecheck and leave full lanes to CI, and extras ship in follow-up PRs.
 - Runtime choice: judgment-heavy work and takeovers go to Claude writers, which are faster; bulk mechanical work goes to Codex on `CODEX_MODEL`, which is cheaper. Move work on usage and speed.
+
+### Cloud workers
+
+For every dispatch, use the placement reported by `scripts/dispatch-route.mjs` and enforced by `../vibe/scripts/cloud-worker.mjs`: cloud only for code-only work needing no running app or local evidence. From the Vibe session, locked criteria and local graph results, run its `record-evidence`, then `dispatch --request <file>`; `poll` and `import` resume and return the task to Vibe. After the unchanged local handoff, full lanes and independent cross-harness review, run `refresh-import` before `ready` or opening a PR. The existing PR guard enforces the import witness. Keep graph research in the brief, never a cloud connector. Claude clears auto-attached connectors before run.
 - Off by default: `node scripts/dispatch-route.mjs --manifest <triage manifest> [--codex-usage <line> --codex-read-at <time>] [--claude-usage <line> --claude-read-at <time>]` (`FLEET_CLASS_ROUTING=1`) names the runtime for a ticket from its class and the usage lines, each used only with a read time no older than 30 minutes and never when it reports an unknown reading, and whether its pull request gets a QA-guide session; `node scripts/dispatch-budget.mjs` (`FLEET_BUDGET_GUIDANCE=1`) says how many heavy runs the shared worker budget has room for when `VIBE_HEAVY_BUDGET=on`, and otherwise the slot count. `slot heavy` still enforces its caps.
 
 ## Lessons loop
