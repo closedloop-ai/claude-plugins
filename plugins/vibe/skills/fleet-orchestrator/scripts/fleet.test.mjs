@@ -29,7 +29,7 @@ function fixture(config) {
   if (config !== undefined) writeFileSync(join(orch, 'config.env'), config);
   writeFileSync(join(orch, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: loadEvidence(), harnesses: [] }));
   // Resolution, freshness and owned admission use real Node; other operational calls remain recorded.
-  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*slot-lock-child.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   writeLoopbackSsh(bin, join(root, 'ssh-args'));
   writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_LOAD:-0}"\n');
   writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "${FLEET_TEST_LOAD:-0}"\n');

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Nested heavy slot requests now reuse the live slot inherited from their process tree instead of waiting for another machine slot. Unrelated processes still obey the configured slot cap.
+- Nested slot cleanup now uses a remotely shipped detached process-group helper: TERM, INT, and HUP drain descendants with bounded escalation before capacity is released, while reused wrappers revalidate the live ancestor lock owner before relaying shutdown signals.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 38 words longer than in 1.1.54 (origin/main at the merge).
 
 ### vibe v1.1.54

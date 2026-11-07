@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT = fileURLToPath(new URL('./slot-lock.sh', import.meta.url));
+const CHILD_SCRIPT = fileURLToPath(new URL('./slot-lock-child.mjs', import.meta.url));
 const TIMEOUT = { timeout: 20_000 };
 
 function lockRoot() {
@@ -22,8 +23,8 @@ function runSync(root, args, input) {
 }
 
 /** Spawns the script and resolves `waitFor(stream, text)` once that text appears on the stream. */
-function start(root, args, envOverrides = {}) {
-  const child = spawn('bash', [SCRIPT, ...args], { env: { ...env(root), ...envOverrides } });
+function start(root, args, envOverrides = {}, spawnOptions = {}) {
+  const child = spawn('bash', [SCRIPT, ...args], { ...spawnOptions, env: { ...env(root), ...envOverrides } });
   const seen = { stdout: '', stderr: '' };
   const waiters = [];
   for (const stream of ['stdout', 'stderr']) {
@@ -55,6 +56,22 @@ function holdSlot(root, name, n, owner = 'holder') {
 function deadPid() {
   return spawnSync('true').pid;
 }
+
+test('the child helper owns signals before it creates the detached group', TIMEOUT, () => {
+  const source = readFileSync(CHILD_SCRIPT, 'utf8');
+  const spawnAt = source.indexOf("child = spawn(command");
+  assert.ok(spawnAt > 0);
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    const handlerAt = source.indexOf(`process.on('${signal}'`);
+    assert.ok(handlerAt > 0 && handlerAt < spawnAt, `${signal} is persistent before spawn`);
+  }
+  // Node delivers JS signal callbacks only after the synchronous spawn/listener turn yields. The
+  // spawnReady fence covers a pending signal, while this failed-spawn path proves no group is orphaned.
+  const root = lockRoot();
+  const failed = runSync(root, ['e2e', 'w1', join(root, 'missing-command')]);
+  assert.equal(failed.status, 127, failed.stderr);
+  assert.equal(existsSync(join(root, 'e2e-1.lock')), false);
+});
 
 test('runs the command with its stdin, returns its exit status and frees the slot', TIMEOUT, () => {
   const root = lockRoot();
@@ -204,6 +221,150 @@ test('SIGTERM stops the command and frees the slot', TIMEOUT, async () => {
   assert.equal(existsSync(join(root, 'e2e-1.lock')), false);
   const childPid = Number(readFileSync(marker, 'utf8'));
   assert.throws(() => process.kill(childPid, 0), { code: 'ESRCH' });
+});
+
+test('nested TERM cleanup keeps the owning slot until the descendant exits', TIMEOUT, async () => {
+  const root = lockRoot();
+  const marker = join(root, 'nested-done');
+  const leaf = `trap 'sleep 1; touch "$1"; exit 0' TERM; echo nested-ready; while :; do sleep 0.05; done`;
+  const outer = start(root, ['heavy', 'outer writer',
+    'bash', SCRIPT, 'heavy', 'nested writer', 'sh', '-c', leaf, '_', marker]);
+  await outer.waitFor('stdout', 'nested-ready');
+  outer.child.kill('SIGTERM');
+
+  const contender = start(root, ['heavy', 'next writer', 'echo', 'contender ran']);
+  await contender.waitFor('stderr', 'slot-lock: heavy busy');
+  assert.equal(existsSync(marker), false, 'the descendant is still cleaning up');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), true, 'capacity stays held during nested cleanup');
+  assert.equal(contender.seen.stdout, '');
+
+  assert.deepEqual(await outer.exited, { code: 143, signal: null });
+  assert.equal(existsSync(marker), true, 'the descendant finished its TERM cleanup');
+  assert.deepEqual(await contender.exited, { code: 0, signal: null });
+  assert.equal(contender.seen.stdout, 'contender ran\n');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), false, 'capacity is released after cleanup');
+});
+
+test('a process-group TERM and the wrapper forward share one cleanup without releasing early', TIMEOUT, async () => {
+  const root = lockRoot();
+  const marker = join(root, 'group-term-done');
+  const leaf = `trap 'sleep 1; touch "$1"; exit 0' TERM; echo group-term-ready; while :; do sleep 0.05; done`;
+  const outer = start(root, ['heavy', 'outer writer',
+    'bash', SCRIPT, 'heavy', 'nested writer', 'sh', '-c', leaf, '_', marker], {}, { detached: true });
+  await outer.waitFor('stdout', 'group-term-ready');
+  assert.ok(outer.child.pid > 1);
+  process.kill(-outer.child.pid, 'SIGTERM');
+
+  const contender = start(root, ['heavy', 'next writer', 'echo', 'contender ran']);
+  await contender.waitFor('stderr', 'slot-lock: heavy busy');
+  assert.equal(existsSync(marker), false, 'the repeated TERM path is still draining');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), true, 'capacity remains held during repeated TERM');
+  assert.equal(contender.seen.stdout, '');
+
+  assert.deepEqual(await outer.exited, { code: 143, signal: null });
+  assert.equal(existsSync(marker), true);
+  assert.deepEqual(await contender.exited, { code: 0, signal: null });
+  assert.equal(contender.seen.stdout, 'contender ran\n');
+});
+
+test('SIGHUP drains nested descendants before releasing capacity', TIMEOUT, async () => {
+  const root = lockRoot();
+  const marker = join(root, 'hup-done');
+  const leaf = `trap 'sleep 1; touch "$1"; exit 0' TERM; echo hup-ready; while :; do sleep 0.05; done`;
+  const outer = start(root, ['heavy', 'outer writer',
+    'bash', SCRIPT, 'heavy', 'nested writer', 'sh', '-c', leaf, '_', marker], {}, { detached: true });
+  await outer.waitFor('stdout', 'hup-ready');
+  assert.ok(outer.child.pid > 1);
+  process.kill(-outer.child.pid, 'SIGHUP');
+
+  const contender = start(root, ['heavy', 'next writer', 'echo', 'contender ran']);
+  await contender.waitFor('stderr', 'slot-lock: heavy busy');
+  assert.equal(existsSync(marker), false, 'the SIGHUP path is still draining');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), true, 'capacity remains held during SIGHUP cleanup');
+  assert.equal(contender.seen.stdout, '');
+
+  assert.deepEqual(await outer.exited, { code: 129, signal: null });
+  assert.equal(existsSync(marker), true);
+  assert.deepEqual(await contender.exited, { code: 0, signal: null });
+  assert.equal(contender.seen.stdout, 'contender ran\n');
+});
+
+test('signaling only a reused wrapper delegates bounded cleanup to the verified owner', TIMEOUT, async () => {
+  const root = lockRoot();
+  const pidsFile = join(root, 'reused-wrapper-pids');
+  const leaf = `trap '' HUP INT TERM; echo "$PPID $$" > "$1"; echo reused-ready; while :; do sleep 0.05; done`;
+  const outer = start(root, ['heavy', 'outer writer',
+    'bash', SCRIPT, 'heavy', 'nested writer', 'sh', '-c', leaf, '_', pidsFile]);
+  await outer.waitFor('stdout', 'reused-ready');
+  const [innerPid, leafPid] = readFileSync(pidsFile, 'utf8').trim().split(/\s+/).map(Number);
+  process.kill(innerPid, 'SIGTERM');
+
+  const contender = start(root, ['heavy', 'next writer', 'echo', 'contender ran']);
+  await contender.waitFor('stderr', 'slot-lock: heavy busy');
+  assert.equal(contender.seen.stdout, '');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), true, 'the verified owner retains capacity');
+
+  assert.deepEqual(await outer.exited, { code: 143, signal: null });
+  for (const pid of [innerPid, leafPid]) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  assert.deepEqual(await contender.exited, { code: 0, signal: null });
+  assert.equal(contender.seen.stdout, 'contender ran\n');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), false);
+});
+
+test('a reused wrapper rechecks ownership before relaying its terminating signal', TIMEOUT, async () => {
+  const root = lockRoot();
+  const pidsFile = join(root, 'stale-relay-pids');
+  const leaf = `trap '' HUP INT TERM; echo "$PPID $$" > "$1"; echo stale-relay-ready; while :; do sleep 0.05; done`;
+  const outer = start(root, ['heavy', 'outer writer',
+    'bash', SCRIPT, 'heavy', 'nested writer', 'sh', '-c', leaf, '_', pidsFile]);
+  await outer.waitFor('stdout', 'stale-relay-ready');
+  const lockPidFile = join(root, 'heavy-1.lock', 'pid');
+  const ownerPid = Number(readFileSync(lockPidFile, 'utf8'));
+  const [innerPid, leafPid] = readFileSync(pidsFile, 'utf8').trim().split(/\s+/).map(Number);
+  writeFileSync(lockPidFile, `${process.pid}\n`); // Invalidate the proof after reuse was admitted.
+  process.kill(innerPid, 'SIGTERM');
+
+  const contender = start(root, ['heavy', 'next writer', 'echo', 'contender ran']);
+  await contender.waitFor('stderr', 'slot-lock: heavy busy');
+  const ownerStayedRunning = await Promise.race([
+    outer.exited.then(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(true), 300)),
+  ]);
+  assert.equal(ownerStayedRunning, true, 'stale proof must not signal the former relay target');
+  assert.doesNotThrow(() => process.kill(ownerPid, 0));
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), true, 'local cleanup fails closed with capacity held');
+  assert.equal(contender.seen.stdout, '');
+
+  writeFileSync(lockPidFile, `${ownerPid}\n`);
+  outer.child.kill('SIGTERM');
+  assert.deepEqual(await outer.exited, { code: 143, signal: null });
+  for (const pid of [innerPid, leafPid]) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  assert.deepEqual(await contender.exited, { code: 0, signal: null });
+  assert.equal(contender.seen.stdout, 'contender ran\n');
+});
+
+test('nested TERM cleanup force-stops a descendant chain that ignores TERM', TIMEOUT, async () => {
+  const root = lockRoot();
+  const pidsFile = join(root, 'stubborn-pids');
+  const leaf = `trap '' TERM; sleep 30 & echo "$$ $!" > "$1"; echo stubborn-ready; wait`;
+  const outer = start(root, ['heavy', 'outer writer',
+    'bash', SCRIPT, 'heavy', 'nested writer', 'sh', '-c', leaf, '_', pidsFile]);
+  await outer.waitFor('stdout', 'stubborn-ready');
+  const pids = readFileSync(pidsFile, 'utf8').trim().split(/\s+/).map(Number);
+  const started = Date.now();
+  outer.child.kill('SIGTERM');
+
+  const contender = start(root, ['heavy', 'next writer', 'echo', 'contender ran']);
+  await contender.waitFor('stderr', 'slot-lock: heavy busy');
+  assert.equal(contender.seen.stdout, '');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), true, 'capacity stays held during the grace period');
+
+  assert.deepEqual(await outer.exited, { code: 143, signal: null });
+  assert.ok(Date.now() - started >= 1_800, 'the TERM grace elapses before forced cleanup');
+  for (const pid of pids) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  assert.deepEqual(await contender.exited, { code: 0, signal: null });
+  assert.equal(contender.seen.stdout, 'contender ran\n');
+  assert.equal(existsSync(join(root, 'heavy-1.lock')), false, 'capacity is released after forced cleanup');
 });
 
 test('rejects bad arguments with usage and exit 2', TIMEOUT, () => {

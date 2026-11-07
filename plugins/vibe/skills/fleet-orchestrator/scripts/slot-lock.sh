@@ -68,20 +68,19 @@ is_process_ancestor() {
   return 1
 }
 
-held_slot=${held_lock#"$lock_root/$name-"}
-held_slot=${held_slot%.lock}
-if [ "$held_lock" = "$lock_root/$name-$held_slot.lock" ]; then
-  case "$held_slot" in
-    '' | *[!0-9]*) ;;
-    *)
-      if [ -n "$held_pid" ] && [ -f "$held_lock/pid" ] &&
-        [ "$(cat "$held_lock/pid")" = "$held_pid" ] && kill -0 "$held_pid" 2>/dev/null &&
-        is_process_ancestor "$held_pid"; then
-        reused=1
-      fi
-      ;;
-  esac
-fi
+held_lock_is_owned() {
+  local held_slot current_pid
+  held_slot=${held_lock#"$lock_root/$name-"}
+  held_slot=${held_slot%.lock}
+  [ "$held_lock" = "$lock_root/$name-$held_slot.lock" ] || return 1
+  case "$held_slot" in '' | *[!0-9]*) return 1 ;; esac
+  [ -n "$held_pid" ] && [ -f "$held_lock/pid" ] || return 1
+  current_pid=$(cat "$held_lock/pid" 2>/dev/null) || return 1
+  [ "$current_pid" = "$held_pid" ] && kill -0 "$held_pid" 2>/dev/null &&
+    is_process_ancestor "$held_pid"
+}
+
+if held_lock_is_owned; then reused=1; fi
 acquire() {
   local n candidate
   for n in $(seq 1 "$slots"); do
@@ -99,16 +98,29 @@ acquire() {
 }
 
 child=
-admitting=
+releasing=
+exit_signal=
 release() {
-  [ -n "$child" ] && kill "$child" 2>/dev/null
-  # Fence admission handles the signal and exits promptly; reap it before removing its record.
-  [ -n "$child" ] && [ -n "$admitting" ] && wait "$child" 2>/dev/null
+  [ -n "$releasing" ] && return
+  releasing=1
+  trap '' HUP INT TERM
+  # A reused wrapper owns no process group. Relay its terminating signal to the already-verified
+  # outer lock owner, which is the single actor responsible for bounded group cleanup.
+  if [ -n "$reused" ] && [ -n "$exit_signal" ] && held_lock_is_owned; then
+    kill -s "$exit_signal" "$held_pid" 2>/dev/null || :
+  fi
+  if [ -n "$child" ]; then
+    kill "$child" 2>/dev/null
+    # The owning child helper applies a bounded TERM/grace/KILL to its detached group. Reused wrappers
+    # remain in that group, so waiting here reaps the helper before the owned lock releases capacity.
+    wait "$child" 2>/dev/null
+  fi
   [ -n "$lock" ] && rm -rf "$lock"
 }
 trap release EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'exit_signal=HUP; exit 129' HUP
+trap 'exit_signal=INT; exit 130' INT
+trap 'exit_signal=TERM; exit 143' TERM
 
 if [ -z "$reused" ]; then
   until acquire; do
@@ -119,12 +131,11 @@ fi
 
 if [ "$name" = heavy ] && [ -z "$reused" ]; then
   here=$(cd "$(dirname "$0")" && pwd)
-  admitting=1
   node "$here/../../vibe/scripts/owned-state.mjs" admit-heavy "$lock" "$$" "$owner" </dev/null >/dev/null &
   child=$!
   wait "$child"
   status=$?
-  child= admitting=
+  child=
   [ "$status" -eq 0 ] || exit "$status"
 fi
 
@@ -143,8 +154,11 @@ fi
 # the explicit <&0 keeps its stdin, which bash would otherwise point at /dev/null for a background job.
 if [ -z "$reused" ]; then
   export SLOT_LOCK_HELD_PATH=$lock SLOT_LOCK_HELD_PID=$$
+  here=$(cd "$(dirname "$0")" && pwd)
+  node "$here/slot-lock-child.mjs" "$@" <&0 &
+else
+  "$@" <&0 &
 fi
-"$@" <&0 &
 child=$!
 wait "$child"
 status=$?

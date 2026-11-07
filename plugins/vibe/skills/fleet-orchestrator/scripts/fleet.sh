@@ -32,7 +32,7 @@ case "$where" in
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/skill-freshness.mjs vibe/scripts/plugin-script-references.mjs vibe/scripts/session-record.mjs vibe/scripts/loaded-skill.mjs vibe/scripts/owned-state.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
+ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/skill-freshness.mjs vibe/scripts/plugin-script-references.mjs vibe/scripts/session-record.mjs vibe/scripts/loaded-skill.mjs vibe/scripts/owned-state.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/slot-lock-child.mjs fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
 ship=("${ship[@]/#/skills/}" shared/process-identity.mjs)
 extra=()
 
