@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.61
+
+#### Added
+- Fleet cloud dispatch now applies one code-only placement policy, generates a Vibe brief from locked criteria and digest-bound local graph evidence, and starts Claude RemoteTrigger or legacy Codex Cloud tasks noninteractively. It clears Claude's auto-attached connectors before execution, keeps run and session IDs distinct, bounds polling, records wall time, and wraps Claude follow-ups.
+- Cloud results import into a canonical Vibe-created worktree as uncommitted changes with a provider/result/source witness. Claude branch import checks the operator's commit author; every Codex invocation removes only its own `error.log`. The existing PR guard now rejects an unimported or stale cloud result and requires the current handoff gate, opposite-harness review and operator-authored local commit.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 98 words longer than in 1.1.57 (origin/main at the build, 68a756870fef53bfebb0b8f3e4b218ea455b5f7a).
+
 ### vibe v1.1.57
 
 #### Fixed
