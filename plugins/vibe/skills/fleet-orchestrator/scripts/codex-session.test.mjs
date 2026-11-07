@@ -174,7 +174,7 @@ test('turn on a new session starts a thread, names it, moves it into Fleet worke
   });
 });
 
-test('turn on a saved session resumes its thread with the saved options', async () => {
+test('AC-3: turn on a saved session resumes its thread with the saved options', async () => {
   const { dir, promptFile } = workDir();
   saveState(dir, 'w1', { threadId: 'T1', cwd: '/wt', effort: 'medium', sandbox: 'danger-full-access', turns: [] });
   const client = stubClient({ 'thread/resume': {}, 'turn/start': { turn: { id: 'U2' } } });

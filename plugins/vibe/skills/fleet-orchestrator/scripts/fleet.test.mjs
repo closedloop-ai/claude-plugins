@@ -129,6 +129,24 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /^-o\nConnectTimeout=10\n-o\nServerAliveInterval=15\nbox\n/);
 });
 
+test('a remote new writer refuses an existing worktree without a Vibe record on the target host', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  // The remote harness normally records Node argv; run the shipped launcher to exercise its real preflight.
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*codex-session.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  writeFileSync(join(f.root, 'bin', 'codex'), `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'app-server daemon start') console.log(JSON.stringify({ socketPath: ${JSON.stringify(join(f.root, 'missing.sock'))} }));\nelse console.log(JSON.stringify({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: ${JSON.stringify(PLUGIN_ROOT)} } }] }));\n`);
+  chmodSync(join(f.root, 'bin', 'codex'), 0o755);
+  const worktree = join(f.root, 'pre-made-worktree');
+  const created = spawnSync('git', ['init', '-q', '-b', 'vibe/example', worktree], { encoding: 'utf8' });
+  assert.equal(created.status, 0, created.stderr);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
+  assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false);
+});
+
 test('remote cleanup ships the exact board and runs on the owning host with its session state', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));

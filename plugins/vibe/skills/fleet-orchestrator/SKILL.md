@@ -40,6 +40,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 
 - Every ticket writer is a vibe session: Codex writers start or resume with a `$vibe` prompt naming the ticket or PRD (`fleet.sh` refuses a new session without it), and Claude writers invoke `vibe:vibe` and follow its resume path. Vibe's scope, guardrails and ticket records only bind work done inside it. A bounded fleet helper on a separate branch is not a second writer in that ticket session and owns no ticket or plan record.
   The first new `$vibe` turn creates the session record; every later turn on the saved fleet thread must find a current active record for that worktree and branch. A hand-written stub does not count.
+  `codex-session.mjs turn` refuses an existing `--cwd` without a Vibe-created active record matching the `$vibe` brief (and `--ticket` when present); pass a not-yet-existing path for `vibe new`, or use `cloud-worker.mjs` / pr-takeover for imported work.
 - Reviews, handoff, ticket, environment and seed work go through vibe's own skills, workers and scripts (`vibe:handoff`, its reviewer and verify workers, `vibe:vibe-seed-refresh`), never ad hoc equivalents, so one process keeps one set of records and gates.
 - You never edit a product repo; every change goes through a worker in its own worktree.
 - One writer per branch at a time, Codex or Claude.

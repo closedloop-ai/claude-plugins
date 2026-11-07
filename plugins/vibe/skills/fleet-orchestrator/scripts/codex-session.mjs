@@ -15,7 +15,7 @@
 // `last` prints the thread's status line and its last <n> agent messages (default 1).
 // The state file is the one codex-fleet-monitor reads for a `local|remote <name>` session line.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import path, { resolve } from 'node:path';
@@ -28,7 +28,7 @@ import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
-import { readSessionRecord } from '../../vibe/scripts/session-record.mjs';
+import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from '../../vibe/scripts/session-record.mjs';
 import { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } from '../../vibe/scripts/loaded-skill.mjs';
 import { promptProblems } from './skill-freshness.mjs';
 import { canonicalWorktree, ensureReloadFence, e2eLockDir as machineE2eLockDir, machineSlotLockDir, readE2eWaiters,
@@ -47,6 +47,7 @@ const SANDBOX_POLICIES = {
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORT_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 const VIBE_PROMPT = /^\s*\$vibe\b/;
+const VIBE_BRIEF_TICKET = /^\s*\$vibe[^\r\n]*?\b((?:ISS|PRD|FEA)-\d+)\b/;
 const DONE_CLAIMS = /^\s*Done:/m;
 const REVERIFY = /^\s*Re-verify:\s*\S/m;
 
@@ -145,6 +146,33 @@ export function assertVibeSession(worktree) {
 export function requireResumeSession(saved, requestedCwd) {
   if (!saved) return null;
   return assertVibeSession(saved.cwd ?? requestedCwd);
+}
+
+/** Bind a new writer's brief to the canonical live ticket of its Vibe-created worktree. */
+function requireNewSessionWorktree(saved, worktree, ticket, prompt) {
+  if (saved || !worktree) return null;
+  try {
+    lstatSync(worktree);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error(`cannot inspect --cwd ${worktree}: ${error.message}`);
+  }
+  const fix = `pass a not-yet-existing path and let the writer's vibe new create it, or use cloud-worker.mjs / pr-takeover for imported work`;
+  const briefTicket = VIBE_BRIEF_TICKET.exec(prompt)?.[1];
+  if (!briefTicket) throw new Error(`existing --cwd ${worktree} needs a $vibe brief naming its ticket; ${fix}`);
+  if (ticket && ticket !== briefTicket) throw new Error(`--ticket ${ticket} does not match the $vibe brief ticket ${briefTicket}; ${fix}`);
+  let record;
+  try {
+    record = assertVibeSession(worktree);
+    assertVibeCreatedWorktree(worktree, record);
+  } catch (error) {
+    throw new Error(`existing --cwd ${worktree} has no matching active Vibe-created session record for brief ticket ${briefTicket}: ${error.message}; ${fix}`);
+  }
+  const canonicalTicket = sessionLiveTicket(record) ?? record.ticket;
+  if (canonicalTicket !== briefTicket) {
+    throw new Error(`existing --cwd ${worktree} has a different vibe session ticket than brief ticket ${briefTicket}; ${fix}`);
+  }
+  return record;
 }
 
 /** Returns the saved state, or null when the session has none yet. */
@@ -526,6 +554,7 @@ function defined(object) {
  * `warn` receives each sidebar step an older App Server could not apply.
  */
 export async function startTurn(client, state, prompt, promptFile, { name, warn = () => {}, mechanical = false, page } = {}) {
+  requireNewSessionWorktree(state.threadId ? state : null, state.cwd, state.ticket, prompt);
   const threadOptions = defined({ cwd: state.cwd, model: state.model, sandbox: state.sandbox, approvalPolicy: 'never' });
   let { threadId } = state;
   const { ended, archivedAt, ...open } = state;
@@ -688,6 +717,7 @@ async function main() {
     if (options.command === 'turn') {
       const saved = loadState(options.stateDir, options.name);
       requireResumeSession(saved, options.cwd);
+      requireNewSessionWorktree(saved, options.cwd, options.ticket, readFileSync(options.promptFile, 'utf8'));
     }
     if (['turn', 'steer', 'reload'].includes(options.command)) options.pluginRoot = verifiedPluginRoot(options.pluginRoot);
   } catch (error) {
