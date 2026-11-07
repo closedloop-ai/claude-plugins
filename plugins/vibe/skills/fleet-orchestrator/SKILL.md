@@ -110,6 +110,7 @@ Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-mo
 ## Claude workers
 
 - Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`.
+- Before any Codex or Claude worker runs direct `frozen-render.mjs`, capture `scripts/fleet.sh <orchDir> local|remote policy` for that worker's machine and put its non-secret, shell-quoted prefix in the private brief. The worker invokes `<machine policy prefix> node frozen-render.mjs ... --where <side>` so the actual command process receives the existing slot, load and force variables; the prefix is command-scoped and writes no record.
 - Hold an agent with TaskStop, never a message; check nothing it started still runs.
 - Batch asks to a writer at milestones; side work goes to read-only workers.
 - A pane teammate sees messages only when its turn ends, so writers keep turns short. On `UNACKED`, or an idle worker that ignored a message, resend once, then interrupt after the second unanswered delivery: ask the operator to press Esc in the named pane. A resend never reaches a writer mid-turn: on `UNACKED-SCOPE` or `SCOPE-NOT-STARTED` interrupt at once, or TaskStop and relaunch it with the change in its prompt. Keep long briefs in a file and send its path.

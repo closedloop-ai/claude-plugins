@@ -11,6 +11,10 @@ TEMPLATES = PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates
 QUALITY = PLUGIN / "skills" / "vibe" / "references" / "quality-loop.md"
 GUARDRAILS = PLUGIN / "skills" / "vibe" / "references" / "guardrails.md"
 PARALLEL_PROMPT = PLUGIN / "evals" / "orch-parallel-e2e-queued" / "prompt.md"
+STORYBOOK_AGENT = PLUGIN / "agents" / "vibe-storybook-decomposer.md"
+VERIFY_AGENT = PLUGIN / "agents" / "vibe-verify-worker.md"
+FROZEN_RENDER = PLUGIN / "skills" / "handoff" / "scripts" / "frozen-render.mjs"
+FLEET_SCRIPT = PLUGIN / "skills" / "fleet-orchestrator" / "scripts" / "fleet.sh"
 
 
 def test_non_e2e_lanes_start_while_e2e_is_queued() -> None:
@@ -40,7 +44,7 @@ def test_capacity_moves_keep_machine_limits_binding() -> None:
 def test_writers_and_reports_preserve_parallel_work() -> None:
     """Both writer prompts and the operator report expose the parallel plan."""
     templates = TEMPLATES.read_text()
-    instruction = "Start independent repository selected validation lanes concurrently through assigned heavy slots"
+    instruction = "Start independent repository selected validation lanes concurrently, including non-e2e lanes while e2e runs elsewhere: lanes that do not self-slot use assigned heavy slots, while self-slotting commands are invoked directly"
     for heading in ("## Worker preamble", "## Resume prompt"):
         prompt = flat(section(templates, heading))
         assert instruction in prompt
@@ -59,6 +63,19 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
     assert "longest dependent path rather than a serial sum" in fleet_report
     assert fleet_text.count("Before replying with remaining work, use [Remaining work report]") == 1
     assert next(i for i, line in enumerate(fleet_text.splitlines(), 1) if "Before replying with remaining work, use" in line) < 100
+
+
+def test_frozen_render_worker_commands_require_the_machine_policy_prefix() -> None:
+    """Both worker runtimes apply existing policy variables to the actual self-slotting command."""
+    for path in (STORYBOOK_AGENT, VERIFY_AGENT, TEMPLATES):
+        text = path.read_text()
+        assert "<machine policy prefix>" in text, path
+        assert "fleet.sh <orchDir> local|remote policy" in text, path
+    assert "--heavy-machine" in FROZEN_RENDER.read_text()
+    assert "policy()" in FLEET_SCRIPT.read_text()
+    surface = FROZEN_RENDER.read_text() + FLEET_SCRIPT.read_text()
+    for forbidden in ("heavy-policy.mjs", "policy-worktree", "policy-generation", "policy-token"):
+        assert forbidden not in surface
 
 
 def test_operator_reporting_requires_visible_critical_path_eta() -> None:

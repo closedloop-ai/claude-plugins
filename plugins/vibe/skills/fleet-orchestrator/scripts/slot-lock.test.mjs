@@ -73,6 +73,16 @@ test('the child helper owns signals before it creates the detached group', TIMEO
   assert.equal(existsSync(join(root, 'e2e-1.lock')), false);
 });
 
+test('the owning wrapper records a startup signal until the helper pid is assigned', TIMEOUT, () => {
+  const source = readFileSync(SCRIPT, 'utf8');
+  const pendingAt = source.indexOf('pending_signal=');
+  const startAt = source.indexOf('node "$here/slot-lock-child.mjs" "$@" <&0 &', pendingAt);
+  const childAt = source.indexOf('child=$!', startAt);
+  const restoredAt = source.indexOf('install_exit_traps', childAt);
+  const handledAt = source.indexOf('exit_for_signal "$pending_signal"', restoredAt);
+  assert.ok(pendingAt > 0 && pendingAt < startAt && startAt < childAt && childAt < restoredAt && restoredAt < handledAt);
+});
+
 test('runs the command with its stdin, returns its exit status and frees the slot', TIMEOUT, () => {
   const root = lockRoot();
   const ok = runSync(root, ['e2e', 'w1', 'sh', '-c', 'cat; ls "$1"', '_', join(root, 'e2e-1.lock')], 'piped\n');
@@ -138,6 +148,24 @@ test('takes a free slot of N without waiting and reports holders with --status',
   assert.equal(result.stderr, '');
   assert.match(result.stdout, /heavy-2\.lock/);
   assert.equal(runSync(root, ['--status', 'heavy']).stdout, 'w1 vitest\n');
+});
+
+test('target-machine direct heavy mode uses existing cap, load and force policy', TIMEOUT, () => {
+  const root = lockRoot(); const bin = join(root, 'bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "%s\\n" "$FLEET_TEST_LOAD"\n', { mode: 0o700 });
+  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "$FLEET_TEST_LOAD"\n', { mode: 0o700 });
+  writeFileSync(join(bin, 'getconf'), '#!/bin/sh\nprintf "%s\\n" "$FLEET_TEST_CORES"\n', { mode: 0o700 });
+  holdSlot(root, 'heavy', 1, 'first'); holdSlot(root, 'heavy', 2, 'second');
+  const common = { ...env(root), PATH: `${bin}:${process.env.PATH}`, FLEET_TEST_LOAD: '34', FLEET_TEST_CORES: '18',
+    FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator kept direct render here' };
+  const local = spawnSync('bash', [SCRIPT, '--heavy-machine', 'local', 'heavy', 'direct local',
+    'cat', join(root, 'heavy-3.lock', 'owner')], { encoding: 'utf8', env: { ...common, HEAVY_SLOTS: '3', MAX_LOAD_PER_CORE: '1.5' } });
+  assert.equal(local.status, 0, local.stderr);
+  assert.match(local.stdout, /force reason: operator kept direct render here/);
+  const remote = spawnSync('bash', [SCRIPT, '--heavy-machine', 'remote', 'heavy', 'direct remote',
+    'cat', join(root, 'heavy-3.lock', 'owner')], { encoding: 'utf8', env: { ...common, REMOTE_HEAVY_SLOTS: '3', REMOTE_MAX_LOAD_PER_CORE: '1.5' } });
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.match(remote.stdout, /force reason: operator kept direct render here/);
 });
 
 test('a nested request reuses its process tree heavy slot while the other slot is held', TIMEOUT, async () => {
@@ -369,7 +397,9 @@ test('nested TERM cleanup force-stops a descendant chain that ignores TERM', TIM
 
 test('rejects bad arguments with usage and exit 2', TIMEOUT, () => {
   const root = lockRoot();
-  for (const args of [[], ['e2e', 'w1'], ['--slots', '0', 'e2e', 'w1', 'true'], ['--slots', 'x', 'e2e', 'w1', 'true'], ['../e2e', 'w1', 'true'], ['--status']]) {
+  for (const args of [[], ['e2e', 'w1'], ['--slots', '0', 'e2e', 'w1', 'true'], ['--slots', 'x', 'e2e', 'w1', 'true'],
+    ['--slots', '1', '--heavy-machine', 'local', 'heavy', 'w1', 'true'], ['--heavy-machine', 'other', 'heavy', 'w1', 'true'],
+    ['--heavy-machine', 'local', 'e2e', 'w1', 'true'], ['../e2e', 'w1', 'true'], ['--status']]) {
     const result = runSync(root, args);
     assert.equal(result.status, 2, `args ${JSON.stringify(args)}`);
     assert.match(result.stderr, /Usage: slot-lock\.sh/);

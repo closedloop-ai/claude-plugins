@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end|interrupt|reload> <name> [codex-session.mjs options]
 #        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> <command...>
+#        fleet.sh <orchDir> <local|remote> policy
 #        fleet.sh <orchDir> <local|remote> cleanup
 # A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE.
 # <orchDir> is a fleet home (its active program) or a program dir; codex-fleet-monitor/scripts/work-dir.mjs
@@ -10,7 +11,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,4p' "$0" | sed 's/^# //' >&2
+  sed -n '2,5p' "$0" | sed 's/^# //' >&2
   exit 2
 }
 
@@ -50,6 +51,38 @@ has_option() {
     case "$word" in "$1" | "$1"=*) return 0 ;; esac
   done
   return 1
+}
+
+# Existing target-machine policy, validated once for fleet slots and the non-persistent worker prefix.
+machine_policy() {
+  local target=$1 slots max slots_key max_key force reason
+  if [ "$target" = local ]; then
+    slots=${HEAVY_SLOTS:-1}; max=${MAX_LOAD_PER_CORE:-1.5}; slots_key=HEAVY_SLOTS; max_key=MAX_LOAD_PER_CORE
+  else
+    slots=${REMOTE_HEAVY_SLOTS:-1}; max=${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}
+    slots_key=REMOTE_HEAVY_SLOTS; max_key=REMOTE_MAX_LOAD_PER_CORE
+  fi
+  force=${FLEET_FORCE_HERE:-}; reason=${FLEET_FORCE_REASON:-}
+  case "$slots" in '' | *[!0-9]* | 0) echo "fleet: $slots_key must be a positive integer" >&2; exit 2 ;; esac
+  awk -v value="$max" 'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/ && value > 0) }' || {
+    echo "fleet: $max_key must be a positive number" >&2; exit 2;
+  }
+  case "$force" in '' | 0 | 1) ;; *) echo "fleet: FLEET_FORCE_HERE must be 0 or 1" >&2; exit 2 ;; esac
+  case "$reason" in *$'\n'* | *$'\r'* | *$'\t'*) echo "fleet: FLEET_FORCE_REASON must be one line without control characters" >&2; exit 2 ;; esac
+  if [ "$force" = 1 ] && [ -z "$reason" ]; then echo "fleet: FLEET_FORCE_HERE=1 requires FLEET_FORCE_REASON" >&2; exit 2; fi
+  POLICY_SLOTS=$slots POLICY_MAX_LOAD=$max POLICY_FORCE=$force POLICY_REASON=$reason
+}
+
+policy() {
+  [ $# -eq 0 ] || usage
+  machine_policy "$where"
+  if [ "$where" = local ]; then
+    printf 'HEAVY_SLOTS=%q MAX_LOAD_PER_CORE=%q FLEET_FORCE_HERE=%q FLEET_FORCE_REASON=%q\n' \
+      "$POLICY_SLOTS" "$POLICY_MAX_LOAD" "$POLICY_FORCE" "$POLICY_REASON"
+  else
+    printf 'REMOTE_HEAVY_SLOTS=%q REMOTE_MAX_LOAD_PER_CORE=%q FLEET_FORCE_HERE=%q FLEET_FORCE_REASON=%q\n' \
+      "$POLICY_SLOTS" "$POLICY_MAX_LOAD" "$POLICY_FORCE" "$POLICY_REASON"
+  fi
 }
 
 session() {
@@ -130,7 +163,8 @@ slot() {
   [ $# -ge 1 ] || usage
   if [ -n "$typed" ] || node "$skills/vibe/scripts/e2e-lock.mjs" intent "$@" >/dev/null; then preflight=1; fi
   if [ "$name" = heavy ]; then
-    if [ "$where" = local ]; then slots=${HEAVY_SLOTS:-1}; else slots=${REMOTE_HEAVY_SLOTS:-1}; fi
+    machine_policy "$where"
+    slots=$POLICY_SLOTS
     check=1
   fi
   local admission_note=
@@ -139,14 +173,14 @@ slot() {
   fi
   if [ "$where" = local ]; then
     cd "$dir"
-    if [ -n "$check" ]; then MAX_LOAD_PER_CORE=${MAX_LOAD_PER_CORE:-1.5} bash "$here/load-check.sh"; fi
+    if [ -n "$check" ]; then MAX_LOAD_PER_CORE=$POLICY_MAX_LOAD bash "$here/load-check.sh"; fi
     local slot_args=(--slots "$slots")
     if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
     if [ -n "$preflight" ]; then slot_args+=(--preflight-node "$skills/vibe/scripts/e2e-lock.mjs"); fi
     exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@"
   fi
   local gate=
-  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/load-check.sh") && "; fi
+  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "$POLICY_MAX_LOAD") FLEET_FORCE_HERE=$(printf %q "$POLICY_FORCE") FLEET_FORCE_REASON=$(printf %q "$POLICY_REASON") bash $(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/load-check.sh") && "; fi
   local slot_args=(--slots "$slots")
   if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
   if [ -n "$preflight" ]; then
@@ -176,6 +210,7 @@ cleanup() {
 case "$action" in
   session) session "$@" ;;
   slot) slot "$@" ;;
+  policy) policy "$@" ;;
   cleanup) cleanup "$@" ;;
   *) usage ;;
 esac

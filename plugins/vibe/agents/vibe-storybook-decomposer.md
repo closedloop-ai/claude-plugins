@@ -238,9 +238,11 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence:
 
-- Frozen renders: run `../skills/handoff/scripts/frozen-render.mjs --repo
+- Frozen renders: run `<machine policy prefix> node ../skills/handoff/scripts/frozen-render.mjs --repo
   <worktree> --base <base> --base-dir <prepared base worktree> --story-file
-  <file> ... --out <dir>` once with every story file the inventory's
+  <file> ... --out <dir> --where <local|remote>` once with the non-secret,
+  shell-quoted prefix from `fleet.sh <orchDir> local|remote policy` for this
+  worker's machine and every story file the inventory's
   `frozen-render` finding lists, never a capture of your own. The base URL
   is the repo's Storybook served from a disposable worktree made by
   `../skills/handoff/scripts/frozen-render.mjs prepare-base --repo <worktree>

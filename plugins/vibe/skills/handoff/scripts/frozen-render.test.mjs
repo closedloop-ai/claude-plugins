@@ -60,11 +60,11 @@ test("static comparison rebuilds both outputs for the named current heads before
     withServer, nextPort: async (other) => other ? 6122 : 6121,
     resolveCommit: (dir, ref) => { events.push(`resolve ${dir} ${ref}`); return "base-commit-full"; },
     headOf: (dir) => dir === repo ? "head-commit" : "base-commit-full",
-    buildStatic: async (dir, head) => { events.push(`build ${dir} ${head}`); },
+    buildStatic: async (dir, head, options) => { events.push(`build ${dir} ${head} ${options.where}`); },
     launch: async () => ({ close: async () => {} }), compare: async () => ({}),
   });
   assert.deepEqual(events, [
-    `resolve ${repo} main~1`, `build ${baseDir} base-commit-full`, `build ${repo} head-commit`, `serve ${baseDir}`, `serve ${repo}`,
+    `resolve ${repo} main~1`, `build ${baseDir} base-commit-full local`, `build ${repo} head-commit local`, `serve ${baseDir}`, `serve ${repo}`,
   ]);
 });
 
@@ -90,10 +90,12 @@ mkdir -p "$out"
 printf fresh >"$out/index.html"
 `);
   chmodSync(fakePnpm, 0o700);
-  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS };
+  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS,
+    MAX_LOAD_PER_CORE: process.env.MAX_LOAD_PER_CORE };
   process.env.PATH = `${bin}:${process.env.PATH}`;
   process.env.SLOT_LOCK_DIR = locks;
   process.env.SLOT_LOCK_POLL_SECONDS = "0.01";
+  process.env.MAX_LOAD_PER_CORE = "1000000";
   t.after(() => {
     for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value;
   });
@@ -130,10 +132,12 @@ printf partial >"$out/index.html"
 exit 43
 `);
   chmodSync(fakePnpm, 0o700);
-  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS };
+  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS,
+    MAX_LOAD_PER_CORE: process.env.MAX_LOAD_PER_CORE };
   process.env.PATH = `${bin}:${process.env.PATH}`;
   process.env.SLOT_LOCK_DIR = locks;
   process.env.SLOT_LOCK_POLL_SECONDS = "0.01";
+  process.env.MAX_LOAD_PER_CORE = "1000000";
   t.after(() => {
     for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value;
   });
@@ -150,7 +154,7 @@ exit 43
   }
 });
 
-test("the configured heavy slot wait wraps the bounded Storybook build", (t) => {
+test("the target-machine heavy policy wraps the bounded Storybook build", (t) => {
   const fixture = makeHome("vibe-frozen-slot-shape-");
   t.after(fixture.cleanup);
   const worktree = path.join(fixture.root, "head");
@@ -166,14 +170,14 @@ test("the configured heavy slot wait wraps the bounded Storybook build", (t) => 
     const bounded = args.findIndex((arg) => path.basename(arg) === "run-bounded.mjs");
     const pnpm = args.indexOf("pnpm");
     assert.ok(slot >= 0 && bounded > slot && pnpm > bounded, JSON.stringify(args));
-    assert.deepEqual(args.slice(slot + 1, slot + 5), ["--slots", "3", "heavy", `frozen-render ${path.basename(worktree)}`]);
+    assert.deepEqual(args.slice(slot + 1, slot + 5), ["--heavy-machine", "remote", "heavy", `frozen-render ${path.basename(worktree)}`]);
     assert.deepEqual(args.slice(bounded + 1, bounded + 3), ["600", "pnpm"]);
     const staging = args.at(-1);
     mkdirSync(staging, { recursive: true });
     writeFileSync(path.join(staging, "index.html"), "fresh");
     return { status: 0, stdout: "", stderr: "" };
   };
-  rebuildStatic(worktree, { run, env: { HEAVY_SLOTS: "3" } });
+  rebuildStatic(worktree, { run, env: { REMOTE_HEAVY_SLOTS: "3" }, where: "remote" });
   assert.equal(calls.length, 1);
   assert.equal(readFileSync(path.join(output, "index.html"), "utf8"), "fresh");
 });
@@ -613,7 +617,7 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   writeFileSync(path.join(repo, "s.stories.tsx"), "export default { title: \"A\" };\nexport const B = {};\n");
   spawnSync("git", ["-C", repo, "add", "-A"]);
   spawnSync("git", ["-C", repo, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "story"]);
-  const args = [SCRIPT, "--repo", repo, "--base", "HEAD", "--base-dir", repo, "--story-file", "s.stories.tsx", "--out", path.join(root, "out")];
+  const args = [SCRIPT, "--repo", repo, "--base", "HEAD", "--base-dir", repo, "--story-file", "s.stories.tsx", "--out", path.join(root, "out"), "--where", "local"];
   const badNow = spawnSync(process.execPath, [...args, "--now", "yesterday"], { encoding: "utf8" });
   assert.equal(badNow.status, 2);
   assert.match(badNow.stdout, /^error: --now must be an ISO time/);

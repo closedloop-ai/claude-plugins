@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
@@ -11,6 +11,7 @@ import { writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
 const LOAD_CHECK = join(SCRIPTS, 'load-check.sh');
+const SLOT_LOCK = join(SCRIPTS, 'slot-lock.sh');
 const TIMEOUT = { timeout: 20_000 };
 const RELATIVE_IMPORT = /^import [^;]*? from (['"])(\.{1,2}\/[^'"]+)\1;/gms;
 const PLUGIN_ROOT = realpathSync(join(SCRIPTS, '..', '..', '..'));
@@ -44,7 +45,7 @@ function fixture(config) {
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), ...env },
   });
   const argv = (result) => result.stdout.split('\n').filter((l) => l.startsWith('arg:')).map((l) => l.slice(4));
-  return { root, orch, prompt, run, argv };
+  return { root, orch, bin, prompt, run, argv };
 }
 
 const remoteConfig = (root, extra = '') => `REMOTE_HOST=box\nREMOTE_STATE_DIR=${root}/remote/sessions\nREMOTE_SHELL="bash -c"\n${extra}`;
@@ -59,6 +60,13 @@ function remotePlugin(root, version, withGate) {
   writeFileSync(join(root, 'skills', 'fleet-orchestrator', 'SKILL.md'), '# fleet\n');
   if (withGate) writeFileSync(join(root, 'skills', 'handoff', 'scripts', 'handoff-gate.mjs'), 'export {};\n');
 }
+
+test('public fleet shell entrypoints are executable and usage lists every action', TIMEOUT, () => {
+  for (const file of [FLEET, SLOT_LOCK]) assert.equal(statSync(file).mode & 0o111, 0o111, file);
+  const usage = spawnSync(FLEET, [], { encoding: 'utf8' });
+  assert.equal(usage.status, 2);
+  for (const action of ['session', 'slot', 'policy', 'cleanup']) assert.match(usage.stderr, new RegExp(`\\b${action}\\b`));
+});
 
 test('a single machine needs no config: local sessions use <orchDir>/sessions', TIMEOUT, () => {
   const f = fixture();
@@ -79,6 +87,34 @@ test('turn takes model and effort from config unless given; other commands get n
   writeFileSync(join(f.root, 'state', 'w1.json'), JSON.stringify({ threadId: 'test', cwd: '/wt', loadedSkill: loadEvidence('test') }));
   const steer = f.argv(f.run(['local', 'session', 'steer', 'w1', '--prompt-file', f.prompt]));
   assert.deepEqual(steer.slice(4), ['--prompt-file', f.prompt, '--plugin-root', PLUGIN_ROOT]);
+});
+
+test('policy prints a quoted non-persistent prefix that reaches a clean worker shell', TIMEOUT, () => {
+  const f = fixture(remoteConfig('/remote', 'HEAVY_SLOTS=3\nMAX_LOAD_PER_CORE=1.25\nREMOTE_HEAVY_SLOTS=4\nREMOTE_MAX_LOAD_PER_CORE=1.5\nFLEET_FORCE_HERE=1\nFLEET_FORCE_REASON="operator kept this lane"\n'));
+  const local = f.run(['local', 'policy']);
+  assert.equal(local.status, 0, local.stderr);
+  assert.match(local.stdout, /^HEAVY_SLOTS=3 MAX_LOAD_PER_CORE=1\.25 FLEET_FORCE_HERE=1 FLEET_FORCE_REASON=operator\\ kept\\ this\\ lane\n$/);
+  assert.equal(existsSync(join(f.orch, 'vibe-fleet-heavy-policy.json')), false);
+  const remote = f.run(['remote', 'policy']);
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.match(remote.stdout, /^REMOTE_HEAVY_SLOTS=4 REMOTE_MAX_LOAD_PER_CORE=1\.5 FLEET_FORCE_HERE=1 FLEET_FORCE_REASON=operator\\ kept\\ this\\ lane\n$/);
+
+  const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+  const runClean = (prefix, side, count) => {
+    const locks = join(f.root, `prefix-${side}`); mkdirSync(locks);
+    for (let n = 1; n < count; n++) {
+      const dir = join(locks, `heavy-${n}.lock`); mkdirSync(dir);
+      writeFileSync(join(dir, 'pid'), `${process.pid}\n`); writeFileSync(join(dir, 'owner'), `held-${n}\n`);
+    }
+    const owner = join(locks, `heavy-${count}.lock`, 'owner');
+    const command = `${prefix.trim()} PATH=${quote(`${f.bin}:${process.env.PATH}`)} SLOT_LOCK_DIR=${quote(locks)} FLEET_TEST_LOAD=34 FLEET_TEST_CORES=18 bash ${quote(SLOT_LOCK)} --heavy-machine ${side} heavy frozen-render cat ${quote(owner)}`;
+    return spawnSync('env', ['-i', `HOME=${f.root}`, `PATH=${process.env.PATH}`, 'bash', '-c', command], { encoding: 'utf8' });
+  };
+  for (const [prefix, side, count] of [[local.stdout, 'local', 3], [remote.stdout, 'remote', 4]]) {
+    const result = runClean(prefix, side, count);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /force reason: operator kept this lane/);
+  }
 });
 
 test('prompt preflight delegates stale turns to checked idle migration, admits reload-only steers and refuses deleted scripts', TIMEOUT, () => {

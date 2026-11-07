@@ -28,8 +28,10 @@ Command-based repositories default to `pnpm test:lanes`; their existing
 `pre-pr-lanes.mjs check --report` path is unchanged.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
-For a frozen comparison, run handoff's `frozen-render.mjs` with its prepared
-base worktree; it owns both servers and their URLs through the verifier run
+For a frozen comparison, run `<machine policy prefix> node frozen-render.mjs`
+with its prepared base worktree and `--where local|remote`, using the
+non-secret, shell-quoted prefix from `fleet.sh <orchDir> local|remote policy`
+for this worker's machine; it owns both servers and their URLs through the verifier run
 wrapper. For another check needing Storybook, use
 `verify-storybook-process.mjs run` so its finalizer stops the server on success
 or failure. Never launch an ad hoc static server, use separate start and stop

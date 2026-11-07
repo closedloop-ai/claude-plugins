@@ -13,7 +13,7 @@
 //   frozen-render.mjs --repo <session worktree> --base <base commit>
 //                     --base-dir <prepared base worktree>
 //                     --story-file <repo-relative story path> [--story-file ...]
-//                     --out <dir> [--viewport 1280x800] [--timeout-ms 20000]
+//                     --out <dir> --where <local|remote> [--viewport 1280x800] [--timeout-ms 20000]
 //                     [--now <ISO time>]
 //   frozen-render.mjs prepare-base --repo <session worktree> --base <base commit>
 //                     --story-file <path> [--story-file ...] --dir <new worktree>
@@ -137,13 +137,13 @@ async function freePort(exclude) {
 }
 
 /** Rebuild a static Storybook under the fleet heavy lock, preserving the prior output until success. */
-export function rebuildStatic(worktree, { run = spawnSync, env = process.env } = {}) {
+export function rebuildStatic(worktree, { run = spawnSync, env = process.env, where = "local" } = {}) {
+  if (!["local", "remote"].includes(where)) throw new Error("frozen-render machine must be local or remote");
   const output = path.join(worktree, "apps", "storybook", "storybook-static");
   const token = randomUUID();
   const staging = `${output}.vibe-build-${token}`;
   const previous = `${output}.vibe-previous-${token}`;
-  const slots = String(env.HEAVY_SLOTS || "1");
-  const result = run("bash", [SLOT_LOCK, "--slots", slots, "heavy", `frozen-render ${path.basename(worktree)}`,
+  const result = run("bash", [SLOT_LOCK, "--heavy-machine", where, "heavy", `frozen-render ${path.basename(worktree)}`,
     process.execPath, RUN_BOUNDED, "600", "pnpm", "exec", "storybook", "build", "--output-dir", staging], {
     cwd: path.join(worktree, "apps", "storybook"), encoding: "utf8", env,
   });
@@ -178,9 +178,10 @@ function resolveCommit(worktree, ref) {
 }
 
 /** Own both comparison servers and the browser for the whole render, including failures. */
-export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles, out, viewport, timeoutMs, now },
+export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles, out, viewport, timeoutMs, now, where = "local" },
   { withServer = withVerifyStorybook, nextPort = freePort, launch, compare = frozenStoryFiles,
-    headOf = currentHead, resolveCommit: resolve = resolveCommit, buildStatic = rebuildStatic } = {}) {
+    headOf = currentHead, resolveCommit: resolve = resolveCommit,
+    buildStatic = (dir, _head, options) => rebuildStatic(dir, options) } = {}) {
   const basePort = await nextPort();
   const headPort = await nextPort(basePort);
   const baseStatic = path.join(baseDir, "apps", "storybook", "storybook-static");
@@ -195,8 +196,8 @@ export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles
     const baseHead = headOf(baseDir);
     const head = headOf(repo);
     if (baseHead !== comparisonBase) throw new Error("Prepared base checkout does not match the named base commit.");
-    await buildStatic(baseDir, baseHead);
-    await buildStatic(repo, head);
+    await buildStatic(baseDir, baseHead, { where });
+    await buildStatic(repo, head, { where });
     if (headOf(baseDir) !== baseHead || headOf(repo) !== head) {
       throw new Error("Storybook checkout head moved during its static build; comparison refused.");
     }
@@ -596,7 +597,7 @@ async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     repo: { type: "string" }, base: { type: "string" }, "base-dir": { type: "string" },
     "story-file": { type: "string", multiple: true }, out: { type: "string" }, viewport: { type: "string" }, "timeout-ms": { type: "string" },
-    now: { type: "string" }, dir: { type: "string" },
+    now: { type: "string" }, dir: { type: "string" }, where: { type: "string" },
   } });
   if (positionals[0] === "prepare-base") {
     if (!values.repo || !values.base || !values["story-file"]?.length || !values.dir || positionals.length > 1) {
@@ -608,8 +609,8 @@ async function main(argv) {
   if (positionals.length) {
     throw new Error(`unknown command ${positionals[0]}; the only command is prepare-base`);
   }
-  if (!values.repo || !values.base || !values["base-dir"] || !values["story-file"]?.length || !values.out) {
-    throw new Error("Usage: frozen-render.mjs --repo <worktree> --base <commit> --base-dir <prepared worktree> --story-file <path> [--story-file ...] --out <dir> [--viewport WxH] [--timeout-ms N] [--now <ISO time>]");
+  if (!values.repo || !values.base || !values["base-dir"] || !values["story-file"]?.length || !values.out || !["local", "remote"].includes(values.where)) {
+    throw new Error("Usage: frozen-render.mjs --repo <worktree> --base <commit> --base-dir <prepared worktree> --story-file <path> [--story-file ...] --out <dir> --where <local|remote> [--viewport WxH] [--timeout-ms N] [--now <ISO time>]");
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000) {
@@ -622,7 +623,7 @@ async function main(argv) {
   const viewport = parseViewport(values.viewport);
   const chromium = loadChromium(values.repo);
   return runOwnedFrozenComparison({ repo: values.repo, baseDir: values["base-dir"], base: values.base,
-    storyFiles: values["story-file"], out: path.resolve(values.out), viewport, timeoutMs, now },
+    storyFiles: values["story-file"], out: path.resolve(values.out), viewport, timeoutMs, now, where: values.where },
   { launch: () => chromium.launch({ args: [...DETERMINISTIC_CHROMIUM_ARGS], handleSIGINT: false, handleSIGTERM: false }) });
 }
 

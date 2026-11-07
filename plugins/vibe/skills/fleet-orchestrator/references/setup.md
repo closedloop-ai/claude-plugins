@@ -44,6 +44,8 @@ normal load routing and a busy machine is refused.
 
 Session, request and remote state dirs are derived per program. `fleet.sh` uses `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot and load keys, and the `REMOTE_*` keys. Vibe's worker-model policy owns sub-agent models. `MOVE_AT_PERCENT` is yours to compare with each `codex-usage` line.
 
+`fleet.sh <orchDir> local|remote policy` validates the selected machine's existing slot, load, force flag and one-line force reason, then prints only safely shell-quoted assignments for those existing variables. It writes no state. Put that non-secret prefix in a private Codex or Claude worker brief and invoke `<machine policy prefix> node frozen-render.mjs ... --where <side>`; applying it to the actual tool command crosses either worker shell boundary without relying on App Server or client environment inheritance.
+
 ## First-run interview
 
 Ask once, in one question set, only for keys `config.env` lacks; offer the default first.
