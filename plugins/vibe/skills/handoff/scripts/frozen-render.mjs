@@ -186,21 +186,14 @@ export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles
   const headPort = await nextPort(basePort);
   const baseStatic = path.join(baseDir, "apps", "storybook", "storybook-static");
   const headStatic = path.join(repo, "apps", "storybook", "storybook-static");
-  const useStatic = existsSync(baseStatic) && existsSync(headStatic);
-  if (existsSync(baseStatic) !== existsSync(headStatic)) {
-    throw new Error("Frozen render needs both Storybook builds or neither; one side has no build.");
-  }
-  let comparisonBase = base;
-  if (useStatic) {
-    comparisonBase = resolve(repo, base);
-    const baseHead = headOf(baseDir);
-    const head = headOf(repo);
-    if (baseHead !== comparisonBase) throw new Error("Prepared base checkout does not match the named base commit.");
-    await buildStatic(baseDir, baseHead, { where });
-    await buildStatic(repo, head, { where });
-    if (headOf(baseDir) !== baseHead || headOf(repo) !== head) {
-      throw new Error("Storybook checkout head moved during its static build; comparison refused.");
-    }
+  const comparisonBase = resolve(repo, base);
+  const baseHead = headOf(baseDir);
+  const head = headOf(repo);
+  if (baseHead !== comparisonBase) throw new Error("Prepared base checkout does not match the named base commit.");
+  await buildStatic(baseDir, baseHead, { where });
+  await buildStatic(repo, head, { where });
+  if (headOf(baseDir) !== baseHead || headOf(repo) !== head) {
+    throw new Error("Storybook checkout head moved during its static build; comparison refused.");
   }
   return withServer(baseDir, basePort, (baseUrl) => withServer(repo, headPort, async (headUrl) => {
     const browser = await launch();
@@ -209,8 +202,8 @@ export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles
     } finally {
       await browser.close();
     }
-  }, useStatic ? { staticDir: headStatic } : {}),
-  useStatic ? { staticDir: baseStatic } : {});
+  }, { staticDir: headStatic }),
+  { staticDir: baseStatic });
 }
 
 /** Every story ID in `storyFiles`, read from their text at `base` in `repo`. */

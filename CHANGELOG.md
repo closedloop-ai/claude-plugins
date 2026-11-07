@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Nested slot cleanup now uses a remotely shipped detached process-group helper: TERM, INT, and HUP drain descendants with bounded escalation before capacity is released, while reused wrappers revalidate the live ancestor lock owner before relaying shutdown signals.
 - Direct self-slotting heavy checks now select the explicit local or remote slot cap and run the target machine's shared load admission before acquisition; owning wrappers defer startup signals until their cleanup helper PID is recorded.
 - Fleet prints a non-persistent, safely quoted prefix for the selected machine's existing slot, load and force variables. Codex and Claude frozen-render briefs apply it to the actual direct command, so base and head inherit target policy without a new record, token or App Server transport.
+- Frozen comparisons build both static outputs under direct heavy admission before starting either server. The shared bounded runner now holds its detached process group through TERM grace and SIGKILL drainage, even when the direct child exits first.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 355 words longer than in 1.1.54 (origin/main at the merge).
 
 ### vibe v1.1.54

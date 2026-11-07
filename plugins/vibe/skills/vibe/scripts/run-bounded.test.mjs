@@ -89,3 +89,25 @@ test("a SIGTERM to run-bounded reaches the child's process group instead of orph
   await once(wrapper, "close");
   assert.throws(() => process.kill(childPid, 0), { code: "ESRCH" }, "the child is gone once its wrapper was terminated");
 });
+
+test("a direct child exit during TERM cleanup cannot orphan a TERM-ignoring descendant", { timeout: 20_000 }, async () => {
+  const { spawn } = await import("node:child_process");
+  const { once } = await import("node:events");
+  const childSource = `
+    const { spawn } = require("node:child_process");
+    const grandchild = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});console.log('ready');setInterval(()=>{},1000)"],
+      { stdio: ["ignore", "pipe", "ignore"] });
+    process.on("SIGTERM", () => process.exit(0));
+    grandchild.stdout.once("data", () => console.log(grandchild.pid));
+    setInterval(() => {}, 1000);
+  `;
+  const wrapper = spawn(process.execPath, [SCRIPT, "60", process.execPath, "-e", childSource],
+    { stdio: ["ignore", "pipe", "inherit"] });
+  const grandchild = Number(await new Promise((resolve) => wrapper.stdout.once("data", (chunk) => resolve(String(chunk).trim()))));
+  assert.ok(grandchild > 1);
+  const started = Date.now();
+  wrapper.kill("SIGTERM");
+  await once(wrapper, "close");
+  assert.ok(Date.now() - started >= 1_800, "run-bounded owns the full TERM grace after its direct child exits");
+  assert.throws(() => process.kill(grandchild, 0), { code: "ESRCH" }, "the detached group is absent before run-bounded exits");
+});

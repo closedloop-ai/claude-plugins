@@ -33,6 +33,7 @@ export const TIMED_OUT_EXIT = 124;
 /** The stderr line that carries a heavy run's attempts, first-failure signature and load at start. */
 export const RESULT_PREFIX = "run-bounded-result: ";
 const GRACE_MS = 2_000;
+const POLL_MS = 25;
 
 /** Runs `command` in its own process group and resolves its exit code, or 124 after `seconds`. */
 export function runBounded(command, args, options) {
@@ -50,7 +51,11 @@ export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: capture ? ["inherit", "pipe", "pipe"] : stdio, detached: true, ...(env ? { env: { ...process.env, ...env } } : {}) });
     let timedOut = false;
-    let killTimer;
+    let directResult;
+    let directClosedResolve;
+    const directClosed = new Promise((done) => { directClosedResolve = done; });
+    let drainPromise;
+    let finished = false;
     let output = "";
     if (capture) {
       for (const [stream, sink] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) {
@@ -72,39 +77,75 @@ export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", 
         }
       }
     };
-    // A caller's kill of this process must reach the detached group, or the group is orphaned.
-    const forward = (signal) => {
-      signalGroup(signal);
-      killTimer ??= setTimeout(() => signalGroup("SIGKILL"), GRACE_MS);
+    const groupAlive = () => {
+      if (!(child.pid > 1) || child.pid === process.pid) return false;
+      try {
+        process.kill(-child.pid, 0);
+        return true;
+      } catch (error) {
+        // Only ESRCH proves the detached group absent. EPERM and unknown probe errors fail closed.
+        return error?.code !== "ESRCH";
+      }
     };
+    const delay = (ms) => new Promise((done) => setTimeout(done, ms));
+    const waitForGroup = async (milliseconds) => {
+      const end = Date.now() + milliseconds;
+      while (groupAlive() && Date.now() < end) await delay(POLL_MS);
+      return !groupAlive();
+    };
+    const drainGroup = (signal = "SIGTERM") => {
+      if (drainPromise) return drainPromise;
+      drainPromise = (async () => {
+        signalGroup(signal);
+        if (!await waitForGroup(GRACE_MS)) {
+          signalGroup("SIGKILL");
+          while (groupAlive()) await delay(POLL_MS);
+        }
+      })();
+      return drainPromise;
+    };
+    // A caller's signal must drain the detached group before this wrapper can exit.
+    const forward = (signal) => { void drainGroup(signal); void finish(); };
     const onTerm = () => forward("SIGTERM");
     const onInt = () => forward("SIGINT");
+    const onHup = () => forward("SIGHUP");
     process.on("SIGTERM", onTerm);
     process.on("SIGINT", onInt);
+    process.on("SIGHUP", onHup);
     const release = () => {
       process.off("SIGTERM", onTerm);
       process.off("SIGINT", onInt);
+      process.off("SIGHUP", onHup);
+      clearTimeout(deadline);
     };
     const deadline = setTimeout(() => {
       timedOut = true;
-      signalGroup("SIGTERM");
-      killTimer = setTimeout(() => signalGroup("SIGKILL"), GRACE_MS);
+      void drainGroup("SIGTERM");
+      void finish();
     }, seconds * 1000);
+    async function finish(error) {
+      if (finished) return;
+      finished = true;
+      try {
+        await drainGroup("SIGTERM");
+        await directClosed;
+        release();
+        if (error) reject(error);
+        else resolve({ code: timedOut ? TIMED_OUT_EXIT : directResult, output });
+      } catch (failure) {
+        release();
+        reject(failure);
+      }
+    }
     child.once("error", (error) => {
-      release();
-      clearTimeout(deadline);
-      reject(error);
+      directResult = 127;
+      directClosedResolve();
+      void finish(error);
     });
     child.once("close", (code, signal) => {
-      release();
-      clearTimeout(deadline);
-      if (timedOut) {
-        signalGroup("SIGKILL");
-        clearTimeout(killTimer);
-        resolve({ code: TIMED_OUT_EXIT, output });
-        return;
-      }
-      resolve({ code: code ?? 128 + (os.constants.signals[signal] ?? 0), output });
+      directResult = code ?? 128 + (os.constants.signals[signal] ?? 0);
+      directClosedResolve();
+      void finish();
     });
   });
 }

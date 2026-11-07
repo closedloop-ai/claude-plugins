@@ -22,7 +22,8 @@ test("the central comparison owns both servers and closes them after success or 
   };
   const launch = async () => ({ close: async () => { events.push("browser closed"); } });
   const args = { repo: "head", baseDir: "base", base: "abc", storyFiles: ["story"], out: "out" };
-  const dependencies = { withServer, nextPort: async (other) => other ? 6122 : 6121, launch };
+  const dependencies = { withServer, nextPort: async (other) => other ? 6122 : 6121, launch,
+    resolveCommit: () => "abc", headOf: (dir) => dir === "base" ? "abc" : "head", buildStatic: async () => {} };
   const result = await runOwnedFrozenComparison(args, { ...dependencies,
     compare: async ({ baseUrl, headUrl }) => ({ baseUrl, headUrl }) });
   assert.deepEqual(result, { baseUrl: "http://base:6121", headUrl: "http://head:6122" });
@@ -41,7 +42,9 @@ test("a second server startup failure still closes the first", async () => {
     finally { events.push(`stop ${dir}`); }
   };
   await assert.rejects(runOwnedFrozenComparison({ repo: "head", baseDir: "base", base: "abc", storyFiles: [], out: "out" },
-    { withServer, nextPort: async (other) => other ? 6122 : 6121, launch: async () => { throw new Error("browser not needed"); } }), /head failed/);
+    { withServer, nextPort: async (other) => other ? 6122 : 6121, resolveCommit: () => "abc",
+      headOf: (dir) => dir === "base" ? "abc" : "head", buildStatic: async () => {},
+      launch: async () => { throw new Error("browser not needed"); } }), /head failed/);
   assert.deepEqual(events, ["start base", "start head", "stop base"]);
 });
 
@@ -66,6 +69,50 @@ test("static comparison rebuilds both outputs for the named current heads before
   assert.deepEqual(events, [
     `resolve ${repo} main~1`, `build ${baseDir} base-commit-full local`, `build ${repo} head-commit local`, `serve ${baseDir}`, `serve ${repo}`,
   ]);
+});
+
+test("missing static outputs are built under target admission before static servers start", async (t) => {
+  const fixture = makeHome("vibe-frozen-no-static-"); t.after(fixture.cleanup);
+  const baseDir = path.join(fixture.root, "base"); const repo = path.join(fixture.root, "head");
+  const bin = path.join(fixture.root, "bin"); const locks = path.join(fixture.root, "locks");
+  const builds = path.join(fixture.root, "builds");
+  for (const dir of [baseDir, repo]) mkdirSync(path.join(dir, "apps", "storybook"), { recursive: true });
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, "pnpm"), `#!/bin/sh
+out=
+for arg in "$@"; do out="$arg"; done
+grep -q 'force reason: operator admitted frozen build' "$SLOT_LOCK_DIR/heavy-1.lock/owner" || exit 41
+printf '%s\n' "$PWD" >>"$BUILD_LOG"
+mkdir -p "$out"; printf fresh >"$out/index.html"
+`, { mode: 0o700 });
+  writeFileSync(path.join(bin, "cut"), '#!/bin/sh\nprintf "%s\\n" "$FLEET_TEST_LOAD"\n', { mode: 0o700 });
+  writeFileSync(path.join(bin, "sysctl"), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "$FLEET_TEST_LOAD"\n', { mode: 0o700 });
+  writeFileSync(path.join(bin, "getconf"), '#!/bin/sh\nprintf "%s\\n" "$FLEET_TEST_CORES"\n', { mode: 0o700 });
+  const keys = ["PATH", "SLOT_LOCK_DIR", "BUILD_LOG", "HEAVY_SLOTS", "MAX_LOAD_PER_CORE", "FLEET_FORCE_HERE",
+    "FLEET_FORCE_REASON", "FLEET_TEST_LOAD", "FLEET_TEST_CORES"];
+  const before = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, { PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: locks, BUILD_LOG: builds,
+    HEAVY_SLOTS: "1", MAX_LOAD_PER_CORE: "1.5", FLEET_FORCE_HERE: "1",
+    FLEET_FORCE_REASON: "operator admitted frozen build", FLEET_TEST_LOAD: "34", FLEET_TEST_CORES: "18" });
+  t.after(() => { for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value; });
+  let servers = 0;
+  const withServer = async (dir, _port, action, options) => {
+    assert.equal(readFileSync(builds, "utf8").trim().split("\n").length, 2, "both admitted builds finish before a server starts");
+    assert.equal(options.staticDir, path.join(dir, "apps", "storybook", "storybook-static"));
+    assert.equal(readFileSync(path.join(options.staticDir, "index.html"), "utf8"), "fresh");
+    servers += 1; return action(`http://${path.basename(dir)}`);
+  };
+  const dependencies = { withServer, nextPort: async (other) => other ? 6122 : 6121,
+    resolveCommit: () => "base", headOf: (dir) => dir === baseDir ? "base" : "head",
+    launch: async () => ({ close: async () => {} }), compare: async () => ({ ok: true }) };
+  await runOwnedFrozenComparison({ repo, baseDir, base: "HEAD", storyFiles: [], out: fixture.root, where: "local" }, dependencies);
+  assert.equal(servers, 2);
+
+  process.env.FLEET_FORCE_HERE = ""; process.env.FLEET_FORCE_REASON = "";
+  process.env.FLEET_TEST_LOAD = "100"; process.env.FLEET_TEST_CORES = "1";
+  servers = 0;
+  await assert.rejects(runOwnedFrozenComparison({ repo, baseDir, base: "HEAD", storyFiles: [], out: fixture.root, where: "local" }, dependencies), /Storybook static build failed/);
+  assert.equal(servers, 0, "load refusal starts no server");
 });
 
 test("static rebuild waits in the fleet heavy slot and preserves the old build until the new build starts", async (t) => {
