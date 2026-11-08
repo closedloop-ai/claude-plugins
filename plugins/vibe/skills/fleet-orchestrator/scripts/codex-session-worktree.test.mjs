@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadState, parseCli, requireResumeSession, run, saveState } from './codex-session.mjs';
+import { readProcessIdentity } from '../../../shared/process-identity.mjs';
 
 function git(cwd, ...args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
@@ -116,6 +117,62 @@ test('AC-1: accepted turn journal keeps both thread and turn ids before state sa
   assert.equal(saved.phase, 'turn-created');
   assert.equal(saved.threadId, 'T1');
   assert.equal(saved.turnId, 'U1');
+});
+
+function preparedJournal(f, launcher) {
+  mkdirSync(f.stateDir, { recursive: true });
+  const journal = join(f.stateDir, 'writer.launch.json');
+  writeFileSync(journal, JSON.stringify({ phase: 'prepared', cwd: f.worktree, launcher }));
+  return journal;
+}
+
+test('a local new writer retries after its exact prepared launcher has died', async (t) => {
+  const f = fixture(t);
+  writeFileSync(f.recordPath, JSON.stringify(f.record));
+  const journal = preparedJournal(f, { pid: 999999, identity: 'dead launcher' });
+  const app = client();
+  assert.equal(await run(app, f.options()), 'writer turn T1 U1');
+  assert.equal(app.calls[0].method, 'thread/start');
+  assert.equal(existsSync(journal), false);
+});
+
+test('a live or uncertain prepared launcher blocks a local new writer', async (t) => {
+  const f = fixture(t);
+  writeFileSync(f.recordPath, JSON.stringify(f.record));
+  const exact = readProcessIdentity(process.pid);
+  assert.ok(exact);
+  const journal = preparedJournal(f, { pid: process.pid, identity: exact });
+  const app = client();
+  await assert.rejects(run(app, f.options()), /launch|exists|busy/i);
+  assert.deepEqual(app.calls, []);
+  assert.equal(JSON.parse(readFileSync(journal, 'utf8')).launcher.identity, exact);
+  writeFileSync(journal, JSON.stringify({ phase: 'prepared', launcher: { pid: process.pid } }));
+  await assert.rejects(run(app, f.options()), /launch|exists|busy/i);
+  assert.ok(existsSync(journal));
+  writeFileSync(journal, JSON.stringify({ phase: 'may-have-started', launcher: { pid: 999999, identity: 'dead' } }));
+  await assert.rejects(run(app, f.options()), /launch|exists|busy/i);
+  assert.ok(existsSync(journal));
+});
+
+test('a reused PID with a different birth identity permits local prepared retry', async (t) => {
+  const f = fixture(t);
+  writeFileSync(f.recordPath, JSON.stringify(f.record));
+  const journal = preparedJournal(f, { pid: process.pid, identity: 'prior birth' });
+  const app = client();
+  assert.equal(await run(app, f.options()), 'writer turn T1 U1');
+  assert.equal(app.calls[0].method, 'thread/start');
+  assert.equal(existsSync(journal), false);
+});
+
+test('a saved local session coexists with an old prepared journal without replacing its thread', async (t) => {
+  const f = fixture(t);
+  writeFileSync(f.recordPath, JSON.stringify(f.record));
+  saveState(f.stateDir, 'writer', { threadId: 'T1', cwd: f.worktree, ticket: 'ISS-1', model: 'm', effort: 'high', turns: [] });
+  const journal = preparedJournal(f, { pid: 999999, identity: 'dead launcher' });
+  const app = client();
+  assert.equal(await run(app, f.options()), 'writer turn T1 U1');
+  assert.equal(app.calls[0].method, 'thread/resume');
+  assert.ok(existsSync(journal));
 });
 
 test('AC-1: an active Vibe record with an optional operator name is admitted', async (t) => {

@@ -7,7 +7,7 @@ import { linkSync, lstatSync, readFileSync, renameSync, unlinkSync, writeFileSyn
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
+import { processIdentityStatus, readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
 
 function pathAbsent(target) {
   try { lstatSync(target); return false; } catch (error) { return error?.code === 'ENOENT'; }
@@ -27,13 +27,9 @@ function preparedLauncherEvidence(journalPath, statePath, claimPath, attempt, { 
     if (journal.phase !== 'prepared') return 'uncertain';
     const { pid, identity } = journal.launcher ?? {};
     if (!Number.isSafeInteger(pid) || pid <= 1 || typeof identity !== 'string' || !identity) return 'uncertain';
-    let dead = false;
-    try { signal(pid, 0); } catch (error) { if (error?.code !== 'ESRCH') return 'uncertain'; dead = true; }
-    if (!dead) {
-      const actual = identityOf(pid);
-      if (!actual) return 'uncertain';
-      if (actual === identity) return 'in-flight';
-    }
+    const status = processIdentityStatus(pid, identity, { identityOf, signal });
+    if (status === 'live') return 'in-flight';
+    if (status !== 'dead') return 'uncertain';
     if (!pathAbsent(statePath)) return 'uncertain';
     const current = readClaim(journalPath);
     if (current?.phase !== 'prepared' || current.launcher?.pid !== pid || current.launcher.identity !== identity) return 'uncertain';

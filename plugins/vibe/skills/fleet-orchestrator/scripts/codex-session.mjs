@@ -33,7 +33,7 @@ import { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProbl
 import { promptProblems } from './skill-freshness.mjs';
 import { canonicalWorktree, ensureReloadFence, e2eLockDir as machineE2eLockDir, machineSlotLockDir, readE2eWaiters,
   regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } from '../../vibe/scripts/owned-state.mjs';
-import { readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
+import { processIdentityStatus, readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -637,6 +637,29 @@ export function run(client, options, dependencies = {}) {
   return control(options.stateDir, options.name, () => runControlled(client, options, dependencies), dependencies.control);
 }
 
+/** Reclaim only a dead, unchanged pre-request journal while no saved writer state exists. */
+function clearDeadPreparedLaunch(journalPath, savedPath) {
+  let prior;
+  try { prior = regularJson(journalPath); } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  const { pid, identity } = prior.launcher ?? {};
+  if (prior.phase !== 'prepared' || processIdentityStatus(pid, identity) !== 'dead') {
+    throw new Error('launch journal is active or uncertain; prepared ownership retained');
+  }
+  const absent = (file) => { try { lstatSync(file); return false; } catch (error) {
+    if (error.code === 'ENOENT') return true;
+    throw error;
+  } };
+  if (!absent(savedPath)) throw new Error('saved session appeared during launch recovery; journal retained');
+  const current = regularJson(journalPath);
+  if (JSON.stringify(current) !== JSON.stringify(prior) || !absent(savedPath)) {
+    throw new Error('launch journal or saved session changed during recovery; journal retained');
+  }
+  rmSync(journalPath);
+}
+
 async function runControlled(client, options, { warn = (text) => console.error(`codex-session: ${text}`), ...dependencies } = {}) {
   let saved = loadState(options.stateDir, options.name);
   if (options.command === 'reload') return JSON.stringify(await deliverReloadControlled(client, options, dependencies));
@@ -699,6 +722,7 @@ async function runControlled(client, options, { warn = (text) => console.error(`
     if (saved.reload && isSkillReload(prompt)) mechanicalDispatch = true;
   }
   const journalPath = options.command === 'turn' && !saved ? path.join(options.stateDir, `${options.name}.launch.json`) : null;
+  if (journalPath) clearDeadPreparedLaunch(journalPath, statePath(options.stateDir, options.name));
   const launcherIdentity = journalPath ? readProcessIdentity(process.pid) : null;
   if (journalPath && !launcherIdentity) throw new Error('remote launcher process identity is unavailable; writer not started');
   const launch = journalPath ? { phase: 'prepared', cwd: options.cwd, createdAt: new Date().toISOString(),
