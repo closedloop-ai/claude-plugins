@@ -62,6 +62,14 @@ function realRemoteSession(f) {
   return worktree;
 }
 
+/** Let the real fleet shell complete a remote turn while the test launcher writes only remote state. */
+function successfulRemoteWriter(f, exitStatus = 0) {
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit ${exitStatus};; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  return join(f.root, 'future-worktree');
+}
+
 function remotePlugin(root, version, withGate) {
   mkdirSync(join(root, '.codex-plugin'), { recursive: true });
   mkdirSync(join(root, 'skills', 'vibe'), { recursive: true });
@@ -153,6 +161,7 @@ test('a remote new writer refuses an existing worktree without a Vibe record on 
   assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
   assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false);
   assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.json')), false);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.pending')), false);
 });
 
 test('a refused remote new writer preserves an existing local remote marker byte for byte', TIMEOUT, () => {
@@ -167,6 +176,57 @@ test('a refused remote new writer preserves an existing local remote marker byte
   assert.equal(result.status, 2, result.stdout + result.stderr);
   assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
   assert.equal(readFileSync(marker, 'utf8'), previous);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.pending')), false);
+});
+
+test('remote turn establishes local marker readiness before starting the writer', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f);
+  writeFileSync(join(f.orch, 'sessions'), 'not a directory\n');
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false,
+    'no remote thread may start when its local ownership marker cannot be prepared');
+});
+
+test('remote marker promotion failure retains a recoverable pending record', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f);
+  const failedOnce = join(f.root, 'marker-promotion-failed');
+  writeFileSync(join(f.root, 'bin', 'mv'), `#!/usr/bin/env bash\nif [[ "$1" == */marker.json && "$2" == *.remote.json && ! -e ${JSON.stringify(failedOnce)} ]]; then : > ${JSON.stringify(failedOnce)}; exit 1; fi\nexec /bin/mv "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'mv'), 0o755);
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending');
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.ok(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), 'the remote launcher succeeded');
+  assert.equal(existsSync(marker), false);
+  assert.ok(existsSync(join(pending, 'marker.json')), 'prepared marker survives for exact recovery');
+  const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
+  assert.equal(existsSync(pending), false);
+});
+
+test('an ambiguous remote failure after state creation keeps a recoverable pending marker', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f, 1);
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending');
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.ok(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')));
+  assert.ok(existsSync(join(pending, 'marker.json')));
+  assert.equal(existsSync(marker), false);
+  const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
+  assert.equal(existsSync(pending), false);
 });
 
 test('remote cleanup ships the exact board and runs on the owning host with its session state', TIMEOUT, () => {

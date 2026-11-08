@@ -9,9 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - New Codex fleet turns refuse an existing worktree unless a Vibe-created active session record matches the `$vibe` brief and live ticket. Direct and remote fleet launches share the guard; missing paths still let Vibe create the worktree, and saved sessions still resume.
 - Remote fleet turns publish their local ownership marker only after the target host starts the writer; a refused start leaves no new marker and preserves an existing marker unchanged.
+- Remote starts prepare a recoverable ownership record before launch. If local marker publication fails afterward, fleet status names the pending turn and `recover-marker` verifies the remote state before completing or clearing it.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 34 words longer than in 1.1.61 (origin/main at this update, f7dfc2148436e6b0bc99652ff975974a7b838d31).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 54 words longer than in 1.1.61 (origin/main at this update, f7dfc2148436e6b0bc99652ff975974a7b838d31).
 
 ### vibe v1.1.61
 

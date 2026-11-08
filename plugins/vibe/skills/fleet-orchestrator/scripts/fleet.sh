@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end|interrupt|reload> <name> [codex-session.mjs options]
+# Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end|interrupt|reload|recover-marker> <name> [codex-session.mjs options]
 #        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> <command...>
 #        fleet.sh <orchDir> <local|remote> cleanup
 # A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE.
@@ -44,6 +44,56 @@ run_remote() {
     ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 "$REMOTE_HOST" "$outer"
 }
 
+# The same remote state probe resolves ambiguous launches and explicit marker recovery.
+remote_writer_state() {
+  local marker_name=$1 state_path probe
+  state_path=$(printf %q "$REMOTE_STATE_DIR/$marker_name.json")
+  probe="command -v jq >/dev/null 2>&1 || exit 127; if test -f $state_path && jq -e '(.threadId | type) == \"string\" and (.cwd | type) == \"string\" and (.threadId | length) > 0 and (.cwd | length) > 0' $state_path >/dev/null 2>&1; then printf present; else printf absent; fi"
+  run_remote "$probe"
+}
+
+# A prepared marker survives a successful remote launch even if final publication fails.
+# Recover it only after checking the target's saved writer state, or remove it when no state exists.
+recover_remote_marker() {
+  local marker_name=$1
+  local pending="$orch/sessions/$marker_name.remote.pending"
+  local marker="$orch/sessions/$marker_name.remote.json"
+  if [ -L "$pending" ] || [ ! -d "$pending" ]; then
+    echo "fleet: no prepared remote marker for $marker_name" >&2
+    return 2
+  fi
+  if [ ! -e "$pending/marker.json" ] && [ ! -L "$pending/marker.json" ]; then
+    if [ -f "$marker" ] && [ ! -L "$marker" ]; then
+      rmdir "$pending"
+      return
+    fi
+    echo "fleet: prepared remote marker has no payload and no published marker" >&2
+    return 2
+  fi
+  if [ -L "$pending/marker.json" ] || [ ! -f "$pending/marker.json" ]; then
+    echo "fleet: prepared remote marker is not a regular file" >&2
+    return 2
+  fi
+  if ! jq -e --arg host "$REMOTE_HOST" --arg stateDir "$REMOTE_STATE_DIR" '.host == $host and .stateDir == $stateDir' "$pending/marker.json" >/dev/null; then
+    echo "fleet: prepared remote marker does not match this host and state directory" >&2
+    return 2
+  fi
+  local state
+  state=$(remote_writer_state "$marker_name") || { echo "fleet: could not check remote writer state; prepared marker retained" >&2; return 1; }
+  if [ "$state" = present ]; then
+    if ! mv "$pending/marker.json" "$marker"; then
+      echo "fleet: remote writer exists but local marker publication failed; retry remote session recover-marker $marker_name" >&2
+      return 1
+    fi
+  elif [ "$state" = absent ]; then
+    rm "$pending/marker.json"
+  else
+    echo "fleet: remote writer state reply was not recognized; prepared marker retained" >&2
+    return 1
+  fi
+  rmdir "$pending"
+}
+
 has_option() {
   local word
   for word in ${args[@]+"${args[@]}"}; do
@@ -57,6 +107,10 @@ session() {
   local command=$1 name=$2 i prompt= target_cwd= plugin_root expected_version
   shift 2
   args=("$@")
+  if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "fleet: session name must be letters, digits, dot, dash or underscore" >&2
+    return 2
+  fi
   if [ "$command" = turn ]; then
     if [ -n "${CODEX_MODEL:-}" ] && ! has_option --model; then args+=(--model "$CODEX_MODEL"); fi
     if [ -n "${CODEX_EFFORT:-}" ] && ! has_option --effort; then args+=(--effort "$CODEX_EFFORT"); fi
@@ -75,6 +129,14 @@ session() {
     exit 2
   fi
   expected_version=$(jq -er '.version' "$plugin_root/.codex-plugin/plugin.json")
+  if [ "$command" = recover-marker ]; then
+    if [ "$where" != remote ] || [ "${#args[@]}" -ne 0 ]; then
+      echo "fleet: recover-marker needs remote session and a name only" >&2
+      return 2
+    fi
+    recover_remote_marker "$name"
+    return
+  fi
   if [ "$where" = local ]; then
     local state=${LOCAL_STATE_DIR:-$orch/sessions}
     mkdir -p "$state"
@@ -114,11 +176,51 @@ session() {
   fi
   local plugin_arg=
   if [ "$command" = turn ] || [ "$command" = steer ]; then plugin_arg=' --plugin-root "$remote_root"'; fi
-  run_remote "${codex_check}remote_root=$remote_root; ${preflight}$(printf '%q ' node "$remote_dir/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
-  # Mark only a successful remote turn; a refusal must not create or overwrite local ownership evidence.
+  local pending= marker=
+  # Prepare the exact marker bytes before a remote turn can create a writer.
+  # A pending directory is durable recovery evidence, never a started-session marker.
   if [ "$command" = turn ]; then
     mkdir -p "$orch/sessions"
-    printf '{"host":"%s","stateDir":"%s"}\n' "$REMOTE_HOST" "$REMOTE_STATE_DIR" > "$orch/sessions/$name.remote.json"
+    pending="$orch/sessions/$name.remote.pending"
+    marker="$orch/sessions/$name.remote.json"
+    if [ -L "$marker" ] || { [ -e "$marker" ] && [ ! -f "$marker" ]; }; then
+      echo "fleet: existing remote marker is not a regular file" >&2
+      return 2
+    fi
+    if ! mkdir "$pending"; then
+      echo "fleet: prepared remote marker already exists or cannot be created; run remote session recover-marker $name" >&2
+      return 2
+    fi
+    if ! jq -nc --arg host "$REMOTE_HOST" --arg stateDir "$REMOTE_STATE_DIR" '{host:$host,stateDir:$stateDir}' > "$pending/marker.json"; then
+      rm -f "$pending/marker.json"
+      rmdir "$pending"
+      echo "fleet: local remote marker could not be prepared; writer not started" >&2
+      return 2
+    fi
+  fi
+  if run_remote "${codex_check}remote_root=$remote_root; ${preflight}$(printf '%q ' node "$remote_dir/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"; then
+    if [ "$command" = turn ]; then
+      if ! mv "$pending/marker.json" "$marker"; then
+        echo "fleet: remote writer started but local marker publication failed; run remote session recover-marker $name" >&2
+        return 1
+      fi
+      if ! rmdir "$pending"; then
+        echo "fleet: marker published but pending directory remains; run remote session recover-marker $name" >&2
+        return 1
+      fi
+    fi
+  else
+    local status=$?
+    if [ "$command" = turn ]; then
+      local remote_state=
+      if remote_state=$(remote_writer_state "$name") && [ "$remote_state" = absent ]; then
+        rm -f "$pending/marker.json"
+        rmdir "$pending"
+      else
+        echo "fleet: remote result is unconfirmed; prepared marker retained; run remote session recover-marker $name" >&2
+      fi
+    fi
+    return "$status"
   fi
 }
 

@@ -20,5 +20,6 @@ scripts/fleet.sh <orchDir> local|remote session reload <name> [--retry]
 - `reload` fences the canonical worktree in existing machine slot locks through evidence completion. Jobs register before checking that fence; admitted jobs block reload. Heavy admission waits at most 60 seconds; E2E keeps its wait budget. Receipt scans resume; `--retry` preserves nonce/text. Retained work stays durable until confirmed delivery. Thread, worktree, branch, session record and board row survive.
 - Use `interrupt` only when reload cannot wait. It records the reason, sends `turn/interrupt`, and confirms the turn stopped; unconfirmed stops remain visible failures. Resume with `turn`; never archive or replace the writer for reload.
 - `end` records stopped/merged and archives only an idle thread; `turn` reopens it. Recovery skips ended sessions.
+- On `PENDING-REMOTE`, run `fleet.sh <orchDir> remote session recover-marker <name>`; it checks remote state before publishing or clearing prepared ownership.
 - Run high effort, never maximum; vibe chooses sub-agent models. No Codex computer use: use the code host CLI and `request-visual.mjs` ([template](./templates.md#visual-request)) for Claude visual checks.
 <!-- end: codex-sessions-rules -->

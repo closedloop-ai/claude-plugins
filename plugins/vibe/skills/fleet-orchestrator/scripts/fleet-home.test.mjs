@@ -81,6 +81,24 @@ test('check reports state written outside the home or the program, and passes on
   assert.equal(run(['check', '--home', home]).status, 0, run(['check', '--home', home]).stdout);
 });
 
+test('check reports a pending remote marker as recoverable rather than unmanaged', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'iss-1', '--shape', 'fleet', '--home', home]).status, 0);
+  const program = path.join(home, 'programs', 'iss-1');
+  writeFileSync(path.join(program, 'sessions.txt'), 'remote writer\n');
+  const pending = path.join(program, 'sessions', 'writer.remote.pending');
+  mkdirSync(pending);
+  writeFileSync(path.join(pending, 'marker.json'), '{"host":"box","stateDir":"/remote/sessions"}\n');
+  const checked = run(['check', '--home', home]);
+  assert.equal(checked.status, 1);
+  assert.match(checked.stdout, /^PENDING-REMOTE remote writer:/m);
+  assert.doesNotMatch(checked.stdout, /^UNMANAGED remote writer:/m);
+  rmSync(path.join(program, 'sessions.txt'));
+  const withoutRoster = run(['check', '--home', home]);
+  assert.match(withoutRoster.stdout, /^PENDING-REMOTE remote writer:/m,
+    'pending ownership remains discoverable before the roster names the writer');
+});
+
 test('every script resolves the home to the active program, with per-program state dirs derived', (t) => {
   const home = path.join(tempRoot(t), 'fleet');
   run(['start', 'iss-1', '--shape', 'fleet', '--home', home]);
