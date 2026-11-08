@@ -49,6 +49,19 @@ function fixture(config) {
 
 const remoteConfig = (root, extra = '') => `REMOTE_HOST=box\nREMOTE_STATE_DIR=${root}/remote/sessions\nREMOTE_SHELL="bash -c"\n${extra}`;
 
+/** Exercise the shipped remote launcher while keeping App Server calls inside a nonexistent test socket. */
+function realRemoteSession(f) {
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*codex-session.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  writeFileSync(join(f.root, 'bin', 'codex'), `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'app-server daemon start') console.log(JSON.stringify({ socketPath: ${JSON.stringify(join(f.root, 'missing.sock'))} }));\nelse console.log(JSON.stringify({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: ${JSON.stringify(PLUGIN_ROOT)} } }] }));\n`);
+  chmodSync(join(f.root, 'bin', 'codex'), 0o755);
+  const worktree = join(f.root, 'pre-made-worktree');
+  const created = spawnSync('git', ['init', '-q', '-b', 'vibe/example', worktree], { encoding: 'utf8' });
+  assert.equal(created.status, 0, created.stderr);
+  return worktree;
+}
+
 function remotePlugin(root, version, withGate) {
   mkdirSync(join(root, '.codex-plugin'), { recursive: true });
   mkdirSync(join(root, 'skills', 'vibe'), { recursive: true });
@@ -127,24 +140,33 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), '$vibe ISS-1\n');
   assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /^-o\nConnectTimeout=10\n-o\nServerAliveInterval=15\nbox\n/);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.orch, 'sessions', 'w1.remote.json'), 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
 });
 
 test('a remote new writer refuses an existing worktree without a Vibe record on the target host', TIMEOUT, () => {
   const f = fixture();
-  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
-  // The remote harness normally records Node argv; run the shipped launcher to exercise its real preflight.
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*codex-session.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
-  chmodSync(join(f.root, 'bin', 'node'), 0o755);
-  writeFileSync(join(f.root, 'bin', 'codex'), `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'app-server daemon start') console.log(JSON.stringify({ socketPath: ${JSON.stringify(join(f.root, 'missing.sock'))} }));\nelse console.log(JSON.stringify({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: ${JSON.stringify(PLUGIN_ROOT)} } }] }));\n`);
-  chmodSync(join(f.root, 'bin', 'codex'), 0o755);
-  const worktree = join(f.root, 'pre-made-worktree');
-  const created = spawnSync('git', ['init', '-q', '-b', 'vibe/example', worktree], { encoding: 'utf8' });
-  assert.equal(created.status, 0, created.stderr);
+  const worktree = realRemoteSession(f);
   const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
     '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
   assert.equal(result.status, 2, result.stdout + result.stderr);
   assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
   assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.json')), false);
+});
+
+test('a refused remote new writer preserves an existing local remote marker byte for byte', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = realRemoteSession(f);
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  mkdirSync(dirname(marker), { recursive: true });
+  const previous = '{"host":"prior","stateDir":"prior-state"}\n';
+  writeFileSync(marker, previous);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
+  assert.equal(readFileSync(marker, 'utf8'), previous);
 });
 
 test('remote cleanup ships the exact board and runs on the owning host with its session state', TIMEOUT, () => {

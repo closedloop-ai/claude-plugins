@@ -87,11 +87,6 @@ session() {
     if [ "$command" = turn ] || [ "$command" = steer ]; then args+=(--plugin-root "$plugin_root"); fi
     exec node "$here/codex-session.mjs" "$command" "$state" "$name" ${args[@]+"${args[@]}"}
   fi
-  # fleet-home.mjs check reports a remote session in sessions.txt without this marker as started outside fleet.sh.
-  if [ "$command" = turn ]; then
-    mkdir -p "$orch/sessions"
-    printf '{"host":"%s","stateDir":"%s"}\n' "$REMOTE_HOST" "$REMOTE_STATE_DIR" > "$orch/sessions/$name.remote.json"
-  fi
   if [ -n "$prompt" ]; then
     extra=(-C "$(cd "$(dirname "$prompt")" && pwd)" "$(basename "$prompt")")
     # finding-brief.mjs puts a finding's evidence in <prompt>.evidence/, which the writer must be able to open.
@@ -120,6 +115,11 @@ session() {
   local plugin_arg=
   if [ "$command" = turn ] || [ "$command" = steer ]; then plugin_arg=' --plugin-root "$remote_root"'; fi
   run_remote "${codex_check}remote_root=$remote_root; ${preflight}$(printf '%q ' node "$remote_dir/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
+  # Mark only a successful remote turn; a refusal must not create or overwrite local ownership evidence.
+  if [ "$command" = turn ]; then
+    mkdir -p "$orch/sessions"
+    printf '{"host":"%s","stateDir":"%s"}\n' "$REMOTE_HOST" "$REMOTE_STATE_DIR" > "$orch/sessions/$name.remote.json"
+  fi
 }
 
 slot() {
