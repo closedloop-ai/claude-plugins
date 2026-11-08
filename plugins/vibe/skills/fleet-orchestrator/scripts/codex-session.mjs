@@ -33,7 +33,7 @@ import { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProbl
 import { promptProblems } from './skill-freshness.mjs';
 import { canonicalWorktree, ensureReloadFence, e2eLockDir as machineE2eLockDir, machineSlotLockDir, readE2eWaiters,
   regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } from '../../vibe/scripts/owned-state.mjs';
-import { readProcessIdentity } from '../../../shared/process-identity.mjs';
+import { readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -75,6 +75,7 @@ export function parseCli(argv) {
       sandbox: { type: 'string' },
       count: { type: 'string' },
       'plugin-root': { type: 'string' },
+      'fleet-claim': { type: 'string' },
       retry: { type: 'boolean' },
     },
   });
@@ -94,6 +95,7 @@ export function parseCli(argv) {
     }
   }
   if (!['turn', 'steer', 'reload'].includes(command) && values['plugin-root'] !== undefined) throw new Error('--plugin-root applies to turn, steer and reload only');
+  if (command !== 'turn' && values['fleet-claim'] !== undefined) throw new Error('--fleet-claim applies to turn only');
   if (values.retry && command !== 'reload') throw new Error('--retry applies to reload only');
   if (command !== 'last' && values.count !== undefined) throw new Error('--count applies to last only');
   if (values.effort !== undefined && !EFFORT_PATTERN.test(values.effort)) throw new Error('effort must be an identifier such as high');
@@ -113,6 +115,7 @@ export function parseCli(argv) {
     sandbox: values.sandbox,
     count,
     ...(values['plugin-root'] === undefined ? {} : { pluginRoot: resolve(values['plugin-root']) }),
+    ...(values['fleet-claim'] === undefined ? {} : { fleetClaim: resolve(values['fleet-claim']) }),
     ...(values.retry ? { retry: true } : {}),
   };
 }
@@ -553,7 +556,9 @@ function defined(object) {
  * disconnects once the turn is accepted, so an approval request would have nobody to answer it.
  * `warn` receives each sidebar step an older App Server could not apply.
  */
-export async function startTurn(client, state, prompt, promptFile, { name, warn = () => {}, mechanical = false, page } = {}) {
+export async function startTurn(client, state, prompt, promptFile, {
+  name, warn = () => {}, mechanical = false, page, beforeNewThread = () => {}, afterNewThread = () => {}, afterNewTurn = () => {},
+} = {}) {
   requireNewSessionWorktree(state.threadId ? state : null, state.cwd, state.ticket, prompt);
   const threadOptions = defined({ cwd: state.cwd, model: state.model, sandbox: state.sandbox, approvalPolicy: 'never' });
   let { threadId } = state;
@@ -562,9 +567,11 @@ export async function startTurn(client, state, prompt, promptFile, { name, warn 
     if (archivedAt) await client.request('thread/unarchive', { threadId });
     await client.request('thread/resume', { threadId, ...threadOptions });
   } else {
+    beforeNewThread(); // The durable launch journal must precede App Server thread creation.
     const started = await client.request('thread/start', { ...threadOptions, threadSource: WORKER_THREAD_SOURCE });
     threadId = started?.thread?.id;
     if (!threadId) throw new Error('App Server returned no thread id');
+    afterNewThread(threadId);
     for (const warning of await labelWorkerThread(client, threadId, workerThreadName(name, state.ticket))) warn(warning);
   }
   const result = await client.request('turn/start', defined({
@@ -578,6 +585,7 @@ export async function startTurn(client, state, prompt, promptFile, { name, warn 
   }));
   const turnId = result?.turn?.id;
   if (!turnId) throw new Error('App Server returned no turn id');
+  if (!state.threadId) afterNewTurn(turnId);
   return { ...open, threadId, turns: [...state.turns, { turnId, kind: 'turn', promptFile }] };
 }
 
@@ -690,17 +698,45 @@ async function runControlled(client, options, { warn = (text) => console.error(`
     }
     if (saved.reload && isSkillReload(prompt)) mechanicalDispatch = true;
   }
+  const journalPath = options.command === 'turn' && !saved ? path.join(options.stateDir, `${options.name}.launch.json`) : null;
+  const launcherIdentity = journalPath ? readProcessIdentity(process.pid) : null;
+  if (journalPath && !launcherIdentity) throw new Error('remote launcher process identity is unavailable; writer not started');
+  const launch = journalPath ? { phase: 'prepared', cwd: options.cwd, createdAt: new Date().toISOString(),
+    launcher: { pid: process.pid, identity: launcherIdentity } } : null;
+  if (journalPath) writeAtomic(journalPath, launch, { exclusive: true });
+  let launchRecord = launch;
+  let launchPhase = 'prepared';
+  const updateLaunch = (phase, fields = {}) => {
+    if (journalPath) {
+      const next = { ...launchRecord, phase, ...fields };
+      writeAtomic(journalPath, next);
+      launchRecord = next;
+      launchPhase = phase;
+    }
+  };
   let state;
-  if (options.command === 'turn') state = await startTurn(client, nextState(saved, options), prompt, promptFile, { name: options.name, warn, mechanical: mechanicalDispatch });
-  else {
-    if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
-    state = await steerTurn(client, saved, prompt, promptFile, { mechanical: mechanicalDispatch });
+  try {
+    if (options.command === 'turn') state = await startTurn(client, nextState(saved, options), prompt, promptFile, {
+      name: options.name, warn, mechanical: mechanicalDispatch,
+      beforeNewThread: () => updateLaunch('may-have-started'),
+      afterNewThread: (threadId) => updateLaunch('thread-created', { threadId }),
+      afterNewTurn: (turnId) => updateLaunch('turn-created', { turnId }),
+    });
+    else {
+      if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
+      state = await steerTurn(client, saved, prompt, promptFile, { mechanical: mechanicalDispatch });
+    }
+  } catch (error) {
+    // A prepared journal proves thread/start was never sent; only that phase is safe to discard.
+    if (journalPath && launchPhase === 'prepared') rmSync(journalPath, { force: true });
+    throw error;
   }
   // A fresh thread reads the installed skill on its first $vibe turn; this records that definition
   // at spawn, which is not an observation of the read.
   if (!saved) state.loadedSkill = loadedSkillEvidence(state.threadId, 'codex', options.pluginRoot ?? PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
   if (mechanicalDispatch) state.reload.turnId = state.turns.at(-1).turnId;
   saveState(options.stateDir, options.name, state);
+  if (journalPath) rmSync(journalPath);
   const { turnId, kind } = state.turns.at(-1);
   // The next idle turn starts loading immediately; held jobs leave the same durable queue for a milestone pump.
   if (beginIdleReload && !reloadBlockers({ ...state, name: options.name }, dependencies).length) {
@@ -709,11 +745,33 @@ async function runControlled(client, options, { warn = (text) => console.error(`
   return `${options.name} ${kind} ${state.threadId} ${turnId}`;
 }
 
+/** Bind the remote fleet handoff to this same process across shell exec. */
+function verifiedFleetClaim(options) {
+  if (!options.fleetClaim) return null;
+  const stat = lstatSync(options.fleetClaim);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('fleet preflight claim is not a regular file');
+  const claim = JSON.parse(readFileSync(options.fleetClaim, 'utf8'));
+  if (typeof claim.attempt !== 'string' || !claim.attempt
+    || resolve(options.fleetClaim) !== resolve(options.stateDir, `${options.name}.preflight.${claim.attempt}.json`)
+    || claim.phase !== 'launching' || claim.launcher?.pid !== process.pid
+    || claim.launcher.started !== readProcessStart(process.pid)) throw new Error('fleet preflight claim does not match this launcher');
+  return claim;
+}
+
+/** Publish a completed pre-start refusal or release a successful handoff. */
+function settleFleetClaim(options, claim, code) {
+  if (!claim) return;
+  if (code === 2) writeAtomic(path.join(options.stateDir, `${options.name}.preflight-rejected.json`),
+    { attempt: claim.attempt, stage: 'preflight-rejected' });
+  if (code === 0) rmSync(options.fleetClaim);
+}
+
 async function main() {
   exitAfterTotalTimeout();
-  let options;
+  let options, fleetClaim;
   try {
     options = parseCli(process.argv.slice(2));
+    fleetClaim = verifiedFleetClaim(options);
     if (options.command === 'turn') {
       const saved = loadState(options.stateDir, options.name);
       requireResumeSession(saved, options.cwd);
@@ -722,6 +780,10 @@ async function main() {
     if (['turn', 'steer', 'reload'].includes(options.command)) options.pluginRoot = verifiedPluginRoot(options.pluginRoot);
   } catch (error) {
     console.error(`codex-session: ${error.message}`);
+    try { settleFleetClaim(options, fleetClaim, 2); } catch (receiptError) {
+      console.error(`codex-session: fleet rejection receipt failed: ${receiptError.message}`);
+      process.exit(1);
+    }
     process.exit(2);
   }
   const client = connectViaProxy(daemonSocket());
@@ -734,6 +796,10 @@ async function main() {
     code = 1;
   }
   client.close();
+  try { settleFleetClaim(options, fleetClaim, code); } catch (error) {
+    console.error(`codex-session: fleet handoff settlement failed: ${error.message}`);
+    code = 1;
+  }
   process.exit(code);
 }
 

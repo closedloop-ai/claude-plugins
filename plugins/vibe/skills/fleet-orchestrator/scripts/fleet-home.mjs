@@ -125,7 +125,8 @@ function unmanagedSessions(programDir) {
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8").split("\n").map((line) => line.trim().split(/\s+/)).filter((fields) => ["local", "remote"].includes(fields[0]) && fields[1])
     .filter(([where, name, threadId]) => threadId || (!existsSync(path.join(programDir, "sessions", where === "local" ? `${name}.json` : `${name}.remote.json`))
-      && !(where === "remote" && existsSync(path.join(programDir, "sessions", `${name}.remote.pending`)))))
+      && !(where === "remote" && (existsSync(path.join(programDir, "sessions", `${name}.remote.pending.json`))
+        || existsSync(path.join(programDir, "sessions", `${name}.remote.pending`))))))
     .map(([where, name]) => `UNMANAGED ${where} ${name}: not started through fleet.sh; start its next turn with fleet.sh so its state lives in sessions/`);
 }
 
@@ -133,8 +134,17 @@ function unmanagedSessions(programDir) {
 function pendingRemoteMarkers(programDir) {
   const sessions = path.join(programDir, "sessions");
   if (!existsSync(sessions)) return [];
-  return readdirSync(sessions).filter((name) => name.endsWith(".remote.pending"))
-    .map((name) => `PENDING-REMOTE remote ${name.slice(0, -".remote.pending".length)}: recover with fleet.sh <orchDir> remote session recover-marker ${name.slice(0, -".remote.pending".length)}`);
+  return readdirSync(sessions).flatMap((name) => {
+    if (name.endsWith(".remote.pending.json")) {
+      const writer = name.slice(0, -".remote.pending.json".length);
+      return [`PENDING-REMOTE remote ${writer}: recover with fleet.sh <orchDir> remote session recover-marker ${writer}`];
+    }
+    if (name.endsWith(".remote.pending")) {
+      const writer = name.slice(0, -".remote.pending".length);
+      return [`PENDING-REMOTE-LEGACY remote ${writer}: preserve and audit this older prepared owner before another turn`];
+    }
+    return [];
+  });
 }
 
 function unmanagedState(dir) {

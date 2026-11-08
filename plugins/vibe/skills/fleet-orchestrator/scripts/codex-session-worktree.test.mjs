@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -63,6 +63,59 @@ test('AC-1 AC-4: new writer accepts a matching active record in a Vibe-shaped li
   const app = client();
   assert.equal(await run(app, f.options()), 'writer turn T1 U1');
   assert.equal(app.calls[0].method, 'thread/start');
+  assert.equal(existsSync(join(f.stateDir, 'writer.launch.json')), false);
+});
+
+test('AC-1: a durable launch journal precedes thread creation and survives a pre-save failure', async (t) => {
+  const f = fixture(t);
+  writeFileSync(f.recordPath, JSON.stringify(f.record));
+  const journal = join(f.stateDir, 'writer.launch.json');
+  const app = { request: async (method) => {
+    if (method === 'thread/start') {
+      const saved = JSON.parse(readFileSync(journal, 'utf8'));
+      assert.equal(saved.phase, 'may-have-started');
+      assert.equal(saved.launcher.pid, process.pid);
+      assert.match(saved.launcher.identity, /\S/);
+      return { thread: { id: 'T1' } };
+    }
+    if (method === 'turn/start') {
+      const saved = JSON.parse(readFileSync(journal, 'utf8'));
+      assert.equal(saved.phase, 'thread-created');
+      assert.equal(saved.threadId, 'T1');
+      throw new Error('simulated failure before state save');
+    }
+    if (['thread/name/set', 'threadSection/list', 'threadSection/create', 'thread/section/move'].includes(method)) {
+      return method === 'threadSection/list' ? { data: [], nextCursor: null }
+        : method === 'threadSection/create' ? { section: { id: 'S1' } } : {};
+    }
+    throw new Error(`unexpected ${method}`);
+  } };
+  await assert.rejects(run(app, f.options()), /simulated failure before state save/);
+  assert.equal(loadState(f.stateDir, 'writer'), null);
+  assert.equal(JSON.parse(readFileSync(journal, 'utf8')).phase, 'thread-created');
+});
+
+test('AC-1: accepted turn journal keeps both thread and turn ids before state save', async (t) => {
+  const f = fixture(t);
+  writeFileSync(f.recordPath, JSON.stringify(f.record));
+  const journal = join(f.stateDir, 'writer.launch.json');
+  const app = { request: async (method) => {
+    if (method === 'thread/start') return { thread: { id: 'T1' } };
+    if (method === 'turn/start') {
+      mkdirSync(join(f.stateDir, 'writer.json'));
+      return { turn: { id: 'U1' } };
+    }
+    if (['thread/name/set', 'threadSection/list', 'threadSection/create', 'thread/section/move'].includes(method)) {
+      return method === 'threadSection/list' ? { data: [], nextCursor: null }
+        : method === 'threadSection/create' ? { section: { id: 'S1' } } : {};
+    }
+    throw new Error(`unexpected ${method}`);
+  } };
+  await assert.rejects(run(app, f.options()));
+  const saved = JSON.parse(readFileSync(journal, 'utf8'));
+  assert.equal(saved.phase, 'turn-created');
+  assert.equal(saved.threadId, 'T1');
+  assert.equal(saved.turnId, 'U1');
 });
 
 test('AC-1: an active Vibe record with an optional operator name is admitted', async (t) => {
@@ -85,6 +138,7 @@ test('new writer refuses inactive and wrong-ticket records in a linked worktree'
   const app = client();
   writeFileSync(f.recordPath, JSON.stringify({ ...f.record, status: 'stopped' }));
   await assert.rejects(run(app, f.options()), /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
+  assert.equal(existsSync(join(f.stateDir, 'writer.launch.json')), false, 'pre-thread refusal clears only its prepared journal');
   writeFileSync(f.recordPath, JSON.stringify({ ...f.record, ticket: 'ISS-2', liveTicket: 'ISS-2' }));
   await assert.rejects(run(app, f.options()), /ticket.*ISS-1/);
   assert.deepEqual(app.calls, []);
@@ -109,6 +163,7 @@ test('new writer uses the brief ticket when --ticket is omitted and rejects an u
     '--cwd', f.worktree, '--model', 'm', '--effort', 'high']);
   writeFileSync(f.promptFile, '$vibe resume this session\n');
   await assert.rejects(run(app, withoutFlag), /brief naming its ticket/);
+  assert.equal(existsSync(join(f.stateDir, 'writer.launch.json')), false);
   assert.deepEqual(app.calls, []);
   writeFileSync(f.promptFile, '$vibe ISS-1\n');
   assert.equal(await run(app, withoutFlag), 'writer turn T1 U1');

@@ -8,3 +8,12 @@ export function readProcessIdentity(pid, { run = spawnSync, env = process.env } 
   const identity = result.stdout?.trim();
   return result.status === 0 && identity ? identity : null;
 }
+
+/** Process birth time stays constant when a shell execs its launcher. */
+export function readProcessStart(pid, { run = spawnSync, env = process.env } = {}) {
+  const result = run("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8", env: { ...env, LC_ALL: "C" }, timeout: 5_000,
+  });
+  const started = result.stdout?.trim();
+  return result.status === 0 && started ? started : null;
+}

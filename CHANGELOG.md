@@ -9,10 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - New Codex fleet turns refuse an existing worktree unless a Vibe-created active session record matches the `$vibe` brief and live ticket. Direct and remote fleet launches share the guard; missing paths still let Vibe create the worktree, and saved sessions still resume.
 - Remote fleet turns publish their local ownership marker only after the target host starts the writer; a refused start leaves no new marker and preserves an existing marker unchanged.
-- Remote starts prepare a recoverable ownership record before launch. If local marker publication fails afterward, fleet status names the pending turn and `recover-marker` verifies the remote state before completing or clearing it.
+- Remote starts prepare recoverable ownership before launch, and the Codex launcher journals thread creation before App Server side effects. `recover-marker` refuses a live dispatch, clears only an attempt-bound pre-start rejection, and retains uncertain ownership after a crash; a saved remote writer can be published from pending state.
+- Remote starts refuse an existing marker for another host or state directory. Recovery follows the target saved in pending ownership after config changes, and the launch journal retains both accepted thread and turn IDs.
+- Remote pending ownership becomes visible only after its target and dispatch owner are complete. A signal during either preparation stage leaves no blocking pending name, so a later turn can retry; older pending directories remain visible and block duplicate dispatch.
+- Proven remote preflight failures now clear their exact pending attempt, including a missing Codex CLI. Recovery uses a dead dispatch's prepared-only journal to clear pending, keeps that proof until the next turn, retains later uncertain phases, and serializes same-name turns and recoveries so a stale decision cannot erase a newer attempt.
+- Prepared recovery now checks the remote launcher's PID and birth identity as well as the local owner, so an SSH child that outlives its parent keeps pending ownership. macOS `lockf` retains its lock file, and pre-start rejection receipts publish atomically without truncating a prior complete receipt.
+- Remote preflight now publishes an attempt-bound process claim before checks and marks the launcher boundary. Recovery keeps live or uncertain attempts pending, clears a proven dead preflight even if its rejection receipt was interrupted, and atomically cancels a missing claim before a delayed command can start.
+- The remote shell now execs the Codex launcher in its claimed PID, using a birth-time witness that survives exec. Recovery clears a dead exact `launching` attempt without state or journal; the launcher itself publishes completed refusal receipts and releases successful claims.
+- Remote recovery re-reads saved state, launch journal and preflight claim after it proves the exact launcher ended. A phase or state written during that identity check now keeps pending ownership instead of letting a stale pre-dispatch observation erase it.
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 54 words longer than in 1.1.61 (origin/main at this update, f7dfc2148436e6b0bc99652ff975974a7b838d31).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 99 words longer than in 1.1.61 (origin/main at this update, f7dfc2148436e6b0bc99652ff975974a7b838d31).
 
 ### vibe v1.1.61
 
