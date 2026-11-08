@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remote recovery re-reads saved state, launch journal and preflight claim after it proves the exact launcher ended. A phase or state written during that identity check now keeps pending ownership instead of letting a stale pre-dispatch observation erase it.
 
 #### Changed
+- Remote recovery regression tests now live in a focused module with a shared fleet fixture, keeping the main fleet test file below its source-size limit.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 99 words longer than in 1.1.61 (origin/main at this update, f7dfc2148436e6b0bc99652ff975974a7b838d31).
 
 ### vibe v1.1.61

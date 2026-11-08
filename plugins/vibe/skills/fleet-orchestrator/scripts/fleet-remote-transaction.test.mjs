@@ -397,4 +397,3 @@ test('post-death reread catches a journal appearing after the shell absence chec
   assert.ok(existsSync(pending));
   assert.equal(JSON.parse(readFileSync(journal, 'utf8')).phase, 'may-have-started');
 });
-
