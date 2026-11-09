@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.66
+
+#### Added
+- Compaction control for fleet-orchestrator chats in Claude Code (ISS-13859; the operator ruled on 2026-11-09 to rescope it to compaction). A PostToolUse hook tells the operator once, when the chat was launched without `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, the exact command to relaunch it with the window from `<fleetHome>/context-guard.json` (default 300000); nothing writes the variable or the `autoCompactWindow` setting, which would change every chat. At `flushAtPercent` of the window (default 85) it tells the orchestrator, once per compaction cycle, to bring the active program's state files current; with no window it names no compaction point and repeats at each step of growth the window would leave as headroom (45k by default). The window range and the reading list's file names come from fleet-home.mjs, so the hooks cannot drift from them. Context is the latest request's input plus cache read plus cache write tokens.
+- A PreCompact hook prints instructions for the compaction summary in those chats: leave out what the program state files hold, and keep open operator questions, rulings not yet in rulings.md, live worker and session names, and unkept promises to the operator. Claude Code uses a PreCompact hook's stdout as those instructions.
+- Both hooks act only in chats that loaded the skill (a Skill call or Claude Code's injected skill line; a mention, a quoted marker or a Codex-form `$fleet-orchestrator` prompt does not count), never in subagents, and fail open with no output. After its first scan the skill-load check reads only newly appended transcript bytes, and the usage read takes a bounded tail window (256 KB, widening to 8 MB at most).
+- The limits live in `<fleetHome>/context-guard.json`, reread on every call with no restart. `fleet-home.mjs resume` writes the default file when the home has none, and reports an unparseable file as `CONTEXT-GUARD-INVALID` and a failed seed write as `CONTEXT-GUARD-UNSEEDED` without dropping the reading list; `check` accepts the new file.
+
+#### Changed
+- `runHookScript` prints a string result as plain text, so a PreCompact hook's output is the instructions themselves; `mergeResults` keeps an optional `systemMessage`.
+- To keep instruction words level, fleet-orchestrator SKILL.md's Setup check bullet no longer restates the setup block's contents, and references/state.md drops a resume-log sentence its "A new chat" steps already cover.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 4 words shorter than in 1.1.65 (origin/main at this update, 37b2a51c9fb049bf5bfc40cc07203b5ae06d4691).
+
 ### vibe v1.1.65
 
 #### Fixed
