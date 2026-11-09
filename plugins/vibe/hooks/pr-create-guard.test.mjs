@@ -37,6 +37,9 @@ test("PR guard separates payload words from direct and nested commands", (t) => 
     assert.equal(guard(vibe, command)?.decision, "deny", command);
   }
   assert.equal(guard(ordinary, `cd ${vibe} && gh pr create --fill`)?.decision, "deny");
+  assert.equal(guard(ordinary, `env -C ${vibe} gh pr create --fill`)?.decision, "deny", "env -C runs gh in the vibe worktree");
+  assert.equal(guard(vibe, `env --chdir=${ordinary} gh pr create --fill`), null);
+  assert.match(guard(ordinary, `env -C ${vibe} bash -c 'gh pr create --fill'`)?.reason ?? "", /unresolved shell cwd/);
   assert.equal(guard(vibe, "cat <<'EOF'\nbody text\nEOF\ngh pr create --fill")?.decision, "deny");
   assert.equal(guard(vibe, "cat <<EOF\n$(gh pr create --fill)\nEOF")?.decision, "deny");
   assert.equal(guard(vibe, "echo \"$(cat <<'EOF'\nbody text\nEOF\ngh pr create --fill)\"")?.decision, "deny");

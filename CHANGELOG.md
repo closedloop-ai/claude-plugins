@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.65
+
+#### Fixed
+- The merge guard (`hooks/merge-guard.mjs`) looks a `gh pr merge` pull request up in the repository gh will merge in. It used to ask gh in the session's working directory and ignore a leading `cd`, so `cd <claude-plugins> && gh pr merge 413` from a symphony-alpha session was refused as symphony-alpha #413's author, and a session-repo pull request by the operator could clear the check for another author's pull request in the repository the command moved to. The repository now comes from `-R`/`--repo` (also before `pr`), then the `GH_REPO` gh will see (inline, exported, assigned over the session's, or the session's own; `unset` and an empty value count as unset), then the directory the command runs in after `cd`, `pushd`/`popd`, subshells and an `env -C`/`sudo -D` prefix, and only then the session's directory. A pull request URL names its own repository.
+- When the guard cannot prove that directory (a `cd` to a variable the command does not set, to `$(...)`, inside a conditional or loop, to a missing directory, a shell started by `env -C`, or a command substitution in the `gh` command) and no `-R`, `GH_REPO` or URL decides the repository, it refuses and asks for `-R <owner/repo>` instead of checking the session's repository. `gh pr merge` inside `bash -c` and `eval` payloads is now checked too; remote `ssh` merges are still not judged.
+
+#### Changed
+- The per-scope directory walk the PR-create guard used moves to `hooks/command-calls.mjs`, shared by both guards, and `commandPrefix` in `hooks/command-segments.mjs` reports an `env -C`/`sudo -D` directory. The PR-create guard therefore also checks `env -C <dir> gh pr create` in `<dir>`; it never reads the target repository, so nothing else in it changes.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.65.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.64 (origin/main at this update, d67f12e0b3afe24c43bb55709705cc7263278ad6); only the README version line changed.
+
 ### vibe v1.1.64
 
 #### Fixed

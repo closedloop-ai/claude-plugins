@@ -10,6 +10,7 @@ const SHELLS = new Set(['bash', 'sh', 'zsh']);
 const CONTROL = new Set(['{', '}', 'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until',
   'for', 'case', 'esac']);
 const MAX_NESTED_SHELL_DEPTH = 64;
+const CHDIR_OPTIONS = Object.freeze({ env: ['-C', '--chdir'], sudo: ['-D', '--chdir'] });
 const SSH_VALUED = new Set(['-p', '-i', '-o', '-J', '-F', '-l', '-S', '-W', '-L', '-R', '-D', '-b',
   '-E', '-B', '-I', '-w', '-c', '-e', '-m', '-O', '-P']);
 const envSplit = value => {
@@ -17,9 +18,13 @@ const envSplit = value => {
   return shellWords((quote === '"' || quote === "'") && value.at(-1) === quote ? value.slice(1, -1) : value);
 };
 
-/** Peel executable wrappers and assignments at any shell boundary; return the first actual program and its environment. */
+/**
+ * Peel executable wrappers and assignments at any shell boundary; return the first actual program,
+ * its environment and, when `env -C` or `sudo -D` moves it, the directory it runs in.
+ */
 export function commandPrefix(words, start = 0) {
   const env = {};
+  let chdir;
   let index = start;
   while (index < words.length) {
     const assignment = ENV_ASSIGN.exec(words[index]);
@@ -47,13 +52,24 @@ export function commandPrefix(words, start = 0) {
         words.splice(index, 1, ...split);
         break;
       } else if (boolean.includes(word)) index += 1;
-      else if (valued.includes(word)) index += 2;
-      else if (valued.some(option => option.startsWith('--') ? word.startsWith(`${option}=`) : word.startsWith(option) && word.length > option.length)) index += 1;
-      else if (wrapper === 'sudo' && word.startsWith('--')) index += 1;
+      else if (valued.includes(word)) {
+        if (CHDIR_OPTIONS[wrapper]?.includes(word)) chdir = words[index + 1] ?? '';
+        index += 2;
+      } else if (valued.some(option => attachedValue(word, option) !== null)) {
+        const option = CHDIR_OPTIONS[wrapper]?.find(name => attachedValue(word, name) !== null);
+        if (option) chdir = attachedValue(word, option);
+        index += 1;
+      } else if (wrapper === 'sudo' && word.startsWith('--')) index += 1;
       else break;
     }
   }
-  return { env, index };
+  return chdir === undefined ? { env, index } : { env, index, chdir };
+}
+
+/** The value `word` attaches to `option` (`--chdir=dir`, `-Cdir`), or null. */
+function attachedValue(word, option) {
+  if (option.startsWith('--')) return word.startsWith(`${option}=`) ? word.slice(option.length + 1) : null;
+  return word.startsWith(option) && word.length > option.length ? word.slice(option.length) : null;
 }
 
 /** Shell words with quoted whitespace preserved; operators are handled by commandSegments. */
@@ -336,9 +352,12 @@ function expandSegment(segment, depth, expandShellPayloads, remote, scope, child
   const current = words.slice(prefix.index);
   const controls = [];
   while (CONTROL.has(current[0])) controls.push(current.shift());
+  const moved = prefix.chdir === undefined ? {} : { chdir: prefix.chdir };
+  const entry = (extra = {}) => ({ env: prefix.env, words: current, controls, remote, scope, hasSubstitution,
+    substitutions, ...moved, ...extra });
   if (current.length === 0) return controls.length || Object.keys(prefix.env).length
-    ? [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }] : [];
-  if (!expandShellPayloads) return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }];
+    ? [entry()] : [];
+  if (!expandShellPayloads) return [entry()];
   const program = path.basename(current[0]);
   if (functions.has(program)) {
     if (functionStack.includes(program)) return [];
@@ -356,7 +375,7 @@ function expandSegment(segment, depth, expandShellPayloads, remote, scope, child
     const payload = current.slice(index).join(' ');
     return payload ? expandCommand(payload, depth + 1, true, true, childScope(scope), childScope,
       hasSubstitution, new Map(), [])
-      : [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }];
+      : [entry()];
   }
   if (SHELLS.has(program)) {
     let index = 1;
@@ -370,24 +389,24 @@ function expandSegment(segment, depth, expandShellPayloads, remote, scope, child
       const payload = current[index] ?? '';
       if (/^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/.test(payload)
         || (!payload && substitutions.length)) {
-        return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions,
-          wrapperPayload: payload, wrapper: program }];
+        return [entry({ wrapperPayload: payload, wrapper: program })];
       }
+      // A shell started by env -C or sudo -D begins elsewhere; callers cannot prove a cwd inside it.
       if (payload) return expandCommand(payload, depth + 1, true, remote,
-        childScope(scope), childScope, hasSubstitution, new Map(), []);
+        childScope(scope), childScope, hasSubstitution, new Map(), [])
+        .map((nested) => prefix.chdir === undefined ? nested : { ...nested, chdirPayload: prefix.chdir });
     }
   }
   if (program === 'eval' && (current.length > 1 || substitutions.length)) {
     const payload = current.slice(current[1] === '--' ? 2 : 1).join(' ');
     if (/^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/.test(payload)
       || (!payload && substitutions.length)) {
-      return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions,
-        evalPayload: payload }];
+      return [entry({ evalPayload: payload })];
     }
     return payload ? expandCommand(payload, depth + 1, true, remote, scope, childScope,
       hasSubstitution, functions, functionStack) : [];
   }
-  return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }];
+  return [entry()];
 }
 
 /** Replace literal function definitions with ordered registration markers, never executed bodies. */
