@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.13.2
+
+#### Fixed
+- The `coverage-critic-prepare` manifest reports `diff_summary_hash`, the `signal_input_hash` content hash of the diff summary the critic is given, alongside `coverage_plan_initial_hash`, `signals_hash`, `prompt_hash`, and `available_reviewers_hash`, so the component that moved a cache key is visible.
+
 ### vibe v1.1.63
 
 #### Fixed
