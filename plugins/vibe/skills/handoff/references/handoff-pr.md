@@ -67,7 +67,8 @@ and matrix. This gate rechecks mergeability, acceptance criteria, the PR body,
 verifier evidence and machine-produced reviewer findings,
 then records a private witness bound to the source. A later source change
 invalidates it; finish the affected handoff steps and rerun this gate. The
-PreToolUse guard refuses `gh pr create` without a current witness.
+PreToolUse guard refuses `gh pr create` without a current witness; its refusal
+names each way forward, including the gate-bug exception.
 
 Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`

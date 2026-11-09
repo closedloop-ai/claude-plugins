@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.67
+
+#### Fixed
+- The PR creation guard resolves an explicit head against its owning worktree and effective GitHub repository, so a proven non-Vibe head can open a PR from a Vibe-scoped conversation while a recorded Vibe session still needs its gate. From a recorded session's own worktree, a PR of its current branch stays gated whatever that branch is called, and so does one whose explicit head carries the worktree's commits not yet on origin's default branch. A non-Vibe head the guard cannot resolve locally, such as a remote-only branch or a fork targeting upstream, is judged by the command's worktree as before. The guard also covers GitHub CLI's `pr new` alias and attached short head, base and body options.
+- A known Vibe handoff gate bug can be overridden with a dedicated PR-body line naming its ISS ticket and a reason. The line clears a failed handoff gate, a missing session record and unverifiable head ownership; missing ticket or reason keeps the PR refused. Cloud import readiness, including its own rerun of the handoff gate, stays a separate protection the override does not clear; other shell guards remain in force.
+- Every Vibe-gating PR refusal now names a supported retry: the override line, running `gh pr create` from a checkout of the target repository, a literal working directory, or the cloud worker's import and refresh steps. The handoff PR reference and environment worker say where to run it.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 18 words longer than in 1.1.66 (origin/main at this update, 2dbf2bbc284a3a498f68af6841380b69fae59024): the override's condition, line format and retry moved into the guard's refusal messages, leaving one pointer each in the handoff PR reference and the environment worker.
+
 ### vibe v1.1.66
 
 #### Added
