@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.65
+### vibe v1.1.66
 
 #### Added
 - A PostToolUse context guard for fleet-orchestrator chats in Claude Code (ISS-13859; Codex chats are not measured). After every tool call it measures the latest request's context (input plus cache read plus cache write tokens). At the warn limit (default 200k) it shows the operator one line and tells the orchestrator to keep this chat's own handoff notes current. At the handoff limit (default 300k) it recommends a handoff and repeats every 20 minutes; the operator decides, and work never stops on its own. It acts only in chats that loaded the skill (a mention does not count), never in subagents, never blocks a tool call. After its first scan the skill-load check reads only newly appended transcript bytes, and the usage read takes a bounded tail window (256 KB, widening to 8 MB at most).
@@ -15,7 +15,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The context guard's and fleet-home's internal helpers stay module-private, and a same-mtime test pins the newest-handoff order as a total order (handoff gate diff rules).
 - After a compaction, the reading list vibe's SessionStart hook injects names only that chat's own handoff file, never a sibling chat's newer one in the same program, and the command it says to rerun is `fleet-home.mjs resume --chat <session id>` (an empty `--chat=` lists no handoff).
 - To keep instruction words level, fleet-orchestrator SKILL.md's Setup check bullet no longer restates the setup block's contents, and references/state.md drops a resume-log sentence its "A new chat" steps already cover.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.64 (origin/main at this update, d67f12e0b3afe24c43bb55709705cc7263278ad6).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.65 (origin/main at this update, 37b2a51c9fb049bf5bfc40cc07203b5ae06d4691).
+
+### vibe v1.1.65
+
+#### Fixed
+- The merge guard (`hooks/merge-guard.mjs`) looks a `gh pr merge` pull request up in the repository gh will merge in. It used to ask gh in the session's working directory and ignore a leading `cd`, so `cd <claude-plugins> && gh pr merge 413` from a symphony-alpha session was refused as symphony-alpha #413's author, and a session-repo pull request by the operator could clear the check for another author's pull request in the repository the command moved to. The repository now comes from `-R`/`--repo` (also before `pr`), then the `GH_REPO` gh will see (inline, exported, assigned over the session's, or the session's own; `unset` and an empty value count as unset), then the directory the command runs in after `cd`, `pushd`/`popd`, subshells and an `env -C`/`sudo -D` prefix, and only then the session's directory. A pull request URL names its own repository.
+- When the guard cannot prove that directory (a `cd` to a variable the command does not set, to `$(...)`, inside a conditional or loop, to a missing directory, a shell started by `env -C`, or a command substitution in the `gh` command) and no `-R`, `GH_REPO` or URL decides the repository, it refuses and asks for `-R <owner/repo>` instead of checking the session's repository. `gh pr merge` inside `bash -c` and `eval` payloads is now checked too; remote `ssh` merges are still not judged.
+
+#### Changed
+- The per-scope directory walk the PR-create guard used moves to `hooks/command-calls.mjs`, shared by both guards, and `commandPrefix` in `hooks/command-segments.mjs` reports an `env -C`/`sudo -D` directory. The PR-create guard therefore also checks `env -C <dir> gh pr create` in `<dir>`; it never reads the target repository, so nothing else in it changes.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.65.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.64 (origin/main at this update, d67f12e0b3afe24c43bb55709705cc7263278ad6); only the README version line changed.
 
 ### vibe v1.1.64
 
