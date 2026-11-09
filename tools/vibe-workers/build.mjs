@@ -11,7 +11,7 @@ await buildBundles({
   build,
   toolDir,
   outdir,
-  isEntry: (file) => ["writer-state.ts", "claude-worker.ts", "main-sync.ts"].includes(file),
+  isEntry: (file) => ["writer-state.ts", "claude-worker.ts", "main-sync.ts", "scope-intake.ts"].includes(file),
   // The bundled compiler parser initializes its filesystem adapter using CommonJS path globals.
   banner,
 });

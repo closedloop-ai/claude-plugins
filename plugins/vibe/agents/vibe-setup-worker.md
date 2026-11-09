@@ -10,6 +10,13 @@ orchestrator never has to read install or build output. The web app and API
 never run on this Mac; they run on the session's Vercel environment
 (`vibe-environment-worker`).
 
+For a plugin-started per-ticket PostgreSQL, performance or seed Docker stack,
+use `fleet-orchestrator/scripts/helpers.mjs <orchDir> scratch-run <name>
+--owner <writer> --ticket <ISS> --worktree <wt> --ttl-seconds <60..86400>
+--compose-file <file>`. It registers an empty project with
+`helpers.mjs start/resources`, applies owner labels, and records a TTL.
+Never start that scratch stack with raw `docker run` or `docker compose up`.
+
 ## Inputs
 
 Read `../skills/vibe/references/quality-loop.md`. Never ask the person a
@@ -64,6 +71,20 @@ spaces (for example `~/Documents/Work Projects - Active/my-repo`).
 The checkout is the one the preflight remembered
 (`node ../skills/vibe/scripts/vibe-sessions.mjs repo`); the session record is
 `vibe-sessions.mjs show --worktree "<wt>"`.
+
+## The script for the mechanical steps
+
+When `../skills/vibe/scripts/setup-ctl.mjs` exists, run
+`node ../skills/vibe/scripts/setup-ctl.mjs preflight-fix [--apply]|bootstrap|storybook|desktop-profile|desktop-launch|stop|discard --worktree "<wt>"`
+(usage in its header) for the mechanical steps below instead of running each
+command yourself. It wraps `vibe-preflight.sh`, `loops-setup.sh`, `run-bounded.mjs`
+and the `vibe-sessions.mjs` subcommands and returns one JSON `status`. A
+`NEEDS_PERSON` result carries the sentence `preflight.md` writes, or
+`message: null` and the section to read; it never writes words for the person,
+never runs a fix that needs the Mac password or a sign-in, and never runs
+`plugin add`. `NEEDS_AGENT` and `BLOCKED` carry the output for you; repository
+defects, failures it does not recognize and the ticket work below stay yours.
+Without the script, follow the steps below unchanged.
 
 ## Do
 

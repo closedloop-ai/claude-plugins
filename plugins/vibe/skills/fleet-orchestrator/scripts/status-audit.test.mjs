@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { auditStatuses, childFinding, sweepFindings } from './status-audit.mjs';
+import { auditStatuses, childFinding, skipsAudit, sweepFindings } from './status-audit.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./status-audit.mjs', import.meta.url));
 const merged = { url: 'https://example.test/pull/1', state: 'MERGED' };
@@ -98,4 +98,58 @@ test('the status sweep flags plans left open behind DONE tickets and absorbed ch
     ['ISS-4', 'UNCHECKED'],
   ]);
   assert.deepEqual(sweepFindings({ status: 'IN_PROGRESS', plans: [{ slug: 'PLN-1', status: 'DRAFT' }] }), [], 'a plan may stay open while its ticket is');
+});
+
+test('FLEET_TRIM_STATUS_AUDIT=1 skips only a report run; every other run audits as before', () => {
+  assert.equal(skipsAudit('report', { FLEET_TRIM_STATUS_AUDIT: '1' }), true);
+  for (const at of ['assignment', 'merge', undefined]) assert.equal(skipsAudit(at, { FLEET_TRIM_STATUS_AUDIT: '1' }), false, String(at));
+  assert.equal(skipsAudit('report', {}), false, 'off by default');
+  assert.throws(() => skipsAudit('weekly', {}), /--at must be/);
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'audit-at-'));
+  const file = path.join(dir, 'snapshot.json');
+  writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P', children: [{ slug: 'c', status: 'BACKLOG', writer: 'w', pullRequests: [] }] }] }));
+  const run = (at, env) => spawnSync(process.execPath, [SCRIPT, '--snapshot', file, '--at', at], { encoding: 'utf8', env: { ...process.env, FLEET_TRIM_STATUS_AUDIT: '', ...env } });
+  const skipped = run('report', { FLEET_TRIM_STATUS_AUDIT: '1' });
+  assert.deepEqual([skipped.status, skipped.stdout], [0, 'status audit: skipped at report\n']);
+  assert.equal(run('merge', { FLEET_TRIM_STATUS_AUDIT: '1' }).status, 1, 'a merge still audits and still fails on a mismatch');
+  assert.equal(run('report', {}).status, 1, 'a report audits when the switch is off');
+  rmSync(dir, { recursive: true });
+});
+
+test('the status sweep flags a recorded sequencing ruling whose BLOCKS link is missing', (t) => {
+  const snapshot = {
+    prds: [],
+    programRulings: '- Ruling 2026-11-02 (ticket: ISS-3): ISS-3 waits until ISS-1 and #42 merge\n',
+    pullRequestTickets: { 42: 'ISS-2' },
+    artifactLinks: [{ source: 'ISS-1', target: 'ISS-3', linkType: 'BLOCKS' }],
+  };
+  assert.deepEqual(auditStatuses(snapshot).findings, [{
+    kind: 'SEQUENCING-BLOCKS-MISSING',
+    blocker: 'ISS-2',
+    blocked: 'ISS-3',
+  }]);
+
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'status-audit-sequencing-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'snapshot.json');
+  writeFileSync(file, JSON.stringify(snapshot));
+  const result = spawnSync(process.execPath, [SCRIPT, '--snapshot', file], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /SEQUENCING-BLOCKS-MISSING ISS-2 blocks ISS-3/);
+
+  const unresolved = { ...snapshot,
+    programRulings: '- Ruling 2026-11-04 (ticket: ISS-9): ISS-9 waits until the migrations ticket merges\n',
+    pullRequestTickets: {}, artifactLinks: [] };
+  assert.deepEqual(auditStatuses(unresolved).findings, [{
+    kind: 'SEQUENCING-UNRESOLVED',
+    reference: 'the migrations ticket merges',
+    ruling: 'ISS-9 waits until the migrations ticket merges',
+  }]);
+
+  const ordinary = { ...snapshot,
+    programRulings: [
+      '- Ruling 2026-11-04 (ticket: ISS-9): the PLN status follows the work',
+      '- Ruling 2026-11-04 (ticket: ISS-9): reviewers wait for CI before commenting',
+    ].join('\n'), pullRequestTickets: {}, artifactLinks: [] };
+  assert.deepEqual(auditStatuses(ordinary).findings, []);
 });

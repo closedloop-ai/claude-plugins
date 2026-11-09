@@ -140,41 +140,8 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   `references/quality-loop.md` (both past its first 400 lines) before it
   plans or builds, and follows them: they set what the session decision table
   records and when a render is allowed.
-- Codex: invoke as `$vibe`. Workers are this plugin's agents in `agents/`
-  (`../../agents/<name>.md` from this file). Codex cannot load them as
-  registered agents, so spawn a subagent with the file's body as its
-  instructions plus the inputs below, and set the spawn's `model` and
-  `reasoning_effort` to what `node scripts/worker-model.mjs codex <name>`
-  prints: explorers (requirements, backend, primitive and Storybook advice,
-  the handoff summary) run on `gpt-5.6-terra`, every writer, reviewer and
-  verifier on `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
-  asked for it. Spawn `vibe-change-worker` only ONCE per
-  session with a read-only hold brief, record its returned actual native ID
-  (the agent path `spawn_agent` returns, such as `/root/vibe_writer`, is that
-  ID), register/claim its queued request, then follow up/resume that same context.
-  Never make a new source writer per request/unit. Repo agents live in `<repo>/.claude/agents/`.
-  A new native helper also starts with a read-only hold brief; obtain its real
-  ID, acquire the grant, then resume that SAME helper for the operation.
-  Before any native helper's session/ticket mutation, acquire its exact canonical
-  role/action through `writer-state.mjs acquire-record` as `quality-loop.md`
-  specifies. `register` and `acquire-record` bind the installed plugin root
-  that runs them when `agentRoot` is left out, and refuse another release's
-  root, so leave it out unless a recorded binding says otherwise. Dispatch only after acquisition. Release with `release-record`
-  only after observed completion or confirmed owned termination of that actual
-  native turn, never because the coordinator script exited. When
-  `release-record` for the writer's own grant fails with `ENOENT` because a
-  plugin install removed its recorded root, recover at once through
-  quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
-  `retainedRecord`, internally, never a question or a message to engineering.
-  Startup and confirmed discard use the same bounded stable contexts below.
-- Codex loads this plugin's `hooks/hooks.json` (the shell, kill and merge
-  guards, the away checklist and the compaction resume) but runs it only once
-  it is reviewed and trusted in Codex's `/hooks`, and again after it changes.
-  So after any context compaction in Codex, before the next action, run
-  fleet-orchestrator's `scripts/fleet-home.mjs resume` when you orchestrate a
-  fleet and read each `READ` file it prints, then reread the session record
-  (`vibe-sessions.mjs show`) and `session-questions.mjs list`; never continue from
-  the summary alone.
+> Read `references/vibe-harness-codex.md` (block `codex-invoke-and-workers`) when this orchestrator runs in Codex or a recorded writer's runtime is Codex.
+> Read `references/vibe-harness-codex.md` (block `codex-hooks-and-compaction`) when this orchestrator runs in Codex or a recorded writer's runtime is Codex.
 - Usage limits (both harnesses). In Codex, run
   `node scripts/codex-usage.mjs check` before spawning a worker or
   forwarding a request to the writer, and again when a worker turn stalls
@@ -208,60 +175,7 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   relative to `<root>/agents` (so `../skills/vibe/scripts/vibe-sessions.mjs`
   is `<root>/skills/vibe/scripts/vibe-sessions.mjs`)." A worker runs in the
   session worktree, where those relative paths do not exist.
-- Claude Code: invoke as `/vibe:vibe`; plugin agents are available as
-  `vibe:<name>`. Launch every worker through `scripts/dist/claude-worker.mjs`,
-  never through the native Agent tool: a plugin agent dispatched natively gets
-  only the built-in tools its file lists, with no ClosedLoop or closedloop-graph
-  tools, so a natively dispatched ticket worker comes back `BLOCKED` and a
-  verify worker cannot reach the graph. The only
-  native dispatch is the bootstrap in section 1. Send the launcher one JSON
-  object on stdin: `{"worktree", "agentName", "mode", "requestId", "input"
-  (or "continuation"), "capabilities"}` plus the record and sessionless fields
-  below when they apply. Leave `agentRoot` out: the launcher binds its own
-  installed plugin root, or a resumed writer's recorded root, so a guessed or
-  remembered path can never point it at the wrong place (a supplied
-  `<root>/agents` is read as `<root>`; another release's root is refused as
-  `STALE_PLUGIN_ROOT`). `capabilities` lists every closedloop-graph read and
-  every ClosedLoop read the parent can see (`{name, service: "graph" |
-  "closedloop", operation, access: "read"}`), plus only the writes the
-  record action allows; the requirements and ticket workers are refused
-  (`MISSING_CAPABILITIES`) without the ClosedLoop reads they need. Before any
-  work the launcher checks the Claude sign-in and that every granted
-  connection loaded in the worker. Its refusals:
-  - `CLAUDE_SIGN_IN_NEEDED`: send the person its `personAction` once, word
-    for word, then wait for them to say they're done and launch the same
-    request again. Any other sign of an expired Claude sign-in (a setup
-    worker's diagnosis, a preflight `claude-login` failure) gets the same
-    words, from the `claude-auth-login` row of `references/preflight.md`,
-    rather than any other sign-in step the worker suggested. Never tell them
-    to run `claude /login`: in the Terminal it opens a full Claude session
-    that prints permission rules and asks about project connections.
-  - `MCP_TOOLS_MISSING`: a granted connection did not load; dispatch
-    `vibe-setup-worker` to restore it, then relaunch. Ask the person nothing
-    unless setup returns `NEEDS_PERSON`.
-  - `CLAUDE_CLI_MISSING`, `AGENT_ROOT_INVALID`, `STALE_PLUGIN_ROOT`: internal;
-    fix the call (leave `agentRoot` out) or dispatch setup.
-  - `PROTECTED_PATH_HOOK_UNAVAILABLE`: internal; dispatch `vibe-setup-worker`
-    to check the installed Claude Code version and writer hook, follow the
-    `claude-protected-hook-version` row in `references/preflight.md`, then
-    relaunch the same request. Ask the person nothing.
-  Use the canonical own-plugin scoped definition and exact capabilities
-  discovered/verified in the parent. It uses supported launch-time binding, not an invented per-call
-  Agent override. Briefs/capability metadata are JSON on stdin. The implementation
-  writer's actual Claude session ID is persisted and explicitly resumed.
-  On an existing session preserve its original recorded binding and actual
-  writer ID while that definition matches. For a missing definition or proven
-  upgraded digest, follow quality-loop.md's recorded definition migration
-  through the current installed `writer-state.mjs migrate` command. Never
-  replace via ordinary registration, copy definitions or bypass a refusal.
-  The returned writer carries the same session artifacts and request queue;
-  no technical question goes to the person running the session.
-  Before a session exists, requirements and setup run in the validated remembered
-  checkout with `sessionless: {kind: "startup"}`; never fabricate a session.
-  Requirements use mode `request` with only graph/live read capabilities. Setup
-  ticket creation or progress uses mode `record`, the corresponding `recordAction`
-  (`create` or `progress`), `exclusiveRecordTurn: true` and only that action's
-  exact parent-discovered writes. All setup operations remain non-implementation.
+> Read `references/vibe-harness-claude.md` (block `claude-launcher`) when this orchestrator runs in Claude Code or a worker is launched through the Claude launcher.
 
 Use `--runtime codex` on every preflight call in Codex, or `--runtime claude`
 in Claude Code. Preserve it in setup-worker briefs and reruns. Claude resolves
@@ -300,7 +214,7 @@ stops until core is explicitly installed and enabled.
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers; in reference mode, research an outside product the person named and list the behaviors to build |
 | `vibe-ticket-worker` | create the session's live ticket and link the document it started from, publish the session's plan as its PLN after each request, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
-| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (tests only for a requested pull request) |
+| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (test authoring only with a top-level pull-request or `testsRequired` grant) |
 | `vibe-backend-worker` | read-only backend/contract advice for that writer |
 | `vibe-primitive-worker` | read-only component/spec advice for that writer |
 | `vibe-storybook-decomposer` | read-only Storybook placement owner: before the writer creates, retitles or moves a story or adds a shared component, the precedent search and Placement block it records in its local plan |
@@ -584,7 +498,7 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    and no record grants. Keep its brief internal; no upfront summary or plan approval.
    Keep its quoted acceptance criteria from the ticket and its PRD for the
    writer's first request (`references/quality-loop.md`, "Acceptance criteria
-   before ready"). When the source is a PRD, its existing children are the
+   before ready"), as the draft Spec Card (`references/spec-card.md`). When the source is a PRD, its existing children are the
    scope units: the requirements brief classifies every child before the
    session ticket exists, and the ticket worker claims or reports them
    (`vibe-ticket-worker.md`, create step 7).
@@ -619,44 +533,29 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    actual transcript path>"`. The command verifies the transcript's own
    session ID. Never invent an ID or record the implementation writer as the
    orchestrator.
-6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
-   `vibe-ticket-worker` in create mode with the worktree, the
-   requirements worker's brief, the originating ticket if any, and the mode.
-   It records the ticket's slug on the session itself and links the
-   originating document (a PRD, an ISS or another document) to the ticket
-   (source PRODUCES ticket).
+6. Dispatch `vibe-setup-worker` to bootstrap the new worktree. Read the
+   `session` returned by `vibe-sessions.mjs new`. When the returned
+   `session.liveTicket` is the originating issue, do not dispatch
+   `vibe-ticket-worker` and never queue `create` mode: the session record is
+   already bound to that issue, preserving its current owner and status.
+   Otherwise dispatch the
+   ticket worker in create mode with the worktree, the requirements worker's
+   brief, the originating document if any, and the mode. Create mode records
+   the new issue's slug on the session and links the originating document (a
+   PRD, an ISS or another document) to the ticket (source PRODUCES ticket).
    Keep the ticket link in the session record for completion and handoff.
-7. Stand up the environment (section 3).
+7. Classify the work and stand up the environment (section 3). Run
+   `scripts/vibe-triage.mjs classify` and keep its manifest
+   (`references/triage.md`), passing the brief's `likelyFiles` as `--paths` and
+   their sources as `--path-sources-file`, and no `--paths` when the brief has
+   none; for the class it names, other than `unknown`
+   or `mockup`, also load that class's pipeline skill. Section 3 runs now unless
+   the manifest's `environment` step has `effective: defer`, which happens only
+   while the triage switch is on (off by default).
 
 ### Mockup sessions
 
-Initial creation of a pure mockup session uses `new-prototype`, the same
-operator and live-ticket rules, and one owned `prototype/<slug>` worktree from
-fresh main, without an app data mode, API environment or flag snapshot.
-Bootstrap/ticket setup remains operational. Then register/resume the SAME
-persistent implementation writer under section 5 and forward the person's
-mockup request. It reads the absolute canonical
-`<repo-root>/.claude/skills/prototype/SKILL.md` guidance, plans locally and
-performs all prototype/shared surface/registry changes itself. Do not spawn a separate prototype source writer.
-
-Preserve canonical mock-data, componentization, visual/product review and
-metadata ownership. Ignore canonical steps asking for a second source writer,
-worktree/branch or a technical-plan approval. All corrections return to this
-same context, and no tests are authored (`references/guardrails.md`, "Tests").
-
-After the writer's quick checks pass, the orchestrator commits with its
-script. Dispatch `vibe-prototype-worker` only in operational share mode to
-publish that exact checked commit through canonical Vercel sharing. If it
-needs source generation/fixes, return those facts to the SAME writer. No
-helper silently edits registry, metadata or implementation to make sharing pass.
-
-Open only a verified immutable preview and return its URL, full deployed SHA
-and slug on completion. Respect Vercel team login. A stale/failed share stays
-blocked, never reported as current. Resume an owned prototype's existing writer
-ID and publication; chat, annotations, fixes and handoff all queue to it.
-Never create a new worktree/branch for these requests or an arbitrary
-unrecorded prototype. Next-owner assignment and canonical metadata transitions
-remain in the handoff flow.
+> Read `references/vibe-mockup.md` (block `mockup-flow`) when the request is a pure mockup or the session is an owned prototype.
 
 Resuming: use the session's `worktree`, and run the matching `codex-sessions`
 or `claude-sessions` command again so a
@@ -720,7 +619,9 @@ When it returns `DONE`:
 - Confirm the tab shows the app (with seeded data when seeded), not an error
   page or an empty shell, before saying it is ready.
 - Start Desktop for every session, per the Desktop section of
-  `references/environment.md`, and open it as a second tab:
+  `references/environment.md`, unless the manifest's `desktop` step has
+  `effective: skip` (`references/triage.md`, "The switch"; off by default), and
+  open it as a second tab:
   1. Run `node scripts/vibe-sessions.mjs desktop-tab --worktree "<wt>"`. If it
      reports `running`, skip to step 3.
   2. If the session has no Desktop profile yet (`desktopAuthSavedAt` is null
@@ -837,7 +738,8 @@ evidence, never by replacing the writer.
    every saved reference image path. Never send your own description of an
    image in place of its path. It performs
    graph/owner prep and writes the canonical core-template plan locally.
-   It always creates or extends the one session decision table at
+   It locks the Spec Card before any code (`references/spec-card.md`). It
+   always creates or extends the one session decision table at
    `.closedloop-ai/decision-tables/<session-slug>.md` before any code, using
    the named core skill in quality-loop.md. Include its path and affected/
    interacting row IDs in every applicable worker brief. Later requests append
@@ -903,7 +805,10 @@ evidence, never by replacing the writer.
    PLN's status. Its `NEEDS_CHANGE` (a plan line
    that would publish a local path, a username, a secret or a private input)
    goes to the SAME writer to fix its local plan, then plan mode runs again.
-   None of it waits on or reaches the person, and it never delays the deploy.
+   A repair only to vibe's private plan or records, with no scope, code, test
+   or HEAD change, is `self-bookkeeping`: the writer makes it automatically,
+   it is never `NEEDS_PERSON`, and Root reports it in one line. None of it
+   waits on or reaches the person, and it never delays the deploy.
    A plan's body never goes into the ticket. Operational bootstrap/build/deploy helpers
    execute no implementation edits, and sharing waits for the writer's quick
    checks. The orchestrator alone commits through its owned script.
@@ -1154,31 +1059,37 @@ Whenever the person asks to throw a session away (at any point, for any
    the person it is already finished (a pull request was opened, or it went
    to design and engineering) and stop.
 2. Tell them in plain words what will be lost (the session's summary, its
-   unsaved files, their Vercel copy of the app and its data, and the ticket,
-   which is canceled) and ask them to confirm.
+   unsaved files, and their Vercel copy of the app and its data). When
+   `liveTicketCreatedBySession` is true, also say that session-created ticket
+   is canceled. A bound pre-existing ticket is not canceled or reassigned.
+   Ask them to confirm.
 3. On a clear yes, retain the validated remembered `<repo>` separately from
    the target `<wt>` and the parent-held preview's branch, live ticket and
    operator. Dispatch `vibe-setup-worker` from that stable `<repo>` with
    `sessionless: {kind: "startup"}`, mode `record`, `recordAction: "discard"`,
    `exclusiveRecordTurn: true`, graph/live reads only, and `discardTarget`:
    `{worktree: "<wt>", confirmed: true, branch, operatorId, operatorEmail}`
-   plus `liveTicket` only when present (`references/quality-loop.md`,
+   plus `liveTicket` and `liveTicketCreatedBySession` when present (`references/quality-loop.md`,
    "Exactly three helper paths"). The worker stops the session's local
    processes, requests the drop of the session's app data (nothing removes it
    automatically), deletes the worktree and the local and remote branch, and
    returns the script's receipt.
 4. Only after that successful result has `discarded: true`, retain its
-   `cancelEvidence` in the parent. If there was a live ticket, dispatch
+   `cancelEvidence` in the parent. If it names a ticket with
+   `liveTicketCreatedBySession: true`, dispatch
    `vibe-ticket-worker` from the retained `<repo>` in mode `record`, action
    `cancel`, with `exclusiveRecordTurn: true` and
    `sessionless: {kind: "discarded", evidence: <cancelEvidence>}`, granting
    only parent-discovered graph/live reads and the declared cancel writes. A
-   failed or partial discard blocks cancellation.
+   failed or partial discard blocks cancellation. Without that evidence,
+   leave the bound ticket's status and owner untouched.
 5. Tell them in one line that it is gone.
 
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
+- `references/triage.md`: the triage manifest, its classes and the switch;
+  `references/pipeline-core.md`: the rules every class pipeline shares.
 - `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions and the precedent check, visual references and the reference check before ready, visual QA during the session, and the repair-only test rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,

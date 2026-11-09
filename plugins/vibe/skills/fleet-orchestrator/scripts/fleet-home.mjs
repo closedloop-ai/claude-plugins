@@ -43,7 +43,9 @@
 // key in the home's config.env), `SHARED-REMOTE` (REMOTE_STATE_DIR without
 // REMOTE_FLEET_HOME, shared by every program), `UNMANAGED <where> <name>` (a
 // sessions.txt session with no state file fleet.sh wrote) and
-// `UNMANAGED-STATE <file>` (Codex thread state outside sessions/). Given a
+// `UNMANAGED-STATE <file>` (Codex thread state outside sessions/), and
+// `PENDING-REMOTE remote <name>` (prepared ownership needing recover-marker).
+// Given a
 // flat work dir it prints `FLAT-LAYOUT`. board.mjs status prints the same lines.
 // `migrate` turns a flat work dir into a home in place (or moves it to
 // --home): the reusable files stay at the top, everything else moves to
@@ -96,7 +98,7 @@ export function homeProblems(dir) {
   if (config.REMOTE_STATE_DIR && !config.REMOTE_FLEET_HOME) {
     problems.push("SHARED-REMOTE REMOTE_STATE_DIR is shared by every program: set REMOTE_FLEET_HOME to the fleet home on REMOTE_HOST");
   }
-  problems.push(...unmanagedSessions(resolved.dir), ...unmanagedState(resolved.home), ...unmanagedState(resolved.dir));
+  problems.push(...pendingRemoteMarkers(resolved.dir), ...unmanagedSessions(resolved.dir), ...unmanagedState(resolved.home), ...unmanagedState(resolved.dir));
   return problems;
 }
 
@@ -122,8 +124,27 @@ function unmanagedSessions(programDir) {
   const file = path.join(programDir, "sessions.txt");
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8").split("\n").map((line) => line.trim().split(/\s+/)).filter((fields) => ["local", "remote"].includes(fields[0]) && fields[1])
-    .filter(([where, name, threadId]) => threadId || !existsSync(path.join(programDir, "sessions", where === "local" ? `${name}.json` : `${name}.remote.json`)))
+    .filter(([where, name, threadId]) => threadId || (!existsSync(path.join(programDir, "sessions", where === "local" ? `${name}.json` : `${name}.remote.json`))
+      && !(where === "remote" && (existsSync(path.join(programDir, "sessions", `${name}.remote.pending.json`))
+        || existsSync(path.join(programDir, "sessions", `${name}.remote.pending`))))))
     .map(([where, name]) => `UNMANAGED ${where} ${name}: not started through fleet.sh; start its next turn with fleet.sh so its state lives in sessions/`);
+}
+
+/** Surface every prepared remote turn, even before sessions.txt names it, for exact recovery. */
+function pendingRemoteMarkers(programDir) {
+  const sessions = path.join(programDir, "sessions");
+  if (!existsSync(sessions)) return [];
+  return readdirSync(sessions).flatMap((name) => {
+    if (name.endsWith(".remote.pending.json")) {
+      const writer = name.slice(0, -".remote.pending.json".length);
+      return [`PENDING-REMOTE remote ${writer}: recover with fleet.sh <orchDir> remote session recover-marker ${writer}`];
+    }
+    if (name.endsWith(".remote.pending")) {
+      const writer = name.slice(0, -".remote.pending".length);
+      return [`PENDING-REMOTE-LEGACY remote ${writer}: preserve and audit this older prepared owner before another turn`];
+    }
+    return [];
+  });
 }
 
 function unmanagedState(dir) {

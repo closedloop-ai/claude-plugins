@@ -21,6 +21,7 @@ const GIT_NETWORK_MS = 15 * 60 * 1000;
 const desktopSchema = z.object({ ok: z.boolean(), running: z.boolean() }).passthrough();
 const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
 export { MainSyncError };
+export { workflowLaneDefinitions } from "./main-sync-ci.js";
 export { mainSyncFailure } from "./main-sync-failure.js";
 
 /** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */

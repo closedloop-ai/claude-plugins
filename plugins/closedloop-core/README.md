@@ -146,7 +146,8 @@ so the page reloads from disk. The threat model is in the skill's `SKILL.md`.
 Graphs made by earlier versions keep refreshing from their configs in
 `~/.local/share/prd-dependency-graph/` and move to the portable format on their
 next refresh. Creating or refreshing a graph starts the helper in the background
-and replaces one left running from another install. It also writes a
+and replaces one left running from an older release or a checkout; an older copy
+never replaces a newer helper or launcher. It also writes a
 `~/.local/bin/prd-graph-helper` launcher that follows plugin updates, which the
 page shows when the helper is not running. `scripts/check_graph.cjs` is a
 headless browser check of a rendered graph.

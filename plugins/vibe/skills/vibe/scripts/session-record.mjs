@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /** Executes bounded git reads and operations for the session's exact worktree. */
@@ -32,4 +32,32 @@ export function writeSessionRecord(worktree, record) {
 /** Reads pre-ISS-12057 ticket records without inventing a ticket when neither field exists. */
 export function sessionLiveTicket(record) {
   return record.liveTicket ?? record.handoffTicket ?? null;
+}
+
+/** Verify the linked, canonical worktree and private creation evidence written by `vibe new`. */
+export function assertVibeCreatedWorktree(worktree, record) {
+  if (typeof worktree !== "string" || !path.isAbsolute(worktree)) throw new Error("an absolute Vibe worktree is required");
+  const root = git(worktree, ["rev-parse", "--show-toplevel"]);
+  if (realpathSync(root) !== realpathSync(worktree)) throw new Error("use the exact Vibe worktree root");
+  const privateDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
+  const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!existsSync(path.join(privateDir, "commondir")) || !lstatSync(path.join(worktree, ".git")).isFile()) {
+    throw new Error("a Vibe-created linked worktree is required");
+  }
+  const session = record ?? readSessionRecord(worktree);
+  if (!session || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(session.slug ?? "") || session.branch !== `vibe/${session.slug}`) {
+    throw new Error("a Vibe-created session record and branch are required");
+  }
+  const canonical = path.join(path.dirname(realpathSync(commonDir)), ".claude", "worktrees", `vibe-${session.slug}`);
+  if (realpathSync(worktree) !== canonical) throw new Error("Vibe worktree is outside its canonical creation path");
+  if (git(worktree, ["branch", "--show-current"]) !== session.branch) throw new Error("Vibe branch and worktree disagree");
+  if (session.worktree && realpathSync(session.worktree) !== realpathSync(worktree)) throw new Error("Vibe record belongs to another worktree");
+  if (typeof session.liveTicketCreatedBySession !== "boolean") throw new Error("Vibe ticket ownership provenance is missing");
+  if (!session.operator?.id || !session.operator?.email) throw new Error("Vibe operator identity is missing");
+  if (!/^[a-f0-9]{40}$/i.test(session.baseCommit ?? "") || !Number.isFinite(Date.parse(session.createdAt ?? ""))) {
+    throw new Error("Vibe creation base and time are missing");
+  }
+  try { git(worktree, ["merge-base", "--is-ancestor", session.baseCommit, "HEAD"]); }
+  catch { throw new Error("Vibe creation base is not an ancestor of this worktree"); }
+  return session;
 }

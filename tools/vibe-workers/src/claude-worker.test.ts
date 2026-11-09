@@ -2,7 +2,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, workerSessionName } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
@@ -81,6 +81,29 @@ function run(value: ReturnType<typeof fixture>, input: Record<string, unknown>, 
 }
 
 describe("production Claude CLI adapter", () => {
+  it("honors explicit top-level test requirements only for the persistent writer's eligible modes", () => {
+    const grant = { agentName: "vibe-change-worker", mode: "request", testsRequired: true } as const;
+    expect(testAuthoringGranted(grant)).toBe(true);
+    expect(testAuthoringGranted({ ...grant, testsRequired: false })).toBe(false);
+    const rawBrief = { ...grant, testsRequired: false, input: "The person asks to write tests now" };
+    expect(testAuthoringGranted(rawBrief)).toBe(false);
+    expect(testAuthoringGranted({ ...grant, mode: "record" })).toBe(false);
+    expect(testAuthoringGranted({ ...grant, mode: "plan" })).toBe(false);
+    expect(testAuthoringGranted({ ...grant, agentName: "vibe-guardrails-reviewer" })).toBe(false);
+    expect(testAuthoringGranted({ ...grant, mode: "pull-request", testsRequired: false })).toBe(true);
+  });
+  it("passes an explicit testsRequired grant through the real Claude launch envelope", () => {
+    const value = setup();
+    const launched = run(value, { input: "Build the change", mode: "request", testsRequired: true });
+    expect(launched.status, launched.stderr).toBe(0);
+    expect(readProof(value.metadata)[0]?.payload.authority.testAuthoringAuthorized).toBe(true);
+  });
+  it("does not elevate a raw test-writing request through the real Claude launch envelope", () => {
+    const value = setup();
+    const launched = run(value, { input: "Please write tests", mode: "request" });
+    expect(launched.status, launched.stderr).toBe(0);
+    expect(readProof(value.metadata)[0]?.payload.authority.testAuthoringAuthorized).toBe(false);
+  });
   it("binds the persistent writer-only protected path hooks on first launch and resume", () => {
     const value = setup();
     expect(run(value, { input: "WRITE_ALLOWED" }).status).toBe(0);
@@ -223,6 +246,7 @@ describe("production Claude CLI adapter", () => {
       expect(bound.agent.prompt).toContain("vibe-pr-evidence.json");
       expect(bound.agent.prompt).toContain("vibe-lane-results.json");
       expect(bound.agent.prompt).toContain("vibe-lane-report.txt");
+      expect(bound.agent.prompt).toContain("typed lane run receipts");
       expect(bound.agent.prompt).toContain(".control/");
       expect(bound.agent.prompt).toContain("Never edit product source, tests, fixtures, snapshots, catalog or allowlists");
       expect(bound.agent.prompt).not.toContain("never mutate files or records");
@@ -440,7 +464,7 @@ describe("production Claude CLI adapter", () => {
     expect(proof[2]?.payload.authority.testAuthoringAuthorized).toBe(true);
     expect(proof[2]?.payload.authority.testRepairAuthorized).toBe(true);
     const prompt = proof[0]!.definition["vibe:vibe-change-worker"]!.prompt;
-    expect(prompt).toContain("Never author tests in plan, request, fix, handoff, record or build turns");
+    expect(prompt).toContain("Never author tests in plan or record turns");
     expect(prompt).toContain("Only an explicit pull-request turn");
     const advisor = run(value, { agentName: "vibe-guardrails-reviewer", input: "Check the pull request", mode: "pull-request" });
     expect(advisor.status, advisor.stderr).toBe(0);
@@ -517,11 +541,13 @@ describe("production Claude CLI adapter", () => {
     const input = { agentName: "vibe-ticket-worker", input: "Cancel the operator's discarded ticket after live ownership verification",
       mode: "record", recordAction: "cancel", exclusiveRecordTurn: true, capabilities: [...graph, ...liveReads, recordWrite, update] };
     expect(run(value, { ...input, sessionless: { kind: "discarded" } }).status).toBe(1);
-    const evidence = { discarded: true, branch: "vibe/discarded-test", liveTicket: "ISS-1",
+    const evidence = { discarded: true, branch: "vibe/discarded-test", liveTicket: "ISS-1", liveTicketCreatedBySession: true,
       operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" };
+    expect(run(value, { ...input, sessionless: { kind: "discarded",
+      evidence: { ...evidence, liveTicketCreatedBySession: false } } }).status).toBe(1);
     expect(run(value, { ...input, worktree: deleted, sessionless: { kind: "discarded", evidence } }).status).toBe(1);
     const result = run(value, { ...input, sessionless: { kind: "discarded", evidence } });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     const proof = readProof(value.metadata)[0];
     expect(proof?.definition["vibe:vibe-ticket-worker"]?.tools).toContain(recordWrite.name);
     expect(proof?.definition["vibe:vibe-ticket-worker"]?.tools).toContain(update.name);
@@ -538,20 +564,21 @@ describe("production Claude CLI adapter", () => {
     execFileSync("git", ["worktree", "add", "-b", branch, target], { cwd: value.worktree, stdio: "ignore" });
     const metadata = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: target, encoding: "utf8" }).trim();
     writeFileSync(join(metadata, "vibe-session.json"), JSON.stringify({ worktree: target, branch, status: "active",
-      liveTicket: "ISS-2", operator: { id: "fixture-owner", email: "owner@example.invalid" } }));
-    const discardTarget = { worktree: target, confirmed: true, branch, liveTicket: "ISS-2",
+      liveTicket: "ISS-2", liveTicketCreatedBySession: true, operator: { id: "fixture-owner", email: "owner@example.invalid" } }));
+    const discardTarget = { worktree: target, confirmed: true, branch, liveTicket: "ISS-2", liveTicketCreatedBySession: true,
       operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" };
     const input = { agentName: "vibe-setup-worker", input: "DISCARD_OWNED_FIXTURE", sessionless: { kind: "startup" },
       mode: "record", recordAction: "discard", exclusiveRecordTurn: true, discardTarget };
     expect(run(value, { ...input, discardTarget: { ...discardTarget, operatorId: "different-owner" } }).status).toBe(1);
     expect(run(value, { ...input, discardTarget: { ...discardTarget, liveTicket: "ISS-3" } }).status).toBe(1);
+    expect(run(value, { ...input, discardTarget: { ...discardTarget, liveTicketCreatedBySession: false } }).status).toBe(1);
     mkdirSync(join(metadata, "vibe-record-turn.lock"));
     expect(run(value, input).status).toBe(1);
     expect(existsSync(target)).toBe(true);
     expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
     rmSync(join(metadata, "vibe-record-turn.lock"), { recursive: true });
     const result = run(value, input);
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(existsSync(target)).toBe(false);
     expect(existsSync(value.worktree)).toBe(true);
     expect(existsSync(JSON.parse(result.stdout).tracePath)).toBe(true);
@@ -559,7 +586,8 @@ describe("production Claude CLI adapter", () => {
     expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
     expect(readProof(value.metadata)[0]?.payload.input).toBe("DISCARD_OWNED_FIXTURE");
     expect(JSON.parse(result.stdout).data.discardReceipt.cancelEvidence).toEqual({ discarded: true, branch,
-      liveTicket: "ISS-2", operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" });
+      liveTicket: "ISS-2", liveTicketCreatedBySession: true,
+      operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" });
   });
   it("uses the canonical historical ticket read from preview through confirmed discard and preserves ticket absence", () => {
     const value = setup();
@@ -584,8 +612,9 @@ describe("production Claude CLI adapter", () => {
         sessionless: { kind: "startup" }, mode: "record", recordAction: "discard", exclusiveRecordTurn: true,
         discardTarget: { worktree: facts.worktree, branch: facts.branch, confirmed: true,
           operatorId: facts.operator.id, operatorEmail: facts.operator.email,
+          liveTicketCreatedBySession: facts.liveTicketCreatedBySession,
           ...(facts.liveTicket ? { liveTicket: facts.liveTicket } : {}) } });
-      expect(result.status, result.stderr).toBe(0);
+      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
       const receipt = JSON.parse(result.stdout).data.discardReceipt;
       expect(receipt.discarded).toBe(true);
       expect(receipt.wouldLose.liveTicket).toBe(legacyTicket ?? null);

@@ -33,7 +33,7 @@ any story work, read the repo skill `.claude/skills/storybook/SKILL.md` and
 `references/gotchas.md`, then follow `workflows/author-stories.md` and
 `workflows/design-controls.md` exactly, except that the "existing story files
 in the same area" of author-stories step 1 are the same capability's, not the
-same folder's (`../skills/vibe/references/guardrails.md`, "Storybook
+same folder's (`../skills/vibe/references/guardrails-ui.md`, "Storybook
 taxonomy"). For placement, use that skill's placement pieces:
 
 - `references/governance.md` ("Taxonomy") and `workflows/curate-sidebar.md`
@@ -56,7 +56,7 @@ Read `apps/storybook/AGENTS.md` for
 where stories must live to be collected, and the repo's
 `apps/storybook/TAXONOMY.md`, which places every new story: a current root,
 its page tree, one lifecycle tag and the release bump, never a frozen v1.0
-root (`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). Read
+root (`../skills/vibe/references/guardrails-ui.md`, "Storybook taxonomy"). Read
 that doc as the session's base has it: on a base older than the lifecycle
 scheme it still places new work under `<Level> v2.0/` with the `v2.0` tag. An
 existing component's story file keeps its title and tag ("Precedent search",

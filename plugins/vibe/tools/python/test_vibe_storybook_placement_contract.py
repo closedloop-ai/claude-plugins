@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import skill_split
 from vibe_contract_text import agent, flat, paragraph, section
 
 
@@ -258,13 +259,13 @@ def test_same_area_means_same_capability_not_same_folder() -> None:
         "says to match are the stories for the same capability that block reports, read with "
         f"{TAXONOMY_DOC}, never the neighbors in the same folder."
     ) in rule
-    pointer = '(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy")'
+    pointer = '(`../skills/vibe/references/guardrails-ui.md`, "Storybook taxonomy")'
     decomposer = flat(agent("vibe-storybook-decomposer"))
     assert f"are the same capability's, not the same folder's {pointer}" in decomposer
     writer = flat(agent("vibe-change-worker"))
     assert "The story files you match are the same capability's, not the same folder's (same section)." in writer
-    holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if "never the neighbors in the same folder" in flat(path.read_text())]
-    assert holders == ["guardrails.md"]
+    holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if "never the neighbors in the same folder" in flat(skill_split.raw(path))]
+    assert holders == ["guardrails-ui.md"]
 
 
 MIRROR_STRUCTURE_ONLY = (

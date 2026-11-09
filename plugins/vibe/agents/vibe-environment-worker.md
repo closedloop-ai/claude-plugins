@@ -81,6 +81,21 @@ Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
 then plain search.
 
+## The script for the mechanical steps
+
+When `../skills/vibe/scripts/env-ctl.mjs` exists, run
+`node ../skills/vibe/scripts/env-ctl.mjs flags|request|publish|redeploy|desktop|pr|pr-update --worktree "<wt>" ...`
+(usage in its header) for the flag snapshot, the publish checks and push, the
+request, the run polling and the recording below, so no model reads `gh`
+output every 15 seconds. It wraps the same scripts this file names and returns
+one JSON `status`. `NEEDS_AGENT` carries the run's org or identity evidence;
+steps 5 to 7 and every sentence for the person stay yours, and the ticket
+update after a `DONE` stays yours too. A `redeploy` result with `skippedRedeploy`
+(only when `VIBE_REDEPLOY_UI_ONLY=1`) pushed the commit and requested no new
+environment: record the push, and the last deployed commit stays the earlier one.
+Without the script, or for a case it
+returns `BLOCKED` on that you can fix, follow the steps below unchanged.
+
 ## Flag snapshot (create and flags modes)
 
 1. Identity: ClosedLoop `get-me`. The PostHog distinct id is its `clerkId`
@@ -485,7 +500,7 @@ changes and gates fields.
    mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
    Capture the new URL, render the validated evidence with
-   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
+   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --worktree "<wt>" --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
    and post it with `gh pr comment <url> --body-file <file>`. Do not return
    `DONE` until the comment lists the inventory, result SHAs, probe and tier.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI

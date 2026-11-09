@@ -4,7 +4,8 @@
 // command-segments.mjs drops words containing < or >, which erases heredoc
 // markers needed here; this narrow splitter retains them without importing the dispatcher.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,7 @@ const pythonOpen = /\bopen\s*\(\s*(['"`])([^'"`]+)\1\s*,\s*(['"`])[wax+][^'"`]*\
 const pythonPath = /\bPath\s*\(\s*(['"`])([^'"`]+)\1\s*\)\s*\.\s*(?:write_text|write_bytes)\s*\(/g;
 const nodeWrite = /\b(?:writeFileSync|appendFileSync|createWriteStream|writeFile|appendFile)\s*\(\s*(['"`])([^'"`]+)\1/g;
 const nodeSecond = /\b(?:copyFileSync|renameSync|copyFile|rename)\s*\(\s*(['"`])[^'"`]+\1\s*,\s*(['"`])([^'"`]+)\2/g;
+const gitDirectoryCache = new Map();
 
 /** Segment-aware membership in a canonical directory. */
 function inside(root, target) {
@@ -48,6 +50,30 @@ function targetPaths(root, cwd, raw) {
   return { lexical, effective, admitted };
 }
 
+/** Match the one private change log owned by this exact linked worktree. */
+function isOwnChangeLog(root, target) {
+  try {
+    let gitDir = gitDirectoryCache.get(root);
+    if (!gitDir) {
+      gitDir = path.resolve(execFileSync("git", ["-C", root, "rev-parse", "--absolute-git-dir"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      }).trim());
+      gitDirectoryCache.set(root, gitDir);
+    }
+    const lexical = path.join(gitDir, "vibe-changes.md");
+    const effective = path.join(realpathSync(gitDir), "vibe-changes.md");
+    if (target.lexical !== lexical || target.effective !== effective) return false;
+    try {
+      if (!lstatSync(target.lexical).isFile()) return false;
+    } catch (error) {
+      if (error?.code !== "ENOENT") return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function protectedPath(root, target) {
   // A vibe worktree itself may live below a parent checkout's .claude/worktrees.
   // Strip that trusted prefix for local targets, but still recognize protected
@@ -57,8 +83,9 @@ function protectedPath(root, target) {
     || protectedFiles.has(part) || (part === "git" && parts[index - 1] === ".config"));
 }
 
-function protectedWrite(root, cwd, raw) {
+function protectedWrite(root, cwd, raw, { allowOwnChangeLog = true } = {}) {
   const target = targetPaths(root, cwd, raw);
+  if (allowOwnChangeLog && isOwnChangeLog(root, target)) return false;
   return protectedPath(root, target.lexical) || protectedPath(realpathSync(root), target.effective);
 }
 
@@ -133,9 +160,9 @@ function bashProtectedWrite(root, cwd, command) {
       }
       continue;
     }
-    const decisionFor = (target) => {
+    const decisionFor = (target, allowOwnChangeLog = true) => {
       if (unresolvedCwd && !path.isAbsolute(target)) return unresolvedReason;
-      return protectedWrite(root, currentCwd, target) ? protectedReason : null;
+      return protectedWrite(root, currentCwd, target, { allowOwnChangeLog }) ? protectedReason : null;
     };
     if (writers.has(name)) {
       const inline = args.findIndex((arg) => ["-c", "-e", "--eval"].includes(arg));
@@ -147,7 +174,9 @@ function bashProtectedWrite(root, cwd, command) {
       }
     }
     if (destinationWriters.has(name) && args.length >= 2) {
-      const reason = decisionFor(args.at(-1));
+      // The hook checks the whole command before execution. Any destination writer
+      // can plant a symlink that an earlier path check cannot yet observe.
+      const reason = decisionFor(args.at(-1), false);
       if (reason) return reason;
     }
     if (name === "sed" && args.some((arg) => arg === "-i" || arg.startsWith("-i"))
@@ -178,7 +207,7 @@ export function protectedWriteDecision(event, root) {
   const cwd = path.resolve(event.cwd);
   if (tool === "Edit" || tool === "Write") {
     const target = targetPaths(root, cwd, event.tool_input?.file_path);
-    if (target.admitted) {
+    if (target.admitted || isOwnChangeLog(root, target)) {
       return eventName === "PermissionRequest"
         ? { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } }
         : null;

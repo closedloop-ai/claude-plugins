@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, rebuildStatic, runOwnedFrozenComparison, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, isFrozenGlobalInput, prepareBase, rebuildStatic, runOwnedFrozenComparison, storybookPreviewImportClosure, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome, mutateSourceRead } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -244,6 +244,27 @@ function sandbox(t) {
   return { ...fixture, out: path.join(fixture.root, "out") };
 }
 
+test("byte-identical screenshots skip PNG decode, while different bytes with identical pixels still compare equal", async (t) => {
+  const { out } = sandbox(t);
+  const png = shot(GREY);
+  const differentlyEncoded = Buffer.concat([png, Buffer.from([0])]);
+  const browser = fakeBrowser({
+    [BASE]: { "a--same": passes(png), "b--same-pixels": [passes(png), passes(differentlyEncoded)] },
+    [HEAD]: { "a--same": passes(png), "b--same-pixels": passes(png) },
+  });
+  let decodes = 0;
+  const dependencies = { decodePng: (bytes) => { decodes++; return decodePng(bytes); } };
+  const summary = await frozenRenders({ ids: ["a--same", "b--same-pixels"], fileCount: 1, baseUrl: BASE, headUrl: HEAD,
+    browser, out, command: "frozen-render.mjs" }, dependencies);
+  const details = JSON.parse(readFileSync(path.join(out, "results.json"), "utf8")).details;
+  assert.equal(decodes, 2, "the all-equal story does no decode; the two byte-distinct groups decode once each");
+  assert.deepEqual(details.map((story) => story.outcome), [FrozenOutcome.Identical, FrozenOutcome.Identical]);
+  assert.deepEqual(Object.values(details[0].renders).map((render) => render.timingsMs.decode), [0, 0, 0]);
+  assert.equal(new Set(Object.values(details[1].renders).map((render) => render.pixels)).size, 1,
+    "different PNG bytes with identical decoded pixels share the exact pixel hash");
+  assert.equal(summary.ok, true);
+});
+
 test("each class: identical, unstable on base, same failure, changed render, new failure and a changed play on an unstable base (ISS-13317)", async (t) => {
   const { out } = sandbox(t);
   const ids = ["a--identical", "b--unstable", "c--same-failure", "d--changed", "e--newly-failing", "f--unstable-play-changed"];
@@ -289,6 +310,12 @@ test("each class: identical, unstable on base, same failure, changed render, new
     "same-failure c--same-failure: fails the same way on the base: storyThrewException fired: No fixture for /api/pr-files",
   ]);
   assert.equal(summary.lines.at(-1), `summary: 6 stories in 2 story files: 1 identical, 1 unstable on base (b--unstable), 1 same failure (c--same-failure), 3 blocking; results ${path.join(out, "results.json")}`);
+  const phaseNames = ["contextCreation", "pageLoad", "playWait", "fonts", "screenshot", "decode", "hash"];
+  for (const render of Object.values(details[0].renders)) {
+    assert.deepEqual(Object.keys(render.timingsMs), phaseNames);
+    assert.ok(Object.values(render.timingsMs).every((duration) => Number.isFinite(duration) && duration >= 0));
+    assert.equal("rawPngHash" in render, false, "results record timings without exposing the internal raw-byte hash");
+  }
   // A cropped diff only for the unstable base and for blocking pixel differences, never for a new failure with the base's pixels.
   assert.deepEqual(details.filter((story) => story.crop).map((story) => story.storyId), ["b--unstable", "d--changed"]);
   const crop = decodePng(readFileSync(summary.blocking[0].crop));
@@ -636,4 +663,63 @@ test("a recorded line survives unrelated commits and clears only proven unchange
   writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
     "a rendered dependency change invalidates the recorded states");
+});
+
+test("preview reachability includes imports added or removed across the comparison (ISS-13752)", () => {
+  const preview = "apps/storybook/.storybook/preview.tsx";
+  const oldCss = "apps/storybook/.storybook/old.css";
+  const newCss = "apps/storybook/.storybook/new.css";
+  const closure = storybookPreviewImportClosure(new Set([preview, oldCss]), new Set([preview, newCss]),
+    (file) => file === preview ? 'import "./old.css";' : null,
+    (file) => file === preview ? 'import "./new.css";' : null);
+  assert.equal(isFrozenGlobalInput(oldCss, closure), true);
+  assert.equal(isFrozenGlobalInput(newCss, closure), true);
+  assert.equal(isFrozenGlobalInput("apps/storybook/.storybook/unrelated.css", closure), false);
+});
+
+test("frozen input digests include global HTML, config, manifests, lockfile and public bytes but exclude unrelated CSS (ISS-13752)", (t) => {
+  const fixture = makeHome("vibe-frozen-inputs-");
+  t.after(fixture.cleanup);
+  const checkout = path.join(fixture.root, "wt");
+  git(fixture.root, ["init", "--quiet", "--initial-branch=main", checkout], fixture.home);
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const second = "apps/storybook/stories/second.stories.tsx";
+  const localCss = "packages/design-system/components/first.css";
+  const previewCss = "apps/storybook/.storybook/preview.css";
+  const globalFiles = ["apps/storybook/.storybook/preview-head.html", "apps/storybook/.storybook/main.ts",
+    "apps/storybook/public/fonts/ui.woff2", "apps/storybook/package.json", "packages/design-system/package.json",
+    "packages/app/package.json", "pnpm-lock.yaml", "packages/design-system/styles/theme.css", previewCss];
+  const originals = {
+    [first]: 'import "@repo/design-system/components/first";\nexport default { title: "Composites v1.0/First" };\nexport const Default = {};\n',
+    [second]: 'export default { title: "Composites v1.0/Second" };\nexport const Default = {};\n',
+    "packages/design-system/components/first.tsx": 'import "./first.css";\n',
+    [localCss]: ".first { color: red; }\n",
+    "apps/storybook/.storybook/preview.tsx": 'import "./preview.css";\n',
+    "packages/design-system/components/unrelated.css": ".unrelated { color: red; }\n",
+    ...Object.fromEntries(globalFiles.map((file) => [file, `original ${file}\n`])),
+  };
+  for (const [file, content] of Object.entries(originals)) {
+    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+    writeFileSync(path.join(checkout, file), content);
+  }
+  git(checkout, ["add", "-A"], fixture.home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], fixture.home);
+  const base = git(checkout, ["rev-parse", "HEAD"], fixture.home);
+  const beforeFirst = frozenInputs(checkout, base, [first]);
+  const beforeSecond = frozenInputs(checkout, base, [second]);
+  for (const file of globalFiles) {
+    const changed = file.endsWith("woff2") ? Buffer.from([0xff, 0x00, 0xfd]) : `changed ${file}\n`;
+    writeFileSync(path.join(checkout, file), changed);
+    assert.notEqual(frozenInputs(checkout, base, [first]), beforeFirst, file);
+    assert.notEqual(frozenInputs(checkout, base, [second]), beforeSecond, file);
+    writeFileSync(path.join(checkout, file), originals[file]);
+  }
+  writeFileSync(path.join(checkout, localCss), ".first { color: blue; }\n");
+  assert.notEqual(frozenInputs(checkout, base, [first]), beforeFirst);
+  assert.equal(frozenInputs(checkout, base, [second]), beforeSecond);
+  writeFileSync(path.join(checkout, localCss), originals[localCss]);
+  const unrelated = "packages/design-system/components/unrelated.css";
+  writeFileSync(path.join(checkout, unrelated), ".unrelated { color: blue; }\n");
+  assert.equal(frozenInputs(checkout, base, [first]), beforeFirst);
+  assert.equal(frozenInputs(checkout, base, [second]), beforeSecond);
 });

@@ -3,16 +3,20 @@
 // https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/thread_history.rs
 import { connectViaProxy, daemonSocket } from "../../codex-fleet-monitor/scripts/liveness.mjs";
 
+function nativeMcpName(item) {
+  return `mcp__${item.server.replaceAll("-", "_")}__${item.tool}`;
+}
+
 /** Completed turn and machine-observed successful MCP calls, or a refusal. */
 export function observedCodexTurn(thread, sessionId, turnId) {
   if (thread?.id !== sessionId) throw new Error("App Server returned another native reviewer thread");
   const turn = Array.isArray(thread.turns) ? thread.turns.find(item => item?.id === turnId) : null;
-  if (turn?.status !== "completed" || !Array.isArray(turn.items) || turn.itemsView === "notLoaded") {
+  if (turn?.status !== "completed" || !Array.isArray(turn.items) || turn.items.length === 0 || turn.itemsView === "notLoaded") {
     throw new Error("App Server has no loaded completed reviewer turn and items");
   }
   const toolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "completed"
     && typeof item.server === "string" && typeof item.tool === "string")
-    .map(item => `mcp__${item.server}__${item.tool}`);
+    .map(nativeMcpName);
   return { sessionId, turnId, status: "completed", toolCalls };
 }
 
@@ -37,6 +41,9 @@ export async function readCodexReviewTurn(sessionId, turnId, client) {
       items.push(...(page?.data ?? []).map(entry => entry?.item).filter(Boolean));
       cursor = page?.nextCursor ?? null;
     } while (cursor);
-    return observedCodexTurn({ ...thread, turns: [{ ...turn, items }] }, sessionId, turnId);
+    // The summary marker describes thread/turns/list, before these item pages were loaded.
+    const loadedTurn = { ...turn, items };
+    delete loadedTurn.itemsView;
+    return observedCodexTurn({ ...thread, turns: [loadedTurn] }, sessionId, turnId);
   } finally { if (!client) owned.close(); }
 }

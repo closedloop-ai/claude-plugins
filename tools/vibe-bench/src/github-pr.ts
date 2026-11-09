@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { advanceBenchmarkPr, benchmarkPr, BENCHMARK_TASK } from "./contract.ts";
 import type { BenchmarkPr } from "./contract.ts";
 import type { PreparedFixture } from "./fixture.ts";
+import { privateTextProblem } from "./private-artifact.ts";
 
 /** Explicit proof destination; the Claude checkout's origin always stays fake. */
 export const PROOF_REPO = "closedloop-ai/symphony-alpha";
@@ -178,7 +179,7 @@ export function cleanupRecordedProof(runDir: string, expectedBaseRef: string, ex
 }
 
 function validPublicText(value: string): void {
-  if (/\/(?:Users|private|tmp|var\/folders)\/|\b(?:laptop|localhost|local path)\b/i.test(value)) {
+  if (privateTextProblem(value)) {
     throw new Error("benchmark-pr-private-wording");
   }
 }

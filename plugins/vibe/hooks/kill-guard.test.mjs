@@ -26,6 +26,13 @@ test("pattern kills, group kills and unrecorded pids are refused; kill of a reco
     sh("cd /wt &&", byName("p"), "-f e2e"),
     sh("pgrep -f vitest | xargs", "kill"),
     sh("kill", "$(pgrep -f vitest)"),
+    "bash -c 'kill $(date)'",
+    'bash -c "kill $(date)"',
+    'eval "kill $(date)"',
+    "ssh host 'kill $(date)'",
+    "f() { kill $(date); }; f",
+    "# <<EOF\nkill 1",
+    "kill</dev/null 1",
     sh("kill", "$PID"),
     sh("kill", "--", "-1"),
     sh("kill", "-9", "-1"),
@@ -49,6 +56,9 @@ test("pattern kills, group kills and unrecorded pids are refused; kill of a reco
     'git commit -m "stop the watcher"',
     "ps aux | grep kill",
     "echo kill",
+    "printf '%s\\n' 'kill $(date)'",
+    "cat <<'EOF'\nkill $(date)\nEOF",
+    "f() { kill $(date); }",
   ];
   for (const command of allowed) assert.deepEqual(killProblems(command, isOwn), [], command);
   assert.deepEqual(killProblems("ssh host 'bash -lc \"kill 777\"'", isOwn), [], "a remote pid is not judged against the local ledger");

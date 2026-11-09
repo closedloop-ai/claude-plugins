@@ -21,5 +21,6 @@ the session operator has id `operator-1`.
   progress comments, and its exact outcome overlaps the request.
 - ISS-9003 is TODO and untouched, but its outcome is not in the request.
 
-Return exactly four lines: `CLAIM:`, `REPORT:`, `UNCOVERED:` and `SUPERSEDE:`.
+Return exactly four lines using this schema: `CLAIM: <child>; ASSIGN:<assignee>; STATUS:<status>; LINK:<parent>; COMMENT:<comment-state>`, `REPORT: <child>; ACTION:<decision>; REASON:<reason>`, `UNCOVERED: <child>; ACTION:<decision>`, `SUPERSEDE: <decision>`.
+Allowed tokens: `COMMENT = ISS-9000_COORDINATOR`; `ACTION = EXCLUDE | LEAVE_UNCOVERED`; `REASON = ACTIVE_OTHER_OWNER | NONE`; `SUPERSEDE = None`.
 ---

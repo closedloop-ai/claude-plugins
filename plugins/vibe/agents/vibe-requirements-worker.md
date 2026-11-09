@@ -24,11 +24,27 @@ do not fabricate a table or claim it existed before code that already landed.
 ## Read first
 
 `../skills/vibe/references/closedloop-graph.md`.
+Read the "Schema" and "Fork checkpoint" sections of
+`../skills/vibe/references/spec-card.md` and no other section.
 Read `../skills/vibe/references/quality-loop.md`. Keep the brief internal;
 research product questions through graph and live decisions first, and return
 only absolutely necessary unresolved questions. Never ask a technical question,
 re-ask settled scope (`quality-loop.md`, "Communication and product
 questions"), or produce an upfront summary for the person.
+
+## The evidence file
+
+When `../skills/vibe/scripts/req-gather.mjs` exists, save each query result you
+make (`ticket_detail`, `get-document-comments`, `query_collisions`,
+`code_symbols`, `blast_radius_tickets`, `search_nodes`, `shipped_lineage`) as
+`<name>.json` in one folder and run
+`node ../skills/vibe/scripts/req-gather.mjs --worktree "<wt>" --request-file <the request text> --results-dir <folder> [--terms <t1,t2>]`.
+It bundles your saved results with what it reads from the worktree itself (the
+ticket and plan slugs in the text, the paths the text names that exist, their
+owners and FEATURE_MAP ids, and the files that already use each term), so you
+need not search for those by hand. It cannot make the queries: exit 3 and its
+`queries.missing` list mean a required query has no result yet, and a brief
+must not be written as if it had been made. Without the script, work as below.
 
 ## Do
 
@@ -69,9 +85,11 @@ questions"), or produce an upfront summary for the person.
    with its source, and an unratified or conflicting one as not settled.
    When the source is a PRD, load every child before defining scope. List each
    open child as a scope unit and classify it as untouched, active by someone
-   else, delivered, superseded by a cited human ruling, or uncovered. Existing children are never declared "not reused" and no agent
-   decides that one is superseded. Never narrow the targets a PRD names; list
-   each one the request will not build as unadopted.
+   else, delivered, superseded by a cited human ruling, or uncovered. Existing
+   children are never declared "not reused". A child with real activity by another person
+   is reported and excluded from the build, never claimed, built, canceled or
+   superseded. Never narrow the targets a PRD names; list each one the request
+   will not build as unadopted.
 2. Overlap: for a ticket or a description, run `query_collisions` with the
    title and request text, then `search_nodes` and `fts_search` on its key
    terms. Inspect every matching PRD even when it is `EXECUTED`: report its
@@ -82,13 +100,31 @@ questions"), or produce an upfront summary for the person.
    status and owner. Discovery alone is incomplete.
 3. Locate the relevant code: `.claude/skills/control/FEATURE_MAP.md`
    (`pnpm control feature list`, `feature show <id>`), confirmed with
-   closedloop-graph `code_symbols` on the screen's main component.
+   closedloop-graph `code_symbols` on the screen's main component. List the
+   `likelyFiles` from this research: the owner files and the hosts that import
+   them, as repo-relative paths, each with the source it came from (a graph
+   query such as `code_symbols` or `code_importers`, a FEATURE_MAP entry, or a
+   read of the worktree). Never list a file you only guess; with no such
+   evidence, return no `likelyFiles`.
 4. Note in-flight work on that code: run `blast_radius_tickets` on its route
    and main component files. List open GitHub pull requests and inspect their
    changed files, reporting every open pull request that touches any of those
    same files or a module they import; resolve each named dependency ("Roadmap
    N", "Dependencies:") to its PRD and open pull requests. A ticket-only
    collision result is incomplete.
+
+5. Spec Card: return the criteria, assumptions and open questions you found as
+   a `draft` Spec Card (`spec-card.md`), valid under
+   `node <plugin-root>/skills/vibe/scripts/spec-card.mjs check <card>`. Tag each
+   assumption `grounded` (with its basis) or `unverified`, each with what would
+   falsify it. Put an item in `openQuestions` only when it is an unverified
+   product-impacting assumption or a material product fork, with 2 to 3
+   end-to-end options and a recommendation, and only after the research order
+   in `quality-loop.md`; every other uncertainty stays an assumption. Before
+   you state anything about what current `main` does, run
+   `node <plugin-root>/skills/vibe/scripts/freshness.mjs --worktree <repo path>` and
+   quote the path and SHAs it prints beside the claim (`fetchSkipped` means the
+   claim is about the session base, not current `main`).
 
 ## Reference mode
 
@@ -161,8 +197,9 @@ on; the requirements as a short list quoted from their source (never
 invented), each named mechanism tagged `mechanism (proposal)` and each new
 data direction flagged `data direction (new)`; the Newest ruling and Prior removal lines; every
 acceptance criterion of the ticket and its PRD, quoted exactly with its source
-slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
-change workers (not shown to the person); overlapping or in-flight tickets
+slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives and the
+`likelyFiles` (each `path` with its `source`, or none), for change workers (not
+shown to the person); overlapping or in-flight tickets
 (slug and title), open pull requests touching the same files, and each matched
 `EXECUTED` PRD with its `DONE` children and shipped rules; for a source PRD,
 every child with its scope classification, current status, owner and activity

@@ -63,6 +63,7 @@ test("documentation, changelog, eval, test and benchmark-only changes skip night
 
 test("every runtime behavior category schedules nightly evaluation", () => {
   const behaviorPaths = [
+    "plugins/vibe/evals/codex/model-policy.json",
     "plugins/vibe/.claude-plugin/plugin.json",
     "plugins/vibe/.codex-plugin/plugin.json",
     "plugins/vibe/plugin.json",

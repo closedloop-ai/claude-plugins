@@ -59,7 +59,7 @@ def allowed_context(path: Path, text: str, match: re.Match[str]) -> bool:
             "When continuing needs a fix to the vibe tooling, stop" in phrase
             and HISTORICAL_STOP_PROMPTS[relative] in nearby
         )
-    if relative == "skills/vibe/references/quality-loop.md":
+    if relative in ("skills/vibe/references/quality-loop.md", "skills/vibe/references/quality-loop-recovery.md"):
         return phrase == "message engineering" and "never tells the person to message engineering about it" in nearby
     if relative == "skills/vibe/SKILL.md":
         return phrase == "they need an engineer" and "Do not tell the person they need an engineer" in nearby

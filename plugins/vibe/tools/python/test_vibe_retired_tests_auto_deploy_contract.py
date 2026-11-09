@@ -74,7 +74,8 @@ def test_reviewers_verify_deleted_tests_covered_only_retired_code() -> None:
                      "A deletion that covered any live behavior is blocking",
                      "a deleted test or case with no entry there"):
         assert required in guardrails, required
-    assert "a deleted test that still covered live behavior" in flat(agent("vibe-adversarial-reviewer"))
+    # ISS-13353: the adversarial reviewer no longer repeats check 9's deletion rule; it points at it.
+    assert "guardrails reviewer, not repeated" in flat(agent("vibe-adversarial-reviewer"))
     assert "recorded deletion of a test that covered only retired code" in flat(agent("vibe-verify-worker"))
     check = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
     assert "`retiredTests` whose deleted files or cases it confirms covered only code the request retires" in check

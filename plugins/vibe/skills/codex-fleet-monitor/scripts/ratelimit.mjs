@@ -1,10 +1,14 @@
-// Usage: node ratelimit.mjs <label>
-// Prints "codex-usage <label> <band>% <state> resets=<n>" from account/rateLimits/read, or
-// "codex-usage <label> unreadable READFAIL". Band is `under<N>%` below N percent used (USAGE_HIGH_PERCENT,
+// Usage: node ratelimit.mjs <label> [--work-dir <orchDir>] [--source <name>] [--json]
+// Prints "codex-usage <label> <band>% <state> resets=<n> read=<iso> source=<name>" from
+// account/rateLimits/read, or "codex-usage <label> unreadable READFAIL ...". Band is `under<N>%`
+// below N percent used (USAGE_HIGH_PERCENT,
 // default 80), so ordinary use is not an event, and `HIGH(<used percent floored to 10>%)` from N up.
 // Needs liveness.mjs beside it; snapshot.sh ships both files to the remote host.
 // Also the plugin's one reader and classifier of Codex usage: vibe/scripts/codex-usage.mjs imports it.
 import { connectStdio, connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint } from './liveness.mjs';
+import { parseArgs } from 'node:util';
+import { defaultUsageWorkDir, recordUsageReading } from './usage-state.mjs';
+import { resolveWorkDir } from './work-dir.mjs';
 
 export const UsageState = Object.freeze({
   Ok: 'ok',
@@ -39,12 +43,13 @@ export async function readRateLimits({ transport = UsageTransport.Daemon, codex 
     try {
       await client.initialize(timeoutMs);
     } catch (error) {
-      return { error: `initialize failed: ${error.message}` };
+      return { error: `initialize failed: ${error.message}`, readAt: new Date().toISOString() };
     }
     try {
-      return { result: await client.request('account/rateLimits/read', READ_PARAMS, timeoutMs) };
+      const result = await client.request('account/rateLimits/read', READ_PARAMS, timeoutMs);
+      return { result, readAt: new Date().toISOString() };
     } catch (error) {
-      return { error: `account/rateLimits/read failed: ${error.message}` };
+      return { error: `account/rateLimits/read failed: ${error.message}`, readAt: new Date().toISOString() };
     }
   } finally {
     client.close();
@@ -68,17 +73,35 @@ export function highUsagePercent(env = process.env) {
   return env.USAGE_HIGH_PERCENT && Number.isFinite(value) && value > 0 ? value : HIGH_USAGE_PERCENT;
 }
 
-export function usageLine(label, response, high = HIGH_USAGE_PERCENT) {
+export function usageLine(label, response, high = HIGH_USAGE_PERCENT, metadata = null) {
   const band = usageBand(response?.rateLimits?.primary?.usedPercent, high);
   const resets = response?.rateLimitResetCredits?.availableCount ?? 0;
-  return `codex-usage ${label} ${band} ${classifyUsage(response)} resets=${resets}`;
+  const suffix = metadata ? ` read=${metadata.readAt} source=${metadata.source}` : '';
+  return `codex-usage ${label} ${band} ${classifyUsage(response)} resets=${resets}${suffix}`;
+}
+
+/** Persistable result for one Codex usage probe. */
+export function rateLimitReading(label, outcome, { source = 'ratelimit', high = HIGH_USAGE_PERCENT } = {}) {
+  const readAt = outcome.readAt ?? new Date().toISOString();
+  const status = outcome.error || classifyUsage(outcome.result) === UsageState.Unknown ? 'readfail' : 'ok';
+  const line = outcome.error
+    ? `codex-usage ${label} unreadable READFAIL read=${readAt} source=${source}`
+    : usageLine(label, outcome.result, high, { readAt, source });
+  return { runtime: 'codex', machine: label, source, status, readAt, line };
 }
 
 async function main() {
   exitAfterTotalTimeout();
-  const label = process.argv[2] ?? 'local';
-  const { result, error } = await readRateLimits();
-  console.log(error ? `codex-usage ${label} unreadable READFAIL` : usageLine(label, result, highUsagePercent()));
+  const { values, positionals } = parseArgs({
+    args: process.argv.slice(2), allowPositionals: true,
+    options: { json: { type: 'boolean', default: false }, source: { type: 'string' }, 'work-dir': { type: 'string' } },
+  });
+  const label = positionals[0] ?? 'local';
+  const source = values.source ?? 'ratelimit';
+  const reading = rateLimitReading(label, await readRateLimits(), { source, high: highUsagePercent() });
+  const workDir = values['work-dir'] ? resolveWorkDir(values['work-dir']).dir : defaultUsageWorkDir();
+  recordUsageReading(workDir, reading);
+  console.log(values.json ? JSON.stringify({ line: reading.line, reading }) : reading.line);
   process.exit(0);
 }
 

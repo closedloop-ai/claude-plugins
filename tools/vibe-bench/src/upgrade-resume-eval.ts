@@ -13,13 +13,22 @@ import type { CodexAppServerClient } from "../../shared/codex-app-server-client.
 import { labelWorkerThread, WORKER_THREAD_SOURCE } from
   "../../shared/thread-sidebar.mjs";
 import type { EvalCaseResult, EvalSuiteResult } from "./eval-collector.ts";
+import { EVAL_POLICY } from "./eval-policy.ts";
 import type { EvalRuntime } from "./eval-policy.ts";
 import type { EvalCaseDefinition, ReleaseReference, UpgradeTransition } from "./eval-selection.ts";
 import { archivePluginRelease, archiveSnapshotTarget, snapshotPluginVersion } from "./plugin-snapshot.ts";
 import type { PluginReleaseArchive } from "./plugin-snapshot.ts";
 import type { PluginSnapshot } from "./plugin-snapshot.ts";
 import { runOwnedProcess } from "./owned-process.ts";
+import { privateReplyDestination, writePrivateReply } from
+  "./private-artifact.ts";
 import { writeBenchmarkSessionRecord } from "./session-preflight.ts";
+import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
+import { evidenceTrace as statefulClaudeEvidenceTrace,
+  failureDiagnostic as normalizedClaudeFailureDiagnostic,
+  recordTurnOutput, terminalEvidence } from "./stateful-claude-evidence.ts";
+
+export { statefulClaudeEvidenceTrace };
 
 export const STATEFUL_CLAUDE_ROOT_TIMEOUT_MS = 1_200_000;
 export const CLAUDE_WRITER_TIMEOUT_MS = 900_000;
@@ -30,6 +39,10 @@ const CODEX_MARKETPLACE = "closedloop-ai";
 const CODEX_PLUGIN_SELECTOR = `vibe@${CODEX_MARKETPLACE}`;
 const CODEX_CORE_SELECTOR = `closedloop-core@${CODEX_MARKETPLACE}`;
 const PROOF_FILE = "upgrade-resume-proof.txt";
+const statefulCodexModelInstruction = () =>
+  `In this isolated evaluation, pass model ${EVAL_POLICY.codexModel} for every spawned ` +
+  `Codex subagent, including the writer. Preserve each role's existing reasoning effort. ` +
+  `This instruction changes only the model selection in the loaded skill.`;
 
 const REQUIRED_GRAPH_OPERATIONS = ["get_routing_protocol", "code_projects", "code_symbols",
   "code_callers", "code_importers", "blast_radius_tickets", "code_grep", "code_snippet",
@@ -55,6 +68,18 @@ export type UpgradeFailureCode = "STALE_PLUGIN_ROOT" | "MODEL_BLOCK" | "AUTH_UNA
 const INFRASTRUCTURE_FAILURE_CODES = new Set<UpgradeFailureCode>([
   "AUTH_UNAVAILABLE", "INSTALL_INVALID", "MODEL_UNAVAILABLE", "TIMEOUT", "SANDBOX_REFUSAL",
 ]);
+export const STATEFUL_INFRASTRUCTURE_RETRIES = 1;
+
+export interface UpgradeAttemptEvidence {
+  attempt: number;
+  passed: boolean;
+  failureCode: UpgradeFailureCode | null;
+  wallMs: number;
+  rootSessionId: string;
+  /** Validated native Codex model when an agent turn started. */
+  model?: string;
+  trace: string[];
+}
 
 export interface UpgradeCaseEvidence {
   caseId: string;
@@ -65,6 +90,8 @@ export interface UpgradeCaseEvidence {
   agentCostUsd: number | null;
   tokens: Record<string, number> | null;
   cliVersion: string;
+  /** Validated native Codex model; absent when no Codex turn started. */
+  model?: string;
   target: ReleaseReference;
   prior: ReleaseReference;
   oldArchiveRetained: boolean;
@@ -74,9 +101,15 @@ export interface UpgradeCaseEvidence {
   finalWriterId: string | null;
   migrationCount: number;
   trace: string[];
+  /** Harness availability gap. This is neither a pass nor a product failure. */
+  unavailableReason?: string;
   /** Aggregate result only: each selected historical cell and the current subject's disposition. */
   transitionResults?: UpgradeTransitionResult[];
+  /** Every attempt of this cell, retained when transient infrastructure is retried. */
+  attemptResults?: UpgradeAttemptEvidence[];
 }
+
+type PrivateUpgradeCaseEvidence = UpgradeCaseEvidence & { privateReply?: string };
 
 /** Distinguish a fixed historical proof from the release currently under test. */
 interface UpgradeTransitionResult {
@@ -99,7 +132,19 @@ export interface UpgradeResumeRunInput {
   runtimes: EvalRuntime[];
   targetRef?: string;
   signal?: AbortSignal;
+  cellRunner?: UpgradeCellRunner;
 }
+
+/** Injectable stateful cell boundary used by focused production-path fixtures. */
+export type UpgradeCellRunner = (input: {
+  runtime: EvalRuntime;
+  role: "historical" | "current";
+  expected: "pass" | "fail";
+  item: EvalCaseDefinition;
+  transition: UpgradeTransition;
+  attemptRoot: string;
+  currentSnapshot?: PluginSnapshot;
+}) => Promise<PrivateUpgradeCaseEvidence>;
 
 export interface UpgradeResumeRunner {
   run(input: UpgradeResumeRunInput): Promise<Partial<Record<EvalRuntime, EvalSuiteResult>>>;
@@ -111,7 +156,8 @@ function hash(value: unknown): string {
 
 function caseResult(evidence: UpgradeCaseEvidence): EvalCaseResult {
   return { id: evidence.caseId, passed: evidence.passed,
-    failedGraders: evidence.failureCode ? [evidence.failureCode] : [], skippedGraders: [] };
+    failedGraders: evidence.failureCode ? [evidence.failureCode] : [], skippedGraders: [],
+    ...(evidence.unavailableReason ? { unavailableReason: evidence.unavailableReason } : {}) };
 }
 
 /** A known-bad product failure is expected; infrastructure failure never is. */
@@ -147,10 +193,12 @@ export function scoreUpgradeTransitions(items: Array<{ role: "historical" | "cur
     (failure ? "ORACLE_MISMATCH" : null), transitions };
 }
 
-/** Convert stateful evidence into the existing native suite shape without new result fields. */
+/** Preserve the validated Codex model when building a stateful-only suite. */
 export function statefulSuite(runtime: EvalRuntime, evidence: UpgradeCaseEvidence[]): EvalSuiteResult {
   const cases = evidence.map(caseResult).sort((left, right) => left.id.localeCompare(right.id));
   const passed = cases.filter((item) => item.passed).length;
+  const unavailable = cases.filter((item) => item.unavailableReason !== undefined).length;
+  const failed = cases.length - passed - unavailable;
   const agentValues = evidence.map((item) => item.agentCostUsd);
   const agentCostUsd = runtime === "claude" && agentValues.every((value) => value !== null)
     ? agentValues.reduce((sum, value) => sum + (value ?? 0), 0) : null;
@@ -159,8 +207,13 @@ export function statefulSuite(runtime: EvalRuntime, evidence: UpgradeCaseEvidenc
       for (const [key, value] of Object.entries(item.tokens ?? {})) totals[key] = (totals[key] ?? 0) + value;
       return totals;
     }, {}) : null;
-  const payload = { runtime, cliVersion: evidence[0]?.cliVersion ?? "unknown", cases, passed,
-    failed: cases.length - passed, wallMs: evidence.reduce((sum, item) => sum + item.wallMs, 0),
+  const models = [...new Set(evidence.flatMap((item) => item.model ? [item.model] : []))];
+  if (runtime === "codex" && models.some((model) => model !== EVAL_POLICY.codexModel)) {
+    throw new Error("eval-stateful-codex-model-mismatch");
+  }
+  const payload = { runtime, cliVersion: evidence[0]?.cliVersion ?? "unknown",
+    ...(runtime === "codex" && models.length ? { model: models[0] } : {}), cases, passed,
+    failed, unavailable, wallMs: evidence.reduce((sum, item) => sum + item.wallMs, 0),
     agentCostUsd, judgeCostUsd: runtime === "claude" ? 0 : null,
     costUsd: runtime === "claude" && agentCostUsd !== null ? agentCostUsd : null, tokens };
   return { ...payload, nativeHash: hash({ payload, evidence }) };
@@ -176,6 +229,120 @@ export function statefulInfrastructureInvalidReason(suite: EvalSuiteResult): str
   return null;
 }
 
+function nullableAttemptSum(values: Array<number | null>): number | null {
+  return values.every((value) => value !== null)
+    ? values.reduce((sum, value) => sum + (value ?? 0), 0) : null;
+}
+
+/** Retry one infrastructure-failed stateful cell once and retain every attempt. */
+export async function runUpgradeCellWithRetry(input: { transitionRoot: string;
+  run(attemptRoot: string): Promise<PrivateUpgradeCaseEvidence> }): Promise<PrivateUpgradeCaseEvidence> {
+  const attempts: Array<{ evidence: UpgradeCaseEvidence; privateReply?: string }> = [];
+  for (let attempt = 1; attempt <= 1 + STATEFUL_INFRASTRUCTURE_RETRIES; attempt += 1) {
+    const attemptRoot = join(input.transitionRoot, "attempts", String(attempt));
+    mkdirSync(attemptRoot, { recursive: true, mode: 0o700 });
+    const { privateReply, ...evidence } = await input.run(attemptRoot);
+    writeFileSync(join(attemptRoot, "evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`,
+      { mode: 0o600 });
+    attempts.push({ evidence, ...(privateReply ? { privateReply } : {}) });
+    if (evidence.failureCode === null || !INFRASTRUCTURE_FAILURE_CODES.has(evidence.failureCode)) break;
+  }
+  const final = attempts.at(-1);
+  if (!final) throw new Error("eval-stateful-attempt-missing");
+  const tokenKeys = [...new Set(attempts.flatMap((item) => Object.keys(item.evidence.tokens ?? {})))];
+  const tokens = attempts.every((item) => item.evidence.tokens !== null)
+    ? Object.fromEntries(tokenKeys.map((key) => [key,
+      attempts.reduce((sum, item) => sum + (item.evidence.tokens?.[key] ?? 0), 0)])) : null;
+  return { ...final.evidence,
+    wallMs: attempts.reduce((sum, item) => sum + item.evidence.wallMs, 0),
+    agentCostUsd: nullableAttemptSum(attempts.map((item) => item.evidence.agentCostUsd)), tokens,
+    trace: attempts.flatMap((item, index) => [
+      `attempt=${index + 1} failure=${item.evidence.failureCode ?? "none"}`,
+      ...item.evidence.trace,
+    ]),
+    attemptResults: attempts.map((item, index) => ({ attempt: index + 1,
+      passed: item.evidence.passed, failureCode: item.evidence.failureCode,
+      wallMs: item.evidence.wallMs, rootSessionId: item.evidence.rootSessionId,
+      ...(item.evidence.model ? { model: item.evidence.model } : {}), trace: item.evidence.trace })),
+    ...(final.privateReply ? { privateReply: final.privateReply } : {}),
+  };
+}
+
+/** Preserve one stateful Claude case's final reply without adding it to evidence JSON. */
+export function preserveStatefulClaudeReply(runRoot: string, caseId: string, reply: string): void {
+  writePrivateReply(privateReplyDestination(join(runRoot, "claude"), caseId), reply);
+}
+
+function writerDefinitionDigest(vibeRoot: string): string {
+  return createHash("sha256").update(readFileSync(
+    join(vibeRoot, "agents/vibe-change-worker.md"))).digest("hex");
+}
+
+function definitionDigest(release: PluginReleaseArchive): string {
+  return writerDefinitionDigest(release.claudeVibeRoot);
+}
+
+/** Whether a stateful case has a truthful current-subject premise. */
+export interface UpgradeCaseAvailability {
+  available: boolean;
+  reason: string | null;
+}
+
+/** Validate the stored prior and classify a current unchanged case before any model launch. */
+export function classifyUpgradeCaseAvailability(input: {
+  item: Pick<EvalCaseDefinition, "id" | "definition" | "nightlyPrior">;
+  priorDigest: string;
+  targetDigest: string;
+}): UpgradeCaseAvailability {
+  const prior = input.item.nightlyPrior;
+  if (!prior || prior.writerDigestSha256 !== input.priorDigest) {
+    throw new Error(`eval-stateful-nightly-prior-digest-mismatch:${input.item.id}:` +
+      `${prior?.version ?? "missing"}`);
+  }
+  const matches = input.priorDigest === input.targetDigest;
+  if (input.item.definition === "unchanged") {
+    return matches ? { available: true, reason: null }
+      : { available: false, reason: `NO_VALID_PRIOR case=${input.item.id} ` +
+        `released=${prior.version}@${prior.ref} priorDigest=${input.priorDigest} ` +
+        `currentDigest=${input.targetDigest}` };
+  }
+  if (input.item.definition !== "changed" || matches) {
+    throw new Error(`eval-stateful-definition-premise-mismatch:${input.item.id}:` +
+      `${prior.version}:current`);
+  }
+  return { available: true, reason: null };
+}
+
+/** Fail as a harness error when a case's definition premise is false. */
+export function assertUpgradeDefinitionPremise(
+  item: Pick<EvalCaseDefinition, "id" | "definition" | "nightlyPrior">,
+  prior: PluginReleaseArchive, target: PluginReleaseArchive): void {
+  const priorDigest = definitionDigest(prior);
+  if (item.nightlyPrior?.ref === prior.sha &&
+      item.nightlyPrior.writerDigestSha256 !== priorDigest) {
+    throw new Error(`eval-stateful-nightly-prior-digest-mismatch:${item.id}:${prior.version}`);
+  }
+  const matches = priorDigest === definitionDigest(target);
+  if ((item.definition === "unchanged") !== matches) {
+    throw new Error(`eval-stateful-definition-premise-mismatch:${item.id}:` +
+      `${prior.version}:${target.version}`);
+  }
+}
+
+function unavailableCaseEvidence(input: { item: EvalCaseDefinition; runtime: EvalRuntime;
+  subject: ReleaseReference; cliVersion: string; reason: string }): UpgradeCaseEvidence {
+  const prior = input.item.nightlyPrior;
+  if (!prior) throw new Error(`eval-stateful-nightly-prior-missing:${input.item.id}`);
+  return { caseId: input.item.id, runtime: input.runtime, passed: false, failureCode: null,
+    unavailableReason: input.reason, wallMs: 0,
+    agentCostUsd: input.runtime === "claude" ? 0 : null,
+    tokens: input.runtime === "codex" ? {} : null, cliVersion: input.cliVersion,
+    target: input.subject, prior: { version: prior.version, ref: prior.ref },
+    oldArchiveRetained: true, proofLines: [], rootSessionId: "not-run-no-valid-prior",
+    previousWriterId: null, finalWriterId: null, migrationCount: 0,
+    trace: [`unavailable before model launch: ${input.reason}`] };
+}
+
 /** Merge disjoint ordinary and stateful cases while preserving existing per-runtime metrics. */
 export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
   stateful: EvalSuiteResult | null, selectedCases: string[]): EvalSuiteResult | null {
@@ -183,6 +350,9 @@ export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
   if (!stateful) return ordinary;
   if (ordinary.runtime !== stateful.runtime || ordinary.cliVersion !== stateful.cliVersion) {
     throw new Error("eval-stateful-suite-identity-mismatch");
+  }
+  if (ordinary.model && stateful.model && ordinary.model !== stateful.model) {
+    throw new Error("eval-stateful-suite-model-mismatch");
   }
   const cases = [...ordinary.cases, ...stateful.cases].sort((left, right) => left.id.localeCompare(right.id));
   if (cases.map((item) => item.id).join("\0") !== [...selectedCases].sort().join("\0") ||
@@ -195,8 +365,14 @@ export function mergeEvalSuiteResults(ordinary: EvalSuiteResult | null,
     ? Object.fromEntries([...new Set([...Object.keys(ordinary.tokens), ...Object.keys(stateful.tokens)])]
       .map((key) => [key, (ordinary.tokens?.[key] ?? 0) + (stateful.tokens?.[key] ?? 0)])) : null;
   const passed = cases.filter((item) => item.passed).length;
-  const payload = { runtime: ordinary.runtime, cliVersion: ordinary.cliVersion, cases, passed,
-    failed: cases.length - passed, wallMs: ordinary.wallMs + stateful.wallMs,
+  const unavailable = cases.filter((item) => item.unavailableReason !== undefined).length;
+  const failed = cases.length - passed - unavailable;
+  const payload = { runtime: ordinary.runtime, cliVersion: ordinary.cliVersion,
+    ...(ordinary.model ? { model: ordinary.model } : {}),
+    ...(ordinary.judgeModel ? { judgeModel: ordinary.judgeModel } : {}), cases, passed,
+    ...(ordinary.deterministicOverride
+      ? { deterministicOverride: ordinary.deterministicOverride } : {}),
+    failed, unavailable, wallMs: ordinary.wallMs + stateful.wallMs,
     agentCostUsd: nullableSum(ordinary.agentCostUsd, stateful.agentCostUsd),
     judgeCostUsd: nullableSum(ordinary.judgeCostUsd, stateful.judgeCostUsd),
     costUsd: nullableSum(ordinary.costUsd, stateful.costUsd), tokens };
@@ -367,6 +543,17 @@ export function classifyUpgradeFailure(error: unknown): UpgradeFailureCode {
   return "ORACLE_MISMATCH";
 }
 
+/** Retain only fixed metadata and normalized diagnostics from Claude JSONL. */
+export function statefulClaudeTerminalEvidence(stdout: string, exitCode: number | null): string {
+  return terminalEvidence(stdout, exitCode, classifyUpgradeFailure);
+}
+
+/** Write one stateful Claude turn artifact through the shared redaction policy. */
+export function recordClaudeTurnOutput(root: string, label: string,
+  result: { exitCode: number | null; stdout: string; stderr: string }): string {
+  return recordTurnOutput(root, label, result, classifyUpgradeFailure);
+}
+
 /** Use only the last completed native turn, so an earlier recovered capacity error cannot mask a later oracle failure. */
 export function codexServerFailure(trace: string[]): UpgradeFailureCode | null {
   for (let index = trace.length - 1; index >= 0; index -= 1) {
@@ -387,17 +574,6 @@ export function codexServerFailure(trace: string[]): UpgradeFailureCode | null {
 function boundedTrace(lines: string[], limit = 200, lineBytes = 4_000): string[] {
   return lines.slice(-limit).map((line) => Buffer.byteLength(line) <= lineBytes
     ? line : `${Buffer.from(line).subarray(0, lineBytes).toString("utf8")}…`);
-}
-
-/** Preserve the complete Claude process result before any bounded display trace is made. */
-export function recordClaudeTurnOutput(root: string, label: string,
-  result: { exitCode: number | null; stdout: string; stderr: string }): string {
-  if (!/^(turn-one|turn-two|stale-recovery)$/.test(label)) {
-    throw new Error("eval-stateful-claude-turn-label-invalid");
-  }
-  const path = join(root, `${label}.terminal.json`);
-  writeFileSync(path, `${JSON.stringify(result)}\n`, { flag: "wx", mode: 0o600 });
-  return path;
 }
 
 /** The released Claude launcher resolves `claude` on PATH inside its Bash child. */
@@ -476,6 +652,28 @@ function claudeEvents(stdout: string): Record<string, any>[] {
     try { return JSON.parse(line) as Record<string, any>; }
     catch { throw new Error("eval-stateful-claude-stream-invalid"); }
   });
+}
+
+/** Read only the terminal result of one Claude turn; an earlier turn never fills a missing result. */
+export function claudeTerminalReply(stdout: string): string {
+  return claudeEvents(stdout).flatMap((event) => event.type === "result" &&
+    typeof event.result === "string" ? [event.result] : []).at(-1) ?? "";
+}
+
+/** Replace the retained reply at every turn, including when the newest turn has no result. */
+export function nextClaudeTurnReply(_previous: string, stdout: string): string {
+  return claudeTerminalReply(stdout);
+}
+
+/** The newest planned transition owns the case reply, including an explicit missing result. */
+export function nextPlannedClaudeReply(observed: string | undefined): string {
+  return observed ?? "";
+}
+
+/** Missing reply evidence never hides a more specific current infrastructure failure. */
+export function statefulReplyFailureCode(original: UpgradeFailureCode | null,
+  replyMissing: boolean): UpgradeFailureCode | null {
+  return replyMissing ? original ?? "ORACLE_MISMATCH" : original;
 }
 
 /** Accept only the released launcher's exact stale refusal for this queued request. */
@@ -788,7 +986,7 @@ export function cleanupClaudeVersionRecords(root: string, rootSessionId: string,
 async function runClaudeCase(input: { repo: string; root: string; item: EvalCaseDefinition;
   transition: UpgradeTransition; claudeExecutable: string; pluginSha: string;
   currentSnapshot?: PluginSnapshot;
-  signal?: AbortSignal }): Promise<UpgradeCaseEvidence> {
+  signal?: AbortSignal }): Promise<PrivateUpgradeCaseEvidence> {
   const started = Date.now();
   const prior = archivePluginRelease(input.repo, input.transition.prior.ref,
     join(input.root, "prior"), input.transition.prior.version);
@@ -797,16 +995,20 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       input.currentSnapshot, input.transition.target.version)
     : archivePluginRelease(input.repo, input.transition.target.ref,
       join(input.root, "target"), input.transition.target.version);
+  assertUpgradeDefinitionPremise(input.item, prior, target);
   const versionServer = await fixtureVersionServer(target);
   const prepared = await fixture(join(input.root, "fixture"), prior, input.item.id);
   const settings = writeClaudeRootSettings(input.root, prepared.worktree, [prior, target]);
   const rootSessionId = randomUUID();
   const processTrace: string[] = [];
-  const env = claudeRootEnvironment(input.claudeExecutable);
+  let finalReply = "";
+  const isolation = createClaudeEvalIsolation(join(input.root, "isolated-mcp"),
+    input.claudeExecutable, UPGRADE_GRAPH_CAPABILITIES);
+  const env = claudeRootEnvironment(isolation.executable);
   const invoke = async (release: PluginReleaseArchive, prompt: string, resume: boolean) => {
     const args = claudeUpgradeRootArgs({ release, settings, rootSessionId, prompt, resume,
       caseId: input.item.id });
-    return await runOwnedProcess(input.claudeExecutable, args, { cwd: prepared.worktree,
+    return await runOwnedProcess(isolation.executable, args, { cwd: prepared.worktree,
       deadline: Date.now() + STATEFUL_CLAUDE_ROOT_TIMEOUT_MS, signal: input.signal,
       maxBuffer: 16 * 1024 * 1024, env });
   };
@@ -817,7 +1019,9 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       requestId: prepared.requestOne, marker: "turn-one", continuation: false,
       vibeRoot: prior.claudeVibeRoot, runtime: "claude" })}`, false);
     recordClaudeTurnOutput(input.root, "turn-one", first);
-    processTrace.push(`turn-one exit=${first.exitCode}\nstdout:\n${first.stdout}\nstderr:\n${first.stderr}`);
+    processTrace.push(`turn-one exit=${first.exitCode}`);
+    const firstEvents = [...claudeEvents(first.stdout)];
+    finalReply = nextClaudeTurnReply(finalReply, first.stdout);
     if (first.exitCode !== 0 || proofLines(prepared.worktree).join("\n") !== "turn-one") {
       throw new Error(claudeTurnFailureText(first) || "MODEL_BLOCKED first turn did not complete");
     }
@@ -834,12 +1038,12 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       ...(input.item.definition === "changed" ? { migration: {
         previousWorkerId: before.workerId, previousDigest: before.binding.digest } } : {}) })}`, true);
     recordClaudeTurnOutput(input.root, "turn-two", targetTurn);
-    processTrace.push(`turn-two exit=${targetTurn.exitCode}\nstdout:\n${targetTurn.stdout}\nstderr:\n${targetTurn.stderr}`);
+    processTrace.push(`turn-two exit=${targetTurn.exitCode}`);
     let after = writerLedger(prepared.worktree);
     let lines = proofLines(prepared.worktree);
     const targetEvents = [...claudeEvents(targetTurn.stdout)];
-    let terminalText = targetEvents.flatMap((event) => event.type === "result" &&
-      typeof event.result === "string" ? [event.result] : []).at(-1) ?? "";
+    let terminalText = claudeTerminalReply(targetTurn.stdout);
+    finalReply = nextClaudeTurnReply(finalReply, targetTurn.stdout);
     if (claudeStaleRecoveryEligible({ exitCode: targetTurn.exitCode, terminalText,
       requestId: prepared.requestTwo, oldWriterId: before.workerId, proofLines: lines,
       oldArchiveRetained: existsSync(prior.archiveRoot),
@@ -849,15 +1053,14 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       targetTurn = await invoke(target, claudeStaleRecoveryPrompt({ requestId: prepared.requestTwo,
         sessionSlug: prepared.sessionSlug }), true);
       recordClaudeTurnOutput(input.root, "stale-recovery", targetTurn);
-      processTrace.push(`stale-recovery exit=${targetTurn.exitCode}\nstdout:\n${targetTurn.stdout}` +
-        `\nstderr:\n${targetTurn.stderr}`);
+      processTrace.push(`stale-recovery exit=${targetTurn.exitCode}`);
       targetEvents.push(...claudeEvents(targetTurn.stdout));
       after = writerLedger(prepared.worktree);
       lines = proofLines(prepared.worktree);
-      terminalText = targetEvents.flatMap((event) => event.type === "result" &&
-        typeof event.result === "string" ? [event.result] : []).at(-1) ?? "";
+      terminalText = claudeTerminalReply(targetTurn.stdout);
+      finalReply = nextClaudeTurnReply(finalReply, targetTurn.stdout);
     }
-    const events = [...claudeEvents(first.stdout), ...targetEvents];
+    const events = [...firstEvents, ...targetEvents];
     const costs = events.flatMap((event) => event.type === "result" &&
       typeof event.total_cost_usd === "number" ? [event.total_cost_usd] : []);
     const migrationCount = Array.isArray(after?.migrations) ? after.migrations.length : 0;
@@ -877,13 +1080,13 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       target: input.transition.target, prior: input.transition.prior,
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: lines, rootSessionId,
       previousWriterId: before?.workerId ?? null, finalWriterId: after?.workerId ?? null,
-      migrationCount, trace: boundedTrace([...processTrace, ...events.flatMap((event) =>
-        event.type === "assistant" ? [JSON.stringify(event.message?.content ?? [])] : [])]) };
+      migrationCount, trace: statefulClaudeEvidenceTrace(processTrace, finalReply),
+      ...(finalReply ? { privateReply: finalReply } : {}) };
     await versionServer.close(); cleanupClaudeVersionRecords(input.root, rootSessionId);
     return evidence;
   } catch (error) {
     const ledger = writerLedger(prepared.worktree);
-    const evidence: UpgradeCaseEvidence = { caseId: input.item.id, runtime: "claude", passed: false,
+    const evidence: PrivateUpgradeCaseEvidence = { caseId: input.item.id, runtime: "claude", passed: false,
       failureCode: classifyUpgradeFailure(error),
       wallMs: Date.now() - started, agentCostUsd: null, tokens: null,
       cliVersion: execFileSync(input.claudeExecutable, ["--version"], { encoding: "utf8" })
@@ -892,7 +1095,9 @@ async function runClaudeCase(input: { repo: string; root: string; item: EvalCase
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: proofLines(prepared.worktree),
       rootSessionId, previousWriterId: ledger?.workerId ?? null, finalWriterId: ledger?.workerId ?? null,
       migrationCount: Array.isArray(ledger?.migrations) ? ledger.migrations.length : 0,
-      trace: boundedTrace([...processTrace, error instanceof Error ? error.message : String(error)]) };
+      trace: statefulClaudeEvidenceTrace(
+        [...processTrace, normalizedClaudeFailureDiagnostic(error, classifyUpgradeFailure)], finalReply),
+      ...(finalReply ? { privateReply: finalReply } : {}) };
     await versionServer.close().catch(() => {}); cleanupClaudeVersionRecords(input.root, rootSessionId);
     return evidence;
   }
@@ -1136,9 +1341,10 @@ export async function finalizeCodexObservedRequest(input: { trace: string[];
   return after!;
 }
 
-async function appServerTurn(client: CodexAppServerClient, input: { threadId?: string;
+/** Pin and verify every Codex thread used by a stateful cell, including native children. */
+export async function appServerTurn(client: CodexAppServerClient, input: { threadId?: string;
   cwd: string; skill: string; prompt: string }): Promise<{ threadId: string; trace: string[];
-    tokens: Record<string, number> }> {
+    tokens: Record<string, number>; model: string }> {
   const trace: string[] = [];
   trace.push(`skill:${realpathSync(input.skill)}`);
   let resolveDone: (() => void) | undefined;
@@ -1149,11 +1355,15 @@ async function appServerTurn(client: CodexAppServerClient, input: { threadId?: s
   });
   try {
     const created = input.threadId ? null : await client.request("thread/start", { cwd: input.cwd,
+      model: EVAL_POLICY.codexModel,
+      developerInstructions: statefulCodexModelInstruction(),
       approvalPolicy: "never", sandbox: "danger-full-access", threadSource: WORKER_THREAD_SOURCE });
     const threadId = input.threadId ?? created.thread.id;
     if (created) await labelWorkerThread(client, threadId, "vibe upgrade resume");
     await client.request("turn/start", { threadId, cwd: input.cwd,
-      input: [{ type: "text", text: input.prompt, text_elements: [] },
+      model: EVAL_POLICY.codexModel,
+      input: [{ type: "text", text: `${statefulCodexModelInstruction()}\n\n${input.prompt}`,
+        text_elements: [] },
         { type: "skill", name: "vibe:vibe", path: input.skill }] });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1162,8 +1372,40 @@ async function appServerTurn(client: CodexAppServerClient, input: { threadId?: s
           CODEX_STATEFUL_ROOT_TIMEOUT_MS);
       })]);
     } finally { if (timer) clearTimeout(timer); }
-    return { threadId, trace, tokens: appServerTokenUsage(trace) };
+    const threadIds = new Set([threadId]);
+    for (const line of trace) {
+      if (!line.startsWith("{")) continue;
+      const event = JSON.parse(line) as { method?: string; params?: { toModel?: string;
+        item?: { type?: string; agentThreadId?: string };
+        turn?: { items?: Array<{ type?: string; agentThreadId?: string }> } } };
+      if (event.method === "model/rerouted" &&
+          event.params?.toModel !== EVAL_POLICY.codexModel) {
+        throw new Error("eval-stateful-codex-model-rerouted");
+      }
+      for (const item of [event.params?.item, ...(event.params?.turn?.items ?? [])]) {
+        if (item?.type === "subAgentActivity" && item.agentThreadId) {
+          threadIds.add(item.agentThreadId);
+        }
+      }
+    }
+    for (const id of threadIds) {
+      const read = await client.request("thread/read", { threadId: id, includeTurns: false });
+      if (read?.thread?.model !== EVAL_POLICY.codexModel) {
+        throw new Error("eval-stateful-codex-model-mismatch");
+      }
+      trace.push(`model:${id}:${read.thread.model}`);
+    }
+    return { threadId, trace, tokens: appServerTokenUsage(trace), model: EVAL_POLICY.codexModel };
   } finally { remove(); }
+}
+
+/** Reassert the stateful eval model when the exact root resumes after upgrade. */
+export async function resumeStatefulCodexThread(client: CodexAppServerClient,
+  threadId: string, cwd: string): Promise<void> {
+  const resumed = await client.resumeThread(threadId, cwd, { model: EVAL_POLICY.codexModel,
+    developerInstructions: statefulCodexModelInstruction() });
+  if (resumed.id !== threadId) throw new Error("WRONG_SESSION Codex resumed another root");
+  if (resumed.model !== EVAL_POLICY.codexModel) throw new Error("eval-stateful-codex-model-mismatch");
 }
 
 /** Ask the real root to apply an exact writer-state finalization, preserving its native trace. */
@@ -1193,12 +1435,14 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
       input.currentSnapshot, input.transition.target.version)
     : archivePluginRelease(input.repo, input.transition.target.ref,
       join(input.root, "target"), input.transition.target.version);
+  assertUpgradeDefinitionPremise(input.item, prior, target);
   const prepared = await fixture(join(input.root, "fixture"), prior, input.item.id);
   const home = join(input.root, "codex-home");
   const marketplace = join(input.root, "marketplace");
   const env = { ...process.env, CODEX_HOME: home };
   let client: CodexAppServerClient | null = null;
   let rootSessionId = "";
+  let observedModel: string | undefined;
   let before: Record<string, any> | null = null;
   const trace: string[] = [];
   try {
@@ -1214,6 +1458,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
         marker: "turn-one", continuation: false, vibeRoot: oldInstall.installedPath,
         runtime: "codex" })}` });
     rootSessionId = first.threadId;
+    observedModel = first.model;
     trace.push(...first.trace);
     before = writerLedger(prepared.worktree);
     const held = heldCodexWriter(first.trace, before !== null, proofLines(prepared.worktree));
@@ -1251,8 +1496,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
       addMarketplace: false });
     client = await startCodexAppServer({ codex: input.codexExecutable, env,
       clientName: "vibe_upgrade_resume" });
-    const resumed = await client.resumeThread(rootSessionId, prepared.worktree);
-    if (resumed.id !== rootSessionId) throw new Error("WRONG_SESSION Codex resumed another root");
+    await resumeStatefulCodexThread(client, rootSessionId, prepared.worktree);
     const migrationPayload = { worktree: prepared.worktree, runtime: "codex",
       agentRoot: targetInstall.installedPath, agentName: "vibe-change-worker",
       previousWorkerId: priorLedger.workerId, previousDigest: priorLedger.binding.digest,
@@ -1312,7 +1556,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
         { encoding: "utf8" }).trim(), target: input.transition.target, prior: input.transition.prior,
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: lines, rootSessionId,
       previousWriterId: priorLedger.workerId, finalWriterId: after?.workerId ?? null,
-      migrationCount, trace: boundedTrace(trace) };
+      migrationCount, model: observedModel, trace: boundedTrace(trace) };
   } catch (error) {
     const ledger = writerLedger(prepared.worktree);
     return { caseId: input.item.id, runtime: "codex", passed: false,
@@ -1323,6 +1567,7 @@ async function runCodexCase(input: { repo: string; root: string; item: EvalCaseD
       oldArchiveRetained: existsSync(prior.archiveRoot), proofLines: proofLines(prepared.worktree),
       rootSessionId, previousWriterId: before?.workerId ?? null, finalWriterId: ledger?.workerId ?? null,
       migrationCount: Array.isArray(ledger?.migrations) ? ledger.migrations.length : 0,
+      ...(observedModel ? { model: observedModel } : {}),
       trace: boundedTrace([...trace, error instanceof Error ? error.message : String(error)]) };
   } finally {
     await client?.close();
@@ -1340,38 +1585,88 @@ export async function runUpgradeResumeCases(input: UpgradeResumeRunInput): Promi
   if (!/^[a-f0-9]{40}$/.test(targetRef)) throw new Error("eval-stateful-target-ref-invalid");
   const subject = upgradeSubject({ repo: input.repo, targetRef, pluginSha: input.pluginSha,
     currentSnapshot: input.currentSnapshot });
+  const availabilities = new Map<string, UpgradeCaseAvailability>();
+  if (targetRef === input.pluginSha) {
+    const targetDigest = writerDefinitionDigest(input.currentSnapshot.vibeDir);
+    for (const item of input.cases) {
+      const priorReference = item.nightlyPrior;
+      if (!priorReference) throw new Error(`eval-stateful-nightly-prior-missing:${item.id}`);
+      const premiseRoot = join(input.runRoot, "premises", item.id);
+      const prior = archivePluginRelease(input.repo, priorReference.ref,
+        join(premiseRoot, "prior"), priorReference.version);
+      const priorDigest = definitionDigest(prior);
+      const availability = classifyUpgradeCaseAvailability({ item, priorDigest, targetDigest });
+      availabilities.set(item.id, availability);
+      writeFileSync(join(premiseRoot, "evidence.json"), `${JSON.stringify({
+        caseId: item.id, prior: priorReference, priorDigest, target: subject,
+        targetDigest, ...availability,
+      }, null, 2)}\n`, { mode: 0o600 });
+    }
+  }
   const lanes = input.runtimes.map(async (runtime) => {
     const evidence: UpgradeCaseEvidence[] = [];
     for (const item of input.cases) {
       const caseRoot = join(input.runRoot, runtime, item.id);
-      mkdirSync(dirname(caseRoot), { recursive: true });
+      mkdirSync(caseRoot, { recursive: true, mode: 0o700 });
+      const availability = availabilities.get(item.id);
+      if (availability && !availability.available) {
+        const cliVersion = runtime === "claude"
+          ? execFileSync(input.claudeExecutable, ["--version"], { encoding: "utf8" })
+            .match(/\d+\.\d+\.\d+/)?.[0] ?? "unknown"
+          : execFileSync(input.codexExecutable, ["--version"], { encoding: "utf8" }).trim();
+        const unavailable = unavailableCaseEvidence({ item, runtime, subject, cliVersion,
+          reason: availability.reason ?? `NO_VALID_PRIOR case=${item.id}` });
+        evidence.push(unavailable);
+        writeFileSync(join(caseRoot, "evidence.json"), `${JSON.stringify(unavailable, null, 2)}\n`,
+          { mode: 0o600 });
+        continue;
+      }
       const observations: Array<{ role: "historical" | "current"; expected: "pass" | "fail";
         evidence: UpgradeCaseEvidence }> = [];
+      let privateReply = "";
       for (const planned of upgradeTransitionPlan(item, runtime, subject,
         input.targetRef, input.pluginSha)) {
         const transitionRoot = join(caseRoot, planned.role === "current" ? "current" :
           join("historical", planned.transition.target.version));
-        mkdirSync(transitionRoot, { recursive: true });
-        const result = runtime === "claude"
-          ? await runClaudeCase({ repo: input.repo, root: transitionRoot, item,
-            transition: planned.transition, claudeExecutable: input.claudeExecutable,
-            pluginSha: input.pluginSha, signal: input.signal,
-            ...(planned.role === "current" ? { currentSnapshot: input.currentSnapshot } : {}) })
-          : await runCodexCase({ repo: input.repo, root: transitionRoot, item,
-            transition: planned.transition, codexExecutable: input.codexExecutable,
-            ...(planned.role === "current" ? { currentSnapshot: input.currentSnapshot } : {}) });
+        const privateResult = await runUpgradeCellWithRetry({ transitionRoot, run: async (attemptRoot) => {
+          const currentSnapshot = planned.role === "current" ? input.currentSnapshot : undefined;
+          if (input.cellRunner) return await input.cellRunner({ runtime, role: planned.role,
+            expected: planned.expected, item, transition: planned.transition, attemptRoot,
+            ...(currentSnapshot ? { currentSnapshot } : {}) });
+          return runtime === "claude"
+            ? await runClaudeCase({ repo: input.repo, root: attemptRoot, item,
+              transition: planned.transition, claudeExecutable: input.claudeExecutable,
+              pluginSha: input.pluginSha, signal: input.signal,
+              ...(currentSnapshot ? { currentSnapshot } : {}) })
+            : await runCodexCase({ repo: input.repo, root: attemptRoot, item,
+              transition: planned.transition, codexExecutable: input.codexExecutable,
+              ...(currentSnapshot ? { currentSnapshot } : {}) });
+        } });
+        const { privateReply: observedReply, ...result } = privateResult;
+        privateReply = nextPlannedClaudeReply(observedReply);
         observations.push({ role: planned.role, expected: planned.expected, evidence: result });
         writeFileSync(join(transitionRoot, "evidence.json"), `${JSON.stringify(result, null, 2)}\n`,
           { mode: 0o600 });
         if (result.failureCode !== null && INFRASTRUCTURE_FAILURE_CODES.has(result.failureCode)) break;
       }
       const scored = scoreUpgradeTransitions(observations);
+      let replyFailure = false;
+      if (runtime === "claude") {
+        try {
+          if (!privateReply) throw new Error("eval-stateful-claude-reply-missing");
+          preserveStatefulClaudeReply(input.runRoot, item.id, privateReply);
+        } catch {
+          replyFailure = true;
+        }
+      }
       const representative = observations.find((item) => item.role === "current")?.evidence ??
         observations.at(-1)!.evidence;
       const agentCosts = observations.map((item) => item.evidence.agentCostUsd);
       const allTokens = observations.map((item) => item.evidence.tokens);
-      const combined: UpgradeCaseEvidence = { ...representative, passed: scored.passed,
-        failureCode: scored.failureCode, transitionResults: scored.transitions,
+      const combined: UpgradeCaseEvidence = { ...representative,
+        passed: scored.passed && !replyFailure,
+        failureCode: statefulReplyFailureCode(scored.failureCode, replyFailure),
+        transitionResults: scored.transitions,
         wallMs: observations.reduce((sum, item) => sum + item.evidence.wallMs, 0),
         agentCostUsd: agentCosts.every((value) => value !== null)
           ? agentCosts.reduce((sum, value) => sum + (value ?? 0), 0) : null,

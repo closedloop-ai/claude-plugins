@@ -15,8 +15,19 @@ remote_node() {
   e+=" RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${REMOTE_CONTINUE_PROMPT_FILE:-}"
   e+=" PASS_TIMEOUT_SECONDS=${PASS_TIMEOUT_SECONDS:-} LOG_MAX_BYTES=${LOG_MAX_BYTES:-} SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-}"
   e+=" CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-}"
-  COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
-    ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL 'env $e node $d/$*'" 2>/dev/null
+  local invoke="env $e node $d/$*"
+  local freshness=()
+  if [ "$1" = skill-freshness.mjs ]; then
+    freshness=(-C $K/../.. fleet-orchestrator/scripts/skill-freshness.mjs codex-fleet-monitor/scripts/work-dir.mjs
+      vibe/scripts/loaded-skill.mjs vibe/scripts/plugin-script-references.mjs)
+    shift
+    # Resolve outside env: a bare `env VAR=...` would print the process environment.
+    invoke='root=$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1); test -n "$root" && '
+    invoke+="env $e node $d/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
+  fi
+  COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs usage-state.mjs work-dir.mjs \
+    "${freshness[@]}" 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+    ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL ${(q)invoke}" 2>/dev/null
 }
 # A failed gh call prints nothing; keep the last non-empty value for that key so a blip is not an event.
 zmodload zsh/datetime
@@ -40,16 +51,38 @@ fi
 if [ -n "${L// }" ]; then
   SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-} node $K/recover.mjs --report $LOCAL_STATE_DIR local
   CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-} node $K/liveness.mjs ${LOCAL_STATE_DIR:?set LOCAL_STATE_DIR} ${=L} | sed 's/^/local /' >> $W/live.txt
+  node $K/../../fleet-orchestrator/scripts/skill-freshness.mjs watch-lines $LOCAL_STATE_DIR ${=L}
 fi
 if [ -n "${R// }" ]; then
   out=$(remote_node recover.mjs --report $REMOTE_STATE_DIR remote); echo "${out:-recovery remote unreadable}"
   out=$(remote_node liveness.mjs $REMOTE_STATE_DIR $R)
   if [ -n "$out" ]; then echo "$out" | sed 's/^/remote /' >> $W/live.txt
   else echo "session remote $REMOTE_HOST UNREACHABLE"; fi
+  remote_node skill-freshness.mjs watch-lines $REMOTE_STATE_DIR $R
 fi
-USAGE_HIGH_PERCENT=$HIGH node $K/ratelimit.mjs local 2>/dev/null
-[ "${CLAUDE_USAGE:-1}" = 0 ] || USAGE_HIGH_PERCENT=$HIGH CLAUDE_USAGE_SECONDS=${CLAUDE_USAGE_SECONDS:-} node $K/claude-usage.mjs $W local 2>/dev/null
-if [ -n "${REMOTE_HOST:-}" ]; then out=$(remote_node ratelimit.mjs remote); echo "${out:-codex-usage remote unreadable READFAIL}"; fi
+# Record a transport failure that happened before ratelimit.mjs could return its own failed reading.
+record_usage_readfail() {
+  local runtime=$1 machine=$2 source=$3 read_at line
+  read_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  line="$runtime-usage $machine unreadable READFAIL read=$read_at source=$source"
+  jq -cn --arg runtime "$runtime" --arg machine "$machine" --arg source "$source" --arg readAt "$read_at" --arg line "$line" \
+    '{runtime:$runtime,machine:$machine,source:$source,status:"readfail",readAt:$readAt,line:$line}' | \
+    node $K/usage-state.mjs record-json $W >/dev/null
+  echo "$line"
+}
+codex_json=$(USAGE_HIGH_PERCENT=$HIGH node $K/ratelimit.mjs local --json --source snapshot --work-dir $W 2>/dev/null)
+if [ -n "$codex_json" ]; then echo "$codex_json" | jq -r .line; else record_usage_readfail codex local snapshot; fi
+[ "${CLAUDE_USAGE:-1}" = 0 ] || USAGE_HIGH_PERCENT=$HIGH CLAUDE_USAGE_SECONDS=${CLAUDE_USAGE_SECONDS:-} node $K/claude-usage.mjs $W local --source snapshot 2>/dev/null
+if [ -n "${REMOTE_HOST:-}" ]; then
+  remote_usage_dir=${REMOTE_FLEET_HOME:+$REMOTE_FLEET_HOME/programs/$FLEET_PROGRAM}; remote_usage_dir=${remote_usage_dir:-$REMOTE_STATE_DIR}
+  out=$(remote_node ratelimit.mjs remote --json --source snapshot --work-dir $remote_usage_dir)
+  if [ -n "$out" ]; then
+    print -r -- "$out" | node $K/usage-state.mjs record-json $W >/dev/null
+    print -r -- "$out" | jq -r .line
+  else record_usage_readfail codex remote snapshot; fi
+fi
+# Stable flags only: the last-good time changes only after a successful read, so failed retries do not wake every tick.
+node $K/usage-state.mjs watch-lines $W 2>/dev/null
 if [ -n "${REQUESTS_DIR:-}" ]; then requests local ls -t $REQUESTS_DIR; fi
 if [ -n "${REMOTE_REQUESTS_DIR:-}" ]; then requests remote ssh -o ConnectTimeout=10 ${REMOTE_HOST:?set REMOTE_HOST} "ls -t $REMOTE_REQUESTS_DIR"; fi
 zsh $K/classify.sh $W/item-history.txt $STALL_SECONDS ${QUESTION_SECONDS:-900} < $W/live.txt

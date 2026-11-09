@@ -1,48 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
-
-const isFrozenStory = (text) => / v1\.0\//.test(text);
-
-function put(root, files) {
-  for (const [file, content] of Object.entries(files)) {
-    if (content === null) {
-      rmSync(path.join(root, file));
-      continue;
-    }
-    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-    writeFileSync(path.join(root, file), content);
-  }
-}
-
-/** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
-function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false }) {
-  const { root, home, cleanup } = makeHome("vibe-diff-rules-");
-  t.after(cleanup);
-  const checkout = path.join(root, "wt");
-  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
-  for (const step of history) {
-    put(checkout, step.files);
-    git(checkout, ["add", "-A"], home);
-    git(checkout, ["commit", "--quiet", "--allow-empty", "-m", step.message], home);
-  }
-  put(checkout, { "README.md": "seed\n", ...base });
-  git(checkout, ["add", "-A"], home);
-  git(checkout, ["commit", "--quiet", "-m", "base"], home);
-  const baseSha = git(checkout, ["rev-parse", "HEAD"], home);
-  put(checkout, head);
-  if (commit) {
-    git(checkout, ["add", "-A"], home);
-    git(checkout, ["commit", "--quiet", "-m", "session"], home);
-  }
-  writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), typeof changeLog === "function" ? changeLog({ checkout, base: baseSha }) : changeLog);
-  const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory });
-  return { ...result, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
-}
+import { isFrozenStory, put, run } from "./diff-rules-test-fixture.mjs";
 
 test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {
   const files = parseUnifiedDiff([
@@ -227,7 +189,7 @@ test("frozen stories include global styles, tokens, Tailwind config and Storyboo
     "apps/app/globals.css": "body { color: red; }\n",
     "packages/design-system/tokens/colors.json": "{\"text\":\"red\"}\n",
     "tailwind.config.ts": "export default { theme: {} };\n",
-    "apps/storybook/.storybook/preview.tsx": "export const decorators = [];\n",
+    "apps/storybook/.storybook/preview.tsx": "import \"../../app/globals.css\";\nexport const decorators = [];\n",
   };
   for (const [file, text] of Object.entries({
     "apps/app/globals.css": "body { color: blue; }\n",
