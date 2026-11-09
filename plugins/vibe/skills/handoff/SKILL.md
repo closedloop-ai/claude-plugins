@@ -494,8 +494,7 @@ push, until its rerun on the corrected tests is clean.
 
 An authenticated web E2E mutation proof without the staging test password can
 run in a repository-owned credential-free Playwright project that collects the
-spec with no live sign-in setup on the production host (symphony-alpha routes
-`e2e/documents-summary-scope.spec.ts` to `chromium`). Mutate only an isolated
+spec with no live sign-in setup on the production host. Mutate only an isolated
 exact-head checkout on the remote E2E slot, headless with retries off, then
 restore its bytes and record the passing run. Never handle or bypass a credential.
 

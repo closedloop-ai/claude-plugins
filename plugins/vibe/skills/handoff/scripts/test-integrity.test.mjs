@@ -784,3 +784,58 @@ test("ISS-13846 review F1 a comment-only mutation or authored failure text canno
   assert.match(problems(receiptFor(summary, realEdit)).join("\n"), /exact assertion failure/,
     "authored text naming the coordinate is not runner output");
 });
+
+test("ISS-13846 review F2 a direct Storybook frame on another assertion cannot prove this candidate", t => {
+  const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", [
+    "export const LivePagedGroupedAppending: Story = {",
+    "  play: async ({ canvasElement }) => {",
+    '    const idleLoadingRow = canvasElement.querySelector("[data-paged-list-loading-row]");',
+    "    await expect(idleLoadingRow).toBeNull();",
+    '    await expect(canvasElement.querySelector("[data-stale]")).toBeNull();',
+    "  },",
+    "};",
+  ].join("\n"), ["expect(idleLoadingRow)"]);
+  const read = file => file === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  assert.equal(candidate.line, 4);
+  const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
+  const edit = { old: '    const idleLoadingRow = canvasElement.querySelector("[data-paged-list-loading-row]");',
+    new: '    const idleLoadingRow = (() => { const row = document.createElement("div"); row.setAttribute("data-paged-list-loading-row", ""); canvasElement.append(row); return canvasElement.querySelector("[data-paged-list-loading-row]"); })();' };
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-other-assertion-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const problems = (frame, name) => {
+    const raw = [" FAIL  stories/surfaces-v2/v2-documents-list.stories.tsx > Live Paged Grouped Appending",
+      "AssertionError: expected <div></div> to be null",
+      ` ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:${frame}`,
+      " Failed Tests 1", " Test Files 1 failed"].join("\n");
+    const receipt = { candidate: candidate.id, target: candidate.path, command, mutationExit: 1, mutationOutput: raw,
+      restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
+      beforeSha256: hash(fixture.source), mutatedSha256: hash(fixture.source.replace(edit.old, edit.new)), mutationEdit: edit };
+    const bytes = JSON.stringify(receipt);
+    writeFileSync(path.join(dir, name), bytes);
+    const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+      mutation: "insert one loading row", presentState: "row inside the queried cell",
+      assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+      command, observedFailure: raw, restoredPass: true, commit: COMMIT, ownerBoundary: "production",
+      mountedSignal: "idle cell mounted", mutationRun: { command, exitCode: 1, assertionFailure: raw },
+      rawReceipt: name, rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+    return testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, dir);
+  };
+  assert.deepEqual(problems("1:3", "story-line.json"), [], "positive control: the instrumenter maps to the story object");
+  assert.match(problems("5:11", "other-assertion.json").join("\n"), /exact assertion failure/,
+    "the runner named the unchanged line-5 assertion");
+});
+
+test("ISS-13846 review F3 a real card count keeps its layout proof while a busy count does not", () => {
+  const fixture = changed("src/documents-list.test.tsx", [
+    'test("renders one card in the narrow layout", () => {',
+    '  const items = screen.getAllByRole("article");',
+    "  expect(items).toHaveLength(1);",
+    '  expect(screen.getAllByRole("row", { busy: true })).toHaveLength(1);',
+    "});",
+  ].join("\n"), ["toHaveLength"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
+    ["layout:src/documents-list.test.tsx:3"], "the card comes only from the test's context; the busy count is state");
+});

@@ -163,3 +163,27 @@ test("ISS-13846 review DT-31 production SSH probe uses the selected worktree and
   ]) assert.equal(specExecutionLimitation(altered,
     "apps/desktop/test/e2e/shared-paged-source-documents.spec.ts", commit), null);
 });
+
+test("ISS-13846 review F1 a probed commit that is not a full SHA never reaches the remote shell", () => {
+  const desktop = "apps/desktop/test/e2e/shared-paged-source-documents.spec.ts";
+  const record = commit => ({ selectedTier: "C", probedCommit: commit,
+    container: { ...container, dockerReachable: false }, native: { available: false },
+    remote: { available: true, command: `~/vibe-remote/e2e-slot.sh --head ${commit} proof-owner <command...>`,
+      runnerHost: "selected-second-laptop", runnerWorktree: "/selected/iss-13699", probeOwner: "proof-owner",
+      source: "SSH exact-head probe passed",
+      desktopHarness: { available: false, reason: NO_DISPLAYLESS_ELECTRON, probe: "remote selected-tier displayless probe failed", probedCommit: commit } },
+    unavailableSpecs: [desktop], ciCoverage: ["desktop-e2e-validation.yml:desktop-e2e/validated"] });
+  const calls = [];
+  const probe = commit => request => { calls.push(request.command); return request.nativeDesktop
+    ? { exitCode: 2, output: "Usage: e2e-slot.sh [--head <sha>] <owner-label> <command...>" }
+    : { exitCode: 0, output: JSON.stringify({ kind: "selected-runner-desktop-capability/v2", head: commit,
+      worktree: "/selected/iss-13699", platform: "darwin", linuxHarness: false }) }; };
+  const valid = "5afa61faa88a057e2f67df4da923a7be6e46adf5";
+  assert.deepEqual(specExecutionLimitation(record(valid), desktop, valid, probe(valid)),
+    { tier: "C", kind: "displayless", displaylessLimitation: NO_DISPLAYLESS_ELECTRON }, "positive control");
+  calls.length = 0;
+  const injected = "x;echo-INJECTED;#";
+  assert.equal(specExecutionLimitation(record(injected), desktop, injected, probe(injected)), null);
+  assert.deepEqual(tierEvidenceProblems(record(injected), [desktop], probe(injected)).length > 0, true);
+  assert.deepEqual(calls, [], "no remote command is built from a non-SHA commit");
+});

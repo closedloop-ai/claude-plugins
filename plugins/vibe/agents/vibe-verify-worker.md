@@ -161,8 +161,11 @@ adds `ownerBoundary: "production"`, a positive `mountedSignal`, the exact change
 `assertionLine`, `assertionLocation` (repo path, line and column), and
 `presentState` describing where the element was made
 present. Record `mutationRun: { command, exitCode, assertionFailure }` from the
-actual mutation run, with its raw output in a private `rawReceipt`; the schema
-check below names every binding it needs. If the runner cannot identify the assertion column, put each
+actual mutation run. Name its private receipt JSON in the git dir as
+`rawReceipt` with `rawReceiptSha256` and `restoredOutputSha256`; the receipt
+holds `candidate`, `target`, `command`, `head`, `mutationExit`,
+`mutationOutput` (raw runner output), `restoredExit`, `restoredOutput`,
+`beforeSha256`, `mutatedSha256` and the one `mutationEdit: { old, new }`. If the runner cannot identify the assertion column, put each
 assertion on its own line and rerun the mutation through a runner that reports
 the source column. Layout proof
 adds the official grid or prototype `baseline` and the `layoutAssertion` that

@@ -18,6 +18,8 @@ const SETUP_FAILURE = /^\s*(?:Error:\s*)?(?:TypeError|ReferenceError|SyntaxError
 const QUERY_ASSERTION = /queryBy(?:Role|Text|LabelText|TestId|PlaceholderText|DisplayValue|AltText|Title)\b/;
 const COUNT_ONE = /(?:toHaveCount|toHaveLength)\(\s*1\s*\)/;
 const LAYOUT_SURFACE = /\b(?:card|metric|summary)\b/i;
+// A busy or loading count is state, not card layout (PC-2, accepted 2026-11-09).
+const BUSY_STATE = /aria-busy|\bbusy\b|loading/i;
 const PROOF_CLASSES = new Set(["responsive", "absence", "layout"]);
 const SHA = /^[a-f0-9]{40}$/;
 
@@ -175,7 +177,8 @@ export function testIntegrityCandidates(files, read) {
           "changed assertion claims an element is absent", entry.text.trim(), "",
           `${file.path}:${entry.line}:${entry.text.search(/\S/) + 1}`));
       }
-      if (COUNT_ONE.test(entry.text) && LAYOUT_SURFACE.test(entry.text)) {
+      if (COUNT_ONE.test(entry.text) && !BUSY_STATE.test(entry.text)
+        && LAYOUT_SURFACE.test(`${file.path}\n${nearby(sourceLines, entry.line, 16)}`)) {
         found.push(candidate("layout", file.path, entry.line, caseName,
           "card, metric, or summary coverage asserts only one element"));
       }
@@ -282,6 +285,9 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
     || !/Failed Tests\s+[1-9]\d*\b/.test(failure)) return false;
   const line = Number(proof.assertionLocation.match(/:(\d+):\d+$/)?.[1]);
   if (!Number.isInteger(line)) return false;
+  // A direct frame on another assertion's line means that assertion failed, not this candidate.
+  const frameLine = Number(new RegExp(`^\\s*❯\\s+${matcher}\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?:(\\d+):\\d+`, "m").exec(failure)?.[1]);
+  if (Number.isInteger(frameLine) && frameLine !== line && /\bexpect\s*\(/.test(source.split("\n")[frameLine - 1] ?? "")) return false;
   let story = null;
   for (const declaration of source.matchAll(/^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+)/gm)) {
     if (lineNumberAt(source, declaration.index) > line) break;

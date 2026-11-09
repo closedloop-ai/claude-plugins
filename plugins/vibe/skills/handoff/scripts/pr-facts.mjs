@@ -444,16 +444,16 @@ function authenticatedSourceCarry(worktree, source, current, publishedCommit) {
   return { testedCommit: problems.length ? publishedCommit : source.head, problems };
 }
 
-/**
- * Confirm the verifier's CI carry still matches this machine's read-only
- * runtime probe. A fabricated "no Docker" report cannot waive E2E merely by
- * selecting no tier; a changed prerequisite requires fresh evidence.
- */
 function currentCapabilityProbe({ worktree, commit }) {
   if (git(worktree, ["rev-parse", "HEAD"]) !== commit) throw new Error("HEAD moved before the capability probe");
   return probeE2eCapability({ worktree, commit });
 }
 
+/**
+ * Confirm the verifier's CI carry still matches this machine's read-only
+ * runtime probe. A fabricated "no Docker" report cannot waive E2E merely by
+ * selecting no tier; a changed prerequisite requires fresh evidence.
+ */
 export function capabilityProbeProblems(evidence, worktree, commit, probeCapability = currentCapabilityProbe, currentCommit = commit) {
   const carried = (Array.isArray(evidence?.testRuns) ? evidence.testRuns : [])
     .filter((run) => run?.status === "not-run" && typeof run.path === "string" && isE2ePath(run.path));

@@ -17,6 +17,8 @@ const CAPABILITY_SCRIPT = [
   "const linuxHarness=process.platform==='linux'&&['xvfb-run','dbus-run-session','gnome-keyring-daemon'].every(tool=>cp.spawnSync('sh',['-c','command -v '+tool],{stdio:'ignore'}).status===0);",
   `console.log(JSON.stringify({kind:'${CAPABILITY_KIND}',head,worktree:process.cwd(),platform:process.platform,linuxHarness}));`,
 ].join("");
+// The commit reaches a regular expression and the remote shell, so only a full SHA is accepted.
+const SHA = /^[0-9a-f]{40}$/;
 const OLD_SLOT_USAGE = /^Usage: e2e-slot\.sh \[--head <sha>\] <owner-label> <command\.\.\.>$/m;
 
 /** Re-probe the selected remote runner through its supported login-shell route. */
@@ -33,7 +35,7 @@ function remoteDesktopProbe(capability, commit, runProbe = runSelectedRemoteProb
   const host = remote?.runnerHost;
   const worktree = remote?.runnerWorktree;
   const owner = remote?.probeOwner;
-  if (typeof host !== "string" || !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(host)
+  if (!SHA.test(commit ?? "") || typeof host !== "string" || !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(host)
     || typeof worktree !== "string" || !/^\/[A-Za-z0-9_./-]+$/.test(worktree)
     || worktree.split("/").includes("..")
     || typeof owner !== "string" || !/^[a-z0-9][a-z0-9-]{2,60}$/.test(owner)
@@ -91,7 +93,7 @@ export function selectE2eTier(capability = {}) {
 export function specExecutionLimitation(capability, spec, commit, runProbe) {
   if (!capability || capability.selectedTier !== selectE2eTier(capability).tier) return null;
   if (capability.selectedTier === null) return { tier: null, kind: "no-tier" };
-  if (!["A", "C"].includes(capability.selectedTier) || capability.probedCommit !== commit
+  if (!["A", "C"].includes(capability.selectedTier) || !SHA.test(commit ?? "") || capability.probedCommit !== commit
     || typeof capability.container?.command !== "string" || !capability.container.command.trim()) return null;
   if (capability.selectedTier === "C" && (typeof capability.remote?.command !== "string"
     || !new RegExp(`(?:^|\\s)--head\\s+${commit}(?:\\s|$)`).test(capability.remote.command)
