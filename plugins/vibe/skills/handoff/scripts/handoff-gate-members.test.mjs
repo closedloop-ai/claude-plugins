@@ -43,6 +43,7 @@ function fixture(t) {
   const met = (id) => `| ${id} | MET | script | pnpm test |\n`;
   const cells = (ids) => JSON.stringify({ surfaces: ["web"], inputs: ["*"], flags: [], rows: ids.map((criterion) => ({ criterion, surface: "web", input: "*", evidence: "not input-driven: unit test" })) });
   return {
+    gitDir,
     worktree,
     receipts,
     body: file("body.md", "Delivers ISS-123 and ISS-124.\n"),
@@ -54,7 +55,7 @@ function fixture(t) {
 }
 
 test("the gate runs the real criteria audit over each member ticket it is given (ISS-13924)", (t) => {
-  const { worktree, receipts, body, ticket, member, audit, matrix } = fixture(t);
+  const { gitDir, worktree, receipts, body, ticket, member, audit, matrix } = fixture(t);
   const inventoryArgs = [];
   // The criteria audit runs for real; only the inventory, which needs a whole repository, is stubbed.
   const runScript = (command, args, options) => {
@@ -62,7 +63,8 @@ test("the gate runs the real criteria audit over each member ticket it is given 
     inventoryArgs.push(args);
     return { status: 0, stdout: JSON.stringify(passingInventory), stderr: "" };
   };
-  const gate = (members, ids) => recordHandoffGate({ worktree, base: "main", body, runs: receipts[0], receipts, ticket, audit: audit(ids), matrix: matrix(ids), members }, { runScript });
+  const gate = (members, ids, title = "ISS-123, ISS-124: Group header counts") =>
+    recordHandoffGate({ worktree, base: "main", body, runs: receipts[0], receipts, ticket, audit: audit(ids), matrix: matrix(ids), members, title }, { runScript });
 
   assert.throws(() => gate([`ISS-124=${member}`], ["AC-1"]), /acceptance criteria audit failed[\s\S]*ISS-124:AC-1: not audited/,
     "a member's unmet criterion fails the gate");
@@ -76,4 +78,24 @@ test("the gate runs the real criteria audit over each member ticket it is given 
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }), null);
   writeFileSync(member, "- Acceptance criteria:\n  - [ ] The group header shows its count\n  - [ ] A new criterion\n");
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }), "handoff member ticket evidence changed");
+  writeFileSync(member, "- Acceptance criteria:\n  - [ ] The group header shows its count\n");
+  assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }), null);
+  // vibe-sessions.mjs touch --member-ticket after the gate passed
+  writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ memberTickets: ["ISS-124", "ISS-125"] }));
+  assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }), "the session's member tickets changed since the handoff gate");
+});
+
+test("with member tickets the gate needs a PR title, and the title and body must name every member", (t) => {
+  const { worktree, receipts, body, ticket, member, audit, matrix } = fixture(t);
+  const runScript = (command, args, options) => (args[0].endsWith("criteria-audit.mjs") ? spawnSync(command, args, options)
+    : { status: 0, stdout: JSON.stringify(passingInventory), stderr: "" });
+  const ids = ["AC-1", "ISS-124:AC-1"];
+  const gate = (title) => recordHandoffGate({ worktree, base: "main", body, runs: receipts[0], receipts, ticket, audit: audit(ids), matrix: matrix(ids), members: [`ISS-124=${member}`], title }, { runScript });
+  assert.throws(() => gate(undefined), /pass --title so the gate checks the PR names them/);
+  assert.throws(() => gate("ISS-123: Group header counts"), /the PR title does not name member ticket ISS-124/);
+  writeFileSync(body, "Delivers ISS-123 and ISS-1240.\n");
+  assert.throws(() => gate("ISS-123, ISS-124: Group header counts"), /the PR body does not name member ticket ISS-124/);
+  writeFileSync(body, "Delivers ISS-123 and ISS-124.\n");
+  gate("ISS-123, ISS-124: Group header counts");
+  assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }), null);
 });

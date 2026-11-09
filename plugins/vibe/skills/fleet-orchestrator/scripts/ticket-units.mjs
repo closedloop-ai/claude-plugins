@@ -37,9 +37,16 @@
 // blocker inside the unit is built in order on the same branch (cl-sweep
 // references/feature-units.md, `scheduled_in_unit`).
 //
-// With `--board`, the units already on the board (board.mjs unit) are in
-// flight: their tickets stay together, and a ticket that joins one prints
-// FOLD into that unit and its writer instead of a new unit.
+// A ticket with `operatorAssigned: false` never joins a unit for any reason; a
+// related one prints RELATED with the unit, for the operator to decide. A
+// `prd` needs `operatorAssigned`. An `apart` pair must be related; when it
+// still joins through other tickets, the line says so instead of "kept
+// apart". Malformed fields exit 2.
+//
+// With `--board`, the open units on the board (board.mjs unit; a unit closed
+// with `--closed` is finished) are in flight: their tickets stay together, and
+// a ticket that joins one prints FOLD into that unit and its writer instead of
+// a new unit.
 //
 // Prints one line per unit, which is the operator's line:
 //   UNIT <name> <a, b>: <a>~<b> <reason>; ...
@@ -47,24 +54,39 @@
 //   UNIT <name> <a, b>: in flight (<writer>)
 //   FOLD <ticket> into <unit> (<writer>): <ticket>~<member> <reason>
 //   BLOCKED <ticket> by <blocker>: kept separate until it merges
+//   RELATED <ticket> to unit <unit>: <ticket>~<member> <reason>; it has another owner ...
 //   OVERLAP <unit> <unit>: two in-flight units are related; give one owner or a merge order
 // Exits 0. Malformed input exits 2.
 //
 // `pr-check` exits 1 until the PR title and body name every ticket of the unit.
+// board.mjs status prints `unitMemberProblems` for a local writer whose vibe
+// session has not recorded every other ticket of its unit as a member.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { missingTicketNames } from "../../handoff/scripts/ticket-names.mjs";
 
 const SLUG = /^[A-Z]+-\d+$/;
+const PRD = /^PRD-\d+$/;
 
-/** The units recorded on a program's board, `{}` when it has none. */
-export function boardUnits(orchDir) {
+/** The board's open units (closed ones are finished) and its writer rows. */
+export function readBoard(orchDir) {
   const file = path.join(resolveWorkDir(orchDir).dir, "board.json");
-  if (!existsSync(file)) return {};
-  return JSON.parse(readFileSync(file, "utf8")).units ?? {};
+  const board = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  return { units: openUnits(board.units ?? {}), writers: board.writers ?? {} };
+}
+
+/** The open units recorded on a program's board, `{}` when it has none. */
+export function boardUnits(orchDir) {
+  return readBoard(orchDir).units;
+}
+
+/** Units not yet closed with `board.mjs unit <name> --closed <PR>`. */
+export function openUnits(units) {
+  return Object.fromEntries(Object.entries(units).filter(([, unit]) => !unit.closed));
 }
 
 /** Why two tickets are related, strongest evidence first, or an empty list. */
@@ -89,7 +111,10 @@ export function joinReasons(a, b, collisions = []) {
 /** Groups the candidates against the in-flight units; pure. */
 export function groupTickets(candidates, units = {}) {
   const tickets = validTickets(candidates);
-  const bySlug = new Map(tickets.map((ticket) => [ticket.slug, ticket]));
+  const collisions = candidates.collisions ?? [];
+  // A ticket assigned to someone else never joins a unit; it is only reported as related.
+  const foreign = tickets.filter((ticket) => ticket.operatorAssigned === false);
+  const bySlug = new Map(tickets.filter((ticket) => ticket.operatorAssigned !== false).map((ticket) => [ticket.slug, ticket]));
   const unitOf = new Map();
   for (const [name, unit] of Object.entries(units)) {
     for (const slug of unit.tickets ?? []) {
@@ -98,13 +123,14 @@ export function groupTickets(candidates, units = {}) {
     }
   }
   const all = [...bySlug.values()];
-  const apart = apartPairs(candidates, all, candidates.collisions ?? []);
+  const apart = apartPairs(candidates, [...all, ...foreign], collisions);
+  const related = (a, b) => (a.repo === b.repo ? joinReasons(a, b, collisions) : []);
   const edges = [];
   for (let i = 0; i < all.length; i += 1) {
     for (let j = i + 1; j < all.length; j += 1) {
       const [a, b] = [all[i], all[j]];
-      if (a.repo !== b.repo || apart.has(pairKey(a.slug, b.slug))) continue;
-      const reasons = joinReasons(a, b, candidates.collisions ?? []);
+      if (apart.has(pairKey(a.slug, b.slug))) continue;
+      const reasons = related(a, b);
       if (reasons.length > 0) edges.push({ a: a.slug, b: b.slug, reasons });
     }
   }
@@ -120,29 +146,48 @@ export function groupTickets(candidates, units = {}) {
     if (added.length === 0) break;
     for (const [slug, blocker] of added) blocked.set(slug, blocker);
   }
-  return { units: components.map((members) => describe(members, { bySlug, edges, unitOf, units, all, apart, candidates })), blocked: [...blocked].map(([slug, blocker]) => ({ slug, blocker })) };
+  const context = { bySlug, edges, unitOf, units, all, apart, blocked };
+  const grouped = components.map((members) => describe(members, context));
+  const otherOwners = foreign.flatMap((ticket) => grouped.flatMap((unit) => {
+    const via = unit.tickets.map((slug) => ({ slug, reasons: related(ticket, bySlug.get(slug)) })).find((entry) => entry.reasons.length > 0);
+    return via ? [{ slug: ticket.slug, unit: unit.name, via: via.slug, reasons: via.reasons }] : [];
+  }));
+  return { units: grouped, blocked: [...blocked].map(([slug, blocker]) => ({ slug, blocker })), otherOwners };
 }
 
 /** Tickets of the unit that the PR title or body does not name. */
 export function prNameProblems(unit, title, body) {
-  const names = (text, slug) => new RegExp(`(^|[^A-Za-z0-9-])${slug}(?![0-9])`).test(text);
-  return (unit?.tickets ?? []).flatMap((slug) => [
-    ...(names(title, slug) ? [] : [`the PR title does not name ${slug}`]),
-    ...(names(body, slug) ? [] : [`the PR body does not name ${slug}`]),
-  ]);
+  return [
+    ...missingTicketNames(title, unit?.tickets ?? []).map((slug) => `the PR title does not name ${slug}`),
+    ...missingTicketNames(body, unit?.tickets ?? []).map((slug) => `the PR body does not name ${slug}`),
+  ];
 }
 
-/** The board page's Units section: each unit, its writer, its writer's PR and every ticket in it. */
+/** The board page's Units section: each unit, its writer, its writer's PR, every ticket in it, and whether it closed. */
 export function renderUnits(units, writers) {
   const rows = Object.entries(units).map(([name, unit]) => {
     const row = writers[unit.writer] ?? {};
-    return `| ${name} | ${unit.writer ?? ""} | ${row.pr ? `${row.repo ?? unit.repo ?? ""}#${row.pr}` : ""} | ${unit.tickets.join(", ")} |`;
+    return `| ${name} | ${unit.writer ?? ""} | ${row.pr ? `${row.repo ?? unit.repo ?? ""}#${row.pr}` : ""} | ${unit.tickets.join(", ")} | ${unit.closed ? `closed with ${unit.closed.pr}` : "open"} |`;
   });
-  return rows.length === 0 ? ["- none"] : ["| Unit | Writer | PR | Tickets |", "|---|---|---|---|", ...rows];
+  return rows.length === 0 ? ["- none"] : ["| Unit | Writer | PR | Tickets | State |", "|---|---|---|---|---|", ...rows];
+}
+
+/** Board status lines for open units whose local writer has not recorded every other ticket as a session member. */
+export function unitMemberProblems(units, writers, readRecord) {
+  return Object.entries(openUnits(units)).flatMap(([name, unit]) => {
+    const row = writers[unit.writer];
+    if (!row?.worktree || row.where === "remote") return [];
+    let record;
+    try { record = readRecord(row.worktree); } catch { record = null; }
+    if (!record) return [];
+    const anchor = record.liveTicket ?? record.ticket;
+    const missing = unit.tickets.filter((slug) => slug !== anchor && !(record.memberTickets ?? []).includes(slug));
+    return missing.length === 0 ? [] : [`UNIT-MEMBERS-UNRECORDED ${name} ${unit.writer}: ${missing.join(", ")}; the writer runs vibe-sessions.mjs touch --worktree <wt> --member-ticket <slug> for each, so handoff audits their criteria`];
+  });
 }
 
 /** The operator lines for a grouping. */
-export function groupLines({ units, blocked }) {
+export function groupLines({ units, blocked, otherOwners = [] }) {
   const lines = [];
   for (const unit of units) {
     if (unit.overlap.length > 1) lines.push(`OVERLAP ${unit.overlap.join(" ")}: two in-flight units are related; give one owner or a merge order`);
@@ -151,25 +196,46 @@ export function groupLines({ units, blocked }) {
       lines.push(`UNIT ${unit.name} ${unit.tickets.join(", ")}: in flight (${unit.writer ?? "no writer yet"})`);
       continue;
     }
-    const split = unit.prdSplits.map((entry) => `; ${entry}`).join("");
+    const notes = [...unit.keptApart.map((entry) => `kept apart: ${entry}`), ...unit.joinedThrough, ...unit.blockedNeighbours, ...unit.prdSplits]
+      .map((entry) => `; ${entry}`).join("");
     lines.push(unit.tickets.length === 1
-      ? `UNIT ${unit.name} ${unit.tickets[0]} alone: ${unit.apartReason}${split}`
-      : `UNIT ${unit.name} ${unit.tickets.join(", ")}: ${unit.joins.map((join) => `${join.a}~${join.b} ${join.reasons.join(", ")}`).join("; ")}${unit.keptApart.length ? `; kept apart: ${unit.keptApart.join("; ")}` : ""}${split}`);
+      ? `UNIT ${unit.name} ${unit.tickets[0]} alone: ${unit.apartReason}${notes}`
+      : `UNIT ${unit.name} ${unit.tickets.join(", ")}: ${unit.joins.map((join) => `${join.a}~${join.b} ${join.reasons.join(", ")}`).join("; ")}${notes}`);
   }
   for (const entry of blocked) lines.push(`BLOCKED ${entry.slug} by ${entry.blocker}: kept separate until ${entry.blocker} merges`);
+  for (const entry of otherOwners) {
+    lines.push(`RELATED ${entry.slug} to unit ${entry.unit}: ${entry.slug}~${entry.via} ${entry.reasons.join(", ")}; it has another owner, so it stays out of the unit unless the operator decides otherwise`);
+  }
   return lines;
 }
 
+/** Validates the candidate shapes; malformed input is refused, never guessed at. */
 function validTickets(candidates) {
   if (!Array.isArray(candidates?.tickets)) throw new Error("candidates need a tickets array");
+  for (const key of ["collisions", "apart"]) {
+    const list = candidates[key];
+    if (list !== undefined && (!Array.isArray(list) || list.some((pair) => !SLUG.test(pair?.a ?? "") || !SLUG.test(pair?.b ?? "")))) {
+      throw new Error(`${key} must be an array of {"a", "b"} ticket pairs`);
+    }
+  }
   const seen = new Set();
   return candidates.tickets.map((ticket) => {
     if (!SLUG.test(ticket?.slug ?? "")) throw new Error(`candidate ${JSON.stringify(ticket?.slug)} is not a ticket slug`);
-    if (typeof ticket.repo !== "string" || !ticket.repo.includes("/")) throw new Error(`${ticket.slug} needs its repo as <owner>/<repo>`);
-    if (seen.has(ticket.slug)) throw new Error(`${ticket.slug} is listed twice`);
-    if (ticket.prd !== undefined && !SLUG.test(ticket.prd ?? "")) throw new Error(`${ticket.slug} names prd ${JSON.stringify(ticket.prd)}, not a PRD slug`);
-    if (ticket.operatorAssigned !== undefined && typeof ticket.operatorAssigned !== "boolean") throw new Error(`${ticket.slug} needs operatorAssigned as true or false`);
-    seen.add(ticket.slug);
+    const slug = ticket.slug;
+    if (typeof ticket.repo !== "string" || !ticket.repo.includes("/")) throw new Error(`${slug} needs its repo as <owner>/<repo>`);
+    if (seen.has(slug)) throw new Error(`${slug} is listed twice`);
+    for (const key of ["files", "historyFiles", "surfaces"]) {
+      if (ticket[key] !== undefined && (!Array.isArray(ticket[key]) || ticket[key].some((entry) => typeof entry !== "string" || !entry))) {
+        throw new Error(`${slug} needs ${key} as an array of strings`);
+      }
+    }
+    if (ticket.blockers !== undefined && (!Array.isArray(ticket.blockers) || ticket.blockers.some((blocker) => !SLUG.test(blocker?.slug ?? "") || typeof blocker.met !== "boolean"))) {
+      throw new Error(`${slug} needs blockers as an array of {"slug", "met": true|false}`);
+    }
+    if (ticket.prd !== undefined && !PRD.test(ticket.prd ?? "")) throw new Error(`${slug} names prd ${JSON.stringify(ticket.prd)}, not a PRD slug`);
+    if (ticket.operatorAssigned !== undefined && typeof ticket.operatorAssigned !== "boolean") throw new Error(`${slug} needs operatorAssigned as true or false`);
+    if (ticket.prd !== undefined && ticket.operatorAssigned === undefined) throw new Error(`${slug} names a prd, so it needs operatorAssigned: the PRD join counts only the operator's tickets`);
+    seen.add(slug);
     return { files: [], historyFiles: [], surfaces: [], blockers: [], ...ticket };
   });
 }
@@ -178,18 +244,19 @@ function pairKey(a, b) {
   return [a, b].sort().join(">");
 }
 
-/** Pairs the orchestrator kept apart; only a history-only pair may be. */
+/** Pairs the orchestrator kept apart; only a related pair, and only one related by history alone, may be. */
 function apartPairs(candidates, all, collisions) {
   const bySlug = new Map(all.map((ticket) => [ticket.slug, ticket]));
   const pairs = new Map();
   for (const entry of candidates.apart ?? []) {
     const [a, b] = [bySlug.get(entry?.a), bySlug.get(entry?.b)];
     if (!a || !b || typeof entry.reason !== "string" || !entry.reason.trim()) throw new Error("an apart entry names two candidates and its reason");
-    const reasons = joinReasons(a, b, collisions);
+    const reasons = a.repo === b.repo ? joinReasons(a, b, collisions) : [];
+    if (reasons.length === 0) throw new Error(`${a.slug} and ${b.slug} are not related; there is nothing to keep apart`);
     if (!reasons.every((reason) => reason.endsWith("(history)"))) {
       throw new Error(`${a.slug} and ${b.slug} share ${reasons[0]}; only a pair related by history alone may be kept apart`);
     }
-    pairs.set(pairKey(a.slug, b.slug), { reasons, reason: entry.reason.trim() });
+    pairs.set(pairKey(a.slug, b.slug), { a: a.slug, b: b.slug, reasons, reason: entry.reason.trim() });
   }
   return pairs;
 }
@@ -206,7 +273,27 @@ function connect(slugs, edges, units) {
   return [...groups.values()];
 }
 
-function describe(members, { bySlug, edges, unitOf, units, all, apart }) {
+/** The chain of joined tickets from one member to another, as `a~b~c`. */
+function joinPath(from, to, joins) {
+  const previous = new Map([[from, null]]);
+  const queue = [from];
+  while (queue.length > 0) {
+    const slug = queue.shift();
+    if (slug === to) break;
+    for (const edge of joins) {
+      const next = edge.a === slug ? edge.b : edge.b === slug ? edge.a : null;
+      if (next && !previous.has(next)) {
+        previous.set(next, slug);
+        queue.push(next);
+      }
+    }
+  }
+  const chain = [];
+  for (let slug = to; slug; slug = previous.get(slug)) chain.unshift(slug);
+  return chain.join("~");
+}
+
+function describe(members, { bySlug, edges, unitOf, units, all, apart, blocked }) {
   const inside = new Set(members);
   const joins = edges.filter((edge) => inside.has(edge.a) && inside.has(edge.b));
   const overlap = [...new Set(members.map((slug) => unitOf.get(slug)).filter(Boolean))];
@@ -215,10 +302,16 @@ function describe(members, { bySlug, edges, unitOf, units, all, apart }) {
     const join = joins.find((edge) => (edge.a === slug && inside.has(edge.b)) || (edge.b === slug && inside.has(edge.a)));
     return { slug, unit: name, writer: units[name]?.writer, via: join.a === slug ? join.b : join.a, reasons: join.reasons };
   });
-  const keptApart = [...apart].filter(([key]) => key.split(">").some((slug) => inside.has(slug)))
-    .map(([key, entry]) => `${key.replace(">", "~")} ${entry.reasons.join(", ")}: ${entry.reason}`);
+  const touching = [...apart.values()].filter((entry) => inside.has(entry.a) || inside.has(entry.b));
+  const describeApart = (entry) => `${entry.a}~${entry.b} ${entry.reasons.join(", ")}: ${entry.reason}`;
+  const keptApart = touching.filter((entry) => !(inside.has(entry.a) && inside.has(entry.b))).map(describeApart);
+  const joinedThrough = touching.filter((entry) => inside.has(entry.a) && inside.has(entry.b))
+    .map((entry) => `asked to keep ${entry.a} and ${entry.b} apart (${entry.reason}), but they are joined through ${joinPath(entry.a, entry.b, joins)}`);
   const ticket = bySlug.get(members[0]);
   const others = all.filter((other) => !inside.has(other.slug));
+  const relatedBlocked = edges.filter((edge) => (inside.has(edge.a) && blocked.has(edge.b)) || (inside.has(edge.b) && blocked.has(edge.a)))
+    .map((edge) => (inside.has(edge.a) ? edge.b : edge.a));
+  const blockedNeighbours = [...new Set(relatedBlocked)].map((slug) => `related to ${slug}, which is BLOCKED by ${blocked.get(slug)}`);
   const prds = new Set(members.map((slug) => bySlug.get(slug)).filter((member) => member.prd && member.operatorAssigned === true).map((member) => member.prd));
   const prdSplits = [...prds].flatMap((prd) => {
     const byRepo = new Map();
@@ -228,13 +321,13 @@ function describe(members, { bySlug, edges, unitOf, units, all, apart }) {
     return [...byRepo].map(([repo, tickets]) => `${prd} also has ${tickets.join(", ")} in ${repo}, a unit of its own: a PR cannot span repositories`);
   });
   const elsewhere = others.filter((other) => other.repo !== ticket.repo).map((other) => other.slug);
-  const unrelated = others.filter((other) => other.repo === ticket.repo).map((other) => other.slug);
+  const apartPartners = touching.flatMap((entry) => [entry.a, entry.b]);
+  const unrelated = others.filter((other) => other.repo === ticket.repo && !relatedBlocked.includes(other.slug) && !apartPartners.includes(other.slug)).map((other) => other.slug);
   const apartReason = [
     ...(elsewhere.length ? [`different repository from ${elsewhere.join(", ")}`] : []),
     ...(unrelated.length ? [`no shared file, screen entry, collision or PRD with ${unrelated.join(", ")}`] : []),
-    ...keptApart.map((entry) => `kept apart: ${entry}`),
-  ].join("; ") || "no other candidates";
-  return { name, writer: units[name]?.writer, tickets: members, joins, folds, overlap, inFlight: overlap.length > 0, keptApart, apartReason, prdSplits };
+  ].join("; ") || (blockedNeighbours.length || keptApart.length ? "its only related tickets are kept separate" : "no other candidates");
+  return { name, writer: units[name]?.writer, tickets: members, joins, folds, overlap, inFlight: overlap.length > 0, keptApart, joinedThrough, blockedNeighbours, apartReason, prdSplits };
 }
 
 function main(argv) {

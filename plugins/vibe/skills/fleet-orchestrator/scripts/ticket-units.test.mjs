@@ -132,13 +132,18 @@ test('the operator\'s open tickets under one PRD become one unit with nothing sh
   assert.deepEqual(groupLines(grouping), ['UNIT ISS-1 ISS-1, ISS-2, ISS-3: ISS-1~ISS-2 same PRD PRD-7; ISS-1~ISS-3 same PRD PRD-7; ISS-2~ISS-3 same PRD PRD-7']);
 });
 
-test('a PRD ticket assigned to someone else does not join through the PRD', () => {
+test('a ticket assigned to someone else never joins a unit, not even on a shared file, and is printed as related for the operator', () => {
   const grouping = groupTickets({ tickets: [
-    ticket('ISS-1', { prd: 'PRD-7', operatorAssigned: true }),
+    ticket('ISS-1', { prd: 'PRD-7', operatorAssigned: true, files: ['a.ts'] }),
     ticket('ISS-2', { prd: 'PRD-7', operatorAssigned: true }),
-    ticket('ISS-3', { prd: 'PRD-7', operatorAssigned: false }),
+    ticket('ISS-3', { prd: 'PRD-7', operatorAssigned: false, files: ['a.ts'] }),
+    ticket('ISS-4', { operatorAssigned: false, files: ['z.ts'] }),
   ] });
-  assert.deepEqual(grouping.units.map((unit) => unit.tickets), [['ISS-1', 'ISS-2'], ['ISS-3']]);
+  assert.deepEqual(grouping.units.map((unit) => unit.tickets), [['ISS-1', 'ISS-2']]);
+  assert.deepEqual(groupLines(grouping), [
+    'UNIT ISS-1 ISS-1, ISS-2: ISS-1~ISS-2 same PRD PRD-7',
+    'RELATED ISS-3 to unit ISS-1: ISS-3~ISS-1 shared file a.ts; it has another owner, so it stays out of the unit unless the operator decides otherwise',
+  ]);
 });
 
 test('a PRD ticket in another repository is that repository\'s own unit for the PRD, and both lines say why', () => {
@@ -153,4 +158,54 @@ test('a PRD ticket in another repository is that repository\'s own unit for the 
     `UNIT ISS-3 ISS-3 alone: different repository from ISS-1, ISS-2; PRD-7 also has ISS-1, ISS-2 in ${APP}, a unit of its own: a PR cannot span repositories`,
   ]);
   assert.throws(() => groupTickets({ tickets: [ticket('ISS-1', { prd: 'prd seven' })] }), /not a PRD slug/);
+});
+
+test('a closed unit is finished: a new related ticket starts a new unit instead of folding into its writer', (t) => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'ticket-units-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(path.join(home, 'programs', 'p1'), { recursive: true });
+  writeFileSync(path.join(home, 'current'), 'p1\n');
+  const units = { 'ISS-1': { tickets: ['ISS-1'], writer: 'w1', repo: APP } };
+  const board = (closed) => writeFileSync(path.join(home, 'programs', 'p1', 'board.json'), JSON.stringify({ units: { 'ISS-1': { ...units['ISS-1'], ...(closed ? { closed: { pr: '#7', at: 'now' } } : {}) } } }));
+  const file = path.join(home, 'candidates.json');
+  writeFileSync(file, JSON.stringify({ tickets: [ticket('ISS-7', { files: ['a.ts'] }), ticket('ISS-1', { files: ['a.ts'] })] }));
+  const group = () => spawnSync(process.execPath, [SCRIPT, 'group', '--candidates', file, '--board', home], { encoding: 'utf8' }).stdout;
+  board(false);
+  assert.match(group(), /^FOLD ISS-7 into ISS-1 \(w1\)/);
+  board(true);
+  assert.equal(group(), 'UNIT ISS-7 ISS-7, ISS-1: ISS-7~ISS-1 shared file a.ts\n');
+});
+
+test('a prd without operatorAssigned, and malformed fields, are refused rather than guessed at', () => {
+  const refuses = (extra, pattern) => assert.throws(() => groupTickets({ tickets: [ticket('ISS-1', extra)] }), pattern, JSON.stringify(extra));
+  refuses({ prd: 'PRD-7' }, /names a prd, so it needs operatorAssigned/);
+  refuses({ prd: 'ISS-9', operatorAssigned: true }, /not a PRD slug/);
+  refuses({ files: 'a.ts' }, /files as an array of strings/);
+  refuses({ surfaces: [3] }, /surfaces as an array of strings/);
+  refuses({ blockers: [{ met: false }] }, /blockers as an array/);
+  refuses({ blockers: { slug: 'ISS-9', met: false } }, /blockers as an array/);
+  assert.throws(() => groupTickets({ tickets: [ticket('ISS-1')], collisions: [{ a: 'ISS-1' }] }), /collisions must be an array/);
+});
+
+test('a ticket whose related neighbour is blocked says so instead of claiming nothing is shared', () => {
+  const lines = groupLines(groupTickets({ tickets: [
+    ticket('ISS-1', { files: ['a.ts'] }),
+    ticket('ISS-2', { files: ['a.ts'], blockers: [{ slug: 'ISS-9', met: false }] }),
+  ] }));
+  assert.deepEqual(lines, [
+    'UNIT ISS-1 ISS-1 alone: its only related tickets are kept separate; related to ISS-2, which is BLOCKED by ISS-9',
+    'BLOCKED ISS-2 by ISS-9: kept separate until ISS-9 merges',
+  ]);
+});
+
+test('an apart pair that still joins through another ticket says so, and an unrelated apart pair is refused', () => {
+  const tickets = [
+    ticket('ISS-1', { files: ['a.ts'], historyFiles: ['h.ts'] }),
+    ticket('ISS-2', { files: ['b.ts'], historyFiles: ['h.ts'] }),
+    ticket('ISS-3', { files: ['a.ts', 'b.ts'] }),
+  ];
+  const [line] = groupLines(groupTickets({ tickets, apart: [{ a: 'ISS-1', b: 'ISS-2', reason: 'a rename' }] }));
+  assert.equal(line, 'UNIT ISS-1 ISS-1, ISS-2, ISS-3: ISS-1~ISS-3 shared file a.ts; ISS-2~ISS-3 shared file b.ts; asked to keep ISS-1 and ISS-2 apart (a rename), but they are joined through ISS-1~ISS-3~ISS-2');
+  assert.doesNotMatch(line, /kept apart:/);
+  assert.throws(() => groupTickets({ tickets: [ticket('ISS-1', { files: ['a.ts'] }), ticket('ISS-2', { files: ['b.ts'] })], apart: [{ a: 'ISS-1', b: 'ISS-2', reason: 'x' }] }), /are not related; there is nothing to keep apart/);
 });

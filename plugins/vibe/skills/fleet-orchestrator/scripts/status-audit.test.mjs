@@ -154,34 +154,47 @@ test('the status sweep flags a recorded sequencing ruling whose BLOCKS link is m
   assert.deepEqual(auditStatuses(ordinary).findings, []);
 });
 
-test('a unit moves as one PR: each ticket follows the unit PR on its own, and a member missing from the snapshot is unread', () => {
+test('a unit moves with its writer\'s PR alone: each ticket follows it on its own, and a member or PR missing from the snapshot is unread', () => {
+  const unitPull = (state) => ({ url: 'https://github.com/o/r/pull/10', state });
   const units = { 'ISS-1': { tickets: ['ISS-1', 'ISS-2', 'ISS-3'], writer: 'w1' } };
-  const snapshot = (status2, pulls) => ({ prds: [
+  const writers = (pr) => ({ w1: pr ? { pr: String(pr), repo: 'o/r' } : {} });
+  const snapshot = (status2, pulls, ownPulls = []) => ({ prds: [
     { slug: 'P1', children: [{ slug: 'ISS-1', status: 'IN_REVIEW', pullRequests: pulls, body }] },
-    { slug: null, children: [{ slug: 'ISS-2', status: status2, body }, { slug: 'ISS-3', status: 'DONE', body }] },
+    { slug: null, children: [{ slug: 'ISS-2', status: status2, pullRequests: ownPulls, body }, { slug: 'ISS-3', status: 'DONE', body }] },
   ] });
-  const findings = (status2, pulls) => auditStatuses(snapshot(status2, pulls), units).findings.map(({ slug, kind, expected }) => `${kind} ${slug} ${expected ?? ''}`.trim());
-  assert.deepEqual(findings('IN_PROGRESS', [{ ...merged, url: 'https://example.test/pull/9' }]), ['MISMATCH ISS-1 DONE', 'MISMATCH ISS-2 DONE']);
-  assert.deepEqual(findings('IN_PROGRESS', [open]), ['MISMATCH ISS-2 IN_REVIEW', 'MISMATCH ISS-3 IN_REVIEW']);
-  assert.deepEqual(findings('IN_REVIEW', []), ['MISMATCH ISS-1 IN_PROGRESS', 'MISMATCH ISS-2 IN_PROGRESS', 'MISMATCH ISS-3 IN_PROGRESS']);
+  const findings = (snap, pr = 10) => auditStatuses(snap, units, writers(pr)).findings.map(({ slug, kind, expected }) => `${kind} ${slug} ${expected ?? ''}`.trim());
+  assert.deepEqual(findings(snapshot('IN_PROGRESS', [unitPull('MERGED')])), ['MISMATCH ISS-1 DONE', 'MISMATCH ISS-2 DONE']);
+  assert.deepEqual(findings(snapshot('IN_PROGRESS', [unitPull('OPEN')])), ['MISMATCH ISS-2 IN_REVIEW', 'MISMATCH ISS-3 IN_REVIEW']);
+  assert.deepEqual(findings(snapshot('IN_REVIEW', []), null), ['MISMATCH ISS-1 IN_PROGRESS', 'MISMATCH ISS-2 IN_PROGRESS', 'MISMATCH ISS-3 IN_PROGRESS']);
+  // A member's own earlier PR merged before it folded in; it is not the unit's PR.
+  assert.deepEqual(findings(snapshot('IN_REVIEW', [unitPull('OPEN')], [{ url: 'https://github.com/o/r/pull/3', state: 'MERGED' }])), ['MISMATCH ISS-3 IN_REVIEW']);
+  assert.deepEqual(findings(snapshot('IN_REVIEW', [{ url: 'https://github.com/x/y/pull/10', state: 'OPEN' }])).slice(0, 1), ['UNIT-PR-UNREAD ISS-1'], 'the same number in another repository is not the writer\'s PR');
   const missing = auditStatuses({ prds: [{ slug: 'P1', children: [{ slug: 'ISS-1', status: 'IN_PROGRESS' }] }] }, { 'ISS-1': { tickets: ['ISS-1', 'ISS-4'], writer: 'w1' } });
   assert.deepEqual(missing.findings, [{ slug: 'ISS-4', status: '?', kind: 'UNREAD-MEMBER', unit: 'ISS-1' }]);
   assert.deepEqual(auditStatuses(snapshot('IN_PROGRESS', [merged])).findings.map(({ slug, kind }) => `${kind} ${slug}`), ['MISMATCH ISS-1', 'UNOWNED ISS-2'], 'without the board each ticket is judged alone');
 });
 
-test('--board reads the units, so closing the unit PR flags every ticket still behind it', (t) => {
+test('--board reads the open units and writer rows, so a merged unit PR flags every ticket still behind it until the unit closes', (t) => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'status-audit-board-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(path.join(home, 'programs', 'p1'), { recursive: true });
   writeFileSync(path.join(home, 'current'), 'p1\n');
-  writeFileSync(path.join(home, 'programs', 'p1', 'board.json'), JSON.stringify({ units: { 'ISS-1': { tickets: ['ISS-1', 'ISS-2'], writer: 'w1' } } }));
+  const board = (closed) => writeFileSync(path.join(home, 'programs', 'p1', 'board.json'), JSON.stringify({
+    writers: { w1: { pr: '10', repo: 'o/r' } },
+    units: { 'ISS-1': { tickets: ['ISS-1', 'ISS-2', 'ISS-5'], writer: 'w1', ...(closed ? { closed: { pr: 'PR 10', at: 'now' } } : {}) } },
+  }));
   const file = path.join(home, 'snapshot.json');
   writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P1', children: [
-    { slug: 'ISS-1', status: 'DONE', pullRequests: [merged], body },
+    { slug: 'ISS-1', status: 'DONE', pullRequests: [{ url: 'https://github.com/o/r/pull/10', state: 'MERGED' }], body },
     { slug: 'ISS-2', status: 'IN_REVIEW', body },
   ] }] }));
+  board(false);
   const result = spawnSync(process.execPath, [SCRIPT, '--snapshot', file, '--board', home], { encoding: 'utf8' });
   assert.equal(result.status, 1);
-  assert.match(result.stdout, /^MISMATCH ISS-2 IN_REVIEW, expected DONE \(https:\/\/example\.test\/pull\/1 merged\)$/m);
+  assert.match(result.stdout, /^MISMATCH ISS-2 IN_REVIEW, expected DONE \(https:\/\/github\.com\/o\/r\/pull\/10 merged\)$/m);
+  assert.match(result.stdout, /^UNREAD-MEMBER ISS-5:/m);
   assert.match(spawnSync(process.execPath, [SCRIPT, '--snapshot', file], { encoding: 'utf8' }).stdout, /^UNOWNED ISS-2 IN_REVIEW$/m, 'without the board the merged PR is not evidence for ISS-2');
+  board(true);
+  const closed = spawnSync(process.execPath, [SCRIPT, '--snapshot', file, '--board', home], { encoding: 'utf8' });
+  assert.doesNotMatch(closed.stdout, /UNREAD-MEMBER/, 'a closed unit is no longer read');
 });

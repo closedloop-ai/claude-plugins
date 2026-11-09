@@ -90,7 +90,7 @@ Related tickets go to one writer, one branch and one PR; each keeps its own crit
 1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates (each with its PRD and whether the operator is its assignee) and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
 2. Tell the operator its lines: one per unit, with what joined, what stayed apart and why.
 3. Record each unit with `board.mjs <orchDir> unit`; fold a related ticket into the running writer, never a second one.
-4. Move each ticket yourself (In Progress at start, In Review at PR open, Done at merge) and audit with `status-audit.mjs --board`.
+4. Move each ticket yourself (In Progress at start, In Review at PR open, Done at merge), audit with `status-audit.mjs --board`, and close the unit with `board.mjs <orchDir> unit <name> --closed <PR>` once every member is reconciled.
 
 ## State and persistence
 
