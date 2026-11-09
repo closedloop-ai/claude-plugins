@@ -21,7 +21,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { decideCloudPlacement } from "../../fleet-orchestrator/scripts/cloud-placement.mjs";
-import { readSessionRecord, sessionLiveTicket } from "./session-record.mjs";
+import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from "./session-record.mjs";
 import { gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate.mjs";
 import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
 
@@ -74,22 +74,9 @@ function runCodex(args, { run = runCommand, cwd, timeout = COMMAND_MS } = {}) {
 
 /** Refuse an arbitrary checkout or a fabricated Vibe record before reading its operator. */
 function requireVibeSession(worktree, ticket) {
-  if (typeof worktree !== "string" || !path.isAbsolute(worktree)) throw new Error("an absolute Vibe worktree is required");
-  const root = git(worktree, ["rev-parse", "--show-toplevel"]);
-  if (realpathSync(root) !== realpathSync(worktree)) throw new Error("use the exact Vibe worktree root");
-  const privateDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
-  const commonDir = git(worktree, ["rev-parse", "--git-common-dir"]);
-  if (!existsSync(path.join(privateDir, "commondir")) || !lstatSync(path.join(worktree, ".git")).isFile()) throw new Error("cloud import requires a Vibe-created linked worktree");
-  const record = readSessionRecord(worktree);
-  if (!record || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(record.slug ?? "") || record.branch !== `vibe/${record.slug}`) throw new Error("a Vibe-created session record and branch are required");
-  const canonical = path.join(path.dirname(realpathSync(commonDir)), ".claude", "worktrees", `vibe-${record.slug}`);
-  if (realpathSync(worktree) !== canonical) throw new Error("Vibe worktree is outside its canonical creation path");
-  if (git(worktree, ["branch", "--show-current"]) !== record.branch) throw new Error("Vibe branch and worktree disagree");
-  if (record.worktree && realpathSync(record.worktree) !== realpathSync(worktree)) throw new Error("Vibe record belongs to another worktree");
+  const record = assertVibeCreatedWorktree(worktree);
   if (record.ticket !== ticket || sessionLiveTicket(record) !== ticket || typeof record.liveTicketCreatedBySession !== "boolean") throw new Error("Vibe session ticket and ownership provenance do not match the request");
-  if (!record.operator?.id || !record.operator?.email || !record.operator?.name) throw new Error("Vibe operator identity is missing");
-  if (!/^[a-f0-9]{40}$/i.test(record.baseCommit ?? "") || !Number.isFinite(Date.parse(record.createdAt ?? ""))) throw new Error("Vibe creation base and time are missing");
-  if (runCommand("git", ["-C", worktree, "merge-base", "--is-ancestor", record.baseCommit, "HEAD"]).status !== 0) throw new Error("Vibe creation base is not an ancestor of this worktree");
+  if (!record.operator?.name) throw new Error("Vibe operator name is required for cloud commit attribution");
   return record;
 }
 

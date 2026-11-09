@@ -99,7 +99,7 @@ test("ISS-13760 old subject snapshots use the driver checker revision", (t) => {
 });
 
 test("ISS-13760 production default records current driver provenance", () => {
-  const currentVersion = "1.1.61";
+  const currentVersion = "1.1.63";
   const raw = native(true, vibeRoot, currentVersion);
   const currentExpected = { ...expected, version: currentVersion };
   const nativeCollected = collectClaudeEval(raw, [caseId], currentExpected);
