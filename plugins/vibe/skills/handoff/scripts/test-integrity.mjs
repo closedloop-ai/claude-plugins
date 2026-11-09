@@ -19,7 +19,7 @@ const QUERY_ASSERTION = /queryBy(?:Role|Text|LabelText|TestId|PlaceholderText|Di
 const COUNT_ONE = /(?:toHaveCount|toHaveLength)\(\s*1\s*\)/;
 const LAYOUT_SURFACE = /\b(?:card|metric|summary)\b/i;
 // A busy or loading count is state, not card layout (PC-2, accepted 2026-11-09).
-const BUSY_STATE = /aria-busy|\bbusy\b|loading/i;
+const BUSY_STATE = /aria-busy|\bbusy\b|\bloading\b/i;
 const PROOF_CLASSES = new Set(["responsive", "absence", "layout"]);
 const SHA = /^[a-f0-9]{40}$/;
 
@@ -286,14 +286,23 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
   const line = Number(proof.assertionLocation.match(/:(\d+):\d+$/)?.[1]);
   if (!Number.isInteger(line)) return false;
   // A direct frame on another assertion's line means that assertion failed, not this candidate.
+  // With a Proxy instrumenter frame, the direct frame is the instrumenter's source map, which can
+  // land on an unrelated multiline assertion (ISS-13699's real runs all framed one line), so only
+  // a runner-owned frame is checked against other assertions' spans.
   const frameLine = Number(new RegExp(`^\\s*❯\\s+${matcher}\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?:(\\d+):\\d+`, "m").exec(failure)?.[1]);
-  if (Number.isInteger(frameLine) && frameLine !== line && /\bexpect\s*\(/.test(source.split("\n")[frameLine - 1] ?? "")) return false;
+  const runnerFrame = !new RegExp(`^\\s*❯\\s+Proxy\\.${matcher}\\s`, "m").test(failure);
+  if (Number.isInteger(frameLine) && frameLine !== line && (/\bexpect\s*\(/.test(source.split("\n")[frameLine - 1] ?? "")
+    || runnerFrame && parsedAssertions(source, [{ line: frameLine }]).some((other) => other.line !== line))) return false;
   let story = null;
   for (const declaration of source.matchAll(/^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+)/gm)) {
     if (lineNumberAt(source, declaration.index) > line) break;
     story = declaration[1] ?? null;
   }
-  if (story) return failure.includes(`> ${story.replace(/([a-z0-9])([A-Z])/g, "$1 $2")}`);
+  if (story) {
+    const spaced = story.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // The header names exactly this story, never a sibling whose name it prefixes.
+    return new RegExp(`^\\s*FAIL\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?\\s+>\\s+${spaced}\\s*(?:>|$)`, "m").test(failure);
+  }
   // A shared play helper has no enclosing export; its receipt still binds one
   // adjacent source mutation and the runner's matching assertion method.
   return true;

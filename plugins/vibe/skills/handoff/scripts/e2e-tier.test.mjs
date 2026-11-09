@@ -187,3 +187,27 @@ test("ISS-13846 review F1 a probed commit that is not a full SHA never reaches t
   assert.deepEqual(tierEvidenceProblems(record(injected), [desktop], probe(injected)).length > 0, true);
   assert.deepEqual(calls, [], "no remote command is built from a non-SHA commit");
 });
+
+test("ISS-13846 review A3 the generic slot report cannot carry a runner with a harness or another head", () => {
+  const commit = "5afa61faa88a057e2f67df4da923a7be6e46adf5";
+  const desktop = "apps/desktop/test/e2e/shared-paged-source-documents.spec.ts";
+  const capability = { selectedTier: "C", probedCommit: commit,
+    container: { ...container, dockerReachable: false }, native: { available: false },
+    remote: { available: true, command: `~/vibe-remote/e2e-slot.sh --head ${commit} proof-owner <command...>`,
+      runnerHost: "selected-second-laptop", runnerWorktree: "/selected/iss-13699", probeOwner: "proof-owner",
+      source: "SSH exact-head probe passed",
+      desktopHarness: { available: false, reason: NO_DISPLAYLESS_ELECTRON, probe: "remote selected-tier displayless probe failed", probedCommit: commit } },
+    unavailableSpecs: [desktop], ciCoverage: ["desktop-e2e-validation.yml:desktop-e2e/validated"] };
+  const report = { kind: "selected-runner-desktop-capability/v2", head: commit,
+    worktree: "/selected/iss-13699", platform: "darwin", linuxHarness: false };
+  const probe = generic => request => request.nativeDesktop
+    ? { exitCode: 2, output: "Usage: e2e-slot.sh [--head <sha>] <owner-label> <command...>" }
+    : { exitCode: 0, output: JSON.stringify(generic) };
+  assert.deepEqual(specExecutionLimitation(capability, desktop, commit, probe(report)),
+    { tier: "C", kind: "displayless", displaylessLimitation: NO_DISPLAYLESS_ELECTRON }, "positive control");
+  for (const [changed, why] of [
+    [{ ...report, platform: "linux", linuxHarness: true }, "a Linux runner with the displayless harness"],
+    [{ ...report, head: "b".repeat(40) }, "a report from another head"],
+    [{ ...report, worktree: "/selected/other" }, "a report from another worktree"],
+  ]) assert.equal(specExecutionLimitation(capability, desktop, commit, probe(changed)), null, why);
+});

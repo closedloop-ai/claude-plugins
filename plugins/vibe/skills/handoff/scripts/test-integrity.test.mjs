@@ -839,3 +839,69 @@ test("ISS-13846 review F3 a real card count keeps its layout proof while a busy 
   assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
     ["layout:src/documents-list.test.tsx:3"], "the card comes only from the test's context; the busy count is state");
 });
+
+test("ISS-13846 review A1 A2 Storybook proof binds the exact story and never another multiline assertion", t => {
+  const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", [
+    "export const Live: Story = {",
+    "  play: async ({ canvasElement }) => {",
+    '    const idleLoadingRow = canvasElement.querySelector("[data-paged-list-loading-row]");',
+    "    await expect(idleLoadingRow).toBeNull();",
+    "    await expect(",
+    '      canvasElement.querySelector("[data-stale]"),',
+    "    ).toBeNull();",
+    "  },",
+    "};",
+    "export const LiveEmpty: Story = {};",
+  ].join("\n"), ["expect(idleLoadingRow)"]);
+  const read = file => file === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  assert.equal(candidate.line, 4);
+  const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
+  const edit = { old: '    const idleLoadingRow = canvasElement.querySelector("[data-paged-list-loading-row]");',
+    new: '    const idleLoadingRow = (() => { const row = document.createElement("div"); row.setAttribute("data-paged-list-loading-row", ""); canvasElement.append(row); return canvasElement.querySelector("[data-paged-list-loading-row]"); })();' };
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-exact-story-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let n = 0;
+  const problems = (story, frame, instrumented = false) => {
+    const raw = [` FAIL   0 (chromium)  stories/surfaces-v2/v2-documents-list.stories.tsx > ${story}`,
+      "AssertionError: expected <div></div> to be null",
+      ...(instrumented ? [" ❯ Proxy.toBeNull node_modules/.cache/storybook/sb-vitest/vitest/deps/test.js:10:5"] : []),
+      ` ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:${frame}`,
+      " Failed Tests 1", " Test Files 1 failed"].join("\n");
+    const receipt = { candidate: candidate.id, target: candidate.path, command, mutationExit: 1, mutationOutput: raw,
+      restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
+      beforeSha256: hash(fixture.source), mutatedSha256: hash(fixture.source.replace(edit.old, edit.new)), mutationEdit: edit };
+    const name = `story-${n++}.json`;
+    const bytes = JSON.stringify(receipt);
+    writeFileSync(path.join(dir, name), bytes);
+    const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+      mutation: "insert one loading row", presentState: "row inside the queried cell",
+      assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+      command, observedFailure: raw, restoredPass: true, commit: COMMIT, ownerBoundary: "production",
+      mountedSignal: "idle cell mounted", mutationRun: { command, exitCode: 1, assertionFailure: raw },
+      rawReceipt: name, rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+    return testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, dir);
+  };
+  assert.deepEqual(problems("Live", "1:3"), [], "positive control: the exact story, framed on its story object");
+  assert.match(problems("Live", "7:7").join("\n"), /exact assertion failure/,
+    "A1: the runner framed the unchanged multiline assertion at its matcher line");
+  assert.match(problems("Live Empty", "10:3").join("\n"), /exact assertion failure/,
+    "A2: a sibling story whose name the candidate's story prefixes");
+  assert.deepEqual(problems("Live", "7:7", true), [],
+    "a Proxy instrumenter run maps its direct frame by source map, which ISS-13699's real runs placed on an unrelated assertion");
+  assert.match(problems("Live Empty", "1:3", true).join("\n"), /exact assertion failure/,
+    "the instrumenter path still binds the exact story");
+});
+
+test("ISS-13846 review A4 a card count whose locator merely contains loading letters keeps its layout proof", () => {
+  const fixture = changed("src/documents-list.test.tsx", [
+    'test("renders one card in the narrow layout", () => {',
+    '  expect(screen.getAllByTestId("document-card-uploading")).toHaveLength(1);',
+    '  expect(screen.getAllByTestId("document-loading-row")).toHaveLength(1);',
+    "});",
+  ].join("\n"), ["toHaveLength"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
+    ["layout:src/documents-list.test.tsx:2"], "uploading is a card state word, a loading row is state");
+});
