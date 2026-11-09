@@ -1,56 +1,106 @@
-// PostToolUse guard for a long-running fleet-orchestrator chat whose per-request
-// context has grown large. Every request re-reads the whole conversation from the
-// prompt cache: on 2026-11-09 one orchestrator chat spent $87 on 409 requests,
-// almost all of it cache reads at 320k to 420k tokens per request, and nothing
-// told the operator. The operator's ruling (ISS-13859): detect it, keep the limits in a
-// file the operator can edit, and recommend a handoff for the operator to decide,
-// never a hard stop.
+// vibe's compaction control for a long-running fleet-orchestrator chat in Claude
+// Code (ISS-13859; the operator ruled on 2026-11-09 to "rescope to compaction").
+// Every request re-reads the whole conversation from the prompt cache, so the
+// cost of a request follows where compaction happens and what its summary keeps.
+//
+// PostToolUse (contextGuard): when the chat was launched without
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW (Claude Code reads it at launch, 100k to 1M
+// tokens, over every other window setting), the operator is told once how to
+// relaunch with the window in <fleetHome>/context-guard.json. Nothing writes the
+// variable or the autoCompactWindow setting, which would change every chat. At
+// flushAtPercent of the window the model is told, once per compaction cycle, to
+// bring the program's state files current (with no window, at each step of growth).
+// PreCompact (compactionInstructions): Claude Code uses the hook's stdout as the
+// summary's instructions, so the summary leaves out what those files hold.
 //
 // Context = input + cache read + cache write tokens of the latest assistant
-// request in the transcript. The thresholds are <fleetHome>/context-guard.json
-// (fleet-home.mjs contextGuardConfig), read on every call. At the warn threshold
-// it says so once; at the handoff threshold it recommends a handoff and repeats
-// that every remindEveryMinutes. A drop below warn (a compaction) re-arms both.
-// Each chat is told its own handoff file, in the home's active program dir (else
-// the home), named for its session id and the day it was first named, so it
-// never shares a path or points at another chat's notes (ticket v3, after the
-// local version had an unrelated chat offer another chat's handoff).
-//
-// Only sessions that loaded fleet-orchestrator, never a subagent's tool call. The
-// load check never rescans the transcript: state keeps the offset scanned so far,
-// so a later call reads only what was appended plus a 4 KB overlap. Fails open: any error
-// returns null, so a tool call is never blocked and nothing is printed.
-//
-// Runs from post-tool-use.mjs.
+// request. Only sessions that loaded fleet-orchestrator, never a subagent's tool
+// call. A load is a parsed Claude Code entry (the Skill tool call or the
+// injected isMeta base line), never marker text a prompt or command quotes, and
+// never the hook skill record, which a Codex-form "$fleet-orchestrator" prompt
+// writes in any runtime. The load check never rescans the transcript: state
+// keeps the offset of the last whole line scanned. Fails open: any error
+// returns null, so nothing is printed and no tool call or compaction is blocked.
 
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { chatHandoffDir, chatHandoffFile, contextGuardConfig, defaultHome } from "../skills/fleet-orchestrator/scripts/fleet-home.mjs";
-import { hookStatePath, readHookSkill } from "./hook-session-scope.mjs";
-import { loadsSkill } from "./skill-transcript.mjs";
+import { resolveWorkDir } from "../skills/codex-fleet-monitor/scripts/work-dir.mjs";
+import { COMPACT_WINDOW_RANGE, contextGuardConfig, defaultHome, PROGRAM_READING } from "../skills/fleet-orchestrator/scripts/fleet-home.mjs";
+import { hookStatePath } from "./hook-session-scope.mjs";
 
 const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
-// Longer than any skill load marker, so one split across two chunks is still seen whole.
-const SCAN_OVERLAP_BYTES = 4096;
+const ORCHESTRATOR_SKILL = "vibe:fleet-orchestrator";
+const ORCHESTRATOR_BASE_LINE = /^Base directory for this skill: [^\n]*\/skills\/fleet-orchestrator$/;
 const USAGE_WINDOWS = [256 * 1024, 2 * 1024 * 1024, 8 * 1024 * 1024];
+const WINDOW_VARIABLE = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+// Claude Code's reading of the variable: tokens, or a k/M suffix; outside COMPACT_WINDOW_RANGE it clamps.
+const WINDOW_VALUE = /^\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*$/;
 
-const ContextLevel = Object.freeze({ Warn: "warn", Handoff: "handoff" });
-
-/** The PostToolUse result for `event`: a notice when one is due, else null. Never throws. */
-export function contextGuard(event, env = process.env, now = Date.now()) {
+/** The PostToolUse result for `event`: the window notice and the flush prompt when due, else null. Never throws. */
+export function contextGuard(event, env = process.env) {
   try {
-    return evaluate(event, env, now);
+    return evaluate(event, env);
   } catch {
     return null;
   }
 }
 
-function evaluate(event, env, now) {
+/** The PreCompact stdout for `event`: instructions for the compaction summary in a fleet-orchestrator chat, else null. Never throws. */
+export function compactionInstructions(event, env = process.env) {
+  try {
+    const chat = fleetChat(event, env);
+    const dirs = chat && stateDirs(chat.home);
+    if (!dirs) return null;
+    const { programDir, home } = dirs;
+    return [
+      "This chat is a vibe fleet-orchestrator chat. Its program state lives in files that vibe's SessionStart hook has the chat reread right after this compaction:",
+      ...PROGRAM_READING.map((name) => `- ${path.join(programDir, name)}`),
+      `- ${path.join(home, "lessons.md")} and ${path.join(home, "standing-rulings.md")}`,
+      "Do not restate what those files hold (program history, the board, recorded rulings, lessons). Keep the summary short, and keep only:",
+      "- every question to the operator that is still open, word for word;",
+      "- every operator ruling not yet written to rulings.md, quoted with who said it and when;",
+      "- the name of every live worker, session, watcher and background job, with what it is doing and where its output goes;",
+      "- every promise made to the operator that is not yet kept.",
+    ].join("\n");
+  } catch {
+    return null;
+  }
+}
+
+function evaluate(event, env) {
+  const chat = fleetChat(event, env);
+  if (!chat) return null;
+  const { state, config, stateFile, size } = chat;
+  const result = {};
+  const window = windowTokens(env[WINDOW_VARIABLE]);
+  if (window === null && state.windowNoticeShown !== true) {
+    state.windowNoticeShown = true;
+    result.systemMessage = `This fleet-orchestrator chat has no usable ${WINDOW_VARIABLE}, so it compacts where Claude Code's own settings put it. To compact at ${kilo(config.compactWindowTokens)} (set in ${config.file}), relaunch it with: ${WINDOW_VARIABLE}=${config.compactWindowTokens} claude --resume ${event.session_id}`;
+  }
+  const tokens = latestContextTokens(event.transcript_path, size);
+  const dirs = stateDirs(chat.home);
+  const flushAt = (window ?? config.compactWindowTokens) * config.flushAtPercent / 100;
+  if (tokens !== null && tokens < flushAt) state.flushedAt = null;
+  // With no window the chat compacts where Claude Code's own settings put it, so instead of once
+  // per cycle the prompt repeats each time the context grows by the headroom a window would leave.
+  const step = window === null ? config.compactWindowTokens * (100 - config.flushAtPercent) / 100 : Number.POSITIVE_INFINITY;
+  const flushedAt = Number.isFinite(state.flushedAt) ? state.flushedAt : null;
+  if (dirs && tokens !== null && tokens >= flushAt && (flushedAt === null || tokens - flushedAt >= step)) {
+    state.flushedAt = tokens;
+    const point = window === null
+      ? `has no usable ${WINDOW_VARIABLE}, so it compacts where Claude Code's own settings put it; this repeats every ${kilo(step)} of growth`
+      : `compacts at about ${kilo(window)}`;
+    result.context = `CONTEXT GUARD (flush): this chat re-reads about ${kilo(tokens)} tokens per request and ${point}. Before that, bring the program state files in ${dirs.programDir} current (${PROGRAM_READING.join(", ")}): open operator questions, rulings not yet in rulings.md, live workers and sessions, and promises to the operator. After compaction vibe's SessionStart reading list reloads them.`;
+  }
+  return writeState(stateFile, state, Object.keys(result).length > 0 ? result : null);
+}
+
+/** The state of a main-thread fleet-orchestrator chat for `event`, or null (after saving its scan) for any other. */
+function fleetChat(event, env) {
   if (event?.agent_id) return null;
   const transcript = event?.transcript_path;
-  const userHome = env.HOME || os.homedir();
-  const stateFile = hookStatePath(event?.session_id, "context-guard", userHome);
+  const stateFile = hookStatePath(event?.session_id, "context-guard", env.HOME || os.homedir());
   if (typeof transcript !== "string" || transcript === "" || !stateFile) return null;
   const home = defaultHome(env);
   const config = contextGuardConfig(home);
@@ -59,46 +109,86 @@ function evaluate(event, env, now) {
   const size = statSync(transcript).size;
   if (state.matched !== true) {
     const from = Number.isInteger(state.scannedBytes) && state.scannedBytes <= size ? state.scannedBytes : 0;
-    state.matched = readHookSkill(event.session_id, userHome) === "fleet-orchestrator" || scanLoadsOrchestrator(transcript, from, size);
-    state.scannedBytes = size;
+    const scan = scanLoadsOrchestrator(transcript, from, size);
+    state.matched = scan.matched;
+    state.scannedBytes = scan.scannedBytes;
     if (!state.matched) return writeState(stateFile, state, null);
   }
-  const tokens = latestContextTokens(transcript, size);
-  if (tokens === null) return writeState(stateFile, state, null);
-  const level = levelFor(tokens, config);
-  const due = level !== null && (state.lastLevel !== level
-    || (level === ContextLevel.Handoff && now - (state.lastNotifiedAt ?? 0) >= config.remindEveryMinutes * 60_000));
-  state.lastTokens = tokens;
-  if (level === null) state.lastLevel = null;
-  if (due) {
-    state.lastLevel = level;
-    state.lastNotifiedAt = now;
-    if (typeof state.handoffDay !== "string") state.handoffDay = new Date(now).toISOString().slice(0, 10);
+  return { state, config, stateFile, size, home };
+}
+
+/** The window Claude Code compacts at for a CLAUDE_CODE_AUTO_COMPACT_WINDOW value, or null when unset or unusable. */
+function windowTokens(value) {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const match = WINDOW_VALUE.exec(value);
+  if (!match) return null;
+  const scale = { "": 1, k: 1_000, m: 1_000_000 }[match[2].toLowerCase()];
+  const tokens = Number(match[1]) * scale;
+  return Number.isFinite(tokens) && tokens > 0 ? Math.min(Math.max(tokens, COMPACT_WINDOW_RANGE[0]), COMPACT_WINDOW_RANGE[1]) : null;
+}
+
+/** The active program's dir and the home, or null with no active program (no state files to flush or reread). */
+function stateDirs(home) {
+  try {
+    const resolved = resolveWorkDir(home);
+    return resolved.program ? { programDir: resolved.dir, home: path.resolve(home) } : null;
+  } catch {
+    return null;
   }
-  const handoffFile = due ? chatHandoffFile(chatHandoffDir(home), event.session_id, state.handoffDay) : null;
-  return writeState(stateFile, state, due ? notice(level, tokens, config, handoffFile) : null);
 }
 
-/** The level `tokens` reaches under `config`, or null below the warn threshold. */
-function levelFor(tokens, config) {
-  if (tokens >= config.handoffContextTokens) return ContextLevel.Handoff;
-  if (tokens >= config.warnContextTokens) return ContextLevel.Warn;
-  return null;
-}
-
-/** Whether bytes [from, size) of `file` (with a small overlap before `from`) show a fleet-orchestrator load. */
+/**
+ * Whether the whole lines in bytes [from, size) of `file` hold a fleet-orchestrator load, and the
+ * offset to resume from: past the last whole line, so a line still being written is read next time.
+ */
 function scanLoadsOrchestrator(file, from, size) {
   const fd = openSync(file, "r");
   try {
-    for (let start = Math.max(0, from - SCAN_OVERLAP_BYTES); start < size; start += SCAN_CHUNK_BYTES - SCAN_OVERLAP_BYTES) {
-      const length = Math.min(SCAN_CHUNK_BYTES, size - start);
-      if (loadsSkill(readBytes(fd, start, length).toString("utf8"), "fleet-orchestrator")) return true;
-      if (start + length >= size) break;
+    let offset = from;
+    let insideLongLine = false;
+    while (offset < size) {
+      const chunk = readBytes(fd, offset, Math.min(SCAN_CHUNK_BYTES, size - offset));
+      const end = chunk.lastIndexOf(0x0a);
+      if (end < 0) {
+        if (offset + chunk.length >= size) break;
+        // One line longer than a chunk is a tool result or similar, never a load entry: skip to its end.
+        offset += chunk.length;
+        insideLongLine = true;
+        continue;
+      }
+      const lines = chunk.subarray(0, end).toString("utf8").split("\n");
+      if (lines.slice(insideLongLine ? 1 : 0).some(isOrchestratorLoad)) return { matched: true, scannedBytes: size };
+      offset += end + 1;
+      insideLongLine = false;
     }
-    return false;
+    return { matched: false, scannedBytes: offset };
   } finally {
     closeSync(fd);
   }
+}
+
+/** Whether transcript `line` is a main-thread Claude Code load of fleet-orchestrator. */
+function isOrchestratorLoad(line) {
+  if (!line.includes("fleet-orchestrator")) return false;
+  let entry;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return false;
+  }
+  if (entry?.isSidechain === true) return false;
+  const content = entry?.message?.content;
+  if (entry?.type === "assistant") {
+    return Array.isArray(content) && content.some((block) => block?.type === "tool_use" && block.name === "Skill" && block.input?.skill === ORCHESTRATOR_SKILL);
+  }
+  if (entry?.type !== "user" || entry.isMeta !== true) return false;
+  return entryTexts(content).some((text) => ORCHESTRATOR_BASE_LINE.test(text.split("\n", 1)[0]));
+}
+
+function entryTexts(content) {
+  if (typeof content === "string") return [content];
+  if (!Array.isArray(content)) return [];
+  return content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text);
 }
 
 /** Input + cache read + cache write tokens of the latest main-thread assistant request in `file`, or null. */
@@ -164,17 +254,3 @@ function writeState(file, state, result) {
 }
 
 const kilo = (tokens) => `${Math.round(tokens / 1000)}k`;
-
-/** The user line and the model context for a due notice at `level`, naming this chat's own `handoffFile`. */
-export function notice(level, tokens, config, handoffFile) {
-  if (level === ContextLevel.Warn) {
-    return {
-      systemMessage: `Context is ${kilo(tokens)} tokens per request (warn at ${kilo(config.warnContextTokens)}). Plan a handoff to a fresh chat soon to save tokens.`,
-      context: `CONTEXT GUARD (warn): this chat now re-reads about ${kilo(tokens)} tokens on every request (warn threshold ${kilo(config.warnContextTokens)}, set in ${config.file}). Finish the current step, keep this chat's own handoff notes current in ${handoffFile}, and expect to recommend a handoff at ${kilo(config.handoffContextTokens)}.`,
-    };
-  }
-  return {
-    systemMessage: `Context is ${kilo(tokens)} tokens per request (handoff recommended at ${kilo(config.handoffContextTokens)}). A fresh orchestrator chat would cut the token burn; it is your call.`,
-    context: `CONTEXT GUARD (handoff recommended): this chat re-reads about ${kilo(tokens)} tokens on every request, past the ${kilo(config.handoffContextTokens)} threshold in ${config.file}. Recommend a handoff to the operator and let them decide; do not stop or pause any work on your own. In your next reply, say in one line how large the context is and that a fresh chat would save tokens, and ask whether to hand off now. Meanwhile keep this chat's own handoff file ${handoffFile} current, never another chat's (live state, in-flight workers, queued work, rulings, pitfalls, and a "First steps" section that invokes vibe:fleet-orchestrator and vibe:codex-fleet-monitor) so a handoff costs nothing extra when they say yes. Only after the operator agrees: stop the work this chat owns that a new chat would orphan (its watcher and delivery loops, never independent workers) and give them a ready-to-paste prompt for the new orchestrator that points at the handoff file.`,
-  };
-}

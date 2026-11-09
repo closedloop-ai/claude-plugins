@@ -64,12 +64,15 @@ export function mergeResults(eventName, results) {
   return messages.length > 0 ? { systemMessage: messages.join("\n"), hookSpecificOutput: output } : { hookSpecificOutput: output };
 }
 
-/** Reads the event on stdin, runs `dispatch(event, report)` and prints its output; never exits nonzero. */
+/**
+ * Reads the event on stdin, runs `dispatch(event, report)` and prints its output, a string as plain
+ * text (a PreCompact hook's stdout is the compaction instructions) and anything else as JSON; never exits nonzero.
+ */
 export function runHookScript(scriptName, dispatch) {
   const report = (line) => process.stderr.write(`${line}\n`);
   try {
     const output = dispatch(JSON.parse(readFileSync(0, "utf8") || "{}"), report);
-    if (output) process.stdout.write(`${JSON.stringify(output)}\n`);
+    if (output) process.stdout.write(`${typeof output === "string" ? output : JSON.stringify(output)}\n`);
   } catch (error) {
     report(`${scriptName}: ${errorText(error)}`);
   }

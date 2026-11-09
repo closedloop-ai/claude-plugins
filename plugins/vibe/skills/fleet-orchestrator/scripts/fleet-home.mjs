@@ -8,15 +8,14 @@
 //
 // Layout (codex-fleet-monitor/scripts/work-dir.mjs resolves it for every script):
 //   <fleetHome>/config.env, standing-rulings.md, lessons.md, handover.md   reused by every program
-//   <fleetHome>/context-guard.json                                        the context guard's thresholds
-//   <fleetHome>/programs/<slug>/HANDOFF-<date>-<chat>.md                  one chat's handoff notes (in the home with no program)
+//   <fleetHome>/context-guard.json                                        compaction limits for vibe's context hooks
 //   <fleetHome>/current                                                   the active program's slug
 //   <fleetHome>/programs/<slug>/                                          that program's state
 //
 // Usage: fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet [--home <fleetHome>]
 //        fleet-home.mjs shape no-writer|one-writer|fleet [--home <fleetHome>]
 //        fleet-home.mjs close [--home <fleetHome>]
-//        fleet-home.mjs resume [--home <fleetHome>] [--chat <session id>]
+//        fleet-home.mjs resume [--home <fleetHome>]
 //        fleet-home.mjs check [--home <fleetHome or program dir>]
 //        fleet-home.mjs migrate --from <flat work dir> --program <slug> [--home <fleetHome, default --from>] [--dry-run]
 //
@@ -40,8 +39,7 @@
 // `PLUGIN-VERSION-UNANSWERED` while an outdated plugin has no recorded
 // choice, else the last result. Every new chat runs the check again.
 // `resume` also writes the default context-guard.json when the home has none
-// and reads the resumed program's newest HANDOFF-*.md first (vibe's
-// context-guard hook; the operator's 2026-11-09 ruling).
+// (vibe's compaction hooks; the operator's 2026-11-09 ruling).
 // `check` prints, and exits 1 on, state outside the home or the program:
 // `FLAT <name>` (program state at the home's top), `OUTSIDE <link> -> <target>`
 // (a symlink in the home resolving outside it), `CONFIG <key>` (a per-program
@@ -60,7 +58,7 @@
 // are repointed. It refuses while a watcher holds the lock. rulings.md moves
 // with the program: copy its standing rulings into standing-rulings.md.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -71,6 +69,8 @@ import { skillFreshnessProblem } from "./skill-freshness.mjs";
 export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "context-guard.json", "current", "programs"];
 const PROGRAM_DIRS = ["sessions", "prompts", "requests", "findings", "evidence"];
 const PROGRAM_FILES = ["resume-log.md", "rulings.md", "attention.md"];
+/** The program files a new chat's reading list rereads, in reading order. */
+export const PROGRAM_READING = Object.freeze(["rulings.md", "attention.md", "resume-log.md", "board.md"]);
 export const Shape = Object.freeze({ NoWriter: "no-writer", OneWriter: "one-writer", Fleet: "fleet" });
 const SHAPE_NOTES = Object.freeze({
   [Shape.NoWriter]: "nobody writes code; the resume log, rulings, research and evidence rules apply, the board, watcher, slots, QA and merge sections do not",
@@ -90,9 +90,7 @@ export function homeProblems(dir) {
   if (!resolved.home) return [`FLAT-LAYOUT ${resolved.dir}: migrate it into a fleet home with fleet-home.mjs migrate --from <dir> --program <slug>`];
   const problems = [];
   for (const name of readdirSync(resolved.home)) {
-    if (!REUSABLE.includes(name) && !name.startsWith(".") && !HANDOFF_FILE.test(name)) {
-      problems.push(`FLAT ${name}: program state belongs in programs/${resolved.program}/`);
-    }
+    if (!REUSABLE.includes(name) && !name.startsWith(".")) problems.push(`FLAT ${name}: program state belongs in programs/${resolved.program}/`);
   }
   problems.push(...outsideLinks(resolved.home, resolved.home));
   const homeConfig = readConfigFile(path.join(resolved.home, "config.env"));
@@ -164,12 +162,8 @@ function unmanagedState(dir) {
   }).map((name) => `UNMANAGED-STATE ${path.join(dir, name)}: Codex thread state outside sessions/; start sessions with fleet.sh`);
 }
 
-/**
- * The reading list a new chat follows. A chat resuming itself after a compaction passes its own
- * session id as `chat` (null when unknown) and is shown only its own handoff, never a sibling
- * chat's newer one in the same program; without `chat` it is the program's newest handoff.
- */
-export function resumeLines(home, options = {}) {
+/** The reading list a new chat follows. */
+export function resumeLines(home) {
   const lines = ["config.env", "standing-rulings.md", "lessons.md", "handover.md"].filter((name) => existsSync(path.join(home, name)))
     .map((name) => `READ ${path.join(home, name)}`);
   lines.push(...contextGuardLines(home));
@@ -179,9 +173,7 @@ export function resumeLines(home, options = {}) {
   } catch {}
   if (!resolved.program) return [...lines, `NO-ACTIVE-PROGRAM: start one with fleet-home.mjs start <slug>; it reads no earlier program's state`];
   lines.push(`ACTIVE ${resolved.program} ${resolved.dir}`, shapeLine(resolved.dir), pluginVersionLine(resolved.dir));
-  const handoff = Object.hasOwn(options, "chat") ? options.chat && newestHandoff(resolved.dir, options.chat) : newestHandoff(resolved.dir);
-  if (handoff) lines.push(`READ ${handoff}`);
-  for (const name of ["rulings.md", "attention.md", "resume-log.md", "board.md"]) {
+  for (const name of PROGRAM_READING) {
     if (existsSync(path.join(resolved.dir, name))) lines.push(`READ ${path.join(resolved.dir, name)}`);
   }
   lines.push(...relaunchLines(resolved.dir));
@@ -351,21 +343,25 @@ function movedLinks(dir, moves, depth) {
   return links;
 }
 
-/** The context guard's threshold file, read by vibe's PostToolUse hook on every tool call. */
+/** The compaction limits file, read by vibe's PostToolUse and PreCompact hooks on every call. */
 const CONTEXT_GUARD_FILE = "context-guard.json";
-const CONTEXT_GUARD_DEFAULTS = Object.freeze({ enabled: true, warnContextTokens: 200_000, handoffContextTokens: 300_000, remindEveryMinutes: 20 });
-const CONTEXT_GUARD_NUMBERS = ["warnContextTokens", "handoffContextTokens", "remindEveryMinutes"];
-const HANDOFF_FILE = /^HANDOFF-.*\.md$/;
+const CONTEXT_GUARD_DEFAULTS = Object.freeze({ enabled: true, compactWindowTokens: 300_000, flushAtPercent: 85 });
+// Claude Code accepts an auto-compact window from 100k to 1M tokens.
+export const COMPACT_WINDOW_RANGE = Object.freeze([100_000, 1_000_000]);
 
-/** The guard's settings: the defaults overlaid by `<home>/context-guard.json`; throws on a malformed file. */
+/** The limits: the defaults overlaid by `<home>/context-guard.json`; throws on a malformed file. */
 export function contextGuardConfig(home) {
   const file = path.join(home, CONTEXT_GUARD_FILE);
   const raw = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not a JSON object");
   const config = { ...CONTEXT_GUARD_DEFAULTS, ...raw };
   if (typeof config.enabled !== "boolean") throw new Error("enabled must be true or false");
-  for (const key of CONTEXT_GUARD_NUMBERS) {
-    if (typeof config[key] !== "number" || !Number.isFinite(config[key]) || config[key] <= 0) throw new Error(`${key} must be a positive number`);
+  const [min, max] = COMPACT_WINDOW_RANGE;
+  if (!Number.isInteger(config.compactWindowTokens) || config.compactWindowTokens < min || config.compactWindowTokens > max) {
+    throw new Error(`compactWindowTokens must be a whole number from ${min} to ${max}`);
+  }
+  if (typeof config.flushAtPercent !== "number" || !(config.flushAtPercent > 0 && config.flushAtPercent < 100)) {
+    throw new Error("flushAtPercent must be a number between 0 and 100");
   }
   return { ...config, file };
 }
@@ -375,41 +371,10 @@ function seedContextGuardConfig(home) {
   const file = path.join(home, CONTEXT_GUARD_FILE);
   if (existsSync(file)) return;
   const seed = {
-    _comment: "Edit freely; vibe's context guard rereads this on every tool call. Context = input + cache read + cache write tokens of the latest request, what every new request re-reads. It warns at warnContextTokens, recommends a handoff at handoffContextTokens and repeats that every remindEveryMinutes.",
+    _comment: "Edit freely; vibe rereads this on every call. compactWindowTokens is the CLAUDE_CODE_AUTO_COMPACT_WINDOW a fleet-orchestrator chat should be launched with. At flushAtPercent of that window the chat is told to bring its program state files current before Claude Code compacts it.",
     ...CONTEXT_GUARD_DEFAULTS,
   };
   writeFileSync(file, `${JSON.stringify(seed, null, 2)}\n`, { flag: "wx" });
-}
-
-/** The newest HANDOFF-*.md in `dir` (latest mtime, then name), only `chat`'s own when given, or null. */
-function newestHandoff(dir, chat) {
-  let names;
-  try {
-    names = readdirSync(dir).filter((name) => HANDOFF_FILE.test(name) && (chat === undefined || name.endsWith(`-${chat}.md`)));
-  } catch {
-    return null;
-  }
-  const files = names.map((name) => ({ file: path.join(dir, name), mtime: statSync(path.join(dir, name)).mtimeMs, name }));
-  files.sort((a, b) => b.mtime - a.mtime || b.name.localeCompare(a.name));
-  return files[0]?.file ?? null;
-}
-
-/**
- * The directory a chat keeps its handoff notes in: the active program's dir, else the home. A chat
- * never shares a handoff file: its name carries the chat's session id (a shared
- * path once had an unrelated chat offer another chat's handoff).
- */
-export function chatHandoffDir(home) {
-  try {
-    return resolveWorkDir(home).dir;
-  } catch {
-    return path.resolve(home);
-  }
-}
-
-/** One chat's handoff file in `dir`, named for the day it was first written and the chat's session id. */
-export function chatHandoffFile(dir, sessionId, day) {
-  return path.join(dir, `HANDOFF-${day}-${sessionId}.md`);
 }
 
 /** Seeds context-guard.json for `resume`; a failed write is reported, never a reason to drop the reading list. */
@@ -438,7 +403,7 @@ function contextGuardLines(home) {
 function main(argv) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
-    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" }, chat: { type: "string" },
+    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" },
   } });
   const home = values.home ? path.resolve(values.home) : defaultHome();
   const print = (lines) => process.stdout.write(lines.map((line) => `${line}\n`).join(""));
@@ -460,7 +425,7 @@ function main(argv) {
     return 0;
   }
   if (command === "resume") {
-    print([...seedLines(home), ...resumeLines(home, values.chat === undefined ? {} : { chat: values.chat || null })]);
+    print([...seedLines(home), ...resumeLines(home)]);
     return 0;
   }
   if (command === "check") {

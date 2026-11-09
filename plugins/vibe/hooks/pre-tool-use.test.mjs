@@ -156,10 +156,12 @@ test("results merge as deny > defer > ask > allow and keep every context", () =>
 test("hooks.json registers one command per event, and the PreToolUse matcher names exactly the routed tools", () => {
   const { hooks } = JSON.parse(readFileSync(path.join(HERE, "hooks.json"), "utf8"));
   const commands = (event) => hooks[event].flatMap((entry) => entry.hooks.map((hook) => hook.command));
-  assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "PreToolUse", "SessionStart", "UserPromptSubmit"]);
+  assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "PreCompact", "PreToolUse", "SessionStart", "UserPromptSubmit"]);
   assert.deepEqual(commands("PreToolUse"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs"']);
   assert.deepEqual(commands("PostToolUse"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs"']);
   assert.equal(hooks.PostToolUse[0].matcher, undefined, "the context guard measures after every tool call");
+  assert.deepEqual(commands("PreCompact"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.mjs"']);
+  assert.equal(hooks.PreCompact[0].matcher, undefined, "manual and automatic compactions both get the instructions");
   assert.deepEqual(commands("UserPromptSubmit"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs"']);
   assert.deepEqual(commands("SessionStart"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs"']);
   assert.equal(hooks.SessionStart[0].matcher, "compact");
