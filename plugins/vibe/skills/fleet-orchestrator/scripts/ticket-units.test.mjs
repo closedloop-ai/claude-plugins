@@ -123,3 +123,34 @@ test('group reads the in-flight units from the board and refuses malformed candi
   assert.equal(bad.status, 2);
   assert.match(bad.stderr, /ISS-1 needs its repo/);
 });
+
+test('the operator\'s open tickets under one PRD become one unit with nothing shared, as same PRD', () => {
+  const prd = (slug, extra = {}) => ticket(slug, { prd: 'PRD-7', operatorAssigned: true, ...extra });
+  const grouping = groupTickets({ tickets: [prd('ISS-1', { files: ['a.ts'] }), prd('ISS-2', { files: ['b.ts'] }), prd('ISS-3', { blockers: [{ slug: 'ISS-1', met: false }] })] });
+  assert.deepEqual(grouping.units.map((unit) => unit.tickets), [['ISS-1', 'ISS-2', 'ISS-3']]);
+  assert.deepEqual(grouping.blocked, [], 'a blocker in the same PRD stays inside the unit');
+  assert.deepEqual(groupLines(grouping), ['UNIT ISS-1 ISS-1, ISS-2, ISS-3: ISS-1~ISS-2 same PRD PRD-7; ISS-1~ISS-3 same PRD PRD-7; ISS-2~ISS-3 same PRD PRD-7']);
+});
+
+test('a PRD ticket assigned to someone else does not join through the PRD', () => {
+  const grouping = groupTickets({ tickets: [
+    ticket('ISS-1', { prd: 'PRD-7', operatorAssigned: true }),
+    ticket('ISS-2', { prd: 'PRD-7', operatorAssigned: true }),
+    ticket('ISS-3', { prd: 'PRD-7', operatorAssigned: false }),
+  ] });
+  assert.deepEqual(grouping.units.map((unit) => unit.tickets), [['ISS-1', 'ISS-2'], ['ISS-3']]);
+});
+
+test('a PRD ticket in another repository is that repository\'s own unit for the PRD, and both lines say why', () => {
+  const grouping = groupTickets({ tickets: [
+    ticket('ISS-1', { prd: 'PRD-7', operatorAssigned: true }),
+    ticket('ISS-2', { prd: 'PRD-7', operatorAssigned: true }),
+    ticket('ISS-3', { prd: 'PRD-7', operatorAssigned: true, repo: 'acme/plugins' }),
+  ] });
+  assert.deepEqual(grouping.units.map((unit) => unit.tickets), [['ISS-1', 'ISS-2'], ['ISS-3']]);
+  assert.deepEqual(groupLines(grouping), [
+    'UNIT ISS-1 ISS-1, ISS-2: ISS-1~ISS-2 same PRD PRD-7; PRD-7 also has ISS-3 in acme/plugins, a unit of its own: a PR cannot span repositories',
+    `UNIT ISS-3 ISS-3 alone: different repository from ISS-1, ISS-2; PRD-7 also has ISS-1, ISS-2 in ${APP}, a unit of its own: a PR cannot span repositories`,
+  ]);
+  assert.throws(() => groupTickets({ tickets: [ticket('ISS-1', { prd: 'prd seven' })] }), /not a PRD slug/);
+});

@@ -85,7 +85,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 
 ## Related tickets become one unit
 
-Related tickets go to one writer, one branch and one PR; each keeps its own criteria and statuses. Steps and the candidate sources: [references/ticket-units.md](./references/ticket-units.md).
+Related tickets go to one writer, one branch and one PR; each keeps its own criteria and statuses. When the program works a PRD, every open ticket under it assigned to the operator is one unit per repository. Steps and the candidate sources: [references/ticket-units.md](./references/ticket-units.md).
 
 1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
 2. Tell the operator its lines: one per unit, with what joined, what stayed apart and why.

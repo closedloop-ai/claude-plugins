@@ -12,6 +12,8 @@
 // candidates.json, gathered with cl-find-related-tickets and the closedloop-graph
 // tools (references/ticket-units.md says which tool fills which field):
 //   {"tickets": [{"slug", "repo": "<owner/repo>",
+//      "prd": "<the PRD it belongs to, from its artifact links>",
+//      "operatorAssigned": <true when the operator is its assignee>,
 //      "files": [<repo-relative paths the ticket is expected to change>],
 //      "historyFiles": [<paths only past changes touched (blast_radius_tickets)>],
 //      "surfaces": [<screen map ids>],
@@ -22,7 +24,12 @@
 // first listed ticket.
 //
 // Two tickets in the same repository join on a shared expected file, a shared
-// screen map entry or a collision pair. A pair that shares only history files
+// screen map entry or a collision pair. Open tickets under one PRD that are
+// assigned to the operator join as `same PRD <slug>` with nothing shared
+// (operator ruling, 2026-11-09: "if a PRD is being worked on, all tickets
+// assigned to the user under that PRD should be grouped together and worked
+// on as one PR"); one in another repository is that repository's own unit for
+// the PRD, and the line says so, because a PR cannot span repositories. A pair that shares only history files
 // joins too, labelled `(history)`; the orchestrator may keep that pair apart
 // with an `apart` entry and its one-line reason. `apart` on any other pair is
 // refused. Tickets in different repositories never join. A ticket with an
@@ -63,6 +70,7 @@ export function boardUnits(orchDir) {
 /** Why two tickets are related, strongest evidence first, or an empty list. */
 export function joinReasons(a, b, collisions = []) {
   const reasons = [];
+  if (a.prd && a.prd === b.prd && a.operatorAssigned === true && b.operatorAssigned === true) reasons.push(`same PRD ${a.prd}`);
   const files = new Set(a.files ?? []);
   for (const file of b.files ?? []) if (files.has(file)) reasons.push(`shared file ${file}`);
   const surfaces = new Set(a.surfaces ?? []);
@@ -143,9 +151,10 @@ export function groupLines({ units, blocked }) {
       lines.push(`UNIT ${unit.name} ${unit.tickets.join(", ")}: in flight (${unit.writer ?? "no writer yet"})`);
       continue;
     }
+    const split = unit.prdSplits.map((entry) => `; ${entry}`).join("");
     lines.push(unit.tickets.length === 1
-      ? `UNIT ${unit.name} ${unit.tickets[0]} alone: ${unit.apartReason}`
-      : `UNIT ${unit.name} ${unit.tickets.join(", ")}: ${unit.joins.map((join) => `${join.a}~${join.b} ${join.reasons.join(", ")}`).join("; ")}${unit.keptApart.length ? `; kept apart: ${unit.keptApart.join("; ")}` : ""}`);
+      ? `UNIT ${unit.name} ${unit.tickets[0]} alone: ${unit.apartReason}${split}`
+      : `UNIT ${unit.name} ${unit.tickets.join(", ")}: ${unit.joins.map((join) => `${join.a}~${join.b} ${join.reasons.join(", ")}`).join("; ")}${unit.keptApart.length ? `; kept apart: ${unit.keptApart.join("; ")}` : ""}${split}`);
   }
   for (const entry of blocked) lines.push(`BLOCKED ${entry.slug} by ${entry.blocker}: kept separate until ${entry.blocker} merges`);
   return lines;
@@ -158,6 +167,8 @@ function validTickets(candidates) {
     if (!SLUG.test(ticket?.slug ?? "")) throw new Error(`candidate ${JSON.stringify(ticket?.slug)} is not a ticket slug`);
     if (typeof ticket.repo !== "string" || !ticket.repo.includes("/")) throw new Error(`${ticket.slug} needs its repo as <owner>/<repo>`);
     if (seen.has(ticket.slug)) throw new Error(`${ticket.slug} is listed twice`);
+    if (ticket.prd !== undefined && !SLUG.test(ticket.prd ?? "")) throw new Error(`${ticket.slug} names prd ${JSON.stringify(ticket.prd)}, not a PRD slug`);
+    if (ticket.operatorAssigned !== undefined && typeof ticket.operatorAssigned !== "boolean") throw new Error(`${ticket.slug} needs operatorAssigned as true or false`);
     seen.add(ticket.slug);
     return { files: [], historyFiles: [], surfaces: [], blockers: [], ...ticket };
   });
@@ -208,6 +219,14 @@ function describe(members, { bySlug, edges, unitOf, units, all, apart }) {
     .map(([key, entry]) => `${key.replace(">", "~")} ${entry.reasons.join(", ")}: ${entry.reason}`);
   const ticket = bySlug.get(members[0]);
   const others = all.filter((other) => !inside.has(other.slug));
+  const prds = new Set(members.map((slug) => bySlug.get(slug)).filter((member) => member.prd && member.operatorAssigned === true).map((member) => member.prd));
+  const prdSplits = [...prds].flatMap((prd) => {
+    const byRepo = new Map();
+    for (const other of others.filter((entry) => entry.prd === prd && entry.operatorAssigned === true && entry.repo !== ticket.repo)) {
+      byRepo.set(other.repo, [...(byRepo.get(other.repo) ?? []), other.slug]);
+    }
+    return [...byRepo].map(([repo, tickets]) => `${prd} also has ${tickets.join(", ")} in ${repo}, a unit of its own: a PR cannot span repositories`);
+  });
   const elsewhere = others.filter((other) => other.repo !== ticket.repo).map((other) => other.slug);
   const unrelated = others.filter((other) => other.repo === ticket.repo).map((other) => other.slug);
   const apartReason = [
@@ -215,7 +234,7 @@ function describe(members, { bySlug, edges, unitOf, units, all, apart }) {
     ...(unrelated.length ? [`no shared file, screen entry or collision with ${unrelated.join(", ")}`] : []),
     ...keptApart.map((entry) => `kept apart: ${entry}`),
   ].join("; ") || "no other candidates";
-  return { name, writer: units[name]?.writer, tickets: members, joins, folds, overlap, inFlight: overlap.length > 0, keptApart, apartReason };
+  return { name, writer: units[name]?.writer, tickets: members, joins, folds, overlap, inFlight: overlap.length > 0, keptApart, apartReason, prdSplits };
 }
 
 function main(argv) {

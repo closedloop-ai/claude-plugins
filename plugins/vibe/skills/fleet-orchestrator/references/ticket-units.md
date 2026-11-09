@@ -8,10 +8,11 @@ Run the check before you start any writer, in a new chat's resume steps, on ever
 
 ## 1. Gather candidates
 
-Candidates are the open tickets in the operator's queue and in the current week's project, plus any ticket the operator named. For the ticket you are about to start, and for each in-flight unit's tickets:
+Candidates are the open tickets in the operator's queue and in the current week's project, plus any ticket the operator named. When the program works a PRD (the operator named it, or the ticket you are about to start belongs to one), add every open ticket under that PRD, found through its artifact links (`list-artifact-links`, `ticket_detail` lineage). For the ticket you are about to start, and for each in-flight unit's tickets:
 
 - Map the code with the [cl-find-related-tickets](../../cl-find-related-tickets/SKILL.md) code pass, and search with `fts_search` on its nouns.
 - `ticket_detail` gives each candidate's repository, lineage and BLOCKS links. A blocker is met once it merged or is DONE.
+- Record each candidate's PRD (`prd`) and whether the operator is its assignee (`operatorAssigned`). The operator's open tickets under one PRD join as `same PRD <slug>` with nothing shared (operator ruling, 2026-11-09: "if a PRD is being worked on, all tickets assigned to the user under that PRD should be grouped together and worked on as one PR"). One that changes another repository is that repository's own unit for the PRD.
 - `query_collisions` gives collision pairs; keep each one's reason.
 - Expected files come from the ticket's plan, its requirements brief (`likelyFiles`) or its open PR's diff. Files `blast_radius_tickets` reports only from past changes are `historyFiles`.
 - Screen map ids come from the repo's screen map (for example `pnpm control feature show <id>`).
