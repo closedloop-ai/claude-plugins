@@ -53,7 +53,10 @@ must not be written as if it had been made. Without the script, work as below.
    (`get-document`, `get-document-comments`). Extract the acceptance criteria
    of the ticket AND of its PRD, each quoted exactly with its source slug,
    any design or prototype links, and any decisions in comments; the PRD's flag,
-   rollout, rollback, parity, boundary and non-goal clauses are criteria too. These seed
+   rollout, rollback, parity, boundary and non-goal clauses are criteria too.
+   A brief that names member tickets (a fleet unit: one session, one PR) gets
+   the same read for each member; their criteria are in scope, numbered
+   `<slug>:AC-n`, and the overlap and newest-ruling checks cover them too. These seed
    the session's acceptance criteria list (`quality-loop.md`, "Acceptance
    criteria before ready"). Tag ticket text that names an implementation
    mechanism (a poller, feed, lane, socket, route, table, cursor, or a write

@@ -465,6 +465,8 @@ and pass. A green normal run or an unrun mutation is not proof.
 Never add a check nobody asked for: a new gate, validator, lint rule, CI
 step or repo-wide test, or a shared test helper widened to support one, that
 the ticket, its PRD or the person did not ask for is instruction inflation.
+A fleet unit's member tickets (the session's `memberTickets`) are the ticket
+here and in every scope check: their criteria are asked for, never inflation.
 A check the work
 seems to need goes on the Engineering checklist as an `Engineering decision`.
 

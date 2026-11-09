@@ -1150,3 +1150,14 @@ test("new refuses a --worktree that is not this slug's session path under a chec
   assert.equal(nowhere.status, 1);
   assert.match(nowhere.json.error, /not inside a git checkout/);
 });
+
+test("touch records a fleet unit's member tickets, only ever adding, and refuses a non-slug (ISS-13924)", (t) => {
+  const { home, worktree } = newSession(t, "unit-members");
+  assert.equal(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.memberTickets, undefined);
+  const touched = runNode(SCRIPT, ["touch", "--worktree", worktree, "--member-ticket", "ISS-124", "--member-ticket", "ISS-125"], home);
+  assert.deepEqual(touched.json.session.memberTickets, ["ISS-124", "ISS-125"]);
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--member-ticket", "ISS-124", "--member-ticket", "ISS-126"], home);
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "kept"], home);
+  assert.deepEqual(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.memberTickets, ["ISS-124", "ISS-125", "ISS-126"]);
+  assert.notEqual(runNode(SCRIPT, ["touch", "--worktree", worktree, "--member-ticket", "iss-1"], home).status, 0);
+});

@@ -15,7 +15,7 @@
 //   vibe-sessions.mjs prototype-result --worktree <path> --file <canonical result.json>
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
-//                                     [--created-live-ticket]
+//                                     [--created-live-ticket] [--member-ticket ISS-124 ...]
 //                                     [--live-plan PLN-123] [--live-plan-status DRAFT|APPROVED|EXECUTED]
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--clerk-org-id org_...]
@@ -62,7 +62,10 @@
 // The live ticket (ISS-12057) is `liveTicket`; `--handoff-ticket` and a
 // record's `handoffTicket` are read as the same field for sessions started
 // before it. `liveTicketCreatedBySession` distinguishes a ticket create mode
-// made from a pre-existing issue that the session only bound. `livePlan` is the session plan's implementation plan document
+// made from a pre-existing issue that the session only bound. `memberTickets`
+// (`touch --member-ticket`, only ever added to) are the other tickets a
+// fleet unit delivers in this session's one PR (ISS-13924); handoff audits each
+// one's criteria and the scope checks count them as asked for. `livePlan` is the session plan's implementation plan document
 // (PLN) that the ticket worker publishes from the local plans and links from
 // the live ticket, and `livePlanStatus` the status it last set on it
 // (operator ruling, 2026-10-19). `flag-snapshot` validates and saves the production flag snapshot
@@ -200,6 +203,7 @@ const { positionals, values } = parseArgs({
     "live-ticket": { type: "string" },
     "created-live-ticket": { type: "boolean", default: false },
     "handoff-ticket": { type: "string" },
+    "member-ticket": { type: "string", multiple: true },
     "live-plan": { type: "string" },
     "live-plan-status": { type: "string" },
     "main-merge": { type: "string" },
@@ -480,6 +484,10 @@ function touchSession() {
       (record.liveTicketCreatedBySession === true && record.liveTicket === liveTicket)))) {
     throw new Error("--created-live-ticket requires the newly created --live-ticket, not a bound existing ticket.");
   }
+  const members = values["member-ticket"] ?? [];
+  if (members.some((slug) => !TICKET_PATTERN.test(slug))) {
+    throw new Error("--member-ticket must be a ClosedLoop slug such as ISS-124.");
+  }
   const livePlan = values["live-plan"];
   if (livePlan !== undefined && !PLAN_PATTERN.test(livePlan)) {
     throw new Error("--live-plan must be an implementation plan slug such as PLN-123.");
@@ -531,6 +539,7 @@ function touchSession() {
     operator: operatorFromArgs({ required: false }) ?? record.operator,
     liveTicket: liveTicket ?? record.liveTicket,
     liveTicketCreatedBySession: values["created-live-ticket"] || record.liveTicketCreatedBySession,
+    ...(members.length || record.memberTickets ? { memberTickets: [...new Set([...(record.memberTickets ?? []), ...members])] } : {}),
     livePlan: livePlan ?? record.livePlan,
     livePlanStatus: livePlanStatus ?? record.livePlanStatus,
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,

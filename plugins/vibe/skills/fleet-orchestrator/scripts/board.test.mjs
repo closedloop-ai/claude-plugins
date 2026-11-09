@@ -449,3 +449,19 @@ test('a scope change needs content and a writer whose worktree status can read; 
   assert.equal(run([dir, 'ack', 'w1', '--id', 'c1']).status, 0);
   assert.equal(run([dir, 'pending', 'w1']).stdout, 'pending: none\n');
 });
+
+test('a unit lists its tickets on the board page and in the resume log; a fold adds and a ticket has one unit', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'w1', '--pr', '7', '--repo', 'o/r']).status, 0);
+  assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1', '--repo', 'o/r', '--now', '2026-11-09T10:00:00Z']).status, 0);
+  assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-3', '--now', '2026-11-09T11:00:00Z']).status, 0);
+  const board = JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8'));
+  assert.deepEqual(board.units['ISS-1'], { tickets: ['ISS-1', 'ISS-2', 'ISS-3'], writer: 'w1', repo: 'o/r', at: '2026-11-09T10:00:00.000Z' });
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /## Units\n\n\| Unit \| Writer \| PR \| Tickets \|\n\|---\|---\|---\|---\|\n\| ISS-1 \| w1 \| o\/r#7 \| ISS-1, ISS-2, ISS-3 \|/);
+  assert.equal(readFileSync(path.join(dir, 'resume-log.md'), 'utf8'),
+    '\n## 2026-11-09 10:00\n- Unit ISS-1 (w1) started: ISS-1, ISS-2\n\n## 2026-11-09 11:00\n- Unit ISS-1 (w1) folded ISS-3: ISS-1, ISS-2, ISS-3\n');
+  const second = run([dir, 'unit', 'ISS-4', '--tickets', 'ISS-4,ISS-2']);
+  assert.equal(second.status, 2);
+  assert.match(second.stderr, /ISS-2 already belongs to unit ISS-1/);
+  assert.equal(run([dir, 'unit', 'ISS-5', '--tickets', 'not-a-slug']).status, 2);
+});

@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.70
+
+#### Added
+- fleet-orchestrator groups related tickets into one unit: one writer, one branch, one PR (ISS-13924; Daniel, 2026-11-09: "that is THE reason why fleet-orchestrator was so effective at finishing work"). The practice came from chat rulings and was never in the skill, so a fresh chat worked one ticket per writer. Before any writer starts, on resume, after a merge and when new tickets arrive, the orchestrator gathers candidates (the operator's open queue, the current week's project and any ticket the operator named) with cl-find-related-tickets and the closedloop-graph tools, and `scripts/ticket-units.mjs group` decides the units. Tickets in one repository join on a shared expected file, a shared screen map entry or a collision pair, and each join prints its evidence. A file shared only through past changes is labelled `(history)`, and only such a pair may be kept apart, with a one-line reason. Different repositories never join; a ticket with an unmet blocker outside its unit stays separate as `BLOCKED`; a blocker inside the unit is built in order on the same branch, as in cl-sweep's feature units. A related ticket found while a unit is in flight prints `FOLD` into that unit's writer, and two related in-flight units print `OVERLAP`. Each unit gets one line for the operator.
+- `board.mjs <orchDir> unit <name> --tickets <a,b>` records a unit in board.json (adding tickets folds them in; a ticket belongs to one unit), lists it with its writer, PR and tickets in a Units section of board.md, and appends it to resume-log.md, so a new chat resumes the same grouping. A new chat's steps in references/state.md keep the units and rerun the check.
+- `status-audit.mjs --board <orchDir>` gives each unit member the pull requests and writer of the whole unit, so each ticket moves on its own (In Progress while the writer has no PR, In Review while the PR is open, Done once it merges and that ticket's criteria are checked) and a ticket left behind prints `MISMATCH`. A member missing from the snapshot prints `UNREAD-MEMBER`.
+- `ticket-units.mjs pr-check` fails until the PR title and body name every ticket in the unit.
+- Vibe sessions record a unit's other tickets with `vibe-sessions.mjs touch --member-ticket <slug>` (`memberTickets`, only ever added to). `criteria-audit.mjs` and `handoff-gate.mjs` take `--member <slug>=<body>` and audit each member's criteria as `<slug>:AC-n`; a recorded member with no body fails the audit. `handoff-inventory.mjs` takes repeated `--ticket` so member asks count too. `live-ticket-check.mjs` requires every recorded member in the child evidence map, which the ticket worker fills like a source PRD's children. The requirements worker reads member tickets like the ticket, and guardrails count their criteria as asked for, never instruction inflation.
+
+#### Changed
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.70.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 861 words longer than in 1.1.66 (origin/main at this update, 2dbf2bbc284a3a498f68af6841380b69fae59024), most of it the new references/ticket-units.md.
+
 ### vibe v1.1.66
 
 #### Added

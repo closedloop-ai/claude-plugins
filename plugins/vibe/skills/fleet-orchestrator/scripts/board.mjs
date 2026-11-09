@@ -9,6 +9,7 @@
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
 //        board.mjs <orchDir> duty <duty> --owner <writer or helper>
+//        board.mjs <orchDir> unit <name> --tickets <a,b> [--writer <writer>] [--repo <owner/repo>]
 //        board.mjs <orchDir> question|answered|ack <writer> --id <question or scope id> [--text <the question and its default, or the answer>]
 //        board.mjs <orchDir> pending <writer>
 //        board.mjs <orchDir> status [--pushed <name>=<sha>]... [--threads <name>=<n>]...
@@ -67,6 +68,10 @@
 // writer ran one turn for over two hours (2026-10-26) and never
 // received an answer and two scope additions; it committed and verified the old
 // scope while every send reported success.
+// `unit` records related tickets delivered by one writer on one branch as one
+// PR (operator ruling, 2026-11-09; ticket-units.mjs groups them). A second call adds tickets
+// (a fold) and never drops one. Each call also appends the unit and its tickets
+// to resume-log.md, so a new chat resumes the same grouping.
 // <orchDir> is a fleet home or a program dir (work-dir.mjs). `status` also prints
 // fleet-home.mjs check's lines for a home, or for a flat dir that watches sessions or PRs.
 // All of these count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
@@ -75,7 +80,7 @@
 // unanswered for 7 hours.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -85,6 +90,7 @@ import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
+import { renderUnits } from "./ticket-units.mjs";
 
 const STATE = "board.json";
 const PAGE = "board.md";
@@ -219,6 +225,10 @@ export function render(board) {
     "",
     ...(duties.length > 0 ? duties : ["- none"]),
     "",
+    "## Units",
+    "",
+    ...renderUnits(board.units, board.writers),
+    "",
     "## Not yet told",
     "",
     ...(open.length > 0 ? open : ["- nothing"]),
@@ -237,7 +247,7 @@ export function render(board) {
 function read(orchDir) {
   const file = path.join(orchDir, STATE);
   const board = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
-  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
+  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, units: board.units ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
 }
 
 function write(orchDir, board, line, at) {
@@ -367,7 +377,7 @@ function noHeadRows(board) {
     .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
 }
 
-const ACTIONS = ["writer", "deliver", "told", "duty", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
+const ACTIONS = ["writer", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
 
 /** A scope delivery's acknowledgements and each recipient's worktree head when it was sent; refuses a recipient status cannot watch. */
 function scopeBase(board, to, values, previous) {
@@ -388,6 +398,29 @@ function scopeBase(board, to, values, previous) {
   return { base, acked: previous?.acked ?? {} };
 }
 
+/** Adds or extends a unit; tickets are only ever added, and the resume log records each change. */
+function recordUnit(orchDir, board, name, values, at) {
+  const tickets = list(values.tickets);
+  if (tickets.length === 0 || tickets.some((slug) => !/^[A-Z]+-\d+$/.test(slug))) {
+    throw new Error("unit needs --tickets <slug,slug>: every ticket the unit delivers.");
+  }
+  const owner = Object.entries(board.units).find(([other, unit]) => other !== name && unit.tickets.some((slug) => tickets.includes(slug)));
+  if (owner) throw new Error(`${owner[1].tickets.filter((slug) => tickets.includes(slug)).join(", ")} already belongs to unit ${owner[0]}; one ticket has one writer`);
+  const previous = board.units[name];
+  const added = tickets.filter((slug) => !previous?.tickets.includes(slug));
+  const unit = {
+    ...previous,
+    tickets: [...(previous?.tickets ?? []), ...added],
+    ...(values.writer ? { writer: values.writer } : {}),
+    ...(values.repo ? { repo: values.repo } : {}),
+    at: previous?.at ?? at,
+  };
+  board.units[name] = unit;
+  const change = previous ? (added.length ? `folded ${added.join(", ")}` : "updated") : "started";
+  write(orchDir, board, `unit ${name} ${change}: ${unit.tickets.join(", ")}`, at);
+  appendFileSync(path.join(orchDir, "resume-log.md"), `\n## ${at.slice(0, 16).replace("T", " ")}\n- Unit ${name} (${unit.writer ?? "no writer yet"}) ${change}: ${unit.tickets.join(", ")}\n`);
+}
+
 function main(argv) {
   const [workDir, action, ...rest] = argv;
   const { values, positionals } = parseArgs({
@@ -398,7 +431,7 @@ function main(argv) {
       to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
-      worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" },
+      worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" }, tickets: { type: "string" }, writer: { type: "string" },
     },
   });
   if (!workDir || !ACTIONS.includes(action)) {
@@ -516,6 +549,10 @@ function main(argv) {
     }
     board.duties[name] = { owner: values.owner, at };
     write(orchDir, board, `duty ${name}: ${values.owner}`, at);
+    return 0;
+  }
+  if (action === "unit") {
+    recordUnit(orchDir, board, name, values, at);
     return 0;
   }
   if (action === "writer") {

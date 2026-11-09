@@ -68,7 +68,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 For one writer on one PR, or nobody writing code (design, research, analysis): `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the shape, `fleet-home.mjs shape` changes it before the program grows, and `board.mjs writer` refuses a writer the shape does not allow. Which sections apply:
 
 - Both shapes: Principles (evidence before every claim), Setup, Research with closedloop-graph, State and persistence (resume log, rulings), Pushback, Lessons loop, Artifacts people read, Reporting to the operator.
-- one-writer, also: Roles, Monitoring, Codex sessions, Claude workers, Machines and CPU, Program practices; Quality gates and QA except merge order and shared version-file conflicts; from Fleet board and direct messages only its row and deliveries; from Moving work between runtimes and accounts only a takeover of its writer, which keeps the writer's board row name.
+- one-writer, also: Roles, Related tickets become one unit, Monitoring, Codex sessions, Claude workers, Machines and CPU, Program practices; Quality gates and QA except merge order and shared version-file conflicts; from Fleet board and direct messages only its row and deliveries; from Moving work between runtimes and accounts only a takeover of its writer, which keeps the writer's board row name.
 - no-writer, also: only read-only helpers from Roles and Claude workers, a heavy check you run from Machines and CPU, repo knowledge from Program practices; nothing else.
 
 ## Research with closedloop-graph
@@ -82,6 +82,15 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 - Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
 - Attribute a file's origin or a first failure from local history only through `scripts/history-origin.mjs --repo <repo> --path <file>`.
+
+## Related tickets become one unit
+
+Related tickets go to one writer, one branch and one PR; each keeps its own criteria and statuses. Steps and the candidate sources: [references/ticket-units.md](./references/ticket-units.md).
+
+1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
+2. Tell the operator its lines: one per unit, with what joined, what stayed apart and why.
+3. Record each unit with `board.mjs <orchDir> unit`; fold a related ticket into the running writer, never a second one.
+4. Move each ticket yourself (In Progress at start, In Review at PR open, Done at merge) and audit with `status-audit.mjs --board`.
 
 ## State and persistence
 

@@ -4,7 +4,15 @@
 // and open children had no writer; the operator noticed each one first.
 // Run it at every merge and every writer assignment.
 //
-// Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report]
+// Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report] [--board <orchDir>]
+//
+// With `--board`, each unit on the board (board.mjs unit) moves as
+// one PR: every member gets the pull requests and writer of all its members,
+// so one PR's state is evidence for each ticket in the unit, and a member's
+// status moves on its own: IN_PROGRESS while the unit has a writer and no PR,
+// IN_REVIEW while its PR is open, DONE once it merges and the member's own
+// criteria are checked. A member missing from the snapshot prints
+// `UNREAD-MEMBER <slug>`; put a member with no PRD under `{"slug": null}`.
 //
 // `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default) prints
 // `status audit: skipped at report` and exits 0 without reading the snapshot, so the
@@ -47,6 +55,8 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ticketProblems } from "../../handoff/scripts/executed-check.mjs";
 import { rulingNamesScope, sequencingRequirements } from "../../handoff/scripts/rulings-check.mjs";
+import { boardUnits } from "./ticket-units.mjs";
+import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
@@ -87,6 +97,14 @@ export function childFinding(child, prdSlug) {
     return child.status === "DONE" ? null : { kind: "MISMATCH", expected: "DONE", evidence: `${merged.url ?? "a pull request"} merged` };
   }
   const open = pulls.find((pull) => pull?.state === "OPEN");
+  if (child?.unit && (open || child.writer)) {
+    const expected = open ? "IN_REVIEW" : "IN_PROGRESS";
+    return child.status === expected ? null : {
+      kind: "MISMATCH",
+      expected,
+      evidence: open ? `${open.url ?? "a pull request"} open for unit ${child.unit}` : `writer ${child.writer} started unit ${child.unit}`,
+    };
+  }
   if (open || child?.writer) {
     return ACTIVE.includes(child.status) ? null : {
       kind: "MISMATCH",
@@ -106,14 +124,31 @@ function criteriaFinding(child, prdSlug) {
   return unchecked.length === 0 ? null : { kind: "UNCHECKED", criteria: unchecked.map((problem) => problem.split(" ")[0]).join(", ") };
 }
 
+/** Each unit member carries every member's pull requests and the unit's writer; members the snapshot lacks are UNREAD-MEMBER. */
+export function applyUnits(children, units) {
+  const findings = [];
+  for (const [name, unit] of Object.entries(units)) {
+    const members = children.filter(({ child }) => unit.tickets.includes(child?.slug));
+    for (const slug of unit.tickets.filter((ticket) => !members.some(({ child }) => child.slug === ticket))) {
+      findings.push({ slug, status: "?", kind: "UNREAD-MEMBER", unit: name });
+    }
+    const pulls = [...new Map(members.flatMap(({ child }) => (Array.isArray(child.pullRequests) ? child.pullRequests : []))
+      .map((pull) => [pull?.url ?? JSON.stringify(pull), pull])).values()];
+    for (const entry of members) {
+      entry.child = { ...entry.child, unit: name, pullRequests: pulls, writer: entry.child.writer ?? unit.writer ?? null };
+    }
+  }
+  return findings;
+}
+
 /** Every child that disagrees with its evidence, and every one ruled out of scope. */
-export function auditStatuses(snapshot) {
+export function auditStatuses(snapshot, units = {}) {
   const ruled = new Map((Array.isArray(snapshot?.outOfScope) ? snapshot.outOfScope : [])
     .filter((entry) => typeof entry?.slug === "string" && typeof entry.reason === "string" && entry.reason.trim() !== "")
     .map((entry) => [entry.slug, entry.reason.trim()]));
   const children = (Array.isArray(snapshot?.prds) ? snapshot.prds : [])
     .flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []).map((child) => ({ child, prdSlug: prd?.slug })));
-  const findings = sequencingFindings(snapshot);
+  const findings = [...sequencingFindings(snapshot), ...applyUnits(children, units)];
   const outOfScope = [];
   for (const { child, prdSlug } of children) {
     findings.push(...sweepFindings(child).map((found) => ({ slug: child.slug, status: child.status, ...found })));
@@ -142,7 +177,7 @@ function sequencingFindings(snapshot) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { snapshot: { type: "string" }, at: { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { snapshot: { type: "string" }, at: { type: "string" }, board: { type: "string" } } });
   if (!values.snapshot) {
     throw new Error("Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report]");
   }
@@ -150,12 +185,13 @@ function main(argv) {
     process.stdout.write("status audit: skipped at report\n");
     return 0;
   }
-  const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")));
+  const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")), values.board ? boardUnits(resolveWorkDir(values.board).dir) : {});
   const lines = {
     UNOWNED: (finding) => `UNOWNED ${finding.slug} ${finding.status}`,
     "PLAN-OPEN": (finding) => `PLAN-OPEN ${finding.slug}: ${finding.plan} is ${finding.planStatus}; a DONE ticket's plan is EXECUTED`,
     "ABSORBED-OPEN": (finding) => `ABSORBED-OPEN ${finding.slug} ${finding.status}: absorbed by ${finding.umbrella}, which is DONE; close it in the same step with that merge as evidence`,
     UNSCOPED: (finding) => `UNSCOPED ${finding.slug} ${finding.status}: the out-of-scope ruling "${finding.reason.slice(0, 120)}" names neither the ticket nor its PRD`,
+    "UNREAD-MEMBER": (finding) => `UNREAD-MEMBER ${finding.slug}: a ticket of unit ${finding.unit} is not in the snapshot; add it so its status moves with the unit`,
     UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
     UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,
     MISMATCH: (finding) => `MISMATCH ${finding.slug} ${finding.status}, expected ${finding.expected} (${finding.evidence})`,
@@ -165,7 +201,7 @@ function main(argv) {
   for (const finding of findings) process.stdout.write(`${lines[finding.kind](finding)}\n`);
   for (const entry of outOfScope) process.stdout.write(`OUT-OF-SCOPE ${entry.slug}: ${entry.reason}\n`);
   const count = (kind) => findings.filter((finding) => finding.kind === kind).length;
-  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED")} unchecked, ${count("UNSCOPED")} unscoped, ${count("PLAN-OPEN")} open plans, ${count("ABSORBED-OPEN")} absorbed open\n`);
+  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED") + count("UNREAD-MEMBER")} unchecked, ${count("UNSCOPED")} unscoped, ${count("PLAN-OPEN")} open plans, ${count("ABSORBED-OPEN")} absorbed open\n`);
   return findings.length === 0 ? 0 : 1;
 }
 
