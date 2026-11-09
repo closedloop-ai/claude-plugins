@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - The fleet writer brief and vibe's session step pass `--repo` and `--worktree` to `vibe-sessions.mjs new` for a repository other than the remembered app checkout.
+- The README version line and the Python release-pin contract tests move to 1.1.64.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 188 words longer than in 1.1.63 (origin/main at this update, 21cace5f94c9534607e2612d4d4a8ced22fbeefa).
 
 ### vibe v1.1.63
