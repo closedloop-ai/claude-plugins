@@ -12,7 +12,7 @@ import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.
 export const POST_TOOL_USE_GUARDS = Object.freeze([{ name: "context-guard", run: contextGuard }]);
 
 /** The PostToolUse output for `event`, or null; `report(line)` receives each failing guard's error. */
-export function postToolUse(event, report) {
+function postToolUse(event, report) {
   return mergeResults("PostToolUse", runGuards(POST_TOOL_USE_GUARDS, event, report));
 }
 

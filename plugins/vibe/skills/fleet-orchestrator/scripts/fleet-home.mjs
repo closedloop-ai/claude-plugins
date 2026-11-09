@@ -348,8 +348,8 @@ function movedLinks(dir, moves, depth) {
 }
 
 /** The context guard's threshold file, read by vibe's PostToolUse hook on every tool call. */
-export const CONTEXT_GUARD_FILE = "context-guard.json";
-export const CONTEXT_GUARD_DEFAULTS = Object.freeze({ enabled: true, warnContextTokens: 200_000, handoffContextTokens: 300_000, remindEveryMinutes: 20 });
+const CONTEXT_GUARD_FILE = "context-guard.json";
+const CONTEXT_GUARD_DEFAULTS = Object.freeze({ enabled: true, warnContextTokens: 200_000, handoffContextTokens: 300_000, remindEveryMinutes: 20 });
 const CONTEXT_GUARD_NUMBERS = ["warnContextTokens", "handoffContextTokens", "remindEveryMinutes"];
 const HANDOFF_FILE = /^HANDOFF-.*\.md$/;
 
@@ -367,7 +367,7 @@ export function contextGuardConfig(home) {
 }
 
 /** Writes the default context-guard.json into `home` when it has none, so the operator has a file to edit. */
-export function seedContextGuardConfig(home) {
+function seedContextGuardConfig(home) {
   const file = path.join(home, CONTEXT_GUARD_FILE);
   if (existsSync(file)) return;
   const seed = {
@@ -378,7 +378,7 @@ export function seedContextGuardConfig(home) {
 }
 
 /** The newest HANDOFF-*.md in `dir` (latest mtime, then name), or null. */
-export function newestHandoff(dir) {
+function newestHandoff(dir) {
   let names;
   try {
     names = readdirSync(dir).filter((name) => HANDOFF_FILE.test(name));

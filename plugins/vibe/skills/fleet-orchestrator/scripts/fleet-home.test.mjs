@@ -280,3 +280,19 @@ test('a resume that cannot seed context-guard.json still prints the whole readin
   assert.match(result.stdout, /^ACTIVE prog-a /m);
   assert.equal(existsSync(path.join(home, 'context-guard.json')), false);
 });
+
+test('two handoffs with the same mtime resolve by name, so the newest is a total order', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'one-writer', '--home', home]).status, 0);
+  const program = path.join(home, 'programs', 'prog-a');
+  const same = new Date('2026-11-09T12:00:00Z');
+  const lower = path.join(program, handoffName('2026-11-09', 'chat-a'));
+  const higher = path.join(program, handoffName('2026-11-09', 'chat-b'));
+  for (const file of [higher, lower]) {
+    writeFileSync(file, 'notes\n');
+    utimesSync(file, same, same);
+  }
+  const lines = run(['resume', '--home', home]).stdout.split('\n');
+  assert.ok(lines.includes(`READ ${higher}`), lines.join('\n'));
+  assert.ok(!lines.includes(`READ ${lower}`));
+});

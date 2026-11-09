@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The limits live in `<fleetHome>/context-guard.json`, reread on every call with no restart. `fleet-home.mjs resume` writes the default file when the home has none, reads the resumed program's newest `HANDOFF-*.md`, reports an unparseable file as `CONTEXT-GUARD-INVALID` and a failed seed write as `CONTEXT-GUARD-UNSEEDED` without dropping the reading list; `check` accepts the new file and home-level chat handoffs.
 
 #### Changed
+- The context guard's and fleet-home's internal helpers stay module-private, and a same-mtime test pins the newest-handoff order as a total order (handoff gate diff rules).
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.63 (origin/main at this update, 21cace5f94c9534607e2612d4d4a8ced22fbeefa).
 
 ### vibe v1.1.63

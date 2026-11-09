@@ -35,7 +35,7 @@ const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
 const SCAN_OVERLAP_BYTES = 4096;
 const USAGE_WINDOWS = [256 * 1024, 2 * 1024 * 1024, 8 * 1024 * 1024];
 
-export const ContextLevel = Object.freeze({ Warn: "warn", Handoff: "handoff" });
+const ContextLevel = Object.freeze({ Warn: "warn", Handoff: "handoff" });
 
 /** The PostToolUse result for `event`: a notice when one is due, else null. Never throws. */
 export function contextGuard(event, env = process.env, now = Date.now()) {
@@ -87,7 +87,7 @@ function handoffFileFor(pinned, home, sessionId, now) {
 }
 
 /** The level `tokens` reaches under `config`, or null below the warn threshold. */
-export function levelFor(tokens, config) {
+function levelFor(tokens, config) {
   if (tokens >= config.handoffContextTokens) return ContextLevel.Handoff;
   if (tokens >= config.warnContextTokens) return ContextLevel.Warn;
   return null;
