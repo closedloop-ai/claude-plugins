@@ -8,6 +8,8 @@
 //
 // Layout (codex-fleet-monitor/scripts/work-dir.mjs resolves it for every script):
 //   <fleetHome>/config.env, standing-rulings.md, lessons.md, handover.md   reused by every program
+//   <fleetHome>/context-guard.json                                        the context guard's thresholds
+//   <fleetHome>/programs/<slug>/HANDOFF-<date>-<chat>.md                  one chat's handoff notes (in the home with no program)
 //   <fleetHome>/current                                                   the active program's slug
 //   <fleetHome>/programs/<slug>/                                          that program's state
 //
@@ -37,6 +39,9 @@
 // plugin-version.json: `PLUGIN-VERSION-UNCHECKED` when the check never ran,
 // `PLUGIN-VERSION-UNANSWERED` while an outdated plugin has no recorded
 // choice, else the last result. Every new chat runs the check again.
+// `resume` also writes the default context-guard.json when the home has none
+// and reads the resumed program's newest HANDOFF-*.md first (vibe's
+// context-guard hook; the operator's 2026-11-09 ruling).
 // `check` prints, and exits 1 on, state outside the home or the program:
 // `FLAT <name>` (program state at the home's top), `OUTSIDE <link> -> <target>`
 // (a symlink in the home resolving outside it), `CONFIG <key>` (a per-program
@@ -55,7 +60,7 @@
 // are repointed. It refuses while a watcher holds the lock. rulings.md moves
 // with the program: copy its standing rulings into standing-rulings.md.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -63,7 +68,7 @@ import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { skillFreshnessProblem } from "./skill-freshness.mjs";
 
-export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "current", "programs"];
+export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "context-guard.json", "current", "programs"];
 const PROGRAM_DIRS = ["sessions", "prompts", "requests", "findings", "evidence"];
 const PROGRAM_FILES = ["resume-log.md", "rulings.md", "attention.md"];
 export const Shape = Object.freeze({ NoWriter: "no-writer", OneWriter: "one-writer", Fleet: "fleet" });
@@ -85,7 +90,9 @@ export function homeProblems(dir) {
   if (!resolved.home) return [`FLAT-LAYOUT ${resolved.dir}: migrate it into a fleet home with fleet-home.mjs migrate --from <dir> --program <slug>`];
   const problems = [];
   for (const name of readdirSync(resolved.home)) {
-    if (!REUSABLE.includes(name) && !name.startsWith(".")) problems.push(`FLAT ${name}: program state belongs in programs/${resolved.program}/`);
+    if (!REUSABLE.includes(name) && !name.startsWith(".") && !HANDOFF_FILE.test(name)) {
+      problems.push(`FLAT ${name}: program state belongs in programs/${resolved.program}/`);
+    }
   }
   problems.push(...outsideLinks(resolved.home, resolved.home));
   const homeConfig = readConfigFile(path.join(resolved.home, "config.env"));
@@ -161,12 +168,15 @@ function unmanagedState(dir) {
 export function resumeLines(home) {
   const lines = ["config.env", "standing-rulings.md", "lessons.md", "handover.md"].filter((name) => existsSync(path.join(home, name)))
     .map((name) => `READ ${path.join(home, name)}`);
+  lines.push(...contextGuardLines(home));
   let resolved = { program: null };
   try {
     resolved = resolveWorkDir(home);
   } catch {}
   if (!resolved.program) return [...lines, `NO-ACTIVE-PROGRAM: start one with fleet-home.mjs start <slug>; it reads no earlier program's state`];
   lines.push(`ACTIVE ${resolved.program} ${resolved.dir}`, shapeLine(resolved.dir), pluginVersionLine(resolved.dir));
+  const handoff = newestHandoff(resolved.dir);
+  if (handoff) lines.push(`READ ${handoff}`);
   for (const name of ["rulings.md", "attention.md", "resume-log.md", "board.md"]) {
     if (existsSync(path.join(resolved.dir, name))) lines.push(`READ ${path.join(resolved.dir, name)}`);
   }
@@ -337,6 +347,90 @@ function movedLinks(dir, moves, depth) {
   return links;
 }
 
+/** The context guard's threshold file, read by vibe's PostToolUse hook on every tool call. */
+export const CONTEXT_GUARD_FILE = "context-guard.json";
+export const CONTEXT_GUARD_DEFAULTS = Object.freeze({ enabled: true, warnContextTokens: 200_000, handoffContextTokens: 300_000, remindEveryMinutes: 20 });
+const CONTEXT_GUARD_NUMBERS = ["warnContextTokens", "handoffContextTokens", "remindEveryMinutes"];
+const HANDOFF_FILE = /^HANDOFF-.*\.md$/;
+
+/** The guard's settings: the defaults overlaid by `<home>/context-guard.json`; throws on a malformed file. */
+export function contextGuardConfig(home) {
+  const file = path.join(home, CONTEXT_GUARD_FILE);
+  const raw = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not a JSON object");
+  const config = { ...CONTEXT_GUARD_DEFAULTS, ...raw };
+  if (typeof config.enabled !== "boolean") throw new Error("enabled must be true or false");
+  for (const key of CONTEXT_GUARD_NUMBERS) {
+    if (typeof config[key] !== "number" || !Number.isFinite(config[key]) || config[key] <= 0) throw new Error(`${key} must be a positive number`);
+  }
+  return { ...config, file };
+}
+
+/** Writes the default context-guard.json into `home` when it has none, so the operator has a file to edit. */
+export function seedContextGuardConfig(home) {
+  const file = path.join(home, CONTEXT_GUARD_FILE);
+  if (existsSync(file)) return;
+  const seed = {
+    _comment: "Edit freely; vibe's context guard rereads this on every tool call. Context = input + cache read + cache write tokens of the latest request, what every new request re-reads. It warns at warnContextTokens, recommends a handoff at handoffContextTokens and repeats that every remindEveryMinutes.",
+    ...CONTEXT_GUARD_DEFAULTS,
+  };
+  writeFileSync(file, `${JSON.stringify(seed, null, 2)}\n`, { flag: "wx" });
+}
+
+/** The newest HANDOFF-*.md in `dir` (latest mtime, then name), or null. */
+export function newestHandoff(dir) {
+  let names;
+  try {
+    names = readdirSync(dir).filter((name) => HANDOFF_FILE.test(name));
+  } catch {
+    return null;
+  }
+  const files = names.map((name) => ({ file: path.join(dir, name), mtime: statSync(path.join(dir, name)).mtimeMs, name }));
+  files.sort((a, b) => b.mtime - a.mtime || b.name.localeCompare(a.name));
+  return files[0]?.file ?? null;
+}
+
+/**
+ * The directory a chat keeps its handoff notes in: the active program's dir, else the home. A chat
+ * never shares a handoff file: its name carries the chat's session id (a shared
+ * path once had an unrelated chat offer another chat's handoff).
+ */
+export function chatHandoffDir(home) {
+  try {
+    return resolveWorkDir(home).dir;
+  } catch {
+    return path.resolve(home);
+  }
+}
+
+/** One chat's handoff file in `dir`, named for the day it was first written and the chat's session id. */
+export function chatHandoffFile(dir, sessionId, day) {
+  return path.join(dir, `HANDOFF-${day}-${sessionId}.md`);
+}
+
+/** Seeds context-guard.json for `resume`; a failed write is reported, never a reason to drop the reading list. */
+function seedLines(home) {
+  if (!existsSync(home)) return [];
+  try {
+    seedContextGuardConfig(home);
+    return [];
+  } catch (error) {
+    if (error?.code === "EEXIST") return [];
+    const reason = error instanceof Error ? error.message : String(error);
+    return [`CONTEXT-GUARD-UNSEEDED ${path.join(home, CONTEXT_GUARD_FILE)}: ${reason}; the guard runs on its defaults`];
+  }
+}
+
+function contextGuardLines(home) {
+  try {
+    contextGuardConfig(home);
+    return [];
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return [`CONTEXT-GUARD-INVALID ${path.join(home, CONTEXT_GUARD_FILE)}: ${reason}; the context guard stays silent until it is fixed`];
+  }
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
@@ -362,7 +456,7 @@ function main(argv) {
     return 0;
   }
   if (command === "resume") {
-    print(resumeLines(home));
+    print([...seedLines(home), ...resumeLines(home)]);
     return 0;
   }
   if (command === "check") {

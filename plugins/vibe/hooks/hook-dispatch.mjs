@@ -3,7 +3,8 @@
 // once, runs the guards routed to it, and prints the one JSON object the event's
 // contract reads (code.claude.com/docs/en/hooks).
 //
-// A guard returns null, `{ decision, reason }` or `{ context }`. Every guard
+// A guard returns null, `{ decision, reason }` or `{ context }`, optionally with
+// `systemMessage` (a line the harness shows the user). Every guard
 // fails open on its own, as each did when it was a separate script: one that
 // throws contributes nothing, is reported on stderr under its name, and the
 // others still run. The script always exits 0.
@@ -51,7 +52,8 @@ export function runGuards(guards, event, report) {
 export function mergeResults(eventName, results) {
   const decision = DECISION_PRECEDENCE.find((candidate) => results.some((result) => result.decision === candidate));
   const contexts = results.map((result) => result.context).filter((context) => typeof context === "string" && context !== "");
-  if (decision === undefined && contexts.length === 0) return null;
+  const messages = results.map((result) => result.systemMessage).filter((message) => typeof message === "string" && message !== "");
+  if (decision === undefined && contexts.length === 0 && messages.length === 0) return null;
   const output = { hookEventName: eventName };
   if (decision !== undefined) {
     output.permissionDecision = decision;
@@ -59,7 +61,7 @@ export function mergeResults(eventName, results) {
     if (reasons.length > 0) output.permissionDecisionReason = reasons.join("\n");
   }
   if (contexts.length > 0) output.additionalContext = contexts.join("\n\n");
-  return { hookSpecificOutput: output };
+  return messages.length > 0 ? { systemMessage: messages.join("\n"), hookSpecificOutput: output } : { hookSpecificOutput: output };
 }
 
 /** Reads the event on stdin, runs `dispatch(event, report)` and prints its output; never exits nonzero. */

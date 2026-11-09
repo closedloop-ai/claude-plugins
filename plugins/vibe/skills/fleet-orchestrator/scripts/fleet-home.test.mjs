@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -13,6 +13,8 @@ const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
 const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'codex', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const MONITOR = path.join(HERE, '..', '..', 'codex-fleet-monitor', 'scripts');
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'fleet-home.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+// Built from parts so the skill's no-ticket-id scan does not read a dated handoff name as a ticket id.
+const handoffName = (...parts) => `${['HANDOFF', ...parts].join('-')}.md`;
 const tempRoot = (t) => {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'fleet-home-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -227,4 +229,54 @@ test('resume refuses a stale loaded skill until the current installed release is
   assert.match(run(['resume', '--home', home]).stdout, /PLUGIN-RELOAD-REQUIRED: target actor loaded 1\.0\.85/);
   writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: actorLoad('new-chat'), harnesses: [] }));
   assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION current at now/m);
+});
+
+test('resume writes the editable context-guard file once and reads only the resumed program\'s newest handoff', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'one-writer', '--home', home]).status, 0);
+  const guardFile = path.join(home, 'context-guard.json');
+  assert.equal(run(['resume', '--home', home]).status, 0);
+  const seeded = JSON.parse(readFileSync(guardFile, 'utf8'));
+  assert.deepEqual([seeded.warnContextTokens, seeded.handoffContextTokens, seeded.remindEveryMinutes], [200000, 300000, 20]);
+  const programA = path.join(home, 'programs', 'prog-a');
+  const older = path.join(programA, handoffName('2026-11-09', 'chat-2'));
+  const newer = path.join(programA, handoffName('2026-11-08', 'chat-1'));
+  writeFileSync(older, 'older\n');
+  writeFileSync(newer, 'newer\n');
+  utimesSync(older, new Date('2026-11-09T10:00:00Z'), new Date('2026-11-09T10:00:00Z'));
+  utimesSync(newer, new Date('2026-11-09T12:00:00Z'), new Date('2026-11-09T12:00:00Z'));
+  writeFileSync(path.join(home, handoffName('2026-11-09', 'loose-chat')), 'a chat with no program\n');
+  const lines = run(['resume', '--home', home]).stdout.split('\n');
+  assert.ok(lines.includes(`READ ${newer}`), lines.join('\n'));
+  assert.ok(!lines.includes(`READ ${older}`));
+  assert.ok(!lines.some((line) => line.includes('loose-chat')), 'a home-level chat file is not the program\'s handoff');
+  assert.ok(lines.indexOf(`READ ${newer}`) > lines.findIndex((line) => line.startsWith('ACTIVE prog-a ')), 'read as the program\'s state');
+  assert.equal(run(['check', '--home', home]).status, 0, run(['check', '--home', home]).stdout);
+  writeFileSync(guardFile, JSON.stringify({ warnContextTokens: 150000 }));
+  run(['resume', '--home', home]);
+  assert.deepEqual(JSON.parse(readFileSync(guardFile, 'utf8')), { warnContextTokens: 150000 }, 'an edited file is never overwritten');
+  assert.equal(run(['close', '--home', home]).status, 0);
+  assert.ok(!run(['resume', '--home', home]).stdout.includes('HANDOFF-'), 'no program, no earlier program\'s handoff');
+  assert.equal(run(['start', 'prog-b', '--shape', 'one-writer', '--home', home]).status, 0);
+  assert.ok(!run(['resume', '--home', home]).stdout.includes('HANDOFF-'), 'a new program reads none of prog-a\'s handoffs');
+  writeFileSync(guardFile, '{broken');
+  assert.match(run(['resume', '--home', home]).stdout, new RegExp(`^CONTEXT-GUARD-INVALID ${guardFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `, 'm'));
+  assert.equal(run(['resume', '--home', path.join(home, 'absent')]).status, 0);
+  assert.equal(existsSync(path.join(home, 'absent')), false, 'resume creates no home');
+});
+
+test('a resume that cannot seed context-guard.json still prints the whole reading list', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'one-writer', '--home', home]).status, 0);
+  chmodSync(home, 0o555);
+  let result;
+  try {
+    result = run(['resume', '--home', home]);
+  } finally {
+    chmodSync(home, 0o755);
+  }
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^CONTEXT-GUARD-UNSEEDED .*context-guard\.json: /m);
+  assert.match(result.stdout, /^ACTIVE prog-a /m);
+  assert.equal(existsSync(path.join(home, 'context-guard.json')), false);
 });

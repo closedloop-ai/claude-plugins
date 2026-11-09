@@ -7,6 +7,7 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
 ```
 <fleetHome>/
   config.env  standing-rulings.md  lessons.md  handover.md   reused by every program
+  context-guard.json                                         context limits
   current                                                    the active program's slug
   programs/<slug>/
     sessions.txt  prs.txt  board.md  watcher and monitor files (codex-fleet-monitor)
@@ -16,6 +17,7 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
     requests/  findings/  evidence/
     resume-log.md  rulings.md  attention.md  review.md
     program.json   the program's shape (no-writer, one-writer or fleet)
+    HANDOFF-<date>-<chat>.md   per-chat handoffs
     plugin-version.json   the plugin version check, the operator's answer and any update
 ```
 
@@ -42,8 +44,6 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
 - Restarted: watcher re-armed; review-102 relaunched from prompts/review-102-01-initial.md
 - Pending: #102 QA checkpoint 3 with the operator; flag key approval for <key>
 ```
-
-Read it top to bottom after any restart or compaction before acting.
 
 ## Rulings
 

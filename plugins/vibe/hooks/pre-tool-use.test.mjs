@@ -149,13 +149,17 @@ test("results merge as deny > defer > ask > allow and keep every context", () =>
   assert.deepEqual(mergeResults("PreToolUse", [{ decision: "ask", reason: "b" }, { context: "one" }, { decision: "deny", reason: "c" }, { context: "two" }, { decision: "deny", reason: "d" }]).hookSpecificOutput,
     { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "c\nd", additionalContext: "one\n\ntwo" });
   assert.deepEqual(mergeResults("PreToolUse", [{ decision: "allow", reason: "a" }, { decision: "ask", reason: "b" }]).hookSpecificOutput.permissionDecisionReason, "b");
+  assert.deepEqual(mergeResults("PostToolUse", [{ systemMessage: "one" }, { context: "c", systemMessage: "two" }]),
+    { systemMessage: "one\ntwo", hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "c" } });
 });
 
 test("hooks.json registers one command per event, and the PreToolUse matcher names exactly the routed tools", () => {
   const { hooks } = JSON.parse(readFileSync(path.join(HERE, "hooks.json"), "utf8"));
   const commands = (event) => hooks[event].flatMap((entry) => entry.hooks.map((hook) => hook.command));
-  assert.deepEqual(Object.keys(hooks).sort(), ["PreToolUse", "SessionStart", "UserPromptSubmit"]);
+  assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "PreToolUse", "SessionStart", "UserPromptSubmit"]);
   assert.deepEqual(commands("PreToolUse"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs"']);
+  assert.deepEqual(commands("PostToolUse"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs"']);
+  assert.equal(hooks.PostToolUse[0].matcher, undefined, "the context guard measures after every tool call");
   assert.deepEqual(commands("UserPromptSubmit"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs"']);
   assert.deepEqual(commands("SessionStart"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs"']);
   assert.equal(hooks.SessionStart[0].matcher, "compact");
