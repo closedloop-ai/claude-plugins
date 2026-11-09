@@ -28,7 +28,7 @@ export function fleetResume(event, env = process.env) {
     || readHookSkill(event?.session_id, env.HOME) === "fleet-orchestrator")) return null;
   const home = defaultHome(env);
   if (!existsSync(path.join(home, "programs"))) return null;
-  const lines = resumeLines(home);
+  const lines = resumeLines(home, { chat: typeof event.session_id === "string" && event.session_id !== "" ? event.session_id : null });
   const active = lines.find((line) => line.startsWith("ACTIVE "));
   if (!active) return null;
   const programDir = active.split(" ").slice(2).join(" ");

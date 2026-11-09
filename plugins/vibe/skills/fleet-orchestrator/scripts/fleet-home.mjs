@@ -164,8 +164,12 @@ function unmanagedState(dir) {
   }).map((name) => `UNMANAGED-STATE ${path.join(dir, name)}: Codex thread state outside sessions/; start sessions with fleet.sh`);
 }
 
-/** The reading list a new chat follows. */
-export function resumeLines(home) {
+/**
+ * The reading list a new chat follows. A chat resuming itself after a compaction passes its own
+ * session id as `chat` (null when unknown) and is shown only its own handoff, never a sibling
+ * chat's newer one in the same program; without `chat` it is the program's newest handoff.
+ */
+export function resumeLines(home, options = {}) {
   const lines = ["config.env", "standing-rulings.md", "lessons.md", "handover.md"].filter((name) => existsSync(path.join(home, name)))
     .map((name) => `READ ${path.join(home, name)}`);
   lines.push(...contextGuardLines(home));
@@ -175,7 +179,7 @@ export function resumeLines(home) {
   } catch {}
   if (!resolved.program) return [...lines, `NO-ACTIVE-PROGRAM: start one with fleet-home.mjs start <slug>; it reads no earlier program's state`];
   lines.push(`ACTIVE ${resolved.program} ${resolved.dir}`, shapeLine(resolved.dir), pluginVersionLine(resolved.dir));
-  const handoff = newestHandoff(resolved.dir);
+  const handoff = Object.hasOwn(options, "chat") ? options.chat && newestHandoff(resolved.dir, options.chat) : newestHandoff(resolved.dir);
   if (handoff) lines.push(`READ ${handoff}`);
   for (const name of ["rulings.md", "attention.md", "resume-log.md", "board.md"]) {
     if (existsSync(path.join(resolved.dir, name))) lines.push(`READ ${path.join(resolved.dir, name)}`);
@@ -377,11 +381,11 @@ function seedContextGuardConfig(home) {
   writeFileSync(file, `${JSON.stringify(seed, null, 2)}\n`, { flag: "wx" });
 }
 
-/** The newest HANDOFF-*.md in `dir` (latest mtime, then name), or null. */
-function newestHandoff(dir) {
+/** The newest HANDOFF-*.md in `dir` (latest mtime, then name), only `chat`'s own when given, or null. */
+function newestHandoff(dir, chat) {
   let names;
   try {
-    names = readdirSync(dir).filter((name) => HANDOFF_FILE.test(name));
+    names = readdirSync(dir).filter((name) => HANDOFF_FILE.test(name) && (chat === undefined || name.endsWith(`-${chat}.md`)));
   } catch {
     return null;
   }
