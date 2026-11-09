@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
@@ -718,4 +718,44 @@ test("without a hook record the loaded gate is not enforced; with one it is", as
   const observed = await run(home, ["loaded", "--runtime", "codex"], codexEnv);
   assert.deepEqual([observed.code, observed.result.enforced, observed.result.loadedSkill.basis], [0, true, "hook-observed"]);
   assert.equal((await run(home, ["adopt", "--worktree", second], codexEnv)).code, 0);
+});
+
+/** Runs the script under a process named `codex`, as a Codex App Server thread's shell does. */
+function runInCodex(root, home, args, env) {
+  const launcher = path.join(root, "harness", "codex");
+  if (!existsSync(launcher)) {
+    mkdirSync(path.dirname(launcher), { recursive: true });
+    symlinkSync("/bin/sh", launcher);
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(launcher, ["-c", '"$0" "$@"; exit $?', process.execPath, SCRIPT, ...args], {
+      env: { PATH: SYSTEM_PATH, HOME: home, ...env },
+    });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, result: JSON.parse(stdout) }));
+  });
+}
+
+// ISS-13834: a Codex App Server started from a Claude Code chat passes that chat's
+// CLAUDE_CODE_SESSION_ID and CLAUDECODE=1 to every Codex thread. The chat's own hook record
+// then made the writer's load check enforced against the wrong actor and refused it.
+test("a Codex writer that inherited a Claude session id is checked as its own thread", async (t) => {
+  const { root, home } = sandbox(t);
+  const claudeChat = "1bc84ae5-e27b-4e2c-b779-34be38c3a70b";
+  const codexThread = "01a1b313-e78f-7951-afd9-b55267389d9b";
+  const inherited = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: claudeChat, CODEX_THREAD_ID: codexThread };
+  const chatHook = path.join(home, ".vibe-hook-scope", `${claudeChat}.json`);
+  mkdirSync(path.dirname(chatHook), { recursive: true });
+  writeFileSync(chatHook, JSON.stringify({ sessionId: claudeChat, skill: "fleet-orchestrator", loadedSkill: loaded(claudeChat, "claude") }));
+  const unobserved = await runInCodex(root, home, ["loaded", "--runtime", "codex"], inherited);
+  assert.deepEqual([unobserved.code, unobserved.result.ok, unobserved.result.enforced], [0, true, false], JSON.stringify(unobserved.result));
+  assert.equal(unobserved.result.state, path.join(home, ".codex", "vibe", "plugin-version", `${codexThread}.json`));
+  writeFileSync(path.join(home, ".vibe-hook-scope", `${codexThread}.json`),
+    JSON.stringify({ sessionId: codexThread, skill: "vibe", loadedSkill: loaded(codexThread, "codex") }));
+  const observed = await runInCodex(root, home, ["loaded", "--runtime", "codex"], inherited);
+  assert.deepEqual([observed.code, observed.result.enforced, observed.result.loadedSkill.actorId], [0, true, codexThread]);
 });

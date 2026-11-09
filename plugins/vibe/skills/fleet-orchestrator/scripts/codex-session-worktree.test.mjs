@@ -4,7 +4,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { loadState, parseCli, requireResumeSession, run, saveState } from './codex-session.mjs';
+import { launchWriter, loadState, parseCli, requireResumeSession, run, saveState } from './codex-session.mjs';
+import { launchCwd, vibeHookTrustProblem } from './writer-launch.mjs';
 import { readProcessIdentity } from '../../../shared/process-identity.mjs';
 
 function git(cwd, ...args) {
@@ -260,7 +261,7 @@ test('new writer rejects a linked record without Vibe ticket provenance', async 
 
 test('AC-2 AC-4: new writer still accepts a not-yet-existing worktree path', async (t) => {
   const f = fixture(t);
-  const future = join(f.dir, 'future-worktree');
+  const future = join(f.repo, '.claude', 'worktrees', 'vibe-future-worktree');
   const app = client();
   assert.equal(await run(app, { ...f.options(), cwd: future }), 'writer turn T1 U1');
   assert.equal(existsSync(future), false);
@@ -292,4 +293,101 @@ test('direct CLI refuses an unrecorded linked worktree before App Server connect
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
   assert.equal(loadState(f.stateDir, 'writer'), null);
+});
+
+// Codex runs hooks in the thread's cwd, and a not-yet-existing worktree path can run
+// none, so a fleet writer's first $vibe turn recorded no load evidence for its own thread.
+test('a new thread whose cwd does not exist yet starts in the checkout that owns the worktree path', async (t) => {
+  const f = fixture(t);
+  const future = join(f.repo, '.claude', 'worktrees', 'vibe-future');
+  const app = client();
+  assert.equal(await run(app, { ...f.options(), cwd: future }), 'writer turn T1 U1');
+  assert.equal(app.calls.find((call) => call.method === 'thread/start').params.cwd, f.repo);
+  assert.equal(app.calls.find((call) => call.method === 'turn/start').params.cwd, f.repo);
+  assert.equal(loadState(f.stateDir, 'writer').cwd, future, 'the session stays bound to the worktree vibe new creates');
+  assert.equal(existsSync(future), false);
+});
+
+test('a new writer whose missing cwd is not under a checkout is refused at launch with the fix', async (t) => {
+  const f = fixture(t);
+  assert.throws(() => launchCwd(join(f.dir, 'future-worktree')),
+    /does not exist.*<checkout>\/\.claude\/worktrees\/<name>.*main checkout.*vibe new/s);
+  assert.throws(() => launchCwd(join(f.dir, 'loose', '.claude', 'worktrees', 'vibe-x')), /does not exist/);
+  assert.equal(launchCwd(f.worktree), f.worktree);
+  const result = spawnSync(process.execPath, [new URL('./codex-session.mjs', import.meta.url).pathname,
+    'turn', f.stateDir, 'writer', '--prompt-file', f.promptFile, '--cwd', join(f.dir, 'future-worktree'),
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'], { encoding: 'utf8' });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /future-worktree does not exist.*vibe new creates it/s);
+  assert.equal(loadState(f.stateDir, 'writer'), null);
+});
+
+// a first turn that ended before vibe new (a refused load check, a question, an early
+// stop) left a thread fleet.sh refused every later turn on.
+test('a thread whose first turn created no session accepts a $vibe recovery turn for the same ticket and worktree', async (t) => {
+  const f = fixture(t);
+  const future = join(f.repo, '.claude', 'worktrees', 'vibe-future');
+  saveState(f.stateDir, 'writer', { threadId: 'T1', cwd: future, ticket: 'ISS-1', model: 'm', effort: 'high', turns: [{ turnId: 'U0', kind: 'turn' }] });
+  const saved = loadState(f.stateDir, 'writer');
+  assert.equal(requireResumeSession(saved, future, '$vibe ISS-1 continue\n'), null);
+  const app = client();
+  const options = parseCli(['turn', f.stateDir, 'writer', '--prompt-file', f.promptFile]);
+  assert.equal(await run(app, options), 'writer turn T1 U1');
+  assert.deepEqual(app.calls.map((call) => call.method), ['thread/resume', 'turn/start']);
+  assert.equal(app.calls[0].params.cwd, f.repo);
+  assert.equal(loadState(f.stateDir, 'writer').turns.length, 2);
+});
+
+test('a thread with no session refuses an ordinary turn and a $vibe turn for another ticket or worktree', async (t) => {
+  const f = fixture(t);
+  const future = join(f.repo, '.claude', 'worktrees', 'vibe-future');
+  saveState(f.stateDir, 'writer', { threadId: 'T1', cwd: future, ticket: 'ISS-1', model: 'm', effort: 'high', turns: [] });
+  const saved = loadState(f.stateDir, 'writer');
+  assert.throws(() => requireResumeSession(saved, future, 'keep going\n'), /no vibe session record.*\$vibe ISS-1/s);
+  assert.throws(() => requireResumeSession(saved, future, '$vibe ISS-2\n'), /ticket ISS-2.*ISS-1/s);
+  assert.throws(() => requireResumeSession(saved, f.worktree, '$vibe ISS-1\n'), /bound to/);
+  assert.throws(() => requireResumeSession({ ...saved, cwd: f.worktree }, f.worktree, '$vibe ISS-1\n'), /no vibe session record/);
+  writeFileSync(f.promptFile, 'keep going\n');
+  const result = spawnSync(process.execPath, [new URL('./codex-session.mjs', import.meta.url).pathname,
+    'turn', f.stateDir, 'writer', '--prompt-file', f.promptFile], { encoding: 'utf8' });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /no vibe session record .* yet; a thread whose first turn created no session takes only a \$vibe ISS-1 recovery turn/);
+  assert.equal(loadState(f.stateDir, 'writer').turns.length, 0);
+});
+
+// Codex pins plugin hook approval to the whole bundle, so every vibe release leaves
+// vibe's hooks "modified" and failing until they are approved again.
+test('a writer launch is refused while any vibe Codex hook is not trusted, naming the fix', async (t) => {
+  const f = fixture(t);
+  const listing = (trustStatus) => ({ data: [{ cwd: f.repo, hooks: [
+    { key: 'vibe@fixture-market:hooks/hooks.json:user_prompt_submit:0:0', pluginId: 'vibe@fixture-market', trustStatus, enabled: true },
+    { key: 'vibe@fixture-market:hooks/hooks.json:pre_tool_use:0:0', pluginId: 'vibe@fixture-market', trustStatus: 'trusted', enabled: true },
+    { key: '/fixture/.codex/hooks.json:user_prompt_submit:0:0', pluginId: null, trustStatus: 'untrusted', enabled: true },
+  ] }] });
+  const future = join(f.repo, '.claude', 'worktrees', 'vibe-future');
+  const modified = client();
+  modified.request = async (method, params) => {
+    modified.calls.push({ method, params });
+    if (method === 'hooks/list') return listing('modified');
+    throw new Error(`unexpected ${method}`);
+  };
+  await assert.rejects(launchWriter(modified, { ...f.options(), cwd: future }),
+    /user_prompt_submit:0:0 is modified.*re-approve the vibe hooks in Codex's \/hooks/s);
+  assert.deepEqual(modified.calls.map((call) => call.method), ['hooks/list']);
+  assert.deepEqual(modified.calls[0].params, { cwds: [f.repo] });
+  assert.equal(loadState(f.stateDir, 'writer'), null);
+
+  const trusted = client();
+  const request = trusted.request;
+  trusted.request = async (method, params) => (method === 'hooks/list' ? listing('trusted') : request(method, params));
+  assert.equal(await launchWriter(trusted, { ...f.options(), cwd: future }), 'writer turn T1 U1');
+});
+
+test('an App Server without hooks/list keeps launching; other listing failures refuse', async () => {
+  const old = { request: async () => { throw new Error('unknown variant `hooks/list`'); } };
+  assert.equal(await vibeHookTrustProblem(old, '/x'), null);
+  const broken = { request: async () => { throw new Error('socket closed'); } };
+  assert.match(await vibeHookTrustProblem(broken, '/x'), /could not list Codex hooks: socket closed/);
+  const disabled = { request: async () => ({ data: [{ hooks: [{ key: 'vibe@fixture-market:k', pluginId: 'vibe@fixture-market', trustStatus: 'trusted', enabled: false }] }] }) };
+  assert.match(await vibeHookTrustProblem(disabled, '/x'), /vibe@fixture-market:k is disabled/);
 });

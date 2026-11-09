@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.64
+
+#### Fixed
+- Vibe scripts now act for the harness conversation that owns the command. A Codex App Server started from a Claude Code chat hands that chat's `CLAUDE_CODE_SESSION_ID` and `CLAUDECODE=1` to every Codex thread, and `plugin-version.mjs` preferred it, so a fleet writer's `loaded` check found the chat's hook record and refused the writer. The new `harness-identity.mjs` lets a lone id decide; with both set, the nearest harness process above the command wins (a bounded `ps` walk), and the Codex thread wins when `ps` cannot be read. `plugin-version.mjs`, `vibe-sessions.mjs new`, `reference-images.mjs` (which no longer falls back to the other harness's transcript) and cl-sweep's core skill discovery all use it.
+- `vibe-sessions.mjs new --worktree <checkout>/.claude/worktrees/vibe-<slug>` starts the session in the checkout that owns that path. It refuses a `--repo` of another repository and a path that is not the slug's session path, instead of creating the session in the remembered symphony-alpha checkout.
+- `vibe-preflight.sh --repo` accepts a closedloop-ai/claude-plugins checkout for that run. It is never remembered as the app checkout, and the symphony-alpha dependency and PostHog checks are skipped for it.
+- `codex-session.mjs turn` refuses to start or resume a Codex writer while any vibe Codex hook is not trusted or is disabled, as Codex's `hooks/list` reports. Codex pins plugin hook approval to the whole plugin bundle, so each vibe release leaves the hooks "modified"; the refusal names the fix, re-approving the vibe hooks in Codex's `/hooks`, and settles as a pre-start rejection. An App Server without `hooks/list` is not checked.
+- A new writer whose `--cwd` does not exist yet starts its thread and first turn in the checkout that owns `<checkout>/.claude/worktrees/<name>`, because Codex runs hooks in the thread's cwd and could run none there. The session stays bound to the worktree path. A missing `--cwd` of any other shape is refused at launch with the fix.
+- A saved writer thread whose first turn ended before `vibe new` (a refused check, a question, an early stop) is no longer stranded: it accepts a `$vibe` recovery turn for its own ticket and worktree. Any other turn, another ticket or a different worktree is still refused.
+
+#### Changed
+- The fleet writer brief and vibe's session step pass `--repo` and `--worktree` to `vibe-sessions.mjs new` for a repository other than the remembered app checkout.
+- The README version line and the Python release-pin contract tests move to 1.1.64.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 188 words longer than in 1.1.63 (origin/main at this update, 21cace5f94c9534607e2612d4d4a8ced22fbeefa).
+
 ### vibe v1.1.63
 
 #### Fixed

@@ -15,7 +15,8 @@
 // reference link). `attached` decodes the images the person attached to their
 // latest chat message (`--all`: every message) from this harness's own
 // transcript: the Codex rollout for CODEX_THREAD_ID, or the Claude Code
-// transcript for CLAUDE_CODE_SESSION_ID; `--transcript` names the file.
+// transcript for CLAUDE_CODE_SESSION_ID, whichever harness owns this command
+// (harness-identity.mjs); `--transcript` names the file.
 // Files are content-addressed, so saving the same image twice records it once.
 // Every command prints one JSON object on stdout; errors print
 // {"ok":false,"error":...} and exit non-zero.
@@ -26,6 +27,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { Harness, harnessActor } from "./harness-identity.mjs";
 import { git, readSessionRecord, writeSessionRecord } from "./session-record.mjs";
 
 export const REFERENCE_DIR = "vibe-reference-images";
@@ -114,22 +116,23 @@ export function attachedImageGroups(transcriptText) {
   return groups;
 }
 
-/** The current harness's own transcript file, from its session or thread id. */
-export function findTranscript(env = process.env) {
-  if (env.CODEX_THREAD_ID) {
+/**
+ * The current harness's own transcript file, from the conversation harness-identity.mjs
+ * resolves; never the other harness's transcript under an inherited id (ISS-13834).
+ */
+export function findTranscript(env = process.env, harness = {}) {
+  const actor = harnessActor(env, harness);
+  let found = null;
+  if (actor?.runtime === Harness.Codex) {
     const codexHome = env.CODEX_HOME || path.join(os.homedir(), ".codex");
-    const found = findFile(path.join(codexHome, "sessions"), (name) =>
-      name.startsWith("rollout-") && name.endsWith(`${env.CODEX_THREAD_ID}.jsonl`), 4);
-    if (found) {
-      return found;
-    }
-  }
-  if (env.CLAUDE_CODE_SESSION_ID) {
+    found = findFile(path.join(codexHome, "sessions"), (name) =>
+      name.startsWith("rollout-") && name.endsWith(`${actor.id}.jsonl`), 4);
+  } else if (actor?.runtime === Harness.Claude) {
     const claudeHome = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
-    const found = findFile(path.join(claudeHome, "projects"), (name) => name === `${env.CLAUDE_CODE_SESSION_ID}.jsonl`, 1);
-    if (found) {
-      return found;
-    }
+    found = findFile(path.join(claudeHome, "projects"), (name) => name === `${actor.id}.jsonl`, 1);
+  }
+  if (found) {
+    return found;
   }
   throw new Error("No transcript found for this harness session; pass --transcript.");
 }

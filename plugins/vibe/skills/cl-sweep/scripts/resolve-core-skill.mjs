@@ -4,6 +4,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { harnessActor } from '../../vibe/scripts/harness-identity.mjs';
 
 const PROCESS_API = 'CLOSEDLOOP_APP_SERVER_CLIENT v1';
 const CORE_ID = 'closedloop-core@closedloop-ai';
@@ -67,7 +68,7 @@ export function codexSkills(executable, cwd) {
 
 /** Resolve only the core-owned monitor; unrelated or disabled names never satisfy the binding. */
 export async function resolveCoreSkill(options = {}) {
-  const runtime = options.runtime || (process.env.CLAUDECODE === '1' ? 'claude' : 'codex');
+  const runtime = options.runtime || discoveryRuntime();
   let skillDirectory;
   if (runtime === 'claude') {
     const registry = jsonCommand(options.claude || 'claude', ['plugin', 'list', '--json']);
@@ -115,3 +116,8 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) await main();
+
+/** The harness whose installed core is resolved: the one owning this command, never a CLAUDECODE inherited by a Codex thread. */
+export function discoveryRuntime(env = process.env, harness = {}) {
+  return harnessActor(env, harness)?.runtime ?? (env.CLAUDECODE === '1' ? 'claude' : 'codex');
+}

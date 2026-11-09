@@ -11,7 +11,7 @@ import {
   readThreadState, sendInput,
 } from './core-client-process.mjs';
 import { fixtureSkillPath, installRegistryFixture, registryFixtureCode } from './core-client-fixture.mjs';
-import { DISCOVERY_STAGE_TIMEOUT_MS, DISCOVERY_TOTAL_TIMEOUT_MS, resolveCoreSkill } from './resolve-core-skill.mjs';
+import { DISCOVERY_STAGE_TIMEOUT_MS, DISCOVERY_TOTAL_TIMEOUT_MS, discoveryRuntime, resolveCoreSkill } from './resolve-core-skill.mjs';
 
 function executable(root, name, body) {
   const path = join(root, name);
@@ -163,4 +163,14 @@ test('thread-state forwarding preserves three independent RPC budgets and a sing
   await readThreadState(client, 'thread-1', { timeoutMs: () => 5000 });
   assert.deepEqual(observed[2][1].options, { deadline: 15_000 });
   assert.equal(observed[2][2], 6000);
+});
+
+// ISS-13834: Codex threads of an App Server started from a Claude Code chat inherit CLAUDECODE=1.
+test('discovery runtime follows the harness that owns the command, not an inherited CLAUDECODE', () => {
+  const inherited = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: '1bc84ae5-e27b-4e2c-b779-34be38c3a70b', CODEX_THREAD_ID: '01a1b313-e78f-7951-afd9-b55267389d9b' };
+  assert.equal(discoveryRuntime(inherited, { ancestry: () => ['/opt/codex/bin/codex app-server'] }), 'codex');
+  assert.equal(discoveryRuntime({ CLAUDECODE: '1', CODEX_THREAD_ID: inherited.CODEX_THREAD_ID }), 'codex');
+  assert.equal(discoveryRuntime({ CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: inherited.CLAUDE_CODE_SESSION_ID }), 'claude');
+  assert.equal(discoveryRuntime({ CLAUDECODE: '1' }), 'claude');
+  assert.equal(discoveryRuntime({}), 'codex');
 });
