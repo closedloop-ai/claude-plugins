@@ -295,3 +295,28 @@ test("a refused write of the remembered checkout asks for an escalated rerun and
   assert.equal(escalation?.justification, "Remember where your copy of the code is");
   assert.equal(remembered(env.home), null);
 });
+
+// ISS-13834: a writer on a claude-plugins ticket must start its session in claude-plugins.
+test("--repo accepts a claude-plugins checkout for that session without replacing the remembered symphony-alpha checkout", (t) => {
+  const env = setup(t);
+  const symphony = path.join(env.home, "Source", "symphony-alpha");
+  makeCheckout({ ...env, checkout: symphony });
+  assert.equal(runPreflight(env).checks.repo.detail, symphony);
+  const plugins = path.join(env.home, "Source", "claude-plugins");
+  makeCheckout({ ...env, checkout: plugins, remoteUrl: "https://github.com/closedloop-ai/claude-plugins.git" });
+  const worktree = path.join(plugins, ".claude", "worktrees", "vibe-x");
+  git(plugins, ["worktree", "add", "--quiet", "-b", "vibe/x", worktree], env.home);
+
+  const result = runPreflight(env, ["--repo", worktree]);
+  assert.equal(result.checks.repo.ok, true, result.stdout);
+  assert.equal(result.checks.repo.detail, plugins);
+  assert.equal(result.checks["repo-bootstrap"], undefined, "symphony-alpha's dependency install is not a claude-plugins prerequisite");
+  assert.equal(result.checks["posthog-key"], undefined, "the app flag snapshot key is not a claude-plugins prerequisite");
+  assert.equal(remembered(env.home), symphony);
+
+  const other = path.join(env.home, "Source", "elsewhere");
+  makeCheckout({ ...env, checkout: other, remoteUrl: "git@github.com:someone/claude-plugins.git" });
+  const refused = runPreflight(env, ["--repo", other]);
+  assert.equal(refused.checks.repo.ok, false);
+  assert.match(refused.checks.repo.detail, /is not a symphony-alpha or claude-plugins checkout/);
+});
