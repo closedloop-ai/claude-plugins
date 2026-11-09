@@ -466,36 +466,65 @@ test('a unit lists its tickets on the board page and in the resume log; a fold a
   assert.equal(run([dir, 'unit', 'ISS-5', '--tickets', 'not-a-slug']).status, 2);
 });
 
-test('a unit closed with its merged PR is finished: the board shows it, the log records it, and its tickets can start a new unit', (t) => {
+test('a unit closes only with its writer row\'s PR; the board and log show it, and a new unit takes the next free name', (t) => {
   const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'w1', '--pr', '7', '--repo', 'o/r']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1', '--now', '2026-11-09T10:00:00Z']).status, 0);
-  assert.equal(run([dir, 'unit', 'ISS-9', '--closed', '#7']).status, 2, 'only a recorded unit closes');
-  assert.equal(run([dir, 'unit', 'ISS-1', '--closed', 'PR 7', '--now', '2026-11-09T12:00:00Z']).status, 0);
+  assert.equal(run([dir, 'unit', 'ISS-9', '--closed', '7']).status, 2, 'only a recorded unit closes');
+  assert.equal(run([dir, 'unit', 'ISS-5', '--tickets', 'ISS-5']).status, 0);
+  const noRow = run([dir, 'unit', 'ISS-5', '--closed', '7']);
+  assert.equal(noRow.status, 2, 'a unit with no writer row cannot close');
+  assert.match(noRow.stderr, /no PR recorded/);
+  for (const typo of ['8', '#8', ['x', 'y#7'].join('/'), 'https://github.com/o/r/pull/70']) {
+    const refused = run([dir, 'unit', 'ISS-1', '--closed', typo]);
+    assert.equal(refused.status, 2, typo);
+    assert.match(refused.stderr, /is not the PR on writer w1's board row/);
+  }
+  assert.equal(run([dir, 'unit', 'ISS-1', '--closed', 'https://github.com/o/r/pull/7', '--now', '2026-11-09T12:00:00Z']).status, 0);
   const board = JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8'));
-  assert.deepEqual(board.units['ISS-1'].closed, { pr: 'PR 7', at: '2026-11-09T12:00:00.000Z' });
-  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /\| ISS-1 \| w1 \|  \| ISS-1, ISS-2 \| closed with PR 7 \|/);
-  assert.match(readFileSync(path.join(dir, 'resume-log.md'), 'utf8'), /- Unit ISS-1 \(w1\) closed with PR 7: ISS-1, ISS-2\n$/);
+  assert.match(board.units['ISS-1'].closed.pr, /^o\/r#7$/);
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /\| ISS-1 \| w1 \| o\/r#7 \| ISS-1, ISS-2 \| closed with o\/r#7 \|/);
+  assert.match(readFileSync(path.join(dir, 'resume-log.md'), 'utf8'), /- Unit ISS-1 \(w1\) closed with o\/r#7: ISS-1, ISS-2\n$/);
   const refold = run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-3']);
   assert.equal(refold.status, 2);
-  assert.match(refold.stderr, /unit ISS-1 is closed; start a new unit/);
-  assert.equal(run([dir, 'unit', 'ISS-2', '--tickets', 'ISS-2,ISS-3', '--writer', 'w2']).status, 0, 'a closed unit no longer owns its tickets');
+  assert.match(refold.stderr, /unit ISS-1 is closed; start the new unit as ISS-1#2/);
+  assert.equal(run([dir, 'unit', 'ISS-1#2', '--tickets', 'ISS-1,ISS-3', '--writer', 'w2']).status, 0, 'a closed unit no longer owns its tickets or blocks its name');
 });
 
-test('status flags a unit whose local writer has not recorded every other ticket on its vibe session', (t) => {
+test('status flags a unit whose writer has not recorded every other ticket, and every case it cannot check', (t) => {
   const dir = tempDir(t);
   const worktree = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-unit-wt-'));
-  t.after(() => rmSync(worktree, { recursive: true, force: true }));
+  const plain = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-unit-plain-'));
+  t.after(() => { rmSync(worktree, { recursive: true, force: true }); rmSync(plain, { recursive: true, force: true }); });
   execFileSync('git', ['init', '-q', worktree]);
   const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
   const record = (memberTickets) => writeFileSync(path.join(gitDir, 'vibe-session.json'), JSON.stringify({ liveTicket: 'ISS-1', memberTickets }));
   assert.equal(run([dir, 'writer', 'w1', '--worktree', worktree]).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2,ISS-3', '--writer', 'w1']).status, 0);
-  record(['ISS-2']);
   let status = run([dir, 'status']);
+  assert.match(status.stdout, /^UNIT-MEMBERS-UNCHECKED ISS-1 w1: no vibe session record in its worktree yet;/m);
+  record(['ISS-2']);
+  status = run([dir, 'status']);
   assert.equal(status.status, 1);
   assert.match(status.stdout, /^UNIT-MEMBERS-UNRECORDED ISS-1 w1: ISS-3; the writer runs vibe-sessions\.mjs touch/m);
   record(['ISS-2', 'ISS-3']);
   status = run([dir, 'status']);
-  assert.doesNotMatch(status.stdout, /UNIT-MEMBERS-UNRECORDED/);
-  assert.match(status.stdout, /, 0 units with unrecorded members/);
+  assert.doesNotMatch(status.stdout, /UNIT-MEMBERS/);
+  assert.match(status.stdout, /, 0 unit member problems/);
+  assert.equal(run([dir, 'writer', 'w2', '--worktree', plain]).status, 0);
+  assert.equal(run([dir, 'writer', 'w3', '--where', 'remote', '--worktree', worktree]).status, 0);
+  assert.equal(run([dir, 'writer', 'w4', '--pr', '9']).status, 0);
+  for (const [unit, writer] of [['ISS-4', 'w2'], ['ISS-5', 'w3'], ['ISS-6', 'w4'], ['ISS-7', 'ghost'], ['ISS-8', '']]) {
+    assert.equal(run([dir, 'unit', unit, '--tickets', unit, ...(writer ? ['--writer', writer] : [])]).status, 0);
+  }
+  status = run([dir, 'status']);
+  assert.equal(status.status, 1);
+  for (const line of [
+    /^UNIT-MEMBERS-UNCHECKED ISS-4 w2: cannot read its session record/m,
+    /^UNIT-MEMBERS-UNCHECKED ISS-5 w3: remote writer; its session record is on the owning machine;/m,
+    /^UNIT-MEMBERS-UNCHECKED ISS-6 w4: its writer row has no --worktree;/m,
+    /^UNIT-MEMBERS-UNCHECKED ISS-7 ghost: no board row for writer ghost;/m,
+    /^UNIT-MEMBERS-UNCHECKED ISS-8 -: the unit has no writer;/m,
+  ]) assert.match(status.stdout, line);
+  assert.match(status.stdout, /, 5 unit member problems/);
 });

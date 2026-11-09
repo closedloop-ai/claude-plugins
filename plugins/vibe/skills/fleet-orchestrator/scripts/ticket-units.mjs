@@ -59,8 +59,12 @@
 // Exits 0. Malformed input exits 2.
 //
 // `pr-check` exits 1 until the PR title and body name every ticket of the unit.
-// board.mjs status prints `unitMemberProblems` for a local writer whose vibe
-// session has not recorded every other ticket of its unit as a member.
+// board.mjs status prints `unitMemberProblems`: UNIT-MEMBERS-UNRECORDED for a
+// local writer whose vibe session has not recorded every other ticket of its
+// unit as a member, and UNIT-MEMBERS-UNCHECKED when that cannot be read (a
+// remote writer, no writer row or worktree, no or unreadable session record).
+// A new unit takes the name of its first ticket; when a closed unit already
+// has that name, it gets the next free `<name>#<n>`.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -72,11 +76,19 @@ import { missingTicketNames } from "../../handoff/scripts/ticket-names.mjs";
 const SLUG = /^[A-Z]+-\d+$/;
 const PRD = /^PRD-\d+$/;
 
-/** The board's open units (closed ones are finished) and its writer rows. */
+/** The board's open units (closed ones are finished), its writer rows, and every unit name already used. */
 export function readBoard(orchDir) {
   const file = path.join(resolveWorkDir(orchDir).dir, "board.json");
   const board = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
-  return { units: openUnits(board.units ?? {}), writers: board.writers ?? {} };
+  return { units: openUnits(board.units ?? {}), writers: board.writers ?? {}, names: Object.keys(board.units ?? {}) };
+}
+
+/** `base`, or `base#2`, `base#3`, ... when a closed unit already has the name. */
+export function freeUnitName(base, taken) {
+  if (!taken.includes(base)) return base;
+  let n = 2;
+  while (taken.includes(`${base}#${n}`)) n += 1;
+  return `${base}#${n}`;
 }
 
 /** The open units recorded on a program's board, `{}` when it has none. */
@@ -109,7 +121,7 @@ export function joinReasons(a, b, collisions = []) {
 }
 
 /** Groups the candidates against the in-flight units; pure. */
-export function groupTickets(candidates, units = {}) {
+export function groupTickets(candidates, units = {}, takenNames = Object.keys(units)) {
   const tickets = validTickets(candidates);
   const collisions = candidates.collisions ?? [];
   // A ticket assigned to someone else never joins a unit; it is only reported as related.
@@ -146,7 +158,7 @@ export function groupTickets(candidates, units = {}) {
     if (added.length === 0) break;
     for (const [slug, blocker] of added) blocked.set(slug, blocker);
   }
-  const context = { bySlug, edges, unitOf, units, all, apart, blocked };
+  const context = { bySlug, edges, unitOf, units, all, apart, blocked, takenNames };
   const grouped = components.map((members) => describe(members, context));
   const otherOwners = foreign.flatMap((ticket) => grouped.flatMap((unit) => {
     const via = unit.tickets.map((slug) => ({ slug, reasons: related(ticket, bySlug.get(slug)) })).find((entry) => entry.reasons.length > 0);
@@ -172,14 +184,18 @@ export function renderUnits(units, writers) {
   return rows.length === 0 ? ["- none"] : ["| Unit | Writer | PR | Tickets | State |", "|---|---|---|---|---|", ...rows];
 }
 
-/** Board status lines for open units whose local writer has not recorded every other ticket as a session member. */
+/** Board status lines for open units whose writer has not recorded every other ticket as a session member, or where that cannot be read. */
 export function unitMemberProblems(units, writers, readRecord) {
   return Object.entries(openUnits(units)).flatMap(([name, unit]) => {
-    const row = writers[unit.writer];
-    if (!row?.worktree || row.where === "remote") return [];
+    const unchecked = (why) => [`UNIT-MEMBERS-UNCHECKED ${name} ${unit.writer ?? "-"}: ${why}; check the writer's vibe-sessions.mjs show --worktree <wt> memberTickets on its machine`];
+    const row = unit.writer ? writers[unit.writer] : undefined;
+    if (!row) return unchecked(unit.writer ? `no board row for writer ${unit.writer}` : "the unit has no writer");
+    if (row.where === "remote") return unchecked("remote writer; its session record is on the owning machine");
+    if (!row.worktree) return unchecked("its writer row has no --worktree");
     let record;
-    try { record = readRecord(row.worktree); } catch { record = null; }
-    if (!record) return [];
+    try { record = readRecord(row.worktree); }
+    catch (error) { return unchecked(`cannot read its session record (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`); }
+    if (!record) return unchecked("no vibe session record in its worktree yet");
     const anchor = record.liveTicket ?? record.ticket;
     const missing = unit.tickets.filter((slug) => slug !== anchor && !(record.memberTickets ?? []).includes(slug));
     return missing.length === 0 ? [] : [`UNIT-MEMBERS-UNRECORDED ${name} ${unit.writer}: ${missing.join(", ")}; the writer runs vibe-sessions.mjs touch --worktree <wt> --member-ticket <slug> for each, so handoff audits their criteria`];
@@ -293,11 +309,11 @@ function joinPath(from, to, joins) {
   return chain.join("~");
 }
 
-function describe(members, { bySlug, edges, unitOf, units, all, apart, blocked }) {
+function describe(members, { bySlug, edges, unitOf, units, all, apart, blocked, takenNames }) {
   const inside = new Set(members);
   const joins = edges.filter((edge) => inside.has(edge.a) && inside.has(edge.b));
   const overlap = [...new Set(members.map((slug) => unitOf.get(slug)).filter(Boolean))];
-  const name = overlap[0] ?? members[0];
+  const name = overlap[0] ?? freeUnitName(members[0], takenNames);
   const folds = overlap.length === 0 ? [] : members.filter((slug) => !unitOf.has(slug)).map((slug) => {
     const join = joins.find((edge) => (edge.a === slug && inside.has(edge.b)) || (edge.b === slug && inside.has(edge.a)));
     return { slug, unit: name, writer: units[name]?.writer, via: join.a === slug ? join.b : join.a, reasons: join.reasons };
@@ -336,7 +352,8 @@ function main(argv) {
     candidates: { type: "string" }, board: { type: "string" }, unit: { type: "string" }, title: { type: "string" }, "body-file": { type: "string" },
   } });
   if (action === "group" && values.candidates) {
-    const grouping = groupTickets(JSON.parse(readFileSync(values.candidates, "utf8")), values.board ? boardUnits(values.board) : {});
+    const board = values.board ? readBoard(values.board) : { units: {}, names: [] };
+    const grouping = groupTickets(JSON.parse(readFileSync(values.candidates, "utf8")), board.units, board.names);
     for (const line of groupLines(grouping)) process.stdout.write(`${line}\n`);
     return 0;
   }

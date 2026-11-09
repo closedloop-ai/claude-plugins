@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { groupLines, groupTickets, joinReasons, prNameProblems } from './ticket-units.mjs';
+import { freeUnitName, groupLines, groupTickets, joinReasons, prNameProblems } from './ticket-units.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./ticket-units.mjs', import.meta.url));
 const APP = 'acme/app';
@@ -174,6 +174,9 @@ test('a closed unit is finished: a new related ticket starts a new unit instead 
   assert.match(group(), /^FOLD ISS-7 into ISS-1 \(w1\)/);
   board(true);
   assert.equal(group(), 'UNIT ISS-7 ISS-7, ISS-1: ISS-7~ISS-1 shared file a.ts\n');
+  writeFileSync(file, JSON.stringify({ tickets: [ticket('ISS-1', { files: ['a.ts'] }), ticket('ISS-7', { files: ['a.ts'] })] }));
+  assert.equal(group(), 'UNIT ISS-1#2 ISS-1, ISS-7: ISS-1~ISS-7 shared file a.ts\n', 'a closed unit\'s name goes to the next free suffix');
+  assert.equal(freeUnitName('ISS-1', ['ISS-1', 'ISS-1#2']), 'ISS-1#3');
 });
 
 test('a prd without operatorAssigned, and malformed fields, are refused rather than guessed at', () => {

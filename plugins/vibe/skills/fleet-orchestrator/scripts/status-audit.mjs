@@ -13,8 +13,10 @@
 // open, DONE once it merges and the member's own criteria are checked. The
 // orchestrator makes those moves with update-document; this audit finds the
 // drift. A member missing from the snapshot prints `UNREAD-MEMBER <slug>`
-// (put a member with no PRD under `{"slug": null}`), and a writer PR no member
-// lists prints `UNIT-PR-UNREAD <unit>`.
+// (put a member with no PRD under `{"slug": null}`). `UNIT-PR-UNREAD <unit>`,
+// with the unit's members left unjudged, means the writer's PR is in no
+// member's pullRequests, or the writer row has no PR while a member lists an
+// open or merged one.
 //
 // `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default) prints
 // `status audit: skipped at report` and exits 0 without reading the snapshot, so the
@@ -135,15 +137,21 @@ export function applyUnits(children, units, writers = {}) {
       findings.push({ slug, status: "?", kind: "UNREAD-MEMBER", unit: name });
     }
     const row = writers[unit.writer] ?? {};
+    const listed = members.flatMap(({ child }) => (Array.isArray(child.pullRequests) ? child.pullRequests : []));
     let pulls = [];
+    let unread = null;
     if (row.pr) {
-      const listed = members.flatMap(({ child }) => (Array.isArray(child.pullRequests) ? child.pullRequests : []));
       const match = listed.find((pull) => isWriterPull(pull?.url, row));
       if (match) pulls = [match];
-      else findings.push({ slug: name, status: "?", kind: "UNIT-PR-UNREAD", unit: name, pr: `${row.repo ?? ""}#${row.pr}` });
+      else unread = `no member lists the writer's PR ${row.repo ?? ""}#${row.pr}; add its state to the snapshot`;
+    } else {
+      const live = listed.filter((pull) => pull?.state === "OPEN" || pull?.state === "MERGED").map((pull) => pull.url ?? "a pull request");
+      if (live.length) unread = `the writer row records no PR, but members list ${[...new Set(live)].join(", ")}; record the unit's PR with board.mjs writer ${unit.writer ?? "<writer>"} --pr <n>`;
     }
+    // Without the unit's PR state, judging would push members backwards; report it instead.
+    if (unread) findings.push({ slug: name, status: "?", kind: "UNIT-PR-UNREAD", unit: name, why: unread });
     for (const entry of members) {
-      entry.child = { ...entry.child, unit: name, pullRequests: pulls, writer: entry.child.writer ?? unit.writer ?? null };
+      entry.child = { ...entry.child, unit: name, pullRequests: pulls, writer: entry.child.writer ?? unit.writer ?? null, ...(unread ? { unitUnread: true } : {}) };
     }
   }
   return findings;
@@ -166,7 +174,7 @@ export function auditStatuses(snapshot, units = {}, writers = {}) {
   const outOfScope = [];
   for (const { child, prdSlug } of children) {
     findings.push(...sweepFindings(child).map((found) => ({ slug: child.slug, status: child.status, ...found })));
-    const finding = childFinding(child, prdSlug);
+    const finding = child?.unitUnread ? null : childFinding(child, prdSlug);
     if (!finding) continue;
     const reason = ruled.get(child.slug);
     if (reason && rulingNamesScope(reason, [child.slug, prdSlug])) outOfScope.push({ slug: child.slug, reason });
@@ -206,7 +214,7 @@ function main(argv) {
     "PLAN-OPEN": (finding) => `PLAN-OPEN ${finding.slug}: ${finding.plan} is ${finding.planStatus}; a DONE ticket's plan is EXECUTED`,
     "ABSORBED-OPEN": (finding) => `ABSORBED-OPEN ${finding.slug} ${finding.status}: absorbed by ${finding.umbrella}, which is DONE; close it in the same step with that merge as evidence`,
     UNSCOPED: (finding) => `UNSCOPED ${finding.slug} ${finding.status}: the out-of-scope ruling "${finding.reason.slice(0, 120)}" names neither the ticket nor its PRD`,
-    "UNIT-PR-UNREAD": (finding) => `UNIT-PR-UNREAD ${finding.unit}: no member lists the writer's PR ${finding.pr}; add its state to the snapshot`,
+    "UNIT-PR-UNREAD": (finding) => `UNIT-PR-UNREAD ${finding.unit}: ${finding.why}; its members are not judged until then`,
     "UNREAD-MEMBER": (finding) => `UNREAD-MEMBER ${finding.slug}: a ticket of unit ${finding.unit} is not in the snapshot; add it so its status moves with the unit`,
     UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
     UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,

@@ -6,7 +6,8 @@
 // With members recorded on the session, the gate needs `--title`, and the
 // title and body must name every member; the witness keeps the member list,
 // so a member added afterwards (`vibe-sessions.mjs touch --member-ticket`)
-// makes it stale.
+// makes it stale. At PR creation the hook passes the command's `--title`, and
+// a title that leaves a member unnamed (or none) is refused there too.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -55,7 +56,7 @@ export function gatePath(worktree) {
 }
 
 /** Current gate problem, or null when the final inventory covered this source. */
-export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
+export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
   let record;
   try {
     const file = gatePath(worktree);
@@ -79,6 +80,8 @@ export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
       if (saved && JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved)) return `handoff ${key} evidence changed`;
     }
     if (JSON.stringify(sessionMembers(worktree)) !== JSON.stringify(record.memberTickets ?? [])) return "the session's member tickets changed since the handoff gate";
+    const naming = memberNameProblems(record.memberTickets ?? [], title, readFileSync(bodyFile, "utf8"));
+    if (naming.length) return naming.join("; ");
     if ((record.evidence?.members ?? []).some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff member ticket evidence changed";
     if (!Array.isArray(record.receipts) || record.receipts.some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff review receipt changed";
     if (reviewReceiptProblems(readReviewReceipts(record.receipts.map(item => item.path)), sourceIdentity(worktree)).problems.length) return "handoff review evidence is stale or incomplete";

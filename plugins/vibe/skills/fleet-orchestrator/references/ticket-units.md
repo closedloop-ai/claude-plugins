@@ -25,9 +25,9 @@ Write them to `<orchDir>/evidence/candidates-<date>.json` in the shape `scripts/
 
 ## 3. Record and start
 
-- New unit: `board.mjs <orchDir> unit <name> --tickets <a,b> --writer <writer> --repo <owner/repo>`, then the writer's row as usual. The board page and the resume log now list the unit and its tickets.
+- New unit: `board.mjs <orchDir> unit <name> --tickets <a,b> --writer <writer> --repo <owner/repo>`, with the name `group` printed (a closed unit's name goes to the next `<name>#<n>`), then the writer's row as usual. The board page and the resume log now list the unit and its tickets.
 - The writer is one vibe session on the first ticket. Its brief lists every ticket in the unit and tells the writer to run `vibe-sessions.mjs touch --worktree <wt> --member-ticket <slug>` for each other one. Its plan's numbered criteria list covers every criterion of every ticket (`<slug>:AC-n` for the members); handoff's criteria audit, ticket check and scope checks then cover every member.
-- `board.mjs <orchDir> status` prints `UNIT-MEMBERS-UNRECORDED` until a local writer's session records every other ticket; send it the touch commands.
+- `board.mjs <orchDir> status` prints `UNIT-MEMBERS-UNRECORDED` until a local writer's session records every other ticket; send it the touch commands. `UNIT-MEMBERS-UNCHECKED` means the board cannot read that session (a remote writer, no writer row or worktree, no session yet): check `vibe-sessions.mjs show` on the writer's machine.
 - Fold: `board.mjs <orchDir> unit <name> --tickets <new>`, then `deliver <id> --kind scope --to <writer> --text <the ticket, its criteria and the touch command>`. Never start a second writer for it.
 
 ## 4. Statuses
@@ -38,8 +38,8 @@ You move each ticket yourself, through `update-document`; nothing moves it autom
 - In Review when the unit's PR opens; vibe's ticket worker moves members through its child evidence, and you move any it missed.
 - Done when the PR merges and that ticket's own criteria are checked against the merged code.
 
-At every assignment and merge, run `status-audit.mjs --snapshot <file> --board <orchDir>`: it judges every member by the PR on the unit writer's board row, so a ticket left behind prints `MISMATCH`. Once the PR merged and every member is reconciled, close the unit: `board.mjs <orchDir> unit <name> --closed <owner/repo#n>`. A later related ticket then starts a new unit instead of folding into the finished writer.
+At every assignment and merge, run `status-audit.mjs --snapshot <file> --board <orchDir>`: it judges every member by the PR on the unit writer's board row, so a ticket left behind prints `MISMATCH`. Once the PR merged and every member is reconciled, close the unit with the PR on its writer's row: `board.mjs <orchDir> unit <name> --closed <n>` (any other PR is refused). A later related ticket then starts a new unit instead of folding into the finished writer.
 
 ## 5. The PR
 
-Before the PR opens, `node scripts/ticket-units.mjs pr-check --board <orchDir> --unit <name> --title <title> --body-file <file>` must pass: the title and body name every ticket in the unit. Handoff's gate checks the same for the session's member tickets (`handoff-gate.mjs --title`). Reviews and QA plans take every member's criteria.
+Before the PR opens, `node scripts/ticket-units.mjs pr-check --board <orchDir> --unit <name> --title <title> --body-file <file>` must pass: the title and body name every ticket in the unit. Handoff's gate (`handoff-gate.mjs --title`) and the PR-create hook (the command's `--title`) check the same for the session's member tickets. Reviews and QA plans take every member's criteria.

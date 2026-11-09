@@ -10,7 +10,7 @@
 //        board.mjs <orchDir> told <item> <recipient>
 //        board.mjs <orchDir> duty <duty> --owner <writer or helper>
 //        board.mjs <orchDir> unit <name> --tickets <a,b> [--writer <writer>] [--repo <owner/repo>]
-//        board.mjs <orchDir> unit <name> --closed <merged PR>
+//        board.mjs <orchDir> unit <name> --closed <its writer row's PR: n, #n, owner/repo#n or its URL>
 //        board.mjs <orchDir> question|answered|ack <writer> --id <question or scope id> [--text <the question and its default, or the answer>]
 //        board.mjs <orchDir> pending <writer>
 //        board.mjs <orchDir> status [--pushed <name>=<sha>]... [--threads <name>=<n>]...
@@ -95,7 +95,7 @@ import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
-import { renderUnits, unitMemberProblems } from "./ticket-units.mjs";
+import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
 const STATE = "board.json";
@@ -404,13 +404,26 @@ function scopeBase(board, to, values, previous) {
   return { base, acked: previous?.acked ?? {} };
 }
 
+/** Whether `value` names the writer row's PR: its number, `#n`, `<repo>#n` or its pull request URL. */
+function namesWriterPr(value, row) {
+  const pr = String(row.pr);
+  const url = /\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(value);
+  if (url) return url[2] === pr && (!row.repo || url[1] === row.repo);
+  const short = /^(?:([^\s#]+\/[^\s#]+))?#?(\d+)$/.exec(value);
+  return Boolean(short) && short[2] === pr && (!short[1] || !row.repo || short[1] === row.repo);
+}
+
 /** Adds or extends a unit; tickets are only ever added, and the resume log records each change. */
 function recordUnit(orchDir, board, name, values, at) {
   if (values.closed !== undefined) {
     const unit = board.units[name];
     if (!unit) throw new Error(`no unit ${name} on the board`);
-    if (!values.closed.trim() || values.tickets) throw new Error("--closed takes the unit's merged PR and nothing else");
-    unit.closed = { pr: values.closed.trim(), at };
+    if (values.tickets) throw new Error("--closed takes the unit's merged PR and nothing else");
+    const row = board.writers[unit.writer] ?? {};
+    if (!row.pr || !namesWriterPr(values.closed.trim(), row)) {
+      throw new Error(`--closed ${values.closed} is not the PR on writer ${unit.writer ?? "(none)"}'s board row (${row.pr ? `${row.repo ?? ""}#${row.pr}` : "no PR recorded"}); a unit closes only with its own PR`);
+    }
+    unit.closed = { pr: `${row.repo ?? ""}#${row.pr}`, at };
     write(orchDir, board, `unit ${name} closed with ${unit.closed.pr}: ${unit.tickets.join(", ")}`, at);
     appendFileSync(path.join(orchDir, "resume-log.md"), `\n## ${at.slice(0, 16).replace("T", " ")}\n- Unit ${name} (${unit.writer ?? "no writer"}) closed with ${unit.closed.pr}: ${unit.tickets.join(", ")}\n`);
     return;
@@ -419,7 +432,7 @@ function recordUnit(orchDir, board, name, values, at) {
   if (tickets.length === 0 || tickets.some((slug) => !/^[A-Z]+-\d+$/.test(slug))) {
     throw new Error("unit needs --tickets <slug,slug>: every ticket the unit delivers.");
   }
-  if (board.units[name]?.closed) throw new Error(`unit ${name} is closed; start a new unit for later tickets`);
+  if (board.units[name]?.closed) throw new Error(`unit ${name} is closed; start the new unit as ${freeUnitName(name, Object.keys(board.units))}, the name ticket-units.mjs group prints`);
   const owner = Object.entries(board.units).find(([other, unit]) => other !== name && !unit.closed && unit.tickets.some((slug) => tickets.includes(slug)));
   if (owner) throw new Error(`${owner[1].tickets.filter((slug) => tickets.includes(slug)).join(", ")} already belongs to unit ${owner[0]}; one ticket has one writer`);
   const previous = board.units[name];
@@ -507,7 +520,7 @@ function main(argv) {
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
     const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
     for (const line of home) process.stdout.write(`${line}\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${members.length} units with unrecorded members${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${members.length} unit member problems${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
     return members.length + commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;

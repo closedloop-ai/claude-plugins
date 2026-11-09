@@ -29,16 +29,19 @@ export function prCreateCalls(command, initialCwd) {
     if (actionAt < 0) continue;
     let base = null;
     let bodyFile = null;
+    let title;
     for (let i = actionAt + 2; i < words.length; i += 1) {
       const word = words[i];
-      if (["--base", "-B", "--body-file", "-F"].includes(word)) {
+      if (["--base", "-B", "--body-file", "-F", "--title", "-t"].includes(word)) {
         const value = words[++i];
         if (word === "--base" || word === "-B") base = value;
+        else if (word === "--title" || word === "-t") title = value;
         else bodyFile = value;
       } else if (word.startsWith("--base=")) base = word.slice(7);
       else if (word.startsWith("--body-file=")) bodyFile = word.slice(12);
+      else if (word.startsWith("--title=")) title = word.slice(8);
     }
-    calls.push({ cwd, base, bodyFile: bodyFile ? path.resolve(cwd, bodyFile) : null,
+    calls.push({ cwd, base, title, bodyFile: bodyFile ? path.resolve(cwd, bodyFile) : null,
       remote, uncertainCwd, unresolvedTarget });
   }
   return calls;
@@ -83,7 +86,7 @@ export function prCreateGuard(event, home = os.homedir()) {
     }
     const cloudProblem = cloudPrProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile });
     if (cloudProblem) return deny(`gh pr create refused: ${cloudProblem}`);
-    const problem = handoffGateProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile });
+    const problem = handoffGateProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile, title: call.title });
     if (problem) return deny(`gh pr create refused: ${problem}; run the final handoff gate on the published source`);
   }
   return null;
