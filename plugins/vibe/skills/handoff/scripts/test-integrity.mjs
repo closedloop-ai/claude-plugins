@@ -20,8 +20,16 @@ const COUNT_ONE = /(?:toHaveCount|toHaveLength)\(\s*1\s*\)/;
 const LAYOUT_SURFACE = /\b(?:card|metric|summary)\b/i;
 // A busy or loading count is state, not card layout (PC-2, accepted 2026-11-09).
 const BUSY_STATE = /aria-busy|\bbusy\b|\bloading\b/i;
-// A filter for the not-busy state counts ordinary elements, so it keeps the layout check.
-const NOT_BUSY = /\bbusy\s*:\s*false\b|aria-busy\s*=\s*["']?false["']?/gi;
+// A negated busy or loading predicate selects ordinary elements, so it keeps the layout check: an option
+// (`busy: false`), an attribute (`aria-busy="false"`, `:not([aria-busy])`), a negated property
+// (`!card.loading`, `!isBusy`) or a comparison (`card.loading === false`, `card.busy !== true`).
+const NOT_BUSY = new RegExp([
+  String.raw`\bbusy\s*:\s*false\b`,
+  String.raw`aria-busy\s*=\s*["']?false["']?`,
+  String.raw`:not\(\s*\[\s*aria-busy(?:\s*=\s*["']?true["']?)?\s*\]\s*\)`,
+  String.raw`!\s*(?:[A-Za-z_$][\w$]*\??\.)*(?:is)?(?:busy|loading)\b`,
+  String.raw`(?:[A-Za-z_$][\w$]*\??\.)*(?:is)?(?:busy|loading)\s*(?:===?\s*false|!==?\s*true)\b`,
+].join("|"), "gi");
 const PROOF_CLASSES = new Set(["responsive", "absence", "layout"]);
 const SHA = /^[a-f0-9]{40}$/;
 
@@ -285,9 +293,10 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
   const blockEnd = source.slice(assertionStart + 1).search(/^\s*(?:export\s+const\s|(?:export\s+)?(?:async\s+)?function\s)/m);
   const following = source.slice(assertionStart + proof.assertionLine.length,
     blockEnd < 0 ? source.length : assertionStart + 1 + blockEnd);
-  const sameQuery = queriedText ?? directValue;
-  if (matcher && sameQuery && [...following.matchAll(new RegExp(`\\bexpect\\s*\\(([^;]*?)\\)\\s*\\.\\s*(?:not\\s*\\.\\s*)?${matcher}\\s*\\(`, "g"))]
-    .some((later) => later[1].includes(sameQuery))) return false;
+  if (matcher && laterAssertionCouldFail(source, following, matcher, {
+    query: queriedText === undefined ? undefined : queryKey(queriedText), variable: directValue,
+    inserted: edit.new.slice(commonPrefix, edit.new.length - commonSuffixLength(edit.old, edit.new, commonPrefix)),
+  })) return false;
   const directMatcher = matcher && new RegExp(`^\\s*❯\\s+${matcher}\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?:\\d+:\\d+`, "m").test(failure);
   const instrumentedMatcher = matcher && new RegExp(`^\\s*❯\\s+Proxy\\.${matcher}\\s+node_modules/`, "m").test(failure);
   if ((!directMatcher && !instrumentedMatcher)
@@ -505,4 +514,45 @@ export function testIntegrityProblems(evidence, files, read, commit, receiptDir)
 /** Source with comments and whitespace removed, so a comment-only edit cannot pose as a mutation. */
 function executableSource(value) {
   return value.replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:\\])\/\/.*$/gm, "$1").replace(/\s+/g, "");
+}
+
+function commonSuffixLength(before, after, prefix) {
+  let length = 0;
+  while (length < before.length - prefix && length < after.length - prefix
+    && before[before.length - 1 - length] === after[after.length - 1 - length]) length += 1;
+  return length;
+}
+
+/** The text a query matches: a string literal's content in any quote style, or a regular expression. */
+function queryKey(expression) {
+  const literal = /^\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/.exec(expression);
+  if (literal) return { text: literal[2] };
+  const pattern = /^\s*\/((?:\\.|[^/\\])+)\/([a-z]*)/.exec(expression);
+  if (pattern) { try { return { regex: new RegExp(pattern[1], pattern[2]) }; } catch { return undefined; } }
+  return undefined;
+}
+
+/**
+ * Whether a later same-matcher assertion in the candidate's block could also see the mutation, so an
+ * instrumented failure cannot say which one failed: the same variable, a query equal to the candidate's or
+ * found in the inserted text, or a later call to a helper in this file that asserts with the same matcher.
+ */
+function laterAssertionCouldFail(source, following, matcher, { query, variable, inserted }) {
+  for (const later of following.matchAll(new RegExp(`\\bexpect\\s*\\(([^;]*?)\\)\\s*\\.\\s*(?:not\\s*\\.\\s*)?${matcher}\\s*\\(`, "g"))) {
+    const argument = later[1].trim();
+    if (variable && new RegExp(`^${variable}\\b`).test(argument)) return true;
+    const call = /\b(?:query|get|find)(?:All)?By[A-Za-z]+\(\s*([^)]*)/.exec(argument);
+    const key = call ? queryKey(call[1]) : undefined;
+    if (!key) continue;
+    if (key.text !== undefined && (query?.text === key.text || inserted.includes(key.text))) return true;
+    if (key.regex && ((query?.text !== undefined && key.regex.test(query.text)) || key.regex.test(inserted))) return true;
+  }
+  for (const call of following.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const helper = new RegExp(`(?:function\\s+${call[1]}\\s*\\(|const\\s+${call[1]}\\s*=\\s*(?:async\\s*)?\\()`).exec(source);
+    if (!helper) continue;
+    const open = source.indexOf("{", helper.index);
+    const close = open < 0 ? -1 : matchingBrace(source, open);
+    if (close > open && new RegExp(`\\.\\s*${matcher}\\s*\\(`).test(source.slice(open, close))) return true;
+  }
+  return false;
 }

@@ -906,45 +906,56 @@ test("ISS-13846 review A4 a card count whose locator merely contains loading let
     ["layout:src/documents-list.test.tsx:2"], "uploading is a card state word, a loading row is state");
 });
 
-test("ISS-13846 final review A-1 a later broader assertion on the same query cannot prove an instrumented candidate", t => {
-  const lines = scoped => [
+test("ISS-13846 final review A-1 a later assertion that could see the mutation cannot prove an instrumented candidate", t => {
+  const source = later => [
+    "async function expectNoLoading(scope) {",
+    '  await expect(within(scope).queryByText("Loading")).toBeNull();',
+    "}",
     "export const Live: Story = {",
     "  play: async ({ canvasElement }) => {",
     "    const grid = canvasElement.querySelector(\"[role=grid]\");",
     '    await expect(within(grid).queryByText("Loading")).toBeNull();',
-    ...(scoped ? [] : ['    await expect(within(canvasElement).queryByText("Loading")).toBeNull();']),
+    ...(later ? [`    ${later}`] : []),
     "  },",
     "};",
   ].join("\n");
   const hash = value => createHash("sha256").update(value).digest("hex");
   const dir = mkdtempSync(path.join(tmpdir(), "storybook-later-assertion-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const problems = (scoped, name) => {
-    const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", lines(scoped), ["within(grid)"]);
+  let n = 0;
+  const problems = later => {
+    const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", source(later), ["within(grid)"]);
     const read = file => file === fixture.file.path ? fixture.source : null;
     const [candidate] = testIntegrityCandidates([fixture.file], read);
     const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
     const edit = { old: '    const grid = canvasElement.querySelector("[role=grid]");',
-      new: '    const grid = canvasElement.querySelector("[role=grid]"); const note = document.createElement("p"); note.textContent = "Loading"; canvasElement.append(note);' };
+      new: '    const grid = canvasElement.querySelector("[role=grid]"); const note = document.createElement("p"); note.textContent = "Loading"; grid.append(note);' };
     const raw = [" FAIL   0 (chromium)  stories/surfaces-v2/v2-documents-list.stories.tsx > Live",
       "AssertionError: ", " ❯ Proxy.toBeNull node_modules/.cache/storybook/sb-vitest/vitest/deps/test.js:10:5",
-      " ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:1:3", " Failed Tests 1", " Test Files 1 failed"].join("\n");
+      " ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:4:3", " Failed Tests 1", " Test Files 1 failed"].join("\n");
     const receipt = { candidate: candidate.id, target: candidate.path, command, mutationExit: 1, mutationOutput: raw,
       restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
       beforeSha256: hash(fixture.source), mutatedSha256: hash(fixture.source.replace(edit.old, edit.new)), mutationEdit: edit };
+    const name = `later-${n++}.json`;
     const bytes = JSON.stringify(receipt);
     writeFileSync(path.join(dir, name), bytes);
     const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
-      mutation: "append Loading outside the grid", presentState: "Loading present in the canvas",
+      mutation: "append Loading inside the grid", presentState: "Loading present in the grid",
       assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
       command, observedFailure: raw, restoredPass: true, commit: COMMIT, ownerBoundary: "production",
       mountedSignal: "grid mounted", mutationRun: { command, exitCode: 1, assertionFailure: raw },
       rawReceipt: name, rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
     return testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, dir);
   };
-  assert.deepEqual(problems(true, "scoped-only.json"), [], "positive control: no later assertion over the same query");
-  assert.match(problems(false, "broader-later.json").join("\n"), /exact assertion failure/,
-    "the broader canvas assertion could be the one that failed");
+  assert.deepEqual(problems(null), [], "positive control: the mutation is inside the asserted grid and nothing later can fail");
+  assert.deepEqual(problems('await expect(within(canvasElement).queryByText("Saved")).toBeNull();'), [],
+    "a later assertion over text the mutation never inserts cannot be the failure");
+  for (const [later, why] of [
+    ['await expect(within(canvasElement).queryByText("Loading")).toBeNull();', "the same literal query"],
+    ["await expect(within(canvasElement).queryByText('Loading')).toBeNull();", "the same query in other quotes"],
+    ["await expect(within(canvasElement).queryByText(/Loading/)).toBeNull();", "a regular expression that matches the inserted text"],
+    ["await expectNoLoading(canvasElement);", "a helper that asserts with the same matcher"],
+  ]) assert.match(problems(later).join("\n"), /exact assertion failure/, why);
 });
 
 test("ISS-13846 final review A-2 a restored run is proof only with a numeric zero exit", () => {
@@ -995,4 +1006,20 @@ test("ISS-13846 final review A-3 a card count filtered to not-busy rows keeps it
   const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
   assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
     ["layout:src/documents-summary.test.tsx:2"], "busy: false filters ordinary cards; busy: true counts busy state");
+});
+
+test("ISS-13846 final review N1 a card count over a negated busy predicate keeps its layout proof", () => {
+  const fixture = changed("e2e/documents-summary-cards.spec.ts", [
+    'test("one summary card", async ({ page }) => {',
+    '  await expect(page.locator(\'[data-card]:not([aria-busy="true"])\')).toHaveCount(1);',
+    "  expect(cards.filter(card => !card.loading)).toHaveLength(1);",
+    "  expect(cards.filter(card => card.loading === false)).toHaveLength(1);",
+    '  await expect(page.locator(\'[aria-busy="true"]\')).toHaveCount(1);',
+    "  expect(rows.filter(row => row.loading)).toHaveLength(1);",
+    "});",
+  ].join("\n"), ["[data-card]", "!card.loading", "card.loading === false", "page.locator('[aria-busy", "row.loading"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
+    ["layout:e2e/documents-summary-cards.spec.ts:2", "layout:e2e/documents-summary-cards.spec.ts:3", "layout:e2e/documents-summary-cards.spec.ts:4"],
+    "negated busy predicates count ordinary cards; positive busy or loading counts stay exempt (PC-2)");
 });
