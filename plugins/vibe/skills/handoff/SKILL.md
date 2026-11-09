@@ -487,13 +487,17 @@ On a requested pull request, lighter and backend alike, the repo's
 `pull-request` turn, not optional: give it
 those test files and the code they cover. It checks above all that each
 test can fail when the behavior it names breaks and that no test name claims
-more than its assertions pin. For narrow/mobile, absence, and
-metric/summary/card layout tests, require the mechanical
-`testIntegrityProofs` mutation evidence checked by the handoff inventory; a
-normal green run or a count-only assertion cannot substitute for it. Its
-confirmed findings resume the SAME writer
+more than its assertions pin; the handoff inventory gates their
+`testIntegrityProofs` mutation evidence. Its confirmed findings resume the SAME writer
 in its `pull-request` turn, and the pull request does not open, or take a new
 push, until its rerun on the corrected tests is clean.
+
+An authenticated web E2E mutation proof without the staging test password can
+run in a repository-owned credential-free Playwright project that collects the
+spec with no live sign-in setup on the production host (symphony-alpha routes
+`e2e/documents-summary-scope.spec.ts` to `chromium`). Mutate only an isolated
+exact-head checkout on the remote E2E slot, headless with retries off, then
+restore its bytes and record the passing run. Never handle or bypass a credential.
 
 ### Join the background lane run
 

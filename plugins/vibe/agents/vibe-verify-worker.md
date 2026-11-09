@@ -161,18 +161,15 @@ adds `ownerBoundary: "production"`, a positive `mountedSignal`, the exact change
 `assertionLine`, `assertionLocation` (repo path, line and column), and
 `presentState` describing where the element was made
 present. Record `mutationRun: { command, exitCode, assertionFailure }` from the
-actual mutation run. Its command must equal the proof command, its exit code
-must be nonzero, and `assertionFailure` must quote the failing absence assertion
-with its exact source location as the primary diagnostic location,
-not a setup error or another assertion. An unrun mutation has no result and
-blocks handoff. If the runner cannot identify the assertion column, put each
+actual mutation run, with its raw output in a private `rawReceipt`; the schema
+check below names every binding it needs. If the runner cannot identify the assertion column, put each
 assertion on its own line and rerun the mutation through a runner that reports
 the source column. Layout proof
 adds the official grid or prototype `baseline` and the `layoutAssertion` that
 failed when the card moved. Never infer these fields from a green normal run.
 After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
-"<gitdir>/vibe-pr-evidence.json"` and fix every reported shape problem before
+"<gitdir>/vibe-pr-evidence.json" --worktree "<wt>"` and fix every reported shape problem before
 returning. The handoff inventory still checks the actual selections and runs.
 
 In `pre-pr` mode, read the final uncommitted change identified by HEAD plus
@@ -244,8 +241,11 @@ Desktop spec with no supported displayless Linux Electron harness, record
 `desktopHarness: { available: false, reason: "no supported displayless Linux
 Electron harness", probe: "<actual platform and harness check>" }` and
 the same `displaylessLimitation` plus `selectedTier: "A"` on its not-run
-item. If the selected tier can actually execute a spec, run it and record
-the result; do not carry it to CI.
+item. Tier C records `remote.available: true`, `source`, `runnerHost`,
+`runnerWorktree`, `probeOwner`, its `~/vibe-remote/e2e-slot.sh --head <final sha>`
+`command` and that `desktopHarness` plus `probedCommit`, with `selectedTier: "C"`;
+the gate reprobes the runner. If the selected tier can actually execute a
+spec, run it and record the result; do not carry it to CI.
 
 For targeted E2E, record the repository's capability probe and choose:
 

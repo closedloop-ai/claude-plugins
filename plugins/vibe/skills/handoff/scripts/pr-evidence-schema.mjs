@@ -4,9 +4,10 @@
 
 import { validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { testIntegrityProofShapeProblems } from "./test-integrity.mjs";
+import { proofSourceAt, testIntegrityProofShapeProblems } from "./test-integrity.mjs";
 
 export const TEST_SELECTORS = Object.freeze(["code_tests_for", "related", "e2e-reference"]);
 
@@ -46,10 +47,10 @@ export function readTestSelection(evidence) {
  * The Part B path-only object is not a documented older version: it lacks the
  * cases, commands, lane report and full test paths needed for safe conversion.
  */
-export function prEvidenceShapeProblems(evidence) {
+export function prEvidenceShapeProblems(evidence, receiptDir, readSource) {
   const problems = [
     ...readTestSelection(evidence).problems,
-    ...testIntegrityProofShapeProblems(evidence),
+    ...testIntegrityProofShapeProblems(evidence, receiptDir, readSource),
     ...(evidence?.treeEquivalentCarry === undefined ? [] : treeEquivalentCarryShapeProblems(evidence.treeEquivalentCarry)),
   ];
   const inventory = evidence?.targetedInventory;
@@ -153,9 +154,10 @@ export function treeEquivalentCarryShapeProblems(carry) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { values } = parseArgs({ options: { file: { type: "string" } } });
+  const { values } = parseArgs({ options: { file: { type: "string" }, worktree: { type: "string" } } });
   if (!values.file) throw new Error("Usage: pr-evidence-schema.mjs --file <private vibe-pr-evidence.json>");
-  const problems = prEvidenceShapeProblems(JSON.parse(readFileSync(values.file, "utf8")));
+  const problems = prEvidenceShapeProblems(JSON.parse(readFileSync(values.file, "utf8")), dirname(values.file),
+    values.worktree ? file => proofSourceAt(values.worktree, file) : undefined);
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems })}\n`);
   if (problems.length) process.exitCode = 1;
 }

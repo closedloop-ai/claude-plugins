@@ -1,12 +1,61 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   testIntegrityCandidates,
   testIntegrityProblems,
   testIntegrityProofShapeProblems,
+  proofSourceAt,
 } from "./test-integrity.mjs";
 
 const COMMIT = "a".repeat(40);
+const RECEIPT_DIR = mkdtempSync(path.join(tmpdir(), "test-integrity-receipts-"));
+process.on("exit", () => rmSync(RECEIPT_DIR, { recursive: true, force: true }));
+let receiptNumber = 0;
+
+/** Raw Vitest output for a summary: the runner header, the summary's own failure location and its source frame. */
+function runnerOutput(proof, source) {
+  const summary = proof.mutationRun.assertionFailure;
+  if (/^\s*FAIL\s|^\s*\d+\)\s+\[/m.test(summary)) return summary;
+  const location = /([A-Za-z0-9_./-]+\.(?:test|spec|stories)\.[cm]?[jt]sx?):(\d+):(\d+)/.exec(summary);
+  const lines = [` FAIL  ${proof.path} > ${proof.case}`, ...summary.split("\n")];
+  if (location) {
+    lines.push(` ❯ ${location[0]}`);
+    const frame = location[1] === proof.path ? source.split("\n")[Number(location[2]) - 1] : undefined;
+    if (frame !== undefined) lines.push(`  > ${location[2]}| ${frame}`, `     | ${" ".repeat(Number(location[3]) - 1)}^`);
+  }
+  return lines.join("\n");
+}
+
+function withReceipt(input, source) {
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const proof = { ...input, mutationRun: { ...input.mutationRun, assertionFailure: runnerOutput(input, source) } };
+  const old = source.split("\n")[0];
+  const mutationEdit = { old, new: `${old} void "intentional mutation";` };
+  const receipt = { candidate: proof.candidate, target: proof.path, command: proof.command,
+    mutationExit: proof.mutationRun.exitCode, mutationOutput: proof.mutationRun.assertionFailure,
+    restoredExit: 0, restoredOutput: "Test Files 1 passed", head: proof.commit,
+    beforeSha256: hash(source), mutatedSha256: hash(source.replace(mutationEdit.old, mutationEdit.new)), mutationEdit };
+  const name = `proof-${receiptNumber++}.json`;
+  const bytes = JSON.stringify(receipt);
+  writeFileSync(path.join(RECEIPT_DIR, name), bytes);
+  return { ...proof, rawReceipt: name, rawReceiptSha256: hash(bytes),
+    restoredOutputSha256: hash(receipt.restoredOutput) };
+}
+
+test("ISS-13846 proof source reads stay inside regular worktree files", t => {
+  const root = mkdtempSync(path.join(tmpdir(), "proof-source-root-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(path.join(root, "valid.stories.tsx"), "export const Valid = {};\n");
+  symlinkSync("/etc/hosts", path.join(root, "linked.stories.tsx"));
+  assert.match(proofSourceAt(root, "valid.stories.tsx"), /Valid/);
+  assert.equal(proofSourceAt(root, "linked.stories.tsx"), null);
+  assert.equal(proofSourceAt(root, "../outside.stories.tsx"), null);
+});
 
 function changed(path, source, needles) {
   const lines = source.split("\n");
@@ -97,9 +146,10 @@ test("responsive, mocked-owner absence, premature absence, and count-only layout
       ? { baseline: "Surfaces/Artifacts/Documents/Documents List", layoutAssertion: "the card is a child of the metric grid at its established width" }
       : {}),
   }));
-  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: proofs }, files, read, COMMIT), []);
+  const receiptProofs = proofs.map(proof => proof.class === "absence" ? withReceipt(proof, read(proof.path)) : proof);
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: receiptProofs }, files, read, COMMIT, RECEIPT_DIR), []);
 
-  const mockedOwner = structuredClone(proofs);
+  const mockedOwner = structuredClone(receiptProofs);
   mockedOwner.find((proof) => proof.class === "absence").ownerBoundary = "mock";
   assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: mockedOwner }).join("\n"), /ownerBoundary: "production"/);
 });
@@ -146,7 +196,20 @@ test("AC-4 absence assertions reject missing or unrun proof and accept an execut
       assertionFailure: `AssertionError: expect(pager.getByRole("status")).toHaveCount(0) failed at ${proof.assertionLocation}; Expected count: 0; Received count: 1`,
     },
   };
-  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [executed] }, files, read, COMMIT), []);
+  const executedReceipt = withReceipt(executed, fixture.source);
+  const missingBytes = JSON.parse(readFileSync(path.join(RECEIPT_DIR, executedReceipt.rawReceipt), "utf8"));
+  delete missingBytes.mutationEdit;
+  const missingBytesFile = `proof-${receiptNumber++}.json`;
+  const missingBytesRaw = JSON.stringify(missingBytes);
+  writeFileSync(path.join(RECEIPT_DIR, missingBytesFile), missingBytesRaw);
+  const unverifiable = { ...executedReceipt, rawReceipt: missingBytesFile,
+    rawReceiptSha256: createHash("sha256").update(missingBytesRaw).digest("hex") };
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [unverifiable] }, RECEIPT_DIR, read).join("\n"),
+    /mutation bytes|mutated source|provenance/i,
+  "an arbitrary changed hash without recoverable mutated bytes is not proof");
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [executedReceipt] }, files, read, COMMIT, RECEIPT_DIR), []);
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [executed] }, tmpdir(), read).join("\n"),
+    /raw runner receipt/i, "a production receipt directory cannot accept authored non-Storybook failure text alone");
   for (const mutationRun of [
     { command: proof.command, exitCode: 0, assertionFailure: "no assertion failed" },
     { command: "a different test", exitCode: 1, assertionFailure: "the status count was 1" },
@@ -161,19 +224,19 @@ test("AC-4 absence assertions reject missing or unrun proof and accept an execut
   const setupCrash = { ...executed, observedFailure: "setup crashed",
     mutationRun: { command: proof.command, exitCode: 1,
       assertionFailure: "TypeError: Cannot read properties of undefined" } };
-  assert.match(testIntegrityProblems({ testIntegrityProofs: [setupCrash] }, files, read, COMMIT).join("\n"), /exact assertion failure/);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [withReceipt(setupCrash, fixture.source)] }, files, read, COMMIT, RECEIPT_DIR).join("\n"), /exact assertion failure/);
   const wrongAssertion = { ...executed,
     mutationRun: { command: proof.command, exitCode: 1,
       assertionFailure: 'AssertionError: expect(other).toHaveCount(1) failed at unrelated.spec.ts:99:1; Expected count: 1; Received count: 0' } };
-  assert.match(testIntegrityProblems({ testIntegrityProofs: [wrongAssertion] }, files, read, COMMIT).join("\n"), /exact assertion failure/);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [withReceipt(wrongAssertion, fixture.source)] }, files, read, COMMIT, RECEIPT_DIR).join("\n"), /exact assertion failure/);
   const unrelatedStack = { ...executed,
     mutationRun: { command: proof.command, exitCode: 1,
       assertionFailure: `AssertionError: expect(other).toHaveCount(1) failed at unrelated.spec.ts:9:1; Expected count: 1; Received count: 0\n at ${proof.assertionLocation}` } };
-  assert.match(testIntegrityProblems({ testIntegrityProofs: [unrelatedStack] }, files, read, COMMIT).join("\n"), /primary assertion location/);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [withReceipt(unrelatedStack, fixture.source)] }, files, read, COMMIT, RECEIPT_DIR).join("\n"), /primary assertion location/);
   const uiTextTypeError = { ...executed,
     mutationRun: { command: proof.command, exitCode: 1,
       assertionFailure: `AssertionError: expect(pager).toHaveCount(0) failed at ${proof.assertionLocation}; Expected null, received element with text TypeError` } };
-  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [uiTextTypeError] }, files, read, COMMIT), []);
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [withReceipt(uiTextTypeError, fixture.source)] }, files, read, COMMIT, RECEIPT_DIR), []);
 });
 
 test("AC-2 changed hidden and detached assertions are absence candidates", () => {
@@ -183,6 +246,35 @@ test("AC-2 changed hidden and detached assertions are absence candidates", () =>
   ];
   const read = path => fixtures.find(({ file }) => file.path === path)?.source ?? null;
   assert.deepEqual(testIntegrityCandidates(fixtures.map(({ file }) => file), read).map(({ kind }) => kind), ["absence", "absence"]);
+});
+
+test("ISS-13846 positive presence assertions are not absence mutation candidates", () => {
+  const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", [
+    "export const Live: Story = {",
+    "  play: async () => {",
+    '    expect(cell).not.toBeNull();',
+    '    expect(idleLoadingRow).toBeNull();',
+    "  },",
+    "};",
+  ].join("\n"), ["not.toBeNull", "idleLoadingRow"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.map(({ id }) => id), ["absence:apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx:4"]);
+  const multiline = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", [
+    "export const Live: Story = {", "  play: async () => {", "    expect(cell)", "      .not", "      .toBeNull();", "  },", "};",
+  ].join("\n"), [".toBeNull"]);
+  assert.deepEqual(testIntegrityCandidates([multiline.file], path => path === multiline.file.path ? multiline.source : null), []);
+});
+
+test("ISS-13846 a busy-state count in a summary spec is not card-layout proof", () => {
+  const fixture = changed("e2e/documents-summary-scope.spec.ts", [
+    'test("one busy list", async () => {',
+    '  await expect(results.locator(\'[aria-busy="true"]\')).toHaveCount(1);',
+    '  await expect(results.locator(\'[data-slot="card"]\')).toHaveCount(1);',
+    "});",
+  ].join("\n"), ["aria-busy", "data-slot"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
+    ["layout:e2e/documents-summary-scope.spec.ts:3"]);
 });
 
 test("AC-2 changing only the locator in a multiline absence assertion still needs proof", () => {
@@ -238,8 +330,8 @@ test("AC-2 two absence assertions on one changed line each need their own proof"
     assertionLine: second.assertionLine, assertionLocation: second.assertionLocation,
     mutationRun: { command, exitCode: 1,
       assertionFailure: `AssertionError: expect(queryByText).toBeNull failed at ${second.assertionLocation}` } };
-  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [proof, secondProof] }, [fixture.file],
-    path => path === fixture.file.path ? fixture.source : null, COMMIT), []);
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [withReceipt(proof, fixture.source), withReceipt(secondProof, fixture.source)] }, [fixture.file],
+    path => path === fixture.file.path ? fixture.source : null, COMMIT, RECEIPT_DIR), []);
   assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [{ ...secondProof,
     assertionLocation: `${second.path}:${second.line}` }] }).join("\n"), /path, line and column/);
 });
@@ -259,7 +351,7 @@ test("AC-2 an earlier positive assertion on the same line cannot satisfy absence
     ownerBoundary: "production", mountedSignal: "controls owner mounted",
     mutationRun: { command, exitCode: 1,
       assertionFailure: `AssertionError: expect(ready).toBe(true) failed at ${candidate.path}:${candidate.line}:1` } };
-  assert.match(testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT).join("\n"), /primary assertion location/);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [withReceipt(proof, fixture.source)] }, [fixture.file], read, COMMIT, RECEIPT_DIR).join("\n"), /primary assertion location/);
 });
 
 test("AC-2 a changed locator deep inside a multiline absence assertion needs proof", () => {
@@ -295,4 +387,400 @@ test("AC-2 a changed locator inside expect.soft needs absence proof", () => {
   const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0].kind, "absence");
+});
+
+test("ISS-13846 AC-1/2 real Storybook runner failure binds the primary changed assertion", t => {
+  const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", [
+    "export const Live: Story = {",
+    "  play: async ({ canvas }) => {",
+    '    await expect(canvas.queryByRole("status")).toBeNull();',
+    "  },",
+    "};",
+  ].join("\n"), ["toBeNull"]);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
+  const raw = [
+    " RUN  v5.0.2 /repo/apps/storybook",
+    " FAIL  stories/surfaces-v2/v2-documents-list.stories.tsx > Live",
+    'AssertionError: expected <span>Loading</span> to be null',
+    "- Expected: null",
+    "+ Received: <span>Loading</span>",
+    " ❯ stories/surfaces-v2/v2-documents-list.stories.tsx:3:49",
+    '     3|     await expect(canvas.queryByRole("status")).toBeNull();',
+    "       |                                                 ^",
+  ].join("\n");
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "render status inside the mounted story", presentState: "status is inside the story canvas",
+    assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+    command, observedFailure: raw, restoredPass: true, commit: COMMIT,
+    ownerBoundary: "production", mountedSignal: "story canvas mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: raw } };
+  const receipts = mkdtempSync(path.join(tmpdir(), "storybook-mutation-receipt-"));
+  t.after(() => rmSync(receipts, { recursive: true, force: true }));
+  const storyEdit = { old: "  play: async ({ canvas }) => {",
+    new: '  play: async ({ canvas }) => { const row=document.createElement("span"); row.textContent="Loading"; canvas.append(row);' };
+  const receipt = { candidate: candidate.id, target: candidate.path, command, mutationExit: 1, mutationOutput: raw,
+    restoredExit: 0, restoredOutput: "Test Files 1 passed", head: [COMMIT],
+    beforeSha256: createHash("sha256").update(fixture.source).digest("hex"),
+    mutatedSha256: createHash("sha256").update(fixture.source.replace(storyEdit.old, storyEdit.new)).digest("hex"),
+    mutationEdit: storyEdit };
+  const bytes = JSON.stringify(receipt);
+  writeFileSync(path.join(receipts, "storybook.json"), bytes);
+  proof.rawReceipt = "storybook.json";
+  proof.rawReceiptSha256 = createHash("sha256").update(bytes).digest("hex");
+  proof.restoredOutputSha256 = createHash("sha256").update(receipt.restoredOutput).digest("hex");
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, receipts), []);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [{ ...proof, rawReceiptSha256: "0".repeat(64) }] },
+    [fixture.file], read, COMMIT, receipts).join("\n"), /receipt/i);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [{ ...proof, rawReceipt: undefined }] },
+    [fixture.file], read, COMMIT, receipts).join("\n"), /receipt/i);
+  const wrongSourceReceipt = { ...receipt, beforeSha256: "0".repeat(64) };
+  const wrongSourceBytes = JSON.stringify(wrongSourceReceipt);
+  writeFileSync(path.join(receipts, "wrong-source.json"), wrongSourceBytes);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [{ ...proof,
+    rawReceipt: "wrong-source.json", rawReceiptSha256: createHash("sha256").update(wrongSourceBytes).digest("hex") }] },
+  [fixture.file], read, COMMIT, receipts).join("\n"), /receipt/i);
+  let traversed = false;
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [{ ...proof, path: "../../private.stories.tsx" }] },
+    receipts, () => { traversed = true; return fixture.source; }).join("\n"), /path/i);
+  assert.equal(traversed, false, "untrusted proof paths cannot make the validator read outside the worktree");
+  for (const failure of [
+    raw.replace(":3:49", ":2:49"),
+    raw.replace("AssertionError:", "TypeError:"),
+    raw.replace(" ❯ stories/surfaces-v2/v2-documents-list.stories.tsx:3:49", " ❯ unrelated.stories.tsx:3:49"),
+  ]) assert.match(testIntegrityProblems({ testIntegrityProofs: [{ ...proof,
+    mutationRun: { command, exitCode: 1, assertionFailure: failure } }] }, [fixture.file], read, COMMIT, receipts).join("\n"), /primary assertion location|receipt/i);
+});
+
+test("ISS-13846 AC-1 Storybook instrumenter source-map coordinate binds a receipt-edited precondition", t => {
+  const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", [
+    "export const LivePagedGroupedAppending: Story = {",
+    "  play: async ({ canvasElement }) => {",
+    '    const idleLoadingRow = canvasElement.querySelector("[data-paged-list-loading-row]");',
+    "    await expect(idleLoadingRow).toBeNull();",
+    "  },",
+    "};",
+  ].join("\n"), ["toBeNull"]);
+  const read = file => file === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
+  const raw = [" RUN  v5.0.2 /repo/apps/storybook",
+    " FAIL  stories/surfaces-v2/v2-documents-list.stories.tsx > Live Paged Grouped Appending",
+    "AssertionError: expected <div data-paged-list-loading-row></div> to be null",
+    " ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:1:3",
+    "     1| export const LivePagedGroupedAppending: Story = {",
+    "       |   ^", " Failed Tests 1", " Test Files 1 failed", " Tests 1 failed | 16 passed"].join("\n");
+  const edit = { old: '    const idleLoadingRow = canvasElement.querySelector("[data-paged-list-loading-row]");',
+    new: '    const idleLoadingRow = (() => { const row = document.createElement("div"); row.setAttribute("data-paged-list-loading-row", ""); canvasElement.append(row); return canvasElement.querySelector("[data-paged-list-loading-row]"); })();' };
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const receipt = { candidate: candidate.id, target: candidate.path, command, mutationExit: 1, mutationOutput: raw,
+    restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
+    beforeSha256: hash(fixture.source), mutatedSha256: hash(fixture.source.replace(edit.old, edit.new)), mutationEdit: edit };
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-instrumented-proof-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bytes = JSON.stringify(receipt);
+  writeFileSync(path.join(dir, "story.json"), bytes);
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "insert one loading row into the idle mounted cell", presentState: "row inside the exact queried cell",
+    assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+    command, observedFailure: raw, restoredPass: true, commit: COMMIT, ownerBoundary: "production",
+    mountedSignal: "idle cell mounted", mutationRun: { command, exitCode: 1, assertionFailure: raw },
+    rawReceipt: "story.json", rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, dir), []);
+  const sourceFile = path.join(dir, fixture.file.path);
+  mkdirSync(path.dirname(sourceFile), { recursive: true });
+  writeFileSync(sourceFile, fixture.source);
+  const evidencePath = path.join(dir, "evidence.json");
+  writeFileSync(evidencePath, JSON.stringify({ testSelection: [], testRuns: [], rerunCycles: [],
+    testIntegrityProofs: [proof], targetedInventory: { actor: "read-only", source: "final-committed-diff",
+      commit: COMMIT, laneReport: { command: "pnpm test:lanes", matches: [] }, entries: [], noTestsReason: "fixture" } }));
+  const schema = new URL("./pr-evidence-schema.mjs", import.meta.url).pathname;
+  const runSchema = worktree => spawnSync(process.execPath, [schema, "--file", evidencePath,
+    ...(worktree ? ["--worktree", worktree] : [])], { encoding: "utf8" });
+  assert.equal(runSchema(dir).status, 0);
+  assert.match(runSchema(null).stdout, /primary assertion location/);
+  const proxyRaw = raw.replace(" ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:1:3",
+    " ❯ Proxy.toBeNull node_modules/.cache/storybook/test-helper.js:2552:20\n ❯ _jsxDEV stories/surfaces-v2/v2-documents-list.stories.tsx:1:3");
+  const proxyReceipt = { ...receipt, mutationOutput: proxyRaw };
+  const proxyBytes = JSON.stringify(proxyReceipt);
+  writeFileSync(path.join(dir, "proxy.json"), proxyBytes);
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [{ ...proof, rawReceipt: "proxy.json",
+    rawReceiptSha256: hash(proxyBytes), mutationRun: { command, exitCode: 1, assertionFailure: proxyRaw } }] },
+  [fixture.file], read, COMMIT, dir), []);
+  for (const failure of [raw.replace("❯ toBeNull", "❯ toBeVisible"), raw.replace("AssertionError", "TypeError"),
+    raw.replace("stories/surfaces-v2/v2-documents-list.stories.tsx:1:3", "other.stories.tsx:1:3")]) {
+    const changedReceipt = { ...receipt, mutationOutput: failure };
+    const changedBytes = JSON.stringify(changedReceipt);
+    writeFileSync(path.join(dir, "changed.json"), changedBytes);
+    assert.notDeepEqual(testIntegrityProblems({ testIntegrityProofs: [{ ...proof,
+      rawReceipt: "changed.json", rawReceiptSha256: hash(changedBytes),
+      mutationRun: { command, exitCode: 1, assertionFailure: failure } }] }, [fixture.file], read, COMMIT, dir), []);
+  }
+});
+
+test("ISS-13846 review DT-18 real adjacent 611/612 matcher cannot be relabeled", t => {
+  const filePath = "apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx";
+  const lines = [...Array.from({ length: 607 }, () => "// story context"),
+    "async function triggerPagedRefetch() {",
+    '  const loadingRow = loadingScope.querySelector("[data-paged-list-loading-row]");',
+    "  await ready;",
+    "  await expect(loadingRow).toBeNull();",
+    '  await expect(within(loadingScope).queryByText("Loading documents…")).toBeNull();',
+    "}"];
+  const source = lines.join("\n");
+  const file = { path: filePath, status: "M", added: [611, 612].map(line => ({ line, text: lines[line - 1] })) };
+  const read = path => path === filePath ? source : null;
+  const candidates = testIntegrityCandidates([file], read);
+  assert.deepEqual(candidates.map(item => item.id), [`absence:${filePath}:611`, `absence:${filePath}:612`]);
+  const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
+  const raw = [" FAIL  stories/surfaces-v2/v2-documents-list.stories.tsx > Live Paged Refetch",
+    "AssertionError: expected <div data-paged-list-loading-row></div> to be null",
+    " ❯ Proxy.toBeNull node_modules/.cache/storybook/test-helper.js:2552:20",
+    " ❯ _jsxDEV stories/surfaces-v2/v2-documents-list.stories.tsx:416:7",
+    " Failed Tests 2", " Test Files 1 failed"].join("\n");
+  const edit = { old: lines[608], new: '  const injected = document.createElement("div"); injected.setAttribute("data-paged-list-loading-row", ""); loadingScope.append(injected); ' + lines[608] };
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const dir = mkdtempSync(path.join(tmpdir(), "adjacent-story-proof-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const proofFor = candidate => {
+    const receipt = { candidate: candidate.id, target: filePath, command, mutationExit: 1,
+      mutationOutput: raw, restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
+      beforeSha256: hash(source), mutatedSha256: hash(source.replace(edit.old, edit.new)), mutationEdit: edit };
+    const bytes = JSON.stringify(receipt);
+    const name = `line-${candidate.line}.json`;
+    writeFileSync(path.join(dir, name), bytes);
+    return { candidate: candidate.id, path: filePath, case: candidate.case, class: "absence",
+      mutation: "insert loading row before the first absence assertion", command, observedFailure: raw,
+      restoredPass: true, commit: COMMIT, ownerBoundary: "production", mountedSignal: "scope mounted",
+      presentState: "loading row present", assertionLine: candidate.assertionLine,
+      assertionLocation: candidate.assertionLocation, mutationRun: { command, exitCode: 1, assertionFailure: raw },
+      rawReceipt: name, rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+  };
+  assert.deepEqual(testIntegrityProofShapeProblems({ testIntegrityProofs: [proofFor(candidates[0])] }, dir, read), []);
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [proofFor(candidates[1])] }, dir, read).join("\n"),
+    /exact assertion|primary assertion|receipt/i,
+  "the same raw line-611 failure cannot be relabeled as adjacent line 612");
+  const textEdit = { old: `${lines[610]}\n${lines[611]}`,
+    new: `${lines[610]} const inserted = document.createElement("span"); inserted.textContent = "Loading documents…"; loadingScope.append(inserted);\n${lines[611]}` };
+  const textRaw = raw.replace("<div data-paged-list-loading-row></div>", "<span>Loading documents…</span>");
+  const textProofFor = candidate => {
+    const base = proofFor(candidate);
+    const receipt = { candidate: candidate.id, target: filePath, command, mutationExit: 1,
+      mutationOutput: textRaw, restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
+      beforeSha256: hash(source), mutatedSha256: hash(source.replace(textEdit.old, textEdit.new)), mutationEdit: textEdit };
+    const bytes = JSON.stringify(receipt);
+    const name = `text-line-${candidate.line}.json`;
+    writeFileSync(path.join(dir, name), bytes);
+    return { ...base, mutationRun: { command, exitCode: 1, assertionFailure: textRaw },
+      rawReceipt: name, rawReceiptSha256: hash(bytes) };
+  };
+  assert.deepEqual(testIntegrityProofShapeProblems({ testIntegrityProofs: [textProofFor(candidates[1])] }, dir, read), []);
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [textProofFor(candidates[0])] }, dir, read).join("\n"),
+    /exact assertion|primary assertion|receipt/i,
+  "the line-612 text failure cannot be relabeled as the preceding line-611 row assertion");
+  const firstWinsEdit = { old: lines[608],
+    new: '  const inserted = document.createElement("div"); inserted.setAttribute("data-paged-list-loading-row", ""); inserted.textContent = "Loading documents…"; loadingScope.append(inserted); ' + lines[608] };
+  const firstWinsRaw = raw.replace("<div data-paged-list-loading-row></div>",
+    "<div data-paged-list-loading-row>Loading documents…</div>");
+  const falseSecondReceipt = { candidate: candidates[1].id, target: filePath, command,
+    mutationExit: 1, mutationOutput: firstWinsRaw, restoredExit: 0, restoredOutput: "Test Files 1 passed",
+    head: COMMIT, beforeSha256: hash(source), mutatedSha256: hash(source.replace(firstWinsEdit.old, firstWinsEdit.new)),
+    mutationEdit: firstWinsEdit };
+  const falseSecondBytes = JSON.stringify(falseSecondReceipt);
+  writeFileSync(path.join(dir, "first-wins.json"), falseSecondBytes);
+  const falseSecondProof = { ...proofFor(candidates[1]), rawReceipt: "first-wins.json",
+    rawReceiptSha256: hash(falseSecondBytes), mutationRun: { command, exitCode: 1, assertionFailure: firstWinsRaw } };
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [falseSecondProof] }, dir, read).join("\n"),
+    /exact assertion|primary assertion|receipt/i,
+  "a line-611 failure cannot satisfy line 612 merely because the injected row also contains its queried text");
+});
+
+test("ISS-13846 review DT-25 queryByRole failure needs the exact asserted scope", t => {
+  const pathName = "apps/storybook/stories/surfaces-v2/scope.stories.tsx";
+  const source = ["export const Live: Story = {", "  play: async ({ canvasElement }) => {",
+    '    const scope = canvasElement.querySelector("#scope"); const unrelated = canvasElement.querySelector("#elsewhere");',
+    '    await expect(within(scope).queryByRole("status")).toBeNull();',
+    '    await expect(within(unrelated).queryByRole("status")).toBeNull();',
+    "  },", "};"].join("\n");
+  const file = { path: pathName, status: "M", added: [{ line: 4, text: source.split("\n")[3] }] };
+  const read = fileName => fileName === pathName ? source : null;
+  const [candidate] = testIntegrityCandidates([file], read);
+  const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run scope.stories.tsx";
+  const raw = [" FAIL  stories/surfaces-v2/scope.stories.tsx > Live",
+    "AssertionError: expected <span role=status></span> to be null",
+    " ❯ Proxy.toBeNull node_modules/.cache/storybook/test-helper.js:2552:20",
+    " ❯ _jsxDEV stories/surfaces-v2/scope.stories.tsx:1:3", " Failed Tests 1"].join("\n");
+  const old = source.split("\n")[2];
+  const edit = { old, new: old + ' const node = document.createElement("span"); node.setAttribute("role", "status"); unrelated.append(node);' };
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const receipt = { candidate: candidate.id, target: pathName, command, mutationExit: 1,
+    mutationOutput: raw, restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
+    beforeSha256: hash(source), mutatedSha256: hash(source.replace(old, edit.new)), mutationEdit: edit };
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-scope-receipt-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bytes = JSON.stringify(receipt);
+  writeFileSync(path.join(dir, "wrong-scope.json"), bytes);
+  const proof = { candidate: candidate.id, path: pathName, case: candidate.case, class: "absence",
+    mutation: "insert status only in unrelated scope", command, observedFailure: raw,
+    restoredPass: true, commit: COMMIT, ownerBoundary: "production", mountedSignal: "both scopes mounted",
+    presentState: "status outside the exact asserted scope", assertionLine: candidate.assertionLine,
+    assertionLocation: candidate.assertionLocation, mutationRun: { command, exitCode: 1, assertionFailure: raw },
+    rawReceipt: "wrong-scope.json", rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: [proof] }, dir, read).join("\n"),
+    /exact assertion|primary assertion|receipt/i);
+});
+
+test("ISS-13846 AC-2 real Vitest package-relative matcher coordinate identifies a multiline expect", () => {
+  const fixture = changed("packages/app/shared/components/__tests__/paged-list-refetch-loading.test.tsx", [
+    'test("no loading row", () => {',
+    "  expect(",
+    '    screen.queryByText("Loading documents")',
+    "  ).toBeNull();",
+    "});",
+  ].join("\n"), ["toBeNull"]);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "pnpm --filter @repo/app exec vitest run shared/components/__tests__/paged-list-refetch-loading.test.tsx";
+  const raw = [
+    " FAIL  shared/components/__tests__/paged-list-refetch-loading.test.tsx > no loading row",
+    "AssertionError: expected <span>Loading documents</span> to be null",
+    " ❯ shared/components/__tests__/paged-list-refetch-loading.test.tsx:4:5",
+    "     2|   expect(",
+    '     3|     screen.queryByText("Loading documents")',
+    "     4|   ).toBeNull();",
+    "       |     ^",
+  ].join("\n");
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "render loading row", presentState: "loading row is mounted", assertionLine: candidate.assertionLine,
+    assertionLocation: candidate.assertionLocation, command, observedFailure: raw, restoredPass: true,
+    commit: COMMIT, ownerBoundary: "production", mountedSignal: "list mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: raw } };
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [withReceipt(proof, fixture.source)] }, [fixture.file], read, COMMIT, RECEIPT_DIR), []);
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [withReceipt({ ...proof,
+    mutationRun: { command, exitCode: 1, assertionFailure: raw.replace(":4:5", ":1:5") } }, fixture.source)] },
+  [fixture.file], read, COMMIT, RECEIPT_DIR).join("\n"), /primary assertion location/);
+});
+
+test("ISS-13846 AC-4 credential-free web E2E proof still needs real red and restored receipts", t => {
+  const fixture = changed("e2e/documents-summary-scope.spec.ts", [
+    'test("no loading rows", async ({ page }) => {',
+    '  await expect(page.locator("[data-paged-list-loading-row]")).toHaveCount(',
+    "    0",
+    "  );",
+    "});",
+  ].join("\n"), ["toHaveCount("]);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "pnpm exec playwright test --project=chromium e2e/documents-summary-scope.spec.ts --retries=0 -g 'no loading rows'";
+  const raw = ["Running 1 test using 1 worker", "1) [chromium] › e2e/documents-summary-scope.spec.ts:1:1 › no loading rows",
+    "    Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m).toHaveCount(expected) failed",
+    "    Expected: 0", "    Received: 1",
+    '    > 2 |   await expect(page.locator("[data-paged-list-loading-row]")).toHaveCount(',
+    "          |                                                                    ^",
+    "      3 |     0", "      4 |   );",
+    "        at /work/e2e/documents-summary-scope.spec.ts:2:68"].join("\n");
+  const receipts = mkdtempSync(path.join(tmpdir(), "web-mutation-receipt-"));
+  t.after(() => rmSync(receipts, { recursive: true, force: true }));
+  const receipt = { candidate: candidate.id, target: candidate.path, command, mutationExit: 1, mutationOutput: raw,
+    restoredExit: 0, restoredOutput: "1 passed", head: COMMIT,
+    beforeSha256: createHash("sha256").update(fixture.source).digest("hex"),
+    mutationEdit: { old: 'test("no loading rows", async ({ page }) => {',
+      new: 'test("no loading rows", async ({ page }) => { void "intentional setup mutation";' },
+    mutatedSha256: createHash("sha256").update(fixture.source.replace('test("no loading rows", async ({ page }) => {',
+      'test("no loading rows", async ({ page }) => { void "intentional setup mutation";')).digest("hex") };
+  const bytes = JSON.stringify(receipt);
+  writeFileSync(path.join(receipts, "web.json"), bytes);
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "mount the loading row", presentState: "loading row mounted", assertionLine: candidate.assertionLine,
+    assertionLocation: candidate.assertionLocation, command, observedFailure: raw, restoredPass: true,
+    commit: COMMIT, ownerBoundary: "production", mountedSignal: "list mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: raw }, rawReceipt: "web.json",
+    rawReceiptSha256: createHash("sha256").update(bytes).digest("hex"),
+    restoredOutputSha256: createHash("sha256").update(receipt.restoredOutput).digest("hex") };
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, receipts), []);
+  for (const changedProof of [
+    { ...proof, commit: "c".repeat(40) },
+    { ...proof, mutationRun: { ...proof.mutationRun, exitCode: 0 } },
+    { ...proof, restoredOutputSha256: "0".repeat(64) },
+    { ...proof, mutationRun: { ...proof.mutationRun, assertionFailure: "AssertionError: authored failure at e2e/documents-summary-scope.spec.ts:2:9" } },
+  ]) assert.notDeepEqual(testIntegrityProblems({ testIntegrityProofs: [changedProof] }, [fixture.file], read, COMMIT, receipts), []);
+});
+
+test("ISS-13846 AC-5 PR evidence CLI rejects a tampered raw Storybook receipt", t => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pr-proof-cli-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const commit = "f".repeat(40);
+  const candidate = "absence:apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx:3";
+  const command = "pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
+  const raw = [" FAIL  stories/surfaces-v2/v2-documents-list.stories.tsx > Live",
+    "AssertionError: expected <span>Loading</span> to be null",
+    " ❯ stories/surfaces-v2/v2-documents-list.stories.tsx:3:49",
+    '     3|     await expect(canvas.queryByRole("status")).toBeNull();'].join("\n");
+  const receipt = { candidate, command, mutationExit: 1, mutationOutput: raw, restoredExit: 0,
+    restoredOutput: "1 passed", head: commit, beforeSha256: "a".repeat(64), mutatedSha256: "b".repeat(64) };
+  const bytes = JSON.stringify(receipt);
+  writeFileSync(path.join(dir, "story.json"), bytes);
+  const proof = { candidate, path: "apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx",
+    case: "Live", class: "absence", mutation: "render status", command, observedFailure: raw,
+    restoredPass: true, commit, ownerBoundary: "production", mountedSignal: "story mounted",
+    presentState: "status rendered", assertionLine: 'expect(canvas.queryByRole("status")).toBeNull()',
+    assertionLocation: "apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx:3:11",
+    mutationRun: { command, exitCode: 1, assertionFailure: raw }, rawReceipt: "story.json",
+    rawReceiptSha256: createHash("sha256").update(bytes).digest("hex"),
+    restoredOutputSha256: createHash("sha256").update(receipt.restoredOutput).digest("hex") };
+  const evidence = { testSelection: [], testRuns: [], rerunCycles: [], testIntegrityProofs: [proof],
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit,
+      laneReport: { command: "pnpm test:lanes", matches: [] }, entries: [], noTestsReason: "fixture" } };
+  const evidencePath = path.join(dir, "vibe-pr-evidence.json");
+  const run = value => { writeFileSync(evidencePath, JSON.stringify(value));
+    return spawnSync(process.execPath, [new URL("./pr-evidence-schema.mjs", import.meta.url).pathname,
+      "--file", evidencePath], { encoding: "utf8" }); };
+  assert.equal(run(evidence).status, 0);
+  const tampered = { ...evidence, testIntegrityProofs: [{ ...proof, rawReceiptSha256: "0".repeat(64) }] };
+  assert.match(run(tampered).stdout, /raw runner receipt is invalid/);
+  assert.notEqual(run(tampered).status, 0);
+});
+
+test("ISS-13846 review F1 a comment-only mutation or authored failure text cannot prove absence", () => {
+  const fixture = changed("src/pager.test.tsx", [
+    'test("no stale pager", () => {',
+    '  expect(screen.queryByText("stale")).toBeNull();',
+    "});",
+  ].join("\n"), ["toBeNull"]);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  assert.equal(candidate.kind, "absence");
+  const command = "pnpm vitest src/pager.test.tsx";
+  const summary = `AssertionError: expect(queryByText).toBeNull failed at ${candidate.assertionLocation}`;
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "render the stale pager", presentState: "the stale pager is present",
+    assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+    command, observedFailure: "stale pager assertion failed", restoredPass: true, commit: COMMIT,
+    ownerBoundary: "production", mountedSignal: "pager owner mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: summary } };
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const first = fixture.source.split("\n")[0];
+  const receiptFor = (output, edit) => {
+    const receipt = { candidate: proof.candidate, target: proof.path, command, mutationExit: 1, mutationOutput: output,
+      restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT, beforeSha256: hash(fixture.source),
+      mutatedSha256: hash(fixture.source.replace(edit.old, edit.new)), mutationEdit: edit };
+    const name = `proof-${receiptNumber++}.json`;
+    const bytes = JSON.stringify(receipt);
+    writeFileSync(path.join(RECEIPT_DIR, name), bytes);
+    return { ...proof, mutationRun: { ...proof.mutationRun, assertionFailure: output }, rawReceipt: name,
+      rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+  };
+  const problems = entry => testIntegrityProblems({ testIntegrityProofs: [entry] }, [fixture.file], read, COMMIT, RECEIPT_DIR);
+  const realEdit = { old: first, new: `${first} render(<Pager stale />);` };
+  const runner = runnerOutput(proof, fixture.source);
+  assert.deepEqual(problems(receiptFor(runner, realEdit)), [], "positive control: real runner output and an executable mutation");
+  assert.match(problems(receiptFor(runner, { old: first, new: `${first} /* render(<Pager stale />) */` })).join("\n"),
+    /executable source/, "a comment-only edit cannot make the assertion fail");
+  assert.match(problems(receiptFor(runner, { old: first, new: `${first} // render(<Pager stale />)` })).join("\n"),
+    /executable source/, "a line comment is not a mutation either");
+  assert.match(problems(receiptFor(runner, { old: first, new: `${first} {/* <Pager stale /> */}` })).join("\n"),
+    /executable source/, "a JSX comment is not a mutation either");
+  assert.match(problems(receiptFor(summary, realEdit)).join("\n"), /exact assertion failure/,
+    "authored text naming the coordinate is not runner output");
 });

@@ -3,7 +3,7 @@
 // files), assertion and export changes, new apps/api refusals, ticket asks and
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
 
-import { withStableSource, validSourceIdentity, committedSourceIdentity, committedFile } from "../../vibe/scripts/tested-head.mjs";
+import { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
@@ -20,11 +20,14 @@ import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
-import { testIntegrityProblems } from "./test-integrity.mjs";
+import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
+import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
 const GH_LIST_FILE_CAP = 100;
+const SCOPED_CORPUS_AUTHORITY = Symbol("scoped pull-request corpus authenticated by inventory");
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const ASSERTION = /\b(?:expect|assert)\s*[.(]|\.(?:toBe|toEqual|toStrictEqual|toMatch|toThrow|toContain|toHave\w*)\b/;
 const SKIP = /\b(?:it|test|describe)\.(?:skip|todo|only)\s*\(/;
@@ -88,6 +91,16 @@ export function readDiff(worktree, base) {
     files.push({ path: file, status: "A", hunks: [{ newStart: 1, newCount: lines.length, removed: [], added: lines.map((text, i) => ({ line: i + 1, text })) }] });
   }
   return files;
+}
+
+/** Recompute changed proof candidates from the same recorded main-sync base as the inventory. */
+function evidenceCandidateFiles(worktree) {
+  const record = readSessionRecord(worktree);
+  const base = proofCorpusBase(worktree);
+  const localFixPaths = new Set((Array.isArray(record?.localFixes) ? record.localFixes : [])
+    .flatMap(fix => Array.isArray(fix?.paths) ? fix.paths : []).filter(file => typeof file === "string"));
+  return readDiff(worktree, base).filter(file => !localFixPaths.has(file.path)
+    && !file.path.startsWith(".closedloop-ai/vibe-plans/"));
 }
 
 /** Open pull requests sharing a changed file, or a file a changed file imports. */
@@ -377,26 +390,12 @@ export function loadOpenPrs() {
 
 /** The facts for the inventory's JSON, with the gates when a body or a runs file is given. */
 export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, body, runs, commit, prBase = "main", requiredTests = [], template,
-  probeCapability = ({ worktree: root, commit: sha }) => {
-    if (git(root, ["rev-parse", "HEAD"]) !== sha) throw new Error("HEAD moved before the capability probe");
-    return probeE2eCapability({ worktree: root, commit: sha });
-  } }) {
+  probeCapability = currentCapabilityProbe }) {
   return withStableSource(worktree, current => {
-    let testedCommit = commit;
-    const bindingProblems = [];
-    if (runs?.source !== undefined) {
-      const source = runs.source;
-      let ancestor = false;
-      if (validSourceIdentity(source)) {
-        try { git(worktree, ['merge-base', '--is-ancestor', source.head, current.head]); ancestor = true; } catch { /* Not proven. */ }
-      }
-      const omitted = git(worktree, ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']) !== '';
-      if (!validSourceIdentity(source) || source.treeSha256 !== current.treeSha256 || commit !== current.head || !ancestor || omitted) {
-        bindingProblems.push(omitted
-          ? 'published commit omitted uncommitted or untracked inputs covered by the tested source identity'
-          : 'tested source identity does not match current content and its proven commit ancestry');
-      } else testedCommit = source.head;
-    }
+    const binding = runs?.source === undefined ? { testedCommit: commit, problems: [] }
+      : authenticatedSourceCarry(worktree, runs.source, current, commit);
+    const testedCommit = binding.testedCommit;
+    const bindingProblems = binding.problems;
     const files = readDiff(worktree, base).filter((file) => include.has(file.path));
     const changed = files.map((file) => file.path);
     const { contracts, refusals } = contractChanges(files);
@@ -419,24 +418,30 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       ] }),
       ...(runs === undefined ? {} : { prEvidenceProblems: [
         ...bindingProblems,
-        ...evidenceProblems(runs, changed, testedCommit, worktree),
-        ...selectionProblems(runs, files, requiredTests, testedCommit),
-        ...testIntegrityProblems(
-          runs,
-          files,
-          file => {
-            try { return readFileSync(path.join(worktree, file), "utf8"); }
-            catch { return null; }
-          },
-          testedCommit
-        ),
-        ...targetedEvidenceProblems(runs, testedCommit, worktree),
-        ...capabilityProbeProblems(runs, worktree, testedCommit, probeCapability, commit),
+        ...prEvidenceValidationProblems(runs, testedCommit, { worktree, files, scopeBase: base, scopeInclude: include,
+          scopeAuthority: SCOPED_CORPUS_AUTHORITY,
+          readSource: file => proofSourceAt(worktree, file), probeCapability, currentCommit: commit,
+          requiredTests }),
         ...ciCheckProblems(runs, changed, testedCommit),
-        ...tierEvidenceProblems(runs.e2eCapability, (Array.isArray(runs.targetedInventory?.entries) ? runs.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
       ] }),
     };
   });
+}
+
+/** Authenticate the same clean ancestor/equal-tree carry for inventory and PR comment. */
+function authenticatedSourceCarry(worktree, source, current, publishedCommit) {
+  let ancestor = false;
+  if (validSourceIdentity(source)) {
+    try { git(worktree, ["merge-base", "--is-ancestor", source.head, current.head]); ancestor = true; }
+    catch { /* Unproven ancestry remains a failed carry. */ }
+  }
+  const omitted = git(worktree, ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]) !== "";
+  const problems = !validSourceIdentity(source) || source.treeSha256 !== current.treeSha256
+    || publishedCommit !== current.head || !ancestor || omitted
+    ? [omitted
+      ? "published commit omitted uncommitted or untracked inputs covered by the tested source identity"
+      : "tested source identity does not match current content and its proven commit ancestry"] : [];
+  return { testedCommit: problems.length ? publishedCommit : source.head, problems };
 }
 
 /**
@@ -444,7 +449,12 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
  * runtime probe. A fabricated "no Docker" report cannot waive E2E merely by
  * selecting no tier; a changed prerequisite requires fresh evidence.
  */
-export function capabilityProbeProblems(evidence, worktree, commit, probeCapability, currentCommit = commit) {
+function currentCapabilityProbe({ worktree, commit }) {
+  if (git(worktree, ["rev-parse", "HEAD"]) !== commit) throw new Error("HEAD moved before the capability probe");
+  return probeE2eCapability({ worktree, commit });
+}
+
+export function capabilityProbeProblems(evidence, worktree, commit, probeCapability = currentCapabilityProbe, currentCommit = commit) {
   const carried = (Array.isArray(evidence?.testRuns) ? evidence.testRuns : [])
     .filter((run) => run?.status === "not-run" && typeof run.path === "string" && isE2ePath(run.path));
   if (carried.length === 0) return [];
@@ -468,6 +478,9 @@ export function capabilityProbeProblems(evidence, worktree, commit, probeCapabil
     || named.notRunnableReason !== current.container.notRunnableReason) {
     return ["Docker runtime probe differs from the current machine; rerun the read-only capability probe and rewrite CI carry evidence"];
   }
+  if (!named.secretsSet || !current.container.secretsSet) {
+    return ["E2E identity-key presence probe is incomplete; do not carry specs to CI"];
+  }
   for (const key of REQUIRED_CONTAINER_IDENTITY) {
     if (named.secretsSet?.[key] !== current.container.secretsSet[key]) {
       return ["E2E identity-key presence differs from the current machine; rerun the read-only capability probe"];
@@ -480,6 +493,54 @@ export function capabilityProbeProblems(evidence, worktree, commit, probeCapabil
     return ["Desktop displayless probe differs from the current machine; rerun the read-only capability probe"];
   }
   return [];
+}
+
+/** One source-backed carry and mutation-proof decision for inventory and PR comment. */
+export function prEvidenceValidationProblems(evidence, commit, options = {}) {
+  const { worktree, probeCapability = currentCapabilityProbe } = options;
+  const receiptDir = options.receiptDir ?? (worktree ? git(worktree, ["rev-parse", "--absolute-git-dir"]) : undefined);
+  const current = worktree ? sourceIdentity(worktree) : options.currentSource;
+  const currentCommit = options.currentCommit ?? current?.head ?? commit;
+  let sourceProblems = [];
+  if (current && (!validSourceIdentity(evidence?.source) || commit !== evidence.source.head)) {
+    sourceProblems = ["evidence source does not match the current worktree HEAD and source identity"];
+  } else if (current && !sameSource(evidence.source, current)) {
+    sourceProblems = worktree
+      ? authenticatedSourceCarry(worktree, evidence.source, current, current.head).problems
+        .map(problem => `evidence source does not match the current worktree HEAD and source identity: ${problem}`)
+      : ["evidence source does not match the current worktree HEAD and source identity"];
+  }
+  let files = options.files ?? options.candidateFiles;
+  let scopeProblems = [];
+  if (worktree) {
+    try {
+      const authenticated = options.scopeAuthority === SCOPED_CORPUS_AUTHORITY
+        && options.scopeBase && options.scopeInclude instanceof Set
+        ? readDiff(worktree, options.scopeBase).filter(file => options.scopeInclude.has(file.path))
+        : evidenceCandidateFiles(worktree);
+      if (Array.isArray(files)) {
+        const expected = authenticated.map(file => file.path).sort();
+        const supplied = files.map(file => file.path).sort();
+        if (!isDeepStrictEqual(supplied, expected)) scopeProblems = ["changed proof corpus does not match the authenticated session scope"];
+      } else files = authenticated;
+    } catch { files = null; }
+  }
+  const candidateProblem = Array.isArray(files) ? [] : ["changed proof candidates need an exact worktree or explicit test corpus"];
+  if (!Array.isArray(files)) files = [];
+  const readSource = options.readSource ?? (worktree ? file => proofSourceAt(worktree, file) : () => null);
+  const specs = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : [])
+    .filter(entry => entry?.kind === "e2e").map(entry => entry.path);
+  return [
+    ...evidenceProblems(evidence, files.map(file => file.path), commit, worktree),
+    ...selectionProblems(evidence, files, options.requiredTests ?? [], commit),
+    ...targetedEvidenceProblems(evidence, commit, worktree, receiptDir),
+    ...tierEvidenceProblems(evidence?.e2eCapability, specs),
+    ...sourceProblems,
+    ...scopeProblems,
+    ...candidateProblem,
+    ...testIntegrityProblems(evidence, files, readSource, commit, receiptDir),
+    ...capabilityProbeProblems(evidence, worktree, commit, probeCapability, currentCommit),
+  ];
 }
 
 function git(worktree, args) {
@@ -595,11 +656,13 @@ function e2eCarriedForCi(evidence, selection, spec, commit) {
  * inventory row names exact cases and a command, and has a passing result at
  * that SHA unless the E2E capability record explicitly leaves it to CI.
  */
-export function targetedEvidenceProblems(runsFile, commit, worktree) {
+export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir) {
   const inventory = runsFile?.targetedInventory;
   if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
   const { entries: selection } = readTestSelection(runsFile);
-  const problems = [...prEvidenceShapeProblems(runsFile)];
+  const problems = [...prEvidenceShapeProblems(runsFile,
+    receiptDir ?? (worktree ? git(worktree, ["rev-parse", "--absolute-git-dir"]) : undefined),
+    worktree ? file => proofSourceAt(worktree, file) : undefined)];
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   const laneRuns = runs.filter((run) => run?.lane);
   const older = Boolean(commit) && (inventory.commit !== commit || laneRuns.some((run) => run?.commit && run.commit !== commit));
@@ -738,4 +801,23 @@ function readTemplate(worktree, base) {
 
 function text(value) {
   return typeof value === "string" && value.trim() !== "";
+}
+
+/**
+ * The one session diff base for proof candidates, shared by inventory and the PR comment: the recorded
+ * main-sync main, else the merge-base with the comparison branch. Inventory passes its verified remote
+ * comparison; other callers use the configured `vibe.baseRef` or the clone's recorded remote default.
+ */
+export function proofCorpusBase(worktree, comparisonOperand = () => localComparisonOperand(worktree)) {
+  const record = readSessionRecord(worktree);
+  const synced = record?.status === "active" && record?.operator ? readMainSyncProvenance(worktree) : undefined;
+  return synced?.mainSha ?? git(worktree, ["merge-base", "HEAD", comparisonOperand()]);
+}
+
+function localComparisonOperand(worktree) {
+  try {
+    const configured = git(worktree, ["config", "--get", "vibe.baseRef"]);
+    if (configured) return `origin/${configured}`;
+  } catch { /* No configured base. */ }
+  try { return git(worktree, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]); } catch { return "origin/main"; }
 }

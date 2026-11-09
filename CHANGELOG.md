@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.68
+
+#### Fixed
+- The handoff mutation-proof gate accepts a real Storybook runner failure at a changed `.stories.tsx` primary assertion, including a browser-prefixed failure header and a play helper that an exported story calls. A setup error, an unrelated or earlier assertion, a comment-only mutation, and authored failure text that only names the coordinate are refused.
+- Every absence proof binds a private raw runner receipt: its command, exact head, mutation and restored exits, before and mutated source hashes, the restored output hash, and the one mutation edit. Package-relative Vitest paths and matcher or multiline coordinates, and Playwright output, are matched against the repo-relative candidate without loosening its identity.
+- A positive `.not.toBeNull()` presence assertion is no longer treated as an absence candidate, and a busy-state count is no longer treated as card-layout proof because a nearby line mentions a card. Real absent-element and card-layout assertions still need their proofs.
+- A Desktop E2E spec on a selected remote tier can be carried to CI as not run only when a live probe of that runner at the exact head finds no supported displayless Electron route and the selected lane, spec record and post-merge `desktop-e2e/validated` owner agree. A runner whose native Desktop slot runs keeps the spec required. The handoff inventory and the PR evidence comment use one decision and one proof-candidate base.
+- `pr-evidence-schema.mjs` takes the worktree and checks proofs against the tested source, the verifier documents the remote-tier Desktop record, and the handoff skill documents a credential-free route for web E2E mutation proofs through a repository-owned Playwright project.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 19 words shorter than in 1.1.65 (origin/main at this update, 37b2a51c9fb049bf5bfc40cc07203b5ae06d4691).
+
 ### vibe v1.1.65
 
 #### Fixed
