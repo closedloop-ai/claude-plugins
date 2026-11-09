@@ -21,6 +21,7 @@ import { readHookSkill } from "./hook-session-scope.mjs";
 const FLEET_HOME_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "skills", "fleet-orchestrator", "scripts", "fleet-home.mjs");
 const ENTRY_HEADING = /^## /m;
 const MAX_ENTRY_CHARS = 3000;
+const CHAT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 /** The SessionStart result after a compaction in an orchestrator session: its reading list as context, or null. */
 export function fleetResume(event, env = process.env) {
@@ -28,14 +29,15 @@ export function fleetResume(event, env = process.env) {
     || readHookSkill(event?.session_id, env.HOME) === "fleet-orchestrator")) return null;
   const home = defaultHome(env);
   if (!existsSync(path.join(home, "programs"))) return null;
-  const lines = resumeLines(home, { chat: typeof event.session_id === "string" && event.session_id !== "" ? event.session_id : null });
+  const chat = typeof event.session_id === "string" && CHAT_ID.test(event.session_id) ? event.session_id : null;
+  const lines = resumeLines(home, { chat });
   const active = lines.find((line) => line.startsWith("ACTIVE "));
   if (!active) return null;
   const programDir = active.split(" ").slice(2).join(" ");
   const entry = lastEntry(path.join(programDir, "resume-log.md"));
   return {
     context: [
-      `Your context was just compacted, and the summary may be wrong or incomplete. Before any other action, run \`node "${FLEET_HOME_SCRIPT}" resume\` and read each READ file in order; it printed:`,
+      `Your context was just compacted, and the summary may be wrong or incomplete. Before any other action, run \`node "${FLEET_HOME_SCRIPT}" resume ${chat ? `--chat ${chat}` : "--chat="}\` and read each READ file in order; it printed:`,
       ...lines,
       ...(entry ? ["", "The newest resume-log entry:", entry] : []),
     ].join("\n"),

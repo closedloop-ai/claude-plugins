@@ -16,7 +16,7 @@
 // Usage: fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet [--home <fleetHome>]
 //        fleet-home.mjs shape no-writer|one-writer|fleet [--home <fleetHome>]
 //        fleet-home.mjs close [--home <fleetHome>]
-//        fleet-home.mjs resume [--home <fleetHome>]
+//        fleet-home.mjs resume [--home <fleetHome>] [--chat <session id>]
 //        fleet-home.mjs check [--home <fleetHome or program dir>]
 //        fleet-home.mjs migrate --from <flat work dir> --program <slug> [--home <fleetHome, default --from>] [--dry-run]
 //
@@ -438,7 +438,7 @@ function contextGuardLines(home) {
 function main(argv) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
-    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" },
+    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" }, chat: { type: "string" },
   } });
   const home = values.home ? path.resolve(values.home) : defaultHome();
   const print = (lines) => process.stdout.write(lines.map((line) => `${line}\n`).join(""));
@@ -460,7 +460,7 @@ function main(argv) {
     return 0;
   }
   if (command === "resume") {
-    print([...seedLines(home), ...resumeLines(home)]);
+    print([...seedLines(home), ...resumeLines(home, values.chat === undefined ? {} : { chat: values.chat || null })]);
     return 0;
   }
   if (command === "check") {

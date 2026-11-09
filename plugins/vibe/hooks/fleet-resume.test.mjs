@@ -11,6 +11,7 @@ import { recordHookSkill } from "./hook-session-scope.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_START = path.join(HERE, "session-start.mjs");
+const FLEET_HOME_SCRIPT = path.join(HERE, "..", "skills", "fleet-orchestrator", "scripts", "fleet-home.mjs");
 
 function fleetHome(t) {
   const home = mkdtempSync(path.join(tmpdir(), "vibe-fleet-resume-"));
@@ -81,6 +82,13 @@ test("after a compaction a chat's reading list names only its own handoff file",
   const context = fleetResume(event("chat-a"), { FLEET_HOME: home })?.context ?? "";
   assert.ok(context.includes(`READ ${own}`), context);
   assert.ok(!context.includes(sibling), "a sibling chat's newer handoff is never listed");
+  assert.ok(context.includes(" resume --chat chat-a`"), "the command it tells the chat to rerun is filtered to that chat");
+  const rerun = spawnSync(process.execPath, [FLEET_HOME_SCRIPT, "resume", "--home", home, "--chat", "chat-a"], { encoding: "utf8" });
+  assert.ok(rerun.stdout.includes(`READ ${own}`) && !rerun.stdout.includes(sibling), rerun.stdout);
+  const unfiltered = spawnSync(process.execPath, [FLEET_HOME_SCRIPT, "resume", "--home", home], { encoding: "utf8" });
+  assert.ok(unfiltered.stdout.includes(`READ ${sibling}`), "a fresh chat's resume still reads the program's newest handoff");
   const unknown = fleetResume(event(undefined), { FLEET_HOME: home })?.context ?? "";
-  assert.ok(!unknown.includes("HANDOFF-"), "an unknown chat is shown no handoff");
+  assert.ok(!unknown.includes("HANDOFF-") && unknown.includes(" resume --chat=`"), "an unknown chat is shown no handoff");
+  const none = spawnSync(process.execPath, [FLEET_HOME_SCRIPT, "resume", "--home", home, "--chat="], { encoding: "utf8" });
+  assert.ok(!none.stdout.includes("HANDOFF-"), none.stdout);
 });

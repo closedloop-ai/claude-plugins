@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - The context guard's and fleet-home's internal helpers stay module-private, and a same-mtime test pins the newest-handoff order as a total order (handoff gate diff rules).
-- After a compaction, the reading list vibe's SessionStart hook injects names only that chat's own handoff file, never a sibling chat's newer one in the same program.
+- After a compaction, the reading list vibe's SessionStart hook injects names only that chat's own handoff file, never a sibling chat's newer one in the same program, and the command it says to rerun is `fleet-home.mjs resume --chat <session id>` (an empty `--chat=` lists no handoff).
 - To keep instruction words level, fleet-orchestrator SKILL.md's Setup check bullet no longer restates the setup block's contents, and references/state.md drops a resume-log sentence its "A new chat" steps already cover.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.64 (origin/main at this update, d67f12e0b3afe24c43bb55709705cc7263278ad6).
 
