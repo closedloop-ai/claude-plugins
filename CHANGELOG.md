@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.64
+
+#### Fixed
+- The PR creation guard resolves an explicit head against its owning worktree and effective GitHub repository, so a proven non-Vibe head can open a PR from a Vibe-scoped conversation while a recorded Vibe session still needs its gate. The guard also covers GitHub CLI's `pr new` alias and attached short head, base and body options.
+- A known Vibe handoff gate bug can be overridden only with a dedicated PR-body line naming its ISS ticket and a reason. Missing ticket or reason keeps the PR refused, and cloud import readiness and other shell guards remain in force.
+
 ### vibe v1.1.61
 
 #### Added

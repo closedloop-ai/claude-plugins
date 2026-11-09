@@ -14,7 +14,8 @@ then step 3's guardrail check, step 5's checks with the new tests included and
 step 6's review on the result, with the repo's `review-soul` critic required
 on those tests, then the remaining step 6 candidate gates before step 7's commit and its push and publication through
 `vibe-environment-worker` in redeploy mode. The pull request does not open
-until those tests pass, their independent review is clean and step 9's gate passes.
+until those tests pass, their independent review is clean and step 9's gate passes,
+apart from the documented operator exception for a known Vibe gate bug below.
 
 During that turn, run `node scripts/parallel-prep.mjs --writer-state running
 --pull-request` and dispatch each lane. Prep may draft evidence, warm E2E,
@@ -67,7 +68,18 @@ and matrix. This gate rechecks mergeability, acceptance criteria, the PR body,
 verifier evidence and machine-produced reviewer findings,
 then records a private witness bound to the source. A later source change
 invalidates it; finish the affected handoff steps and rerun this gate. The
-PreToolUse guard refuses `gh pr create` without a current witness.
+PreToolUse guard refuses `gh pr create` without a current witness or the
+documented operator exception below.
+
+The operator's 2026-11-08 ruling permits one exception: when every substantive
+check and review has passed and only a known Vibe gate bug blocks the witness,
+the orchestrator may open the PR outside that gate. Record the operator ruling
+and the failing gate command and diagnostic. Put a dedicated line in the
+submitted PR body: `Vibe gate override: ISS-<number>: <reason>`.
+The PR guard reads the `--body-file` supplied to `gh pr create` and refuses a
+missing ticket or reason. A failing substantive check, stale source, missing
+review, or cloud import protection is not a gate bug exception. Never use the
+exception silently or to create a PR for a different head branch.
 
 Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`

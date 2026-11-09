@@ -490,7 +490,15 @@ changes and gates fields.
    <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
    file>` immediately before creation. Use the paths step 9 of handoff passed;
    when there is no ticket, omit the ticket/audit/matrix arguments. A failed
-   gate is `BLOCKED`, not a reason to bypass the hook. Create it with
+   gate is `BLOCKED` unless the orchestrator has recorded the operator's
+   2026-11-08 exception ruling, every substantive check and review has passed,
+   and the only failure is a known Vibe gate bug. In that narrow case, keep
+   the exact failed command and diagnostic, add
+   `Vibe gate override: ISS-<number>: <reason>` to the submitted
+   body file, and create the PR without a handoff witness. The hook checks
+   that line in `--body-file`; absent ticket or reason still refuses. Do not
+   use this exception for a failed check, stale source, missing review or
+   cloud import problem. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as

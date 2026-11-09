@@ -1,5 +1,7 @@
-// A vibe PR must carry a current private handoff witness for its exact source.
+// A vibe PR needs its current private handoff witness, or the operator's
+// documented ticketed exception for a known handoff gate bug.
 import { execFileSync } from "node:child_process";
+import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { commandSegments } from "./command-segments.mjs";
 import { deny, eventCwd } from "./hook-dispatch.mjs";
@@ -10,6 +12,8 @@ import { conversationSkill } from "./hook-session-scope.mjs";
 import os from "node:os";
 
 const VIBE_BRANCH = "vibe/";
+const PR_CREATE_DATA_OPTIONS = new Set(["--body", "-b", "--title", "-t", "--template", "-T",
+  "--assignee", "-a", "--reviewer", "-r", "--label", "-l", "--milestone", "-m", "--project", "-p"]);
 
 /** Whether a shell call opens a PR through GitHub CLI. */
 export function createsPullRequest(command) {
@@ -112,17 +116,48 @@ export function prCreateCalls(command, initialCwd) {
     if (actionAt < 0) continue;
     let base = null;
     let bodyFile = null;
+    let head = null;
+    const repositoryOverrides = [];
+    for (let i = 1; i < actionAt; i += 1) {
+      const word = words[i];
+      if (word === "--repo" || word === "-R") repositoryOverrides.push(words[++i] ?? "");
+      else if (word.startsWith("--repo=")) repositoryOverrides.push(word.slice(7));
+      else if (/^-R.+/.test(word)) repositoryOverrides.push(word.slice(word.startsWith("-R=") ? 3 : 2));
+    }
     for (let i = actionAt + 2; i < words.length; i += 1) {
       const word = words[i];
-      if (["--base", "-B", "--body-file", "-F"].includes(word)) {
+      if (["--base", "-B", "--body-file", "-F", "--head", "-H", "--repo", "-R"].includes(word)) {
         const value = words[++i];
         if (word === "--base" || word === "-B") base = value;
+        else if (word === "--head" || word === "-H") head = value ?? "";
+        else if (word === "--repo" || word === "-R") repositoryOverrides.push(value ?? "");
         else bodyFile = value;
       } else if (word.startsWith("--base=")) base = word.slice(7);
       else if (word.startsWith("--body-file=")) bodyFile = word.slice(12);
+      else if (word.startsWith("--head=")) head = word.slice(7);
+      else if (word.startsWith("--repo=")) repositoryOverrides.push(word.slice(7));
+      else if (/^-R.+/.test(word)) repositoryOverrides.push(word.slice(word.startsWith("-R=") ? 3 : 2));
+      else if (PR_CREATE_DATA_OPTIONS.has(word)) i += 1;
+      else {
+        const attached = /^-([BFH])(?:=(.*)|(.+))$/.exec(word);
+        if (attached) {
+          const value = attached[2] ?? attached[3];
+          if (attached[1] === "B") base = value;
+          else if (attached[1] === "F") bodyFile = value;
+          else head = value;
+        }
+      }
     }
-    calls.push({ cwd: state.cwd, base, bodyFile: bodyFile ? path.resolve(state.cwd, bodyFile) : null,
-      remote, uncertainCwd: state.uncertainCwd, unresolvedTarget: state.unresolvedTarget });
+    const explicitRepository = repositoryOverrides.at(-1);
+    repositoryOverrides.length = 0;
+    if (explicitRepository !== undefined && explicitRepository !== "") repositoryOverrides.push(explicitRepository);
+    else {
+      const environmentRepository = Object.hasOwn(env, "GH_REPO") ? env.GH_REPO
+        : Object.hasOwn(state.variables, "GH_REPO") ? state.variables.GH_REPO : process.env.GH_REPO;
+      if (environmentRepository !== undefined && environmentRepository !== "") repositoryOverrides.push(environmentRepository);
+    }
+    calls.push({ cwd: state.cwd, base, head, bodyFile: bodyFile ? path.resolve(state.cwd, bodyFile) : null,
+      repositoryOverrides, remote, uncertainCwd: state.uncertainCwd, unresolvedTarget: state.unresolvedTarget });
   }
   return calls;
 }
@@ -137,7 +172,7 @@ function ghCreateAt(words) {
     else if (word.startsWith('--repo=') || /^-R.+/.test(word)) index += 1;
     else break;
   }
-  return words[index] === 'pr' && words[index + 1] === 'create' ? index : -1;
+  return words[index] === 'pr' && ["create", "new"].includes(words[index + 1]) ? index : -1;
 }
 
 function variableValue(name, variables) {
@@ -319,6 +354,77 @@ export function vibeWorktree(cwd) {
   catch { return false; }
 }
 
+/** An explicit CLI or GH_REPO target must match the Git repository used for head proof. */
+function repositoryMatches(cwd, overrides) {
+  if (overrides.length === 0) return true;
+  try {
+    const origin = git(cwd, ["remote", "get-url", "origin"]);
+    const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(origin);
+    if (!match) return false;
+    const actual = match[1].toLowerCase();
+    return overrides.every(value => {
+      const selected = /^(?:github\.com\/)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.exec(value ?? "");
+      return selected?.[1].toLowerCase() === actual;
+    });
+  } catch { return false; }
+}
+
+/** A marker for another branch cannot own this head; an unreadable selected marker stays uncertain. */
+function worktreeHeadOwner(cwd, head) {
+  if (!inVibeSession(cwd)) return head.startsWith(VIBE_BRANCH) ? { cwd } : { nonVibe: true };
+  try {
+    const record = JSON.parse(readFileSync(path.join(git(cwd, ["rev-parse", "--absolute-git-dir"]), "vibe-session.json"), "utf8"));
+    if (record.branch === head || (record.branch === undefined && head.startsWith(VIBE_BRANCH))) return { cwd };
+    if (typeof record.branch === "string") return head.startsWith(VIBE_BRANCH) ? { unownedVibe: true } : { nonVibe: true };
+  } catch { /* An unreadable marker on the selected worktree is not proof of a non-Vibe head. */ }
+  return { uncertain: true };
+}
+
+/** Find the local worktree that owns the PR head, or prove a local non-Vibe branch has no owner. */
+function prHeadTarget(cwd, head, repositoryOverrides) {
+  if (!repositoryMatches(cwd, repositoryOverrides)) return null;
+  if (head === null) {
+    try {
+      const branch = git(cwd, ["branch", "--show-current"]);
+      return branch ? worktreeHeadOwner(cwd, branch) : { cwd };
+    } catch { return { cwd }; }
+  }
+  if (typeof head !== "string" || !head || head.startsWith("-") || head.includes(":")) return null;
+  try {
+    git(cwd, ["check-ref-format", "--branch", head]);
+    git(cwd, ["rev-parse", "--verify", `refs/heads/${head}^{commit}`]);
+    const worktrees = git(cwd, ["worktree", "list", "--porcelain"]).split(/\n\s*\n/);
+    for (const entry of worktrees) {
+      const worktree = /^worktree (.+)$/m.exec(entry)?.[1];
+      if (!worktree) continue;
+      if (entry.split("\n").includes(`branch refs/heads/${head}`)) return worktreeHeadOwner(worktree, head);
+      if (inVibeSession(worktree)) {
+        try {
+          const record = JSON.parse(readFileSync(path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-session.json"), "utf8"));
+          if (record.branch === head) return { uncertain: true };
+        } catch { /* A corrupt record on another branch does not own this head. */ }
+      }
+    }
+    return head.startsWith(VIBE_BRANCH) ? { unownedVibe: true } : { nonVibe: true };
+  } catch { return null; }
+}
+
+/** A bounded, explicit PR-body declaration names the blocking Vibe issue and a nonempty reason. */
+function hasTicketedGateOverride(bodyFile) {
+  if (!bodyFile) return false;
+  try {
+    const stat = lstatSync(bodyFile);
+    if (!stat.isFile() || stat.size > 65536) return false;
+    return readFileSync(bodyFile, "utf8").split(/\r?\n/).some(line =>
+      /^Vibe gate override: ISS-\d+:\s*\S.*$/.test(line));
+  } catch { return false; }
+}
+
+/** A named Vibe head scopes the guard even when its worktree or repository cannot be resolved. */
+function vibeNamedHead(head) {
+  return typeof head === "string" && head.split(":").at(-1).startsWith(VIBE_BRANCH);
+}
+
 /** Refuse PR publication in a vibe session without the final handoff witness. */
 export function prCreateGuard(event, home = os.homedir()) {
   const command = event?.tool_input?.command;
@@ -326,11 +432,16 @@ export function prCreateGuard(event, home = os.homedir()) {
   const calls = prCreateCalls(command, eventCwd(event));
   if (calls.length === 0) return null;
   const startingCwd = eventCwd(event);
+  const targets = calls.map(call => call.remote || call.uncertainCwd || call.unresolvedExecutable
+    ? null : prHeadTarget(call.cwd, call.head, call.repositoryOverrides));
   const recorded = inVibeSession(startingCwd) || vibeWorktree(startingCwd) === true ||
+    calls.some(call => vibeNamedHead(call.head)) ||
     calls.some(call => !call.remote && !call.uncertainCwd &&
-      (inVibeSession(call.cwd) || vibeWorktree(call.cwd) === true));
+      (inVibeSession(call.cwd) || vibeWorktree(call.cwd) === true)) ||
+    targets.some(target => target?.unownedVibe || target?.uncertain ||
+      (target?.cwd && (inVibeSession(target.cwd) || vibeWorktree(target.cwd) === true)));
   if (!conversationSkill(event, home) && !recorded) return null;
-  for (const call of calls) {
+  for (const [index, call] of calls.entries()) {
     if (call.unresolvedExecutable) {
       if (call.remote || call.uncertainCwd || inVibeSession(call.cwd) || vibeWorktree(call.cwd) === true) {
         return deny(`gh pr create refused: ${call.unresolvedExecutable} in ${call.cwd}`);
@@ -339,14 +450,21 @@ export function prCreateGuard(event, home = os.homedir()) {
     }
     if (call.remote) return deny("gh pr create refused: remote or unresolved shell cwd cannot prove a local vibe handoff gate");
     if (call.uncertainCwd) return deny(`gh pr create refused: unresolved shell cwd ${call.unresolvedTarget ?? "unknown"} from ${call.cwd} cannot prove a local vibe handoff gate`);
-    if (!inVibeSession(call.cwd)) {
-      if (vibeWorktree(call.cwd) === false) continue;
+    const target = targets[index];
+    if (target?.nonVibe) continue;
+    if (target?.unownedVibe) return deny("gh pr create refused: no vibe session record for the PR head branch");
+    if (target?.uncertain) return deny("gh pr create refused: PR head ownership cannot be verified");
+    if (!target) return deny("gh pr create refused: PR head branch cannot be proved local and unrelated to a vibe session");
+    if (!inVibeSession(target.cwd)) {
+      if (vibeWorktree(target.cwd) === false) continue;
       return deny("gh pr create refused: no vibe session record in the command worktree");
     }
-    const cloudProblem = cloudPrProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile });
+    const cloudProblem = cloudPrProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile });
     if (cloudProblem) return deny(`gh pr create refused: ${cloudProblem}`);
-    const problem = handoffGateProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile });
-    if (problem) return deny(`gh pr create refused: ${problem}; run the final handoff gate on the published source`);
+    const problem = handoffGateProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile });
+    if (problem && !hasTicketedGateOverride(call.bodyFile)) {
+      return deny(`gh pr create refused: ${problem}; run the final handoff gate on the published source or name the blocking Vibe ticket and reason in a Vibe gate override line in the PR body`);
+    }
   }
   return null;
 }
