@@ -11,8 +11,8 @@
 // (fleet-home.mjs contextGuardConfig), read on every call. At the warn threshold
 // it says so once; at the handoff threshold it recommends a handoff and repeats
 // that every remindEveryMinutes. A drop below warn (a compaction) re-arms both.
-// Each chat is told its own handoff file, in the program dir it runs (else the
-// home), named for its session id and pinned once it is in a program, so it
+// Each chat is told its own handoff file, in the home's active program dir (else
+// the home), named for its session id and the day it was first named, so it
 // never shares a path or points at another chat's notes (ticket v3, after the
 // local version had an unrelated chat offer another chat's handoff).
 //
@@ -73,17 +73,10 @@ function evaluate(event, env, now) {
   if (due) {
     state.lastLevel = level;
     state.lastNotifiedAt = now;
-    state.handoffFile = handoffFileFor(state.handoffFile, home, event.session_id, now);
+    if (typeof state.handoffDay !== "string") state.handoffDay = new Date(now).toISOString().slice(0, 10);
   }
-  return writeState(stateFile, state, due ? notice(level, tokens, config, state.handoffFile) : null);
-}
-
-/** This chat's handoff file: a pinned program-dir file stays; otherwise the current program dir (else the home). */
-function handoffFileFor(pinned, home, sessionId, now) {
-  const kept = typeof pinned === "string" ? pinned : null;
-  if (kept && path.basename(path.dirname(path.dirname(kept))) === "programs") return kept;
-  const dir = chatHandoffDir(home);
-  return kept && path.dirname(kept) === dir ? kept : chatHandoffFile(dir, sessionId, new Date(now).toISOString().slice(0, 10));
+  const handoffFile = due ? chatHandoffFile(chatHandoffDir(home), event.session_id, state.handoffDay) : null;
+  return writeState(stateFile, state, due ? notice(level, tokens, config, handoffFile) : null);
 }
 
 /** The level `tokens` reaches under `config`, or null below the warn threshold. */

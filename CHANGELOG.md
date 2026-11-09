@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Added
 - A PostToolUse context guard for fleet-orchestrator chats in Claude Code (ISS-13859; Codex chats are not measured). After every tool call it measures the latest request's context (input plus cache read plus cache write tokens). At the warn limit (default 200k) it shows the operator one line and tells the orchestrator to keep this chat's own handoff notes current. At the handoff limit (default 300k) it recommends a handoff and repeats every 20 minutes; the operator decides, and work never stops on its own. It acts only in chats that loaded the skill (a mention does not count), never in subagents, never blocks a tool call. After its first scan the skill-load check reads only newly appended transcript bytes, and the usage read takes a bounded tail window (256 KB, widening to 8 MB at most).
-- Each chat gets its own handoff file, `HANDOFF-<date>-<session id>.md` in the program dir it runs (in the fleet home when no program is active), so no chat is pointed at another chat's notes.
+- Each chat gets its own handoff file, `HANDOFF-<date>-<session id>.md` in the home's active program dir (in the fleet home when no program is active), keeping the day it was first named, so no chat is pointed at another chat's notes.
 - The limits live in `<fleetHome>/context-guard.json`, reread on every call with no restart. `fleet-home.mjs resume` writes the default file when the home has none, reads the resumed program's newest `HANDOFF-*.md`, reports an unparseable file as `CONTEXT-GUARD-INVALID` and a failed seed write as `CONTEXT-GUARD-UNSEEDED` without dropping the reading list; `check` accepts the new file and home-level chat handoffs.
 
 #### Changed

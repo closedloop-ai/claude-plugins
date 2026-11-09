@@ -16,6 +16,11 @@ function scopePath(sessionId, home) {
   return path.join(home, ".vibe-hook-scope", `${sessionId}.json`);
 }
 
+/** Whether `sessionId` is a harness session id hook state may be keyed by. */
+export function isSessionId(sessionId) {
+  return SESSION.test(sessionId ?? "");
+}
+
 /** A hook's private per-session state file under `~/.vibe-hook-scope/<hook>/`, or null for an unusable session id. */
 export function hookStatePath(sessionId, hook, home = os.homedir()) {
   if (!SESSION.test(sessionId ?? "")) return null;

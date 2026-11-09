@@ -116,7 +116,9 @@ test("two chats each get their own handoff file, in the program each runs, never
   const otherProgram = path.join(fleetHome, "programs", "prog-b");
   mkdirSync(otherProgram);
   writeFileSync(path.join(fleetHome, "current"), "prog-b\n");
-  assert.ok(contextGuard(event, env, now + 20 * MINUTE).context.includes(fileA), "a chat keeps its program's file when the home switches program");
+  const reminder = contextGuard(event, env, now + 20 * MINUTE).context;
+  assert.ok(reminder.includes(path.join(otherProgram, `HANDOFF-${day}-s-1.md`)), "a chat's file follows the home's active program, keeping its first day");
+  assert.ok(!reminder.includes(fileB), reminder);
 });
 
 test("with no active program a chat's handoff file is in the home, and moves to its program once one starts", (t) => {
