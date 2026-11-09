@@ -66,7 +66,7 @@ test('a related ticket arriving mid-flight folds into the running writer instead
   assert.deepEqual(groupLines(grouping), [
     'FOLD ISS-5 into ISS-1 (w1): ISS-5~ISS-1 shared file a.ts',
     'UNIT ISS-1 ISS-1, ISS-5: in flight (w1)',
-    'UNIT ISS-6 ISS-6 alone: no shared file, screen entry or collision with ISS-1, ISS-5',
+    'UNIT ISS-6 ISS-6 alone: no shared file, screen entry, collision or PRD with ISS-1, ISS-5',
   ]);
 });
 

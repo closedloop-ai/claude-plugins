@@ -87,7 +87,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 
 Related tickets go to one writer, one branch and one PR; each keeps its own criteria and statuses. When the program works a PRD, every open ticket under it assigned to the operator is one unit per repository. Steps and the candidate sources: [references/ticket-units.md](./references/ticket-units.md).
 
-1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
+1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates (each with its PRD and whether the operator is its assignee) and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
 2. Tell the operator its lines: one per unit, with what joined, what stayed apart and why.
 3. Record each unit with `board.mjs <orchDir> unit`; fold a related ticket into the running writer, never a second one.
 4. Move each ticket yourself (In Progress at start, In Review at PR open, Done at merge) and audit with `status-audit.mjs --board`.

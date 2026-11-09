@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - The README version line and the Python and vibe-bench release-pin tests move to 1.1.70.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 993 words longer than in 1.1.66 (origin/main at this update, 2dbf2bbc284a3a498f68af6841380b69fae59024), most of it the new references/ticket-units.md.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 1004 words longer than in 1.1.66 (origin/main at this update, 2dbf2bbc284a3a498f68af6841380b69fae59024), most of it the new references/ticket-units.md.
 
 ### vibe v1.1.66
 

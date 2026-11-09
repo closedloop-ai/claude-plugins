@@ -231,7 +231,7 @@ function describe(members, { bySlug, edges, unitOf, units, all, apart }) {
   const unrelated = others.filter((other) => other.repo === ticket.repo).map((other) => other.slug);
   const apartReason = [
     ...(elsewhere.length ? [`different repository from ${elsewhere.join(", ")}`] : []),
-    ...(unrelated.length ? [`no shared file, screen entry or collision with ${unrelated.join(", ")}`] : []),
+    ...(unrelated.length ? [`no shared file, screen entry, collision or PRD with ${unrelated.join(", ")}`] : []),
     ...keptApart.map((entry) => `kept apart: ${entry}`),
   ].join("; ") || "no other candidates";
   return { name, writer: units[name]?.writer, tickets: members, joins, folds, overlap, inFlight: overlap.length > 0, keptApart, apartReason, prdSplits };
