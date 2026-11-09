@@ -1100,3 +1100,53 @@ test("link builds the person's story and page links from the session record, and
     assert.match(refused.json.error, message);
   }
 });
+
+// ISS-13834: writers on claude-plugins tickets ran `new --worktree <claude-plugins path>` and
+// got a symphony-alpha session from the remembered checkout (ISS-13773, ISS-13846).
+const PLUGINS_REMOTE = "git@github.com:closedloop-ai/claude-plugins.git";
+
+function pluginsCheckout(root, home) {
+  const checkout = path.join(root, "Source", "claude-plugins");
+  makeCheckout({ root, home, checkout, remoteUrl: PLUGINS_REMOTE });
+  return checkout;
+}
+
+test("new derives the repository from a --worktree path in a different repository than the remembered checkout", (t) => {
+  const { root, home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const plugins = pluginsCheckout(root, home);
+  const requested = path.join(plugins, ".claude", "worktrees", "vibe-nested-slot");
+  const created = runNode(SCRIPT, ["new", "--slug", "nested-slot", "--summary", "Nested slot", "--mode", "blank",
+    "--worktree", requested, ...OPERATOR_ARGS], home);
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.json));
+  assert.equal(created.json.session.worktree, requested);
+  assert.equal(git(requested, ["config", "--get", "remote.origin.url"], home), PLUGINS_REMOTE);
+  assert.equal(existsSync(path.join(checkout, ".claude", "worktrees", "vibe-nested-slot")), false);
+  assert.equal(git(checkout, ["branch", "--list", "vibe/nested-slot"], home), "");
+});
+
+test("new refuses when --repo and the --worktree path name different repositories", (t) => {
+  const { root, home, checkout } = setup(t);
+  const plugins = pluginsCheckout(root, home);
+  const requested = path.join(plugins, ".claude", "worktrees", "vibe-nested-slot");
+  const refused = runNode(SCRIPT, ["new", "--repo", checkout, "--slug", "nested-slot", "--summary", "Nested slot",
+    "--mode", "blank", "--worktree", requested, ...OPERATOR_ARGS], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /--repo .*symphony-alpha.* and --worktree .*claude-plugins.* are different repositories/s);
+  assert.equal(existsSync(requested), false);
+  assert.equal(existsSync(path.join(checkout, ".claude", "worktrees", "vibe-nested-slot")), false);
+});
+
+test("new refuses a --worktree that is not this slug's session path under a checkout", (t) => {
+  const { root, home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const plugins = pluginsCheckout(root, home);
+  const otherSlug = runNode(SCRIPT, ["new", "--slug", "nested-slot", "--summary", "Nested slot", "--mode", "blank",
+    "--worktree", path.join(plugins, ".claude", "worktrees", "vibe-another"), ...OPERATOR_ARGS], home);
+  assert.equal(otherSlug.status, 1);
+  assert.match(otherSlug.json.error, /vibe-nested-slot/);
+  const nowhere = runNode(SCRIPT, ["new", "--slug", "nested-slot", "--summary", "Nested slot", "--mode", "blank",
+    "--worktree", path.join(root, "loose", ".claude", "worktrees", "vibe-nested-slot"), ...OPERATOR_ARGS], home);
+  assert.equal(nowhere.status, 1);
+  assert.match(nowhere.json.error, /not inside a git checkout/);
+});

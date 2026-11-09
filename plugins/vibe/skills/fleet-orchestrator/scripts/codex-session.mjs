@@ -7,6 +7,9 @@
 //   node codex-session.mjs reload <stateDir> <name> [--retry] (pump actor-acknowledged pages and retained work)
 // `turn` starts a thread bound to --cwd when <stateDir>/<name>.json does not exist (a new session also needs
 // --model, --effort and a prompt that starts with `$vibe`, since every writer is a vibe session), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
+// A missing --cwd must be `<checkout>/.claude/worktrees/<name>`: the thread runs in that checkout until vibe new
+// creates the worktree, and a saved thread with no session record yet takes only a `$vibe <its ticket>` recovery
+// turn. Every `turn` is refused while vibe's Codex hooks are not approved (writer-launch.mjs).
 // A new thread is named `<name> · <ticket>` (`<name>` without --ticket) and moved into the Codex app's "Fleet workers" sidebar section.
 // `end` records the writer stopped or merged in its state file, then archives its thread; it refuses a thread
 // with a running turn. A later `turn` on an ended session unarchives the thread first.
@@ -31,6 +34,7 @@ import {
 import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from '../../vibe/scripts/session-record.mjs';
 import { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } from '../../vibe/scripts/loaded-skill.mjs';
 import { promptProblems } from './skill-freshness.mjs';
+import { launchCwd, recoveryTurnProblem, threadCwd, VIBE_BRIEF_TICKET, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
 import { canonicalWorktree, ensureReloadFence, e2eLockDir as machineE2eLockDir, machineSlotLockDir, readE2eWaiters,
   regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } from '../../vibe/scripts/owned-state.mjs';
 import { processIdentityStatus, readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
@@ -46,8 +50,6 @@ const SANDBOX_POLICIES = {
 };
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORT_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
-const VIBE_PROMPT = /^\s*\$vibe\b/;
-const VIBE_BRIEF_TICKET = /^\s*\$vibe[^\r\n]*?\b((?:ISS|PRD|FEA)-\d+)\b/;
 const DONE_CLAIMS = /^\s*Done:/m;
 const REVERIFY = /^\s*Re-verify:\s*\S/m;
 
@@ -145,10 +147,23 @@ export function assertVibeSession(worktree) {
   return record;
 }
 
-/** A new `$vibe` turn creates its record; every saved thread must resume that exact session. */
-export function requireResumeSession(saved, requestedCwd) {
+/**
+ * A new `$vibe` turn creates its record; every saved thread must resume that exact session. A
+ * thread whose first turn ended before `vibe new` created it takes only a `$vibe` recovery turn
+ * for its own ticket and worktree (writer-launch.mjs), so it is never stranded.
+ */
+export function requireResumeSession(saved, requestedCwd, prompt) {
   if (!saved) return null;
-  return assertVibeSession(saved.cwd ?? requestedCwd);
+  if (requestedCwd && saved.cwd && requestedCwd !== saved.cwd) {
+    throw new Error(`session is bound to ${saved.cwd}; start a new session name for ${requestedCwd}`);
+  }
+  const worktree = saved.cwd ?? requestedCwd;
+  if (worktree && !existsSync(worktree)) {
+    const problem = recoveryTurnProblem({ ...saved, cwd: worktree }, prompt);
+    if (problem) throw new Error(problem);
+    return null;
+  }
+  return assertVibeSession(worktree);
 }
 
 /** Bind a new writer's brief to the canonical live ticket of its Vibe-created worktree. */
@@ -560,7 +575,9 @@ export async function startTurn(client, state, prompt, promptFile, {
   name, warn = () => {}, mechanical = false, page, beforeNewThread = () => {}, afterNewThread = () => {}, afterNewTurn = () => {},
 } = {}) {
   requireNewSessionWorktree(state.threadId ? state : null, state.cwd, state.ticket, prompt);
-  const threadOptions = defined({ cwd: state.cwd, model: state.model, sandbox: state.sandbox, approvalPolicy: 'never' });
+  // Hooks run in the thread's cwd: until vibe new creates the worktree, the owning checkout.
+  const cwd = threadCwd(state.cwd);
+  const threadOptions = defined({ cwd, model: state.model, sandbox: state.sandbox, approvalPolicy: 'never' });
   let { threadId } = state;
   const { ended, archivedAt, ...open } = state;
   if (threadId) {
@@ -577,7 +594,7 @@ export async function startTurn(client, state, prompt, promptFile, {
   const result = await client.request('turn/start', defined({
     threadId,
     input: textInput(prompt, { mechanical, page }),
-    cwd: state.cwd,
+    cwd,
     model: state.model,
     effort: state.effort,
     sandboxPolicy: state.sandbox && SANDBOX_POLICIES[state.sandbox],
@@ -631,6 +648,16 @@ export async function endSession(client, stateDir, name, saved, reason) {
     saveState(stateDir, name, state);
   }
   return `${name} ended ${state.threadId} ${state.ended.reason}`;
+}
+
+/** `run`, after refusing a turn while vibe's Codex hooks are unapproved: the thread would record no load evidence for itself. */
+export async function launchWriter(client, options, dependencies = {}) {
+  if (options.command === 'turn') {
+    const problem = await vibeHookTrustProblem(client, threadCwd(loadState(options.stateDir, options.name)?.cwd ?? options.cwd));
+    // A refusal before any thread or turn starts settles like the pre-connection checks (exit 2).
+    if (problem) throw Object.assign(new Error(problem), { preStart: true });
+  }
+  return run(client, options, dependencies);
 }
 
 export function run(client, options, dependencies = {}) {
@@ -798,8 +825,10 @@ async function main() {
     fleetClaim = verifiedFleetClaim(options);
     if (options.command === 'turn') {
       const saved = loadState(options.stateDir, options.name);
-      requireResumeSession(saved, options.cwd);
-      requireNewSessionWorktree(saved, options.cwd, options.ticket, readFileSync(options.promptFile, 'utf8'));
+      const prompt = readFileSync(options.promptFile, 'utf8');
+      requireResumeSession(saved, options.cwd, prompt);
+      requireNewSessionWorktree(saved, options.cwd, options.ticket, prompt);
+      launchCwd(saved?.cwd ?? options.cwd);
     }
     if (['turn', 'steer', 'reload'].includes(options.command)) options.pluginRoot = verifiedPluginRoot(options.pluginRoot);
   } catch (error) {
@@ -814,10 +843,10 @@ async function main() {
   let code = 0;
   try {
     await client.initialize();
-    console.log(await run(client, options));
+    console.log(await launchWriter(client, options));
   } catch (error) {
     console.error(`codex-session: ${error.message}`);
-    code = 1;
+    code = error.preStart ? 2 : 1;
   }
   client.close();
   try { settleFleetClaim(options, fleetClaim, code); } catch (error) {

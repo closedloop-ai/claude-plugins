@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { findTranscript } from "./reference-images.mjs";
 import { git, makeHome, runNode } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "reference-images.mjs");
@@ -107,4 +108,26 @@ test("fails plainly when the transcript holds no image the person attached", (t)
   const result = runNode(SCRIPT, ["attached", "--worktree", worktree, "--transcript", transcript], home);
   assert.equal(result.status, 1);
   assert.match(result.json.error, /no image the person attached/);
+});
+
+// ISS-13834: a Codex thread whose App Server started in a Claude Code chat inherits that chat's
+// CLAUDE_CODE_SESSION_ID; its transcript is the Codex rollout, never the Claude chat's.
+test("a Codex thread never falls back to the Claude chat transcript it inherited the id of", (t) => {
+  const fixture = makeHome("reference-transcript-");
+  t.after(fixture.cleanup);
+  const claudeId = "11111111-2222-4333-8444-555555555555";
+  const thread = "01a13656-91fe-75f0-81fa-c3f941e9ae56";
+  const claudeHome = path.join(fixture.root, "claude");
+  const codexHome = path.join(fixture.root, "codex");
+  mkdirSync(path.join(claudeHome, "projects", "-chat"), { recursive: true });
+  writeFileSync(path.join(claudeHome, "projects", "-chat", `${claudeId}.jsonl`), "{}\n");
+  const env = { CLAUDECODE: "1", CLAUDE_CONFIG_DIR: claudeHome, CLAUDE_CODE_SESSION_ID: claudeId, CODEX_HOME: codexHome, CODEX_THREAD_ID: thread };
+  const inCodex = { ancestry: () => ["/opt/codex/bin/codex app-server"] };
+  assert.throws(() => findTranscript(env, inCodex), /No transcript found/);
+  const day = path.join(codexHome, "sessions", "2026", "11", "09");
+  mkdirSync(day, { recursive: true });
+  const rollout = path.join(day, `rollout-2026-11-09T10-00-00-${thread}.jsonl`);
+  writeFileSync(rollout, "{}\n");
+  assert.equal(findTranscript(env, inCodex), rollout);
+  assert.equal(findTranscript(env, { ancestry: () => ["/opt/claude/versions/2.1.319"] }), path.join(claudeHome, "projects", "-chat", `${claudeId}.jsonl`));
 });

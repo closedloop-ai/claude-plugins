@@ -19,8 +19,8 @@
 // where [state] is --worktree <vibe session> (the session record's
 // `pluginVersion`), --state <file> (a fleet program's plugin-version.json),
 // or neither: this conversation's startup record under
-// ~/.codex/vibe/plugin-version/, named by CLAUDE_CODE_SESSION_ID or
-// CODEX_THREAD_ID (--conversation overrides).
+// ~/.codex/vibe/plugin-version/, named by the conversation harness-identity.mjs
+// resolves from CLAUDE_CODE_SESSION_ID and CODEX_THREAD_ID (--conversation overrides).
 //
 // `check` prints {"status":"current"|"outdated"|"unknown", "harnesses", "outdated",
 // "versions", "reason"?} and always exits 0: no network, a refused, slow or
@@ -78,12 +78,13 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { Harness, harnessActor } from "./harness-identity.mjs";
 import { readSessionRecord, writeSessionRecord } from "./session-record.mjs";
 
 export const MARKETPLACE = "closedloop-ai";
 export const LATEST_BASE = "https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main";
 export const BUNDLED_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
-export const Harness = Object.freeze({ Claude: "claude", Codex: "codex" });
+export { Harness };
 export const VersionStatus = Object.freeze({ Current: "current", Outdated: "outdated", Unknown: "unknown", Pending: "pending" });
 export const Choice = Object.freeze({ Update: "update", Proceed: "proceed" });
 export const Connection = Object.freeze({ Connected: "connected", NotConnected: "not-connected" });
@@ -338,16 +339,14 @@ export function startupFile(conversation, home = os.homedir()) {
   return path.join(startupDir(home), `${conversation}.json`);
 }
 
-/** This conversation's id from the harness, or "default" outside one. */
+/** This conversation's id from the harness (harness-identity.mjs), or "default" outside one. */
 export function conversationId(env = process.env) {
-  return [env.CLAUDE_CODE_SESSION_ID, env.CODEX_THREAD_ID].find((value) => typeof value === "string" && CONVERSATION.test(value)) ?? "default";
+  return harnessActor(env)?.id ?? "default";
 }
 
 /** Active harness for a conversation, or null outside Claude/Codex. */
 export function conversationRuntime(env = process.env) {
-  if (typeof env.CLAUDE_CODE_SESSION_ID === "string" && CONVERSATION.test(env.CLAUDE_CODE_SESSION_ID)) return Harness.Claude;
-  if (typeof env.CODEX_THREAD_ID === "string" && CONVERSATION.test(env.CODEX_THREAD_ID)) return Harness.Codex;
-  return null;
+  return harnessActor(env)?.runtime ?? null;
 }
 
 /** Reads a startup record, or null. */

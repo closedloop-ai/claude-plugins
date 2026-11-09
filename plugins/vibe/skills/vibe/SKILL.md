@@ -518,8 +518,11 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
 3. Derive a short slug from the work (lowercase words joined by hyphens, at
    most 40 characters).
 4. `node scripts/vibe-sessions.mjs new --slug <slug> --summary "<one line>"
-   --mode <seeded|blank> [--ticket <slug>]
+   --mode <seeded|blank> [--ticket <slug>] [--repo <checkout>] [--worktree <path>]
    --operator-id <id> --operator-email <email> --operator-name "<firstName lastName>"`,
+   passing the `--repo` and `--worktree` a fleet brief names (the worktree
+   must be `<checkout>/.claude/worktrees/vibe-<slug>`; `new` refuses a
+   `--repo` of another repository),
    with the operator from the `get-me` call in section 1 (the person running
    this session; leave out `--operator-name` when `get-me` has no name). This
    fetches main and creates the worktree on `vibe/<slug>` from fresh
