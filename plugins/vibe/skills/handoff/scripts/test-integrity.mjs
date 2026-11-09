@@ -20,6 +20,8 @@ const COUNT_ONE = /(?:toHaveCount|toHaveLength)\(\s*1\s*\)/;
 const LAYOUT_SURFACE = /\b(?:card|metric|summary)\b/i;
 // A busy or loading count is state, not card layout (PC-2, accepted 2026-11-09).
 const BUSY_STATE = /aria-busy|\bbusy\b|\bloading\b/i;
+// A filter for the not-busy state counts ordinary elements, so it keeps the layout check.
+const NOT_BUSY = /\bbusy\s*:\s*false\b|aria-busy\s*=\s*["']?false["']?/gi;
 const PROOF_CLASSES = new Set(["responsive", "absence", "layout"]);
 const SHA = /^[a-f0-9]{40}$/;
 
@@ -177,7 +179,7 @@ export function testIntegrityCandidates(files, read) {
           "changed assertion claims an element is absent", entry.text.trim(), "",
           `${file.path}:${entry.line}:${entry.text.search(/\S/) + 1}`));
       }
-      if (COUNT_ONE.test(entry.text) && !BUSY_STATE.test(entry.text)
+      if (COUNT_ONE.test(entry.text) && !BUSY_STATE.test(entry.text.replace(NOT_BUSY, ""))
         && LAYOUT_SURFACE.test(`${file.path}\n${nearby(sourceLines, entry.line, 16)}`)) {
         found.push(candidate("layout", file.path, entry.line, caseName,
           "card, metric, or summary coverage asserts only one element"));
@@ -278,6 +280,14 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
   const queriedText = /\bqueryByText\(\s*([^)]+)\)/.exec(proof.assertionLine)?.[1]?.trim();
   const directValue = /^expect\(\s*([A-Za-z_$][\w$]*)\s*\)/.exec(proof.assertionLine)?.[1];
   if (queriedText && !edit.new.includes(queriedText) || directValue && !edit.new.includes(directValue)) return false;
+  // A later same-matcher assertion over the same query in this block could be the one that
+  // failed (a broader scope sees the mutation too), and the instrumenter cannot tell them apart.
+  const blockEnd = source.slice(assertionStart + 1).search(/^\s*(?:export\s+const\s|(?:export\s+)?(?:async\s+)?function\s)/m);
+  const following = source.slice(assertionStart + proof.assertionLine.length,
+    blockEnd < 0 ? source.length : assertionStart + 1 + blockEnd);
+  const sameQuery = queriedText ?? directValue;
+  if (matcher && sameQuery && [...following.matchAll(new RegExp(`\\bexpect\\s*\\(([^;]*?)\\)\\s*\\.\\s*(?:not\\s*\\.\\s*)?${matcher}\\s*\\(`, "g"))]
+    .some((later) => later[1].includes(sameQuery))) return false;
   const directMatcher = matcher && new RegExp(`^\\s*❯\\s+${matcher}\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?:\\d+:\\d+`, "m").test(failure);
   const instrumentedMatcher = matcher && new RegExp(`^\\s*❯\\s+Proxy\\.${matcher}\\s+node_modules/`, "m").test(failure);
   if ((!directMatcher && !instrumentedMatcher)

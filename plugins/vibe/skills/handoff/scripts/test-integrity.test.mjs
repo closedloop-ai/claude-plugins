@@ -905,3 +905,94 @@ test("ISS-13846 review A4 a card count whose locator merely contains loading let
   assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
     ["layout:src/documents-list.test.tsx:2"], "uploading is a card state word, a loading row is state");
 });
+
+test("ISS-13846 final review A-1 a later broader assertion on the same query cannot prove an instrumented candidate", t => {
+  const lines = scoped => [
+    "export const Live: Story = {",
+    "  play: async ({ canvasElement }) => {",
+    "    const grid = canvasElement.querySelector(\"[role=grid]\");",
+    '    await expect(within(grid).queryByText("Loading")).toBeNull();',
+    ...(scoped ? [] : ['    await expect(within(canvasElement).queryByText("Loading")).toBeNull();']),
+    "  },",
+    "};",
+  ].join("\n");
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-later-assertion-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const problems = (scoped, name) => {
+    const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", lines(scoped), ["within(grid)"]);
+    const read = file => file === fixture.file.path ? fixture.source : null;
+    const [candidate] = testIntegrityCandidates([fixture.file], read);
+    const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
+    const edit = { old: '    const grid = canvasElement.querySelector("[role=grid]");',
+      new: '    const grid = canvasElement.querySelector("[role=grid]"); const note = document.createElement("p"); note.textContent = "Loading"; canvasElement.append(note);' };
+    const raw = [" FAIL   0 (chromium)  stories/surfaces-v2/v2-documents-list.stories.tsx > Live",
+      "AssertionError: ", " ❯ Proxy.toBeNull node_modules/.cache/storybook/sb-vitest/vitest/deps/test.js:10:5",
+      " ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:1:3", " Failed Tests 1", " Test Files 1 failed"].join("\n");
+    const receipt = { candidate: candidate.id, target: candidate.path, command, mutationExit: 1, mutationOutput: raw,
+      restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT,
+      beforeSha256: hash(fixture.source), mutatedSha256: hash(fixture.source.replace(edit.old, edit.new)), mutationEdit: edit };
+    const bytes = JSON.stringify(receipt);
+    writeFileSync(path.join(dir, name), bytes);
+    const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+      mutation: "append Loading outside the grid", presentState: "Loading present in the canvas",
+      assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+      command, observedFailure: raw, restoredPass: true, commit: COMMIT, ownerBoundary: "production",
+      mountedSignal: "grid mounted", mutationRun: { command, exitCode: 1, assertionFailure: raw },
+      rawReceipt: name, rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+    return testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, dir);
+  };
+  assert.deepEqual(problems(true, "scoped-only.json"), [], "positive control: no later assertion over the same query");
+  assert.match(problems(false, "broader-later.json").join("\n"), /exact assertion failure/,
+    "the broader canvas assertion could be the one that failed");
+});
+
+test("ISS-13846 final review A-2 a restored run is proof only with a numeric zero exit", () => {
+  const fixture = changed("src/pager.test.tsx", [
+    'test("no stale pager", () => {',
+    '  expect(screen.queryByText("stale")).toBeNull();',
+    "});",
+  ].join("\n"), ["toBeNull"]);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "pnpm vitest src/pager.test.tsx";
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "render the stale pager", presentState: "the stale pager is present",
+    assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+    command, observedFailure: "stale pager assertion failed", restoredPass: true, commit: COMMIT,
+    ownerBoundary: "production", mountedSignal: "pager owner mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: `AssertionError: expect(queryByText).toBeNull failed at ${candidate.assertionLocation}` } };
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const first = fixture.source.split("\n")[0];
+  const edit = { old: first, new: `${first} render(<Pager stale />);` };
+  const raw = runnerOutput(proof, fixture.source);
+  const withRestoredExit = (restored) => {
+    const receipt = { candidate: proof.candidate, target: proof.path, command, mutationExit: 1, mutationOutput: raw,
+      restoredOutput: "Test Files 1 passed", head: COMMIT, beforeSha256: hash(fixture.source),
+      mutatedSha256: hash(fixture.source.replace(edit.old, edit.new)), mutationEdit: edit,
+      ...(restored === undefined ? {} : { restoredExit: restored }) };
+    const name = `proof-${receiptNumber++}.json`;
+    const bytes = JSON.stringify(receipt);
+    writeFileSync(path.join(RECEIPT_DIR, name), bytes);
+    return testIntegrityProblems({ testIntegrityProofs: [{ ...proof, mutationRun: { ...proof.mutationRun, assertionFailure: raw },
+      rawReceipt: name, rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) }] },
+    [fixture.file], read, COMMIT, RECEIPT_DIR);
+  };
+  assert.deepEqual(withRestoredExit(0), [], "positive control");
+  for (const restored of [1, "0", null, undefined, -1]) {
+    assert.match(withRestoredExit(restored).join("\n"), /raw runner receipt is invalid/,
+      `a passing summary with restoredExit ${JSON.stringify(restored)} is not a restored pass`);
+  }
+});
+
+test("ISS-13846 final review A-3 a card count filtered to not-busy rows keeps its layout proof", () => {
+  const fixture = changed("src/documents-summary.test.tsx", [
+    'test("renders one summary card", () => {',
+    '  expect(screen.getAllByRole("article", { busy: false })).toHaveLength(1);',
+    '  expect(screen.getAllByRole("row", { busy: true })).toHaveLength(1);',
+    "});",
+  ].join("\n"), ["toHaveLength"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id),
+    ["layout:src/documents-summary.test.tsx:2"], "busy: false filters ordinary cards; busy: true counts busy state");
+});
