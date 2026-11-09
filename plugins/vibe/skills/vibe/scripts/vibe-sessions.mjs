@@ -7,7 +7,8 @@
 //   vibe-sessions.mjs repo
 //   vibe-sessions.mjs list            [--repo <symphony-alpha checkout>]
 //   vibe-sessions.mjs show            --worktree <path>
-//   vibe-sessions.mjs new             [--repo <checkout>] --slug <slug> --summary <text>
+//   vibe-sessions.mjs new             [--repo <checkout>] [--worktree <checkout>/.claude/worktrees/vibe-<slug>]
+//                                     --slug <slug> --summary <text>
 //                                     --mode seeded|blank [--ticket ISS-123]
 //                                     --operator-id <id> --operator-email <email> [--operator-name <name>]
 //   vibe-sessions.mjs new-prototype   same ownership/summary options, without --mode
@@ -40,7 +41,9 @@
 //   vibe-sessions.mjs discard         --worktree <path> [--confirm]
 //
 // `--repo` defaults to the checkout vibe-preflight.sh remembered in
-// ~/.codex/vibe/config.json; `repo` prints it. `local-fix` records files the
+// ~/.codex/vibe/config.json; `repo` prints it. On `new`, `--worktree` names the
+// checkout that owns that path instead, and a `--repo` of another repository is
+// refused. `local-fix` records files the
 // sole implementation writer changed to work around a symphony-alpha bug (filed as the
 // ticket), so no redeploy or handoff commits them. `story-replacement` records
 // an existing story file whose title changed because it became the entry of a
@@ -393,7 +396,6 @@ function compareLastActive(a, b) {
 }
 
 function newSession({ prototype = false } = {}) {
-  const repo = resolveRepo();
   const slug = requireOption("slug");
   const summary = requireOption("summary");
   const mode = prototype ? null : requireMode(requireOption("mode"));
@@ -411,11 +413,9 @@ function newSession({ prototype = false } = {}) {
     );
   }
   const branch = `${prototype ? PROTOTYPE_BRANCH_PREFIX : BRANCH_PREFIX}${slug}`;
-  const worktree = path.join(
-    git(repo, ["rev-parse", "--show-toplevel"]),
-    WORKTREE_DIR,
-    `${prototype ? "prototype-" : WORKTREE_NAME_PREFIX}${slug}`
-  );
+  const worktreeName = `${prototype ? "prototype-" : WORKTREE_NAME_PREFIX}${slug}`;
+  const repo = newSessionRepo(worktreeName);
+  const worktree = path.join(git(repo, ["rev-parse", "--show-toplevel"]), WORKTREE_DIR, worktreeName);
   if (existsSync(worktree)) {
     throw new Error(`A session already exists at ${worktree}. Resume it or pick another slug.`);
   }
@@ -716,6 +716,47 @@ function resolveRepo() {
     );
   }
   return repo;
+}
+
+/**
+ * The checkout a new session starts in. A requested `--worktree` names it: the path must be
+ * `<checkout>/.claude/worktrees/<worktreeName>`, and a `--repo` of another repository is refused,
+ * so a claude-plugins session never lands in the remembered symphony-alpha checkout (ISS-13834).
+ * Without `--worktree`, `--repo` or the remembered checkout as before.
+ */
+function newSessionRepo(worktreeName) {
+  if (!values.worktree) {
+    return resolveRepo();
+  }
+  const requested = path.resolve(values.worktree);
+  const owner = path.dirname(path.dirname(path.dirname(requested)));
+  const top = checkoutTop(owner);
+  if (!top) {
+    throw new Error(`--worktree ${values.worktree} is not inside a git checkout's ${WORKTREE_DIR} folder.`);
+  }
+  if (realpathSync(top) !== realpathSync(owner) || requested !== path.join(owner, WORKTREE_DIR, worktreeName)) {
+    throw new Error(`--worktree ${values.worktree} must be ${path.join(owner, WORKTREE_DIR, worktreeName)}, this slug's session path in ${top}.`);
+  }
+  if (values.repo && gitCommonDir(values.repo) !== gitCommonDir(owner)) {
+    throw new Error(`--repo ${values.repo} and --worktree ${values.worktree} are different repositories; pass the checkout that owns the worktree path, or drop --repo.`);
+  }
+  return owner;
+}
+
+function checkoutTop(dir) {
+  try {
+    return existsSync(dir) ? git(dir, ["rev-parse", "--show-toplevel"]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function gitCommonDir(dir) {
+  try {
+    return realpathSync(git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
+  } catch {
+    throw new Error(`${dir} is not a git checkout.`);
+  }
 }
 
 /** Records the sole writer's managed local workaround paths under the owning bug ticket. */

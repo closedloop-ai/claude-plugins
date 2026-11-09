@@ -1,53 +1,28 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
-import { writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs';
+import { fixture, loadEvidence, PLUGIN_ROOT, remoteConfig, successfulRemoteWriter, writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
 const LOAD_CHECK = join(SCRIPTS, 'load-check.sh');
 const TIMEOUT = { timeout: 20_000 };
 const RELATIVE_IMPORT = /^import [^;]*? from (['"])(\.{1,2}\/[^'"]+)\1;/gms;
-const PLUGIN_ROOT = realpathSync(join(SCRIPTS, '..', '..', '..'));
-const loadEvidence = (actor = 'test', runtime = 'codex') => loadedSkillEvidence(actor, runtime, PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.InstalledAtSpawn);
-
-/**
- * An orchestration dir plus a bin dir that shadows `node` (prints its argv, one per line) and `ssh`
- * (records its argv and runs the remote command line locally with bash, stdin included).
- */
-function fixture(config) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-')));
-  const orch = join(root, 'orch');
-  const bin = join(root, 'bin');
-  mkdirSync(orch);
-  mkdirSync(bin);
-  if (config !== undefined) writeFileSync(join(orch, 'config.env'), config);
-  writeFileSync(join(orch, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: loadEvidence(), harnesses: [] }));
-  // Resolution, freshness and owned admission use real Node; other operational calls remain recorded.
-  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
-  writeLoopbackSsh(bin, join(root, 'ssh-args'));
-  writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_LOAD:-0}"\n');
-  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "${FLEET_TEST_LOAD:-0}"\n');
-  writeFileSync(join(bin, 'getconf'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_CORES:-8}"\n');
-  writeRemoteCodexStub(bin, PLUGIN_ROOT);
-  for (const command of ['node', 'ssh', 'cut', 'sysctl', 'getconf']) chmodSync(join(bin, command), 0o755);
-  const prompt = join(root, 'prompts', 'w1-01-start.md');
-  mkdirSync(join(root, 'prompts'));
-  writeFileSync(prompt, '$vibe ISS-1\n');
-  const run = (args, env = {}) => spawnSync('bash', [FLEET, orch, ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), ...env },
-  });
-  const argv = (result) => result.stdout.split('\n').filter((l) => l.startsWith('arg:')).map((l) => l.slice(4));
-  return { root, orch, prompt, run, argv };
+/** Exercise the shipped remote launcher while keeping App Server calls inside a nonexistent test socket. */
+function realRemoteSession(f) {
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*codex-session.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  writeFileSync(join(f.root, 'bin', 'codex'), `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'app-server daemon start') console.log(JSON.stringify({ socketPath: ${JSON.stringify(join(f.root, 'missing.sock'))} }));\nelse console.log(JSON.stringify({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: ${JSON.stringify(PLUGIN_ROOT)} } }] }));\n`);
+  chmodSync(join(f.root, 'bin', 'codex'), 0o755);
+  const worktree = join(f.root, 'pre-made-worktree');
+  const created = spawnSync('git', ['init', '-q', '-b', 'vibe/example', worktree], { encoding: 'utf8' });
+  assert.equal(created.status, 0, created.stderr);
+  return worktree;
 }
-
-const remoteConfig = (root, extra = '') => `REMOTE_HOST=box\nREMOTE_STATE_DIR=${root}/remote/sessions\nREMOTE_SHELL="bash -c"\n${extra}`;
 
 function remotePlugin(root, version, withGate) {
   mkdirSync(join(root, '.codex-plugin'), { recursive: true });
@@ -117,17 +92,311 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   const result = f.run(['remote', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/remote wt']);
   assert.equal(result.status, 0, result.stderr);
   const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
-  assert.deepEqual(f.argv(result), [
+  const remoteArgv = f.argv(result);
+  assert.deepEqual(remoteArgv.slice(0, -2), [
     join(shipped, 'skills/fleet-orchestrator/scripts/codex-session.mjs'), 'turn', join(f.root, 'remote', 'sessions'), 'w1',
     '--prompt-file', join(shipped, 'w1-01-start.md'), '--cwd', '/remote wt', '--effort', 'high',
       '--plugin-root', PLUGIN_ROOT,
   ]);
+  assert.equal(remoteArgv.at(-2), '--fleet-claim');
+  assert.match(remoteArgv.at(-1), /\/w1\.preflight\.[^/]+\.json$/);
   for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs']) {
     assert.ok(existsSync(join(shipped, "skills", file)), file);
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), '$vibe ISS-1\n');
   assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /^-o\nConnectTimeout=10\n-o\nServerAliveInterval=15\nbox\n/);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.orch, 'sessions', 'w1.remote.json'), 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
 });
+
+test('a remote new writer refuses an existing worktree without a Vibe record on the target host', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = realRemoteSession(f);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
+  assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.json')), false);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.pending.json')), false);
+  const rejected = readdirSync(join(f.root, 'remote', 'sessions')).filter((name) => name === 'writer.preflight-rejected.json');
+  assert.equal(rejected.length, 1, 'the refusal has a durable pre-start receipt');
+  const receipt = JSON.parse(readFileSync(join(f.root, 'remote', 'sessions', rejected[0]), 'utf8'));
+  assert.equal(receipt.stage, 'preflight-rejected');
+  assert.match(receipt.attempt, /^\d+-\d+-\d+$/);
+});
+
+test('a refused remote new writer preserves an existing local remote marker byte for byte', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = realRemoteSession(f);
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  mkdirSync(dirname(marker), { recursive: true });
+  const previous = `{"host":"box", "stateDir":${JSON.stringify(join(f.root, 'remote', 'sessions'))}}\n`;
+  writeFileSync(marker, previous);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /not-yet-existing path.*vibe new.*cloud-worker\.mjs.*pr-takeover/s);
+  assert.equal(readFileSync(marker, 'utf8'), previous);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.pending.json')), false);
+});
+
+test('current pre-start refusal wins over an unrelated saved remote state', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = realRemoteSession(f);
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  mkdirSync(dirname(marker), { recursive: true });
+  const previous = `{"host":"box", "stateDir":${JSON.stringify(join(f.root, 'remote', 'sessions'))}}\n`;
+  writeFileSync(marker, previous);
+  const remoteStateDir = join(f.root, 'remote', 'sessions');
+  mkdirSync(remoteStateDir, { recursive: true });
+  const priorState = '{"threadId":"prior-thread","cwd":"/fixture","turns":[]}\n';
+  writeFileSync(join(remoteStateDir, 'writer.json'), priorState);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.equal(readFileSync(marker, 'utf8'), previous);
+  assert.equal(readFileSync(join(remoteStateDir, 'writer.json'), 'utf8'), priorState);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.pending.json')), false);
+});
+
+test('a conflicting prior-host marker refuses a new remote start without losing ownership', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f);
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  mkdirSync(dirname(marker), { recursive: true });
+  const prior = '{"host":"prior-host","stateDir":"prior-state"}\n';
+  writeFileSync(marker, prior);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /existing remote marker.*different|conflicting remote marker/i);
+  assert.equal(readFileSync(marker, 'utf8'), prior);
+  assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.pending.json')), false);
+});
+
+test('remote turn establishes local marker readiness before starting the writer', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f);
+  writeFileSync(join(f.orch, 'sessions'), 'not a directory\n');
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false,
+    'no remote thread may start when its local ownership marker cannot be prepared');
+});
+
+test('a legacy pending directory blocks another remote turn without overwriting its evidence', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f);
+  const legacy = join(f.orch, 'sessions', 'writer.remote.pending');
+  mkdirSync(legacy, { recursive: true });
+  const partial = '{"pid":';
+  writeFileSync(join(legacy, 'owner.json'), partial);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.equal(readFileSync(join(legacy, 'owner.json'), 'utf8'), partial);
+  assert.equal(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), false);
+});
+
+test('remote marker promotion failure retains a recoverable pending record', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f);
+  const failedOnce = join(f.root, 'marker-promotion-failed');
+  writeFileSync(join(f.root, 'bin', 'mv'), `#!/usr/bin/env bash\nif [[ "$2" == *.remote.json && ! -e ${JSON.stringify(failedOnce)} ]]; then : > ${JSON.stringify(failedOnce)}; exit 1; fi\nexec /bin/mv "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'mv'), 0o755);
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.ok(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')), 'the remote launcher succeeded');
+  assert.equal(existsSync(marker), false);
+  assert.ok(existsSync(pending), 'prepared marker survives for exact recovery');
+  const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
+  assert.equal(existsSync(pending), false);
+});
+
+test('recover-marker uses the host and state directory saved in pending after config changes', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f);
+  const failedOnce = join(f.root, 'marker-promotion-failed');
+  writeFileSync(join(f.root, 'bin', 'mv'), `#!/usr/bin/env bash\nif [[ "$2" == *.remote.json && ! -e ${JSON.stringify(failedOnce)} ]]; then : > ${JSON.stringify(failedOnce)}; exit 1; fi\nexec /bin/mv "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'mv'), 0o755);
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
+  const first = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(first.status, 0, first.stdout + first.stderr);
+  assert.ok(existsSync(pending));
+  writeFileSync(join(f.orch, 'config.env'), 'REMOTE_SHELL="bash -c"\n');
+  const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
+  assert.equal(existsSync(pending), false);
+  assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /\nbox\n/);
+});
+
+test('an ambiguous remote failure after state creation keeps a recoverable pending marker', TIMEOUT, () => {
+  const f = fixture();
+  const worktree = successfulRemoteWriter(f, 1);
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
+  const marker = join(f.orch, 'sessions', 'writer.remote.json');
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+    '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.ok(existsSync(join(f.root, 'remote', 'sessions', 'writer.json')));
+  assert.ok(existsSync(pending));
+  assert.equal(existsSync(marker), false);
+  const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
+  assert.equal(existsSync(pending), false);
+});
+
+test('thread acceptance before remote state save never clears pending ownership', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"thread-created","threadId":"accepted-thread"}' > "$3/$4.launch.json"; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
+    '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0);
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
+  assert.ok(existsSync(pending));
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.json')), false);
+  const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+  assert.notEqual(recovered.status, 0, 'a journal naming an accepted thread cannot prove absence');
+  assert.ok(existsSync(pending));
+});
+
+test('missing state without an attempt-bound refusal receipt keeps pending ownership', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
+    '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+  assert.notEqual(result.status, 0);
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
+  assert.ok(existsSync(pending));
+  const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+  assert.notEqual(recovered.status, 0);
+  assert.ok(existsSync(pending));
+  assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.json')), false);
+});
+
+test('concurrent recovery cannot clear an in-flight remote launch before state appears', TIMEOUT, async () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  const release = join(f.root, 'release-remote-launch');
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit 0;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  const child = spawn('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
+    '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'], {
+    env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}`, SLOT_LOCK_DIR: join(f.root, 'locks') },
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.stdout.resume();
+  const stopped = new Promise((resolve) => child.on('close', (status) => resolve(status)));
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
+  try {
+    for (let attempt = 0; attempt < 200 && (!existsSync(pending)
+      || !existsSync(join(f.root, 'remote', 'sessions', 'writer.launch.json'))); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(existsSync(pending), stderr);
+    assert.ok(existsSync(join(f.root, 'remote', 'sessions', 'writer.launch.json')), stderr);
+    const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+    assert.notEqual(recovered.status, 0, recovered.stdout + recovered.stderr);
+    assert.match(recovered.stderr, /dispatch.*(?:active|in flight)/i);
+    assert.ok(existsSync(pending));
+  } finally {
+    writeFileSync(release, 'continue\n');
+    const status = await stopped;
+    assert.equal(status, 0, stderr);
+  }
+  assert.deepEqual(JSON.parse(readFileSync(join(f.orch, 'sessions', 'writer.remote.json'), 'utf8')),
+    { host: 'box', stateDir: join(f.root, 'remote', 'sessions') });
+  assert.equal(existsSync(pending), false);
+});
+
+test('signal-stopped dispatch keeps uncertain thread-before-state ownership for recovery', TIMEOUT, async () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  const release = join(f.root, 'release-crashed-launch');
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  chmodSync(join(f.root, 'bin', 'node'), 0o755);
+  const child = spawn('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
+    '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'], {
+    env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}`, SLOT_LOCK_DIR: join(f.root, 'locks') },
+  });
+  child.stdout.resume(); child.stderr.resume();
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  const closed = new Promise((resolve) => child.on('close', resolve));
+  const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
+  try {
+    for (let attempt = 0; attempt < 200 && (!existsSync(pending)
+      || !existsSync(join(f.root, 'remote', 'sessions', 'writer.launch.json'))); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(existsSync(pending));
+    assert.ok(existsSync(join(f.root, 'remote', 'sessions', 'writer.launch.json')));
+    child.kill('SIGTERM');
+    await exited;
+    const recovered = f.run(['remote', 'session', 'recover-marker', 'writer']);
+    assert.notEqual(recovered.status, 0, recovered.stdout + recovered.stderr);
+    assert.ok(existsSync(pending));
+    assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.json')), false);
+  } finally {
+    writeFileSync(release, 'stop\n');
+    await closed;
+  }
+});
+
+for (const stage of ['marker', 'owner']) {
+  test(`a signal during ${stage} preparation leaves no published pending owner and permits retry`, TIMEOUT, async () => {
+    const f = fixture();
+    const worktree = successfulRemoteWriter(f);
+    const entered = join(f.root, 'entered-preparation');
+    const release = join(f.root, 'release-preparation');
+    const realJq = spawnSync('sh', ['-c', 'command -v jq'], { encoding: 'utf8' }).stdout.trim();
+    const match = stage === 'marker' ? '--arg host' : '--argjson pid';
+    writeFileSync(join(f.root, 'bin', 'jq'), `#!/usr/bin/env bash\nif [[ "$*" == *${JSON.stringify(match)}* ]]; then ${stage === 'owner' ? "printf '{'" : ':'}; : > ${JSON.stringify(entered)}; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; exit 1; fi\nexec ${JSON.stringify(realJq)} "$@"\n`);
+    chmodSync(join(f.root, 'bin', 'jq'), 0o755);
+    const child = spawn('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
+      '--cwd', worktree, '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'], {
+      env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}`, SLOT_LOCK_DIR: join(f.root, 'locks') },
+    });
+    child.stdout.resume(); child.stderr.resume();
+    const closed = new Promise((resolve) => child.on('close', resolve));
+    try {
+      for (let attempt = 0; attempt < 200 && !existsSync(entered); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.ok(existsSync(entered), `${stage} preparation was not reached`);
+      child.kill('SIGTERM');
+    } finally {
+      writeFileSync(release, 'stop\n');
+      await closed;
+    }
+    assert.equal(existsSync(join(f.orch, 'sessions', 'writer.remote.pending.json')), false,
+      'an incomplete staging area must not publish or block the pending owner name');
+    rmSync(join(f.root, 'bin', 'jq'));
+    const retried = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
+      '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
+    assert.equal(retried.status, 0, retried.stdout + retried.stderr);
+    assert.ok(existsSync(join(f.orch, 'sessions', 'writer.remote.json')));
+  });
+}
 
 test('remote cleanup ships the exact board and runs on the owning host with its session state', TIMEOUT, () => {
   const f = fixture();
@@ -154,11 +423,14 @@ test('remote preflight uses the target host plugin and target actor state', TIME
   let result = f.run(['remote', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/remote wt'], { FAKE_REMOTE_PLUGIN_ROOT: remoteRoot });
   assert.equal(result.status, 2, result.stdout + result.stderr);
   assert.match(result.stderr, /target host has vibe 1\.0\.85/);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'w1.remote.pending.json')), false,
+    'pre-dispatch skill refusal clears the exact pending attempt');
   writeFileSync(join(remoteRoot, '.codex-plugin', 'plugin.json'), JSON.stringify({ name: 'vibe', version: JSON.parse(readFileSync(join(PLUGIN_ROOT, '.codex-plugin', 'plugin.json'))).version }));
   rmSync(join(remoteRoot, 'skills', 'handoff', 'scripts', 'handoff-gate.mjs'));
   result = f.run(['remote', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/remote wt'], { FAKE_REMOTE_PLUGIN_ROOT: remoteRoot });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /handoff-gate\.mjs: plugin script does not exist/);
+  assert.equal(existsSync(join(f.orch, 'sessions', 'w1.remote.pending.json')), false);
   writeFileSync(join(remoteRoot, 'skills', 'handoff', 'scripts', 'handoff-gate.mjs'), 'export {};\n');
   result = f.run(['remote', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/remote wt'], { FAKE_REMOTE_PLUGIN_ROOT: remoteRoot });
   assert.equal(result.status, 0, result.stderr);

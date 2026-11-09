@@ -4,11 +4,73 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.67
+
+#### Fixed
+- The PR creation guard resolves an explicit head against its owning worktree and effective GitHub repository, so a proven non-Vibe head can open a PR from a Vibe-scoped conversation while a recorded Vibe session still needs its gate. From a recorded session's own worktree, a PR of its current branch stays gated whatever that branch is called, and so does one whose explicit head carries the worktree's commits not yet on origin's default branch. A non-Vibe head the guard cannot resolve locally, such as a remote-only branch or a fork targeting upstream, is judged by the command's worktree as before. The guard also covers GitHub CLI's `pr new` alias and attached short head, base and body options.
+- A known Vibe handoff gate bug can be overridden with a dedicated PR-body line naming its ISS ticket and a reason. The line clears a failed handoff gate, a missing session record and unverifiable head ownership; missing ticket or reason keeps the PR refused. Cloud import readiness, including its own rerun of the handoff gate, stays a separate protection the override does not clear; other shell guards remain in force.
+- Every Vibe-gating PR refusal now names a supported retry: the override line, running `gh pr create` from a checkout of the target repository, a literal working directory, or the cloud worker's import and refresh steps. The handoff PR reference and environment worker say where to run it.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 18 words longer than in 1.1.66 (origin/main at this update, 2dbf2bbc284a3a498f68af6841380b69fae59024): the override's condition, line format and retry moved into the guard's refusal messages, leaving one pointer each in the handoff PR reference and the environment worker.
+
+### vibe v1.1.66
+
+#### Added
+- Compaction control for fleet-orchestrator chats in Claude Code (ISS-13859; the operator ruled on 2026-11-09 to rescope it to compaction). A PostToolUse hook tells the operator once, when the chat was launched without `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, the exact command to relaunch it with the window from `<fleetHome>/context-guard.json` (default 300000); nothing writes the variable or the `autoCompactWindow` setting, which would change every chat. At `flushAtPercent` of the window (default 85) it tells the orchestrator, once per compaction cycle, to bring the active program's state files current; with no window it names no compaction point and repeats at each step of growth the window would leave as headroom (45k by default). The window range and the reading list's file names come from fleet-home.mjs, so the hooks cannot drift from them. Context is the latest request's input plus cache read plus cache write tokens.
+- A PreCompact hook prints instructions for the compaction summary in those chats: leave out what the program state files hold, and keep open operator questions, rulings not yet in rulings.md, live worker and session names, and unkept promises to the operator. Claude Code uses a PreCompact hook's stdout as those instructions.
+- Both hooks act only in chats that loaded the skill (a Skill call or Claude Code's injected skill line; a mention, a quoted marker or a Codex-form `$fleet-orchestrator` prompt does not count), never in subagents, and fail open with no output. After its first scan the skill-load check reads only newly appended transcript bytes, and the usage read takes a bounded tail window (256 KB, widening to 8 MB at most).
+- The limits live in `<fleetHome>/context-guard.json`, reread on every call with no restart. `fleet-home.mjs resume` writes the default file when the home has none, and reports an unparseable file as `CONTEXT-GUARD-INVALID` and a failed seed write as `CONTEXT-GUARD-UNSEEDED` without dropping the reading list; `check` accepts the new file.
+
+#### Changed
+- `runHookScript` prints a string result as plain text, so a PreCompact hook's output is the instructions themselves; `mergeResults` keeps an optional `systemMessage`.
+- To keep instruction words level, fleet-orchestrator SKILL.md's Setup check bullet no longer restates the setup block's contents, and references/state.md drops a resume-log sentence its "A new chat" steps already cover.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 4 words shorter than in 1.1.65 (origin/main at this update, 37b2a51c9fb049bf5bfc40cc07203b5ae06d4691).
+
+### vibe v1.1.65
+
+#### Fixed
+- The merge guard (`hooks/merge-guard.mjs`) looks a `gh pr merge` pull request up in the repository gh will merge in. It used to ask gh in the session's working directory and ignore a leading `cd`, so `cd <claude-plugins> && gh pr merge 413` from a symphony-alpha session was refused as symphony-alpha #413's author, and a session-repo pull request by the operator could clear the check for another author's pull request in the repository the command moved to. The repository now comes from `-R`/`--repo` (also before `pr`), then the `GH_REPO` gh will see (inline, exported, assigned over the session's, or the session's own; `unset` and an empty value count as unset), then the directory the command runs in after `cd`, `pushd`/`popd`, subshells and an `env -C`/`sudo -D` prefix, and only then the session's directory. A pull request URL names its own repository.
+- When the guard cannot prove that directory (a `cd` to a variable the command does not set, to `$(...)`, inside a conditional or loop, to a missing directory, a shell started by `env -C`, or a command substitution in the `gh` command) and no `-R`, `GH_REPO` or URL decides the repository, it refuses and asks for `-R <owner/repo>` instead of checking the session's repository. `gh pr merge` inside `bash -c` and `eval` payloads is now checked too; remote `ssh` merges are still not judged.
+
+#### Changed
+- The per-scope directory walk the PR-create guard used moves to `hooks/command-calls.mjs`, shared by both guards, and `commandPrefix` in `hooks/command-segments.mjs` reports an `env -C`/`sudo -D` directory. The PR-create guard therefore also checks `env -C <dir> gh pr create` in `<dir>`; it never reads the target repository, so nothing else in it changes.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.65.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.64 (origin/main at this update, d67f12e0b3afe24c43bb55709705cc7263278ad6); only the README version line changed.
+
 ### vibe v1.1.64
 
 #### Fixed
-- The PR creation guard resolves an explicit head against its owning worktree and effective GitHub repository, so a proven non-Vibe head can open a PR from a Vibe-scoped conversation while a recorded Vibe session still needs its gate. The guard also covers GitHub CLI's `pr new` alias and attached short head, base and body options.
-- A known Vibe handoff gate bug can be overridden only with a dedicated PR-body line naming its ISS ticket and a reason. Missing ticket or reason keeps the PR refused, and cloud import readiness and other shell guards remain in force.
+- Vibe scripts now act for the harness conversation that owns the command. A Codex App Server started from a Claude Code chat hands that chat's `CLAUDE_CODE_SESSION_ID` and `CLAUDECODE=1` to every Codex thread, and `plugin-version.mjs` preferred it, so a fleet writer's `loaded` check found the chat's hook record and refused the writer. The new `harness-identity.mjs` lets a lone id decide; with both set, the nearest harness process above the command wins (a bounded `ps` walk), and the Codex thread wins when `ps` cannot be read. `plugin-version.mjs`, `vibe-sessions.mjs new`, `reference-images.mjs` (which no longer falls back to the other harness's transcript) and cl-sweep's core skill discovery all use it.
+- `vibe-sessions.mjs new --worktree <checkout>/.claude/worktrees/vibe-<slug>` starts the session in the checkout that owns that path. It refuses a `--repo` of another repository and a path that is not the slug's session path, instead of creating the session in the remembered symphony-alpha checkout.
+- `vibe-preflight.sh --repo` accepts a closedloop-ai/claude-plugins checkout for that run. It is never remembered as the app checkout, and the symphony-alpha dependency and PostHog checks are skipped for it.
+- `codex-session.mjs turn` refuses to start or resume a Codex writer while any vibe Codex hook is not trusted or is disabled, as Codex's `hooks/list` reports. Codex pins plugin hook approval to the whole plugin bundle, so each vibe release leaves the hooks "modified"; the refusal names the fix, re-approving the vibe hooks in Codex's `/hooks`, and settles as a pre-start rejection. An App Server without `hooks/list` is not checked.
+- A new writer whose `--cwd` does not exist yet starts its thread and first turn in the checkout that owns `<checkout>/.claude/worktrees/<name>`, because Codex runs hooks in the thread's cwd and could run none there. The session stays bound to the worktree path. A missing `--cwd` of any other shape is refused at launch with the fix.
+- A saved writer thread whose first turn ended before `vibe new` (a refused check, a question, an early stop) is no longer stranded: it accepts a `$vibe` recovery turn for its own ticket and worktree. Any other turn, another ticket or a different worktree is still refused.
+
+#### Changed
+- The fleet writer brief and vibe's session step pass `--repo` and `--worktree` to `vibe-sessions.mjs new` for a repository other than the remembered app checkout.
+- The README version line and the Python release-pin contract tests move to 1.1.64.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 188 words longer than in 1.1.63 (origin/main at this update, 21cace5f94c9534607e2612d4d4a8ced22fbeefa).
+
+### vibe v1.1.63
+
+#### Fixed
+- New Codex fleet turns refuse an existing worktree unless a Vibe-created active session record matches the `$vibe` brief and live ticket. Direct and remote fleet launches share the guard; missing paths still let Vibe create the worktree, and saved sessions still resume.
+- Remote fleet turns publish their local ownership marker only after the target host starts the writer; a refused start leaves no new marker and preserves an existing marker unchanged.
+- Remote starts prepare recoverable ownership before launch, and the Codex launcher journals thread creation before App Server side effects. `recover-marker` refuses a live dispatch, clears only an attempt-bound pre-start rejection, and retains uncertain ownership after a crash; a saved remote writer can be published from pending state.
+- Remote starts refuse an existing marker for another host or state directory. Recovery follows the target saved in pending ownership after config changes, and the launch journal retains both accepted thread and turn IDs.
+- Remote pending ownership becomes visible only after its target and dispatch owner are complete. A signal during either preparation stage leaves no blocking pending name, so a later turn can retry; older pending directories remain visible and block duplicate dispatch.
+- Proven remote preflight failures now clear their exact pending attempt, including a missing Codex CLI. Recovery uses a dead dispatch's prepared-only journal to clear pending, keeps that proof until the next turn, retains later uncertain phases, and serializes same-name turns and recoveries so a stale decision cannot erase a newer attempt.
+- Prepared recovery now checks the remote launcher's PID and birth identity as well as the local owner, so an SSH child that outlives its parent keeps pending ownership. macOS `lockf` retains its lock file, and pre-start rejection receipts publish atomically without truncating a prior complete receipt.
+- Remote preflight now publishes an attempt-bound process claim before checks and marks the launcher boundary. Recovery keeps live or uncertain attempts pending, clears a proven dead preflight even if its rejection receipt was interrupted, and atomically cancels a missing claim before a delayed command can start.
+- The remote shell now execs the Codex launcher in its claimed PID, using a birth-time witness that survives exec. Recovery clears a dead exact `launching` attempt without state or journal; the launcher itself publishes completed refusal receipts and releases successful claims.
+- Remote recovery re-reads saved state, launch journal and preflight claim after it proves the exact launcher ended. A phase or state written during that identity check now keeps pending ownership instead of letting a stale pre-dispatch observation erase it.
+- Local new-session turns can retry after an unchanged `prepared` launch journal from a dead launcher. Live or uncertain journals and saved sessions remain protected.
+
+#### Changed
+- Remote recovery regression tests now live in a focused module with a shared fleet fixture, keeping the main fleet test file below its source-size limit.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 129 words longer than in 1.1.61 (origin/main at this update, f7dfc2148436e6b0bc99652ff975974a7b838d31).
 
 ### vibe v1.1.61
 

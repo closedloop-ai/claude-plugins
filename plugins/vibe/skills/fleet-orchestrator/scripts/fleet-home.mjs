@@ -8,6 +8,7 @@
 //
 // Layout (codex-fleet-monitor/scripts/work-dir.mjs resolves it for every script):
 //   <fleetHome>/config.env, standing-rulings.md, lessons.md, handover.md   reused by every program
+//   <fleetHome>/context-guard.json                                        compaction limits for vibe's context hooks
 //   <fleetHome>/current                                                   the active program's slug
 //   <fleetHome>/programs/<slug>/                                          that program's state
 //
@@ -37,13 +38,17 @@
 // plugin-version.json: `PLUGIN-VERSION-UNCHECKED` when the check never ran,
 // `PLUGIN-VERSION-UNANSWERED` while an outdated plugin has no recorded
 // choice, else the last result. Every new chat runs the check again.
+// `resume` also writes the default context-guard.json when the home has none
+// (vibe's compaction hooks; the operator's 2026-11-09 ruling).
 // `check` prints, and exits 1 on, state outside the home or the program:
 // `FLAT <name>` (program state at the home's top), `OUTSIDE <link> -> <target>`
 // (a symlink in the home resolving outside it), `CONFIG <key>` (a per-program
 // key in the home's config.env), `SHARED-REMOTE` (REMOTE_STATE_DIR without
 // REMOTE_FLEET_HOME, shared by every program), `UNMANAGED <where> <name>` (a
 // sessions.txt session with no state file fleet.sh wrote) and
-// `UNMANAGED-STATE <file>` (Codex thread state outside sessions/). Given a
+// `UNMANAGED-STATE <file>` (Codex thread state outside sessions/), and
+// `PENDING-REMOTE remote <name>` (prepared ownership needing recover-marker).
+// Given a
 // flat work dir it prints `FLAT-LAYOUT`. board.mjs status prints the same lines.
 // `migrate` turns a flat work dir into a home in place (or moves it to
 // --home): the reusable files stay at the top, everything else moves to
@@ -61,9 +66,11 @@ import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { skillFreshnessProblem } from "./skill-freshness.mjs";
 
-export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "current", "programs"];
+export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "context-guard.json", "current", "programs"];
 const PROGRAM_DIRS = ["sessions", "prompts", "requests", "findings", "evidence"];
 const PROGRAM_FILES = ["resume-log.md", "rulings.md", "attention.md"];
+/** The program files a new chat's reading list rereads, in reading order. */
+export const PROGRAM_READING = Object.freeze(["rulings.md", "attention.md", "resume-log.md", "board.md"]);
 export const Shape = Object.freeze({ NoWriter: "no-writer", OneWriter: "one-writer", Fleet: "fleet" });
 const SHAPE_NOTES = Object.freeze({
   [Shape.NoWriter]: "nobody writes code; the resume log, rulings, research and evidence rules apply, the board, watcher, slots, QA and merge sections do not",
@@ -96,7 +103,7 @@ export function homeProblems(dir) {
   if (config.REMOTE_STATE_DIR && !config.REMOTE_FLEET_HOME) {
     problems.push("SHARED-REMOTE REMOTE_STATE_DIR is shared by every program: set REMOTE_FLEET_HOME to the fleet home on REMOTE_HOST");
   }
-  problems.push(...unmanagedSessions(resolved.dir), ...unmanagedState(resolved.home), ...unmanagedState(resolved.dir));
+  problems.push(...pendingRemoteMarkers(resolved.dir), ...unmanagedSessions(resolved.dir), ...unmanagedState(resolved.home), ...unmanagedState(resolved.dir));
   return problems;
 }
 
@@ -122,8 +129,27 @@ function unmanagedSessions(programDir) {
   const file = path.join(programDir, "sessions.txt");
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8").split("\n").map((line) => line.trim().split(/\s+/)).filter((fields) => ["local", "remote"].includes(fields[0]) && fields[1])
-    .filter(([where, name, threadId]) => threadId || !existsSync(path.join(programDir, "sessions", where === "local" ? `${name}.json` : `${name}.remote.json`)))
+    .filter(([where, name, threadId]) => threadId || (!existsSync(path.join(programDir, "sessions", where === "local" ? `${name}.json` : `${name}.remote.json`))
+      && !(where === "remote" && (existsSync(path.join(programDir, "sessions", `${name}.remote.pending.json`))
+        || existsSync(path.join(programDir, "sessions", `${name}.remote.pending`))))))
     .map(([where, name]) => `UNMANAGED ${where} ${name}: not started through fleet.sh; start its next turn with fleet.sh so its state lives in sessions/`);
+}
+
+/** Surface every prepared remote turn, even before sessions.txt names it, for exact recovery. */
+function pendingRemoteMarkers(programDir) {
+  const sessions = path.join(programDir, "sessions");
+  if (!existsSync(sessions)) return [];
+  return readdirSync(sessions).flatMap((name) => {
+    if (name.endsWith(".remote.pending.json")) {
+      const writer = name.slice(0, -".remote.pending.json".length);
+      return [`PENDING-REMOTE remote ${writer}: recover with fleet.sh <orchDir> remote session recover-marker ${writer}`];
+    }
+    if (name.endsWith(".remote.pending")) {
+      const writer = name.slice(0, -".remote.pending".length);
+      return [`PENDING-REMOTE-LEGACY remote ${writer}: preserve and audit this older prepared owner before another turn`];
+    }
+    return [];
+  });
 }
 
 function unmanagedState(dir) {
@@ -140,13 +166,14 @@ function unmanagedState(dir) {
 export function resumeLines(home) {
   const lines = ["config.env", "standing-rulings.md", "lessons.md", "handover.md"].filter((name) => existsSync(path.join(home, name)))
     .map((name) => `READ ${path.join(home, name)}`);
+  lines.push(...contextGuardLines(home));
   let resolved = { program: null };
   try {
     resolved = resolveWorkDir(home);
   } catch {}
   if (!resolved.program) return [...lines, `NO-ACTIVE-PROGRAM: start one with fleet-home.mjs start <slug>; it reads no earlier program's state`];
   lines.push(`ACTIVE ${resolved.program} ${resolved.dir}`, shapeLine(resolved.dir), pluginVersionLine(resolved.dir));
-  for (const name of ["rulings.md", "attention.md", "resume-log.md", "board.md"]) {
+  for (const name of PROGRAM_READING) {
     if (existsSync(path.join(resolved.dir, name))) lines.push(`READ ${path.join(resolved.dir, name)}`);
   }
   lines.push(...relaunchLines(resolved.dir));
@@ -316,6 +343,63 @@ function movedLinks(dir, moves, depth) {
   return links;
 }
 
+/** The compaction limits file, read by vibe's PostToolUse and PreCompact hooks on every call. */
+const CONTEXT_GUARD_FILE = "context-guard.json";
+const CONTEXT_GUARD_DEFAULTS = Object.freeze({ enabled: true, compactWindowTokens: 300_000, flushAtPercent: 85 });
+// Claude Code accepts an auto-compact window from 100k to 1M tokens.
+export const COMPACT_WINDOW_RANGE = Object.freeze([100_000, 1_000_000]);
+
+/** The limits: the defaults overlaid by `<home>/context-guard.json`; throws on a malformed file. */
+export function contextGuardConfig(home) {
+  const file = path.join(home, CONTEXT_GUARD_FILE);
+  const raw = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not a JSON object");
+  const config = { ...CONTEXT_GUARD_DEFAULTS, ...raw };
+  if (typeof config.enabled !== "boolean") throw new Error("enabled must be true or false");
+  const [min, max] = COMPACT_WINDOW_RANGE;
+  if (!Number.isInteger(config.compactWindowTokens) || config.compactWindowTokens < min || config.compactWindowTokens > max) {
+    throw new Error(`compactWindowTokens must be a whole number from ${min} to ${max}`);
+  }
+  if (typeof config.flushAtPercent !== "number" || !(config.flushAtPercent > 0 && config.flushAtPercent < 100)) {
+    throw new Error("flushAtPercent must be a number between 0 and 100");
+  }
+  return { ...config, file };
+}
+
+/** Writes the default context-guard.json into `home` when it has none, so the operator has a file to edit. */
+function seedContextGuardConfig(home) {
+  const file = path.join(home, CONTEXT_GUARD_FILE);
+  if (existsSync(file)) return;
+  const seed = {
+    _comment: "Edit freely; vibe rereads this on every call. compactWindowTokens is the CLAUDE_CODE_AUTO_COMPACT_WINDOW a fleet-orchestrator chat should be launched with. At flushAtPercent of that window the chat is told to bring its program state files current before Claude Code compacts it.",
+    ...CONTEXT_GUARD_DEFAULTS,
+  };
+  writeFileSync(file, `${JSON.stringify(seed, null, 2)}\n`, { flag: "wx" });
+}
+
+/** Seeds context-guard.json for `resume`; a failed write is reported, never a reason to drop the reading list. */
+function seedLines(home) {
+  if (!existsSync(home)) return [];
+  try {
+    seedContextGuardConfig(home);
+    return [];
+  } catch (error) {
+    if (error?.code === "EEXIST") return [];
+    const reason = error instanceof Error ? error.message : String(error);
+    return [`CONTEXT-GUARD-UNSEEDED ${path.join(home, CONTEXT_GUARD_FILE)}: ${reason}; the guard runs on its defaults`];
+  }
+}
+
+function contextGuardLines(home) {
+  try {
+    contextGuardConfig(home);
+    return [];
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return [`CONTEXT-GUARD-INVALID ${path.join(home, CONTEXT_GUARD_FILE)}: ${reason}; the context guard stays silent until it is fixed`];
+  }
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
@@ -341,7 +425,7 @@ function main(argv) {
     return 0;
   }
   if (command === "resume") {
-    print(resumeLines(home));
+    print([...seedLines(home), ...resumeLines(home)]);
     return 0;
   }
   if (command === "check") {

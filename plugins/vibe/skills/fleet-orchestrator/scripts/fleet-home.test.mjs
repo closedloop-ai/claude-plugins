@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -79,6 +79,29 @@ test('check reports state written outside the home or the program, and passes on
   writeFileSync(path.join(program, 'sessions', 'prd723-vibe.remote.json'), '{}\n');
   writeFileSync(path.join(program, 'sessions', 'w1.json'), JSON.stringify({ threadId: 't1' }));
   assert.equal(run(['check', '--home', home]).status, 0, run(['check', '--home', home]).stdout);
+});
+
+test('check reports a pending remote marker as recoverable rather than unmanaged', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'iss-1', '--shape', 'fleet', '--home', home]).status, 0);
+  const program = path.join(home, 'programs', 'iss-1');
+  writeFileSync(path.join(program, 'sessions.txt'), 'remote writer\n');
+  const pending = path.join(program, 'sessions', 'writer.remote.pending.json');
+  writeFileSync(pending, '{"host":"box","stateDir":"/remote/sessions","owner":{"pid":99,"started":"prior","attempt":"one"}}\n');
+  const checked = run(['check', '--home', home]);
+  assert.equal(checked.status, 1);
+  assert.match(checked.stdout, /^PENDING-REMOTE remote writer:/m);
+  assert.doesNotMatch(checked.stdout, /^UNMANAGED remote writer:/m);
+  rmSync(path.join(program, 'sessions.txt'));
+  const withoutRoster = run(['check', '--home', home]);
+  assert.match(withoutRoster.stdout, /^PENDING-REMOTE remote writer:/m,
+    'pending ownership remains discoverable before the roster names the writer');
+  const legacy = path.join(program, 'sessions', 'legacy.remote.pending');
+  mkdirSync(legacy);
+  writeFileSync(path.join(program, 'sessions.txt'), 'remote legacy\n');
+  const withLegacy = run(['check', '--home', home]);
+  assert.match(withLegacy.stdout, /^PENDING-REMOTE-LEGACY remote legacy:/m);
+  assert.doesNotMatch(withLegacy.stdout, /^UNMANAGED remote legacy:/m);
 });
 
 test('every script resolves the home to the active program, with per-program state dirs derived', (t) => {
@@ -204,4 +227,39 @@ test('resume refuses a stale loaded skill until the current installed release is
   assert.match(run(['resume', '--home', home]).stdout, /PLUGIN-RELOAD-REQUIRED: target actor loaded 1\.0\.85/);
   writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: actorLoad('new-chat'), harnesses: [] }));
   assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION current at now/m);
+});
+
+test('resume writes the editable context-guard file once and never overwrites an edited one', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'one-writer', '--home', home]).status, 0);
+  const guardFile = path.join(home, 'context-guard.json');
+  assert.equal(run(['resume', '--home', home]).status, 0);
+  const seeded = JSON.parse(readFileSync(guardFile, 'utf8'));
+  assert.deepEqual([seeded.enabled, seeded.compactWindowTokens, seeded.flushAtPercent], [true, 300000, 85]);
+  assert.equal(run(['check', '--home', home]).status, 0, run(['check', '--home', home]).stdout);
+  writeFileSync(guardFile, JSON.stringify({ compactWindowTokens: 400000 }));
+  run(['resume', '--home', home]);
+  assert.deepEqual(JSON.parse(readFileSync(guardFile, 'utf8')), { compactWindowTokens: 400000 }, 'an edited file is never overwritten');
+  for (const broken of ['{broken', JSON.stringify({ compactWindowTokens: 2000000 })]) {
+    writeFileSync(guardFile, broken);
+    assert.match(run(['resume', '--home', home]).stdout, new RegExp(`^CONTEXT-GUARD-INVALID ${guardFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `, 'm'), broken);
+  }
+  assert.equal(run(['resume', '--home', path.join(home, 'absent')]).status, 0);
+  assert.equal(existsSync(path.join(home, 'absent')), false, 'resume creates no home');
+});
+
+test('a resume that cannot seed context-guard.json still prints the whole reading list', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'one-writer', '--home', home]).status, 0);
+  chmodSync(home, 0o555);
+  let result;
+  try {
+    result = run(['resume', '--home', home]);
+  } finally {
+    chmodSync(home, 0o755);
+  }
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^CONTEXT-GUARD-UNSEEDED .*context-guard\.json: /m);
+  assert.match(result.stdout, /^ACTIVE prog-a /m);
+  assert.equal(existsSync(path.join(home, 'context-guard.json')), false);
 });

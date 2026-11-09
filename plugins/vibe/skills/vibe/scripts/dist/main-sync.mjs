@@ -219890,7 +219890,7 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
 // src/main-sync.ts
 import { spawnSync as spawnSync9 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { existsSync as existsSync12, lstatSync as lstatSync8, readFileSync as readFileSync18, realpathSync as realpathSync12 } from "node:fs";
+import { existsSync as existsSync12, lstatSync as lstatSync9, readFileSync as readFileSync18, realpathSync as realpathSync13 } from "node:fs";
 import { join as join19 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 
@@ -223937,7 +223937,7 @@ var NEVER = INVALID;
 
 // ../../plugins/vibe/skills/vibe/scripts/session-record.mjs
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 function git(cwd, args, options = {}) {
   return execFileSync("git", args, {
@@ -224195,17 +224195,17 @@ import { spawnSync } from "node:child_process";
 
 // src/ledger.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync4, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync4, realpathSync as realpathSync4, renameSync, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { basename as basename2, dirname as dirname2, isAbsolute, join as join3 } from "node:path";
 
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync3, realpathSync as realpathSync2 } from "node:fs";
+import { readFileSync as readFileSync3, realpathSync as realpathSync3 } from "node:fs";
 import { join as join2 } from "node:path";
 
 // src/plugin-root.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2, realpathSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2, realpathSync as realpathSync2 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 var AgentRootError = class extends Error {
@@ -224230,7 +224230,7 @@ function installedPluginRoot(metaUrl) {
   const entry = dirname(fileURLToPath(metaUrl));
   for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
     try {
-      const root = realpathSync(candidate);
+      const root = realpathSync2(candidate);
       if (isPluginRoot(root)) return root;
     } catch {
     }
@@ -224271,8 +224271,8 @@ var builtins = /* @__PURE__ */ new Set([
 ]);
 function readDefinition(agentRoot, agentName, capabilityInput) {
   if (!/^vibe-[a-z0-9-]+$/.test(agentName)) throw new Error("Only own-plugin vibe agents are supported");
-  const root = realpathSync2(agentRoot);
-  const file = realpathSync2(join2(root, "agents", `${agentName}.md`));
+  const root = realpathSync3(agentRoot);
+  const file = realpathSync3(join2(root, "agents", `${agentName}.md`));
   if (file !== join2(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
   const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
     readPluginManifest(root)
@@ -224320,8 +224320,8 @@ var recordSchema = external_exports.object({ referenceImages: external_exports.a
 
 // src/ledger.ts
 function checkoutLocation(worktree) {
-  const root = realpathSync3(git2(worktree, ["rev-parse", "--show-toplevel"]));
-  if (realpathSync3(worktree) !== root) throw new Error("Use the session's exact worktree root");
+  const root = realpathSync4(git2(worktree, ["rev-parse", "--show-toplevel"]));
+  if (realpathSync4(worktree) !== root) throw new Error("Use the session's exact worktree root");
   const metadata = git2(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
   const separator = metadata.lastIndexOf("\n");
   if (separator < 0) throw new Error("Missing native checkout metadata boundary");
@@ -224333,7 +224333,7 @@ function location(worktree) {
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
     JSON.parse(readFileSync4(join3(place.dir, "vibe-session.json"), "utf8"))
   );
-  if (record.worktree && realpathSync3(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
+  if (record.worktree && realpathSync4(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
 }
 function readWriterSummary(worktree) {
@@ -224789,7 +224789,7 @@ function stepEvents(events, step) {
 
 // src/main-sync-state.ts
 import { createHash as createHash2, randomUUID } from "node:crypto";
-import { existsSync as existsSync4, lstatSync, readFileSync as readFileSync5, realpathSync as realpathSync4, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync5, realpathSync as realpathSync5, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join4, resolve as resolve2 } from "node:path";
 
 // src/native-record.ts
@@ -224821,7 +224821,7 @@ function syncLocation(worktree) {
   const place = checkoutLocation(worktree);
   readPrivateJson(join4(place.dir, "vibe-session.json"));
   const session = sessionSchema.parse(readSessionRecord(place.root));
-  if (session.branch !== place.branch || session.worktree && realpathSync4(session.worktree) !== place.root || (session.branch.startsWith("prototype/") ? session.mode !== null || !isOwnedPrototypeSession(session, place.branch) : session.mode === null)) {
+  if (session.branch !== place.branch || session.worktree && realpathSync5(session.worktree) !== place.root || (session.branch.startsWith("prototype/") ? session.mode !== null || !isOwnedPrototypeSession(session, place.branch) : session.mode === null)) {
     throw new MainSyncError("Main-sync requires the exact active owned session branch and mode");
   }
   return { ...place, session };
@@ -224829,7 +224829,7 @@ function syncLocation(worktree) {
 function syncContext(raw, operation) {
   const input = mainSyncInputSchema.parse(raw);
   const place = syncLocation(input.context.worktree);
-  const context = { ...input.context, worktree: realpathSync4(input.context.worktree) };
+  const context = { ...input.context, worktree: realpathSync5(input.context.worktree) };
   const lock = join4(place.dir, "vibe-record-turn.lock");
   let actual;
   let primaryOwner;
@@ -224887,13 +224887,13 @@ function syncContext(raw, operation) {
   return { input, place, context: actual, purpose: actual.publicationPurpose ?? "build" };
 }
 function readPrivateJson(file) {
-  const stat = lstatSync(file);
+  const stat = lstatSync2(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_PRIVATE_BYTES) throw new MainSyncError("Private main-sync evidence must be a bounded regular file");
   return JSON.parse(readFileSync5(file, "utf8"));
 }
 function saveSyncReceipt(dir, receipt) {
   const file = join4(dir, MAIN_SYNC_FILE);
-  if (existsSync4(file) && lstatSync(file).isSymbolicLink()) throw new MainSyncError("Main-sync receipt cannot be a symlink");
+  if (existsSync4(file) && lstatSync2(file).isSymbolicLink()) throw new MainSyncError("Main-sync receipt cannot be a symlink");
   const serialized = JSON.stringify(mainSyncStateSchema.parse(receipt));
   if (Buffer.byteLength(serialized, "utf8") > MAX_PRIVATE_BYTES) {
     throw new MainSyncError("Complete main-sync receipt exceeds the unchanged private byte bound; prior evidence is preserved", "NEEDS_CHANGE");
@@ -225200,7 +225200,7 @@ import { dirname as dirname4, isAbsolute as isAbsolute2, join as join6, normaliz
 import { fileURLToPath as fileURLToPath3, pathToFileURL } from "node:url";
 
 // ../../plugins/vibe/skills/vibe/scripts/local-plans.mjs
-import { realpathSync as realpathSync5 } from "node:fs";
+import { realpathSync as realpathSync6 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { parseArgs } from "node:util";
 var LOCAL_PLAN_PREFIX = ".closedloop-ai/vibe-plans/";
@@ -225210,7 +225210,7 @@ function isLocalPlanPath(filePath) {
 function committedLocalPlans(runGit) {
   return runGit(["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", LOCAL_PLAN_PREFIX.slice(0, -1)]).split("\0").filter((file) => file && isLocalPlanPath(file));
 }
-if (process.argv[1] && realpathSync5(fileURLToPath2(import.meta.url)) === realpathSync5(process.argv[1])) {
+if (process.argv[1] && realpathSync6(fileURLToPath2(import.meta.url)) === realpathSync6(process.argv[1])) {
   try {
     const { values } = parseArgs({ options: { worktree: { type: "string" } } });
     if (!values.worktree) throw new Error("--worktree is required.");
@@ -226378,20 +226378,20 @@ import { builtinModules } from "node:module";
 import { dirname as dirname8, join as join11, relative as relative4, resolve as resolve5 } from "node:path";
 
 // src/main-sync-input-catalog.ts
-import { existsSync as existsSync7, lstatSync as lstatSync4, readFileSync as readFileSync11, readdirSync as readdirSync2 } from "node:fs";
+import { existsSync as existsSync7, lstatSync as lstatSync5, readFileSync as readFileSync11, readdirSync as readdirSync2 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname7, join as join10, relative as relative3, sep as sep2 } from "node:path";
-import { realpathSync as realpathSync8 } from "node:fs";
+import { realpathSync as realpathSync9 } from "node:fs";
 var import_yaml4 = __toESM(require_dist(), 1);
 
 // src/main-sync-input-files.ts
-import { lstatSync as lstatSync3, readFileSync as readFileSync10, readdirSync, realpathSync as realpathSync7 } from "node:fs";
+import { lstatSync as lstatSync4, readFileSync as readFileSync10, readdirSync, realpathSync as realpathSync8 } from "node:fs";
 import { dirname as dirname6, join as join9, sep } from "node:path";
 
 // src/main-sync-generated-input.ts
 import { execFileSync as execFileSync3, spawnSync as spawnSync2 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { lstatSync as lstatSync2, readFileSync as readFileSync9, realpathSync as realpathSync6 } from "node:fs";
+import { lstatSync as lstatSync3, readFileSync as readFileSync9, realpathSync as realpathSync7 } from "node:fs";
 import { join as join8 } from "node:path";
 
 // src/main-sync-failure.ts
@@ -226522,8 +226522,8 @@ function verifyGeneratedBiomeInput(root, headSha) {
 }
 function readRegular(root, file) {
   const path2 = join8(root, file);
-  const stat = lstatSync2(path2);
-  if (!stat.isFile() || stat.size > MAX_INPUT_BYTES || stat.mode & 73 || realpathSync6(path2) !== path2) {
+  const stat = lstatSync3(path2);
+  if (!stat.isFile() || stat.size > MAX_INPUT_BYTES || stat.mode & 73 || realpathSync7(path2) !== path2) {
     throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${file}`, "NEEDS_CHANGE");
   }
   return readFileSync9(path2);
@@ -226538,10 +226538,10 @@ function sha256(bytes) {
 // src/main-sync-input-files.ts
 function originFile(root, file) {
   const target = join9(root, file);
-  const stat = lstatSync3(target);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 73 || stat.size > MAX_INPUT_BYTES || realpathSync7(target) !== target) throw new MainSyncError(`Generated input must be a bounded canonical non-executable regular file: ${file}`, "NEEDS_CHANGE");
+  const stat = lstatSync4(target);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 73 || stat.size > MAX_INPUT_BYTES || realpathSync8(target) !== target) throw new MainSyncError(`Generated input must be a bounded canonical non-executable regular file: ${file}`, "NEEDS_CHANGE");
   for (let parent = dirname6(target); parent !== root; parent = dirname6(parent)) {
-    if (!parent.startsWith(`${root}${sep}`) || lstatSync3(parent).isSymbolicLink() || realpathSync7(parent) !== parent) {
+    if (!parent.startsWith(`${root}${sep}`) || lstatSync4(parent).isSymbolicLink() || realpathSync8(parent) !== parent) {
       throw new MainSyncError(`Generated input parent is not canonical: ${file}`, "NEEDS_CHANGE");
     }
   }
@@ -226549,9 +226549,9 @@ function originFile(root, file) {
 }
 function originTree(root, path2, allowed) {
   const target = join9(root, path2);
-  const stat = lstatSync3(target, { throwIfNoEntry: false });
+  const stat = lstatSync4(target, { throwIfNoEntry: false });
   if (!stat) return [];
-  if (stat.isSymbolicLink() || realpathSync7(target) !== target) throw new MainSyncError(`Generated output root cannot be a symlink or alias: ${path2}`, "NEEDS_CHANGE");
+  if (stat.isSymbolicLink() || realpathSync8(target) !== target) throw new MainSyncError(`Generated output root cannot be a symlink or alias: ${path2}`, "NEEDS_CHANGE");
   if (stat.isFile()) {
     if (allowed && !allowed.has(path2)) throw new MainSyncError(`Unknown generated output must be preserved: ${path2}`, "NEEDS_CHANGE");
     return [originFile(root, path2)];
@@ -226773,7 +226773,7 @@ function producerFor(path2) {
   return inputProducers.find((producer) => producer.roots.some((root) => path2 === root || path2.startsWith(`${root}/`)));
 }
 function presentProducers(root) {
-  return inputProducers.filter((producer) => producer.roots.some((path2) => lstatSync4(join10(root, path2), { throwIfNoEntry: false })));
+  return inputProducers.filter((producer) => producer.roots.some((path2) => lstatSync5(join10(root, path2), { throwIfNoEntry: false })));
 }
 function producerFiles(root, producer, allowed) {
   return producer.roots.flatMap((path2) => originTree(root, path2, allowed));
@@ -226784,8 +226784,8 @@ function producerPackage(root, producer) {
   const lookup = createRequire(join10(root, owner.dir, "package.json")).resolve.paths(owner.name) ?? [];
   const file = lookup.map((directory) => join10(directory, owner.name, "package.json")).find((candidate) => existsSync7(candidate));
   if (!file) throw new MainSyncError(`Canonical installed producer is not installed: ${producer.id}`, "NEEDS_CHANGE");
-  const canonical = realpathSync8(file);
-  if (!canonical.startsWith(`${root}${sep2}`) || !lstatSync4(canonical).isFile()) {
+  const canonical = realpathSync9(file);
+  if (!canonical.startsWith(`${root}${sep2}`) || !lstatSync5(canonical).isFile()) {
     throw new MainSyncError(`Canonical installed producer resolves outside the owned validation checkout: ${producer.id}`, "NEEDS_CHANGE");
   }
   const data = packageSchema2.parse(JSON.parse(readFileSync11(canonical, "utf8")));
@@ -226816,8 +226816,8 @@ function producerOwnerInputs(root, producer, allowed) {
       const path2 = join10(directory, name);
       if (path2 === shims) continue;
       const file = relative3(root, path2);
-      const stat = lstatSync4(path2);
-      if (stat.isSymbolicLink() || realpathSync8(path2) !== path2) throw new MainSyncError(`Selected producer package contains a noncanonical node: ${producer.id}`, "NEEDS_CHANGE");
+      const stat = lstatSync5(path2);
+      if (stat.isSymbolicLink() || realpathSync9(path2) !== path2) throw new MainSyncError(`Selected producer package contains a noncanonical node: ${producer.id}`, "NEEDS_CHANGE");
       if (stat.isDirectory()) {
         if (allowed && !shims.startsWith(`${path2}${sep2}`) && ![...allowed].some((item) => item.startsWith(`${file}/`))) throw new MainSyncError("Selected producer contains an unknown directory; preserve it without reading contents", "NEEDS_CHANGE");
         walk(path2);
@@ -226856,8 +226856,8 @@ function verifyProducerInputPaths(root, producers, untracked) {
       }
     }
     for (const input of producer.inputs) {
-      if (!lstatSync4(join10(root, input), { throwIfNoEntry: false })) continue;
-      if (realpathSync8(join10(root, input)) !== join10(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");
+      if (!lstatSync5(join10(root, input), { throwIfNoEntry: false })) continue;
+      if (realpathSync9(join10(root, input)) !== join10(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");
     }
   }
 }
@@ -227308,12 +227308,12 @@ function isDesktopE2eLimitation(item) {
 // src/main-sync-checks.ts
 import { spawnSync as spawnSync8 } from "node:child_process";
 import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync11, lstatSync as lstatSync7, readFileSync as readFileSync17, readlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync11, lstatSync as lstatSync8, readFileSync as readFileSync17, readlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
 import { join as join18 } from "node:path";
 
 // src/main-sync-main-comparison.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
-import { existsSync as existsSync8, mkdtempSync, realpathSync as realpathSync9, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync8, mkdtempSync, realpathSync as realpathSync10, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join12 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
@@ -227423,7 +227423,7 @@ var CapturedMainComparison = class {
     if (this.bootstrap) return this.bootstrap;
     const mainSha = this.receipt.mainSha;
     try {
-      this.checkout = realpathSync9(mkdtempSync(join12(tmpdir(), "vibe-captured-main-")));
+      this.checkout = realpathSync10(mkdtempSync(join12(tmpdir(), "vibe-captured-main-")));
       git(this.root, ["worktree", "add", "--detach", this.checkout, mainSha], { timeout: CLEANUP_MS });
       this.registered = true;
     } catch (error) {
@@ -227526,7 +227526,7 @@ function classifyAgainstMain(mainSha, failed, main, sessionTimedOut, rerun) {
 }
 
 // src/main-sync-private-inputs.ts
-import { existsSync as existsSync9, lstatSync as lstatSync5, realpathSync as realpathSync10 } from "node:fs";
+import { existsSync as existsSync9, lstatSync as lstatSync6, realpathSync as realpathSync11 } from "node:fs";
 import { dirname as dirname9, join as join13, relative as relative5, resolve as resolve6, sep as sep3 } from "node:path";
 var analyzed;
 function verifyPrivateInput(root, file, head) {
@@ -227542,20 +227542,20 @@ function verifyPrivateInput(root, file, head) {
 }
 function verifyPrivateRoot(root) {
   for (const path2 of [".closedloop-ai", ".closedloop-ai/vibe-plans"]) {
-    const stat = lstatSync5(join13(root, path2), { throwIfNoEntry: false });
-    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync10(join13(root, path2)) !== join13(root, path2))) {
+    const stat = lstatSync6(join13(root, path2), { throwIfNoEntry: false });
+    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync11(join13(root, path2)) !== join13(root, path2))) {
       throw new MainSyncError("Private planning evidence requires its canonical owned directory; no symlink or alias is accepted", "NEEDS_CHANGE");
     }
   }
 }
 function verifyEvidencePath(root, file, label = "Private planning evidence") {
   const target = join13(root, file);
-  const stat = lstatSync5(target);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync10(target) !== target) {
+  const stat = lstatSync6(target);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync11(target) !== target) {
     throw new MainSyncError(`${label} requires a bounded canonical regular file`, "NEEDS_CHANGE");
   }
   for (let parent = dirname9(target); parent !== root; parent = dirname9(parent)) {
-    if (!parent.startsWith(`${root}${sep3}`) || lstatSync5(parent).isSymbolicLink() || realpathSync10(parent) !== parent) {
+    if (!parent.startsWith(`${root}${sep3}`) || lstatSync6(parent).isSymbolicLink() || realpathSync11(parent) !== parent) {
       throw new MainSyncError(`${label} cannot use a symlinked or escaping parent`, "NEEDS_CHANGE");
     }
   }
@@ -227565,7 +227565,7 @@ function referencesPrivateInputs(root, privatePaths) {
     if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
     if (reference.kind !== "path") return false;
     const path2 = resolve6(reference.base === "module" ? dirname9(join13(root, file)) : root, reference.value);
-    return existsSync9(path2) && isLocalPlanPath(relative5(root, realpathSync10(path2)));
+    return existsSync9(path2) && isLocalPlanPath(relative5(root, realpathSync11(path2)));
   });
 }
 
@@ -227611,7 +227611,7 @@ import { join as join17 } from "node:path";
 // src/main-sync-input-origin.ts
 import { spawnSync as spawnSync7 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { lstatSync as lstatSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync15, realpathSync as realpathSync11, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { lstatSync as lstatSync7, mkdtempSync as mkdtempSync2, readFileSync as readFileSync15, realpathSync as realpathSync12, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join16 } from "node:path";
 
@@ -227763,7 +227763,7 @@ function prepareInputOrigins(value, before, producers) {
   const packages = [];
   if (!producers.length) return proof();
   const needsCold = producers.some((producer) => producer.argv || producer.package);
-  const cold = needsCold ? realpathSync11(mkdtempSync2(join16(tmpdir2(), "vibe-input-origin-"))) : void 0;
+  const cold = needsCold ? realpathSync12(mkdtempSync2(join16(tmpdir2(), "vibe-input-origin-"))) : void 0;
   let registered = false;
   const commands = [];
   const log = join16(value.place.dir, `vibe-input-origin-${attempt}.json`);
@@ -227775,11 +227775,11 @@ function prepareInputOrigins(value, before, producers) {
       registered = true;
       assertTracked(cold, before);
       for (const producer of producers) {
-        for (const path2 of producer.roots) if (lstatSync6(join16(cold, path2), { throwIfNoEntry: false })) {
+        for (const path2 of producer.roots) if (lstatSync7(join16(cold, path2), { throwIfNoEntry: false })) {
           throw new MainSyncError(`Pristine output origin was not empty: ${path2}`, "NEEDS_CHANGE");
         }
       }
-      if (lstatSync6(join16(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync6(join16(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
+      if (lstatSync7(join16(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync7(join16(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
         throw new MainSyncError("Pristine bootstrap prerequisites are not empty or contain a legacy migration artifact", "NEEDS_CHANGE");
       }
       run(cold, ["bash", ".closedloop-ai/loops-setup.sh"]);
@@ -228003,9 +228003,9 @@ function inspectInventory(root, completion) {
   const before = trackedInputs(root);
   verifyPrivateRoot(root);
   for (const path2 of reportOutputs) {
-    if (lstatSync7(join18(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
+    if (lstatSync8(join18(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
   }
-  const generated = lstatSync7(join18(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
+  const generated = lstatSync8(join18(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
     throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
   }
@@ -228028,7 +228028,7 @@ function inspectInventory(root, completion) {
         continue;
       }
       if (ignored && reportOutputs.has(file)) {
-        const stat = lstatSync7(join18(root, file));
+        const stat = lstatSync8(join18(root, file));
         if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
         continue;
       }
@@ -228081,7 +228081,7 @@ function verifyOriginProof(root, metadata, before, proof, changed = /* @__PURE__
     } else if (producer.ownerPath) {
       throw new MainSyncError("Pure owner cannot borrow an installed package reference", "NEEDS_CHANGE");
     }
-    const stat = lstatSync7(producer.log);
+    const stat = lstatSync8(producer.log);
     const name = producer.log.slice(metadata.length + 1);
     if (!producer.log.startsWith(`${metadata}/`) || !/^vibe-input-origin-[a-f0-9-]{36}\.json$/.test(name) || !stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024 || digest(readFileSync17(producer.log)) !== producer.logSha256) {
       throw new MainSyncError("Actual generated-origin execution evidence changed", "NEEDS_CHANGE");
@@ -228099,7 +228099,7 @@ function trackedInputs(root) {
     const file = entry.slice(tab + 1);
     const target = join18(root, file);
     if (kind !== "blob" || !existsSync11(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
-    const stat = lstatSync7(target);
+    const stat = lstatSync8(target);
     if (stat.size > MAX_INPUT_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
     const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync17(target) : void 0;
     const actual = content && createHash5("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
@@ -228304,7 +228304,7 @@ var desktopSchema = external_exports.object({ ok: external_exports.boolean(), ru
 var TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
 async function readMainSyncInput(worktree) {
   const input = mainSyncInputSchema.parse(await readInput());
-  if (realpathSync12(input.context.worktree) !== realpathSync12(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  if (realpathSync13(input.context.worktree) !== realpathSync13(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
   return input;
 }
 function prepareMainSyncInputs(raw) {
@@ -228605,7 +228605,7 @@ function validationMatches(value, receipt, identity) {
     const evidence = [{ log: command.log, sha256: command.sha256 }, ...command.comparison ? comparisonLogs(command.comparison) : []];
     for (const { log: file, sha256: sha2562 } of evidence) {
       if (!permitted.includes(file)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
-      const stat = lstatSync8(file, { throwIfNoEntry: false });
+      const stat = lstatSync9(file, { throwIfNoEntry: false });
       if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || digest(readFileSync18(file)) !== sha2562) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
     }
     if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");

@@ -10,6 +10,11 @@
 # only one found under the home folder. A checkout is recognized by its git
 # remote (closedloop-ai/symphony-alpha), not by its folder name.
 #
+# --repo also accepts a closedloop-ai/claude-plugins checkout, for a session
+# whose ticket changes the plugins (ISS-13834). That checkout is used for this
+# run only: it is never remembered, and the symphony-alpha app checks
+# (dependencies installed, PostHog key) do not apply to it.
+#
 # Usage: vibe-preflight.sh [--runtime codex|claude] [--codex <CLI>] [--repo <checkout>] [--prototype]
 
 set -uo pipefail
@@ -38,6 +43,7 @@ CONFIG_FILE="$CONFIG_DIR/config.json"
 DEFAULT_NODE_RANGE="^24 || >=26"
 SEARCH_DEPTH=6
 REMOTE_PATTERN='[:/]closedloop-ai/symphony-alpha(\.git)?/?$'
+PLUGINS_REMOTE_PATTERN='[:/]closedloop-ai/claude-plugins(\.git)?/?$'
 
 failures=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -126,9 +132,17 @@ engines_node() {
   return 1
 }
 
-is_symphony_checkout() {
+has_remote() {
   [[ -e "$1/.git" ]] || return 1
-  git -C "$1" config --get-regexp '^remote\..*\.url$' 2>/dev/null | grep -qiE "$REMOTE_PATTERN"
+  git -C "$1" config --get-regexp '^remote\..*\.url$' 2>/dev/null | grep -qiE "$2"
+}
+
+is_symphony_checkout() {
+  has_remote "$1" "$REMOTE_PATTERN"
+}
+
+is_plugins_checkout() {
+  has_remote "$1" "$PLUGINS_REMOTE_PATTERN"
 }
 
 # A worktree resolves to the checkout that owns it, so sessions always start
@@ -179,12 +193,16 @@ find_checkouts() {
 repo=""
 repo_detail=""
 repo_fix=""
+plugins_repo=0
 
 if [[ -n "$REPO_ARG" ]]; then
   if is_symphony_checkout "$REPO_ARG"; then
     repo="$(main_checkout_of "$REPO_ARG")" || repo="$REPO_ARG"
+  elif is_plugins_checkout "$REPO_ARG"; then
+    repo="$(main_checkout_of "$REPO_ARG")" || repo="$REPO_ARG"
+    plugins_repo=1
   else
-    repo_detail="$REPO_ARG is not a symphony-alpha checkout"
+    repo_detail="$REPO_ARG is not a symphony-alpha or claude-plugins checkout"
     repo_fix="ask-for-repo-path"
   fi
 else
@@ -214,7 +232,7 @@ else
   fi
 fi
 
-if [[ -n "$repo" ]]; then
+if [[ -n "$repo" && "$plugins_repo" == 0 ]]; then
   remembered="$(json_field "$CONFIG_FILE" repo)" || remembered=""
   if [[ "$remembered" != "$repo" ]]; then
     remember_repo "$repo"
@@ -420,7 +438,9 @@ if [[ "$RUNTIME" == "claude" ]] && have claude; then
   fi
 fi
 
-if [[ -n "$repo" ]]; then
+if [[ -n "$repo" && "$plugins_repo" == 1 ]]; then
+  emit repo true "$repo" ""
+elif [[ -n "$repo" ]]; then
   emit repo true "$repo" ""
   if [[ -d "$repo/node_modules" ]]; then
     emit repo-bootstrap true "node_modules present" ""

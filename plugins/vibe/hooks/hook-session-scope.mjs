@@ -16,6 +16,12 @@ function scopePath(sessionId, home) {
   return path.join(home, ".vibe-hook-scope", `${sessionId}.json`);
 }
 
+/** A hook's private per-session state file under `~/.vibe-hook-scope/<hook>/`, or null for an unusable session id. */
+export function hookStatePath(sessionId, hook, home = os.homedir()) {
+  if (!SESSION.test(sessionId ?? "")) return null;
+  return path.join(home, ".vibe-hook-scope", hook, `${sessionId}.json`);
+}
+
 /**
  * The harness that sent a hook event, read from the event itself rather than the environment.
  * Codex adds `model` to every hook's input and `turn_id` to turn-scoped ones
