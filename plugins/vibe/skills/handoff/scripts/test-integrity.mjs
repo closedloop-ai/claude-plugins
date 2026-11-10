@@ -193,7 +193,7 @@ export function testIntegrityCandidates(files, read) {
           "changed assertion claims an element is absent", entry.text.trim(), "",
           `${file.path}:${entry.line}:${entry.text.search(/\S/) + 1}`));
       }
-      if (COUNT_ONE.test(entry.text) && !busyStateCount(entry.text)
+      if (COUNT_ONE.test(entry.text) && !busyStateCount(countAssertionText(entry.text))
         && LAYOUT_SURFACE.test(`${file.path}\n${nearby(sourceLines, entry.line, 16)}`)) {
         found.push(candidate("layout", file.path, entry.line, caseName,
           "card, metric, or summary coverage asserts only one element"));
@@ -481,9 +481,13 @@ export function testIntegrityProofShapeProblems(evidence, receiptDir, readSource
         || !text(proof.mutationRun.assertionFailure)) {
         problems.push(`${label} absence proof needs a mutation run with the exact command, nonzero exitCode and assertionFailure`);
       }
-      if (!receipt.problems.length && !exactAssertionFailure(receipt.output === null ? proof : {
+      const proofSource = pathSafe ? readSource?.(proof.path) : null;
+      if (typeof readSource === "function" && (proofSource === null || proofSource === undefined)) {
+        // Without the tested source the frame cannot be bound to the assertion (main required an exact match).
+        problems.push(`${label} absence proof source could not be read to bind the assertion`);
+      } else if (!receipt.problems.length && !exactAssertionFailure(receipt.output === null ? proof : {
         ...proof, mutationRun: { ...proof.mutationRun, assertionFailure: receipt.output },
-      }, pathSafe ? readSource?.(proof.path) : null, receipt)) {
+      }, proofSource, receipt)) {
         problems.push(`${label} absence proof needs the exact assertion failure at the primary assertion location, not a setup or runtime error`);
       }
     }
@@ -690,4 +694,12 @@ function sourceOffset(source, line, column) {
   let start = 0;
   for (let current = 1; current < line; current += 1) start = source.indexOf("\n", start) + 1;
   return start + column - 1;
+}
+
+/** The count assertion's own text on its line: from the nearest expect before the count matcher to that matcher. */
+function countAssertionText(text) {
+  const count = COUNT_ONE.exec(text);
+  if (!count) return text;
+  const start = text.lastIndexOf("expect", count.index);
+  return text.slice(Math.max(start, 0), count.index + count[0].length);
 }

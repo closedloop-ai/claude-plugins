@@ -336,6 +336,35 @@ test("ISS-13846 final review F14 a frame inside the argument is not the candidat
   assert.match(problems(proofAt(3, 3, laterFrame), () => null).join("\n"), /receipt before hash does not match the tested source/);
 });
 
+test("ISS-13846 final review ADV15-1 an unreadable test source cannot bind a later line through a production-file receipt", () => {
+  const lines = ['test("owner", () => {', '  expect(screen.queryByText("stale")).toBeNull();',
+    '  expect(screen.getByText("other")).toBeVisible();', "});"];
+  const fixture = changed("src/owner-proof.test.tsx", lines.join("\n"), ["toBeNull"]);
+  const readCandidates = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], readCandidates);
+  const owner = "export const Owner = () => null;";
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const command = "pnpm vitest src/owner-proof.test.tsx";
+  const failure = [` FAIL  src/owner-proof.test.tsx > ${candidate.case}`, "AssertionError: expected visible",
+    " ❯ src/owner-proof.test.tsx:3:3", `    2| ${lines[1]}`, `  > 3| ${lines[2]}`].join("\n");
+  const mutationEdit = { old: owner, new: `${owner} void "intentional mutation";` };
+  const receipt = { candidate: candidate.id, target: "src/owner.tsx", command, mutationExit: 1, mutationOutput: failure,
+    restoredExit: 0, restoredOutput: "Test Files 1 passed", head: COMMIT, beforeSha256: hash(owner),
+    mutatedSha256: hash(owner.replace(mutationEdit.old, mutationEdit.new)), mutationEdit };
+  const name = `proof-${receiptNumber++}.json`;
+  const bytes = JSON.stringify(receipt);
+  writeFileSync(path.join(RECEIPT_DIR, name), bytes);
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "render stale", presentState: "stale is present", assertionLine: candidate.assertionLine,
+    assertionLocation: candidate.assertionLocation, command, observedFailure: "stale assertion failed", restoredPass: true,
+    commit: COMMIT, ownerBoundary: "production", mountedSignal: "owner mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: failure },
+    rawReceipt: name, rawReceiptSha256: hash(bytes), restoredOutputSha256: hash(receipt.restoredOutput) };
+  const readProof = path => path === "src/owner.tsx" ? owner : null;
+  assert.match(testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], readProof, COMMIT, RECEIPT_DIR,
+    readCandidates).join("\n"), /exact assertion failure|proof source/);
+});
+
 test("ISS-13846 final review F11-1 a frame on another assertion sharing the candidate's closing line is not its failure", () => {
   const lines = ['test("closing", () => {', "  expect(", '    screen.queryByText("a")',
     '  ).toBeNull(); expect(screen.queryByText("b")).toBeTruthy();', "});"];
@@ -1226,6 +1255,14 @@ test("ISS-13846 final review L-NEG a card count excluding loading items in any f
   assert.deepEqual(testIntegrityCandidates([compared.file], path => path === compared.file.path ? compared.source : null)
     .filter(({ kind }) => kind === "layout").map(({ id }) => Number(id.split(":").at(-1))), [2, 3],
     "a count filtered by an inequality or a false comparison counts ordinary cards");
+  const sibling = changed("e2e/documents-summary-cards.spec.ts", [
+    'test("one summary card", async ({ page }) => {',
+    '  expect(within(summary).getAllByRole("article")).toHaveLength(1); expect(status).toHaveTextContent("Loading");',
+    "});",
+  ].join("\n"), ["toHaveLength(1)"]);
+  assert.deepEqual(testIntegrityCandidates([sibling.file], path => path === sibling.file.path ? sibling.source : null)
+    .filter(({ kind }) => kind === "layout").map(({ id }) => Number(id.split(":").at(-1))), [2],
+    "a busy word in a sibling statement does not exempt the count (ADV15-2)");
 });
 
 test("ISS-13846 final review B1 B2 B3 a later query the gate can key is refused when ambiguous, and arrow helpers are attributed", t => {
