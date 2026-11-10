@@ -214,7 +214,16 @@ numbering) and the intended type, for the fresh-context reviewer to fill in.
 file, the script run, the capture, the read or the file and line the trace ends at; the verdict is `MET`, `PARTIAL`
 or `MISSED` (no other status words). A criterion with no `MET` row of a known
 type and a `ref`, or with any `PARTIAL` or `MISSED` row, blocks done; on a
-`PARTIAL` or `MISSED` row the last column says what is missing. A `test` ref
+`PARTIAL` or `MISSED` row the last column says what is missing. A criterion
+that needs the product running on a surface (it names Web, Desktop, the browser
+or the running app) needs a `MET` screenshot row, or a test or script row whose
+ref is an e2e spec or a control run; typecheck, unit-test and source evidence
+alone never meet it. When the person chose passing the work on instead of a
+pull request, a criterion whose only gap is another ticket's work takes a
+`PARTIAL` row whose ref is `not met yet: waits on <ticket>`, run with
+`--passing-on --ticket-status <ticket>=<status>`; it is listed as waiting while
+that ticket is open, and refused for a pull request, without a ticket, or when
+the ticket is DONE or CANCELED. A `test` ref
 must name a file that exists (in the worktree at a candidate audit, at HEAD at
 handoff-gate): a planned test is not evidence, and the
 session writes tests only when the person asked for a pull request, so a

@@ -75,7 +75,10 @@
 // to resume-log.md, so a new chat resumes the same grouping. `--closed <PR>`
 // finishes the unit once its PR merged and every member is reconciled: later
 // tickets start a new unit instead of folding into a finished writer, and
-// status-audit stops reading it. `status` prints UNIT-MEMBERS-UNRECORDED while
+// status-audit stops reading it. `--closed` is refused until the unit's
+// recorded review passed (handoff's unit-review.mjs --record), and `status`
+// prints UNIT-UNREVIEWED for an open unit whose writer has a PR before then.
+// `status` prints UNIT-MEMBERS-UNRECORDED while
 // a local writer's vibe session lacks one of its unit's other tickets.
 // <orchDir> is a fleet home or a program dir (work-dir.mjs). `status` also prints
 // fleet-home.mjs check's lines for a home, or for a flat dir that watches sessions or PRs.
@@ -99,6 +102,7 @@ const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { homeProblems, programShape, Shape } = await vibeCore("lib/fleet-orchestrator/scripts/fleet-home.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
 
 const STATE = "board.json";
 const PAGE = "board.md";
@@ -415,6 +419,15 @@ function namesWriterPr(value, row) {
   return Boolean(short) && short[2] === pr && (!short[1] || !row.repo || short[1] === row.repo);
 }
 
+/** UNIT-UNREVIEWED for each open unit whose writer has a PR while the unit's recorded review has not passed. */
+export function unitReviewLines(orchDir, board) {
+  return Object.entries(board.units ?? {}).filter(([, unit]) => !unit.closed && board.writers?.[unit.writer]?.pr).flatMap(([name, unit]) => {
+    const problem = unitReviewProblem(orchDir, name, unit);
+    const row = board.writers[unit.writer];
+    return problem ? [`UNIT-UNREVIEWED ${name} ${unit.writer} ${row.repo ?? ""}#${row.pr}: ${problem}; it is not ready, and its tickets stay IN_PROGRESS`] : [];
+  });
+}
+
 /** Adds or extends a unit; tickets are only ever added, and the resume log records each change. */
 function recordUnit(orchDir, board, name, values, at) {
   if (values.closed !== undefined) {
@@ -425,6 +438,8 @@ function recordUnit(orchDir, board, name, values, at) {
     if (!row.pr || !namesWriterPr(values.closed.trim(), row)) {
       throw new Error(`--closed ${values.closed} is not the PR on writer ${unit.writer ?? "(none)"}'s board row (${row.pr ? `${row.repo ?? ""}#${row.pr}` : "no PR recorded"}); a unit closes only with its own PR`);
     }
+    const review = unitReviewProblem(orchDir, name, unit);
+    if (review) throw new Error(`${review}; a unit closes only after every member and PRD criterion passed code review and visual QA`);
     unit.closed = { pr: `${row.repo ?? ""}#${row.pr}`, at };
     write(orchDir, board, `unit ${name} closed with ${unit.closed.pr}: ${unit.tickets.join(", ")}`, at);
     appendFileSync(path.join(orchDir, "resume-log.md"), `\n## ${at.slice(0, 16).replace("T", " ")}\n- Unit ${name} (${unit.writer ?? "no writer"}) closed with ${unit.closed.pr}: ${unit.tickets.join(", ")}\n`);
@@ -500,6 +515,8 @@ function main(argv) {
     for (const entry of duties) process.stdout.write(`UNOWNED-DUTY ${entry.duty} owner ${entry.owner} ${entry.why}\n`);
     const members = unitMemberProblems(board.units, board.writers, readSessionRecord);
     for (const line of members) process.stdout.write(`${line}\n`);
+    const reviews = unitReviewLines(orchDir, board);
+    for (const line of reviews) process.stdout.write(`${line}\n`);
     const missing = missingDuties(board, requiredDuties(orchDir));
     for (const duty of missing) process.stdout.write(`MISSING-DUTY ${duty}: give it an owner with board.mjs <orchDir> duty ${duty} --owner <writer or helper>\n`);
     const { unanswered, unacked } = lateQuestions(board, now);
@@ -522,8 +539,8 @@ function main(argv) {
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
     const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
     for (const line of home) process.stdout.write(`${line}\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${members.length} unit member problems${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
-    return members.length + commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${members.length} unit member problems, ${reviews.length} units unreviewed${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
+    return members.length + reviews.length + commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {

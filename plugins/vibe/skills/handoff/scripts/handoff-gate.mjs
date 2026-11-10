@@ -9,6 +9,12 @@
 // so a member added afterwards (`vibe-sessions.mjs touch --member-ticket`)
 // makes it stale. At PR creation the hook passes the command's `--title`, and
 // a title that leaves a member unnamed (or none) is refused there too.
+// A unit (member tickets or a PRD) also needs `--review <review.json>` and its
+// PRD as `--prd <slug>=<body>` (and any plan as `--plan`): the criteria audit
+// runs unit-review.mjs over them, so the PR opens only once every member and
+// PRD criterion passed code review and visual QA on each page and surface it
+// names. Their fingerprints join the witness, and `unitReviewPassed` records it
+// for vibe-core's ticket status guard.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -30,8 +36,13 @@ function fetchCurrentMain(worktree) {
   }
 }
 
+/** The criteria audit's unit review arguments: the review of the completed work and the PRD and plan bodies it reads. */
+export function unitReviewArgs({ review, prds = [], plans = [] }) {
+  return [...(review ? ["--review", review] : []), ...prds.flatMap((prd) => ["--prd", prd]), ...plans.flatMap((plan) => ["--plan", plan])];
+}
+
 /** Run the canonical inventory with PR body and verifier evidence before recording readiness. */
-export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix, members = [], title }, { runScript = spawnSync } = {}) {
+export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix, members = [], prds = [], plans = [], review, title }, { runScript = spawnSync } = {}) {
   const witness = gatePath(worktree);
   if (existsSync(witness)) unlinkSync(witness);
   fetchCurrentMain(worktree);
@@ -49,7 +60,7 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   if (ticket) {
     const criteria = runScript(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), "criteria-audit.mjs"),
       "--worktree", worktree, "--ticket", ticket, "--audit", audit, "--matrix", matrix, "--at", "head",
-      ...members.flatMap((member) => ["--member", member])], { encoding: "utf8" });
+      ...members.flatMap((member) => ["--member", member]), ...unitReviewArgs({ review, prds, plans })], { encoding: "utf8" });
     if (criteria.status !== 0) throw new Error(`acceptance criteria audit failed: ${criteria.stdout || criteria.stderr}`);
   }
   const args = [path.join(path.dirname(fileURLToPath(import.meta.url)), "handoff-inventory.mjs"),
@@ -64,24 +75,29 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   }
   const branch = execFileSync("git", ["-C", worktree, "branch", "--show-current"], { encoding: "utf8" }).trim();
   if (!sameSource(source, sourceIdentity(worktree))) throw new Error("source changed while the handoff gate ran");
-  const evidenceInputs = { body, runs, ticket, audit, matrix };
+  const evidenceInputs = { body, runs, ticket, audit, matrix, review };
   const evidence = Object.fromEntries(EVIDENCE_KEYS.filter(key => evidenceInputs[key]).map(key => [key, evidenceFingerprint(evidenceInputs[key])]));
-  if (members.length) evidence.members = members.map((member) => evidenceFingerprint(member.slice(member.indexOf("=") + 1)));
+  for (const [key, entries] of [["members", members], ["prds", prds], ["plans", plans]]) {
+    if (entries.length) evidence[key] = entries.map((entry) => evidenceFingerprint(entry.slice(entry.indexOf("=") + 1)));
+  }
   const boundReceipts = receipts.map(evidenceFingerprint);
   const finalMergeProblem = checkedMergeProblem(worktree, targets);
   if (finalMergeProblem) throw new Error(finalMergeProblem);
   const current = mergeTargets(worktree, base);
   if (current.base.oid !== targets.base.oid) throw new Error("PR base moved during the handoff gate");
   if (current.main?.oid !== targets.main?.oid) throw new Error("current main moved during the handoff gate");
-  writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts, memberTickets, inventoryPassed: true, prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
+  writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts, memberTickets, unitReviewPassed: Boolean(review), inventoryPassed: true, prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
   return { branch, source };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" }, member: { type: "string", multiple: true }, title: { type: "string" } } });
-  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file> [--member <slug>=<file> ...] [--title <PR title>]]");
+  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, title: { type: "string" } } });
+  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file> [--member <slug>=<file> ...] [--prd <slug>=<file> ...] [--plan <slug>=<file> ...] [--review <review.json>] [--title <PR title>]]");
   values.receipts = values.receipt;
   values.members = values.member ?? [];
+  values.prds = values.prd ?? [];
+  values.plans = values.plan ?? [];
+  if ((values.prds.length || values.plans.length || values.review) && !values.ticket) throw new Error("--prd, --plan and --review need --ticket, --audit and --matrix: the unit review runs inside the criteria audit");
   if (values.members.length && !values.ticket) throw new Error("--member needs --ticket, --audit and --matrix: member criteria are audited with the session's own ticket");
   process.stdout.write(`${JSON.stringify(recordHandoffGate(values))}\n`);
 }

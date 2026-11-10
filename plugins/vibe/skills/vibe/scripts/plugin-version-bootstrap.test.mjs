@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { VIBE_CORE_MIN } from "../../../shared/vibe-core.mjs";
 
 const VIBE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const APPROVE = "open Codex once and approve vibe-core's hooks in /hooks";
@@ -108,9 +109,9 @@ test("with a vibe-core older than this vibe needs, check says which version is i
   const check = f.run("skills/vibe/scripts/plugin-version.mjs", ["check", "--closedloop", "connected", "--graph", "connected"]);
   assert.equal(check.status, 0, check.stderr);
   const result = JSON.parse(check.stdout);
-  assert.equal(result.versions, "vibe-core: you have 0.9.0, this vibe needs 1.0.0 or newer");
+  assert.equal(result.versions, `vibe-core: you have 0.9.0, this vibe needs ${VIBE_CORE_MIN} or newer`);
   assert.deepEqual(result.block.split("\n").slice(1, 3), [
-    "- Codex: vibe-core 0.9.0 is older than this vibe needs (>= 1.0.0)",
+    `- Codex: vibe-core 0.9.0 is older than this vibe needs (>= ${VIBE_CORE_MIN})`,
     `- Codex: vibe's guards cannot load it: run \`${result.fix}\``,
   ]);
 });

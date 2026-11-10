@@ -4,6 +4,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 
 <!-- block: qa-gate-rules -->
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
+- A unit's PR is ready only once its review of the completed work passed (`references/ticket-units.md`, "Review the completed work"): every member and PRD criterion with a code row and a capture for each page and surface it names.
 - Each PR moves through independent review, fixes, verification, visual review where needed, one feature-complete QA pass, operator QA, one main merge, then enqueue.
 - QA evidence records screen, host, state and flag arm. Later diffs use handoff's `qa-impact.mjs` with importers, FEATURE_MAP and lanes. Obey its scope; `None` runs no local lane, screenshot, audit or critic. CI is per push. This also governs the final main merge before `shepherd.mjs`.
 - Off by default and an open owner decision: with `FLEET_REVIEW_HANDOFF_ONLY=1`, `node scripts/review-chain.mjs --pr-head <sha> --handoff-reviewed-head <sha the writer's handoff review reports covering>` prints `verify-fixes-only` when that review covered the PR's exact head, and the orchestrator then runs only the verification of the fixes in place of its own independent review. Any other output, an unset variable or a head that moved after the handoff review keeps the full chain above.

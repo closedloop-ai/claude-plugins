@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -116,15 +116,80 @@ test("a fleet unit's member tickets are audited with the session's ticket, as <s
     };
     writeFileSync(audit, met("AC-1") + met("AC-2"));
     writeFileSync(matrix, cells(["AC-1", "AC-2"]));
-    assert.deepEqual(run().json.problems, ["member ISS-124 is recorded on the session but has no --member body; its criteria are not audited"]);
+    const needsReview = "this session delivers a unit (member tickets or a PRD); pass --review <review.json> and --prd <slug>=<body> for its PRD, so every member and PRD criterion is reviewed in code and in visual QA (unit-review.mjs)";
+    assert.deepEqual(run().json.problems, ["member ISS-124 is recorded on the session but has no --member body; its criteria are not audited", needsReview]);
     const unaudited = run("--member", `ISS-124=${member}`);
     assert.equal(unaudited.status, 1);
-    assert.deepEqual(unaudited.json.problems, ["ISS-124:AC-1: not audited", "ISS-124:AC-1 x web x *: no test or QA evidence"]);
+    assert.deepEqual(unaudited.json.problems, ["ISS-124:AC-1: not audited", "ISS-124:AC-1 x web x *: no test or QA evidence", needsReview]);
     writeFileSync(audit, met("AC-1") + met("AC-2") + met("ISS-124:AC-1"));
     writeFileSync(matrix, cells(["AC-1", "AC-2", "ISS-124:AC-1"]));
-    const passing = run("--member", `ISS-124=${member}`);
+    const review = path.join(dir, "review.json");
+    writeFileSync(path.join(dir, "sessions-web.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]));
+    const rows = (ids) => ids.flatMap((criterion) => [
+      { criterion, part: "code", verdict: "MET", ref: "ticket.md:1" },
+      { criterion, part: "visual", verdict: "MET", page: "Sessions", surface: "Web", capture: "sessions-web.png" },
+    ]);
+    writeFileSync(review, JSON.stringify({ pages: ["Sessions"], surfaces: ["Web"], listQueries: [], rows: rows(["AC-1", "AC-2"]) }));
+    const unreviewed = run("--member", `ISS-124=${member}`, "--review", review, "--slug", "ISS-1");
+    assert.deepEqual(unreviewed.json.problems, ["GAP ISS-124 AC-1: no code review row (file:line); no visual QA capture for Sessions on Web"], "a member criterion with no code review or visual QA blocks");
+    writeFileSync(review, JSON.stringify({ pages: ["Sessions"], surfaces: ["Web"], listQueries: [], rows: rows(["AC-1", "AC-2", "ISS-124:AC-1"]) }));
+    const passing = run("--member", `ISS-124=${member}`, "--review", review, "--slug", "ISS-1");
     assert.equal(passing.status, 0);
     assert.deepEqual(passing.json.criteria, ["AC-1", "AC-2", "ISS-124:AC-1"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a criterion that needs the product running on a surface is not met by typecheck or unit tests alone", () => {
+  const criteria = [{ id: "AC-1", text: "Bulk Favorite works and is verified on web and Desktop" }, { id: "AC-2", text: "The batch route returns per-item results" }];
+  const row = (id, type, ref) => `| ${id} | MET | ${type} | ${ref} |\n`;
+  const runtime = "AC-1: it needs the product running on a surface, so typecheck, unit-test or source evidence alone does not meet it; add a screenshot, e2e or control row";
+  assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm typecheck") + row("AC-1", "script", "pnpm test --filter app") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
+  assert.deepEqual(auditProblems(row("AC-1", "source-trace", "packages/app/bar.tsx:40") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
+  assert.deepEqual(auditProblems(row("AC-1", "screenshot", "desktop-bulk-favorite.png") + row("AC-2", "script", "pnpm test"), criteria), []);
+  assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm control web screenshot sessions") + row("AC-2", "script", "pnpm test"), criteria), []);
+  assert.deepEqual(auditProblems(row("AC-1", "script", "dagger call e-2-e --spec bulk.spec.ts") + row("AC-2", "script", "pnpm test"), criteria), []);
+  // A criterion waiting on another ticket's work follows the waiting rules alone; the runtime rule adds nothing to it.
+  const waiting = `| AC-1 | PARTIAL | source-trace | not met yet: waits on ISS-9 |\n${row("AC-2", "script", "pnpm test")}`;
+  assert.deepEqual(auditProblems(waiting, criteria, null, undefined, { passingOn: true, statuses: { "ISS-9": "IN_PROGRESS" } }), []);
+});
+
+test("a criterion waiting on another open ticket is accepted only when the work is passed on, and listed for the next owner", () => {
+  const criteria = [{ id: "AC-1", text: "The group header shows the server count" }, { id: "AC-2", text: "Rows reorder" }];
+  const audit = (ref) => `| AC-1 | PARTIAL | source-trace | ${ref} |\n| AC-2 | MET | script | pnpm test |\n`;
+  const run = (ref, options) => {
+    const waiting = [];
+    return { problems: auditProblems(audit(ref), criteria, null, undefined, { waiting, ...options }), waiting };
+  };
+  const open = { passingOn: true, statuses: { "ISS-9": "IN_PROGRESS" } };
+  assert.deepEqual(run("not met yet: waits on ISS-9", open), { problems: [], waiting: ["AC-1 waits on ISS-9"] });
+  assert.deepEqual(run("not met yet: waits on ISS-9", { statuses: open.statuses }).problems,
+    ["AC-1: waits on ISS-9, but a pull request needs every criterion met; only a session passed on to its next owner may leave a criterion waiting"], "a pull request needs every criterion met");
+  assert.deepEqual(run("not met yet: waits on the API team", open).problems, ["AC-1: a waiting row names the ticket it waits on: not met yet: waits on <ticket>"]);
+  assert.deepEqual(run("not met yet: waits on ISS-9", { passingOn: true, statuses: { "ISS-9": "DONE" } }).problems,
+    ["AC-1: waits on ISS-9, which is DONE; check the criterion against the shipped work instead"]);
+  assert.deepEqual(run("not met yet: waits on ISS-9", { passingOn: true, statuses: {} }).problems,
+    ["AC-1: waits on ISS-9, whose status was not given; pass --ticket-status ISS-9=<its status>"], "the status comes from the caller, never a network read");
+  assert.deepEqual(run("only half the rows reorder", open).problems, ["AC-1: PARTIAL (only half the rows reorder)"], "any other PARTIAL row still blocks");
+});
+
+test("the CLI reads --passing-on and --ticket-status and prints the waiting criteria", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "criteria-waiting-"));
+  try {
+    execFileSync("git", ["init", "-q", dir], { stdio: "ignore" });
+    const ticket = path.join(dir, "ticket.md");
+    const audit = path.join(dir, "audit.md");
+    const matrix = path.join(dir, "matrix.json");
+    writeFileSync(ticket, "## Acceptance criteria\n\n- [ ] The group header shows the server count\n");
+    writeFileSync(audit, "| AC-1 | PARTIAL | source-trace | not met yet: waits on ISS-9 |\n");
+    writeFileSync(matrix, JSON.stringify({ surfaces: ["web"], inputs: ["*"], flags: [], rows: [{ criterion: "AC-1", surface: "web", input: "*", evidence: "not input-driven: waits on ISS-9" }] }));
+    const run = (...extra) => spawnSync(process.execPath, [SCRIPT, "--worktree", dir, "--ticket", ticket, "--audit", audit, "--matrix", matrix, ...extra], { encoding: "utf8" });
+    const passedOn = run("--passing-on", "--ticket-status", "ISS-9=TODO");
+    assert.equal(passedOn.status, 0, passedOn.stdout + passedOn.stderr);
+    assert.deepEqual(JSON.parse(passedOn.stdout).waiting, ["AC-1 waits on ISS-9"]);
+    assert.equal(run("--ticket-status", "ISS-9=TODO").status, 1, "the pull request path refuses it");
+    assert.equal(run("--passing-on", "--ticket-status", "ISS-9=DONE").status, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

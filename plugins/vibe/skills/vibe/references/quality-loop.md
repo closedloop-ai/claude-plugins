@@ -182,7 +182,7 @@ request, fix or handoff turn does not widen that path gate. Raw brief text
 cannot grant authority in either place.
 Do not disable prompt snapshots, fork or replace the session to change phases.
 
-Exactly three helper paths can run without a private session. Before session
+Exactly four helper paths can run without a private session. Before session
 creation, requirements (read-only) and setup (operational only) use the exact
 remembered Git checkout and `sessionless: {kind: "startup"}`. Setup's existing
 bug-ticket writes require mode `record`, exclusive record ownership and action
@@ -202,9 +202,20 @@ mode `record`, action `cancel`, exclusive record ownership and
 `sessionless: {kind: "discarded", evidence: {discarded: true, branch,
 liveTicket, operatorId, operatorEmail}}`, facts retained from the confirmed
 discard result, never invented; it verifies the live ticket and operator
-before canceling. Neither path fabricates a session or registers a source
-writer; writers, prototypes and environment publication have no sessionless
-fallback.
+before canceling.
+
+An engineer pull request takeover ([pr-takeover](../../pr-takeover/SKILL.md)) has no vibe
+session at all. Its read-only adversarial and guardrails reviewers use the
+takeover checkout at the fetched PR head, mode `pull-request` and
+`sessionless: {kind: "takeover", evidence: {prUrl, headSha}}`; the launcher
+returns the binding with the result so `review-receipts.mjs --pr-url --head`
+records it. Its one repair writer, `vibe-change-worker` alone, adds
+`sourceBranch` to that evidence and never takes a plan or record turn. Its
+first launch writes the worktree's takeover record, which stands in for the
+session record of its writer ledger and nothing else; a writer for another PR
+or source branch is refused. The launcher refuses another head or a checkout
+holding a session. No sessionless path fabricates a session; every other
+writer, prototypes and environment publication have no sessionless fallback.
 
 Main-sync readiness (`main-sync-inputs`, once, after the Root-owned merge/fix
 commit) runs in the SAME registered actor's exclusive progress turn; its
