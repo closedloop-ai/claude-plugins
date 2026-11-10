@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Agent|SendMessage|Skill|AskUserQuestion|request_user_input|request_user_input_async",
+        "matcher": "Bash|Agent|SendMessage|Skill|mcp__closedloop__update-document|AskUserQuestion|request_user_input|request_user_input_async",
         "hooks": [
           {
             "type": "command",

@@ -77,7 +77,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 
 - Before assigning work or ruling between PRs, check `query_collisions` and `blast_radius_tickets`, read PRD lineage with `ticket_detail`, and resolve tickets to screen map entries when the repo publishes them. Shared entries count as overlap across files; assign one owner or an explicit merge order.
 - Every status sweep includes the current `rulings.md` text, the PR-number-to-ticket resolutions, and the live BLOCKS links in the `status-audit.mjs` snapshot. Fix every `SEQUENCING-BLOCKS-MISSING` finding by creating and confirming that blocker-to-blocked link; report `SEQUENCING-UNRESOLVED` references instead of skipping them.
-- Before dispatching a ticket, and in every QA-prep brief, run vibe's newest-ruling search ([requirements worker](../../agents/vibe-requirements-worker.md), Newest ruling); on a hit, stop and ask the operator.
+- Before dispatching a ticket, and in every QA-prep brief, run vibe's newest-ruling search ([requirements worker](../../agents/vibe-requirements-worker.md), Newest ruling); on a hit, stop and ask the operator. It needs no vibe session. In Claude Code, run the requirements worker through the launcher in sessionless startup mode, never through the native Agent tool and never as a general worker in its place: `node ../vibe/scripts/dist/claude-worker.mjs` with one JSON object on stdin, `{"worktree": "<checkout root>", "agentName": "vibe-requirements-worker", "mode": "request", "requestId": "<id>", "input": "<brief>", "capabilities": [<every graph and live read you can see>], "sessionless": {"kind": "startup"}}`.
 - In the same step, check every plan linked to the ticket (`list-artifact-links`, PRODUCES) with `node ../handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`. Each exclusion it reports is scope the brief tells the writer to build, or you escalate; never one to skip.
 - Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
@@ -90,7 +90,8 @@ Related tickets go to one writer, one branch and one PR; each keeps its own crit
 1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates (each with its PRD and whether the operator is its assignee) and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
 2. Tell the operator its lines: one per unit, with what joined, what stayed apart and why.
 3. Record each unit with `board.mjs <orchDir> unit`; fold a related ticket into the running writer, never a second one.
-4. Move each ticket yourself (In Progress at start, In Review at PR open, Done at merge), audit with `status-audit.mjs --board`, and close the unit with `board.mjs <orchDir> unit <name> --closed <PR>` once every member is reconciled.
+4. Before calling the unit ready, record its review of the completed work: `../handoff/scripts/unit-review.mjs ... --record <orchDir> --unit <name>`. Every member criterion and the PRD's criteria for the touched pages each need a code review row and a visual QA capture per page and surface it names. Send its `GAP` lines to the operator by ticket and criterion number; the unit is not ready until there are none.
+5. Move each ticket yourself (In Progress at start, In Review at PR open once the review passed, Done at merge), audit with `status-audit.mjs --board`, and close the unit with `board.mjs <orchDir> unit <name> --closed <PR>` once every member is reconciled; both refuse a unit without a passing review.
 
 ## State and persistence
 

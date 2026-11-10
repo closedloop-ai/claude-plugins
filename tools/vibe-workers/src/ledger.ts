@@ -23,7 +23,11 @@ export function checkoutLocation(worktree: string) {
 
 /** Implementation and publishing always require the real private session's exact branch and checkout. */
 export function location(worktree: string) {
-  const place = checkoutLocation(worktree);
+  return sessionPlace(checkoutLocation(worktree));
+}
+
+/** The session check of `location` for a checkout the caller already resolved. */
+export function sessionPlace(place: ReturnType<typeof checkoutLocation>) {
   const record = z.object({ worktree: z.string().optional(), branch: z.string() }).passthrough().parse(
     JSON.parse(readFileSync(join(place.dir, "vibe-session.json"), "utf8")),
   );
@@ -33,7 +37,7 @@ export function location(worktree: string) {
 
 /** Compact identity only; private queued inputs remain in git metadata. */
 export function readWriterSummary(worktree: string) {
-  const place = location(worktree);
+  const place = writerLocation(worktree);
   if (!existsSync(place.file)) return undefined;
   const ledger = readLedger(place);
   return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
@@ -58,7 +62,7 @@ function recordedDefinitionState(ledger: Ledger): "present" | "removed" | "chang
 /** The persistent writer's recorded definition root, so a resumed writer keeps its binding; undefined without one. */
 export function recordedWriterRoot(worktree: string): string | undefined {
   try {
-    const place = location(worktree);
+    const place = writerLocation(worktree);
     return existsSync(place.file) ? readLedger(place).binding.agentRoot : undefined;
   } catch { return undefined; }
 }
@@ -81,7 +85,7 @@ function definitionUpgradeEvidence(ledger: Ledger, installedRoot: string) {
 
 /** Read-only upgrade decision for the installed Claude launcher; migration uses the same evidence under the ledger lock. */
 export function readWriterUpgradeEvidence(worktree: string, installedRoot: string) {
-  return definitionUpgradeEvidence(readLedger(location(worktree)), installedRoot);
+  return definitionUpgradeEvidence(readLedger(writerLocation(worktree)), installedRoot);
 }
 
 /** Checks the existing active source lease atomically without returning private request text. */
@@ -117,7 +121,7 @@ export function registerWriter(input: unknown) {
   const definition = readDefinition(data.agentRoot, data.agentName, data.capabilities);
   if (data.agentName !== "vibe-change-worker") throw new Error("Session writer must be vibe-change-worker");
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
-  const place = location(data.worktree);
+  const place = writerLocation(data.worktree);
   return locked(place, () => {
     if (existsSync(place.file)) {
       const ledger = readLedger(place);
@@ -252,7 +256,7 @@ function isNewerRelease(current: string, previous: string) {
 /** Serialized mutations preserve active requests across review, person and commit continuations. */
 export function changeWriter(action: "enqueue" | "claim" | "finish", input: unknown) {
   const data = actionSchema.parse(input);
-  const place = location(data.worktree);
+  const place = writerLocation(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (data.workerId !== ledger.workerId) throw new Error("Request must name the registered persistent writer");
@@ -364,7 +368,7 @@ export function releaseRecordTurnAt(place: ReturnType<typeof checkoutLocation>, 
 
 /** Keeps the actual owned Claude group in the turn, not the short-lived coordinator CLI PID. */
 export function attachClaudeProcess(worktree: string, workerId: string, lease: string, processGroupId: number) {
-  const place = location(worktree);
+  const place = writerLocation(worktree);
   locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== "claude" || ledger.workerId !== workerId || ledger.active?.lease !== lease) {
@@ -377,7 +381,7 @@ export function attachClaudeProcess(worktree: string, workerId: string, lease: s
 
 /** Marks the first launch before spawning; failed startup never silently creates a second session. */
 export function markClaudeStarted(worktree: string, workerId: string, lease: string) {
-  const place = location(worktree);
+  const place = writerLocation(worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== "claude" || ledger.workerId !== workerId || ledger.active?.lease !== lease) {
@@ -439,4 +443,47 @@ function proveGroupStopped(processGroupId: number) {
     throw new Error("Unable to prove the owned process group stopped; retain the lease");
   }
   throw new Error("Owned process group is still running; retain the lease");
+}
+
+const TAKEOVER_RECORD = "vibe-takeover.json";
+const takeoverRecordSchema = z.object({ version: z.literal(1), kind: z.literal("takeover"), worktree: z.string().min(1),
+  branch: z.string().min(1), prUrl: z.string().min(1), headSha: z.string().regex(/^[0-9a-f]{40}$/),
+  sourceBranch: z.string().min(1) }).strict();
+export type TakeoverBinding = Pick<z.infer<typeof takeoverRecordSchema>, "prUrl" | "headSha" | "sourceBranch">;
+
+/**
+ * The persistent writer's ledger lives beside the private session record, or, in an engineer PR takeover with no
+ * session, beside the launcher-written takeover record that stands in for it. Every other session operation keeps
+ * requiring the real session record through `location`.
+ */
+function writerLocation(worktree: string) {
+  const place = checkoutLocation(worktree);
+  const file = join(place.dir, TAKEOVER_RECORD);
+  if (existsSync(join(place.dir, "vibe-session.json")) || !existsSync(file)) return sessionPlace(place);
+  const record = takeoverRecordSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+  if (realpathSync(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Takeover worktree or branch changed");
+  return place;
+}
+
+/**
+ * Binds one takeover worktree to one pull request and source branch before its writer registers. The first launch
+ * writes the record; a later launch for another pull request or source branch is a second writer and is refused.
+ */
+export function bindTakeoverWriter(worktree: string, binding: TakeoverBinding) {
+  const place = checkoutLocation(worktree);
+  const file = join(place.dir, TAKEOVER_RECORD);
+  const record = { version: 1 as const, kind: "takeover" as const, worktree: place.root, branch: place.branch, ...binding };
+  return locked(place, () => {
+    if (!existsSync(file)) {
+      if (existsSync(place.file)) throw new Error("Takeover worktree already has a writer from another binding");
+      writeFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: "wx" });
+      return record;
+    }
+    const existing = takeoverRecordSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+    if (existing.worktree !== record.worktree || existing.branch !== record.branch || existing.prUrl !== record.prUrl
+      || existing.sourceBranch !== record.sourceBranch) {
+      throw new Error("Takeover worktree already has a writer bound to another pull request or source branch");
+    }
+    return existing;
+  });
 }

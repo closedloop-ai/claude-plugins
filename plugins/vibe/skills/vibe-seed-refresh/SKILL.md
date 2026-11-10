@@ -31,10 +31,11 @@ which prints short JSON. No worker commits. A commit the hook refused
 error, then you commit again. Workers return a short status (`DONE`,
 `BLOCKED`, or `DRIFT` / `CLEAN` from the check worker).
 
-Workers are this plugin's agents (`../../agents/<name>.md`; in Codex spawn a
+Workers are this plugin's agents (`../../agents/<name>.md`): spawn a Codex
 subagent with the file's body as its instructions and the `model` and
 `reasoning_effort` that `node ../vibe/scripts/worker-model.mjs codex <name>`
-prints, in Claude Code use `vibe:<name>`). Every worker uses closedloop-graph first, per
+prints. Seed refresh has no Claude Code worker path: the vibe agent guard
+refuses these workers there. Every worker uses closedloop-graph first, per
 `../vibe/references/closedloop-graph.md`; say so in each brief.
 
 | Worker | Job |
@@ -57,8 +58,7 @@ means `checking`.
 Dispatch `vibe-seed-check-worker` with the repository checkout path: the
 `repo` from `node ../vibe/scripts/vibe-sessions.mjs repo`, the checkout the
 vibe preflight remembered (if none is remembered, run
-`../vibe/scripts/vibe-preflight.sh --runtime codex` in Codex, or
-`../vibe/scripts/vibe-preflight.sh --runtime claude` in Claude Code, once; it
+`../vibe/scripts/vibe-preflight.sh --runtime codex` once; it
 finds and remembers it). Quote
 the path in every brief; it can contain spaces. It
 returns `CLEAN` with the main SHA, or `DRIFT` with the drift list. On `CLEAN`,
