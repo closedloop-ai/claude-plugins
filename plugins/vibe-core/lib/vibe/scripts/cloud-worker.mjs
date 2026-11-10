@@ -4,6 +4,7 @@
  * to the original Vibe worktree. The existing handoff gate remains the PR gate.
  *
  * Usage: cloud-worker.mjs record-evidence|brief|dispatch|poll|import|followup|refresh-import|ready|validate --request <json>
+ *        cloud-worker.mjs check [--request <json>]
  * Request fields: worktree, ticket, provider, model, reservedVersion, branch,
  * placement {codeOnly, needsRunningApp, localEvidence[]}, criteria
  * [{id, source, text}], graph {ownership, collisions, blastRadius},
@@ -18,6 +19,10 @@
  * repository, for its origin check and receipt). It runs the lanes on that
  * exact commit, changes nothing, and refuses a result bound to another commit
  * or showing a changed file.
+ * A Claude dispatch runs in the environment cloud-environment.mjs resolves
+ * (request `claudeEnvironment`, VIBE_CLOUD_CLAUDE_ENV, then CLOUD_CLAUDE_ENV in
+ * the fleet home's config.env) and is refused with a named error without one.
+ * `check` reports the environment, the API and its fixes; exit 1 on a failure.
  */
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -29,8 +34,8 @@ import { decideCloudPlacement } from "../../fleet-orchestrator/scripts/cloud-pla
 import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from "./session-record.mjs";
 import { gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
 import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
+import { checkCloudSetup, createRefusal, resolveClaudeEnvironment, runNotCreated } from "./cloud-environment.mjs";
 
-const CLAUDE_ENVIRONMENT = "env_01V3WaRD75hgdYdtKUQZz8MW";
 const CODEX_ENVIRONMENT = "claude-plugins";
 const MAX_WALL_MS = 35 * 60 * 1000;
 const DEFAULT_WALL_MS = 35 * 60 * 1000;
@@ -43,7 +48,8 @@ const CHECK_ENTRY_POINT = /^(?:uv run |node |pnpm |ruff |pyright|pytest )/;
 const SHELL_CONTROL = /[;&|`$<>\n]/;
 const INSTALL = { "closedloop-ai/claude-plugins": "uv sync --frozen --group dev", "closedloop-ai/symphony-alpha": "pnpm install --frozen-lockfile" };
 const RESULT_MARKER = "VIBE_VALIDATION_RESULT";
-const RESULT_LINE = /^VIBE_VALIDATION_RESULT (\{.*\})\s*$/gm;
+// The condensed run log folds a message onto one line, so the marker need not start one.
+const RESULT_LINE = /VIBE_VALIDATION_RESULT (\{.*\})\s*$/gm;
 
 /** Run one argv command without a shell, preserving pending exit codes for the caller. */
 export function runCommand(command, args, { cwd, timeout = COMMAND_MS } = {}) {
@@ -172,21 +178,32 @@ export function remoteTrigger(action, payload, { run = runCommand, cwd } = {}) {
   if (!toolId || !toolResult) throw new Error(`RemoteTrigger ${action} returned no verified tool result`);
   const body = typeof toolResult === "string" ? toolResult : Array.isArray(toolResult) ? toolResult.map((item) => item.text ?? "").join("\n") : "";
   const [statusLine, jsonLine] = body.split("\n");
-  if (statusLine !== "HTTP 200" || !jsonLine) throw new Error(`RemoteTrigger ${action} failed: ${firstLine(body)}`);
-  return parseJsonOutput(jsonLine, `RemoteTrigger ${action}`);
+  if (statusLine !== "HTTP 200" || !jsonLine) {
+    const status = Number(/^HTTP (\d{3})\b/.exec(statusLine ?? "")?.[1]);
+    throw Object.assign(new Error(`RemoteTrigger ${action} failed: ${firstLine(body)}`), Number.isInteger(status) ? { httpStatus: status } : {});
+  }
+  const parsed = parseJsonOutput(jsonLine, `RemoteTrigger ${action}`);
+  // get_run_log answers with a JSON header line, then the condensed log as text.
+  return action === "get_run_log" ? { ...parsed, log: body.split("\n").slice(2).join("\n") } : parsed;
 }
 
-/** Create a one-time routine, remove auto-attached connectors, then fire it. */
-export function startClaude(request, brief, { remote = remoteTrigger, name = `${request.ticket} cloud worker` } = {}) {
+/** Create a one-time routine in the resolved environment, remove auto-attached connectors, then fire it. */
+export function startClaude(request, brief, { remote = remoteTrigger, name = `${request.ticket} cloud worker`, env = process.env } = {}) {
+  const environment = resolveClaudeEnvironment(request, { env });
   const sessionId = randomUUID();
-  const created = remote("create", { body: {
-    name, enabled: false, run_once_at: new Date(Date.now() + MAX_WALL_MS).toISOString(),
-    job_config: { ccr: {
-      environment_id: CLAUDE_ENVIRONMENT,
-      session_context: { model: request.model, sources: [{ git_repository: { url: `https://github.com/${request.repository ?? "closedloop-ai/claude-plugins"}` } }], allowed_tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"] },
-      events: [{ data: { uuid: randomUUID(), session_id: sessionId, type: "user", parent_tool_use_id: null, message: { role: "user", content: brief } } }],
-    } }, mcp_connections: [],
-  } });
+  let created;
+  try {
+    created = remote("create", { body: {
+      name, enabled: false, run_once_at: new Date(Date.now() + MAX_WALL_MS).toISOString(),
+      job_config: { ccr: {
+        environment_id: environment.id,
+        session_context: { model: request.model, sources: [{ git_repository: { url: `https://github.com/${request.repository ?? "closedloop-ai/claude-plugins"}` } }], allowed_tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"] },
+        events: [{ data: { uuid: randomUUID(), session_id: sessionId, type: "user", parent_tool_use_id: null, message: { role: "user", content: brief } } }],
+      } }, mcp_connections: [],
+    } });
+  } catch (error) {
+    throw createRefusal(error, environment, remote);
+  }
   const routineId = created?.trigger?.id;
   if (!routineId) throw new Error("RemoteTrigger create returned no routine id");
   const cleared = remote("update", { trigger_id: routineId, body: { clear_mcp_connections: true } });
@@ -203,7 +220,7 @@ export function startClaude(request, brief, { remote = remoteTrigger, name = `${
   const runId = started?.run_id ?? started?.run?.id ?? started?.session_id;
   const cloudSessionId = started?.session_id ?? null;
   if (!runId) throw new Error("RemoteTrigger run returned no run or session id");
-  return { provider: "claude", taskId: runId, runId, sessionId: cloudSessionId, routineId, startedAt: new Date().toISOString() };
+  return { provider: "claude", taskId: runId, runId, sessionId: cloudSessionId, routineId, environment, startedAt: new Date().toISOString() };
 }
 
 /** Submit to the legacy Codex Cloud environment; the selected output branch lives in the brief. */
@@ -239,7 +256,7 @@ export async function pollTask(receipt, request, { codex = codexStatus, remote =
     else {
       const listed = remote("list_runs", { trigger_id: receipt.routineId });
       const run = listed?.data?.find((item) => item.id === (receipt.runId ?? receipt.taskId));
-      if (!run) throw new Error("Claude routine did not list the started run");
+      if (!run) throw runNotCreated(receipt.routineId, receipt.environment ?? { id: "(not recorded)", source: "an older receipt" }, request.repository ?? "closedloop-ai/claude-plugins", remote);
       const remoteStatus = String(run.status ?? "").toLowerCase();
       const workerStatus = String(run.worker_status ?? "").toLowerCase();
       state = { status: remoteStatus === "active" && workerStatus === "idle" ? "completed" : remoteStatus === "active" ? "running" : remoteStatus, sessionId: run.session_id ?? receipt.sessionId ?? (receipt.runId ? null : run.id) };
@@ -479,6 +496,12 @@ export function followupClaude(sessionId, message, { run = runCommand, cwd, time
 async function main(argv) {
   const [action, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: { request: { type: "string" }, "evidence-file": { type: "string" }, "body-file": { type: "string" }, "session-id": { type: "string" }, message: { type: "string" } } });
+  if (action === "check") {
+    const request = values.request ? JSON.parse(readFileSync(values.request, "utf8")) : {};
+    const result = checkCloudSetup(request, { remote: (name, input) => remoteTrigger(name, input, { cwd: request.worktree }) });
+    if (!result.ok) process.exitCode = 1;
+    return result;
+  }
   if (!values.request) throw new Error("--request <json> is required");
   const raw = JSON.parse(readFileSync(values.request, "utf8"));
   if (action === "validate") return validateCommit(raw);
@@ -526,7 +549,7 @@ async function main(argv) {
     return result;
   }
   if (action === "ready") return readyForPr(request, { bodyFile: values["body-file"] });
-  throw new Error("action must be brief, dispatch, poll, import, followup, ready or validate");
+  throw new Error("action must be brief, dispatch, poll, import, followup, ready, validate or check");
 }
 
 /** Check a validation-only request; Codex Cloud returns no task report to bind lane results to. */

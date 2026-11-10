@@ -279,7 +279,7 @@ test('AC-2: generated brief embeds sourced criteria, local graph findings and re
 });
 
 test('AC-1: Claude clears auto-attached connectors before run and refuses an unconfirmed allow list', () => {
-  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', connectorAllowlist: [] };
+  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', connectorAllowlist: [], claudeEnvironment: 'env_01TestRequest' };
   const calls = [];
   const remote = (action, payload) => {
     calls.push({ action, payload });
@@ -290,7 +290,7 @@ test('AC-1: Claude clears auto-attached connectors before run and refuses an unc
   assert.equal(startClaude(request, 'brief', { remote }).taskId, 'run_1');
   assert.deepEqual(calls.map((call) => call.action), ['create', 'update', 'run']);
   assert.equal(calls[1].payload.body.clear_mcp_connections, true);
-  assert.equal(calls[0].payload.body.job_config.ccr.environment_id, 'env_01V3WaRD75hgdYdtKUQZz8MW');
+  assert.equal(calls[0].payload.body.job_config.ccr.environment_id, 'env_01TestRequest');
   assert.equal(calls[0].payload.body.job_config.ccr.session_context.model, request.model);
   assert.throws(() => startClaude(request, 'brief', { remote: (action) => action === 'create' ? { trigger: { id: 'routine_2', mcp_connections: [{ name: 'Slack' }] } } : { trigger: { mcp_connections: [{ name: 'Slack' }] } } }), /connector clearing/);
   assert.throws(() => validateRequest({ ...request, connectorAllowlist: ['slack'] }), /connector allow list/);
@@ -377,7 +377,7 @@ test('AC-3: Claude active session becomes complete only when its worker is idle'
 });
 
 test('DT-14: Claude uses run ID for list matching and a distinct session ID for logs', async () => {
-  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', claudeEnvironment: 'env_01TestRequest' };
   const started = startClaude(request, 'brief', { remote: (action) => {
     if (action === 'create') return { trigger: { id: 'routine_1', mcp_connections: [] } };
     if (action === 'update') return { trigger: { mcp_connections: [] } };

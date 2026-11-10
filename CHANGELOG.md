@@ -6,8 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe-core v1.0.4
 
+#### Fixed
+- The Claude cloud worker no longer sends a hard-coded environment id (ISS-13963). The first real dispatch failed with HTTP 401 because that id was not the operator's. New `lib/vibe/scripts/cloud-environment.mjs` resolves it from the request's `claudeEnvironment`, then `VIBE_CLOUD_CLAUDE_ENV`, then `CLOUD_CLAUDE_ENV` in the fleet home's `config.env`. With none, `CLOUD_ENV_MISSING` refuses before any RemoteTrigger call; a malformed id is `CLOUD_ENV_INVALID`. The receipt records the environment and where it came from. The RemoteTrigger API has no environment list, so nothing is discovered.
+- A refused create is named. HTTP 401 or 403 while the account's routine list still answers, or HTTP 404, is `CLOUD_ENV_UNKNOWN`; a refused list too is `CLOUD_AUTH_REFUSED` (sign in again with /login). A fired run that never appears in `list_runs`, which the API leaves when repository access, the token preflight or environment lookup fails, is `CLOUD_RUN_NOT_CREATED`. It quotes the routine's reported last run and names the fix: connect GitHub to the Claude account with access to the repository, and confirm the environment. Each message carries its fix, and nothing falls back to local.
+- `cloud-worker.mjs validate` now reads the worker's result. Its first real run checked out the commit and passed its lane, then failed with "returned no result line": `remoteTrigger` kept only the JSON header line of `get_run_log`, dropping the condensed log after it, and the result pattern required the marker to start a line, while the condensed log folds the final message onto one line. `remoteTrigger` now returns that log as `log`, and the marker is matched anywhere on its line; the commit, lane and clean-tree checks are unchanged.
+
+#### Added
+- `cloud-worker.mjs check [--request <json>]` reports the environment and its source, whether the routine API answers, whether a routine on the account already runs in that environment (otherwise it is unverified, and the environments the account's routines use are listed), and that GitHub connection cannot be checked before a run. It exits 1 on a failure. `remoteTrigger` now carries the HTTP status of a refused call.
+
 #### Changed
-- `lib/fleet-orchestrator/scripts/fleet-home.test.mjs` records the ticket placement that vibe 1.1.80's `board.mjs writer` now needs before its shape case starts a writer. No vibe-core code changes.
+- `lib/fleet-orchestrator/scripts/fleet-home.test.mjs` records the ticket placement that vibe 1.1.80's `board.mjs writer` now needs before its shape case starts a writer, and the cloud-worker tests send a request environment.
 
 ### vibe v1.1.80
 
@@ -19,9 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - fleet-orchestrator's Cloud workers section states one rule: the placement is recorded before every writer start or fold, whatever the off-by-default runtime routing says, an imported cloud task given a local writer row records `--keep-local "cloud import <task id>"`, and names the check's location in vibe-core (`lib/fleet-orchestrator/scripts/cloud-placement.mjs`) and the cloud worker's (`lib/vibe/scripts/`). The routing line says it never decides placement. The new-chat steps (references/state.md) and the setup checklist (references/setup.md) name the same location, and the writer row usage names `--tickets`.
-- Existing board, fleet-home and snapshot tests record a local placement for the ticket their writers start on.
+- Existing board, fleet-home and snapshot tests record a local placement for the ticket their writers start on, and the vibe-triage cloud tests send a request environment and assert that it is the one sent.
+- fleet-orchestrator's Cloud workers section and setup checklist say to configure the Claude cloud environment (`VIBE_CLOUD_CLAUDE_ENV` or `CLOUD_CLAUDE_ENV`) and run `cloud-worker.mjs check` before the first dispatch.
 - The README version line and the Python and vibe-bench release-pin tests move to 1.1.80.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 112 words longer than in 1.1.79 (origin/main at this update, 397210d7).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 153 words longer than in 1.1.79 (origin/main at this update, 397210d7).
 ### vibe-core v1.0.3
 
 #### Added
