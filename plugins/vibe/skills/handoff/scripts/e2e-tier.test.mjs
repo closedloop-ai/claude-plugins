@@ -72,9 +72,11 @@ test("ISS-13846 AC-3 remote tier carries only an exact-head Desktop displayless 
   const bytes = JSON.stringify(receipt);
   writeFileSync(path.join(dir, "probe.json"), bytes);
   capability.remote.desktopHarness.receipt = { path: "probe.json", sha256: createHash("sha256").update(bytes).digest("hex") };
-  assert.equal(specExecutionLimitation(capability, desktop, commit), null,
-    "a caller-authored self-hashed receipt without selected-runner execution provenance is not authority");
   capability.remote.runnerHost = "selected-second-laptop";
+  // The runner is fully specified, so only the receipt could carry the claim; a probe that cannot run refuses it.
+  assert.equal(specExecutionLimitation(capability, desktop, commit,
+    () => ({ exitCode: 255, output: "ssh: connect to host selected-second-laptop port 22: Connection refused" })), null,
+    "a caller-authored self-hashed receipt without selected-runner execution provenance is not authority");
   const calls = [];
   const unavailable = { kind: "selected-runner-desktop-capability/v2", head: commit,
     worktree: capability.remote.runnerWorktree, platform: "darwin", linuxHarness: false };

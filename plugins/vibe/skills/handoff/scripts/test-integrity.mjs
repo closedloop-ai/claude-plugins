@@ -29,7 +29,9 @@ const NOT_BUSY = new RegExp([
   String.raw`:not\(\s*\[\s*aria-busy(?:\s*=\s*["']?true["']?)?\s*\]\s*\)`,
   String.raw`!\s*(?:[A-Za-z_$][\w$]*\??\.)*(?:is)?(?:busy|loading)\b`,
   String.raw`(?:[A-Za-z_$][\w$]*\??\.)*(?:is)?(?:busy|loading)\s*(?:===?\s*false|!==?\s*true)\b`,
-].join("|"), "gi");
+].join("|"), "i");
+// Any other negation in a busy-state count (`:not(...)`, `hasNot`, `hasNotText`) also keeps the layout check.
+const BUSY_NEGATION = /:not\(|\bhasNot(?:Text)?\b/i;
 const PROOF_CLASSES = new Set(["responsive", "absence", "layout"]);
 const SHA = /^[a-f0-9]{40}$/;
 
@@ -187,7 +189,7 @@ export function testIntegrityCandidates(files, read) {
           "changed assertion claims an element is absent", entry.text.trim(), "",
           `${file.path}:${entry.line}:${entry.text.search(/\S/) + 1}`));
       }
-      if (COUNT_ONE.test(entry.text) && !BUSY_STATE.test(entry.text.replace(NOT_BUSY, ""))
+      if (COUNT_ONE.test(entry.text) && !busyStateCount(entry.text)
         && LAYOUT_SURFACE.test(`${file.path}\n${nearby(sourceLines, entry.line, 16)}`)) {
         found.push(candidate("layout", file.path, entry.line, caseName,
           "card, metric, or summary coverage asserts only one element"));
@@ -262,7 +264,8 @@ function runnerAssertionAt(failure, actualLine, actualColumn, expectedLine, expe
 
 /** Storybook's instrumenter can map a matcher to the story object or helper call; a verified adjacent mutation restores identity. */
 function instrumentedStoryAssertion(failure, proof, source, receipt) {
-  if (!STORY_FILE.test(proof.path) || !source || !receipt.mutationEditVerified) return false;
+  // The edit is positioned against this story's source, so it must mutate this story file.
+  if (!STORY_FILE.test(proof.path) || !source || !receipt.mutationEditVerified || receipt.target !== proof.path) return false;
   // Storybook's proxy stack has no assertion coordinate. A role query can
   // target several scopes with the same role, so its proxy trace alone cannot
   // establish which query executed. Require the runner's source coordinate.
@@ -288,15 +291,14 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
   const queriedText = /\bqueryByText\(\s*([^)]+)\)/.exec(proof.assertionLine)?.[1]?.trim();
   const directValue = /^expect\(\s*([A-Za-z_$][\w$]*)\s*\)/.exec(proof.assertionLine)?.[1];
   if (queriedText && !edit.new.includes(queriedText) || directValue && !edit.new.includes(directValue)) return false;
-  // A later same-matcher assertion over the same query in this block could be the one that
-  // failed (a broader scope sees the mutation too), and the instrumenter cannot tell them apart.
-  const blockEnd = source.slice(assertionStart + 1).search(/^\s*(?:export\s+const\s|(?:export\s+)?(?:async\s+)?function\s)/m);
-  const following = source.slice(assertionStart + proof.assertionLine.length,
-    blockEnd < 0 ? source.length : assertionStart + 1 + blockEnd);
-  if (matcher && laterAssertionCouldFail(source, following, matcher, {
+  // Any other same-matcher assertion that runs after the mutation in this block, or after a call to
+  // this candidate's helper, could be the one that failed; the instrumenter cannot tell them apart.
+  const ambiguity = matcher && {
     query: queriedText === undefined ? undefined : queryKey(queriedText), variable: directValue,
     inserted: edit.new.slice(commonPrefix, edit.new.length - commonSuffixLength(edit.old, edit.new, commonPrefix)),
-  })) return false;
+  };
+  const region = `${source.slice(insertion, assertionStart)}\n${source.slice(assertionStart + proof.assertionLine.length, blockEndAt(source, assertionStart))}`;
+  if (matcher && laterAssertionCouldFail(source, region, matcher, ambiguity)) return false;
   const directMatcher = matcher && new RegExp(`^\\s*❯\\s+${matcher}\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?:\\d+:\\d+`, "m").test(failure);
   const instrumentedMatcher = matcher && new RegExp(`^\\s*❯\\s+Proxy\\.${matcher}\\s+node_modules/`, "m").test(failure);
   if ((!directMatcher && !instrumentedMatcher)
@@ -313,18 +315,21 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
   if (Number.isInteger(frameLine) && frameLine !== line && (/\bexpect\s*\(/.test(source.split("\n")[frameLine - 1] ?? "")
     || runnerFrame && parsedAssertions(source, [{ line: frameLine }]).some((other) => other.line !== line))) return false;
   let story = null;
-  for (const declaration of source.matchAll(/^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+)/gm)) {
+  let helper = null;
+  for (const declaration of source.matchAll(/^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*))/gm)) {
     if (lineNumberAt(source, declaration.index) > line) break;
     story = declaration[1] ?? null;
+    helper = declaration[2] ?? null;
   }
-  if (story) {
-    const spaced = story.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // The header names exactly this story, never a sibling whose name it prefixes.
-    return new RegExp(`^\\s*FAIL\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?\\s+>\\s+${spaced}\\s*(?:>|$)`, "m").test(failure);
+  if (!story && helper) {
+    // A helper candidate runs inside its calling stories: each must name the run, and nothing a
+    // caller asserts after the call may share the ambiguity.
+    const callers = helperCallerStories(source, helper);
+    if (callers.some(({ after }) => matcher && laterAssertionCouldFail(source, after, matcher, ambiguity))) return false;
+    return callers.some(({ name }) => storyHeader(name).test(failure));
   }
-  // A shared play helper has no enclosing export; its receipt still binds one
-  // adjacent source mutation and the runner's matching assertion method.
-  return true;
+  // The header names exactly this story, never a sibling whose name it prefixes.
+  return Boolean(story) && storyHeader(story).test(failure);
 }
 
 function exactAssertionFailure(proof, source, receipt = {}) {
@@ -413,7 +418,7 @@ function rawProofReceipt(proof, receiptDir, readSource) {
       && !proof.mutationRun.assertionFailure.includes(`raw output SHA-256 ${outputHash}`)) {
       throw new Error("authored failure text is not bound to raw runner output");
     }
-    return { output: receipt.mutationOutput, mutationEditVerified, mutationEdit: receipt.mutationEdit, problems: [] };
+    return { output: receipt.mutationOutput, mutationEditVerified, mutationEdit: receipt.mutationEdit, target: receipt.target, problems: [] };
   } catch (error) {
     return { output: null, problems: [`${label} raw runner receipt is invalid: ${error.message}`] };
   }
@@ -528,19 +533,26 @@ function queryKey(expression) {
   const literal = /^\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/.exec(expression);
   if (literal) return { text: literal[2] };
   const pattern = /^\s*\/((?:\\.|[^/\\])+)\/([a-z]*)/.exec(expression);
-  if (pattern) { try { return { regex: new RegExp(pattern[1], pattern[2]) }; } catch { return undefined; } }
+  if (pattern) { try { return { regex: new RegExp(pattern[1], pattern[2].replace(/[gy]/g, "")) }; } catch { return undefined; } }
   return undefined;
 }
 
 /**
- * Whether a later same-matcher assertion in the candidate's block could also see the mutation, so an
+ * Whether another same-matcher assertion that runs after the mutation could also see it, so an
  * instrumented failure cannot say which one failed: the same variable, a query equal to the candidate's or
- * found in the inserted text, or a later call to a helper in this file that asserts with the same matcher.
+ * found in the inserted text (directly or through a variable holding it), a composed `play`, or such an
+ * assertion inside a helper this code calls.
  */
-function laterAssertionCouldFail(source, following, matcher, { query, variable, inserted }) {
-  for (const later of following.matchAll(new RegExp(`\\bexpect\\s*\\(([^;]*?)\\)\\s*\\.\\s*(?:not\\s*\\.\\s*)?${matcher}\\s*\\(`, "g"))) {
-    const argument = later[1].trim();
-    if (variable && new RegExp(`^${variable}\\b`).test(argument)) return true;
+function laterAssertionCouldFail(source, following, matcher, ambiguity, depth = 0) {
+  const { query, variable, inserted } = ambiguity;
+  if (/\.\s*play\s*\(/.test(following)) return true;
+  for (const later of following.matchAll(new RegExp(`\\bexpect(?:\\s*\\.\\s*soft)?\\s*\\(([^;]*?)\\)\\s*\\.\\s*(?:not\\s*\\.\\s*)?${matcher}\\s*\\(`, "g"))) {
+    let argument = later[1].trim();
+    if (variable && new RegExp(`^${escapeRegExp(variable)}(?![\\w$])`).test(argument)) return true;
+    // A variable argument is checked through the query it holds.
+    const held = /^[A-Za-z_$][\w$]*$/.test(argument)
+      && new RegExp(`\\b(?:const|let|var)\\s+${escapeRegExp(argument)}\\s*=\\s*([^;]+)`).exec(source);
+    if (held) argument = held[1];
     const call = /\b(?:query|get|find)(?:All)?By[A-Za-z]+\(\s*([^)]*)/.exec(argument);
     const key = call ? queryKey(call[1]) : undefined;
     if (!key) continue;
@@ -548,11 +560,59 @@ function laterAssertionCouldFail(source, following, matcher, { query, variable, 
     if (key.regex && ((query?.text !== undefined && key.regex.test(query.text)) || key.regex.test(inserted))) return true;
   }
   for (const call of following.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
-    const helper = new RegExp(`(?:function\\s+${call[1]}\\s*\\(|const\\s+${call[1]}\\s*=\\s*(?:async\\s*)?\\()`).exec(source);
+    const name = escapeRegExp(call[1]);
+    const helper = new RegExp(`(?:function\\s+${name}\\s*\\(|(?:const|let|var)\\s+${name}\\s*=\\s*(?:async\\s*)?(?:function\\b|\\(|[A-Za-z_$][\\w$]*\\s*=>))`).exec(source);
     if (!helper) continue;
     const open = source.indexOf("{", helper.index);
     const close = open < 0 ? -1 : matchingBrace(source, open);
-    if (close > open && new RegExp(`\\.\\s*${matcher}\\s*\\(`).test(source.slice(open, close))) return true;
+    // A called helper is ambiguous only when one of its own assertions could see this mutation.
+    if (close > open && depth < 2 && laterAssertionCouldFail(source, source.slice(open, close), matcher, ambiguity, depth + 1)) return true;
   }
   return false;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const DECLARATION = /^\s*(?:export\s+const\s|(?:export\s+)?(?:async\s+)?function\s)/m;
+
+/** Where the top-level declaration holding `offset` ends: the next declaration, or the file end. */
+function blockEndAt(source, offset) {
+  const next = source.slice(offset + 1).search(DECLARATION);
+  return next < 0 ? source.length : offset + 1 + next;
+}
+
+/** The runner header that names exactly this story, never a sibling whose name it prefixes. */
+function storyHeader(story) {
+  const spaced = escapeRegExp(story.replace(/([a-z0-9])([A-Z])/g, "$1 $2"));
+  return new RegExp(`^\\s*FAIL\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?\\s+>\\s+${spaced}\\s*(?:>|$)`, "m");
+}
+
+/** Stories that run a helper, directly or through one other helper, with the code each runs after the call. */
+function helperCallerStories(source, helper) {
+  const callers = [];
+  const visit = (name, depth) => {
+    for (const call of source.matchAll(new RegExp(`\\b${escapeRegExp(name)}\\s*\\(`, "g"))) {
+      const before = source.slice(0, call.index);
+      if (new RegExp(`function\\s+${escapeRegExp(name)}\\s*$`).test(before)) continue;
+      const declarations = [...before.matchAll(/^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*))/gm)];
+      const owner = declarations.at(-1);
+      if (!owner) continue;
+      const after = source.slice(call.index + call[0].length, blockEndAt(source, call.index));
+      if (owner[1]) callers.push({ name: owner[1], after });
+      else if (owner[2] && owner[2] !== name && depth < 1) visit(owner[2], depth + 1);
+    }
+  };
+  visit(helper, 0);
+  return callers;
+}
+
+/**
+ * A count that PC-2 exempts: it names a busy or loading state and negates none, so a filter that
+ * excludes busy or loading items (any negation form) and a word in a comment keep the layout check.
+ */
+function busyStateCount(text) {
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:\\])\/\/.*$/gm, "$1");
+  return BUSY_STATE.test(code) && !NOT_BUSY.test(code) && !BUSY_NEGATION.test(code);
 }
