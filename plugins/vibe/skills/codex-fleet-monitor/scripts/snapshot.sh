@@ -18,6 +18,7 @@ remote_node() {
   local m=$d/plugins/vibe/skills/codex-fleet-monitor/scripts
   local invoke="env $e node $m/$*"
   local ship=(skills/codex-fleet-monitor/scripts/{liveness,ratelimit,recover,usage-state,work-dir}.mjs)
+  [ "$1" = hook-approval.mjs ] && ship+=(skills/codex-fleet-monitor/scripts/hook-approval.mjs)
   if [ "$1" = skill-freshness.mjs ]; then
     ship+=(skills/fleet-orchestrator/scripts/skill-freshness.mjs)
     shift
@@ -74,6 +75,10 @@ record_usage_readfail() {
     node $K/usage-state.mjs record-json $W >/dev/null
   echo "$line"
 }
+# A Codex vibe or vibe-core update can leave vibe-core's hooks unapproved, and with them every vibe guard;
+# each machine's line appears once per installed version change and only when a hook needs approval.
+node $K/hook-approval.mjs local $W 2>/dev/null
+[ -n "${REMOTE_HOST:-}" ] && remote_node hook-approval.mjs remote $REMOTE_STATE_DIR/.fleet-monitor
 codex_json=$(USAGE_HIGH_PERCENT=$HIGH node $K/ratelimit.mjs local --json --source snapshot --work-dir $W 2>/dev/null)
 if [ -n "$codex_json" ]; then echo "$codex_json" | jq -r .line; else record_usage_readfail codex local snapshot; fi
 [ "${CLAUDE_USAGE:-1}" = 0 ] || USAGE_HIGH_PERCENT=$HIGH CLAUDE_USAGE_SECONDS=${CLAUDE_USAGE_SECONDS:-} node $K/claude-usage.mjs $W local --source snapshot 2>/dev/null

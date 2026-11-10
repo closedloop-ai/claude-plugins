@@ -6,17 +6,12 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { VIBE_CORE_INSTALL } from '../../../shared/vibe-core.mjs';
+import { ADD_VIBE_CORE, APPROVE_HOOKS, HookApproval, UNKNOWN_METHOD, vibeCoreHookApproval } from '../../vibe/scripts/vibe-core-hooks.mjs';
 
 export const VIBE_PROMPT = /^\s*\$vibe\b/;
 export const VIBE_BRIEF_TICKET = /^\s*\$vibe[^\r\n]*?\b((?:ISS|PRD|FEA)-\d+)\b/;
 
 const WORKTREES = path.join('.claude', 'worktrees');
-const UNKNOWN_METHOD = /unknown variant|method not found/i;
-const APPROVED = new Set(['trusted', 'managed']);
-const HOOKS_PLUGIN = 'vibe-core@';
-const REAPPROVE = "approve the vibe-core hooks in Codex's /hooks (each vibe-core release changes the plugin bundle Codex approved), then launch again";
-const INSTALL_HOOKS = `run \`${VIBE_CORE_INSTALL.codex}\`, approve its hooks in Codex's /hooks, then launch again`;
 
 function checkoutTop(dir) {
   try {
@@ -76,10 +71,12 @@ export async function vibeHookTrustProblem(client, cwd) {
     if (UNKNOWN_METHOD.test(error.message)) return null;
     return `could not list Codex hooks: ${error.message}`;
   }
-  const hooks = (listing?.data ?? []).flatMap((entry) => entry?.hooks ?? [])
-    .filter((hook) => String(hook?.pluginId ?? '').startsWith(HOOKS_PLUGIN));
-  if (hooks.length === 0) return `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; ${INSTALL_HOOKS}`;
-  const blocked = hooks.filter((hook) => hook.enabled === false || !APPROVED.has(hook.trustStatus))
-    .map((hook) => `${hook.key} is ${hook.enabled === false ? 'disabled' : hook.trustStatus}`);
-  return blocked.length ? `vibe-core's Codex hooks cannot run (${[...new Set(blocked)].join(', ')}); ${REAPPROVE}` : null;
+  const approval = vibeCoreHookApproval(listing);
+  if (approval.state === HookApproval.Missing) {
+    return `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; run \`${ADD_VIBE_CORE}\`, then ${APPROVE_HOOKS}, then launch again`;
+  }
+  if (approval.state === HookApproval.Needed) {
+    return `vibe-core's Codex hooks cannot run (${approval.blocked.join(', ')}); ${APPROVE_HOOKS} (each vibe-core release changes the plugin bundle Codex approved), then launch again`;
+  }
+  return null;
 }

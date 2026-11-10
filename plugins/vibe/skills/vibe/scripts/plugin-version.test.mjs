@@ -81,6 +81,23 @@ const line = a.join(" ");
 s.calls.push(line);
 const save = () => fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify(s));
 if (s.fail && line.startsWith(s.fail)) { save(); process.stderr.write("boom: " + line + "\\n"); process.exit(1); }
+// A Codex App Server that answers hooks/list from the installed plugins: one vibe-core hook, \`hookTrust\` (default trusted),
+// or an App Server without hooks/list when \`noHooksList\` is set.
+if (a[0] === "app-server") {
+  save();
+  require("node:readline").createInterface({ input: process.stdin }).on("line", (text) => {
+    const message = JSON.parse(text);
+    const reply = (value) => process.stdout.write(JSON.stringify({ id: message.id, ...value }) + "\\n");
+    if (message.id === "initialize") reply({ result: {} });
+    else if (message.id && message.method === "hooks/list") {
+      if (s.noHooksList) return reply({ error: { message: "unknown variant \`hooks/list\`" } });
+      const core = s.installed.some((p) => p.name === "vibe-core");
+      reply({ result: { data: [{ cwd: process.cwd(), hooks: core ? [{ key: "vibe-core@closedloop-ai:hooks/hooks.json:pre_tool_use:0:0",
+        pluginId: "vibe-core@closedloop-ai", trustStatus: s.hookTrust ?? "trusted", enabled: true }] : [] }] } });
+    }
+  });
+  return;
+}
 const kind = ${JSON.stringify(kind)};
 const refresh = (name) => {
   const p = s.installed.find((x) => x.name === name);
@@ -308,8 +325,75 @@ test("a harness with vibe but no vibe-core is outdated, and the chosen update in
   assert.equal(result.status, "updated");
   assert.deepEqual(result.plugins.map((plugin) => `${plugin.harness} ${plugin.plugin} ${plugin.before}->${plugin.after} ${plugin.status}`),
     ["codex vibe-core null->1.0.0 updated"]);
-  assert.deepEqual(codex.state().calls.slice(1), ["plugin marketplace upgrade closedloop-ai", "plugin add vibe-core@closedloop-ai", "plugin list --json"]);
+  assert.deepEqual(codex.state().calls.slice(1), ["plugin marketplace upgrade closedloop-ai", "plugin add vibe-core@closedloop-ai", "plugin list --json", "app-server --stdio"]);
+  assert.equal(result.hookApproval, undefined, "every vibe-core hook is trusted, so nothing is said about approval");
   assert.deepEqual(claude.state().calls.slice(1), []);
+});
+
+// Operator ruling (2026-11-09): the setup check names a missing vibe-core in Codex, and asks the developer to
+// approve its hooks only when Codex's hooks/list says one needs it.
+const APPROVE = "open Codex once and approve vibe-core's hooks in /hooks";
+const SPLIT = { vibe: "1.1.69", "vibe-core": "1.0.0", "closedloop-core": "1.6.2" };
+const installedAt = (versions, names) => names.map((name) => ({ name, version: versions[name] }));
+
+async function firstBlock(t, codexState, claudeState = { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]) }) {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles(SPLIT) });
+  const claude = fakeCli(bin, "claude", claudeState);
+  const codex = fakeCli(bin, "codex", codexState);
+  const { result } = await run(home, ["check", ...both(claude, codex, main.url), "--closedloop", "connected", "--graph", "connected"]);
+  assert.equal(result.print, true, JSON.stringify(result));
+  return result.block.split("\n");
+}
+
+test("the first setup check in Codex names a missing vibe-core with its add command and the approval it will need", async (t) => {
+  const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe"]) });
+  assert.deepEqual(block.slice(1, 4), [
+    "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
+    "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core not installed",
+    `- Codex: vibe-core is not installed in Codex, so vibe's guards cannot run there: run \`codex plugin add vibe-core@closedloop-ai\`, then ${APPROVE}`,
+  ]);
+});
+
+test("the first setup check in Codex asks for approval only when a vibe-core hook is untrusted or modified", async (t) => {
+  for (const hookTrust of ["untrusted", "modified"]) {
+    const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]), hookTrust });
+    assert.equal(block[3], `- Codex: vibe-core's hooks are not approved in Codex (vibe-core@closedloop-ai:hooks/hooks.json:pre_tool_use:0:0 is ${hookTrust}), so vibe's guards cannot run there: ${APPROVE}`);
+  }
+  for (const hookTrust of ["trusted", "managed"]) {
+    const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]), hookTrust });
+    assert.deepEqual(block.slice(1, 3), [
+      "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
+      "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
+    ]);
+    assert.ok(!block.some((line) => line.includes("/hooks")), hookTrust);
+  }
+  const unchecked = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]), noHooksList: true });
+  assert.equal(unchecked[3], "- Codex: couldn't check whether vibe-core's hooks are approved in Codex (this Codex App Server has no hooks/list)");
+});
+
+test("Claude Code with vibe-core installed adds nothing to the setup check, and asks Codex nothing it lacks", async (t) => {
+  const block = await firstBlock(t, { installed: [] });
+  assert.deepEqual(block, ["Setup check", "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
+    "- ClosedLoop connection: connected", "- closedloop-graph connection: connected"]);
+});
+
+test("after an update, approval is named only when Codex's hooks/list says a vibe-core hook needs it", async (t) => {
+  for (const [codexState, expected] of [
+    [{}, undefined],
+    [{ hookTrust: "modified" }, `vibe-core's hooks are not approved in Codex (vibe-core@closedloop-ai:hooks/hooks.json:pre_tool_use:0:0 is modified), so vibe's guards cannot run there: ${APPROVE}`],
+    [{ noHooksList: true }, "couldn't check whether vibe-core's hooks are approved in Codex (this Codex App Server has no hooks/list)"],
+  ]) {
+    const { home, bin } = sandbox(t);
+    const main = await marketplace(t, { files: mainFiles(SPLIT) });
+    const claude = fakeCli(bin, "claude", { installed: [] });
+    const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.68" }, { name: "vibe-core", version: "1.0.0" }], main: SPLIT, ...codexState });
+    await run(home, ["check", ...both(claude, codex, main.url)]);
+    await run(home, ["choose", "--choice", "update"]);
+    const { code, result } = await run(home, ["update", "--claude", claude.file, "--codex", codex.file]);
+    assert.equal(code, 0);
+    assert.equal(result.hookApproval, expected, JSON.stringify(codexState));
+  }
 });
 
 test("update commands install a missing required plugin in its dependent's Claude scope and add it in Codex", () => {
@@ -501,8 +585,8 @@ test("the setup check block lists closedloop-core and vibe per installed harness
   assert.equal(first.result.print, true);
   assert.equal(first.result.block, [
     "Setup check",
-    "- Claude Code: closedloop-core 1.5.3 (latest), vibe 1.1.2 (latest)",
-    "- Codex: closedloop-core not installed, vibe 1.1.1 (1.1.2 available)",
+    "- Claude Code: closedloop-core 1.5.3 (latest), vibe 1.1.2 (latest), vibe-core not installed",
+    "- Codex: closedloop-core not installed, vibe 1.1.1 (1.1.2 available), vibe-core not installed",
     "- ClosedLoop connection: connected",
     "- closedloop-graph connection: not connected",
   ].join("\n"));
@@ -643,7 +727,7 @@ test("with no check of this conversation, the setup check still lists the versio
   assert.equal(code, 0);
   assert.equal(result.block, [
     "Setup check",
-    "- Codex: closedloop-core 1.5.3 (couldn't check for a newer version), vibe 1.1.12 (couldn't check for a newer version)",
+    "- Codex: closedloop-core 1.5.3 (couldn't check for a newer version), vibe 1.1.12 (couldn't check for a newer version), vibe-core not installed",
     "- ClosedLoop connection: connected",
     "- closedloop-graph connection: connected",
   ].join("\n"));

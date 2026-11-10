@@ -14,8 +14,8 @@ now leaves this plugin, and Codex's approval of its hooks, unchanged.
 ## Installation
 
 Claude Code installs `vibe-core` through the `vibe` plugin's dependency.
-Codex installs no plugin dependency, so install it explicitly and then approve
-its hooks once in Codex's `/hooks`:
+Codex installs no plugin dependency, so install it explicitly, then open Codex
+once and approve vibe-core's hooks in /hooks:
 
 ```bash
 codex plugin add vibe-core@closedloop-ai

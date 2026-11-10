@@ -36,8 +36,9 @@ CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 ```
 
 vibe-core carries vibe's hooks. Codex runs a plugin's hooks only after you
-approve them: open `/hooks` in Codex and approve vibe-core's hooks once. Each
-vibe-core release asks again; a vibe release does not.
+approve them: open Codex once and approve vibe-core's hooks in /hooks. Each
+vibe-core release can ask again; a vibe release does not. vibe's setup check
+says when Codex reports that an approval is needed.
 
 The last command opens the browser. Have the vibe user sign in to ClosedLoop
 with their own account. Codex stores an OAuth sign-in, not an API key.

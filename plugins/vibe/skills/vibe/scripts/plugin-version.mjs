@@ -79,6 +79,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine } from "./vibe-core-hooks.mjs";
 
 const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -100,12 +101,14 @@ const CATALOG = Object.freeze({ claude: ".claude-plugin/marketplace.json", codex
 const CHOOSERS = Object.freeze(["person", "opening-message"]);
 const COMMANDS = Object.freeze(["check", "choose", "update", "loaded", "pending", "adopt", "status", "show"]);
 const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
-const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe"]);
+const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe", "vibe-core"]);
 /**
  * Plugins another plugin needs installed in the same harness. vibe's hooks ship in vibe-core, and Codex
  * installs no plugin dependency, so a vibe update there can leave vibe-core, and every hook, missing.
  */
 const REQUIRED_WITH = Object.freeze({ vibe: Object.freeze(["vibe-core"]) });
+/** The release from which a plugin needs each REQUIRED_WITH plugin; an older vibe ships its own hooks. */
+const REQUIRED_FROM = Object.freeze({ vibe: FIRST_SPLIT_VIBE });
 const DEFAULT_TIMEOUT_MS = 5_000;
 export const ESCALATION_JUSTIFICATION = "Check whether vibe is up to date";
 const CLI_TIMEOUT_MS = 30_000;
@@ -233,7 +236,7 @@ export async function checkVersions({ clis = {}, latestBase = LATEST_BASE, timeo
   const fetchText = cachedFetch(fetchImpl, timeoutMs);
   const harnesses = [];
   for (const harness of [Harness.Claude, Harness.Codex]) {
-    harnesses.push(await checkHarness(harness, clis[harness] ?? findCli(harness, env, home), latestBase, fetchText));
+    harnesses.push(await withHookApproval(await checkHarness(harness, clis[harness] ?? findCli(harness, env, home), latestBase, fetchText)));
   }
   return summarize(harnesses);
 }
@@ -358,9 +361,11 @@ export function statusBlock(record, connections) {
     }
     const parts = STATUS_PLUGINS.map((name) => {
       const plugin = entry.plugins.find((candidate) => candidate.name === name);
-      return plugin ? `${name} ${plugin.version ?? "(version unknown)"} (${latestNote(plugin)})` : `${name} not installed`;
+      return plugin && !plugin.missing ? `${name} ${plugin.version ?? "(version unknown)"} (${latestNote(plugin)})` : `${name} not installed`;
     });
     lines.push(`- ${label}: ${parts.join(", ")}`);
+    const approval = hookApprovalLine(entry.hookApproval);
+    if (approval) lines.push(`- ${label}: ${approval}`);
   }
   const word = (value) => (value === Connection.Connected ? "connected" : "not connected");
   lines.push(`- ClosedLoop connection: ${word(connections.closedloop)}`, `- closedloop-graph connection: ${word(connections.graph)}`);
@@ -723,7 +728,8 @@ async function main(argv, env, home) {
     const record = store.read();
     // A conversation whose own check never ran or never saved still shows the versions
     // installed here, read locally, never "has not run" with no versions (ISS-13315).
-    const own = record?.conversation === conversation ? record : { harnesses: localInstalled({ clis, env, home }) };
+    const own = record?.conversation === conversation ? record
+      : { harnesses: await Promise.all(localInstalled({ clis, env, home }).map(withHookApproval)) };
     const shown = setupCheck(record, own, connections, conversation, now);
     let recordError;
     try {
@@ -764,6 +770,10 @@ async function main(argv, env, home) {
     // Named before the update, which removes the release their writers are bound to.
     const stranded = vibe ? writersBoundBefore(vibe.latest, home) : [];
     const result = updatePlugins(record, { clis, env, home });
+    // Asked of Codex after the update, so an approval the update made necessary is named, and nothing when none is.
+    const codex = await withHookApproval(afterUpdate(record, result, Harness.Codex));
+    const approval = hookApprovalLine(codex?.hookApproval);
+    if (approval) result.hookApproval = approval;
     const reached = result.plugins.find((plugin) => plugin.plugin === "vibe" && plugin.status === "updated");
     if (stranded.length) {
       result.sessions = migrateStrandedWriters(stranded, reached?.after ?? null);
@@ -885,7 +895,8 @@ function readLedger(worktree) {
 /** The plugins `REQUIRED_WITH` names for an installed one that this harness lacks, carrying its scope and marketplace. */
 export function missingRequired(plugins) {
   const names = new Set(plugins.map((plugin) => plugin.name));
-  return plugins.flatMap((plugin) => (REQUIRED_WITH[plugin.name] ?? []).filter((name) => !names.has(name)).map((name) => ({
+  return plugins.filter((plugin) => (compareVersions(plugin.version, REQUIRED_FROM[plugin.name] ?? "0.0.0") ?? -1) >= 0)
+    .flatMap((plugin) => (REQUIRED_WITH[plugin.name] ?? []).filter((name) => !names.has(name)).map((name) => ({
     name, id: `${name}@${MARKETPLACE}`, version: null, missing: true,
     ...(plugin.scope ? { scope: plugin.scope } : {}), ...(plugin.marketplace ? { marketplace: plugin.marketplace } : {}),
   })));
@@ -902,4 +913,24 @@ function compareMissing(required, latest) {
       ? { ...plugin, latest: found.version, status: VersionStatus.Outdated }
       : { ...plugin, latest: null, status: VersionStatus.Unknown, reason: found.reason };
   });
+}
+
+/**
+ * `entry` with `hookApproval` from Codex's own hooks/list when it is the Codex harness and its vibe runs
+ * vibe-core's hooks (FIRST_SPLIT_VIBE or newer); every other entry is returned unchanged.
+ */
+export async function withHookApproval(entry) {
+  const vibe = entry?.plugins?.find((plugin) => plugin.name === "vibe");
+  if (entry?.harness !== Harness.Codex || !entry.cli || (compareVersions(vibe?.version, FIRST_SPLIT_VIBE) ?? -1) < 0) return entry;
+  const installed = entry.plugins.some((plugin) => plugin.name === "vibe-core" && !plugin.missing);
+  return { ...entry, hookApproval: installed ? await codexHookApproval(entry.cli) : { state: HookApproval.Missing } };
+}
+
+/** `harness`'s entry in `record` with the versions `result` (an update) reached, without listing the plugins again. */
+function afterUpdate(record, result, harness) {
+  const entry = (record.harnesses ?? []).find((candidate) => candidate.harness === harness && Array.isArray(candidate.plugins));
+  if (!entry) return null;
+  const reached = new Map(result.plugins.filter((plugin) => plugin.harness === harness && plugin.after).map((plugin) => [plugin.plugin, plugin.after]));
+  return { ...entry, plugins: entry.plugins.map((plugin) => reached.has(plugin.name)
+    ? { ...plugin, version: reached.get(plugin.name), missing: false } : plugin) };
 }

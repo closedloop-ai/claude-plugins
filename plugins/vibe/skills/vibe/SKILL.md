@@ -324,7 +324,9 @@ a plugin script the installed release no longer has.
   Its `sessions` names each vibe session whose writer was bound to the
   release it replaced: `migrated` needs nothing more, and `on-resume` is
   migrated when that session resumes (`references/quality-loop.md`,
-  "Recorded definition migration"). Neither is news for the person.
+  "Recorded definition migration"). Neither is news for the person. When its
+  output has `hookApproval`, tell the person that line in plain words (it
+  appears only when Codex says a vibe-core hook needs approval).
   Whatever its status, tell the person, for each harness in its `restart`,
   in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
@@ -339,9 +341,10 @@ a plugin script the installed release no longer has.
 ### Setup check
 
 When the check prints `"print":true` (the escalated run's output, when there
-was one), its `block` (the installed closedloop-core and vibe versions for
-each installed harness, each marked latest, newer available or not checked,
-and both connections) opens your first reply word for word, before the
+was one), its `block` (the installed closedloop-core, vibe and vibe-core
+versions for each installed harness, each marked latest, newer available or
+not checked, a Codex line when vibe-core is missing there or its hooks need
+approval, and both connections) opens your first reply word for word, before the
 version question or the endings line. Send that reply as soon as you have the
 block, before you read any other file, run the preflight or dispatch a
 worker. `"print":false` means this conversation already showed it (a
@@ -349,6 +352,12 @@ compaction or a later turn): show nothing. If the check could not run at all,
 `node scripts/plugin-version.mjs status --closedloop <state> --graph <state>`
 prints the same block from the versions installed here. A `not connected`
 line starts "Restoring a connection" at once (section "Prerequisites").
+A Codex line saying vibe-core is not installed, or its hooks are not
+approved, means vibe's guards are off in Codex: tell the person right away in
+one plain line. Installing vibe-core goes through the update flow below.
+Approving its hooks is always the person's own step, never a worker's: they
+need to open Codex once and approve vibe-core's hooks in /hooks. Say nothing
+about approval when the block has no such line.
 
 ### Prerequisites
 

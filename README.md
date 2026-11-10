@@ -75,7 +75,7 @@ codex plugin add vibe@closedloop-ai
 codex plugin add vibe-core@closedloop-ai
 ```
 
-vibe's hooks ship in `vibe-core`; approve them once in Codex's `/hooks`.
+vibe's hooks ship in `vibe-core`: open Codex once and approve vibe-core's hooks in /hooks.
 
 Engineers can also install `code@closedloop-ai` and `code-review@closedloop-ai`.
 Codex requires core to be installed explicitly; Claude Code installs it through
