@@ -635,6 +635,145 @@ describe("production Claude CLI adapter", () => {
     expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
     expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
   });
+  it.each(["vibe-adversarial-reviewer", "vibe-guardrails-reviewer"])("runs the takeover %s with no vibe session and a head-bound receipt", (agentName) => {
+    const { value, headSha, prUrl } = takeoverFixture();
+    const launched = run(value, { agentName, mode: "pull-request", input: "REVIEW_RECEIPT the PR diff",
+      sessionless: { kind: "takeover", evidence: { prUrl, headSha } } });
+    expect(launched.status, launched.stdout + launched.stderr).toBe(0);
+    const output = JSON.parse(launched.stdout);
+    expect(output.takeover).toEqual({ prUrl, headSha, worktree: value.worktree });
+    expect(output.source.head).toBe(headSha);
+    const resultFile = join(value.base, "result.json");
+    writeFileSync(resultFile, launched.stdout);
+    const capture = (head: string, out: string) => spawnSync(process.execPath, [join(bundleDirectory, "../../../handoff/scripts/review-receipts.mjs"),
+      "--worktree", value.worktree, "--role", agentName, "--result", resultFile, "--out", join(value.base, out),
+      "--pr-url", prUrl, "--head", head], { encoding: "utf8" });
+    const receipt = capture(headSha, "receipt.json");
+    expect(receipt.status, receipt.stderr).toBe(0);
+    expect(JSON.parse(receipt.stdout).takeover).toEqual({ prUrl, headSha, worktree: value.worktree });
+    const other = capture("0".repeat(40), "other.json");
+    expect(other.status).toBe(1);
+    expect(other.stderr).toContain("not the expected pull request head");
+    expect(existsSync(join(value.metadata, "vibe-session.json"))).toBe(false);
+    expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
+  });
+  it("refuses a takeover reviewer whose worktree is not at the bound head before Claude starts", () => {
+    const { value, prUrl } = takeoverFixture();
+    const moved = run(value, { agentName: "vibe-guardrails-reviewer", mode: "pull-request", input: "Review",
+      sessionless: { kind: "takeover", evidence: { prUrl, headSha: "0".repeat(40) } } });
+    expect(moved.status).toBe(1);
+    expect(JSON.parse(moved.stdout).code).toBe("TAKEOVER_HEAD_MISMATCH");
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+  });
+  it.each(["vibe-prototype-worker", "vibe-environment-worker", "vibe-ticket-worker", "vibe-setup-worker",
+    "vibe-requirements-worker", "vibe-storybook-decomposer", "vibe-verify-worker"])("refuses a takeover launch for %s", (agentName) => {
+    const { value, headSha, prUrl } = takeoverFixture();
+    writeAgent(value.agentRoot, "vibe-storybook-decomposer", "Read, Grep, Glob, Bash");
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    const evidence = { prUrl, headSha, sourceBranch: "feature/source" };
+    for (const mode of ["request", "pull-request"]) {
+      expect(run(value, { agentName, mode, input: "Takeover", sessionless: { kind: "takeover", evidence },
+        capabilities: [...graph, ...liveReads] }).status, mode).toBe(1);
+    }
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+    expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
+  });
+  it("refuses a takeover launch in a live session, in another mode or with malformed evidence", () => {
+    const { value, headSha, prUrl } = takeoverFixture();
+    const reviewer = { agentName: "vibe-guardrails-reviewer", mode: "pull-request", input: "Review",
+      sessionless: { kind: "takeover", evidence: { prUrl, headSha } } };
+    expect(run(value, { ...reviewer, mode: "request" }).status).toBe(1);
+    expect(run(value, { ...reviewer, sessionless: { kind: "takeover", evidence: { prUrl: "https://example.com/pull/42", headSha } } }).status).toBe(1);
+    expect(run(value, { ...reviewer, sessionless: { kind: "takeover" } }).status).toBe(1);
+    const bound = { kind: "takeover", evidence: { prUrl, headSha, sourceBranch: "feature/source" } };
+    expect(run(value, { input: "Fix", mode: "record", recordAction: "progress", exclusiveRecordTurn: true,
+      sessionless: bound, capabilities: [...graph, recordWrite] }).status, "the takeover writer has no record turn").toBe(1);
+    expect(run(value, { input: "Plan", mode: "plan", sessionless: bound }).status).toBe(1);
+    writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test" }));
+    expect(run(value, reviewer).status, "a live vibe session keeps its own strict operation").toBe(1);
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+  });
+  it("binds one persistent takeover writer to the PR, head and source branch with no vibe session", () => {
+    const { value, headSha, prUrl } = takeoverFixture();
+    const evidence = { prUrl, headSha, sourceBranch: "feature/source" };
+    const first = run(value, { input: "Fix the verified finding", sessionless: { kind: "takeover", evidence } });
+    expect(first.status, first.stdout + first.stderr).toBe(0);
+    const firstResult = JSON.parse(first.stdout);
+    expect(firstResult.takeover).toEqual({ ...evidence, worktree: value.worktree });
+    expect(firstResult.writer.workerId).toBe(firstResult.workerId);
+    expect(JSON.parse(readFileSync(join(value.metadata, "vibe-takeover.json"), "utf8"))).toEqual({ version: 1, kind: "takeover",
+      worktree: value.worktree, branch: "vibe/test", ...evidence });
+    expect(existsSync(join(value.metadata, "vibe-session.json"))).toBe(false);
+    const second = run(value, { requestId: "second", input: "Fix the next finding", sessionless: { kind: "takeover", evidence } });
+    expect(second.status, second.stdout + second.stderr).toBe(0);
+    expect(JSON.parse(second.stdout).workerId).toBe(firstResult.workerId);
+    const proof = readProof(value.metadata);
+    expect(proof).toHaveLength(2);
+    expect(proof[1]?.args).toContain("--resume");
+    for (const item of proof) {
+      expect(item.args[item.args.indexOf("--permission-prompts") + 1]).toBe("none");
+      expect(item.definition["vibe:vibe-change-worker"]?.prompt).toContain("Never start another implementation writer, commit, or push. ");
+    }
+  });
+  it("refuses a second takeover writer for another pull request or source branch", () => {
+    const { value, headSha, prUrl } = takeoverFixture();
+    const evidence = { prUrl, headSha, sourceBranch: "feature/source" };
+    expect(run(value, { input: "Fix", sessionless: { kind: "takeover", evidence } }).status).toBe(0);
+    for (const [label, other] of [["another pull request", { ...evidence, prUrl: "https://github.com/example-org/example-repo/pull/43" }],
+      ["another source branch", { ...evidence, sourceBranch: "feature/other" }]] as const) {
+      const refused = run(value, { requestId: "second", input: "Second writer", sessionless: { kind: "takeover", evidence: other } });
+      expect(refused.status, label).toBe(1);
+      expect(JSON.parse(refused.stdout).code, label).toBe("TAKEOVER_WRITER_BOUND");
+    }
+    expect(readProof(value.metadata)).toHaveLength(1);
+  });
+  it("refuses a takeover writer off the bound head or without its source branch", () => {
+    const { value, headSha, prUrl } = takeoverFixture();
+    const moved = run(value, { input: "Wrong head",
+      sessionless: { kind: "takeover", evidence: { prUrl, headSha: "0".repeat(40), sourceBranch: "feature/source" } } });
+    expect(JSON.parse(moved.stdout).code).toBe("TAKEOVER_HEAD_MISMATCH");
+    expect(run(value, { input: "Unbound", sessionless: { kind: "takeover", evidence: { prUrl, headSha } } }).status,
+      "a takeover writer needs its source branch").toBe(1);
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+    expect(existsSync(join(value.metadata, "vibe-takeover.json"))).toBe(false);
+  });
+  it("refuses a takeover writer on a worktree that already has a writer from another binding", () => {
+    const value = setup();
+    expect(run(value, { input: "Session writer" }).status).toBe(0);
+    rmSync(join(value.metadata, "vibe-session.json"));
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: value.worktree, encoding: "utf8" }).trim();
+    const refused = run(value, { requestId: "second", input: "Takeover writer", sessionless: { kind: "takeover",
+      evidence: { prUrl: "https://github.com/example-org/example-repo/pull/42", headSha, sourceBranch: "feature/source" } } });
+    expect(JSON.parse(refused.stdout).code).toBe("TAKEOVER_WRITER_BOUND");
+    expect(existsSync(join(value.metadata, "vibe-takeover.json"))).toBe(false);
+    expect(readProof(value.metadata)).toHaveLength(1);
+  });
+  it("names the role's sessionless route when a launch needs a vibe session that is missing", () => {
+    const value = setup();
+    rmSync(join(value.metadata, "vibe-session.json"));
+    const refusal = (input: Record<string, unknown>) => {
+      const result = run(value, input);
+      expect(result.status).toBe(1);
+      return JSON.parse(result.stdout) as { code: string; summary: string };
+    };
+    for (const agentName of ["vibe-guardrails-reviewer", "vibe-adversarial-reviewer"]) {
+      writeAgent(value.agentRoot, agentName, "Read, Grep, Glob, Bash, Skill");
+      const missing = refusal({ agentName, mode: "pull-request", input: "Review" });
+      expect(missing.code).toBe("NO_VIBE_SESSION");
+      expect(missing.summary).toContain('"kind": "takeover"');
+    }
+    const startup = refusal({ agentName: "vibe-requirements-worker", input: "Read scope", capabilities: [...graph, ...liveReads] });
+    expect(startup.code).toBe("NO_VIBE_SESSION");
+    expect(startup.summary).toContain('{"kind": "startup"}');
+    const writer = refusal({ input: "Implement" });
+    expect(writer.code).toBe("NO_VIBE_SESSION");
+    expect(writer.summary).toContain('"sourceBranch"');
+    const ticket = refusal({ agentName: "vibe-ticket-worker", input: "Progress", capabilities: [...graph, ...liveReads] });
+    expect(ticket.code).toBe("NO_VIBE_SESSION");
+    expect(ticket.summary).toContain("only inside a vibe session");
+    expect(ticket.summary).not.toContain("sessionless");
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+  });
   it("rejects separate seed-refresh source roles before launching a nonpersistent writer", () => {
     const value = setup();
     writeAgent(value.agentRoot, "vibe-seed-fix-worker", "Read, Write, Edit, Grep, Glob, Bash");
@@ -786,3 +925,12 @@ describe("production Claude CLI adapter", () => {
     expect(readWriterSummary(value.worktree)?.workerId).toBe(registered.workerId);
   });
 });
+
+/** A fixture checkout with no vibe session, as an engineer PR takeover worktree has, and the head it is at. */
+function takeoverFixture() {
+  const value = setup();
+  rmSync(join(value.metadata, "vibe-session.json"));
+  writeAgent(value.agentRoot, "vibe-adversarial-reviewer", "Read, Grep, Glob, Bash, Skill");
+  const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: value.worktree, encoding: "utf8" }).trim();
+  return { value, headSha, prUrl: "https://github.com/example-org/example-repo/pull/42" };
+}

@@ -9,11 +9,11 @@ import { checkClaudeSignIn, checkClaudeSignInAsync, checkProtectedWriteSupportAs
 import { runFromCanonicalEntry } from "./cli.js";
 import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
-import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
+import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { pluginScriptProblems } from "../../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs";
-import { isHandoverContext, isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
 import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
@@ -238,7 +238,8 @@ export async function runWorker(rawInput: unknown) {
     throw new Error("Canonical validation derives its own envelope; caller timeout overrides are not allowed");
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
-  const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : undefined;
+  const recorded = input.agentName === "vibe-change-worker" && (!input.sessionless || input.sessionless.kind === "takeover")
+    ? recordedWriterRoot(input.worktree) : undefined;
   const installedRoot = installedPluginRoot(import.meta.url);
   const resolvedRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
   const upgrade = recorded ? readWriterUpgradeEvidence(input.worktree, installedRoot) : undefined;
@@ -263,6 +264,10 @@ export async function runWorker(rawInput: unknown) {
   if (!persistent) checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   const reviewSource = receiptRoles.has(input.agentName) ? reviewSourceIdentity(definition.root, place.root) : undefined;
+  const takeover = input.sessionless?.kind === "takeover" ? { ...input.sessionless.evidence, worktree: place.root } : undefined;
+  if (takeover && (reviewSource?.head ?? checkoutHead(place.root)) !== takeover.headSha) {
+    throw new Error("Takeover worktree HEAD differs from the pull request head it was bound to");
+  }
   let protectedArgs: string[] = [];
   if (persistent) {
     const [signIn, support] = await Promise.allSettled([
@@ -277,6 +282,7 @@ export async function runWorker(rawInput: unknown) {
   let resume = false;
   let turnInput = input.input ?? input.continuation ?? "";
   if (persistent) {
+    if (takeover) bindTakeoverWriter(place.root, { prUrl: takeover.prUrl, headSha: takeover.headSha, sourceBranch: takeover.sourceBranch! });
     const registered = registerWriter({ worktree: input.worktree, runtime: "claude", agentRoot: definition.root,
       agentName: input.agentName, capabilities: input.capabilities });
     workerId = registered.workerId;
@@ -357,6 +363,7 @@ export async function runWorker(rawInput: unknown) {
     if (persistent && lease) changeWriter("finish", { worktree: input.worktree, workerId, requestId: input.requestId,
       lease, status: output.status, resultSummary: output.summary });
     return { ...output, runtime: "claude", agentName: input.agentName, ...(reviewSource ? { source: reviewSource } : {}),
+      ...(takeover ? { takeover } : {}),
       graphToolIdentities: input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read")
         .map((capability) => mcpToolIdentity(capability.name)),
       graphToolAliases: [...new Set(input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read")
@@ -565,11 +572,13 @@ function safeFailure(error: unknown): { code: string; summary: string; personAct
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...(error.personAction ? { personAction: error.personAction } : {}) };
   }
-  if (error instanceof AgentRootError) return { code: error.code, summary: error.message };
+  if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error
     && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
+  if (message.includes("Takeover worktree HEAD")) return { code: "TAKEOVER_HEAD_MISMATCH", summary: "The takeover worktree is not at the bound pull request head; fetch and check out that head, then relaunch." };
+  if (message.includes("Takeover worktree already has a writer")) return { code: "TAKEOVER_WRITER_BOUND", summary: "This takeover worktree already has its one writer for another pull request or source branch; use a new worktree for another takeover." };
   if (message.includes("never argv")) return { code: "INVALID_REQUEST", summary: "This command takes no arguments; send the launch request on stdin (claude-worker.mjs help prints its shape)." };
   if (error instanceof z.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
@@ -703,4 +712,8 @@ runFromCanonicalEntry(import.meta.url, main);
 export function workerSessionName(agentName: string, branch: string, requestId: string) {
   const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");
   return `vibe ${role} · ${branch.replace(/^vibe\//, "")} · ${requestId}`;
+}
+
+function checkoutHead(root: string) {
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }

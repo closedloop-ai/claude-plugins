@@ -224329,7 +224329,9 @@ function checkoutLocation(worktree) {
   return { root, dir, branch, file: join3(dir, "vibe-writer.json"), lock: join3(dir, "vibe-writer.lock") };
 }
 function location(worktree) {
-  const place = checkoutLocation(worktree);
+  return sessionPlace(checkoutLocation(worktree));
+}
+function sessionPlace(place) {
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
     JSON.parse(readFileSync4(join3(place.dir, "vibe-session.json"), "utf8"))
   );
@@ -224337,7 +224339,7 @@ function location(worktree) {
   return place;
 }
 function readWriterSummary(worktree) {
-  const place = location(worktree);
+  const place = writerLocation(worktree);
   if (!existsSync3(place.file)) return void 0;
   const ledger = readLedger(place);
   return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
@@ -224433,6 +224435,24 @@ function summary(ledger) {
     lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : void 0
   };
 }
+var TAKEOVER_RECORD = "vibe-takeover.json";
+var takeoverRecordSchema = external_exports.object({
+  version: external_exports.literal(1),
+  kind: external_exports.literal("takeover"),
+  worktree: external_exports.string().min(1),
+  branch: external_exports.string().min(1),
+  prUrl: external_exports.string().min(1),
+  headSha: external_exports.string().regex(/^[0-9a-f]{40}$/),
+  sourceBranch: external_exports.string().min(1)
+}).strict();
+function writerLocation(worktree) {
+  const place = checkoutLocation(worktree);
+  const file = join3(place.dir, TAKEOVER_RECORD);
+  if (existsSync3(join3(place.dir, "vibe-session.json")) || !existsSync3(file)) return sessionPlace(place);
+  const record = takeoverRecordSchema.parse(JSON.parse(readFileSync4(file, "utf8")));
+  if (realpathSync4(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Takeover worktree or branch changed");
+  return place;
+}
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -224525,6 +224545,12 @@ var recordContextSchema = external_exports.object({
       liveTicketCreatedBySession: external_exports.literal(true),
       operatorId: external_exports.string().min(1),
       operatorEmail: external_exports.string().email()
+    }).strict() }).strict(),
+    external_exports.object({ kind: external_exports.literal("takeover"), evidence: external_exports.object({
+      prUrl: external_exports.string().regex(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/),
+      headSha: external_exports.string().regex(/^[0-9a-f]{40}$/),
+      /** The PR's source branch the root pushes the repair to; required for the takeover writer. */
+      sourceBranch: external_exports.string().min(1).regex(/^[^\s]+$/).optional()
     }).strict() }).strict()
   ]).optional()
 }).strict();

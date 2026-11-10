@@ -11947,7 +11947,9 @@ function checkoutLocation(worktree) {
   return { root, dir, branch, file: join5(dir, "vibe-writer.json"), lock: join5(dir, "vibe-writer.lock") };
 }
 function location(worktree) {
-  const place = checkoutLocation(worktree);
+  return sessionPlace(checkoutLocation(worktree));
+}
+function sessionPlace(place) {
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
     JSON.parse(readFileSync4(join5(place.dir, "vibe-session.json"), "utf8"))
   );
@@ -11955,7 +11957,7 @@ function location(worktree) {
   return place;
 }
 function readWriterSummary(worktree) {
-  const place = location(worktree);
+  const place = writerLocation(worktree);
   if (!existsSync3(place.file)) return void 0;
   const ledger = readLedger(place);
   return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
@@ -11974,7 +11976,7 @@ function recordedDefinitionState(ledger) {
 }
 function recordedWriterRoot(worktree) {
   try {
-    const place = location(worktree);
+    const place = writerLocation(worktree);
     return existsSync3(place.file) ? readLedger(place).binding.agentRoot : void 0;
   } catch {
     return void 0;
@@ -11998,14 +12000,14 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
   };
 }
 function readWriterUpgradeEvidence(worktree, installedRoot) {
-  return definitionUpgradeEvidence(readLedger(location(worktree)), installedRoot);
+  return definitionUpgradeEvidence(readLedger(writerLocation(worktree)), installedRoot);
 }
 function registerWriter(input) {
   const data = registerSchema.parse(input);
   const definition = readDefinition(data.agentRoot, data.agentName, data.capabilities);
   if (data.agentName !== "vibe-change-worker") throw new Error("Session writer must be vibe-change-worker");
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
-  const place = location(data.worktree);
+  const place = writerLocation(data.worktree);
   return locked(place, () => {
     if (existsSync3(place.file)) {
       const ledger2 = readLedger(place);
@@ -12041,7 +12043,7 @@ function isNewerRelease(current, previous) {
 }
 function changeWriter(action, input) {
   const data = actionSchema.parse(input);
-  const place = location(data.worktree);
+  const place = writerLocation(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (data.workerId !== ledger.workerId) throw new Error("Request must name the registered persistent writer");
@@ -12133,7 +12135,7 @@ function acquireRecordTurnAt(place, owner) {
   });
 }
 function attachClaudeProcess(worktree, workerId, lease, processGroupId) {
-  const place = location(worktree);
+  const place = writerLocation(worktree);
   locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== "claude" || ledger.workerId !== workerId || ledger.active?.lease !== lease) {
@@ -12144,7 +12146,7 @@ function attachClaudeProcess(worktree, workerId, lease, processGroupId) {
   });
 }
 function markClaudeStarted(worktree, workerId, lease) {
-  const place = location(worktree);
+  const place = writerLocation(worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== "claude" || ledger.workerId !== workerId || ledger.active?.lease !== lease) {
@@ -12231,6 +12233,42 @@ function proveGroupStopped(processGroupId) {
     throw new Error("Unable to prove the owned process group stopped; retain the lease");
   }
   throw new Error("Owned process group is still running; retain the lease");
+}
+var TAKEOVER_RECORD = "vibe-takeover.json";
+var takeoverRecordSchema = external_exports.object({
+  version: external_exports.literal(1),
+  kind: external_exports.literal("takeover"),
+  worktree: external_exports.string().min(1),
+  branch: external_exports.string().min(1),
+  prUrl: external_exports.string().min(1),
+  headSha: external_exports.string().regex(/^[0-9a-f]{40}$/),
+  sourceBranch: external_exports.string().min(1)
+}).strict();
+function writerLocation(worktree) {
+  const place = checkoutLocation(worktree);
+  const file = join5(place.dir, TAKEOVER_RECORD);
+  if (existsSync3(join5(place.dir, "vibe-session.json")) || !existsSync3(file)) return sessionPlace(place);
+  const record = takeoverRecordSchema.parse(JSON.parse(readFileSync4(file, "utf8")));
+  if (realpathSync5(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Takeover worktree or branch changed");
+  return place;
+}
+function bindTakeoverWriter(worktree, binding) {
+  const place = checkoutLocation(worktree);
+  const file = join5(place.dir, TAKEOVER_RECORD);
+  const record = { version: 1, kind: "takeover", worktree: place.root, branch: place.branch, ...binding };
+  return locked(place, () => {
+    if (!existsSync3(file)) {
+      if (existsSync3(place.file)) throw new Error("Takeover worktree already has a writer from another binding");
+      writeFileSync(file, `${JSON.stringify(record)}
+`, { mode: 384, flag: "wx" });
+      return record;
+    }
+    const existing = takeoverRecordSchema.parse(JSON.parse(readFileSync4(file, "utf8")));
+    if (existing.worktree !== record.worktree || existing.branch !== record.branch || existing.prUrl !== record.prUrl || existing.sourceBranch !== record.sourceBranch) {
+      throw new Error("Takeover worktree already has a writer bound to another pull request or source branch");
+    }
+    return existing;
+  });
 }
 
 // ../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs
@@ -12435,6 +12473,12 @@ var recordContextSchema = external_exports.object({
       liveTicketCreatedBySession: external_exports.literal(true),
       operatorId: external_exports.string().min(1),
       operatorEmail: external_exports.string().email()
+    }).strict() }).strict(),
+    external_exports.object({ kind: external_exports.literal("takeover"), evidence: external_exports.object({
+      prUrl: external_exports.string().regex(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/),
+      headSha: external_exports.string().regex(/^[0-9a-f]{40}$/),
+      /** The PR's source branch the root pushes the repair to; required for the takeover writer. */
+      sourceBranch: external_exports.string().min(1).regex(/^[^\s]+$/).optional()
     }).strict() }).strict()
   ]).optional()
 }).strict();
@@ -12463,13 +12507,17 @@ function resolveRecordContext(input) {
   }
   let place;
   if (input.sessionless) {
-    const startupRole = input.agentName === "vibe-requirements-worker" || input.agentName === "vibe-setup-worker";
-    const startup = input.sessionless.kind === "startup" && startupRole && input.mode !== "handoff" && input.mode !== "pull-request";
+    const startup = input.sessionless.kind === "startup" && STARTUP_ROLES.has(input.agentName) && input.mode !== "handoff" && input.mode !== "pull-request";
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
-    if (!startup && !cancel) throw new Error("This role/action has no sessionless operation");
+    const takeover = input.sessionless.kind === "takeover" && !input.recordAction && !input.exclusiveRecordTurn && (TAKEOVER_REVIEWERS.has(input.agentName) && input.mode === "pull-request" || input.agentName === TAKEOVER_WRITER && input.mode !== "record" && input.mode !== "plan" && Boolean(input.sessionless.evidence.sourceBranch));
+    if (!startup && !cancel && !takeover) throw new Error("This role/action has no sessionless operation");
     place = checkoutLocation(input.worktree);
     if (existsSync5(join6(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
-  } else place = location(input.worktree);
+  } else {
+    const checkout = checkoutLocation(input.worktree);
+    if (!existsSync5(join6(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
+    place = sessionPlace(checkout);
+  }
   return { place, target: discardLocation(input, place) };
 }
 function discardLocation(input, stable) {
@@ -12495,6 +12543,25 @@ function discardLocation(input, stable) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;
+}
+var STARTUP_ROLES = /* @__PURE__ */ new Set(["vibe-requirements-worker", "vibe-setup-worker"]);
+var TAKEOVER_REVIEWERS = /* @__PURE__ */ new Set(["vibe-adversarial-reviewer", "vibe-guardrails-reviewer"]);
+var TAKEOVER_WRITER = "vibe-change-worker";
+var MissingSessionError = class extends Error {
+  code = "NO_VIBE_SESSION";
+  constructor(agentName) {
+    super(`This worktree has no vibe session record. ${missingSessionRoute(agentName)}`);
+  }
+};
+function missingSessionRoute(agentName) {
+  if (TAKEOVER_REVIEWERS.has(agentName)) {
+    return 'For a pull request takeover, relaunch in the worktree at the PR head with mode pull-request and sessionless {"kind": "takeover", "evidence": {"prUrl": "<PR URL>", "headSha": "<full head SHA>"}}.';
+  }
+  if (agentName === TAKEOVER_WRITER) {
+    return 'Inside a vibe session, start one with the vibe skill. For a pull request takeover, relaunch in the worktree at the PR head with sessionless {"kind": "takeover", "evidence": {"prUrl": "<PR URL>", "headSha": "<full head SHA>", "sourceBranch": "<PR source branch>"}}.';
+  }
+  if (STARTUP_ROLES.has(agentName)) return 'Before a session exists, relaunch with sessionless {"kind": "startup"}.';
+  return "This role runs only inside a vibe session; start one with the vibe skill.";
 }
 
 // src/main-sync-state.ts
@@ -13057,7 +13124,7 @@ async function runWorker(rawInput) {
     throw new Error("Canonical validation derives its own envelope; caller timeout overrides are not allowed");
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
-  const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : void 0;
+  const recorded = input.agentName === "vibe-change-worker" && (!input.sessionless || input.sessionless.kind === "takeover") ? recordedWriterRoot(input.worktree) : void 0;
   const installedRoot = installedPluginRoot(import.meta.url);
   const resolvedRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
   const upgrade = recorded ? readWriterUpgradeEvidence(input.worktree, installedRoot) : void 0;
@@ -13083,6 +13150,10 @@ async function runWorker(rawInput) {
   if (!persistent) checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   const reviewSource = receiptRoles.has(input.agentName) ? reviewSourceIdentity(definition.root, place.root) : void 0;
+  const takeover = input.sessionless?.kind === "takeover" ? { ...input.sessionless.evidence, worktree: place.root } : void 0;
+  if (takeover && (reviewSource?.head ?? checkoutHead(place.root)) !== takeover.headSha) {
+    throw new Error("Takeover worktree HEAD differs from the pull request head it was bound to");
+  }
   let protectedArgs = [];
   if (persistent) {
     const [signIn, support] = await Promise.allSettled([
@@ -13098,6 +13169,7 @@ async function runWorker(rawInput) {
   let resume = false;
   let turnInput = input.input ?? input.continuation ?? "";
   if (persistent) {
+    if (takeover) bindTakeoverWriter(place.root, { prUrl: takeover.prUrl, headSha: takeover.headSha, sourceBranch: takeover.sourceBranch });
     const registered = registerWriter({
       worktree: input.worktree,
       runtime: "claude",
@@ -13231,6 +13303,7 @@ async function runWorker(rawInput) {
       runtime: "claude",
       agentName: input.agentName,
       ...reviewSource ? { source: reviewSource } : {},
+      ...takeover ? { takeover } : {},
       graphToolIdentities: input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read").map((capability) => mcpToolIdentity(capability.name)),
       graphToolAliases: [...new Set(input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read").flatMap((capability) => mcpToolAliases(capability.name)))],
       workerId,
@@ -13503,10 +13576,12 @@ function safeFailure(error) {
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
-  if (error instanceof AgentRootError) return { code: error.code, summary: error.message };
+  if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
+  if (message.includes("Takeover worktree HEAD")) return { code: "TAKEOVER_HEAD_MISMATCH", summary: "The takeover worktree is not at the bound pull request head; fetch and check out that head, then relaunch." };
+  if (message.includes("Takeover worktree already has a writer")) return { code: "TAKEOVER_WRITER_BOUND", summary: "This takeover worktree already has its one writer for another pull request or source branch; use a new worktree for another takeover." };
   if (message.includes("never argv")) return { code: "INVALID_REQUEST", summary: "This command takes no arguments; send the launch request on stdin (claude-worker.mjs help prints its shape)." };
   if (error instanceof external_exports.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
@@ -13626,6 +13701,9 @@ runFromCanonicalEntry(import.meta.url, main);
 function workerSessionName(agentName, branch, requestId) {
   const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");
   return `vibe ${role} \xB7 ${branch.replace(/^vibe\//, "")} \xB7 ${requestId}`;
+}
+function checkoutHead(root) {
+  return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }
 export {
   armMcpInitWatchdog,

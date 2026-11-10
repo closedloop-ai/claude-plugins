@@ -67,4 +67,9 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
   ticket creation or progress uses mode `record`, the corresponding `recordAction`
   (`create` or `progress`), `exclusiveRecordTurn: true` and only that action's
   exact parent-discovered writes. All setup operations remain non-implementation.
+  An engineer PR takeover's adversarial and guardrails reviewers run with
+  `sessionless: {kind: "takeover", evidence: {prUrl, headSha}}` in mode
+  `pull-request` ([pr-takeover](../../pr-takeover/SKILL.md), section 2), and its
+  one repair writer, `vibe-change-worker`, with `sourceBranch` added (section 4);
+  no other role has that route.
 <!-- end: claude-launcher -->

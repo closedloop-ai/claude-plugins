@@ -24,7 +24,7 @@ def _section(text: str, heading: str) -> str:
 def test_both_manifests_publish_the_same_new_skill_version() -> None:
     claude = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
     codex = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text())
-    assert claude["version"] == codex["version"] == "1.1.70"
+    assert claude["version"] == codex["version"] == "1.1.73"
     assert codex["skills"] == "./skills/"
     assert SKILL.read_text().startswith("---\nname: pr-takeover\n")
 
@@ -230,3 +230,59 @@ def test_codex_reviewer_path_names_managed_app_server_receipt() -> None:
     review = _section(SKILL.read_text(), "## 2. Review the PR independently")
     assert "managed App Server thread" in review
     assert "../handoff/SKILL.md" in review
+
+
+def test_url_only_reviewer_launch_grader_requires_the_takeover_route() -> None:
+    claude = (
+        "STEPS: 1. Fetch the PR head into a new worktree. 2. Launch both reviewers with claude-worker.mjs, "
+        'mode pull-request, sessionless {"kind": "takeover"} bound to the PR URL and head SHA. '
+        "3. Capture each result with review-receipts.mjs --pr-url --head."
+    )
+    codex = (
+        "STEPS: 1. Worktree at the fetched head commit. 2. Run the reviewers on the launcher's sessionless "
+        "takeover route. 3. Record review-receipts for each."
+    )
+    general = (
+        "STEPS: 1. Fetch the PR head. 2. The guard blocks the reviewers, so run two general agents that read "
+        "the reviewer definitions. 3. Summarize their findings."
+    )
+    for answer in (claude, codex):
+        assert _grader_matches("url-only", "reviewer-launch", answer), answer
+    assert not _grader_matches("url-only", "reviewer-launch", general)
+
+
+def test_takeover_review_names_the_launcher_route_and_head_bound_receipt() -> None:
+    review = _section(SKILL.read_text(), "## 2. Review the PR independently")
+    for phrase in (
+        "`node ../vibe/scripts/dist/claude-worker.mjs`",
+        '`"sessionless": {"kind": "takeover", "evidence": {"prUrl": "<PR URL>", "headSha": "<full 40-character head SHA>"}}`',
+        "mode `pull-request`",
+        "--pr-url <PR URL> --head <head SHA>",
+        "never the native Agent tool",
+    ):
+        assert phrase in review, phrase
+    assert (PLUGIN / "skills" / "vibe" / "scripts" / "dist" / "claude-worker.mjs").is_file()
+
+
+def test_fleet_pre_dispatch_ruling_search_uses_the_sessionless_requirements_launch() -> None:
+    step = next(line for line in FLEET.read_text().splitlines() if "run vibe's newest-ruling search" in line)
+    for phrase in (
+        "`node ../vibe/scripts/dist/claude-worker.mjs`",
+        '"agentName": "vibe-requirements-worker"',
+        '"mode": "request"',
+        '"sessionless": {"kind": "startup"}',
+        "never as a general worker in its place",
+    ):
+        assert phrase in step, phrase
+
+
+def test_takeover_repair_writer_uses_the_launcher_takeover_binding() -> None:
+    repair = _section(SKILL.read_text(), "## 4. Repair the actual PR")
+    for phrase in (
+        "`node ../vibe/scripts/dist/claude-worker.mjs`, never the native Agent tool",
+        '"sourceBranch": "<PR source branch>"',
+        "takeover record, which stands in for the session record",
+        "refuses a second writer for another PR or source branch",
+        "The writer does not commit or push",
+    ):
+        assert phrase in repair, phrase
