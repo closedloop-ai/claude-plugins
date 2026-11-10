@@ -181,6 +181,21 @@ test('a unit moves with its writer\'s PR alone: each ticket follows it on its ow
   assert.deepEqual(auditStatuses(snapshot('IN_PROGRESS', [merged])).findings.map(({ slug, kind }) => `${kind} ${slug}`), ['MISMATCH ISS-1', 'UNOWNED ISS-2'], 'without the board each ticket is judged alone');
 });
 
+test('until the unit\'s review passes, its members stay IN_PROGRESS and one moved to IN_REVIEW or DONE is UNIT-UNREVIEWED', () => {
+  const units = { 'ISS-1': { tickets: ['ISS-1', 'ISS-2'], writer: 'w1' } };
+  const writers = { w1: { pr: '10', repo: 'o/r' } };
+  const pull = (state) => [{ url: 'https://github.com/o/r/pull/10', state }];
+  const snapshot = (first, second, state) => ({ prds: [{ slug: 'P1', children: [
+    { slug: 'ISS-1', status: first, pullRequests: pull(state), body }, { slug: 'ISS-2', status: second, body },
+  ] }] });
+  const held = () => 'unit ISS-1\'s review has 2 gaps and 0 problems';
+  const kinds = (snap, review) => auditStatuses(snap, units, writers, review).findings.map(({ kind, slug, expected }) => `${kind} ${slug}${expected ? ` ${expected}` : ''}`);
+  assert.deepEqual(kinds(snapshot('IN_PROGRESS', 'IN_PROGRESS', 'OPEN'), held), [], 'an open PR is not In Review until the review passes');
+  assert.deepEqual(kinds(snapshot('IN_REVIEW', 'IN_PROGRESS', 'OPEN'), held), ['UNIT-UNREVIEWED ISS-1']);
+  assert.deepEqual(kinds(snapshot('DONE', 'IN_REVIEW', 'MERGED'), held), ['UNIT-UNREVIEWED ISS-1', 'UNIT-UNREVIEWED ISS-2']);
+  assert.deepEqual(kinds(snapshot('IN_PROGRESS', 'IN_PROGRESS', 'OPEN'), () => null), ['MISMATCH ISS-1 IN_REVIEW', 'MISMATCH ISS-2 IN_REVIEW'], 'once it passes, the PR state rules as before');
+});
+
 test('--board reads the open units and writer rows, so a merged unit PR flags every ticket still behind it until the unit closes', (t) => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'status-audit-board-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
@@ -196,6 +211,11 @@ test('--board reads the open units and writer rows, so a merged unit PR flags ev
     { slug: 'ISS-2', status: 'IN_REVIEW', body },
   ] }] }));
   board(false);
+  const unreviewed = spawnSync(process.execPath, [SCRIPT, '--snapshot', file, '--board', home], { encoding: 'utf8' });
+  assert.match(unreviewed.stdout, /^UNIT-UNREVIEWED ISS-1 DONE: unit ISS-1 has no recorded review; .*stays IN_PROGRESS until every member and PRD criterion passes code review and visual QA$/m);
+  assert.doesNotMatch(unreviewed.stdout, /^MISMATCH ISS-2/m, 'members are not pushed forward while the review is missing');
+  mkdirSync(path.join(home, 'programs', 'p1', 'evidence'), { recursive: true });
+  writeFileSync(path.join(home, 'programs', 'p1', 'evidence', 'unit-review-ISS-1.json'), JSON.stringify({ ok: true, tickets: ['ISS-1', 'ISS-2', 'ISS-5'] }));
   const result = spawnSync(process.execPath, [SCRIPT, '--snapshot', file, '--board', home], { encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /^MISMATCH ISS-2 IN_REVIEW, expected DONE \(https:\/\/github\.com\/o\/r\/pull\/10 merged\)$/m);

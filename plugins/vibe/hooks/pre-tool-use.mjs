@@ -16,6 +16,7 @@ import { pluginVersionGuard, pluginVersionSkillStart } from "./plugin-version-gu
 import { prCreateGuard } from "./pr-create-guard.mjs";
 import { QUESTION_TOOLS, questionGuard } from "./question-guard.mjs";
 import { shellSafetyGuard } from "./shell-safety-guard.mjs";
+import { UPDATE_DOCUMENT_TOOL, unitStatusGuard } from "./unit-status-guard.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import { commandSegments } from "./command-segments.mjs";
 import path from "node:path";
@@ -37,6 +38,7 @@ export const PRE_TOOL_USE_ROUTES = Object.freeze({
   ]),
   SendMessage: Object.freeze([{ name: "pause-guard", run: pauseGuard }, { name: "plugin-version-guard", run: pluginVersionGuard }]),
   Skill: Object.freeze([{ name: "plugin-version-start", run: pluginVersionSkillStart }]),
+  [UPDATE_DOCUMENT_TOOL]: Object.freeze([{ name: "unit-status-guard", run: unitStatusGuard }]),
   ...Object.fromEntries(QUESTION_TOOLS.map((tool) => [tool, Object.freeze([{ name: "question-guard", run: questionGuard }])])),
 });
 

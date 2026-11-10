@@ -90,7 +90,8 @@ Related tickets go to one writer, one branch and one PR; each keeps its own crit
 1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates (each with its PRD and whether the operator is its assignee) and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
 2. Tell the operator its lines: one per unit, with what joined, what stayed apart and why.
 3. Record each unit with `board.mjs <orchDir> unit`; fold a related ticket into the running writer, never a second one.
-4. Move each ticket yourself (In Progress at start, In Review at PR open, Done at merge), audit with `status-audit.mjs --board`, and close the unit with `board.mjs <orchDir> unit <name> --closed <PR>` once every member is reconciled.
+4. Before calling the unit ready, record its review of the completed work: `../handoff/scripts/unit-review.mjs ... --record <orchDir> --unit <name>`. Every member criterion and the PRD's criteria for the touched pages each need a code review row and a visual QA capture per page and surface it names. Send its `GAP` lines to the operator by ticket and criterion number; the unit is not ready until there are none.
+5. Move each ticket yourself (In Progress at start, In Review at PR open once the review passed, Done at merge), audit with `status-audit.mjs --board`, and close the unit with `board.mjs <orchDir> unit <name> --closed <PR>` once every member is reconciled; both refuse a unit without a passing review.
 
 ## State and persistence
 

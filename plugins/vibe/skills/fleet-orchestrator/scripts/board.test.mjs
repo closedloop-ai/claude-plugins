@@ -466,7 +466,7 @@ test('a unit lists its tickets on the board page and in the resume log; a fold a
   assert.equal(run([dir, 'unit', 'ISS-5', '--tickets', 'not-a-slug']).status, 2);
 });
 
-test('a unit closes only with its writer row\'s PR; the board and log show it, and a new unit takes the next free name', (t) => {
+test('a unit closes only with its writer row\'s PR and a passing review; the board and log show it, and a new unit takes the next free name', (t) => {
   const dir = tempDir(t);
   assert.equal(run([dir, 'writer', 'w1', '--pr', '7', '--repo', 'o/r']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1', '--now', '2026-11-09T10:00:00Z']).status, 0);
@@ -480,6 +480,15 @@ test('a unit closes only with its writer row\'s PR; the board and log show it, a
     assert.equal(refused.status, 2, typo);
     assert.match(refused.stderr, /is not the PR on writer w1's board row/);
   }
+  const unreviewed = run([dir, 'unit', 'ISS-1', '--closed', '7']);
+  assert.equal(unreviewed.status, 2, 'a unit with no passing review does not close');
+  assert.match(unreviewed.stderr, /unit ISS-1 has no recorded review; .*a unit closes only after every member and PRD criterion passed code review and visual QA/);
+  assert.match(run([dir, 'status']).stdout, /^UNIT-UNREVIEWED ISS-1 w1 o\/r#7: unit ISS-1 has no recorded review/m, 'status says a unit with a PR is not ready');
+  mkdirSync(path.join(dir, 'evidence'), { recursive: true });
+  writeFileSync(path.join(dir, 'evidence', 'unit-review-ISS-1.json'), JSON.stringify({ ok: true, tickets: ['ISS-1'] }));
+  assert.match(run([dir, 'unit', 'ISS-1', '--closed', '7']).stderr, /does not cover ISS-2, added after it ran/);
+  writeFileSync(path.join(dir, 'evidence', 'unit-review-ISS-1.json'), JSON.stringify({ ok: true, tickets: ['ISS-1', 'ISS-2'] }));
+  assert.doesNotMatch(run([dir, 'status']).stdout, /UNIT-UNREVIEWED ISS-1/);
   assert.equal(run([dir, 'unit', 'ISS-1', '--closed', 'https://github.com/o/r/pull/7', '--now', '2026-11-09T12:00:00Z']).status, 0);
   const board = JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8'));
   assert.match(board.units['ISS-1'].closed.pr, /^o\/r#7$/);

@@ -16,7 +16,11 @@
 // (put a member with no PRD under `{"slug": null}`). `UNIT-PR-UNREAD <unit>`,
 // with the unit's members left unjudged, means the writer's PR is in no
 // member's pullRequests, or the writer row has no PR while a member lists an
-// open one.
+// open one. IN_REVIEW and DONE also need the unit's passing recorded review
+// (handoff's unit-review.mjs --record: every member and PRD criterion passed
+// code review and visual QA on each page and surface it names). Until then
+// every member is expected IN_PROGRESS, and one at IN_REVIEW or DONE prints
+// `UNIT-UNREVIEWED <slug> <status>`; move it back.
 //
 // `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default) prints
 // `status audit: skipped at report` and exits 0 without reading the snapshot, so the
@@ -60,11 +64,13 @@ import { parseArgs } from "node:util";
 import { ticketProblems } from "../../handoff/scripts/executed-check.mjs";
 import { rulingNamesScope, sequencingRequirements } from "../../handoff/scripts/rulings-check.mjs";
 import { readBoard } from "./ticket-units.mjs";
+import { unitReviewProblem } from "../../handoff/scripts/unit-review.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
 const PLAN_CLOSED = new Set(["EXECUTED", "OBSOLETE"]);
+const REVIEWED_STATUSES = new Set(["IN_REVIEW", "DONE"]);
 
 export const TRIM_ENV = "FLEET_TRIM_STATUS_AUDIT";
 export const AuditPoint = Object.freeze({ Assignment: "assignment", Merge: "merge", Report: "report" });
@@ -97,6 +103,8 @@ export function childFinding(child, prdSlug) {
     const criteria = criteriaFinding(child, prdSlug);
     if (criteria) return criteria;
   }
+  // Until the unit's review passes its members stay IN_PROGRESS; applyUnits reports a moved one as UNIT-UNREVIEWED.
+  if (child?.unitHeld) return null;
   if (merged) {
     return child.status === "DONE" ? null : { kind: "MISMATCH", expected: "DONE", evidence: `${merged.url ?? "a pull request"} merged` };
   }
@@ -129,10 +137,11 @@ function criteriaFinding(child, prdSlug) {
 }
 
 /** Each unit member is judged by the unit writer's PR and writer; members the snapshot lacks are UNREAD-MEMBER. */
-export function applyUnits(children, units, writers = {}) {
+export function applyUnits(children, units, writers = {}, reviewProblem = () => null) {
   const findings = [];
   for (const [name, unit] of Object.entries(units)) {
     const members = children.filter(({ child }) => unit.tickets.includes(child?.slug));
+
     for (const slug of unit.tickets.filter((ticket) => !members.some(({ child }) => child.slug === ticket))) {
       findings.push({ slug, status: "?", kind: "UNREAD-MEMBER", unit: name });
     }
@@ -151,8 +160,11 @@ export function applyUnits(children, units, writers = {}) {
     }
     // Without the unit's PR state, judging would push members backwards; report it instead.
     if (unread) findings.push({ slug: name, status: "?", kind: "UNIT-PR-UNREAD", unit: name, why: unread });
+    const moved = members.filter(({ child }) => REVIEWED_STATUSES.has(child.status));
+    const held = moved.length > 0 || pulls.length > 0 ? reviewProblem(name, unit) : null;
+    for (const { child } of held ? moved : []) findings.push({ slug: child.slug, status: child.status, kind: "UNIT-UNREVIEWED", unit: name, why: held });
     for (const entry of members) {
-      entry.child = { ...entry.child, unit: name, pullRequests: pulls, writer: entry.child.writer ?? unit.writer ?? null, ...(unread ? { unitUnread: true } : {}) };
+      entry.child = { ...entry.child, unit: name, pullRequests: pulls, writer: entry.child.writer ?? unit.writer ?? null, ...(unread ? { unitUnread: true } : {}), ...(held ? { unitHeld: true } : {}) };
     }
   }
   return findings;
@@ -165,13 +177,13 @@ function isWriterPull(url, row) {
 }
 
 /** Every child that disagrees with its evidence, and every one ruled out of scope. */
-export function auditStatuses(snapshot, units = {}, writers = {}) {
+export function auditStatuses(snapshot, units = {}, writers = {}, reviewProblem = () => null) {
   const ruled = new Map((Array.isArray(snapshot?.outOfScope) ? snapshot.outOfScope : [])
     .filter((entry) => typeof entry?.slug === "string" && typeof entry.reason === "string" && entry.reason.trim() !== "")
     .map((entry) => [entry.slug, entry.reason.trim()]));
   const children = (Array.isArray(snapshot?.prds) ? snapshot.prds : [])
     .flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []).map((child) => ({ child, prdSlug: prd?.slug })));
-  const findings = [...sequencingFindings(snapshot), ...applyUnits(children, units, writers)];
+  const findings = [...sequencingFindings(snapshot), ...applyUnits(children, units, writers, reviewProblem)];
   const outOfScope = [];
   for (const { child, prdSlug } of children) {
     findings.push(...sweepFindings(child).map((found) => ({ slug: child.slug, status: child.status, ...found })));
@@ -209,13 +221,15 @@ function main(argv) {
     return 0;
   }
   const board = values.board ? readBoard(resolveWorkDir(values.board).dir) : { units: {}, writers: {} };
-  const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")), board.units, board.writers);
+  const reviewProblem = values.board ? (name, unit) => unitReviewProblem(values.board, name, unit) : () => null;
+  const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")), board.units, board.writers, reviewProblem);
   const lines = {
     UNOWNED: (finding) => `UNOWNED ${finding.slug} ${finding.status}`,
     "PLAN-OPEN": (finding) => `PLAN-OPEN ${finding.slug}: ${finding.plan} is ${finding.planStatus}; a DONE ticket's plan is EXECUTED`,
     "ABSORBED-OPEN": (finding) => `ABSORBED-OPEN ${finding.slug} ${finding.status}: absorbed by ${finding.umbrella}, which is DONE; close it in the same step with that merge as evidence`,
     UNSCOPED: (finding) => `UNSCOPED ${finding.slug} ${finding.status}: the out-of-scope ruling "${finding.reason.slice(0, 120)}" names neither the ticket nor its PRD`,
     "UNIT-PR-UNREAD": (finding) => `UNIT-PR-UNREAD ${finding.unit}: ${finding.why}; its members are not judged until then`,
+    "UNIT-UNREVIEWED": (finding) => `UNIT-UNREVIEWED ${finding.slug} ${finding.status}: ${finding.why}; a unit ticket stays IN_PROGRESS until every member and PRD criterion passes code review and visual QA`,
     "UNREAD-MEMBER": (finding) => `UNREAD-MEMBER ${finding.slug}: a ticket of unit ${finding.unit} is not in the snapshot; add it so its status moves with the unit`,
     UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
     UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,
@@ -226,7 +240,7 @@ function main(argv) {
   for (const finding of findings) process.stdout.write(`${lines[finding.kind](finding)}\n`);
   for (const entry of outOfScope) process.stdout.write(`OUT-OF-SCOPE ${entry.slug}: ${entry.reason}\n`);
   const count = (kind) => findings.filter((finding) => finding.kind === kind).length;
-  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED") + count("UNREAD-MEMBER") + count("UNIT-PR-UNREAD")} unchecked, ${count("UNSCOPED")} unscoped, ${count("PLAN-OPEN")} open plans, ${count("ABSORBED-OPEN")} absorbed open\n`);
+  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED") + count("UNREAD-MEMBER") + count("UNIT-PR-UNREAD") + count("UNIT-UNREVIEWED")} unchecked, ${count("UNSCOPED")} unscoped, ${count("PLAN-OPEN")} open plans, ${count("ABSORBED-OPEN")} absorbed open\n`);
   return findings.length === 0 ? 0 : 1;
 }
 
