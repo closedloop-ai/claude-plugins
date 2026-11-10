@@ -11,10 +11,11 @@ const FLEET = join(SCRIPTS, 'fleet.sh');
 const LOAD_CHECK = join(SCRIPTS, 'load-check.sh');
 const TIMEOUT = { timeout: 20_000 };
 const RELATIVE_IMPORT = /^import [^;]*? from (['"])(\.{1,2}\/[^'"]+)\1;/gms;
+const VIBE_CORE_LOAD = /\b(?:vibeCore|runVibeCoreMain)\("([^"]+)"\)/g;
 /** Exercise the shipped remote launcher while keeping App Server calls inside a nonexistent test socket. */
 function realRemoteSession(f) {
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*codex-session.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*codex-session.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   writeFileSync(join(f.root, 'bin', 'codex'), `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'app-server daemon start') console.log(JSON.stringify({ socketPath: ${JSON.stringify(join(f.root, 'missing.sock'))} }));\nelse console.log(JSON.stringify({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: ${JSON.stringify(PLUGIN_ROOT)} } }] }));\n`);
   chmodSync(join(f.root, 'bin', 'codex'), 0o755);
@@ -94,14 +95,14 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
   const remoteArgv = f.argv(result);
   assert.deepEqual(remoteArgv.slice(0, -2), [
-    join(shipped, 'skills/fleet-orchestrator/scripts/codex-session.mjs'), 'turn', join(f.root, 'remote', 'sessions'), 'w1',
+    join(shipped, 'plugins/vibe/skills/fleet-orchestrator/scripts/codex-session.mjs'), 'turn', join(f.root, 'remote', 'sessions'), 'w1',
     '--prompt-file', join(shipped, 'w1-01-start.md'), '--cwd', '/remote wt', '--effort', 'high',
       '--plugin-root', PLUGIN_ROOT,
   ]);
   assert.equal(remoteArgv.at(-2), '--fleet-claim');
   assert.match(remoteArgv.at(-1), /\/w1\.preflight\.[^/]+\.json$/);
   for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs']) {
-    assert.ok(existsSync(join(shipped, "skills", file)), file);
+    assert.ok(existsSync(join(shipped, "plugins", "vibe", "skills", file)), file);
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), '$vibe ISS-1\n');
   assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /^-o\nConnectTimeout=10\n-o\nServerAliveInterval=15\nbox\n/);
@@ -264,7 +265,7 @@ test('an ambiguous remote failure after state creation keeps a recoverable pendi
 test('thread acceptance before remote state save never clears pending ownership', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"thread-created","threadId":"accepted-thread"}' > "$3/$4.launch.json"; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"thread-created","threadId":"accepted-thread"}' > "$3/$4.launch.json"; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
     '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
@@ -280,7 +281,7 @@ test('thread acceptance before remote state save never clears pending ownership'
 test('missing state without an attempt-bound refusal receipt keeps pending ownership', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
     '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
@@ -297,7 +298,7 @@ test('concurrent recovery cannot clear an in-flight remote launch before state a
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
   const release = join(f.root, 'release-remote-launch');
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit 0;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit 0;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const child = spawn('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
     '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'], {
@@ -333,7 +334,7 @@ test('signal-stopped dispatch keeps uncertain thread-before-state ownership for 
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
   const release = join(f.root, 'release-crashed-launch');
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"phase":"may-have-started"}' > "$3/$4.launch.json"; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; exit 1;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const child = spawn('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
     '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'], {
@@ -469,19 +470,21 @@ test('a remote session ships every module codex-session.mjs and skill-freshness.
   const result = f.run(['remote', 'session', 'last', 'w1']);
   assert.equal(result.status, 0, result.stderr);
   const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
-  const skills = join(SCRIPTS, '..', '..', '..');
-  const pending = ['skills/fleet-orchestrator/scripts/codex-session.mjs', 'skills/fleet-orchestrator/scripts/skill-freshness.mjs'];
+  // The shipped tree is the two plugins laid out as a checkout; vibe's scripts reach vibe-core's modules through vibeCore().
+  const plugins = join(SCRIPTS, '..', '..', '..', '..');
+  const pending = ['vibe/skills/fleet-orchestrator/scripts/codex-session.mjs', 'vibe/skills/fleet-orchestrator/scripts/skill-freshness.mjs'];
   const seen = new Set();
   while (pending.length) {
     const file = pending.pop();
     if (seen.has(file)) continue;
     seen.add(file);
-    assert.ok(existsSync(join(shipped, file)), `${file} is imported but not shipped`);
-    for (const [, , spec] of readFileSync(join(skills, file), 'utf8').matchAll(RELATIVE_IMPORT)) {
-      pending.push(relative(skills, join(skills, dirname(file), spec)));
-    }
+    assert.ok(existsSync(join(shipped, 'plugins', file)), `${file} is imported but not shipped`);
+    const source = readFileSync(join(plugins, file), 'utf8');
+    for (const [, , spec] of source.matchAll(RELATIVE_IMPORT)) pending.push(relative(plugins, join(plugins, dirname(file), spec)));
+    for (const [, spec] of source.matchAll(VIBE_CORE_LOAD)) pending.push(join('vibe-core', spec));
   }
-  assert.ok(seen.has('skills/codex-fleet-monitor/scripts/thread-sidebar.mjs'));
+  assert.ok(seen.has('vibe/skills/codex-fleet-monitor/scripts/thread-sidebar.mjs'));
+  assert.ok(seen.has('vibe-core/lib/vibe/scripts/session-record.mjs'));
 });
 
 test('remote without REMOTE_HOST fails and names the missing key', TIMEOUT, () => {

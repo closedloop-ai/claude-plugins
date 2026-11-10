@@ -3,7 +3,6 @@
 // files), assertion and export changes, new apps/api refusals, ticket asks and
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
 
-import { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
@@ -21,8 +20,11 @@ import { prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;

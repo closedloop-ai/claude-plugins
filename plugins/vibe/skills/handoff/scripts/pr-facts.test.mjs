@@ -11,7 +11,9 @@ import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../.
 import { workflowLaneDefinitions } from "./ci-job-shape.mjs";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { qaImpact, qaImpactRequest } from "./qa-impact.mjs";
-import { sourceIdentity, committedSourceIdentity } from '../../vibe/scripts/tested-head.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { sourceIdentity, committedSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 test('dirty precommit evidence cannot bind unchanged HEAD and binds only after the candidate is committed', t => {
   const { root, home, cleanup } = makeHome('precommit-evidence-binding-');

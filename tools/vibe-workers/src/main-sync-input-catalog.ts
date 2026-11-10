@@ -6,7 +6,7 @@ import { z } from "zod";
 import { parse } from "yaml";
 import { MainSyncError, producerInputSchema } from "./main-sync-contracts.js";
 import { originTree } from "./main-sync-input-files.js";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { digest } from "./main-sync-state.js";
 import { readProducerMetadata, verifyProducerHead } from "./main-sync-producer-read.js";
 

@@ -10,7 +10,9 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { ledgerFile, recordedOwn, startTimeOf } from "../../../hooks/kill-guard.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { ledgerFile, recordedOwn, startTimeOf } = await vibeCore("hooks/kill-guard.mjs");
 
 const KINDS = Object.freeze({
   storybook: { pidKey: "storybookPid", identityKey: "storybookIdentity", clear: ["storybookPid", "storybookIdentity", "storybookUrl"], command: /\bstorybook\b/i },

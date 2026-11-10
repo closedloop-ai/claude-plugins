@@ -70,24 +70,37 @@
 // migrates when it resumes) or `failed` with its reason.
 // `vibe-sessions.mjs new` refuses to create a session while this
 // conversation's record is outdated with no choice, and the vibe hooks refuse
-// worker launches in Claude Code while it is (hooks/plugin-version-guard.mjs).
+// worker launches in Claude Code while it is (vibe-core's hooks/plugin-version-guard.mjs).
 
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { Harness, harnessActor } from "./harness-identity.mjs";
-import { readSessionRecord, writeSessionRecord } from "./session-record.mjs";
+import { vibeCore, vibeCoreProblem } from "../../../shared/vibe-core.mjs";
+import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine } from "./vibe-core-hooks.mjs";
+import { BUNDLED_CODEX, findCli, installedPlugins, MARKETPLACE } from "./plugin-cli.mjs";
+import { Choice, Connection, runWithoutVibeCore } from "./plugin-version-bootstrap.mjs";
 
-export const MARKETPLACE = "closedloop-ai";
+// Without vibe-core (a Codex vibe update that did not add it) the modules below cannot load, so the
+// command line reports the missing dependency and how to add it, and stops here (ISS-13869).
+const missingCore = vibeCoreProblem();
+if (missingCore && process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  process.exit(await runWithoutVibeCore(process.argv.slice(2), missingCore));
+}
+
+const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
+const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const startupRecord = await vibeCore("lib/vibe/scripts/startup-record.mjs");
+const { RELEASE_VERSION: VERSION, readJson, startupDir, writeJson } = startupRecord;
+export const { VersionStatus, blockingProblem, compareVersions, installedVibeVersion, loadedSkillProblem, markPending,
+  readStartupRecord, startupFile } = startupRecord;
+
+export { BUNDLED_CODEX, findCli, installedPlugins, MARKETPLACE };
 export const LATEST_BASE = "https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main";
-export const BUNDLED_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
 export { Harness };
-export const VersionStatus = Object.freeze({ Current: "current", Outdated: "outdated", Unknown: "unknown", Pending: "pending" });
-export const Choice = Object.freeze({ Update: "update", Proceed: "proceed" });
-export const Connection = Object.freeze({ Connected: "connected", NotConnected: "not-connected" });
+export { Choice, Connection };
 export const StrandedMigration = Object.freeze({ Migrated: "migrated", OnResume: "on-resume", Failed: "failed" });
 const VIBE_BRANCH = "vibe/";
 const MANIFEST = Object.freeze({ claude: ".claude-plugin/plugin.json", codex: ".codex-plugin/plugin.json" });
@@ -95,37 +108,20 @@ const CATALOG = Object.freeze({ claude: ".claude-plugin/marketplace.json", codex
 const CHOOSERS = Object.freeze(["person", "opening-message"]);
 const COMMANDS = Object.freeze(["check", "choose", "update", "loaded", "pending", "adopt", "status", "show"]);
 const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
-const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe"]);
+const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe", "vibe-core"]);
+/**
+ * Plugins another plugin needs installed in the same harness. vibe's hooks ship in vibe-core, and Codex
+ * installs no plugin dependency, so a vibe update there can leave vibe-core, and every hook, missing.
+ */
+const REQUIRED_WITH = Object.freeze({ vibe: Object.freeze(["vibe-core"]) });
+/** The release from which a plugin needs each REQUIRED_WITH plugin; an older vibe ships its own hooks. */
+const REQUIRED_FROM = Object.freeze({ vibe: FIRST_SPLIT_VIBE });
 const DEFAULT_TIMEOUT_MS = 5_000;
 export const ESCALATION_JUSTIFICATION = "Check whether vibe is up to date";
 const CLI_TIMEOUT_MS = 30_000;
 const UPDATE_TIMEOUT_MS = 180_000;
 const STARTUP_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
-const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
-const CONVERSATION = /^[A-Za-z0-9_.:-]{1,128}$/;
 const SAFE_WORD = /^[\w@%+=:,./-]+$/;
-
-/** -1, 0 or 1 for two x.y.z versions, or null when either is not one. */
-export function compareVersions(left, right) {
-  const a = VERSION.exec(String(left ?? "").trim());
-  const b = VERSION.exec(String(right ?? "").trim());
-  if (!a || !b) {
-    return null;
-  }
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(a[index]) - Number(b[index]);
-    if (difference !== 0) {
-      return difference < 0 ? -1 : 1;
-    }
-  }
-  return 0;
-}
-
-/** The installed vibe version reported for `runtime`, or null. */
-export function installedVibeVersion(record, runtime) {
-  const entry = (record?.harnesses ?? []).find((item) => item?.harness === runtime);
-  return entry?.plugins?.find((plugin) => plugin?.name === "vibe")?.version ?? null;
-}
 
 /**
  * The skill release this conversation loaded. On the first check after an
@@ -141,37 +137,6 @@ export function loadedSkillForCheck(previous, current, conversation, runtime, no
     if (VERSION.test(priorVersion ?? "")) return { conversation, runtime, version: priorVersion, at: previous.checkedAt ?? now.toISOString(), inferred: true };
   }
   return null;
-}
-
-/** Why this conversation must reload the current skill before another brief. */
-export function loadedSkillProblem(record) {
-  const loaded = record?.loadedSkill?.version;
-  const installed = installedVibeVersion(record, record?.loadedSkill?.runtime ?? record?.runtime);
-  const order = compareVersions(loaded, installed);
-  return order !== null && order < 0
-    ? `the conversation loaded vibe ${loaded}, but ${installed} is installed; reload the current vibe/fleet skill before sending another brief`
-    : null;
-}
-
-/** The CLI for `harness` that exists on this machine, or null: PATH first, then its usual install places. */
-export function findCli(harness, env = process.env, home = os.homedir()) {
-  const fallbacks = harness === Harness.Claude
-    ? [path.join(home, ".local", "bin", "claude"), path.join(home, ".claude", "local", "claude")]
-    : [BUNDLED_CODEX];
-  return onPath(harness, env) ?? fallbacks.find(isExecutable) ?? null;
-}
-
-/** The enabled closedloop-ai plugins one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
-export function installedPlugins(harness, listing) {
-  const parsed = typeof listing === "string" ? JSON.parse(listing) : listing;
-  if (harness === Harness.Claude) {
-    const rows = Array.isArray(parsed) ? parsed : [];
-    return rows.filter((row) => typeof row?.id === "string" && row.id.endsWith(`@${MARKETPLACE}`) && row.enabled !== false)
-      .map((row) => ({ name: row.id.slice(0, -MARKETPLACE.length - 1), id: row.id, version: row.version ?? null, scope: row.scope ?? null }));
-  }
-  const rows = Array.isArray(parsed?.installed) ? parsed.installed : [];
-  return rows.filter((row) => row?.marketplaceName === MARKETPLACE && row.installed !== false && row.enabled !== false && typeof row.name === "string")
-    .map((row) => ({ name: row.name, id: row.pluginId ?? `${row.name}@${MARKETPLACE}`, version: row.version ?? null, marketplace: marketplaceOf(row) }));
 }
 
 /** The per-plugin verdicts for one harness, given each plugin's latest version or the reason it is unknown. */
@@ -193,7 +158,8 @@ export function comparePlugins(plugins, latest) {
 export function summarize(harnesses) {
   const outdated = harnesses.flatMap((entry) => (entry.plugins ?? [])
     .filter((plugin) => plugin.status === VersionStatus.Outdated)
-    .map((plugin) => ({ harness: entry.harness, plugin: plugin.name, installed: plugin.version, latest: plugin.latest })));
+    .map((plugin) => ({ harness: entry.harness, plugin: plugin.name, installed: plugin.version, latest: plugin.latest,
+      ...(plugin.missing ? { missing: true } : {}) })));
   const reasons = harnesses.flatMap((entry) => [
     ...(entry.reason ? [`${entry.harness}: ${entry.reason}`] : []),
     ...(entry.plugins ?? []).filter((plugin) => plugin.status === VersionStatus.Unknown).map((plugin) => `${entry.harness} ${plugin.name}: ${plugin.reason}`),
@@ -217,12 +183,14 @@ export function summarize(harnesses) {
   };
 }
 
-/** "vibe: you have 1.0.52, the latest is 1.0.53", once per plugin and version pair, in first-seen order. */
+/** "vibe: you have 1.0.52, the latest is 1.0.53" (or "vibe-core: not installed, ..."), once per plugin and version pair, in first-seen order. */
 export function versionsText(outdated) {
   const seen = new Set();
   const parts = [];
   for (const entry of outdated) {
-    const text = `${entry.plugin}: you have ${entry.installed}, the latest is ${entry.latest}`;
+    const text = entry.missing
+      ? `${entry.plugin}: not installed, the latest is ${entry.latest}`
+      : `${entry.plugin}: you have ${entry.installed}, the latest is ${entry.latest}`;
     if (!seen.has(text)) {
       seen.add(text);
       parts.push(text);
@@ -239,7 +207,7 @@ export function updateCommands(harness, cli, outdated) {
   if (harness === Harness.Claude) {
     return [
       [cli, "plugin", "marketplace", "update", MARKETPLACE],
-      ...outdated.map((plugin) => [cli, "plugin", "update", plugin.id, ...(plugin.scope ? ["--scope", plugin.scope] : [])]),
+      ...outdated.map((plugin) => [cli, "plugin", plugin.missing ? "install" : "update", plugin.id, ...(plugin.scope ? ["--scope", plugin.scope] : [])]),
     ];
   }
   // A local folder marketplace is not refreshed by `marketplace upgrade`
@@ -254,7 +222,7 @@ export async function checkVersions({ clis = {}, latestBase = LATEST_BASE, timeo
   const fetchText = cachedFetch(fetchImpl, timeoutMs);
   const harnesses = [];
   for (const harness of [Harness.Claude, Harness.Codex]) {
-    harnesses.push(await checkHarness(harness, clis[harness] ?? findCli(harness, env, home), latestBase, fetchText));
+    harnesses.push(await withHookApproval(await checkHarness(harness, clis[harness] ?? findCli(harness, env, home), latestBase, fetchText)));
   }
   return summarize(harnesses);
 }
@@ -331,14 +299,6 @@ export function localMarketplaceProblem(outdated) {
   return null;
 }
 
-/** Where this conversation's startup record lives. */
-export function startupFile(conversation, home = os.homedir()) {
-  if (!CONVERSATION.test(conversation)) {
-    throw new Error(`invalid conversation id ${JSON.stringify(conversation)}`);
-  }
-  return path.join(startupDir(home), `${conversation}.json`);
-}
-
 /** This conversation's id from the harness (harness-identity.mjs), or "default" outside one. */
 export function conversationId(env = process.env) {
   return harnessActor(env)?.id ?? "default";
@@ -347,36 +307,6 @@ export function conversationId(env = process.env) {
 /** Active harness for a conversation, or null outside Claude/Codex. */
 export function conversationRuntime(env = process.env) {
   return harnessActor(env)?.runtime ?? null;
-}
-
-/** Reads a startup record, or null. */
-export function readStartupRecord(conversation, home = os.homedir()) {
-  return readJson(startupFile(conversation, home));
-}
-
-/** Marks a conversation's vibe or fleet session as started with the check not yet run; keeps any record it already has. */
-export function markPending(conversation, home = os.homedir(), now = new Date()) {
-  const file = startupFile(conversation, home);
-  if (existsSync(file)) {
-    return readJson(file);
-  }
-  const record = { conversation, status: VersionStatus.Pending, startedAt: now.toISOString() };
-  writeJson(file, record);
-  return record;
-}
-
-/** Why the recorded state blocks starting work, or null: the check never ran, or it found an outdated plugin nobody chose about. */
-export function blockingProblem(record) {
-  if (record?.status === VersionStatus.Pending) {
-    return "the plugin version check has not run in this conversation";
-  }
-  if (record?.status === VersionStatus.Outdated && !record.choice) {
-    return `plugins are outdated (${record.versions}) and the person has not chosen to update or to proceed`;
-  }
-  if (record?.loadedSkillRequired === true && !record.loadedSkill?.actorId) {
-    return "this conversation's hooks recorded no load of the current vibe/fleet skill; load it with the Skill tool or its start prompt before continuing";
-  }
-  return loadedSkillProblem(record);
 }
 
 /** Moves this conversation's startup record onto a vibe session record; refuses one that blocks. Returns the adopted record or null. */
@@ -417,9 +347,11 @@ export function statusBlock(record, connections) {
     }
     const parts = STATUS_PLUGINS.map((name) => {
       const plugin = entry.plugins.find((candidate) => candidate.name === name);
-      return plugin ? `${name} ${plugin.version ?? "(version unknown)"} (${latestNote(plugin)})` : `${name} not installed`;
+      return plugin && !plugin.missing ? `${name} ${plugin.version ?? "(version unknown)"} (${latestNote(plugin)})` : `${name} not installed`;
     });
     lines.push(`- ${label}: ${parts.join(", ")}`);
+    const approval = hookApprovalLine(entry.hookApproval);
+    if (approval) lines.push(`- ${label}: ${approval}`);
   }
   const word = (value) => (value === Connection.Connected ? "connected" : "not connected");
   lines.push(`- ClosedLoop connection: ${word(connections.closedloop)}`, `- closedloop-graph connection: ${word(connections.graph)}`);
@@ -487,33 +419,6 @@ function latestNote(plugin) {
   return "couldn't check for a newer version";
 }
 
-function onPath(name, env) {
-  for (const dir of (env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
-    const candidate = path.join(dir, name);
-    if (isExecutable(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function isExecutable(file) {
-  try {
-    accessSync(file, constants.X_OK);
-    return statSync(file).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function marketplaceOf(row) {
-  const source = row.marketplaceSource;
-  if (source?.sourceType === "local" && typeof source.source === "string") {
-    return { type: "local", root: source.source };
-  }
-  return { type: source?.sourceType ?? "unknown" };
-}
-
 function listInstalled(harness, cli) {
   try {
     const listing = execFileSync(cli, ["plugin", "list", "--json"], { encoding: "utf8", timeout: CLI_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"] });
@@ -534,11 +439,12 @@ async function checkHarness(harness, cli, latestBase, fetchText) {
   if (listed.plugins.length === 0) {
     return { harness, cli, installed: false };
   }
-  const latest = await latestVersions(harness, listed.plugins.map((plugin) => plugin.name), latestBase, fetchText);
+  const required = missingRequired(listed.plugins);
+  const latest = await latestVersions(harness, [...listed.plugins, ...required].map((plugin) => plugin.name), latestBase, fetchText);
   if (latest.reason) {
     return { harness, cli, installed: true, reason: latest.reason, plugins: listed.plugins.map((plugin) => ({ ...plugin, latest: null, status: VersionStatus.Unknown, reason: latest.reason })) };
   }
-  return { harness, cli, installed: true, plugins: comparePlugins(listed.plugins, latest.versions) };
+  return { harness, cli, installed: true, plugins: [...comparePlugins(listed.plugins, latest.versions), ...compareMissing(required, latest.versions)] };
 }
 
 async function latestVersions(harness, names, latestBase, fetchText) {
@@ -590,10 +496,6 @@ function cachedFetch(fetchImpl, timeoutMs) {
   };
 }
 
-function startupDir(home) {
-  return path.join(home, ".codex", "vibe", "plugin-version");
-}
-
 function hookRecord(conversation, home) {
   const record = readJson(path.join(home, ".vibe-hook-scope", `${conversation}.json`));
   return record?.sessionId === conversation ? record : null;
@@ -605,21 +507,6 @@ function hookRecordExists(conversation, home) {
 
 function observedLoadedSkill(conversation, home) {
   return hookRecord(conversation, home)?.loadedSkill ?? null;
-}
-
-function readJson(file) {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function writeJson(file, value) {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(temporary, file);
 }
 
 /** Drops startup records older than 30 days so the folder never grows without bound. */
@@ -800,7 +687,8 @@ async function main(argv, env, home) {
     const record = store.read();
     // A conversation whose own check never ran or never saved still shows the versions
     // installed here, read locally, never "has not run" with no versions (ISS-13315).
-    const own = record?.conversation === conversation ? record : { harnesses: localInstalled({ clis, env, home }) };
+    const own = record?.conversation === conversation ? record
+      : { harnesses: await Promise.all(localInstalled({ clis, env, home }).map(withHookApproval)) };
     const shown = setupCheck(record, own, connections, conversation, now);
     let recordError;
     try {
@@ -841,6 +729,10 @@ async function main(argv, env, home) {
     // Named before the update, which removes the release their writers are bound to.
     const stranded = vibe ? writersBoundBefore(vibe.latest, home) : [];
     const result = updatePlugins(record, { clis, env, home });
+    // Asked of Codex after the update, so an approval the update made necessary is named, and nothing when none is.
+    const codex = await withHookApproval(afterUpdate(record, result, Harness.Codex));
+    const approval = hookApprovalLine(codex?.hookApproval);
+    if (approval) result.hookApproval = approval;
     const reached = result.plugins.find((plugin) => plugin.plugin === "vibe" && plugin.status === "updated");
     if (stranded.length) {
       result.sessions = migrateStrandedWriters(stranded, reached?.after ?? null);
@@ -957,4 +849,47 @@ function readLedger(worktree) {
   } catch {
     return null;
   }
+}
+
+/** The plugins `REQUIRED_WITH` names for an installed one that this harness lacks, carrying its scope and marketplace. */
+export function missingRequired(plugins) {
+  const names = new Set(plugins.map((plugin) => plugin.name));
+  return plugins.filter((plugin) => (compareVersions(plugin.version, REQUIRED_FROM[plugin.name] ?? "0.0.0") ?? -1) >= 0)
+    .flatMap((plugin) => (REQUIRED_WITH[plugin.name] ?? []).filter((name) => !names.has(name)).map((name) => ({
+    name, id: `${name}@${MARKETPLACE}`, version: null, missing: true,
+    ...(plugin.scope ? { scope: plugin.scope } : {}), ...(plugin.marketplace ? { marketplace: plugin.marketplace } : {}),
+  })));
+}
+
+/**
+ * A missing required plugin is outdated against main's version, so the person's update installs it; one main's
+ * marketplace does not list is not required there, and one whose manifest could not be read is unknown.
+ */
+function compareMissing(required, latest) {
+  return required.filter((plugin) => latest.has(plugin.name)).map((plugin) => {
+    const found = latest.get(plugin.name);
+    return found.version
+      ? { ...plugin, latest: found.version, status: VersionStatus.Outdated }
+      : { ...plugin, latest: null, status: VersionStatus.Unknown, reason: found.reason };
+  });
+}
+
+/**
+ * `entry` with `hookApproval` from Codex's own hooks/list when it is the Codex harness and its vibe runs
+ * vibe-core's hooks (FIRST_SPLIT_VIBE or newer); every other entry is returned unchanged.
+ */
+export async function withHookApproval(entry) {
+  const vibe = entry?.plugins?.find((plugin) => plugin.name === "vibe");
+  if (entry?.harness !== Harness.Codex || !entry.cli || (compareVersions(vibe?.version, FIRST_SPLIT_VIBE) ?? -1) < 0) return entry;
+  const installed = entry.plugins.some((plugin) => plugin.name === "vibe-core" && !plugin.missing);
+  return { ...entry, hookApproval: installed ? await codexHookApproval(entry.cli) : { state: HookApproval.Missing } };
+}
+
+/** `harness`'s entry in `record` with the versions `result` (an update) reached, without listing the plugins again. */
+function afterUpdate(record, result, harness) {
+  const entry = (record.harnesses ?? []).find((candidate) => candidate.harness === harness && Array.isArray(candidate.plugins));
+  if (!entry) return null;
+  const reached = new Map(result.plugins.filter((plugin) => plugin.harness === harness && plugin.after).map((plugin) => [plugin.plugin, plugin.after]));
+  return { ...entry, plugins: entry.plugins.map((plugin) => reached.has(plugin.name)
+    ? { ...plugin, version: reached.get(plugin.name), missing: false } : plugin) };
 }

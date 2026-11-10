@@ -62,7 +62,7 @@ def test_every_fleet_chat_starts_with_the_plugin_version_check() -> None:
         "Plugin version, first in every chat: make both connection calls (`get-me`, `sync_status`), then run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
         "\"A newer version of the plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results.\"",
         "`plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log",
-        "run `plugin-version.mjs update --state <same file>`; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them",
+        "run `plugin-version.mjs update --choice update --state <same file>`, `--choice update` only because the operator said update; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them",
     ):
         assert phrase in setup, phrase
     new_chat = section(STATE.read_text(), "## A new chat")

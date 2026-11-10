@@ -4,7 +4,10 @@
 // ordinary sidebar chat, titled by its first prompt, so a fleet once filled the person's chat list.
 // An archived thread stays readable (thread/read) but thread/resume is refused until thread/unarchive, so a
 // live writer is never archived.
-import { readThreadState } from './liveness.mjs';
+
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { readThreadState } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 
 export const FLEET_SECTION_NAME = 'Fleet workers';
 // Sent on thread/start for every worker thread, never for the orchestrator's own thread (operator ruling,

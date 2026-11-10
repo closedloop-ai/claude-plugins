@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "subprocessStatus": [
-    "plugins/vibe/shared/process-identity.mjs:result-stdout",
-    "plugins/vibe/skills/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
+    "plugins/vibe-core/shared/process-identity.mjs:result-stdout",
+    "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
     "plugins/vibe/skills/handoff/scripts/e2e-capability-probe.mjs:info-stdout"
   ],
   "defaultOnSwitches": [],

@@ -40,11 +40,13 @@
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, createWriteStream } from "node:fs";
-import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { escalation, isSandboxRefusal } = await vibeCore("lib/vibe/scripts/sandbox-refusal.mjs");
 
 export const TEMP_PROJECT = "zz vibe precedent check (temp)";
 export const TASK_PREFIX = "zz test";

@@ -34,16 +34,22 @@ case "$where" in
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/fleet-remote-evidence.mjs fleet-orchestrator/scripts/skill-freshness.mjs fleet-orchestrator/scripts/writer-launch.mjs vibe/scripts/plugin-script-references.mjs vibe/scripts/session-record.mjs vibe/scripts/loaded-skill.mjs vibe/scripts/owned-state.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
-ship=("${ship[@]/#/skills/}" shared/process-identity.mjs)
+ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/fleet-remote-evidence.mjs fleet-orchestrator/scripts/skill-freshness.mjs fleet-orchestrator/scripts/writer-launch.mjs vibe/scripts/owned-state.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
+ship=("${ship[@]/#/skills/}")
 extra=()
 
 # Runs a shell command line on REMOTE_HOST after unpacking the shipped scripts (and `extra`) into remote_dir.
 run_remote() {
-  local outer
+  local outer stage files status=0
   outer="mkdir -p $(printf %q "$remote_dir") && tar -C $(printf %q "$remote_dir") -xf - && ${REMOTE_SHELL:-zsh -lic} $(printf %q "$1")"
-  COPYFILE_DISABLE=1 tar -cf - -C "$skills/.." "${ship[@]}" ${extra[@]+"${extra[@]}"} |
-    ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 "$REMOTE_HOST" "$outer"
+  # The shipped scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).
+  stage=$(node "$skills/../shared/ship-plugins.mjs" "${ship[@]}") || return 2
+  files=$(cat "$stage/files")
+  # shellcheck disable=SC2086 # plugin file paths have no spaces; each line is one path
+  COPYFILE_DISABLE=1 tar -chf - -C "$stage" $files ${extra[@]+"${extra[@]}"} |
+    ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 "$REMOTE_HOST" "$outer" || status=$?
+  rm -rf "$stage"
+  return "$status"
 }
 
 # An exact pre-start rejection receipt can clear an attempt; missing state alone cannot.
@@ -53,7 +59,7 @@ remote_writer_evidence() {
   journal_path=$(printf %q "$REMOTE_STATE_DIR/$marker_name.launch.json")
   rejected_path=$(printf %q "$REMOTE_STATE_DIR/$marker_name.preflight-rejected.json")
   preflight_path=$(printf %q "$REMOTE_STATE_DIR/$marker_name.preflight.$attempt.json")
-  evidence_script=$(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/fleet-remote-evidence.mjs")
+  evidence_script=$(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-remote-evidence.mjs")
   probe="command -v jq >/dev/null 2>&1 || exit 127; if test -f $rejected_path && jq -e --arg attempt $(printf %q "$attempt") '.attempt == \$attempt and .stage == \"preflight-rejected\"' $rejected_path >/dev/null 2>&1; then printf rejected; elif test -f $state_path && test ! -L $state_path && jq -e '(.threadId | type) == \"string\" and (.cwd | type) == \"string\" and (.threadId | length) > 0 and (.cwd | length) > 0' $state_path >/dev/null 2>&1; then printf present; elif test -e $state_path || test -L $state_path; then printf uncertain; elif test -e $journal_path || test -L $journal_path; then node $evidence_script journal $journal_path $state_path $preflight_path $(printf %q "$attempt"); else node $evidence_script preflight-probe $preflight_path $(printf %q "$attempt") $state_path $journal_path; fi"
   run_remote "$probe"
 }
@@ -202,7 +208,7 @@ session() {
   if [ -n "$prompt" ]; then
     local remote_bootstrap=
     if [ "$command" = turn ]; then remote_bootstrap=--bootstrap; fi
-    preflight="node $(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/skill-freshness.mjs") remote $(printf %q "$remote_dir/$(basename "$prompt")") --runtime codex --command $(printf %q "$command") --actor-state $(printf %q "$REMOTE_STATE_DIR/$name.json") --plugin-root \"\$remote_root\" --expected-version $(printf %q "$expected_version") --worktree $(printf %q "${target_cwd:-$orch}") $remote_bootstrap"
+    preflight="node $(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/skill-freshness.mjs") remote $(printf %q "$remote_dir/$(basename "$prompt")") --runtime codex --command $(printf %q "$command") --actor-state $(printf %q "$REMOTE_STATE_DIR/$name.json") --plugin-root \"\$remote_root\" --expected-version $(printf %q "$expected_version") --worktree $(printf %q "${target_cwd:-$orch}") $remote_bootstrap"
   fi
   local plugin_arg=
   if [ "$command" = turn ] || [ "$command" = steer ]; then plugin_arg=' --plugin-root "$remote_root"'; fi
@@ -259,7 +265,7 @@ session() {
     local rejected_path preflight_claim evidence_script receipt
     rejected_path=$(printf %q "$REMOTE_STATE_DIR/$name.preflight-rejected.json")
     preflight_claim=$(printf %q "$REMOTE_STATE_DIR/$name.preflight.$attempt.json")
-    evidence_script=$(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/fleet-remote-evidence.mjs")
+    evidence_script=$(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-remote-evidence.mjs")
     receipt="receipt_stage=\$(mktemp $(printf %q "$REMOTE_STATE_DIR/$name.preflight-rejected.json.XXXXXX")) || exit 1; jq -nc --arg attempt $(printf %q "$attempt") '{attempt:\$attempt,stage:\"preflight-rejected\"}' > \"\$receipt_stage\" || { rm -f \"\$receipt_stage\"; exit 1; }; mv \"\$receipt_stage\" $rejected_path || { rm -f \"\$receipt_stage\"; exit 1; }; rm -f $preflight_claim"
     remote_command="node $evidence_script preflight-begin $preflight_claim $(printf %q "$attempt") \"\$\$\" || exit 1; command -v codex >/dev/null 2>&1 || { printf 'fleet: codex CLI is missing on remote host %s (PATH=%s); install Codex CLI on that host and make it available in REMOTE_SHELL\\n' $(printf %q "$REMOTE_HOST") \"\$PATH\" >&2; $receipt; exit 127; }; remote_root=$remote_root; remote_status=\$?; if [ \"\$remote_status\" -ne 0 ] || [ -z \"\$remote_root\" ]; then $receipt; exit 2; fi; "
     if [ -n "$preflight" ]; then remote_command+="$preflight; remote_status=\$?; if [ \"\$remote_status\" -ne 0 ]; then $receipt; exit \"\$remote_status\"; fi; "; fi
@@ -269,10 +275,10 @@ session() {
     remote_state_path=$(printf %q "$REMOTE_STATE_DIR/$name.json")
     remote_journal_path=$(printf %q "$REMOTE_STATE_DIR/$name.launch.json")
     remote_command+="if test ! -e $remote_state_path && test ! -L $remote_state_path && test -e $remote_journal_path && [ \"\$(node $evidence_script journal $remote_journal_path $remote_state_path '' '')\" = prepared ]; then rm $remote_journal_path || { $receipt; exit 1; }; fi; "
-    remote_command+="node $evidence_script preflight-launch $preflight_claim $(printf %q "$attempt") \"\$\$\" || exit 1; exec $(printf '%q ' node "$remote_dir/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg --fleet-claim $preflight_claim"
+    remote_command+="node $evidence_script preflight-launch $preflight_claim $(printf %q "$attempt") \"\$\$\" || exit 1; exec $(printf '%q ' node "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg --fleet-claim $preflight_claim"
   else
     if [ -n "$preflight" ]; then remote_command+="test -n \"\$remote_root\" && $preflight && "; fi
-    remote_command+="$(printf '%q ' node "$remote_dir/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
+    remote_command+="$(printf '%q ' node "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
   fi
   if run_remote "$remote_command"; then
     if [ "$command" = turn ]; then
@@ -319,7 +325,7 @@ slot() {
     exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@"
   fi
   local gate=
-  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/skills/fleet-orchestrator/scripts/load-check.sh") && "; fi
+  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/load-check.sh") && "; fi
   local slot_args=(--slots "$slots")
   if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
   if [ -n "$preflight" ]; then
@@ -327,9 +333,9 @@ slot() {
     expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
     remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
     remote_gate="command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") || { printf 'fleet: remote vibe plugin is missing or not version %s; heavy build not started\\n' $(printf %q "$expected_version") >&2; exit 78; }; "
-    run_remote "${remote_gate}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
+    run_remote "${remote_gate}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
   else
-    run_remote "cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
+    run_remote "cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
   fi
 }
 

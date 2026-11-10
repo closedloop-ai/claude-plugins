@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { MAX_CHECK_MS, MainSyncError, type MainComparison, type MainSyncReceipt } from "./main-sync-contracts.js";
 import { failureCause } from "./main-sync-failure.js";
 import type { CheckCommand } from "./main-sync-lanes.js";

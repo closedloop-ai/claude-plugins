@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { MainSyncError, type OriginProof } from "./main-sync-contracts.js";
 import { digest, type syncContext } from "./main-sync-state.js";
 import { trackedInputs, verifyOriginProof, type inspectInputInventory } from "./main-sync-checks.js";

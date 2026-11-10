@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { writeLoopbackSsh, writeRemoteCodexStub } from '../../fleet-orchestrator/scripts/fleet-test-support.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 
 const SNAPSHOT = fileURLToPath(new URL('./snapshot.sh', import.meta.url));
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -107,7 +109,7 @@ test('AC-005 remote watcher ships its checker imports and compares the owning ho
   writeFileSync(join(state, 'w1.json'), JSON.stringify({ threadId: 'T1', cwd: '/remote/worktree', loadedSkill: { ...loaded, version: '1.1.38' } }));
   const output = f.run('ok');
   assert.ok(output.split('\n').includes(`SKILL-STALE w1 1.1.38 -> ${loaded.version}`), output);
-  assert.ok(existsSync(join(state, '.fleet-monitor/vibe/scripts/loaded-skill.mjs')));
+  assert.ok(existsSync(join(state, '.fleet-monitor/plugins/vibe-core/lib/vibe/scripts/loaded-skill.mjs')));
   assert.doesNotMatch(output, /^(?:PATH|HOME|SHELL)=/m, 'a remote env wrapper must execute a command, never print the environment');
 });
 
@@ -120,10 +122,23 @@ test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, ()
   writeFileSync(join(f.work, 'sessions.txt'), ''); writeFileSync(join(f.work, 'prs.txt'), '');
   f.run('ok');
   const entries = execFileSync('tar', ['-tf', archive], { encoding: 'utf8', timeout: 5000 }).trim().split('\n');
-  assert.deepEqual(entries, ['liveness.mjs', 'ratelimit.mjs', 'recover.mjs', 'usage-state.mjs', 'work-dir.mjs']);
-  const baseline = execFileSync('tar', ['-C', fileURLToPath(new URL('.', import.meta.url)), '-cf', '-', ...entries],
-    { timeout: 5000, env: { ...process.env, COPYFILE_DISABLE: '1' } });
-  assert.equal(readFileSync(archive).byteLength, baseline.byteLength, 'zero additional idle transfer bytes');
+  // The usage scripts and what they load, from both plugins laid out as a checkout; no freshness checker.
+  assert.deepEqual(entries, [
+    'plugins/vibe-core/.claude-plugin/plugin.json', 'plugins/vibe-core/.codex-plugin/plugin.json',
+    'plugins/vibe-core/lib/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe-core/lib/codex-fleet-monitor/scripts/work-dir.mjs',
+    'plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.mjs', 'plugins/vibe-core/lib/vibe/scripts/session-record.mjs',
+    'plugins/vibe/.claude-plugin/plugin.json', 'plugins/vibe/.codex-plugin/plugin.json',
+    'plugins/vibe/shared/plugin-roots.mjs', 'plugins/vibe/shared/vibe-core.mjs',
+    'plugins/vibe/skills/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe/skills/codex-fleet-monitor/scripts/ratelimit.mjs',
+    'plugins/vibe/skills/codex-fleet-monitor/scripts/recover.mjs', 'plugins/vibe/skills/codex-fleet-monitor/scripts/usage-state.mjs',
+    'plugins/vibe/skills/codex-fleet-monitor/scripts/work-dir.mjs', 'plugins/vibe/skills/vibe/scripts/session-questions.mjs',
+  ]);
+  for (const checker of ['skill-freshness.mjs', 'loaded-skill.mjs', 'plugin-script-references.mjs']) {
+    assert.ok(!entries.some((entry) => entry.endsWith(`/${checker}`)), checker);
+  }
+  const baseline = execFileSync('tar', ['-C', fileURLToPath(new URL('../../../..', import.meta.url)), '-cf', '-',
+    ...entries.map((entry) => entry.slice('plugins/'.length))], { timeout: 5000, env: { ...process.env, COPYFILE_DISABLE: '1' } });
+  assert.equal(readFileSync(archive).byteLength, baseline.byteLength, 'zero idle transfer bytes beyond those files');
 });
 
 /** A work dir with one local session and no PRs; its heartbeat file and supervisor lock are the fixture's to write. */

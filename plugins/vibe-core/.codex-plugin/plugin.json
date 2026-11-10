@@ -1,0 +1,17 @@
+{
+  "name": "vibe-core",
+  "version": "1.0.0",
+  "description": "The hooks behind vibe sessions and the modules they run, released apart from vibe so its hook approval lasts",
+  "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
+  "homepage": "https://github.com/closedloop-ai/claude-plugins",
+  "repository": "https://github.com/closedloop-ai/claude-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["closedloop", "vibe-coding", "hooks"],
+  "interface": {
+    "displayName": "ClosedLoop Vibe Core",
+    "shortDescription": "The hooks and shared modules vibe runs.",
+    "developerName": "ClosedLoop",
+    "category": "Development",
+    "capabilities": ["Analyze"]
+  }
+}

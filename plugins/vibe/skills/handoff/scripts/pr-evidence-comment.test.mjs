@@ -9,7 +9,9 @@ import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { prEvidenceValidationProblems, proofCorpusBase, selectionProblems, targetedEvidenceProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
-import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 test("the PR comment lists the final SHA, exact cases, command, tier and result SHA", t => {
   const receiptDir = mkdtempSync(path.join(tmpdir(), "comment-proof-receipts-"));

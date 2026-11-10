@@ -27,8 +27,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { git } from "../../vibe/scripts/session-record.mjs";
 import { REVIEW_EFFECTIVE, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const FINDINGS_SCHEMA = "vibe.guardrails-findings/1";
 export const REVIEW_SCOPE_SCHEMA = "vibe.review-scope/1";

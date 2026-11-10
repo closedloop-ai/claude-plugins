@@ -2,6 +2,7 @@ import { execFile, spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { siblingPluginRoot } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 import { mcpToolIdentity, type Capability } from "./contracts.js";
 
 /** A launch refused before or at worker start, carrying the one plain step a person can take when there is one. */
@@ -16,7 +17,13 @@ const MINIMUM_PROTECTED_HOOK_VERSION = [2, 1, 295] as const;
 function protectedHookPath(pluginRoot: string): string {
   const unavailable = (reason: string) => new LaunchPrecheckError("PROTECTED_PATH_HOOK_UNAVAILABLE",
     `The headless Claude writer's protected-path hook is unavailable: ${reason}`);
-  const hookPath = join(pluginRoot, "hooks", "protected-write-guard.mjs");
+  let hookPath: string;
+  try {
+    // The guard lives in vibe-core beside the installed vibe (ISS-13869).
+    hookPath = join(siblingPluginRoot("vibe-core", { from: join(pluginRoot, ".claude-plugin", "plugin.json") }), "hooks", "protected-write-guard.mjs");
+  } catch (error) {
+    throw unavailable(`vibe-core is missing: ${error instanceof Error ? error.message : String(error)}`);
+  }
   try {
     if (!lstatSync(hookPath).isFile() || realpathSync(hookPath) !== hookPath) {
       throw unavailable("the installed guard must be a regular file");

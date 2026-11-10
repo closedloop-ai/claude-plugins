@@ -15,10 +15,12 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { isEntryPoint } from './liveness.mjs';
-import { resolveWorkDir } from './work-dir.mjs';
 import { highUsagePercent, usageBand } from './ratelimit.mjs';
 import { recordUsageReading } from './usage-state.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { isEntryPoint } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
+const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 const LINE = /^\s*Current (session|week \(all models\)):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s+(.+?))?\s*$/gim;
 export const DEFAULT_INTERVAL_SECONDS = 600;

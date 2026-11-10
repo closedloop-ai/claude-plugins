@@ -10,15 +10,14 @@ const PATH_FIXTURE_NAME = "review-class-path-fixture.json";
 const RUNTIME_EXTENSION = /\.(?:[cm]?js|mjs|ts)$/;
 const EXECUTOR = "(?:spawnSync|execFileSync|execSync|execCommand|execCommandAsync|command|run)";
 const INITIAL_SUBPROCESS_BASELINE = Object.freeze([
-  "plugins/vibe/shared/process-identity.mjs:result-stdout",
-  "plugins/vibe/skills/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
+  "plugins/vibe-core/shared/process-identity.mjs:result-stdout",
+  "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
   "plugins/vibe/skills/handoff/scripts/e2e-capability-probe.mjs:info-stdout",
 ]);
 const INITIAL_DEFAULT_ON_BASELINE = Object.freeze([]);
 
-/** Return tracked runtime source files without tests, fixtures, or generated bundles. */
+/** Return tracked runtime source files of vibe and vibe-core (where its hook modules live) without tests, fixtures, or generated bundles. */
 export function runtimeFiles(root) {
-  const plugin = path.join(root, "plugins/vibe");
   const files = [];
   const visit = (directory) => {
     if (!existsSync(directory)) return;
@@ -34,7 +33,7 @@ export function runtimeFiles(root) {
       ) files.push(path.relative(root, absolute).split(path.sep).join("/"));
     }
   };
-  visit(plugin);
+  for (const plugin of ["plugins/vibe", "plugins/vibe-core"]) visit(path.join(root, plugin));
   return files.sort();
 }
 

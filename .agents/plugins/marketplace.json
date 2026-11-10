@@ -11,6 +11,12 @@
       "category": "Development"
     },
     {
+      "name": "vibe-core",
+      "source": {"source": "local", "path": "./plugins/vibe-core"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Development"
+    },
+    {
       "name": "vibe",
       "source": {"source": "local", "path": "./plugins/vibe"},
       "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},

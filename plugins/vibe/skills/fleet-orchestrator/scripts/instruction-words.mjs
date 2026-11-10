@@ -15,11 +15,13 @@
 // exits 1 otherwise.
 
 import path from "node:path";
-import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 /** Added and removed words on the changed Markdown lines of a unified diff. */
 export function countWords(diff) {

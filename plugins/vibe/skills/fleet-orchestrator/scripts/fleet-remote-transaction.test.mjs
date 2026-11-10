@@ -41,7 +41,7 @@ test('dead dispatch with only a prepared journal clears pending, later phases re
   assert.equal(JSON.parse(readFileSync(journal, 'utf8')).phase, 'prepared',
     'the no-start proof remains available if recovery is interrupted after clearing pending');
   const worktree = successfulRemoteWriter(f);
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) [ ! -e "$3/$4.launch.json" ] || exit 1; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit 0;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) [ ! -e "$3/$4.launch.json" ] || exit 1; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit 0;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const retry = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
     '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
@@ -148,7 +148,7 @@ test('partial rejection receipt publication preserves prior bytes and prepared p
   const receipt = join(remote, 'writer.preflight-rejected.json');
   const prior = '{"attempt":"older","stage":"preflight-rejected"}\n';
   writeFileSync(receipt, prior);
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) printf '%s\\n' '{"phase":"prepared","launcher":{"pid":999999,"identity":"dead"}}' > "$3/$4.launch.json"; exit 2;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) printf '%s\\n' '{"phase":"prepared","launcher":{"pid":999999,"identity":"dead"}}' > "$3/$4.launch.json"; exit 2;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const realJq = spawnSync('sh', ['-c', 'command -v jq'], { encoding: 'utf8' }).stdout.trim();
   writeFileSync(join(f.root, 'bin', 'jq'), `#!/usr/bin/env bash\nif [[ "$*" == *'--arg attempt'* && "$*" == *'preflight-rejected'* && "$*" == *'-nc'* ]]; then printf '{"attempt":'; exit 1; fi\nexec ${JSON.stringify(realJq)} "$@"\n`);
@@ -300,7 +300,7 @@ test('a live exact launching process retains pending until that process ends', T
 test('remote turn execs the claimed preflight process into the launcher', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) claim=$(echo "$3/$4".preflight.*.json); jq -e --argjson pid "$$" '.phase == "launching" and .launcher.pid == $pid' "$claim" >/dev/null || exit 9; mkdir -p "$3"; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit 0;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) claim=$(echo "$3/$4".preflight.*.json); jq -e --argjson pid "$$" '.phase == "launching" and .launcher.pid == $pid' "$claim" >/dev/null || exit 9; mkdir -p "$3"; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit 0;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const result = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', join(f.root, 'future-worktree'),
     '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
@@ -312,7 +312,7 @@ test('killing the remote shell after launching transition leaves no phantom writ
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
   const entered = join(f.root, 'launch-transition-done');
   const release = join(f.root, 'release-launch-helper');
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *fleet-remote-evidence.mjs) ${JSON.stringify(process.execPath)} "$@" || exit $?; if [ "$2" = preflight-launch ]; then : > ${JSON.stringify(entered)}; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; fi; exit 0;; *codex-session.mjs) exit 9;; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *fleet-remote-evidence.mjs) ${JSON.stringify(process.execPath)} "$@" || exit $?; if [ "$2" = preflight-launch ]; then : > ${JSON.stringify(entered)}; while [ ! -f ${JSON.stringify(release)} ]; do sleep 0.05; done; fi; exit 0;; *codex-session.mjs) exit 9;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const child = spawn('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt,
     '--cwd', join(f.root, 'future-worktree'), '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'], {
@@ -390,7 +390,7 @@ test('post-death reread catches a journal appearing after the shell absence chec
   const { pending, claim, journal } = pendingRaceFixture(f, 'absence-race');
   writeFileSync(claim, JSON.stringify({ attempt: 'absence-race', phase: 'preflight',
     launcher: { pid: 999999, started: 'dead birth' } }));
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *fleet-remote-evidence.mjs) if [ "$2" = preflight-probe ]; then printf '%s\\n' '{"phase":"may-have-started"}' > ${JSON.stringify(journal)}; fi; exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf 'arg:%s\\n' "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *fleet-remote-evidence.mjs) if [ "$2" = preflight-probe ]; then printf '%s\\n' '{"phase":"may-have-started"}' > ${JSON.stringify(journal)}; fi; exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf 'arg:%s\\n' "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const result = f.run(['remote', 'session', 'recover-marker', 'writer']);
   assert.notEqual(result.status, 0, result.stdout + result.stderr);

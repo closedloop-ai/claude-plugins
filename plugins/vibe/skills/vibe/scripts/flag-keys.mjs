@@ -29,7 +29,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { isOwnedPrototypeSession } from "./prototype-session.mjs";
-import { readSessionRecord, writeSessionRecord } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const MAX_SURFACES = 50;
 const MAX_KEYS_PER_SURFACE = 20;

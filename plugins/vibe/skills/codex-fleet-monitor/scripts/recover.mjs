@@ -20,10 +20,10 @@ import {
   appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import {
-  classifyTurnError, connectViaProxy, daemonSocket, Failure, isEntryPoint, parseSession, readThreadState,
-} from './liveness.mjs';
 import { waitsForPerson } from '../../vibe/scripts/session-questions.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { classifyTurnError, connectViaProxy, daemonSocket, Failure, isEntryPoint, parseSession, readThreadState } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 
 export const DEFAULT_BACKOFF_SECONDS = [120, 300, 600];
 export const DEFAULT_RESTART_COOLDOWN_SECONDS = 1800;

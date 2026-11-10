@@ -70,7 +70,8 @@ export async function runClaudeTask(
   try {
   const prompt = shapePrompt(shape);
   const baseArgs = claudeArgs(snapshot.vibeDir, launch.mcpConfigFile, launch.settingsFile, prompt).slice(0, -1);
-  baseArgs.splice(baseArgs.indexOf("--plugin-dir"), 0, "--plugin-dir", snapshot.coreDir);
+  baseArgs.splice(baseArgs.indexOf("--plugin-dir"), 0, "--plugin-dir", snapshot.coreDir,
+    ...(snapshot.hooksDir ? ["--plugin-dir", snapshot.hooksDir] : []));
   const requestedSessionId = randomUUID();
   const started = Date.now();
   const checked = checkVibeVersion(snapshot.vibeDir, fixture.agentCheckout,

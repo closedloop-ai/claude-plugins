@@ -4,7 +4,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { prEvidenceValidationProblems } from "./pr-facts.mjs";
 import { laneReportLabel } from "./ci-job-shape.mjs";
-import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 function tableCell(value) {
   return String(value).replace(/\|/g, "\\|").replace(/\r\n?|\n/g, "<br>");

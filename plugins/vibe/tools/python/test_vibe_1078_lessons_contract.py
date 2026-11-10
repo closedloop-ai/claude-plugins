@@ -70,8 +70,10 @@ def test_green_watch_fixes_bind_clean_and_dirty_e2e_evidence_to_real_inputs() ->
     assert "whose old value `rg` still finds anywhere in the repo" in reviewer
     scripts = PLUGIN / "skills" / "vibe" / "scripts"
     lanes = (scripts / "pre-pr-lanes.mjs").read_text()
-    lock = (scripts / "e2e-lock.mjs").read_text()
-    identity = (scripts / "tested-head.mjs").read_text()
+    # e2e-lock.mjs and tested-head.mjs live in vibe-core; vibe keeps command wrappers at these paths.
+    core_scripts = PLUGIN.parent / "vibe-core" / "lib" / "vibe" / "scripts"
+    lock = (core_scripts / "e2e-lock.mjs").read_text()
+    identity = (core_scripts / "tested-head.mjs").read_text()
     verifier = flat((PLUGIN / "agents" / "vibe-verify-worker.md").read_text())
     assert "testedSource" in lock, "local E2E must bind HEAD plus dirty-tree identity"
     assert "sameSource(enteredSource, source)" in lock, "queued edits must invalidate E2E evidence"

@@ -20,9 +20,11 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { parseArgs, isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
-import { committedFile } from "../../vibe/scripts/tested-head.mjs";
 import { workflowLaneDefinitions } from "../../vibe/scripts/dist/main-sync.mjs";
 import { laneSourceShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 export { workflowLaneDefinitions };
 
 const JOB_KEY = /^ {2}([A-Za-z0-9_-]+):\s*$/;

@@ -17,8 +17,10 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { escalation } from "./sandbox-refusal.mjs";
-import { readSessionRecord } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { escalation } = await vibeCore("lib/vibe/scripts/sandbox-refusal.mjs");
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const FETCH_TIMEOUT_MS = 60_000;
 
