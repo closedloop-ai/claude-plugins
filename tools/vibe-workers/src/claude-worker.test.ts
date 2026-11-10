@@ -645,25 +645,20 @@ describe("production Claude CLI adapter", () => {
   });
   it.each(["vibe-adversarial-reviewer", "vibe-guardrails-reviewer"])("runs the takeover %s with no vibe session and a head-bound receipt", (agentName) => {
     const { value, headSha, prUrl } = takeoverFixture();
-    const launched = run(value, { agentName, mode: "pull-request", input: "REVIEW_RECEIPT the PR diff",
-      sessionless: { kind: "takeover", evidence: { prUrl, headSha } } });
-    expect(launched.status, launched.stdout + launched.stderr).toBe(0);
-    const output = JSON.parse(launched.stdout);
+    const { output, capture } = launchTakeoverReview(value, agentName, headSha, prUrl);
     expect(output.takeover).toEqual({ prUrl, headSha, worktree: value.worktree });
     expect(output.source.head).toBe(headSha);
-    const resultFile = join(value.base, "result.json");
-    writeFileSync(resultFile, launched.stdout);
-    const capture = (head: string, out: string) => spawnSync(process.execPath, [join(bundleDirectory, "../../../handoff/scripts/review-receipts.mjs"),
-      "--worktree", value.worktree, "--role", agentName, "--result", resultFile, "--out", join(value.base, out),
-      "--pr-url", prUrl, "--head", head], { encoding: "utf8" });
-    const receipt = capture(headSha, "receipt.json");
+    const receipt = capture(headSha);
     expect(receipt.status, receipt.stderr).toBe(0);
     expect(JSON.parse(receipt.stdout).takeover).toEqual({ prUrl, headSha, worktree: value.worktree });
-    const other = capture("0".repeat(40), "other.json");
-    expect(other.status).toBe(1);
-    expect(other.stderr).toContain("not the expected pull request head");
     expect(existsSync(join(value.metadata, "vibe-session.json"))).toBe(false);
     expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
+  });
+  it("refuses a takeover review receipt for any head but the one the review was bound to", () => {
+    const { value, headSha, prUrl } = takeoverFixture();
+    const other = launchTakeoverReview(value, "vibe-guardrails-reviewer", headSha, prUrl).capture("0".repeat(40));
+    expect(other.status).toBe(1);
+    expect(other.stderr).toContain("not the expected pull request head");
   });
   it("refuses a takeover reviewer whose worktree is not at the bound head before Claude starts", () => {
     const { value, prUrl } = takeoverFixture();
@@ -941,4 +936,17 @@ function takeoverFixture() {
   writeAgent(value.agentRoot, "vibe-adversarial-reviewer", "Read, Grep, Glob, Bash, Skill");
   const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: value.worktree, encoding: "utf8" }).trim();
   return { value, headSha, prUrl: "https://github.com/example-org/example-repo/pull/42" };
+}
+
+/** One takeover reviewer launch, and a receipt capture of its result through the real review-receipts CLI. */
+function launchTakeoverReview(value: ReturnType<typeof fixture>, agentName: string, headSha: string, prUrl: string) {
+  const launched = run(value, { agentName, mode: "pull-request", input: "REVIEW_RECEIPT the PR diff",
+    sessionless: { kind: "takeover", evidence: { prUrl, headSha } } });
+  expect(launched.status, launched.stdout + launched.stderr).toBe(0);
+  const resultFile = join(value.base, "result.json");
+  writeFileSync(resultFile, launched.stdout);
+  const capture = (head: string) => spawnSync(process.execPath, [join(bundleDirectory, "../../../handoff/scripts/review-receipts.mjs"),
+    "--worktree", value.worktree, "--role", agentName, "--result", resultFile, "--out", join(value.base, `receipt-${head}.json`),
+    "--pr-url", prUrl, "--head", head], { encoding: "utf8" });
+  return { output: JSON.parse(launched.stdout), capture };
 }
