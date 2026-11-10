@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - fleet-orchestrator's unit steps (SKILL.md and references/ticket-units.md, new step 4) and its QA gate, and handoff's candidate audit, describe the review and its gap list.
 
 #### Changed
-- The README version line and the Python and vibe-bench release-pin tests move to 1.1.72, and `plugin-version-bootstrap.test.mjs` reads the needed vibe-core version from `VIBE_CORE_MIN` instead of a literal.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.72, and `plugin-version-bootstrap.test.mjs` reads the needed vibe-core version from `VIBE_CORE_MIN` instead of a literal; the committed vibe-workers bundles are rebuilt with the new `VIBE_CORE_MIN`.
 - The acceptance-criteria parsing (`criteriaStates`, `ticketCriteria`, `memberCriteria`) moves to `handoff/scripts/criteria-list.mjs`, so `criteria-audit.mjs` and `unit-review.mjs` share it without importing each other; `criteria-audit.mjs` re-exports it for its other importers.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 802 words longer than in 1.1.71 (origin/main at this update, 182af94e), most of it the new review step in references/ticket-units.md.
 

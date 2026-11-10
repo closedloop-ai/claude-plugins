@@ -12387,7 +12387,7 @@ function compareIdentifier(left, right) {
 }
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.0";
+var VIBE_CORE_MIN = "1.0.2";
 var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
 var cachedRoot = null;
 function vibeCoreRoot() {
