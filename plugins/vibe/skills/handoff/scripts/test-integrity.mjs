@@ -294,7 +294,8 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
   // Any other same-matcher assertion that runs after the mutation in this block, or after a call to
   // this candidate's helper, could be the one that failed; the instrumenter cannot tell them apart.
   const ambiguity = matcher && {
-    query: queriedText === undefined ? undefined : queryKey(queriedText), variable: directValue,
+    query: assertionKey(/^expect\(\s*([^]*?)\)\s*\.(?:\s*not\s*\.)?\s*[A-Za-z]+\s*\([^)]*\)\s*;?$/.exec(proof.assertionLine)?.[1] ?? "", source),
+    variable: directValue,
     inserted: edit.new.slice(commonPrefix, edit.new.length - commonSuffixLength(edit.old, edit.new, commonPrefix)),
   };
   const region = `${source.slice(insertion, assertionStart)}\n${source.slice(assertionStart + proof.assertionLine.length, blockEndAt(source, assertionStart))}`;
@@ -316,10 +317,10 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
     || runnerFrame && parsedAssertions(source, [{ line: frameLine }]).some((other) => other.line !== line))) return false;
   let story = null;
   let helper = null;
-  for (const declaration of source.matchAll(/^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*))/gm)) {
+  for (const declaration of source.matchAll(NAMED_DECLARATION)) {
     if (lineNumberAt(source, declaration.index) > line) break;
     story = declaration[1] ?? null;
-    helper = declaration[2] ?? null;
+    helper = declaration[2] ?? declaration[3] ?? null;
   }
   if (!story && helper) {
     // A helper candidate runs inside its calling stories: each must name the run, and nothing a
@@ -547,17 +548,16 @@ function laterAssertionCouldFail(source, following, matcher, ambiguity, depth = 
   const { query, variable, inserted } = ambiguity;
   if (/\.\s*play\s*\(/.test(following)) return true;
   for (const later of following.matchAll(new RegExp(`\\bexpect(?:\\s*\\.\\s*soft)?\\s*\\(([^;]*?)\\)\\s*\\.\\s*(?:not\\s*\\.\\s*)?${matcher}\\s*\\(`, "g"))) {
-    let argument = later[1].trim();
+    const argument = later[1].trim();
     if (variable && new RegExp(`^${escapeRegExp(variable)}(?![\\w$])`).test(argument)) return true;
-    // A variable argument is checked through the query it holds.
-    const held = /^[A-Za-z_$][\w$]*$/.test(argument)
-      && new RegExp(`\\b(?:const|let|var)\\s+${escapeRegExp(argument)}\\s*=\\s*([^;]+)`).exec(source);
-    if (held) argument = held[1];
-    const call = /\b(?:query|get|find)(?:All)?By[A-Za-z]+\(\s*([^)]*)/.exec(argument);
-    const key = call ? queryKey(call[1]) : undefined;
+    // A query the gate cannot read from the source stays a known limit rather than a refusal
+    // (orchestrator ruling, 2026-11-09): refusing it would reject ISS-13699's genuine proofs.
+    const key = assertionKey(argument, source);
     if (!key) continue;
     if (key.text !== undefined && (query?.text === key.text || inserted.includes(key.text))) return true;
     if (key.regex && ((query?.text !== undefined && key.regex.test(query.text)) || key.regex.test(inserted))) return true;
+    if (key.selector !== undefined && (query?.selector === key.selector
+      || selectorTokens(key.selector).some((token) => inserted.includes(token)))) return true;
   }
   for (const call of following.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
     const name = escapeRegExp(call[1]);
@@ -575,7 +575,10 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const DECLARATION = /^\s*(?:export\s+const\s|(?:export\s+)?(?:async\s+)?function\s)/m;
+const ARROW_HELPER = String.raw`^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)`;
+const DECLARATION = new RegExp(String.raw`^\s*(?:export\s+const\s|(?:export\s+)?(?:async\s+)?function\s)|${ARROW_HELPER}`, "m");
+// A story export, a function helper or a top-level arrow helper, capturing the story or helper name.
+const NAMED_DECLARATION = new RegExp(String.raw`^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*))|${ARROW_HELPER}`, "gm");
 
 /** Where the top-level declaration holding `offset` ends: the next declaration, or the file end. */
 function blockEndAt(source, offset) {
@@ -595,13 +598,14 @@ function helperCallerStories(source, helper) {
   const visit = (name, depth) => {
     for (const call of source.matchAll(new RegExp(`\\b${escapeRegExp(name)}\\s*\\(`, "g"))) {
       const before = source.slice(0, call.index);
-      if (new RegExp(`function\\s+${escapeRegExp(name)}\\s*$`).test(before)) continue;
-      const declarations = [...before.matchAll(/^\s*(?:export\s+const\s+([A-Z][\w$]*)|(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*))/gm)];
-      const owner = declarations.at(-1);
+      // The helper's own definition is not a call.
+      if (/(?:\bfunction|\bconst|\blet)\s+$/.test(before)) continue;
+      const owner = [...before.matchAll(NAMED_DECLARATION)].at(-1);
       if (!owner) continue;
       const after = source.slice(call.index + call[0].length, blockEndAt(source, call.index));
+      const ownerHelper = owner[2] ?? owner[3];
       if (owner[1]) callers.push({ name: owner[1], after });
-      else if (owner[2] && owner[2] !== name && depth < 1) visit(owner[2], depth + 1);
+      else if (ownerHelper && ownerHelper !== name && depth < 1) visit(ownerHelper, depth + 1);
     }
   };
   visit(helper, 0);
@@ -613,6 +617,35 @@ function helperCallerStories(source, helper) {
  * excludes busy or loading items (any negation form) and a word in a comment keep the layout check.
  */
 function busyStateCount(text) {
-  const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:\\])\/\/.*$/gm, "$1");
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:\\])\/\/.*$/gm, "$1")
+    // A variable merely named loading or busy is not a busy state; strings, option keys and properties are.
+    .replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1|(?<![.\w$-])(?:is)?(?:loading|busy)(?![\w$-])(?!\s*:)/gi, (match, quote) => quote ? match : "");
   return BUSY_STATE.test(code) && !NOT_BUSY.test(code) && !BUSY_NEGATION.test(code);
+}
+
+/**
+ * What an assertion queries, read from the source alone: a testing-library query's literal, regular
+ * expression or string constant, or a `querySelector` selector, through a variable that holds the query.
+ * Undefined when the gate cannot tell.
+ */
+function assertionKey(argument, source) {
+  let expression = argument.trim();
+  const held = /^[A-Za-z_$][\w$]*$/.test(expression)
+    && new RegExp(`\\b(?:const|let|var)\\s+${escapeRegExp(expression)}\\s*=\\s*([^;]+)`).exec(source);
+  if (held) expression = held[1].trim();
+  const call = /\b(?:query|get|find)(?:All)?By[A-Za-z]+\(\s*([^)]*)/.exec(expression);
+  if (call) {
+    const literal = queryKey(call[1]);
+    if (literal) return literal;
+    const constant = /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(call[1].trim());
+    const value = constant && new RegExp(`\\b(?:const|let|var)\\s+${escapeRegExp(constant[1])}\\s*=\\s*(["'\`][^\\n]*?["'\`])\\s*;`).exec(source);
+    return value ? queryKey(value[1]) : undefined;
+  }
+  const selector = /\.querySelector(?:All)?\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/.exec(expression);
+  return selector ? { selector: selector[2] } : undefined;
+}
+
+/** The attribute, class and id names a selector depends on. */
+function selectorTokens(selector) {
+  return [...selector.matchAll(/[A-Za-z][\w-]*/g)].map((match) => match[0]).filter((token) => token.length > 2);
 }

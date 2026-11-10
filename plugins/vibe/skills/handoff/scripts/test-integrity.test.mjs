@@ -1026,7 +1026,8 @@ test("ISS-13846 final review N1 a card count over a negated busy predicate keeps
 });
 
 /** A receipt-bound instrumented Storybook proof for the `within(grid)` candidate in a generated story file. */
-function instrumentedStoryProblems(dir, name, lines, { target, story = "Live", needle = "within(grid)" } = {}) {
+function instrumentedStoryProblems(dir, name, lines, { target, story = "Live", needle = "within(grid)",
+  insert = ' const note = document.createElement("p"); note.textContent = "Loading"; grid.append(note);' } = {}) {
   const fixture = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", lines.join("\n"), [needle]);
   // A mutated production file carrying the same line, as in the review's probe, is readable too.
   const read = file => file === fixture.file.path || file === target ? fixture.source : null;
@@ -1034,7 +1035,7 @@ function instrumentedStoryProblems(dir, name, lines, { target, story = "Live", n
   const hash = value => createHash("sha256").update(value).digest("hex");
   const command = "STORYBOOK_BROWSER_TESTS=1 pnpm --filter storybook exec vitest run stories/surfaces-v2/v2-documents-list.stories.tsx";
   const old = lines.find(line => line.includes('querySelector("[role=grid]")'));
-  const edit = { old, new: `${old} const note = document.createElement("p"); note.textContent = "Loading"; grid.append(note);` };
+  const edit = { old, new: `${old}${insert}` };
   const raw = [` FAIL   0 (chromium)  stories/surfaces-v2/v2-documents-list.stories.tsx > ${story}`,
     "AssertionError: ", " ❯ Proxy.toBeNull node_modules/.cache/storybook/sb-vitest/vitest/deps/test.js:10:5",
     " ❯ toBeNull stories/surfaces-v2/v2-documents-list.stories.tsx:1:3", " Failed Tests 1", " Test Files 1 failed"].join("\n");
@@ -1113,4 +1114,82 @@ test("ISS-13846 final review L-NEG a card count excluding loading items in any f
   const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
   assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => Number(id.split(":").at(-1))), [2, 3, 4, 5, 6],
     "only the positive aria-busy count on line 7 is a busy-state count (PC-2)");
+});
+
+test("ISS-13846 final review B1 B2 B3 a later query the gate can key is refused when ambiguous, and arrow helpers are attributed", t => {
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-keys-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let n = 0;
+  const problems = (lines, options) => instrumentedStoryProblems(dir, `keys-${n++}.json`, lines, options);
+  const story = (candidate, later = []) => [
+    "export const Live: Story = {",
+    "  play: async ({ canvasElement }) => {",
+    '    const grid = canvasElement.querySelector("[role=grid]");',
+    `    ${candidate}`,
+    ...later.map(line => `    ${line}`),
+    "  },",
+    "};",
+  ];
+  const testId = 'await expect(within(grid).queryByTestId("toast")).toBeNull();';
+  const ghostInsert = ' const ghost = document.createElement("span"); ghost.setAttribute("data-ghost", ""); ghost.textContent = "Ghost"; canvasElement.append(ghost);';
+  const ghost = 'await expect(within(grid).queryByText("Ghost")).toBeNull();';
+  assert.deepEqual(problems(story(testId)), [], "B1 positive control");
+  assert.match(problems(story(testId, [testId])).join("\n"), /exact assertion failure/, "B1: an identical later queryByTestId");
+  assert.deepEqual(problems(story(ghost, ['await expect(canvasElement.querySelector("[data-saved]")).toBeNull();']), { insert: ghostInsert }), [],
+    "B2 positive control: a selector the mutation never touches");
+  assert.match(problems(story(ghost, ['await expect(canvasElement.querySelector("[data-ghost]")).toBeNull();']), { insert: ghostInsert }).join("\n"),
+    /exact assertion failure/, "B2: a later selector over the inserted attribute");
+  const arrow = later => [
+    "const check = async (canvasElement) => {",
+    '  const grid = canvasElement.querySelector("[role=grid]");',
+    '  await expect(within(grid).queryByText("Loading")).toBeNull();',
+    "};",
+    "export const Live: Story = {",
+    "  play: async ({ canvasElement }) => {",
+    "    await check(canvasElement);",
+    ...later,
+    "  },",
+    "};",
+  ];
+  assert.deepEqual(problems(arrow([])), [], "B3 positive control: an arrow helper named through its calling story");
+  assert.match(problems(arrow(['    await expect(within(canvasElement).queryByText("Loading")).toBeNull();'])).join("\n"),
+    /exact assertion failure/, "B3: the calling story asserts the same query after the arrow helper");
+});
+
+test("ISS-13846 final review N1-variable a card count through a variable named loading keeps its layout proof", () => {
+  const fixture = changed("e2e/summary.spec.ts", [
+    'test("one metric card", async ({ page }) => {',
+    '  const loading = page.getByTestId("metric-card");',
+    "  await expect(loading).toHaveCount(1);",
+    '  await expect(page.locator(\'[aria-busy="true"]\')).toHaveCount(1);',
+    "});",
+  ].join("\n"), ["expect(loading)", "aria-busy"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => id), ["layout:e2e/summary.spec.ts:3"],
+    "a variable name is not a busy state; the aria-busy count is (PC-2)");
+});
+
+test("ISS-13846 final review a helper's own definition is not a call from the helper before it", t => {
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-definition-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const lines = [
+    "async function settle(canvasElement) {",
+    "  await waitFor(() => canvasElement);",
+    "}",
+    "async function checkGrid(canvasElement) {",
+    '  const grid = canvasElement.querySelector("[role=grid]");',
+    '  await expect(within(grid).queryByText("Loading")).toBeNull();',
+    "}",
+    "export const Settled: Story = {",
+    "  play: async ({ canvasElement }) => {",
+    "    await settle(canvasElement);",
+    '    await expect(within(canvasElement).queryByText("Loading")).toBeNull();',
+    "  },",
+    "};",
+    "export const Live: Story = {",
+    "  play: async ({ canvasElement }) => { await checkGrid(canvasElement); },",
+    "};",
+  ];
+  assert.deepEqual(instrumentedStoryProblems(dir, "definition.json", lines), [],
+    "only Live runs checkGrid; Settled's broader assertion follows a different helper");
 });
