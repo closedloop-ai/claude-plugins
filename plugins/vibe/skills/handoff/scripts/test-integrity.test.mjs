@@ -312,6 +312,38 @@ test("ISS-13846 final review ADV10-1 a frame on an assertion nested in the candi
   }
 });
 
+test("ISS-13846 final review F11-1 a frame on another assertion sharing the candidate's closing line is not its failure", () => {
+  const lines = ['test("closing", () => {', "  expect(", '    screen.queryByText("a")',
+    '  ).toBeNull(); expect(screen.queryByText("b")).toBeTruthy();', "});"];
+  const fixture = changed("src/closing-line.test.tsx", lines.join("\n"), ['queryByText("a")']);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "pnpm vitest src/closing-line.test.tsx";
+  const proofAt = column => withReceipt({ candidate: candidate.id, path: candidate.path, case: candidate.case,
+    class: "absence", mutation: "render a", presentState: "a is present", assertionLine: candidate.assertionLine,
+    assertionLocation: candidate.assertionLocation, command, observedFailure: "a assertion failed", restoredPass: true,
+    commit: COMMIT, ownerBoundary: "production", mountedSignal: "owner mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: `AssertionError: expected null at src/closing-line.test.tsx:4:${column}` } }, fixture.source);
+  const problems = proof => testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, RECEIPT_DIR);
+  assert.notDeepEqual(problems(proofAt(lines[3].indexOf("expect(screen") + 1)), []);
+  assert.deepEqual(problems(proofAt(lines[3].indexOf(".toBeNull") + 2)), []);
+});
+
+test("ISS-13846 final review F11-2 a callback check inside a positive assertion's argument keeps main's candidate", () => {
+  const multiline = changed("src/callback.test.tsx", [
+    'test("callback", async () => {', "  await expect(await waitFor(() => {",
+    '    if (screen.queryByText("b")) throw new Error("b is shown");', "    return cell;", "  })).not.toBeNull();", "});",
+  ].join("\n"), ['queryByText("b")']);
+  assert.deepEqual(testIntegrityCandidates([multiline.file], path => path === multiline.file.path ? multiline.source : null)
+    .map(({ id }) => id), ["absence:src/callback.test.tsx:3"]);
+  const sameLine = changed("src/callback-line.test.tsx", [
+    'test("callback", async () => {',
+    '  await expect(await waitFor(() => (screen.queryByText("b") ? null : cell))).not.toBeNull();', "});",
+  ].join("\n"), ["waitFor"]);
+  assert.deepEqual(testIntegrityCandidates([sameLine.file], path => path === sameLine.file.path ? sameLine.source : null)
+    .map(({ id }) => id), ["absence:src/callback-line.test.tsx:2"]);
+});
+
 test("ISS-13846 a busy-state count in a summary spec is not card-layout proof", () => {
   const fixture = changed("e2e/documents-summary-scope.spec.ts", [
     'test("one busy list", async () => {',

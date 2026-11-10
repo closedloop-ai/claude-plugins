@@ -257,7 +257,9 @@ function runnerAssertionAt(failure, actualLine, actualColumn, expectedLine, expe
       && lines[expectedLine - 1]?.slice(expectedColumn - 1).replace(/\s+/g, " ").includes(assertionLine);
     if ((!candidate && !sameLineFallback) || candidate && actualLine > candidate.endLine
       || !sourceLine?.trim().startsWith(snippet) || actualColumn > sourceLine.length + 1
-      || nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn)) return false;
+      || nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn)
+      || candidate && actualLine === candidate.endLine && actualLine !== expectedLine
+        && sourceOffset(source, actualLine, actualColumn) >= candidate.end) return false;
   } else if (!assertionLine.includes(snippet) && !snippets.map((match) => match[2]).join(" ").replace(/\s+/g, " ").includes(assertionLine)) return false;
   if (actualLine < expectedLine) return false;
   if (actualLine === expectedLine) return actualColumn >= expectedColumn
@@ -664,9 +666,10 @@ function onlyPositiveAssertionText(source, line, matches) {
     const from = Math.max(match.start, start) - start;
     const to = Math.min(match.end, end) - start;
     if (from >= to) continue;
-    // A check nested in the positive assertion's argument (a waitFor callback) is still its own check.
+    // Only the line holding the positive matcher is covered; a check nested in its argument (a callback) is still its own check.
+    if (Math.max(match.argumentEnd, start) >= Math.min(match.end, end)) return false;
     const argument = source.slice(Math.max(match.argumentStart, start), Math.min(match.argumentEnd, end));
-    if (/\b(?:expect|assert)\b/.test(argument) || ABSENCE_ASSERTION.test(argument)) return false;
+    if (/\b(?:expect|assert|function)\b|=>/.test(argument) || ABSENCE_ASSERTION.test(argument)) return false;
     text = `${text.slice(0, from)}${" ".repeat(to - from)}${text.slice(to)}`;
     covered = true;
   }
@@ -675,17 +678,18 @@ function onlyPositiveAssertionText(source, line, matches) {
 
 /** A frame inside the candidate's expect argument, at or after a nested expect/assert, belongs to that nested check. */
 function nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn) {
-  const offsetAt = (line, column) => {
-    let start = 0;
-    for (let current = 1; current < line; current += 1) start = source.indexOf("\n", start) + 1;
-    return start + column - 1;
-  };
-  const start = offsetAt(expectedLine, expectedColumn);
+  const start = sourceOffset(source, expectedLine, expectedColumn);
   const head = /^(?:await\s+)?expect(?:\s*\.\s*soft)?\s*\(/.exec(source.slice(start));
   if (!head) return false;
   const open = start + head[0].length - 1;
   const close = matchingParenthesis(source, open);
-  const actual = offsetAt(actualLine, actualColumn);
+  const actual = sourceOffset(source, actualLine, actualColumn);
   if (close < 0 || actual <= open || actual >= close) return false;
   return [...source.slice(open + 1, close).matchAll(/\b(?:expect|assert)\b/g)].some((match) => open + 1 + match.index <= actual);
+}
+
+function sourceOffset(source, line, column) {
+  let start = 0;
+  for (let current = 1; current < line; current += 1) start = source.indexOf("\n", start) + 1;
+  return start + column - 1;
 }
