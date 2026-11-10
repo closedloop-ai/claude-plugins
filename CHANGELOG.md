@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe-core v1.0.1
+### vibe-core v1.0.2
 
 #### Added
 - A PreToolUse guard (`hooks/unit-status-guard.mjs`, routed from `hooks/pre-tool-use.mjs` and added to the `hooks.json` matcher as `mcp__closedloop__update-document`) refuses moving a ticket to IN_REVIEW or DONE while it belongs to an open unit on the active fleet program's board without a passing recorded review, or to a vibe session with member tickets whose handoff gate has not passed the unit review (ISS-13944). Any other ticket, status or write passes untouched.
@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The passing-it-on exception for criteria waiting on other work (ISS-13949) now reaches `criteria-audit.mjs`, which refused every PARTIAL row before. With `--passing-on` (the person chose passing the work on, not a pull request), a PARTIAL row whose ref is `not met yet: waits on <ticket>` is accepted when `--ticket-status <ticket>=<STATUS>` shows that ticket open, and is listed under `waiting` for the next owner. The same row is refused without `--passing-on` (so `handoff-gate.mjs`, which never passes it, refuses it for a pull request), when it names no ticket, when no status is given (the status comes from the caller, never a network read), and when the ticket is DONE or CANCELED.
 - `criteria-audit.mjs` takes `--prd`, `--plan`, `--review` and `--slug`; a session with member tickets or a PRD fails the audit until its review passes, and the review's gap lines join the audit's problems.
 - `handoff-gate.mjs` takes `--review`, `--prd` and `--plan`, runs them through the criteria audit, binds the review, PRD and plan files into its witness (a changed file makes the gate stale) and records `unitReviewPassed`, so the PR-create hook refuses a unit's PR until the review passes.
-- The ticket status guard ships in vibe-core 1.0.1 (below); vibe now needs vibe-core 1.0.1 or newer (`VIBE_CORE_MIN`), because board.mjs, status-audit.mjs and unit-review.mjs read the recorded unit review through it.
+- The ticket status guard ships in vibe-core 1.0.2 (above); vibe now needs vibe-core 1.0.2 or newer (`VIBE_CORE_MIN`), because board.mjs, status-audit.mjs and unit-review.mjs read the recorded unit review through it.
 - `board.mjs unit <name> --closed` refuses a unit without a passing recorded review that covers every one of its tickets, and `board.mjs status` prints `UNIT-UNREVIEWED` for an open unit whose writer has a PR before then. `status-audit.mjs --board` expects every member of such a unit at IN_PROGRESS and prints `UNIT-UNREVIEWED <slug> <status>` for one moved to IN_REVIEW or DONE.
 - fleet-orchestrator's unit steps (SKILL.md and references/ticket-units.md, new step 4) and its QA gate, and handoff's candidate audit, describe the review and its gap list.
 
