@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 // A pull request may open only for the exact source that passed the final
 // pull-request inventory, including its body and verifier run evidence.
+// A fleet unit's member tickets (`--member <slug>=<body>`, ISS-13924) are
+// audited with the session's ticket and bound into the witness the same way.
+// With members recorded on the session, the gate needs `--title`, and the
+// title and body must name every member; the witness keeps the member list,
+// so a member added afterwards (`vibe-sessions.mjs touch --member-ticket`)
+// makes it stale. At PR creation the hook passes the command's `--title`, and
+// a title that leaves a member unnamed (or none) is refused there too.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -10,6 +17,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { evidenceFingerprint } from "./handoff-evidence.mjs";
 import { reviewReceiptProblems } from "./review-receipts.mjs";
+import { missingTicketNames } from "./ticket-names.mjs";
+import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
 const GATE_FILE = "vibe-handoff-gate.json";
 const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "audit", "matrix"]);
@@ -47,7 +56,7 @@ export function gatePath(worktree) {
 }
 
 /** Current gate problem, or null when the final inventory covered this source. */
-export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
+export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
   let record;
   try {
     const file = gatePath(worktree);
@@ -70,6 +79,10 @@ export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
       const saved = record.evidence?.[key];
       if (saved && JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved)) return `handoff ${key} evidence changed`;
     }
+    if (JSON.stringify(sessionMembers(worktree)) !== JSON.stringify(record.memberTickets ?? [])) return "the session's member tickets changed since the handoff gate";
+    const naming = memberNameProblems(record.memberTickets ?? [], title, readFileSync(bodyFile, "utf8"));
+    if (naming.length) return naming.join("; ");
+    if ((record.evidence?.members ?? []).some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff member ticket evidence changed";
     if (!Array.isArray(record.receipts) || record.receipts.some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff review receipt changed";
     if (reviewReceiptProblems(readReviewReceipts(record.receipts.map(item => item.path)), sourceIdentity(worktree)).problems.length) return "handoff review evidence is stale or incomplete";
     return null;
@@ -121,7 +134,22 @@ export function reviewFindingProblems(report, source) {
 }
 
 /** Run the canonical inventory with PR body and verifier evidence before recording readiness. */
-export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix }, { runScript = spawnSync } = {}) {
+/** The member tickets the session records, sorted, so the witness can tell when they change. */
+export function sessionMembers(worktree) {
+  return [...(readSessionRecord(worktree)?.memberTickets ?? [])].sort();
+}
+
+/** Every recorded member ticket the PR title or body leaves unnamed. */
+export function memberNameProblems(memberTickets, title, bodyText) {
+  if (memberTickets.length === 0) return [];
+  if (typeof title !== "string") return [`the session delivers member tickets ${memberTickets.join(", ")}; pass --title so the gate checks the PR names them`];
+  return [
+    ...missingTicketNames(title, memberTickets).map((slug) => `the PR title does not name member ticket ${slug}`),
+    ...missingTicketNames(bodyText, memberTickets).map((slug) => `the PR body does not name member ticket ${slug}`),
+  ];
+}
+
+export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix, members = [], title }, { runScript = spawnSync } = {}) {
   const witness = gatePath(worktree);
   if (existsSync(witness)) unlinkSync(witness);
   fetchCurrentMain(worktree);
@@ -133,15 +161,19 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   const reviewProblems = [...verified.problems, ...reviewFindingProblems({ source, findings: verified.findings }, source)];
   if (reviewProblems.length) throw new Error(reviewProblems.join("; "));
   if (ticket && (!audit || !matrix)) throw new Error("criteria audit and matrix are required with a ticket");
+  const memberTickets = sessionMembers(worktree);
+  const naming = memberNameProblems(memberTickets, title, readFileSync(body, "utf8"));
+  if (naming.length) throw new Error(naming.join("; "));
   if (ticket) {
     const criteria = runScript(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), "criteria-audit.mjs"),
-      "--worktree", worktree, "--ticket", ticket, "--audit", audit, "--matrix", matrix, "--at", "head"], { encoding: "utf8" });
+      "--worktree", worktree, "--ticket", ticket, "--audit", audit, "--matrix", matrix, "--at", "head",
+      ...members.flatMap((member) => ["--member", member])], { encoding: "utf8" });
     if (criteria.status !== 0) throw new Error(`acceptance criteria audit failed: ${criteria.stdout || criteria.stderr}`);
   }
   const args = [path.join(path.dirname(fileURLToPath(import.meta.url)), "handoff-inventory.mjs"),
     "--worktree", worktree, "--phase", "pull-request", "--body", body, "--runs", runs,
     "--commit", execFileSync("git", ["-C", worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-    ...(ticket ? ["--ticket", ticket] : [])];
+    ...(ticket ? ["--ticket", ticket] : []), ...members.flatMap((member) => ["--ticket", member.slice(member.indexOf("=") + 1)])];
   const result = runScript(process.execPath, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`pull-request inventory failed: ${result.stderr || result.stdout}`);
   const inventory = JSON.parse(result.stdout);
@@ -152,19 +184,22 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   if (!sameSource(source, sourceIdentity(worktree))) throw new Error("source changed while the handoff gate ran");
   const evidenceInputs = { body, runs, ticket, audit, matrix };
   const evidence = Object.fromEntries(EVIDENCE_KEYS.filter(key => evidenceInputs[key]).map(key => [key, evidenceFingerprint(evidenceInputs[key])]));
+  if (members.length) evidence.members = members.map((member) => evidenceFingerprint(member.slice(member.indexOf("=") + 1)));
   const boundReceipts = receipts.map(evidenceFingerprint);
   const finalMergeProblem = checkedMergeProblem(worktree, targets);
   if (finalMergeProblem) throw new Error(finalMergeProblem);
   const current = mergeTargets(worktree, base);
   if (current.base.oid !== targets.base.oid) throw new Error("PR base moved during the handoff gate");
   if (current.main?.oid !== targets.main?.oid) throw new Error("current main moved during the handoff gate");
-  writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts, inventoryPassed: true, prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
+  writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts, memberTickets, inventoryPassed: true, prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
   return { branch, source };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" } } });
-  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file>]");
+  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" }, member: { type: "string", multiple: true }, title: { type: "string" } } });
+  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file> [--member <slug>=<file> ...] [--title <PR title>]]");
   values.receipts = values.receipt;
+  values.members = values.member ?? [];
+  if (values.members.length && !values.ticket) throw new Error("--member needs --ticket, --audit and --matrix: member criteria are audited with the session's own ticket");
   process.stdout.write(`${JSON.stringify(recordHandoffGate(values))}\n`);
 }

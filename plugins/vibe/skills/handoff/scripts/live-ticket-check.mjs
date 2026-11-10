@@ -20,6 +20,9 @@
 // and only when the map names the delivering pull request (`pullRequest`); a
 // delivered child with none is `awaitingPullRequest` and keeps its status
 // (operator ruling, 2026-10-21: no IN_REVIEW without a pull request).
+// A fleet unit's member tickets (the session record's `memberTickets`,
+// ISS-13924) are reconciled the same way: each must be in the map, and a
+// session with members needs `--child-evidence`.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
@@ -227,6 +230,9 @@ function main() {
     if (values["child-evidence"]) {
       result.children = checkChildren(values, record);
       result.ok = result.ok && result.children.ok;
+    } else if (record?.memberTickets?.length) {
+      result.children = { ok: false, problems: record.memberTickets.map((slug) => ({ slug, problem: "is a member ticket of this session; pass --child-evidence with it reconciled" })) };
+      result.ok = false;
     }
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     process.exit(result.ok ? 0 : 1);
@@ -248,7 +254,7 @@ function checkChildren(values, record) {
     livePlan: record?.livePlan,
     operator: record?.operator?.email,
   });
-  return checkChildEvidence(JSON.parse(readFileSync(path.resolve(values["child-evidence"]), "utf8")), facts);
+  return checkChildEvidence(JSON.parse(readFileSync(path.resolve(values["child-evidence"]), "utf8")), facts, record?.memberTickets ?? []);
 }
 
 export const CLASSIFICATIONS = ["delivered", "active-elsewhere", "superseded", "uncovered"];
@@ -264,7 +270,7 @@ const ACTIVITY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 
 /** Checks one evidence map against the worktree facts; pure apart from the injected `facts`. */
-export function checkChildEvidence(map, facts) {
+export function checkChildEvidence(map, facts, members = []) {
   const problems = [];
   const report = (slug, problem, item) => problems.push({ slug, ...(item ? { item } : {}), problem });
   const result = { inReview: [], awaitingPullRequest: [], activeElsewhere: [], superseded: [], uncovered: [] };
@@ -279,6 +285,9 @@ export function checkChildEvidence(map, facts) {
   if (!Array.isArray(map.children)) {
     report(null, "has no children array");
     return { ok: false, ...result, problems };
+  }
+  for (const member of members.filter((slug) => !map.children.some((child) => child?.slug === slug))) {
+    report(member, "is a member ticket of this session and is missing from the map; reconcile it like a child");
   }
   for (const child of map.children) {
     const slug = typeof child?.slug === "string" ? child.slug : null;

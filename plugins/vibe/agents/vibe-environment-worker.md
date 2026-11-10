@@ -488,7 +488,7 @@ changes and gates fields.
    <adversarial receipt> --receipt <Storybook receipt> --receipt
    <verifier receipt> --ticket
    <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
-   file>` immediately before creation. Use the paths step 9 of handoff passed;
+   file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`, which with members must name each one, as must the body) immediately before creation. Use the paths step 9 of handoff passed;
    when there is no ticket, omit the ticket/audit/matrix arguments. A failed
    gate is `BLOCKED`, not a reason to bypass the hook, except through the
    exception the hook's refusal names. Create it with

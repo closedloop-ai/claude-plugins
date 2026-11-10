@@ -285,7 +285,9 @@ item quoted from the child (design review, hosted URL, device runs, ledger)
 with `result` and evidence: an added diff line, a tracked changed file, a
 merged pull request with its commit, or a report on the final commit. Run
 step 8's ticket check with `--child-evidence` on it and move exactly
-`children.inReview` to `IN_REVIEW`, with the pull request URL. A child in
+`children.inReview` to `IN_REVIEW`, with the pull request URL. Reconcile each
+of the session's `memberTickets` (a fleet unit's other tickets) in the same map
+as a child; the check refuses a map that omits one. A child in
 `children.awaitingPullRequest` was delivered but has no pull request yet: it
 keeps its status, listed in the Handoff section as delivered on the branch,
 and moves when the pull request opens. Never set `IN_REVIEW` without a pull
