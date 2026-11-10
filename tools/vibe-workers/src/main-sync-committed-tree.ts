@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 
 const WORKSPACE_MANIFEST = /^(?:apps|packages|containers)\/[^/]+\/package\.json$/;
 const manifestSchema = z.object({ name: z.string().optional() }).passthrough();

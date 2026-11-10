@@ -229,12 +229,12 @@ def test_the_update_commands_match_the_install_guide() -> None:
     script = PLUGIN_VERSION.read_text()
     install = flat(INSTALL.read_text())
     for command in ("plugin marketplace upgrade closedloop-ai", "plugin add vibe@closedloop-ai",
-                    "plugin add closedloop-core@closedloop-ai"):
+                    "plugin add closedloop-core@closedloop-ai", "plugin add vibe-core@closedloop-ai"):
         assert command in install, command
     assert '[cli, "plugin", "marketplace", "upgrade", MARKETPLACE]' in script
     assert '[cli, "plugin", "add", `${plugin.name}@${MARKETPLACE}`]' in script
     assert '[cli, "plugin", "marketplace", "update", MARKETPLACE]' in script
-    assert '[cli, "plugin", "update", plugin.id' in script
+    assert '[cli, "plugin", plugin.missing ? "install" : "update", plugin.id' in script
     assert "`$vibe` checks this itself at the start of every session" in install
 
 

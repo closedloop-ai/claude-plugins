@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { git, readSessionRecord } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git, readSessionRecord } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { isOwnedPrototypeSession } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { checkoutLocation, readWriterSummary, verifySourceTurn } from "./ledger.js";
 import { nativeRecordOwnerSchema } from "./native-record.js";

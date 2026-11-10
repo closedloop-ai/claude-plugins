@@ -298,7 +298,8 @@ def test_ticket_ctl_formats_match_the_template_rules() -> None:
 
 
 def test_ws3_adds_no_new_hook_registration_and_changes_no_default_path() -> None:
-    hooks = (PLUGIN_ROOT / "hooks" / "hooks.json").read_text()
+    # vibe's hooks ship in the vibe-core plugin beside it.
+    hooks = (PLUGIN_ROOT.parent / "vibe-core" / "hooks" / "hooks.json").read_text()
     for name in ALL_SCRIPTS:
         assert name not in hooks, name
     for name in ("vibe-setup-worker", "vibe-environment-worker", "vibe-verify-worker", "vibe-guardrails-reviewer"):

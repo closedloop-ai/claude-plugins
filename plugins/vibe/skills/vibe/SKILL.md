@@ -179,8 +179,9 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
 Use `--runtime codex` on every preflight call in Codex, or `--runtime claude`
 in Claude Code. Preserve it in setup-worker briefs and reruns. Claude resolves
-`closedloop-core` through this plugin's manifest dependency; Codex's preflight
-stops until core is explicitly installed and enabled.
+`closedloop-core` and `vibe-core` (which carries vibe's hooks) through this
+plugin's manifest dependencies; Codex's preflight stops until both are
+explicitly installed and enabled.
 - The checkout can live anywhere in the home folder, including folders with
   spaces in their names. Quote every path you pass to a command.
 - Paths like `scripts/...` and `references/...` are relative to this skill's

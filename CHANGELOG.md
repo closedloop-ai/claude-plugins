@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe-core v1.0.0
+
+#### Added
+- A new plugin holding vibe's hooks and every module they run (ISS-13869): the five hook registrations (PreToolUse, PostToolUse, PreCompact, UserPromptSubmit, and SessionStart after a compaction), the 24 hook modules, and the 29 modules they import (28 under `lib/<skill>/scripts/`, two of them split out of vibe modules, and `shared/process-identity.mjs`), with their tests. Codex ties hook approval to a hash of the whole plugin bundle, so while the hooks shipped inside vibe every vibe release left them "modified" and skipped until someone approved them again. A vibe release that leaves this code alone now leaves vibe-core's bundle, and its approval, unchanged.
+- `shared/plugin-roots.mjs` finds a sibling plugin's install in a repository checkout, in Claude Code (from `installed_plugins.json`, matching the caller's own scope, never the cache's directory listing) and in Codex (the version Codex itself treats as active: `local`, else the highest semver). It has no environment override.
+- The guards read vibe's install (its version, skill definitions and scripts) through `shared/vibe-install.mjs`, as data only; no vibe-core module imports or runs a file from vibe's install, and a test fails if one does.
+- The hooks do nothing when vibe is not installed, or while the installed vibe still registers its own hooks (vibe 1.1.68 and older), so a mixed install never applies a guard twice.
+- The handoff gate's read side (`lib/handoff/scripts/handoff-gate-check.mjs`) and the startup version record the hooks read (`lib/vibe/scripts/startup-record.mjs`) are split out of vibe's `handoff-gate.mjs` and `plugin-version.mjs`, whose command-line halves stay in vibe because they run other vibe scripts.
+- Tests for the merge guard's directory and repository resolution (`env --chdir=`, `sudo -D`, `pushd`/`popd`, a bare `export GH_REPO`, and a command substitution in `-R` or `GH_REPO`), left over from ISS-13886.
+
+### vibe v1.1.69
+
+#### Changed
+- vibe's hooks and the modules they run move to the new `vibe-core` plugin (ISS-13869), which vibe declares as a dependency and which both marketplaces list. vibe ships no `hooks/hooks.json`. Its scripts load those modules from vibe-core through `shared/vibe-core.mjs`, which fails with the install or update command when vibe-core is missing or older than `VIBE_CORE_MIN` (1.0.0). The commands among the moved modules (`e2e-lock.mjs`, `tested-head.mjs`, `fleet-home.mjs`, `helpers.mjs` and eight more) keep thin wrappers at their vibe paths, so every documented command still works. The bundled `dist/` workers load those modules at run time instead of carrying copies.
+- **Codex users: approve vibe-core's hooks once in `/hooks`.** Codex installs no plugin dependency, so after updating vibe run `codex plugin add vibe-core@closedloop-ai` and approve its hooks; until then vibe's hooks do not run in Codex. vibe's Codex preflight refuses to start a session until vibe-core is installed and enabled, the version check reports `vibe-core: not installed` and its update installs it, and a Codex fleet writer refuses to launch while vibe-core lists no hooks or any is not approved, naming `/hooks`. Claude Code installs vibe-core with the vibe update.
+- `fleet.sh` and `snapshot.sh` ship both plugins to a remote host, laid out as a checkout, holding exactly the files the shipped scripts load (`shared/ship-plugins.mjs`).
+- The review-class guards scan vibe-core as well as vibe. The Codex eval installs vibe-core when the payload has it and freezes its identity helper from vibe-core. vibe-bench snapshots vibe-core, loads it as a plugin, lays its release cache out as a Claude Code install, and counts vibe-core's runtime as vibe behavior for nightly evaluation.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.69.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 85 words longer than in 1.1.66 (origin/main at this update, 2dbf2bbc284a3a498f68af6841380b69fae59024).
+
 ### vibe v1.1.66
 
 #### Added

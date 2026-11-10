@@ -31,8 +31,13 @@ CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 "$CODEX" plugin marketplace add closedloop-ai/claude-plugins
 "$CODEX" plugin add vibe@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
+"$CODEX" plugin add vibe-core@closedloop-ai
 "$CODEX" mcp add closedloop --url https://mcp.closedloop.ai/mcp
 ```
+
+vibe-core carries vibe's hooks. Codex runs a plugin's hooks only after you
+approve them: open `/hooks` in Codex and approve vibe-core's hooks once. Each
+vibe-core release asks again; a vibe release does not.
 
 The last command opens the browser. Have the vibe user sign in to ClosedLoop
 with their own account. Codex stores an OAuth sign-in, not an API key.
@@ -49,6 +54,7 @@ Check:
 ```bash
 "$CODEX" plugin list | grep vibe@closedloop-ai   # installed, enabled
 "$CODEX" plugin list | grep closedloop-core@closedloop-ai   # installed, enabled
+"$CODEX" plugin list | grep vibe-core@closedloop-ai   # installed, enabled
 "$CODEX" mcp list                                # closedloop (OAuth) and closedloop-graph
 ```
 
@@ -130,6 +136,7 @@ the refreshed marketplace:
 ```bash
 "$CODEX" plugin add vibe@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
+"$CODEX" plugin add vibe-core@closedloop-ai
 ```
 
 **Local folder marketplace** (added with
@@ -141,6 +148,7 @@ does not update this one. Pull the checkout, then install the plugin again:
 git -C "<path to the claude-plugins checkout>" pull
 "$CODEX" plugin add vibe@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
+"$CODEX" plugin add vibe-core@closedloop-ai
 "$CODEX" plugin list --marketplace closedloop-ai
 ```
 

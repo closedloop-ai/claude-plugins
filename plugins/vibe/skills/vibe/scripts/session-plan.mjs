@@ -30,7 +30,9 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { LOCAL_PLAN_PREFIX } from "./local-plans.mjs";
 import { checkPublishableText } from "./publishable-text.mjs";
-import { git } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const PLAN_SEPARATOR = "\n\n---\n\n";
 export const SELF_APPROVED_MARKER = "> Self-approved: vibe sets this plan's status and no human approved it; an exclusion here counts only where it cites a ticket AC, a PRD or an operator ruling.";

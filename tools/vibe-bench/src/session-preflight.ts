@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { siblingPluginRootOrNull } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 
 /** Local-only session fixture written through the pinned plugin's own helper. */
 export async function writeBenchmarkSessionRecord(
@@ -14,8 +15,7 @@ export async function writeBenchmarkSessionRecord(
   if (!/^benchmark\/[a-z0-9-]+$/.test(branch) || !/^[a-f0-9]{40}$/.test(baseCommit)) {
     throw new Error("benchmark-session-input-invalid");
   }
-  const helper = await import(pathToFileURL(join(vibeDir,
-    "skills/vibe/scripts/session-record.mjs")).href) as {
+  const helper = await import(pathToFileURL(vibeHelper(vibeDir, "session-record.mjs")).href) as {
       readSessionRecord(path: string): unknown;
       writeSessionRecord(path: string, record: unknown): void;
   };
@@ -87,4 +87,14 @@ export function checkVibeVersion(
     throw new Error("benchmark-plugin-version-record-invalid");
   }
   return { status: checked.status as "current" | "unknown" | "outdated", choice };
+}
+
+/**
+ * One of vibe's skill helpers: from the vibe-core installed beside the pinned vibe when it has one (vibe 1.1.69
+ * moved the modules its hooks run there, ISS-13869), else from the pinned vibe itself.
+ */
+export function vibeHelper(vibeDir: string, name: string): string {
+  const coreRoot = siblingPluginRootOrNull("vibe-core", { from: join(vibeDir, ".claude-plugin", "plugin.json") });
+  const core = coreRoot ? join(coreRoot, "lib", "vibe", "scripts", name) : null;
+  return core && existsSync(core) ? core : join(vibeDir, "skills", "vibe", "scripts", name);
 }

@@ -14,7 +14,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { resolveWorkDir } from "./work-dir.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 const TICK_SLACK_SECONDS = 120;
 

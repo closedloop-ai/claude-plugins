@@ -17,6 +17,9 @@ export interface VibeChangeScope {
 }
 
 const PLUGIN_PREFIX = "plugins/vibe/";
+/** vibe's hooks and every module they run ship in vibe-core (ISS-13869), so its runtime is vibe behavior too. */
+const HOOKS_PLUGIN_PREFIX = "plugins/vibe-core/";
+const HOOKS_PLUGIN_DOCUMENTATION = /^plugins\/vibe-core\/(?:README|CHANGELOG)(?:\.[^/]+)?$/i;
 const CORE_SKILL_PREFIX = "plugins/closedloop-core/skills/";
 const VIBE_RUNTIME_DIRECTORIES = [
   ".claude-plugin", ".codex-plugin", "skills", "agents", "commands", "hooks", "shared",
@@ -115,6 +118,11 @@ export function classifyVibePath(path: string, vibeDir: string): VibePathDecisio
   }
   if (BENCHMARK_INFRASTRUCTURE.some((pattern) => pattern.test(path))) {
     return { path, kind: "non-behavior", reason: "benchmark-infrastructure" };
+  }
+  if (path.startsWith(HOOKS_PLUGIN_PREFIX)) {
+    if (TEST_ONLY.some((pattern) => pattern.test(path))) return { path, kind: "non-behavior", reason: "test-only" };
+    if (HOOKS_PLUGIN_DOCUMENTATION.test(path)) return { path, kind: "non-behavior", reason: "unreferenced-documentation" };
+    return { path, kind: "behavior", reason: "vibe-core-runtime" };
   }
   if (!path.startsWith(PLUGIN_PREFIX) && path !== "plugins/vibe") {
     return { path, kind: "unrelated", reason: "outside-vibe-plugin" };

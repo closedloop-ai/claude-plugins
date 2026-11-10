@@ -35,7 +35,9 @@ import { flagKeyProblems } from "../../vibe/scripts/flag-keys.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
-import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 /** Every section of the live ticket, in template order. */
 export const TICKET_SECTIONS = [

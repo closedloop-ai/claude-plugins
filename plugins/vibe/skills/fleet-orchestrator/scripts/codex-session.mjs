@@ -25,19 +25,18 @@ import path, { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
-  connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, readThreadState, summarize,
-} from '../../codex-fleet-monitor/scripts/liveness.mjs';
-import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
-import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from '../../vibe/scripts/session-record.mjs';
-import { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } from '../../vibe/scripts/loaded-skill.mjs';
-import { promptProblems } from './skill-freshness.mjs';
 import { launchCwd, recoveryTurnProblem, threadCwd, VIBE_BRIEF_TICKET, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
-import { canonicalWorktree, ensureReloadFence, e2eLockDir as machineE2eLockDir, machineSlotLockDir, readE2eWaiters,
-  regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } from '../../vibe/scripts/owned-state.mjs';
-import { processIdentityStatus, readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, readThreadState, summarize } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
+const { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
+const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
+const { canonicalWorktree, ensureReloadFence, e2eLockDir: machineE2eLockDir, machineSlotLockDir, readE2eWaiters, regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } = await vibeCore("lib/vibe/scripts/owned-state.mjs");
+const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 

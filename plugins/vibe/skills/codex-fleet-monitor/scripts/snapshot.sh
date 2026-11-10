@@ -15,19 +15,23 @@ remote_node() {
   e+=" RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${REMOTE_CONTINUE_PROMPT_FILE:-}"
   e+=" PASS_TIMEOUT_SECONDS=${PASS_TIMEOUT_SECONDS:-} LOG_MAX_BYTES=${LOG_MAX_BYTES:-} SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-}"
   e+=" CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-}"
-  local invoke="env $e node $d/$*"
-  local freshness=()
+  local m=$d/plugins/vibe/skills/codex-fleet-monitor/scripts
+  local invoke="env $e node $m/$*"
+  local ship=(skills/codex-fleet-monitor/scripts/{liveness,ratelimit,recover,usage-state,work-dir}.mjs)
   if [ "$1" = skill-freshness.mjs ]; then
-    freshness=(-C $K/../.. fleet-orchestrator/scripts/skill-freshness.mjs codex-fleet-monitor/scripts/work-dir.mjs
-      vibe/scripts/loaded-skill.mjs vibe/scripts/plugin-script-references.mjs)
+    ship+=(skills/fleet-orchestrator/scripts/skill-freshness.mjs)
     shift
     # Resolve outside env: a bare `env VAR=...` would print the process environment.
     invoke='root=$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1); test -n "$root" && '
-    invoke+="env $e node $d/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
+    invoke+="env $e node $d/plugins/vibe/skills/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
   fi
-  COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs usage-state.mjs work-dir.mjs \
-    "${freshness[@]}" 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+  # These scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).
+  local stage; stage=$(node $K/../../../shared/ship-plugins.mjs $ship) || return 2
+  COPYFILE_DISABLE=1 tar -chf - -C $stage ${(f)"$(<$stage/files)"} 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
     ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL ${(q)invoke}" 2>/dev/null
+  local exit_status=$?
+  rm -rf $stage
+  return $exit_status
 }
 # A failed gh call prints nothing; keep the last non-empty value for that key so a blip is not an event.
 zmodload zsh/datetime

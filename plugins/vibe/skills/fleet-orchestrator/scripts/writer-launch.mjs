@@ -1,11 +1,12 @@
 // Launch checks for a Codex fleet writer that codex-session.mjs runs before a thread or turn
 // starts: where the thread starts, whether a thread with no session may take a
-// recovery turn, and whether vibe's Codex hooks are approved so its first turn records load
-// evidence for itself.
+// recovery turn, and whether vibe-core's Codex hooks (which run vibe's guards) are installed
+// and approved so its first turn records load evidence for itself.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import { VIBE_CORE_INSTALL } from '../../../shared/vibe-core.mjs';
 
 export const VIBE_PROMPT = /^\s*\$vibe\b/;
 export const VIBE_BRIEF_TICKET = /^\s*\$vibe[^\r\n]*?\b((?:ISS|PRD|FEA)-\d+)\b/;
@@ -13,7 +14,9 @@ export const VIBE_BRIEF_TICKET = /^\s*\$vibe[^\r\n]*?\b((?:ISS|PRD|FEA)-\d+)\b/;
 const WORKTREES = path.join('.claude', 'worktrees');
 const UNKNOWN_METHOD = /unknown variant|method not found/i;
 const APPROVED = new Set(['trusted', 'managed']);
-const REAPPROVE = "re-approve the vibe hooks in Codex's /hooks (each vibe release changes the plugin bundle Codex approved), then launch again";
+const HOOKS_PLUGIN = 'vibe-core@';
+const REAPPROVE = "approve the vibe-core hooks in Codex's /hooks (each vibe-core release changes the plugin bundle Codex approved), then launch again";
+const INSTALL_HOOKS = `run \`${VIBE_CORE_INSTALL.codex}\`, approve its hooks in Codex's /hooks, then launch again`;
 
 function checkoutTop(dir) {
   try {
@@ -61,7 +64,10 @@ export function recoveryTurnProblem(saved, prompt) {
   return null;
 }
 
-/** Why vibe's Codex hooks cannot run for a writer started in `cwd`, or null; an App Server without hooks/list is not checked. */
+/**
+ * Why vibe's guards cannot run in Codex for a writer started in `cwd`: vibe-core, which carries them, lists no
+ * hooks there, or one is disabled or not approved. Null when all run; an App Server without hooks/list is not checked.
+ */
 export async function vibeHookTrustProblem(client, cwd) {
   let listing;
   try {
@@ -70,9 +76,10 @@ export async function vibeHookTrustProblem(client, cwd) {
     if (UNKNOWN_METHOD.test(error.message)) return null;
     return `could not list Codex hooks: ${error.message}`;
   }
-  const blocked = (listing?.data ?? []).flatMap((entry) => entry?.hooks ?? [])
-    .filter((hook) => String(hook?.pluginId ?? '').startsWith('vibe@'))
-    .filter((hook) => hook.enabled === false || !APPROVED.has(hook.trustStatus))
+  const hooks = (listing?.data ?? []).flatMap((entry) => entry?.hooks ?? [])
+    .filter((hook) => String(hook?.pluginId ?? '').startsWith(HOOKS_PLUGIN));
+  if (hooks.length === 0) return `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; ${INSTALL_HOOKS}`;
+  const blocked = hooks.filter((hook) => hook.enabled === false || !APPROVED.has(hook.trustStatus))
     .map((hook) => `${hook.key} is ${hook.enabled === false ? 'disabled' : hook.trustStatus}`);
-  return blocked.length ? `vibe's Codex hooks cannot run (${[...new Set(blocked)].join(', ')}); ${REAPPROVE}` : null;
+  return blocked.length ? `vibe-core's Codex hooks cannot run (${[...new Set(blocked)].join(', ')}); ${REAPPROVE}` : null;
 }

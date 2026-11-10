@@ -15,7 +15,9 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { readConfig, resolveWorkDir } from "./work-dir.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 export const DEFAULT_STALE_SECONDS = 30 * 60;
 export const USAGE_HISTORY_LIMIT = 100;

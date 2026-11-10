@@ -4,7 +4,9 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { harnessActor } from '../../vibe/scripts/harness-identity.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 
 const PROCESS_API = 'CLOSEDLOOP_APP_SERVER_CLIENT v1';
 const CORE_ID = 'closedloop-core@closedloop-ai';

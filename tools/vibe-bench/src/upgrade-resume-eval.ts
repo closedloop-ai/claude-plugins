@@ -22,7 +22,7 @@ import type { PluginSnapshot } from "./plugin-snapshot.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 import { privateReplyDestination, writePrivateReply } from
   "./private-artifact.ts";
-import { writeBenchmarkSessionRecord } from "./session-preflight.ts";
+import { vibeHelper, writeBenchmarkSessionRecord } from "./session-preflight.ts";
 import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
 import { evidenceTrace as statefulClaudeEvidenceTrace,
   failureDiagnostic as normalizedClaudeFailureDiagnostic,
@@ -727,6 +727,7 @@ export function claudeUpgradeRootArgs(input: { release: PluginReleaseArchive; se
   if (!/^[0-9a-f-]{36}$/.test(input.rootSessionId)) throw new Error("eval-stateful-claude-session-invalid");
   return ["--print", "--output-format", "stream-json", "--verbose", "--setting-sources", "",
     "--settings", input.settings, "--plugin-dir", input.release.claudeCoreRoot,
+    ...(input.release.claudeHooksRoot ? ["--plugin-dir", input.release.claudeHooksRoot] : []),
     "--plugin-dir", input.release.claudeVibeRoot, "--model", "claude-sonnet-5-5",
     "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--name",
     `vibe upgrade resume · ${input.caseId}`, "--allowedTools", "Bash",
@@ -861,7 +862,7 @@ async function writeClaudeVersionRecord(input: { release: PluginReleaseArchive;
   home?: string; env?: NodeJS.ProcessEnv }): Promise<string> {
   const scripts = join(input.release.claudeVibeRoot, "skills/vibe/scripts");
   const pluginVersion = realpathSync(join(scripts, "plugin-version.mjs"));
-  const loadedSkill = join(scripts, "loaded-skill.mjs");
+  const loadedSkill = vibeHelper(input.release.claudeVibeRoot, "loaded-skill.mjs");
   const hasLoadedSkill = existsSync(loadedSkill);
   const home = input.home ?? homedir();
   const startup = join(home, ".codex/vibe/plugin-version", `${input.rootSessionId}.json`);

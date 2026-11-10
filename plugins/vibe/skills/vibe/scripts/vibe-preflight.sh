@@ -69,9 +69,11 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# Claude resolves core through the manifest dependency. Codex requires an
-# explicitly installed, enabled core before session setup. If Node is absent,
-# the ordinary prerequisite checks below report its existing install fix.
+# Claude resolves closedloop-core and vibe-core through the manifest dependencies.
+# Codex installs no dependency, so it requires both explicitly installed and
+# enabled before session setup: vibe-core carries vibe's hooks, and vibe ships
+# none of its own (ISS-13869). If Node is absent, the ordinary prerequisite
+# checks below report its existing install fix.
 if [[ "$RUNTIME" == "codex" ]] && have node; then
   codex_executable="$CODEX_ARG"
   if [[ -z "$codex_executable" ]]; then
@@ -80,30 +82,35 @@ if [[ "$RUNTIME" == "codex" ]] && have node; then
       codex_executable="/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
     fi
   fi
-  core_fix="$(printf '%q plugin add closedloop-core@closedloop-ai' "$codex_executable")"
-  core_installed=0
+  plugins_json=""
   if [[ -x "$codex_executable" ]]; then
-    plugins_json="$("$codex_executable" plugin list --json 2>/dev/null)" &&
-      printf '%s' "$plugins_json" | node -e '
+    plugins_json="$("$codex_executable" plugin list --json 2>/dev/null)" || plugins_json=""
+  fi
+  missing_plugin=0
+  for required in closedloop-core vibe-core; do
+    if printf '%s' "$plugins_json" | node -e '
         let input = "";
         process.stdin.on("data", chunk => { input += chunk; });
         process.stdin.on("end", () => {
           try {
             const result = JSON.parse(input);
             const enabled = Array.isArray(result.installed) && result.installed.some(
-              plugin => plugin.pluginId === "closedloop-core@closedloop-ai" &&
+              plugin => plugin.pluginId === `${process.argv[1]}@closedloop-ai` &&
                 plugin.installed === true && plugin.enabled === true
             );
             process.exit(enabled ? 0 : 1);
           } catch { process.exit(1); }
         });
-      ' && core_installed=1
-  fi
-  if [[ "$core_installed" != "1" ]]; then
-    emit closedloop-core false 'closedloop-core is not installed and enabled' "$core_fix"
+      ' "$required"; then
+      emit "$required" true "$required is installed and enabled" ''
+    else
+      emit "$required" false "$required is not installed and enabled" "$(printf '%q plugin add %s@closedloop-ai' "$codex_executable" "$required")"
+      missing_plugin=1
+    fi
+  done
+  if [[ "$missing_plugin" == "1" ]]; then
     exit 1
   fi
-  emit closedloop-core true 'closedloop-core is installed and enabled' ''
 fi
 
 # Reads one top-level string field from a JSON file, without needing jq.

@@ -17,8 +17,10 @@ import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { git } from "./session-record.mjs";
 import { isTestFile } from "./test-files.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const RECORD_FILE = "vibe-retired-tests.json";
 const RETIRING_DOCUMENT = /^(?:ISS|PRD|FEA)-\d+$/;

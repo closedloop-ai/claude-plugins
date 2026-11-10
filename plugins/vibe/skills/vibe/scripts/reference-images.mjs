@@ -27,8 +27,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { Harness, harnessActor } from "./harness-identity.mjs";
-import { git, readSessionRecord, writeSessionRecord } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
+const { git, readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const REFERENCE_DIR = "vibe-reference-images";
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;

@@ -10,6 +10,11 @@
       "description": "Shared ClosedLoop planning, intelligence, review, QA, measurement, and PR monitoring"
     },
     {
+      "name": "vibe-core",
+      "source": "./plugins/vibe-core",
+      "description": "The hooks behind vibe sessions and the modules they run, released apart from vibe so its hook approval lasts"
+    },
+    {
       "name": "vibe",
       "source": "./plugins/vibe",
       "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows"
