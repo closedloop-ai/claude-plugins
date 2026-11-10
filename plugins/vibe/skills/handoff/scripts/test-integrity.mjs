@@ -133,7 +133,7 @@ function parsedAssertions(source, changedLines) {
     const endLine = lineNumberAt(source, matcherClose);
     if (!changedLines.some((entry) => entry.line >= line && entry.line <= endLine)) continue;
     const column = match.index - source.lastIndexOf("\n", match.index);
-    matches.push({ line, column, endLine, absence, start: match.index, end: matcherClose + 1,
+    matches.push({ line, column, endLine, absence, start: match.index, end: matcherClose + 1, argumentStart: open + 1, argumentEnd: close,
       text: source.slice(match.index, matcherClose + 1).replace(/\s+/g, " ") });
   }
   return matches;
@@ -663,6 +663,9 @@ function onlyPositiveAssertionText(source, line, matches) {
     const from = Math.max(match.start, start) - start;
     const to = Math.min(match.end, end) - start;
     if (from >= to) continue;
+    // A check nested in the positive assertion's argument (a waitFor callback) is still its own check.
+    const argument = source.slice(Math.max(match.argumentStart, start), Math.min(match.argumentEnd, end));
+    if (/\b(?:expect|assert)\b/.test(argument) || ABSENCE_ASSERTION.test(argument)) return false;
     text = `${text.slice(0, from)}${" ".repeat(to - from)}${text.slice(to)}`;
     covered = true;
   }
