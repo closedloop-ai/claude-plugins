@@ -1230,7 +1230,7 @@ test("ISS-13846 final review A-TARGET A-ORDER an instrumented proof refuses othe
     "(d) the runner header must name a story that runs the helper");
 });
 
-test("ISS-13846 final review L-NEG a card count excluding loading items in any form keeps its layout proof", () => {
+test("ISS-13846 final review L-NEG a card count excluding loading items in a recognized form keeps its layout proof", () => {
   const lines = [
     'test("one summary card", async ({ page }) => {',
     '  await expect(page.locator("[data-card]").filter({ hasNotText: "Loading" })).toHaveCount(1);',
