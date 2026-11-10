@@ -490,7 +490,8 @@ changes and gates fields.
    <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
    file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`, which with members must name each one, as must the body) immediately before creation. Use the paths step 9 of handoff passed;
    when there is no ticket, omit the ticket/audit/matrix arguments. A failed
-   gate is `BLOCKED`, not a reason to bypass the hook. Create it with
+   gate is `BLOCKED`, not a reason to bypass the hook, except through the
+   exception the hook's refusal names. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
