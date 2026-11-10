@@ -112,6 +112,8 @@ test("at PR creation the hook refuses a title that leaves a member ticket unname
   assert.equal(create(`--title "${TITLE}"`), null);
   assert.equal(create(`--title="${TITLE}"`), null);
   assert.equal(create(`-t "${TITLE}"`), null);
+  assert.equal(create(`-t"${TITLE}"`), null, "gh accepts a joined short flag");
+  assert.match(create('-t"ISS-123: Group header counts"')?.reason ?? "", /the PR title does not name member ticket ISS-124/);
   assert.match(create('--title "ISS-123: Group header counts"')?.reason ?? "", /the PR title does not name member ticket ISS-124/);
   assert.match(create("--fill")?.reason ?? "", /pass --title so the gate checks the PR names them/);
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }) === null, false, "without a title the gate is not satisfied");

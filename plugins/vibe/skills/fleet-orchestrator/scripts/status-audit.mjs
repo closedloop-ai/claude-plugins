@@ -16,7 +16,7 @@
 // (put a member with no PRD under `{"slug": null}`). `UNIT-PR-UNREAD <unit>`,
 // with the unit's members left unjudged, means the writer's PR is in no
 // member's pullRequests, or the writer row has no PR while a member lists an
-// open or merged one.
+// open one.
 //
 // `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default) prints
 // `status audit: skipped at report` and exits 0 without reading the snapshot, so the
@@ -145,8 +145,9 @@ export function applyUnits(children, units, writers = {}) {
       if (match) pulls = [match];
       else unread = `no member lists the writer's PR ${row.repo ?? ""}#${row.pr}; add its state to the snapshot`;
     } else {
-      const live = listed.filter((pull) => pull?.state === "OPEN" || pull?.state === "MERGED").map((pull) => pull.url ?? "a pull request");
-      if (live.length) unread = `the writer row records no PR, but members list ${[...new Set(live)].join(", ")}; record the unit's PR with board.mjs writer ${unit.writer ?? "<writer>"} --pr <n>`;
+      // A member's own merged PR from before it folded in is not the unit's; only an open one can be.
+      const live = listed.filter((pull) => pull?.state === "OPEN").map((pull) => pull.url ?? "a pull request");
+      if (live.length) unread = `the writer row records no PR, but members list open ${[...new Set(live)].join(", ")}; record the unit's PR with board.mjs writer ${unit.writer ?? "<writer>"} --pr <n>`;
     }
     // Without the unit's PR state, judging would push members backwards; report it instead.
     if (unread) findings.push({ slug: name, status: "?", kind: "UNIT-PR-UNREAD", unit: name, why: unread });

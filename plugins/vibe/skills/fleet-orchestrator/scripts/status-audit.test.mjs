@@ -170,11 +170,12 @@ test('a unit moves with its writer\'s PR alone: each ticket follows it on its ow
   assert.deepEqual(findings(snapshot('IN_REVIEW', [unitPull('OPEN')], [{ url: 'https://github.com/o/r/pull/3', state: 'MERGED' }])), ['MISMATCH ISS-3 IN_REVIEW']);
   assert.deepEqual(findings(snapshot('IN_REVIEW', [{ url: 'https://github.com/x/y/pull/10', state: 'OPEN' }])), ['UNIT-PR-UNREAD ISS-1'], 'the same number in another repository is not the writer\'s PR, and no member is judged');
   // The writer row has no PR yet while the unit's PR is open or merged: judging would push members back to IN_PROGRESS.
-  for (const state of ['OPEN', 'MERGED']) {
-    const unread = auditStatuses(snapshot('IN_REVIEW', [unitPull(state)]), units, writers(null)).findings;
-    assert.deepEqual(unread.map(({ kind, slug }) => `${kind} ${slug}`), ['UNIT-PR-UNREAD ISS-1'], state);
-    assert.match(unread[0].why, /the writer row records no PR, but members list https:\/\/github\.com\/o\/r\/pull\/10; record the unit's PR with board\.mjs writer w1 --pr <n>/);
-  }
+  const unread = auditStatuses(snapshot('IN_REVIEW', [unitPull('OPEN')]), units, writers(null)).findings;
+  assert.deepEqual(unread.map(({ kind, slug }) => `${kind} ${slug}`), ['UNIT-PR-UNREAD ISS-1']);
+  assert.match(unread[0].why, /the writer row records no PR, but members list open https:\/\/github\.com\/o\/r\/pull\/10; record the unit's PR with board\.mjs writer w1 --pr <n>/);
+  // Before the unit's PR exists, a member's own merged PR from before it folded in is not the unit's: the unit is judged as started.
+  const prePr = auditStatuses(snapshot('IN_PROGRESS', [], [{ url: 'https://github.com/o/r/pull/3', state: 'MERGED' }]), units, writers(null)).findings;
+  assert.deepEqual(prePr.map(({ kind, slug, expected }) => `${kind} ${slug} ${expected}`), ['MISMATCH ISS-1 IN_PROGRESS', 'MISMATCH ISS-3 IN_PROGRESS']);
   const missing = auditStatuses({ prds: [{ slug: 'P1', children: [{ slug: 'ISS-1', status: 'IN_PROGRESS' }] }] }, { 'ISS-1': { tickets: ['ISS-1', 'ISS-4'], writer: 'w1' } });
   assert.deepEqual(missing.findings, [{ slug: 'ISS-4', status: '?', kind: 'UNREAD-MEMBER', unit: 'ISS-1' }]);
   assert.deepEqual(auditStatuses(snapshot('IN_PROGRESS', [merged])).findings.map(({ slug, kind }) => `${kind} ${slug}`), ['MISMATCH ISS-1', 'UNOWNED ISS-2'], 'without the board each ticket is judged alone');

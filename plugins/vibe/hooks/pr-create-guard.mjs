@@ -40,6 +40,7 @@ export function prCreateCalls(command, initialCwd) {
       } else if (word.startsWith("--base=")) base = word.slice(7);
       else if (word.startsWith("--body-file=")) bodyFile = word.slice(12);
       else if (word.startsWith("--title=")) title = word.slice(8);
+      else if (/^-t./.test(word)) title = word.slice(2);
     }
     calls.push({ cwd, base, title, bodyFile: bodyFile ? path.resolve(cwd, bodyFile) : null,
       remote, uncertainCwd, unresolvedTarget });
