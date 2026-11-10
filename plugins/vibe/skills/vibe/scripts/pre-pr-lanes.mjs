@@ -62,6 +62,10 @@
 // too; `check` accepts that record, printing `MAIN-PREEXISTING-LANE`, and the
 // pull request body lists it under Known main failures (ISS-13321).
 //
+// A diff that changes a Storybook story whose package has no typecheck script
+// also selects the story-typecheck.mjs lane (ISS-13947): the repository's lane
+// report names none, and PR #9732 shipped a type error in such a story.
+//
 // `run` runs a lane in the worktree and records its result; `record` takes a
 // result run elsewhere. Both refuse unless the worktree's HEAD is `--head`
 // and record HEAD, diffSha256 and treeSha256 (tested-head.mjs). `run` fails
@@ -76,6 +80,7 @@ import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
 import { git } from "./session-record.mjs";
+import { storyTypecheckLane } from "./story-typecheck.mjs";
 import { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
@@ -192,7 +197,8 @@ function withRecordsLock(worktree, change) {
   }
 }
 
-function readRecords(worktree) {
+/** The session's recorded lane results (`vibe-lane-results.json` in the worktree's git dir), or [] when none exist. */
+export function readRecords(worktree) {
   const file = recordsFile(worktree);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
 }
@@ -267,16 +273,33 @@ function selectedScope(values, command) {
   if (Boolean(values.report) === Boolean(values.impact)) throw new Error("exactly one of --report or --impact is required");
   if (values.impact) {
     const impact = qaImpactRequest(values.worktree, JSON.parse(readFileSync(values.impact, "utf8")));
-    if (!Array.isArray(impact.lanes) || (command && !impact.lanes.includes(command)) || (impact.lanes.length && !/^[a-f0-9]{16}$/.test(impact.laneKey ?? ""))) {
+    const lanes = Array.isArray(impact.lanes) ? withStoryTypecheck(values, impact.lanes) : null;
+    if (!lanes || (command && !lanes.includes(command)) || (impact.lanes.length && !/^[a-f0-9]{16}$/.test(impact.laneKey ?? ""))) {
       throw new Error("--impact must select this lane and carry qa-impact.mjs laneKey");
     }
-    return { lanes: impact.lanes, laneKey: impact.laneKey ?? null, impact };
+    return { lanes, laneKey: impact.laneKey ?? null, impact };
   }
   const report = readFileSync(values.report, "utf8");
-  const lanes = reportLanes(report);
+  const named = reportLanes(report);
+  const lanes = named === null ? null : withStoryTypecheck(values, named);
   if (lanes === null || (command && !lanes.includes(command))) throw new Error("--report must name this lane or explicitly say nothing changed");
-  const laneKey = createHash("sha256").update(JSON.stringify(lanes)).update("\n").update(report).digest("hex").slice(0, 16);
+  const laneKey = createHash("sha256").update(JSON.stringify(named)).update("\n").update(report).digest("hex").slice(0, 16);
   return { lanes, laneKey, impact: null };
+}
+
+/**
+ * The selected lanes plus story-typecheck.mjs when the diff changes a story whose package has
+ * no typecheck script: the repository's lane report names no such lane, and PR #9732 shipped a
+ * type error in a story that nothing typechecked (ISS-13947). The diff is measured from --base,
+ * else from HEAD's merge base with origin/main; with neither, no story lane can be derived.
+ */
+function withStoryTypecheck(values, lanes) {
+  let base = values.base;
+  if (!base) {
+    try { base = git(values.worktree, ["merge-base", "HEAD", "refs/remotes/origin/main"]); } catch { base = null; }
+  }
+  const lane = base ? storyTypecheckLane(values.worktree, base) : null;
+  return lane && !lanes.includes(lane) ? [...lanes, lane] : lanes;
 }
 
 function main(argv) {
