@@ -191,24 +191,26 @@ def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None
 
 
 def copied_identity_helper(output: Path) -> Path:
-    """Place real runtime helper bytes in the fixture's installed payload."""
-    target = output / "market/plugins/vibe/skills/vibe/scripts"
+    """Place real runtime helper bytes in the fixture's installed payload (vibe-core holds them)."""
+    target = output / "market/plugins/vibe-core/lib/vibe/scripts"
     target.mkdir(parents=True, exist_ok=True)
     for name in ("tested-head.mjs", "session-record.mjs"):
-        (target / name).write_bytes((runner.PLUGIN / "skills/vibe/scripts" / name).read_bytes())
+        (target / name).write_bytes((runner.IDENTITY_SCRIPTS / name).read_bytes())
     return target / "tested-head.mjs"
 
 
 def test_receipts_use_copied_helper_after_live_helper_mutates(tmp_path: Path, monkeypatch) -> None:
     copied = copied_identity_helper(tmp_path)
+    (tmp_path / "market/plugins/vibe").mkdir()
     (tmp_path / "market/plugins/closedloop-core").mkdir()
     (tmp_path / "suite").mkdir()
     live = tmp_path / "live"
-    live_scripts = live / "skills/vibe/scripts"
+    live_scripts = live / "vibe-core/lib/vibe/scripts"
     live_scripts.mkdir(parents=True)
     for name in ("tested-head.mjs", "session-record.mjs"):
         (live_scripts / name).write_bytes((copied.parent / name).read_bytes())
-    monkeypatch.setattr(runner, "PLUGIN", live)
+    monkeypatch.setattr(runner, "IDENTITY_SCRIPTS", live_scripts)
+    monkeypatch.setattr(runner, "IDENTITY", live_scripts / "tested-head.mjs")
     before = runner.snapshot_metadata(tmp_path)
     (live_scripts / "tested-head.mjs").write_text('process.stdout.write(JSON.stringify({treeSha256:"forged-live-helper"}));')
     assert runner.snapshot_metadata(tmp_path) == before

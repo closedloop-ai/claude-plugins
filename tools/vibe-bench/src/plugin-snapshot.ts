@@ -1,13 +1,18 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { agentModels } from "./agent-models.ts";
+
+/** vibe 1.1.71 and later ship their hooks, and the modules those run, in this plugin (ISS-13869). */
+const HOOKS_PLUGIN = "vibe-core";
 
 /** Run-owned bytes of the pinned main plugin and its declared core dependency. */
 export interface PluginSnapshot {
   sha: string;
   vibeDir: string;
   coreDir: string;
+  /** vibe-core, when the pinned tree has it. */
+  hooksDir?: string;
   agentModels: Record<string, string>;
 }
 
@@ -20,6 +25,8 @@ export interface PluginReleaseArchive {
   coreDir: string;
   claudeVibeRoot: string;
   claudeCoreRoot: string;
+  hooksDir?: string;
+  claudeHooksRoot?: string;
 }
 
 function manifestVersion(path: string): string {
@@ -30,6 +37,22 @@ function manifestVersion(path: string): string {
   return value.version;
 }
 
+/** Whether the tree at `sha` has the vibe-core plugin. */
+function hasHooksPlugin(repo: string, sha: string): boolean {
+  return spawnSync("git", ["-C", repo, "cat-file", "-e", `${sha}:plugins/${HOOKS_PLUGIN}`]).status === 0;
+}
+
+/** Claude Code's install layout under `runRoot`: cache roots plus the registry vibe's resolver reads. */
+function claudeCacheRoot(runRoot: string, name: string, version: string): string {
+  return join(runRoot, "claude-cache", "plugins", "cache", "closedloop-ai", name, version);
+}
+
+function writeClaudeRegistry(runRoot: string, roots: Record<string, string | undefined>): void {
+  const plugins = Object.fromEntries(Object.entries(roots).filter(([, root]) => root !== undefined)
+    .map(([name, root]) => [`${name}@closedloop-ai`, [{ scope: "user", installPath: root, version: basename(root!) }]]));
+  writeFileSync(join(runRoot, "claude-cache", "plugins", "installed_plugins.json"), `${JSON.stringify({ version: 2, plugins }, null, 2)}\n`);
+}
+
 /** Archive one exact release and build the cache-shaped direct roots required by Claude migration. */
 export function archivePluginRelease(repo: string, ref: string, runRoot: string,
   expectedVersion?: string): PluginReleaseArchive {
@@ -38,8 +61,10 @@ export function archivePluginRelease(repo: string, ref: string, runRoot: string,
     { encoding: "utf8" }).trim();
   if (sha !== ref) throw new Error("eval-release-ref-mismatch");
   mkdirSync(runRoot, { recursive: true });
+  const withHooks = hasHooksPlugin(repo, sha);
   const archive = execFileSync("git", ["-C", repo, "archive", "--format=tar", sha,
-    ".claude-plugin/marketplace.json", "plugins/vibe", "plugins/closedloop-core", "CHANGELOG.md"],
+    ".claude-plugin/marketplace.json", "plugins/vibe", "plugins/closedloop-core",
+    ...(withHooks ? [`plugins/${HOOKS_PLUGIN}`] : []), "CHANGELOG.md"],
   { maxBuffer: 80 * 1024 * 1024 });
   const unpack = spawnSync("tar", ["-xf", "-"], { cwd: runRoot, input: archive, encoding: "utf8" });
   if (unpack.status !== 0) throw new Error(`eval-release-archive-failed:${unpack.stderr ?? "unknown"}`);
@@ -52,19 +77,25 @@ export function archivePluginRelease(repo: string, ref: string, runRoot: string,
   const codexVersion = manifestVersion(join(vibeDir, ".codex-plugin/plugin.json"));
   if (codexVersion !== version || !readFileSync(join(runRoot, "CHANGELOG.md"), "utf8")
     .split("\n").includes(`### vibe v${version}`)) throw new Error("eval-release-contract-invalid");
-  const claudeVibeRoot = join(runRoot, "claude-cache", "vibe", version);
+  const claudeVibeRoot = claudeCacheRoot(runRoot, "vibe", version);
   const coreVersion = manifestVersion(join(coreDir, ".claude-plugin/plugin.json"));
-  const claudeCoreRoot = join(runRoot, "claude-cache", "closedloop-core", coreVersion);
-  mkdirSync(join(claudeVibeRoot, ".."), { recursive: true });
-  mkdirSync(join(claudeCoreRoot, ".."), { recursive: true });
-  cpSync(vibeDir, claudeVibeRoot, { recursive: true, errorOnExist: true, force: false });
-  cpSync(coreDir, claudeCoreRoot, { recursive: true, errorOnExist: true, force: false });
-  if (realpathSync(join(claudeVibeRoot, "..")) !== realpathSync(join(runRoot, "claude-cache", "vibe")) ||
+  const claudeCoreRoot = claudeCacheRoot(runRoot, "closedloop-core", coreVersion);
+  const hooksDir = withHooks ? realpathSync(join(runRoot, "plugins", HOOKS_PLUGIN)) : undefined;
+  const claudeHooksRoot = hooksDir
+    ? claudeCacheRoot(runRoot, HOOKS_PLUGIN, manifestVersion(join(hooksDir, ".claude-plugin/plugin.json"))) : undefined;
+  for (const [source, root] of [[vibeDir, claudeVibeRoot], [coreDir, claudeCoreRoot], [hooksDir, claudeHooksRoot]]) {
+    if (source === undefined || root === undefined) continue;
+    mkdirSync(dirname(root), { recursive: true });
+    cpSync(source, root, { recursive: true, errorOnExist: true, force: false });
+  }
+  writeClaudeRegistry(runRoot, { vibe: claudeVibeRoot, "closedloop-core": claudeCoreRoot, [HOOKS_PLUGIN]: claudeHooksRoot });
+  if (realpathSync(dirname(claudeVibeRoot)) !== realpathSync(dirname(claudeCacheRoot(runRoot, "vibe", version))) ||
       basename(realpathSync(claudeVibeRoot)) !== version) {
     throw new Error("eval-release-root-layout-invalid");
   }
   return { sha, version, archiveRoot: realpathSync(runRoot), vibeDir, coreDir,
-    claudeVibeRoot: realpathSync(claudeVibeRoot), claudeCoreRoot: realpathSync(claudeCoreRoot) };
+    claudeVibeRoot: realpathSync(claudeVibeRoot), claudeCoreRoot: realpathSync(claudeCoreRoot),
+    ...(hooksDir && claudeHooksRoot ? { hooksDir, claudeHooksRoot: realpathSync(claudeHooksRoot) } : {}) };
 }
 
 /** Use the sealed candidate plugin bytes only for the current transition target. */
@@ -76,21 +107,32 @@ export function archiveSnapshotTarget(repo: string, ref: string, runRoot: string
   const release = archivePluginRelease(repo, ref, runRoot);
   const coreVersion = manifestVersion(join(snapshot.coreDir, ".claude-plugin/plugin.json"));
   const oldCoreVersion = manifestVersion(join(release.coreDir, ".claude-plugin/plugin.json"));
-  const claudeVibeRoot = join(runRoot, "claude-cache/vibe", expectedVersion);
-  const claudeCoreRoot = join(runRoot, "claude-cache/closedloop-core", coreVersion);
+  const claudeVibeRoot = claudeCacheRoot(runRoot, "vibe", expectedVersion);
+  const claudeCoreRoot = claudeCacheRoot(runRoot, "closedloop-core", coreVersion);
+  const hooksVersion = snapshot.hooksDir ? manifestVersion(join(snapshot.hooksDir, ".claude-plugin/plugin.json")) : undefined;
+  const hooksDir = snapshot.hooksDir ? join(runRoot, "plugins", HOOKS_PLUGIN) : undefined;
+  const claudeHooksRoot = hooksVersion ? claudeCacheRoot(runRoot, HOOKS_PLUGIN, hooksVersion) : undefined;
   for (const [source, archive, cache] of [
     [snapshot.vibeDir, release.vibeDir, claudeVibeRoot],
     [snapshot.coreDir, release.coreDir, claudeCoreRoot],
+    [snapshot.hooksDir, hooksDir, claudeHooksRoot],
   ]) {
-    rmSync(archive, { recursive: true });
+    if (source === undefined || archive === undefined || cache === undefined) continue;
+    if (existsSync(archive)) rmSync(archive, { recursive: true });
     if (existsSync(cache)) rmSync(cache, { recursive: true });
+    mkdirSync(dirname(cache), { recursive: true });
     cpSync(source, archive, { recursive: true, errorOnExist: true, force: false });
     cpSync(source, cache, { recursive: true, errorOnExist: true, force: false });
   }
   if (release.version !== expectedVersion) rmSync(release.claudeVibeRoot, { recursive: true });
   if (oldCoreVersion !== coreVersion) rmSync(release.claudeCoreRoot, { recursive: true });
+  if (release.claudeHooksRoot && release.claudeHooksRoot !== claudeHooksRoot && existsSync(release.claudeHooksRoot)) {
+    rmSync(release.claudeHooksRoot, { recursive: true });
+  }
+  writeClaudeRegistry(runRoot, { vibe: claudeVibeRoot, "closedloop-core": claudeCoreRoot, [HOOKS_PLUGIN]: claudeHooksRoot });
   return { ...release, version: expectedVersion, claudeVibeRoot: realpathSync(claudeVibeRoot),
-    claudeCoreRoot: realpathSync(claudeCoreRoot) };
+    claudeCoreRoot: realpathSync(claudeCoreRoot),
+    ...(hooksDir && claudeHooksRoot ? { hooksDir: realpathSync(hooksDir), claudeHooksRoot: realpathSync(claudeHooksRoot) } : {}) };
 }
 
 /** Read the candidate version from its sealed plugin snapshot, not the older HEAD manifest. */
@@ -108,7 +150,8 @@ function archivePlugins(repo: string, expectedSha: string, runRoot: string): Plu
   if (existsSync(snapshotDir)) throw new Error("benchmark-plugin-snapshot-exists");
   mkdirSync(snapshotDir, { recursive: true });
   const archive = execFileSync("git", ["-C", repo, "archive", "--format=tar", expectedSha,
-    "plugins/vibe", "plugins/closedloop-core"], { maxBuffer: 80 * 1024 * 1024 });
+    "plugins/vibe", "plugins/closedloop-core", ...(hasHooksPlugin(repo, expectedSha) ? [`plugins/${HOOKS_PLUGIN}`] : [])],
+  { maxBuffer: 80 * 1024 * 1024 });
   const unpack = spawnSync("tar", ["-xf", "-"], { cwd: snapshotDir, input: archive, encoding: "utf8" });
   if (unpack.status !== 0) throw new Error(`benchmark-plugin-archive-failed:${unpack.stderr ?? "unknown"}`);
   // Native evaluators resolve macOS aliases such as /tmp to /private/tmp in
@@ -130,7 +173,13 @@ function archivePlugins(repo: string, expectedSha: string, runRoot: string): Plu
     agentModels: models,
   }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   sealSnapshotRepository(snapshotDir);
-  return { sha: expectedSha, vibeDir, coreDir, agentModels: models };
+  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), agentModels: models };
+}
+
+/** vibe-core in a snapshot, when the snapshot has it. */
+function snapshotHooksDir(snapshotDir: string): { hooksDir?: string } {
+  const hooksDir = join(snapshotDir, "plugins", HOOKS_PLUGIN);
+  return existsSync(hooksDir) ? { hooksDir: realpathSync(hooksDir) } : {};
 }
 
 /**
@@ -166,7 +215,7 @@ export function snapshotPluginsAtWorktree(repo: string, expectedSha: string,
   if (existsSync(snapshotDir)) throw new Error("benchmark-plugin-snapshot-exists");
   mkdirSync(join(snapshotDir, "plugins"), { recursive: true });
   const copier = join(repo, "plugins/vibe/skills/vibe/scripts/tested-head.mjs");
-  for (const name of ["vibe", "closedloop-core"]) {
+  for (const name of ["vibe", "closedloop-core", ...(existsSync(join(repo, "plugins", HOOKS_PLUGIN)) ? [HOOKS_PLUGIN] : [])]) {
     execFileSync(process.execPath, [copier, "copy", join(repo, "plugins", name),
       join(snapshotDir, "plugins", name)], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
   }
@@ -184,7 +233,7 @@ export function snapshotPluginsAtWorktree(repo: string, expectedSha: string,
   writeFileSync(join(snapshotDir, "snapshot.json"), `${JSON.stringify({ sha: expectedSha,
     mode: "worktree", agentModels: models }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   sealSnapshotRepository(snapshotDir);
-  return { sha: expectedSha, vibeDir, coreDir, agentModels: models };
+  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), agentModels: models };
 }
 
 /** Archive the latest accepted nightly, which may precede documentation-only main commits. */

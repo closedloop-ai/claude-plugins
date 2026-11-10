@@ -7,11 +7,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { connectDirect, decodeFrames } from './liveness.mjs';
 import { answerThreadRead } from './test-support.mjs';
 import {
   acquireLock, DEFAULT_CONTINUE_PROMPT, lockHolder, readConfig, recoverPass, reportLine,
 } from './recover.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { connectDirect, decodeFrames } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const HERE = fileURLToPath(new URL('.', import.meta.url));

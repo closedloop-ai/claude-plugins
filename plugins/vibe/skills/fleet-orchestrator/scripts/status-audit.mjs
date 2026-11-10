@@ -64,8 +64,10 @@ import { parseArgs } from "node:util";
 import { ticketProblems } from "../../handoff/scripts/executed-check.mjs";
 import { rulingNamesScope, sequencingRequirements } from "../../handoff/scripts/rulings-check.mjs";
 import { readBoard } from "./ticket-units.mjs";
-import { unitReviewProblem } from "../../handoff/scripts/unit-review.mjs";
-import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
+const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);

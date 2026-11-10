@@ -61,12 +61,14 @@ import { existsSync, mkdirSync, openSync, readFileSync, readSync, closeSync, wri
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-audit.mjs";
-import { evidenceFingerprint } from "./handoff-evidence.mjs";
+import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
 import { listQueryGaps, listQueryShapeProblems, measuredMissing } from "./list-query-performance.mjs";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
-import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { readBoard } from "../../fleet-orchestrator/scripts/ticket-units.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { unitReviewFile } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
 
 export const Part = Object.freeze({ Code: "code", Visual: "visual", Measured: "measured" });
 export const Origin = Object.freeze({ Ticket: "ticket", Prd: "prd" });
@@ -204,28 +206,6 @@ export function unitCriteria({ slug, ticket, members = [], prds = [], plans = []
   const fromPrds = documentCriteria(prds, "--prd", "PRD", Origin.Prd);
   const fromPlans = documentCriteria(plans, "--plan", "plan", Origin.Ticket);
   return { criteria: [...own, ...memberSet.criteria.map((criterion) => ({ ...criterion, origin: Origin.Ticket })), ...fromPlans, ...fromPrds], problems };
-}
-
-/** The review file for a unit on a program's board. */
-export function unitReviewFile(orchDir, unit) {
-  return path.join(resolveWorkDir(orchDir).dir, "evidence", `unit-review-${unit.replace(/[^A-Za-z0-9._-]/g, "-")}.json`);
-}
-
-/** The recorded review of a unit, or null when none was recorded. */
-export function readUnitReview(orchDir, unit) {
-  const file = unitReviewFile(orchDir, unit);
-  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
-}
-
-/** Why a unit may not be reported ready, closed or moved on: null only after a passing recorded review covering every one of its tickets. */
-export function unitReviewProblem(orchDir, name, unit) {
-  let record;
-  try { record = readUnitReview(orchDir, name); }
-  catch (error) { return `unit ${name}'s review record cannot be read (${error instanceof Error ? error.message : String(error)})`; }
-  if (!record) return `unit ${name} has no recorded review; run handoff's unit-review.mjs with --record`;
-  if (record.ok !== true) return `unit ${name}'s review has ${record.gaps?.length ?? 0} gaps and ${record.problems?.length ?? 0} problems`;
-  const uncovered = (unit?.tickets ?? []).filter((slug) => !(record.tickets ?? []).includes(slug));
-  return uncovered.length === 0 ? null : `unit ${name}'s review does not cover ${uncovered.join(", ")}, added after it ran`;
 }
 
 function shapeProblems(review) {

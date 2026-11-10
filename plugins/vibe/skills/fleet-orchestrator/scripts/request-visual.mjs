@@ -7,7 +7,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { isEntryPoint } from '../../codex-fleet-monitor/scripts/liveness.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { isEntryPoint } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 
 const FIELDS = ['Session', 'PR', 'Pushed head', 'Where', 'Flags', 'Expected', 'Requirement'];
 const TITLE = /^# Visual request: (.+)$/m;

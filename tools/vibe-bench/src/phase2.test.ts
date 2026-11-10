@@ -44,10 +44,12 @@ test("seeded setup time does not consume the model execution budget", () => {
 
 test("main plugin hooks require a checked conversation and always refuse native vibe workers", async () => {
   const vibeDir = join(dirname(new URL(import.meta.url).pathname), "../../../plugins/vibe");
-  const agentModule = await import(pathToFileURL(join(vibeDir, "hooks/agent-guard.mjs")).href) as {
+  // vibe's hooks ship in the vibe-core plugin beside it.
+  const hooksDir = join(dirname(vibeDir), "vibe-core");
+  const agentModule = await import(pathToFileURL(join(hooksDir, "hooks/agent-guard.mjs")).href) as {
     agentGuard(input: unknown): unknown;
   };
-  const versionModule = await import(pathToFileURL(join(vibeDir, "hooks/plugin-version-guard.mjs")).href) as {
+  const versionModule = await import(pathToFileURL(join(hooksDir, "hooks/plugin-version-guard.mjs")).href) as {
     pluginVersionGuard(input: unknown, home: string): unknown;
     pluginVersionPromptStart(input: unknown, home: string): unknown;
   };

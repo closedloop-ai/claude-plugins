@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:pa
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import picomatch from "picomatch";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { isCommittedFile } from "./main-sync-committed-tree.js";
 

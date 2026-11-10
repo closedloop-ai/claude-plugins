@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { commitSchema, MainSyncError } from "./main-sync-contracts.js";
 import { producerFailureHead, producerReadArguments } from "./main-sync-native-failure.js";
 

@@ -4,10 +4,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { gatePath, handoffGateProblem, recordHandoffGate } from "./handoff-gate.mjs";
-import { captureReviewReceipt, REVIEW_ROLES } from "./review-receipts.mjs";
-import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
-import { prCreateGuard } from "../../../hooks/pr-create-guard.mjs";
+import { recordHandoffGate } from "./handoff-gate.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
+const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
+const { gatePath, handoffGateProblem } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
 
 const passingInventory = { ok: true, blocking: { prBody: true, prEvidence: true } };
 const TITLE = "ISS-123, ISS-124: Group header counts";

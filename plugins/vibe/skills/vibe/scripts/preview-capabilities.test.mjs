@@ -3,8 +3,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
 import { previewCapabilityProblems } from "./preview-capabilities.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 
 test("provider preview receipt gates missing, stale and unsupported behavior", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "preview-capabilities-"));

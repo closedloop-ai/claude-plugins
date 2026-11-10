@@ -4,7 +4,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";

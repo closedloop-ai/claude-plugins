@@ -9,11 +9,13 @@ import {
   assertVibeSession, lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, requireResumeSession, run, saveState,
 } from './codex-session.mjs';
 import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
-import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import * as sessions from './codex-session.mjs';
 import { writeRemoteCodexStub } from './fleet-test-support.mjs';
-import { readProcessIdentity } from '../../../shared/process-identity.mjs';
-import * as ownership from '../../vibe/scripts/owned-state.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
+const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
+const ownership = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 
 // A writer recorded its parent orchestrator's capacity stop as a human ruling (2026-10-26); every turn and steer
 // this client sends says who it is from.

@@ -5,9 +5,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { gapLines, namesIn, Origin, prdCriteria, requiredCells, reviewGaps, unitCriteria, unitReviewProblem } from "./unit-review.mjs";
+import { gapLines, namesIn, Origin, prdCriteria, requiredCells, reviewGaps, unitCriteria } from "./unit-review.mjs";
 import { budgetMs } from "./list-query-performance.mjs";
-import { unitStatusProblem } from "../../../hooks/unit-status-guard.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
+const { unitStatusProblem } = await vibeCore("hooks/unit-status-guard.mjs");
 
 const SCRIPT = fileURLToPath(new URL("./unit-review.mjs", import.meta.url));
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);

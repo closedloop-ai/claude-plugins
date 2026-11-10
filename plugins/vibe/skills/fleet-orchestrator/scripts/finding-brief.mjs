@@ -22,7 +22,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 /** What is missing from each finding, or an empty list when every finding can be acted on. */
 export function findingProblems(findings, exists = existsSync) {

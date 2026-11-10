@@ -38,12 +38,14 @@
 // Every command prints one JSON object; errors print {"ok":false,"error":...}.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { readSessionRecord, writeSessionRecord } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { escalation, isSandboxRefusal } = await vibeCore("lib/vibe/scripts/sandbox-refusal.mjs");
+const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const KEY_PATTERN = /^[a-z0-9]+(?:[-:][a-z0-9]+)*$/;
 const MAX_TEXT = 4000;

@@ -5,8 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { QaImpact, classifyQaImpact, lockfileUiPackage, qaImpact, qaImpactRequest, semanticSourceText } from "./qa-impact.mjs";
-import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { git, makeHome, mutateSourceRead } from "../../vibe/scripts/test-fixtures.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 const FEATURE_MAP = {
   version: 1,

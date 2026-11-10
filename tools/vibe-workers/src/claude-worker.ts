@@ -12,7 +12,7 @@ import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
-import { pluginScriptProblems } from "../../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs";
+import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
 import { isHandoverContext, isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";

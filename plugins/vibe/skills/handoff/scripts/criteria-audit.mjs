@@ -51,17 +51,17 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
 import { reviewUnit } from "./unit-review.mjs";
+
+export { criteriaStates, memberCriteria, ticketCriteria };
+
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
 
-const CRITERIA_START = /^\s*-\s*Acceptance criteria:\s*$/;
-const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
-const HEADING = /^(#{1,6})\s/;
-const CHECKBOX = /^\s+-\s*\[([ xX])\]\s*(\S.*)$/;
-const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
 const AUDIT_ROW = /^\|\s*((?:[A-Z]+-\d+:)?AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
@@ -69,42 +69,6 @@ const WAITS_REF = /^not met yet: waits on(?:\s+([A-Z]+-\d+)\b)?/;
 const CLOSED_TICKET = new Set(["DONE", "CANCELED"]);
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
 const RUNTIME_REF = /\be2e\b|\.spec\.[cm]?[jt]sx?\b|\bplaywright\b|\bcontrol\b/i;
-
-/** The ticket's acceptance criteria as AC-n ids with their text. */
-export function ticketCriteria(ticket) {
-  return criteriaStates(ticket).map(({ id, text }) => ({ id, text }));
-}
-
-/**
- * The acceptance criteria with whether each box is checked: the template's
- * `- Acceptance criteria:` list, or the checkboxes under an `Acceptance
- * criteria` heading up to the next heading of the same or a higher level.
- */
-export function criteriaStates(ticket) {
-  const criteria = [];
-  const push = (match) => criteria.push({ id: `AC-${criteria.length + 1}`, text: match[2], checked: match[1] !== " " });
-  let inList = false;
-  let headingLevel = 0;
-  for (const line of ticket.split("\n")) {
-    const heading = HEADING.exec(line);
-    if (heading) {
-      inList = false;
-      headingLevel = CRITERIA_HEADING.test(line) ? heading[1].length : headingLevel && heading[1].length > headingLevel ? headingLevel : 0;
-      continue;
-    }
-    if (CRITERIA_START.test(line)) {
-      inList = true;
-      continue;
-    }
-    const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;
-    if (item) {
-      push(item);
-    } else if (inList && line.trim() !== "" && !/^\s{4,}\S/.test(line)) {
-      inList = false;
-    }
-  }
-  return criteria;
-}
 
 /** Criteria with no valid MET row, rows that are not MET or are unproven, and rows for criteria the ticket does not list. */
 export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree, { passingOn = false, statuses = {}, waiting = [] } = {}) {
@@ -218,24 +182,6 @@ function existsAtHead(worktree, file) {
   } catch {
     return false;
   }
-}
-
-/** Each member ticket's criteria as <slug>:AC-n, and the recorded members that have no body. */
-export function memberCriteria(members, recorded = []) {
-  const problems = [];
-  const criteria = [];
-  const given = new Set();
-  for (const entry of members) {
-    const at = entry.indexOf("=");
-    const slug = entry.slice(0, at);
-    if (at <= 0 || !/^[A-Z]+-\d+$/.test(slug)) throw new Error(`--member needs <slug>=<ticket body file>, got ${entry}`);
-    given.add(slug);
-    const own = ticketCriteria(readFileSync(entry.slice(at + 1), "utf8")).map(({ id, text }) => ({ id: `${slug}:${id}`, text }));
-    if (own.length === 0) problems.push(`member ${slug} has no acceptance criteria checklist`);
-    criteria.push(...own);
-  }
-  for (const slug of recorded) if (!given.has(slug)) problems.push(`member ${slug} is recorded on the session but has no --member body; its criteria are not audited`);
-  return { criteria, problems };
 }
 
 /** The member tickets the session recorded; none when the worktree has no session record. */

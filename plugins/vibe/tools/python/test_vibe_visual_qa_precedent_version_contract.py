@@ -204,7 +204,7 @@ def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
         "\"I couldn't check whether vibe is up to date, so I'm carrying on with the version you have.\"",
         "\"A newer version of vibe is available (<versions>). Do you want me to update it now, or keep going with this one? Keeping going with an older version could give worse results.\"",
         "On \"keep going\", run `node scripts/plugin-version.mjs choose --choice proceed` and continue with this version.",
-        "On \"update\", run `choose --choice update`, then `node scripts/plugin-version.mjs update`",
+        "On \"update\", run `choose --choice update`, then `node scripts/plugin-version.mjs update --choice update`",
         "Quit the ChatGPT app completely (press Cmd and Q), open it again, start a new chat and type $vibe.",
         "Close this Claude Code session, start a new one and type /vibe:vibe.",
         "the update is used only from a new session.",
@@ -218,7 +218,7 @@ def test_the_person_chosen_update_is_the_one_plugin_change_allowed() -> None:
     tooling = section(GUARDRAILS.read_text(), "## Plugins and tooling")
     assert_all(tooling, (
         "The one exception is the update the person chooses when the startup version check finds a newer release (`SKILL.md`, section 1, \"Plugin version\")",
-        "the orchestrator runs `plugin-version.mjs update`, which refuses unless that choice is recorded, and nothing else",
+        "the orchestrator runs `plugin-version.mjs update --choice update`, which refuses unless that choice is recorded (or, without vibe-core, given on its command line), and nothing else",
     ))
     role = section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")
     assert "apart from the update the person chooses at startup" in role
@@ -229,12 +229,12 @@ def test_the_update_commands_match_the_install_guide() -> None:
     script = PLUGIN_VERSION.read_text()
     install = flat(INSTALL.read_text())
     for command in ("plugin marketplace upgrade closedloop-ai", "plugin add vibe@closedloop-ai",
-                    "plugin add closedloop-core@closedloop-ai"):
+                    "plugin add closedloop-core@closedloop-ai", "plugin add vibe-core@closedloop-ai"):
         assert command in install, command
     assert '[cli, "plugin", "marketplace", "upgrade", MARKETPLACE]' in script
     assert '[cli, "plugin", "add", `${plugin.name}@${MARKETPLACE}`]' in script
     assert '[cli, "plugin", "marketplace", "update", MARKETPLACE]' in script
-    assert '[cli, "plugin", "update", plugin.id' in script
+    assert '[cli, "plugin", plugin.missing ? "install" : "update", plugin.id' in script
     assert "`$vibe` checks this itself at the start of every session" in install
 
 
