@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.72
+### vibe v1.1.75
 
 #### Fixed
 - The handoff mutation-proof gate accepts a real Storybook runner failure at a changed `.stories.tsx` primary assertion, including a browser-prefixed failure header and a play helper that an exported story calls. A setup error, an unrelated or earlier assertion, a frame inside the assertion's own argument (a nested check or a helper call), a proof whose test source cannot be read, another assertion on a multiline assertion's closing line, a sibling story's failure, a mutation of another file, any assertion that runs after the mutation and could also see it, including inside helpers and the stories that call them (which the Storybook instrumenter cannot tell apart), a comment-only mutation, and authored failure text that only names the coordinate are refused.
@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `pr-evidence-schema.mjs` takes the worktree and checks proofs against the tested source, which it reads only as a regular file of at most 2 MB inside the worktree, the verifier documents the remote-tier Desktop record, and the handoff skill documents a credential-free route for web E2E mutation proofs through a repository-owned Playwright project.
 
 #### Changed
-- The README version line and the Python and vibe-bench release-pin tests move to 1.1.72.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.75.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 2 words shorter than in 1.1.71 (origin/main at this update, 182af94e9c6c3362f2eb8a1cc33f9ca55da6d0f7).
 
 ### vibe-core v1.0.0
