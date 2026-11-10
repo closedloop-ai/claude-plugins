@@ -14,8 +14,8 @@ Codex and Claude Code, and this section is its one canonical statement:
   plugin marketplace, or modify a plugin cache. The one exception is the
   update the person chooses when the startup version check finds a newer
   release (`SKILL.md`, section 1, "Plugin version"): the orchestrator runs
-  `plugin-version.mjs update`, which refuses unless that choice is recorded,
-  and nothing else.
+  `plugin-version.mjs update --choice update`, which refuses unless that choice
+  is recorded (or, without vibe-core, given on its command line), and nothing else.
 - Never clone or vendor the plugin's own repository (claude-plugins) to run a
   different version of its tooling.
 - A vibe tooling defect alone does not stop the person's work. Rerun a failed

@@ -32,14 +32,14 @@ export function hookRuntime(event) {
   return typeof event?.turn_id === "string" || typeof event?.model === "string" ? "codex" : "claude";
 }
 
-/** Persist the latest Skill hook event, including a later non-vibe skill; `runtime` comes from hookRuntime. */
-export function recordHookSkill(sessionId, skill, home = os.homedir(), now = new Date(), runtime = null) {
+/** Persist the latest Skill hook event, including a later non-vibe skill; `runtime` comes from hookRuntime, `cwd` is the event's (the vibe install it resolves is the one the stand-down chose). */
+export function recordHookSkill(sessionId, skill, home = os.homedir(), now = new Date(), runtime = null, cwd = process.cwd()) {
   const file = scopePath(sessionId, home);
   if (!file) return null;
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const scoped = SCOPED.get(skill) ?? null;
   const record = { sessionId, skill: scoped, recordedAt: now.toISOString(),
-    ...(scoped && runtime ? { loadedSkill: loadedSkillEvidence(sessionId, runtime, vibeRoot(), scoped, LoadBasis.HookObserved) } : {}) };
+    ...(scoped && runtime ? { loadedSkill: loadedSkillEvidence(sessionId, runtime, vibeRoot(cwd), scoped, LoadBasis.HookObserved) } : {}) };
   const temp = `${file}.${process.pid}.tmp`;
   writeFileSync(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
   renameSync(temp, file);

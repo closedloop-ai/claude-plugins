@@ -13,7 +13,7 @@ export const HookStandDown = Object.freeze({
   VibeOwnsHooks: "the installed vibe still registers its own hooks",
 });
 
-const CODEX_SECTION = /^\s*\[\s*plugins\s*\.\s*"([^"]+)"\s*\]\s*(?:#.*)?$/;
+const CODEX_SECTION = /^\s*\[\s*plugins\s*\.\s*(?:"([^"]+)"|'([^']+)')\s*\]\s*(?:#.*)?$/;
 const ANY_SECTION = /^\s*\[/;
 const CODEX_ENABLED = /^\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$/;
 
@@ -93,7 +93,7 @@ function codexEnabled(file, id) {
   for (const line of text.split("\n")) {
     const section = CODEX_SECTION.exec(line);
     if (section) {
-      inSection = section[1] === id;
+      inSection = (section[1] ?? section[2]) === id;
       continue;
     }
     if (ANY_SECTION.test(line)) {

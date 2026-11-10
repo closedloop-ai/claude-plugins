@@ -43,7 +43,8 @@ export function codexVersions(cli) {
 /**
  * The line to print for `machine` and whether hooks/list was asked this pass. Asks when `versions` differ from
  * the recorded ones (or nothing is recorded), and again on every pass while the recorded answer was "needed"
- * (so the line clears once the person approves) or "unchecked" (so a later answer still raises its alert).
+ * (so the line clears once the person approves) or "unchecked" by a transient failure (so a later answer still
+ * raises its alert). An App Server without hooks/list is final for that version: no App Server is started again.
  * Only a vibe whose hooks ship in vibe-core is asked about.
  */
 export async function hookApprovalWatch(machine, stateDir, { versions, approval }) {
@@ -51,18 +52,20 @@ export async function hookApprovalWatch(machine, stateDir, { versions, approval 
   const saved = readJson(file);
   if (!versions) return { line: saved?.line ?? null, checked: false };
   const same = saved && JSON.stringify(saved.versions) === JSON.stringify(versions);
-  if (same && !RETRIED.has(saved.state)) return { line: saved.line ?? null, checked: false };
+  if (same && (!RETRIED.has(saved.state) || saved.final)) return { line: saved.line ?? null, checked: false };
   let state = NOT_SPLIT;
+  let final = false;
   let line = null;
   if (typeof versions.vibe === "string" && comparePluginVersions(versions.vibe, FIRST_SPLIT_VIBE) >= 0) {
     const answer = versions["vibe-core"] ? await approval() : { state: HookApproval.Missing };
     state = answer.state;
+    final = answer.final === true;
     const text = hookApprovalLine(answer);
     if (text) line = `HOOK-APPROVAL ${machine} vibe ${versions.vibe} vibe-core ${versions["vibe-core"] ?? "none"}: ${text}`;
   }
   mkdirSync(stateDir, { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify({ versions, state, line, checkedAt: new Date().toISOString() })}\n`);
+  writeFileSync(temporary, `${JSON.stringify({ versions, state, ...(final ? { final } : {}), line, checkedAt: new Date().toISOString() })}\n`);
   renameSync(temporary, file);
   return { line, checked: true };
 }

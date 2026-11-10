@@ -317,7 +317,9 @@ a plugin script the installed release no longer has.
   with this version as requested, though an older version could give worse
   results." and continue in the same turn, without asking.
 - On "update", run `choose --choice update`, then `node
-  scripts/plugin-version.mjs update`; this is the one plugin change you make,
+  scripts/plugin-version.mjs update --choice update`, passing `--choice update`
+  only because the person said update (without vibe-core nothing records their
+  answer, so the update refuses without it); this is the one plugin change you make,
   and only on the person's choice (`references/guardrails.md`, "Plugins and
   tooling"). It updates every outdated ClosedLoop plugin in Claude Code and
   in Codex, whichever has one, and checks each reached the latest version.

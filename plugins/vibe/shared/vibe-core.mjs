@@ -24,19 +24,22 @@ export function vibeCoreRoot() {
   if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
     const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
     throw Object.assign(new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; `
-      + `update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`), { outdated: true });
+      + `update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
+      { outdated: true, installed, minimum: VIBE_CORE_MIN });
   }
   cachedRoot = root;
   return root;
 }
 
-/** Why vibe-core cannot be loaded ({ message, outdated }), or null when it can. */
+/** Why vibe-core cannot be loaded ({ message, outdated, installed?, minimum? }), or null when it can. */
 export function vibeCoreProblem() {
   try {
     vibeCoreRoot();
     return null;
   } catch (error) {
-    return { message: error.message, outdated: error.outdated === true };
+    return error.outdated === true
+      ? { message: error.message, outdated: true, installed: error.installed, minimum: error.minimum }
+      : { message: error.message, outdated: false };
   }
 }
 

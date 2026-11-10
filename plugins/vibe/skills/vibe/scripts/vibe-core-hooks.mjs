@@ -54,7 +54,10 @@ export async function hookApprovalFromClient(client, cwd) {
   try {
     return vibeCoreHookApproval(await client.request("hooks/list", { cwds: [cwd] }));
   } catch (error) {
-    return { state: HookApproval.Unchecked, reason: UNKNOWN_METHOD.test(error.message) ? "this Codex App Server has no hooks/list" : error.message };
+    // An App Server that does not know hooks/list never will; a timeout or a closed connection may pass.
+    return UNKNOWN_METHOD.test(error.message)
+      ? { state: HookApproval.Unchecked, reason: "this Codex App Server has no hooks/list", final: true }
+      : { state: HookApproval.Unchecked, reason: error.message };
   }
 }
 

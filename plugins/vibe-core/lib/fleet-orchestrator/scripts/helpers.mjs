@@ -477,11 +477,11 @@ async function main(argv) {
     const runtime = values.runtime ?? "claude";
     if (!["claude", "codex"].includes(runtime)) throw new Error("--runtime must be claude or codex");
     // The helper is a fresh thread: record the installed definition it starts on, labeled as such.
-    const spawnLoad = FINAL_KINDS.has(kind) ? loadedSkillEvidence(values["worker-id"], runtime, vibeRoot(), "fleet-orchestrator", LoadBasis.InstalledAtSpawn) : null;
+    const spawnLoad = FINAL_KINDS.has(kind) ? loadedSkillEvidence(values["worker-id"], runtime, vibeRoot(values.worktree ?? process.cwd()), "fleet-orchestrator", LoadBasis.InstalledAtSpawn) : null;
     if (FINAL_KINDS.has(kind)) {
       const briefFile = path.isAbsolute(values.brief) ? values.brief : path.resolve(orchDir, values.brief);
       const actorRecord = { loadedSkill: spawnLoad };
-      const problems = promptProblems(actorRecord, readFileSync(briefFile, "utf8"), { actorId: values["worker-id"], pluginRoot: vibeRoot(), worktree: values.worktree });
+      const problems = promptProblems(actorRecord, readFileSync(briefFile, "utf8"), { actorId: values["worker-id"], pluginRoot: vibeRoot(values.worktree ?? process.cwd()), worktree: values.worktree });
       if (problems.length) throw new Error(problems.join("; "));
     }
     const capabilityRecord = FINAL_KINDS.has(kind) ? evidenceFingerprint(values.capabilities) : null;

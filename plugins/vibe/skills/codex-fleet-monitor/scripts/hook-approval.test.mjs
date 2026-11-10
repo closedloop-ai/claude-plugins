@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { hookApprovalWatch } from "./hook-approval.mjs";
-import { APPROVE_HOOKS, HookApproval } from "../../vibe/scripts/vibe-core-hooks.mjs";
+import { APPROVE_HOOKS, HookApproval, hookApprovalFromClient } from "../../vibe/scripts/vibe-core-hooks.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./hook-approval.mjs", import.meta.url));
 const KEY = "vibe-core@market:hooks/hooks.json:pre_tool_use:0:0";
@@ -104,4 +104,25 @@ if (a.join(" ") === "plugin list --json") {
   assert.equal(first.status, 0, first.stderr);
   assert.equal(first.stdout, `HOOK-APPROVAL local vibe 1.1.69 vibe-core 1.0.0: vibe-core's hooks are not approved in Codex (${KEY} is untrusted), so vibe's guards cannot run there: ${APPROVE_HOOKS}\n`);
   assert.equal(run().stdout, first.stdout, "a stable line, so the watcher raises no second event");
+});
+
+test("an App Server without hooks/list is final for that version, so no App Server is started on every pass", async (t) => {
+  const dir = stateDir(t);
+  const versions = { vibe: "1.1.69", "vibe-core": "1.0.0" };
+  const old = approvals({ state: HookApproval.Unchecked, reason: "this Codex App Server has no hooks/list", final: true });
+  const first = await hookApprovalWatch("local", dir, { versions, approval: old.approval });
+  assert.match(first.line, /couldn't check whether vibe-core's hooks are approved in Codex \(this Codex App Server has no hooks\/list\)$/);
+  assert.deepEqual(await hookApprovalWatch("local", dir, { versions, approval: old.approval }), { line: first.line, checked: false });
+  assert.equal(old.asked.count, 1);
+  const updated = await hookApprovalWatch("local", dir, { versions: { ...versions, "vibe-core": "1.0.1" }, approval: old.approval });
+  assert.equal(updated.checked, true, "a new version asks again");
+});
+
+test("only a missing hooks/list method is final; a timeout or a closed connection is retried", async () => {
+  const failing = (message) => ({ request: async () => { throw new Error(message); } });
+  assert.deepEqual(await hookApprovalFromClient(failing("Codex hook listing request failed: unknown variant `hooks/list`"), "/x"),
+    { state: HookApproval.Unchecked, reason: "this Codex App Server has no hooks/list", final: true });
+  for (const message of ["Codex hook listing timed out", "Codex hook listing closed before answering"]) {
+    assert.deepEqual(await hookApprovalFromClient(failing(message), "/x"), { state: HookApproval.Unchecked, reason: message });
+  }
 });

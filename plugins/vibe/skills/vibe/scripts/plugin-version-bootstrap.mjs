@@ -4,8 +4,9 @@
 // startup commands from what is still here, never importing vibe-core: `check`
 // and `status` report vibe-core as missing (outdated) with the command that adds
 // it and exit 0 with their usual JSON, `choose` accepts the person's answer, and
-// `update` runs that command. Nothing is recorded, because the record modules are
-// what is missing; the next check after the install records as usual.
+// `update --choice update`, run only after the person said update, runs that
+// command; a bare `update` refuses. Nothing is recorded, because the record modules
+// are what is missing; the next check after the install records as usual.
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -39,7 +40,7 @@ export async function runWithoutVibeCore(argv, problem, env = process.env) {
   if (command === "check" || command === "status") {
     const connections = { closedloop: values.closedloop, graph: values.graph };
     const block = Object.values(connections).every((value) => Object.values(Connection).includes(value))
-      ? { print: true, block: setupBlock(harness, problem, connections) } : {};
+      ? { print: true, block: setupBlock(harness, problem, connections, fix) } : {};
     if (command === "status" && !block.print) {
       print({ ok: false, error: "--closedloop and --graph must each be connected or not-connected, from this conversation's own get-me and sync_status calls" });
       return 1;
@@ -56,6 +57,11 @@ export async function runWithoutVibeCore(argv, problem, env = process.env) {
     return 0;
   }
   if (command === "update") {
+    // Without vibe-core nothing records the person's answer, so the update carries it itself.
+    if (values.choice !== Choice.Update) {
+      print({ ok: false, error: `the person has not chosen to update here; once they say update, run update --choice update (it runs ${fix.join(" ")})` });
+      return 1;
+    }
     const result = await addVibeCore(harness, cli, fix);
     print(result);
     return result.status === "updated" ? 0 : 1;
@@ -83,19 +89,25 @@ function missingRecord(harness, cli, problem, fix) {
   return {
     status: "outdated", harnesses: [{ harness, cli, installed: true, plugins: [plugin] }],
     outdated: [{ harness, plugin: "vibe-core", installed: null, latest: null, missing: true }],
-    versions: problem.outdated ? "vibe-core: older than this vibe needs" : "vibe-core: not installed",
+    versions: problem.outdated ? `vibe-core: you have ${problem.installed ?? "(no version)"}, this vibe needs ${problem.minimum} or newer` : "vibe-core: not installed",
     reason: problem.message, fix: fix.join(" "),
   };
 }
 
-function setupBlock(harness, problem, connections) {
+function setupBlock(harness, problem, connections, fix) {
   const label = LABEL[harness];
+  let state;
   let line;
-  if (harness === CODEX && !problem.outdated) line = hookApprovalLine({ state: HookApproval.Missing });
-  else if (problem.outdated) line = problem.message;
-  else line = `vibe-core is not installed in Claude Code, so vibe's guards cannot run there: run \`${VIBE_CORE_INSTALL.claude}\``;
+  if (problem.outdated) {
+    state = `vibe-core ${problem.installed ?? "(no version)"} is older than this vibe needs (>= ${problem.minimum})`;
+    line = `vibe's guards cannot load it: run \`${fix.join(" ")}\``;
+  } else {
+    state = "vibe-core not installed";
+    line = harness === CODEX ? hookApprovalLine({ state: HookApproval.Missing })
+      : `vibe-core is not installed in Claude Code, so vibe's guards cannot run there: run \`${VIBE_CORE_INSTALL.claude}\``;
+  }
   const word = (value) => (value === Connection.Connected ? "connected" : "not connected");
-  return ["Setup check", `- ${label}: vibe-core not installed`, `- ${label}: ${line}`,
+  return ["Setup check", `- ${label}: ${state}`, `- ${label}: ${line}`,
     `- ClosedLoop connection: ${word(connections.closedloop)}`, `- closedloop-graph connection: ${word(connections.graph)}`].join("\n");
 }
 

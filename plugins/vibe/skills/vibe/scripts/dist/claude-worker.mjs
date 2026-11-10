@@ -12431,7 +12431,10 @@ function vibeCoreRoot() {
   const installed = pluginManifest(root)?.version ?? null;
   if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
     const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
-    throw Object.assign(new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`), { outdated: true });
+    throw Object.assign(
+      new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
+      { outdated: true, installed, minimum: VIBE_CORE_MIN }
+    );
   }
   cachedRoot = root;
   return root;

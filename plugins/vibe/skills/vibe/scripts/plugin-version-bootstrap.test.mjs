@@ -76,7 +76,11 @@ test("without vibe-core, check and status report it missing with its add command
 test("without vibe-core, the chosen update runs codex plugin add vibe-core and names the approval its new hooks need", (t) => {
   const f = codexInstall(t);
   assert.equal(JSON.parse(f.run("skills/vibe/scripts/plugin-version.mjs", ["choose", "--choice", "update"]).stdout).ok, true);
-  const update = f.run("skills/vibe/scripts/plugin-version.mjs", ["update"]);
+  const refused = f.run("skills/vibe/scripts/plugin-version.mjs", ["update"]);
+  assert.equal(refused.status, 1);
+  assert.match(JSON.parse(refused.stdout).error, /^the person has not chosen to update here; once they say update, run update --choice update/);
+  assert.deepEqual(f.calls(), [], "nothing records the answer without vibe-core, so a bare update installs nothing");
+  const update = f.run("skills/vibe/scripts/plugin-version.mjs", ["update", "--choice", "update"]);
   assert.equal(update.status, 0, update.stderr);
   const result = JSON.parse(update.stdout);
   assert.equal(result.status, "updated");
@@ -92,4 +96,21 @@ test("without vibe-core, a moved command such as fleet-home.mjs resume says what
   assert.equal(resume.status, 2);
   assert.equal(resume.stdout, "");
   assert.match(resume.stderr, /^fleet-home\.mjs: vibe-core is not installed beside vibe \(codex layout\); install it with `claude plugin install vibe-core@closedloop-ai` in Claude Code or `codex plugin add vibe-core@closedloop-ai` in Codex\n$/);
+});
+
+test("with a vibe-core older than this vibe needs, check says which version is installed and which it needs", (t) => {
+  const f = codexInstall(t);
+  const core = path.join(f.cache, "vibe-core", "0.9.0");
+  for (const manifest of [".claude-plugin", ".codex-plugin"]) {
+    mkdirSync(path.join(core, manifest), { recursive: true });
+    writeFileSync(path.join(core, manifest, "plugin.json"), JSON.stringify({ name: "vibe-core", version: "0.9.0" }));
+  }
+  const check = f.run("skills/vibe/scripts/plugin-version.mjs", ["check", "--closedloop", "connected", "--graph", "connected"]);
+  assert.equal(check.status, 0, check.stderr);
+  const result = JSON.parse(check.stdout);
+  assert.equal(result.versions, "vibe-core: you have 0.9.0, this vibe needs 1.0.0 or newer");
+  assert.deepEqual(result.block.split("\n").slice(1, 3), [
+    "- Codex: vibe-core 0.9.0 is older than this vibe needs (>= 1.0.0)",
+    `- Codex: vibe's guards cannot load it: run \`${result.fix}\``,
+  ]);
 });

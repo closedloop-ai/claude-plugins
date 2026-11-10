@@ -60,12 +60,12 @@ export function launchesWorker(command) {
 }
 
 /** The refusal for a worker launch in a conversation whose check blocks, or null. */
-export function versionProblem(conversation, home = os.homedir()) {
+export function versionProblem(conversation, home = os.homedir(), cwd = process.cwd()) {
   if (typeof conversation !== "string" || !CONVERSATION.test(conversation)) return null;
   const record = readStartupRecord(conversation, home);
   if (!record) return null;
   const problem = blockingProblem(record)
-    ?? (loadedSkillRequired(record) ? loadedSkillEvidenceProblem(record.loadedSkill, { actorId: conversation, pluginRoot: vibeRoot() }) : null);
+    ?? (loadedSkillRequired(record) ? loadedSkillEvidenceProblem(record.loadedSkill, { actorId: conversation, pluginRoot: vibeRoot(cwd) }) : null);
   if (!problem) return null;
   const script = vibeScriptPath(PLUGIN_VERSION_SCRIPT);
   return [
@@ -78,7 +78,7 @@ export function versionProblem(conversation, home = os.homedir()) {
 
 /** PreToolUse on Skill: starting vibe or fleet-orchestrator marks the conversation pending. Never decides. */
 export function pluginVersionSkillStart(event, home = os.homedir()) {
-  recordHookSkill(event?.session_id, event?.tool_input?.skill, home, new Date(), hookRuntime(event));
+  recordHookSkill(event?.session_id, event?.tool_input?.skill, home, new Date(), hookRuntime(event), eventCwd(event));
   if (CHECKED_SKILLS.includes(event?.tool_input?.skill) && CONVERSATION.test(event?.session_id ?? "")) markPending(event.session_id, home);
   return null;
 }
@@ -89,7 +89,7 @@ export function pluginVersionPromptStart(event, home = os.homedir()) {
   const prompt = String(event?.prompt ?? "");
   const codex = CODEX_SKILL_START.exec(prompt)?.[1];
   const skill = codex ? `vibe:${codex}` : STARTS_SKILL.exec(prompt)?.[1];
-  if (skill) recordHookSkill(event.session_id, skill, home, new Date(), hookRuntime(event));
+  if (skill) recordHookSkill(event.session_id, skill, home, new Date(), hookRuntime(event), eventCwd(event));
   if (STARTS_SKILL.test(prompt)) markPending(event.session_id, home);
   return null;
 }
@@ -114,6 +114,6 @@ export function pluginVersionGuard(event, home = os.homedir()) {
     || (tool === "Bash" && (launchesWorker(event?.tool_input?.command) || /(?:^|\s)claude\s+-p\b/.test(String(text ?? ""))));
   if (!writerLaunch && tool !== "Agent" && tool !== "SendMessage") return null;
   if (!writerLaunch && !inVibeConversation(event, home)) return null;
-  const problem = versionProblem(event?.session_id, home) ?? pluginScriptProblems(String(text ?? ""), vibeRoot(eventCwd(event)), event?.cwd).at(0);
+  const problem = versionProblem(event?.session_id, home, eventCwd(event)) ?? pluginScriptProblems(String(text ?? ""), vibeRoot(eventCwd(event)), event?.cwd).at(0);
   return problem ? deny(problem) : null;
 }

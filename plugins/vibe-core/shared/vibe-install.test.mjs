@@ -117,6 +117,8 @@ test("Codex: a vibe disabled in config.toml stands the hooks down; another plugi
   assert.equal(standDown(core, root), null);
   writeFileSync(path.join(home, "config.toml"), 'model = "m"\n[plugins."vibe@closedloop-ai"]  # vibe\nenabled = false\n[other]\nenabled = true\n');
   assert.equal(standDown(core, root), HookStandDown.VibeDisabled);
+  writeFileSync(path.join(home, "config.toml"), "[plugins.'vibe@closedloop-ai']\nenabled = false\n");
+  assert.equal(standDown(core, root), HookStandDown.VibeDisabled, "a single-quoted key names the same plugin");
 });
 
 test("a hook entry point runs once: never beside a vibe that still runs its own hooks, nor with no vibe", (t) => {

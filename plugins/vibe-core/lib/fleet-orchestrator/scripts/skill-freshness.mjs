@@ -20,7 +20,8 @@ function readJson(file) {
 }
 
 /** Why the loaded skill release cannot send another brief, or null. */
-export function skillFreshnessProblem(record, { pluginRoot = vibeRoot(), actorId } = {}) {
+export function skillFreshnessProblem(record, { pluginRoot, actorId, worktree } = {}) {
+  pluginRoot ??= vibeRoot(worktree ?? process.cwd());
   if (!record) return "the program has no plugin version record; run the version check and reload the current skill before sending a brief";
   const actor = actorId ?? record.loadedSkill?.actorId;
   // Without a load-evidence source (Codex hooks not trusted yet), the check keeps
@@ -33,9 +34,9 @@ export function skillFreshnessProblem(record, { pluginRoot = vibeRoot(), actorId
 export function promptProblems(record, text, options = {}) {
   const freshness = skillFreshnessProblem(record, options);
   const reload = isSkillReload(text) && reloadableSkill(record?.loadedSkill, {
-    actorId: options.actorId ?? record?.loadedSkill?.actorId, pluginRoot: options.pluginRoot ?? vibeRoot(),
+    actorId: options.actorId ?? record?.loadedSkill?.actorId, pluginRoot: options.pluginRoot ?? vibeRoot(options.worktree ?? process.cwd()),
   });
-  return [...(freshness && !reload ? [freshness] : []), ...pluginScriptProblems(text, options.pluginRoot ?? vibeRoot(), options.worktree)];
+  return [...(freshness && !reload ? [freshness] : []), ...pluginScriptProblems(text, options.pluginRoot ?? vibeRoot(options.worktree ?? process.cwd()), options.worktree)];
 }
 
 async function main(argv) {
@@ -45,7 +46,7 @@ async function main(argv) {
   if (positionals[0] === 'watch-lines') {
     const [, stateDir, ...specs] = positionals;
     if (!stateDir) throw new Error('watch-lines needs a session state directory');
-    return skillStaleLines(stateDir, specs, values['plugin-root'] ?? vibeRoot());
+    return skillStaleLines(stateDir, specs, values['plugin-root'] ?? vibeRoot(values.worktree ?? process.cwd()));
   }
   const [workDir, promptFile, ...extra] = positionals;
   if (!workDir || !promptFile || extra.length) throw new Error("Usage: skill-freshness.mjs <orchDir> <prompt-file> [--runtime codex|claude]");
@@ -59,20 +60,20 @@ async function main(argv) {
   // state keeps working, unchecked, rather than stranding every running writer on an update.
   const legacyThread = Boolean(actorState) && !actorState.loadedSkill;
   if (legacyThread) process.stderr.write(`skill-freshness: ${path.resolve(values["actor-state"])} predates loaded-skill evidence (vibe before 1.1.23); its loaded skill is not checked\n`);
-  const targetVersion = installedPluginVersion(values["plugin-root"] ?? vibeRoot());
+  const targetVersion = installedPluginVersion(values["plugin-root"] ?? vibeRoot(values.worktree ?? process.cwd()));
   const expectedOrder = values["expected-version"] ? compareSkillVersions(targetVersion, values["expected-version"]) : 0;
   const actorId = values.actor ?? actorState?.threadId;
   // Preflight delegates the idle check to codex-session; it must dispatch only a reload turn,
   // retaining this brief until the current definition has actually been delivered.
   const migration = values.command === 'turn' && !actorState?.reload && reloadableSkill(record?.loadedSkill, {
-    actorId, pluginRoot: values["plugin-root"] ?? vibeRoot(),
+    actorId, pluginRoot: values["plugin-root"] ?? vibeRoot(values.worktree ?? process.cwd()),
   });
   const problems = [
     ...(values["expected-version"] && (expectedOrder === null || expectedOrder < 0)
       ? [`target host has vibe ${targetVersion ?? "unknown"}, expected at least ${values["expected-version"]}`] : []),
-    ...(bootstrap || legacyThread ? pluginScriptProblems(prompt, values["plugin-root"] ?? vibeRoot(), values.worktree)
-      : promptProblems(record, migration ? SKILL_RELOAD : prompt, { pluginRoot: values["plugin-root"] ?? vibeRoot(), actorId, worktree: values.worktree })),
-    ...(migration ? pluginScriptProblems(prompt, values['plugin-root'] ?? vibeRoot(), values.worktree) : []),
+    ...(bootstrap || legacyThread ? pluginScriptProblems(prompt, values["plugin-root"] ?? vibeRoot(values.worktree ?? process.cwd()), values.worktree)
+      : promptProblems(record, migration ? SKILL_RELOAD : prompt, { pluginRoot: values["plugin-root"] ?? vibeRoot(values.worktree ?? process.cwd()), actorId, worktree: values.worktree })),
+    ...(migration ? pluginScriptProblems(prompt, values['plugin-root'] ?? vibeRoot(values.worktree ?? process.cwd()), values.worktree) : []),
   ];
   if (problems.length) throw new Error(problems.join("; "));
   return { ok: true, loaded: record?.loadedSkill?.version ?? null, installed: targetVersion, loadedSkillChecked: !bootstrap && !legacyThread, prompt: path.resolve(promptFile) };
