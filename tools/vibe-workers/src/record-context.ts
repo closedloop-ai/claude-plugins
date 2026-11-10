@@ -3,7 +3,7 @@ import { join, sep } from "node:path";
 import { z } from "zod";
 import { sessionLiveTicket } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { identifierSchema } from "./contracts.js";
-import { checkoutLocation, location } from "./ledger.js";
+import { checkoutLocation, location, sessionPlace } from "./ledger.js";
 import { validationWitnessSchema } from "./main-sync-validation-contracts.js";
 
 export const recordModes: Record<string, Record<string, readonly string[]>> = {
@@ -46,6 +46,12 @@ export const recordContextSchema = z.object({
       branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: z.string().regex(/^[A-Z]+-\d+$/),
       liveTicketCreatedBySession: z.literal(true),
       operatorId: z.string().min(1), operatorEmail: z.string().email(),
+    }).strict() }).strict(),
+    z.object({ kind: z.literal("takeover"), evidence: z.object({
+      prUrl: z.string().regex(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/),
+      headSha: z.string().regex(/^[0-9a-f]{40}$/),
+      /** The PR's source branch the root pushes the repair to; required for the takeover writer. */
+      sourceBranch: z.string().min(1).regex(/^[^\s]+$/).optional(),
     }).strict() }).strict(),
   ]).optional(),
 }).strict();
@@ -98,15 +104,22 @@ export function resolveRecordContext(input: RecordContext) {
   }
   let place;
   if (input.sessionless) {
-    const startupRole = input.agentName === "vibe-requirements-worker" || input.agentName === "vibe-setup-worker";
-    const startup = input.sessionless.kind === "startup" && startupRole && input.mode !== "handoff"
+    const startup = input.sessionless.kind === "startup" && STARTUP_ROLES.has(input.agentName) && input.mode !== "handoff"
       && input.mode !== "pull-request";
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker"
       && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
-    if (!startup && !cancel) throw new Error("This role/action has no sessionless operation");
+    const takeover = input.sessionless.kind === "takeover" && !input.recordAction && !input.exclusiveRecordTurn
+      && ((TAKEOVER_REVIEWERS.has(input.agentName) && input.mode === "pull-request")
+        || (input.agentName === TAKEOVER_WRITER && input.mode !== "record" && input.mode !== "plan"
+          && Boolean(input.sessionless.evidence.sourceBranch)));
+    if (!startup && !cancel && !takeover) throw new Error("This role/action has no sessionless operation");
     place = checkoutLocation(input.worktree);
     if (existsSync(join(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
-  } else place = location(input.worktree);
+  } else {
+    const checkout = checkoutLocation(input.worktree);
+    if (!existsSync(join(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
+    place = sessionPlace(checkout);
+  }
   return { place, target: discardLocation(input, place) };
 }
 
@@ -134,4 +147,34 @@ function discardLocation(input: RecordContext, stable: ReturnType<typeof checkou
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;
+}
+
+/** The roles that run before a vibe session exists. */
+export const STARTUP_ROLES: ReadonlySet<string> = new Set(["vibe-requirements-worker", "vibe-setup-worker"]);
+
+/** The read-only reviewers an engineer PR takeover runs with no vibe session. */
+export const TAKEOVER_REVIEWERS: ReadonlySet<string> = new Set(["vibe-adversarial-reviewer", "vibe-guardrails-reviewer"]);
+
+/** The one writer role a PR takeover may bind; every other writer role has no takeover route. */
+export const TAKEOVER_WRITER = "vibe-change-worker";
+
+/** A launch that needs a vibe session found none; the message names the sessionless route the role has, if any. */
+export class MissingSessionError extends Error {
+  readonly code = "NO_VIBE_SESSION";
+  constructor(agentName: string) {
+    super(`This worktree has no vibe session record. ${missingSessionRoute(agentName)}`);
+  }
+}
+
+function missingSessionRoute(agentName: string) {
+  if (TAKEOVER_REVIEWERS.has(agentName)) {
+    return "For a pull request takeover, relaunch in the worktree at the PR head with mode pull-request and "
+      + 'sessionless {"kind": "takeover", "evidence": {"prUrl": "<PR URL>", "headSha": "<full head SHA>"}}.';
+  }
+  if (agentName === TAKEOVER_WRITER) {
+    return "Inside a vibe session, start one with the vibe skill. For a pull request takeover, relaunch in the worktree at the PR head with "
+      + 'sessionless {"kind": "takeover", "evidence": {"prUrl": "<PR URL>", "headSha": "<full head SHA>", "sourceBranch": "<PR source branch>"}}.';
+  }
+  if (STARTUP_ROLES.has(agentName)) return 'Before a session exists, relaunch with sessionless {"kind": "startup"}.';
+  return "This role runs only inside a vibe session; start one with the vibe skill.";
 }

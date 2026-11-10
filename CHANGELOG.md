@@ -28,7 +28,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - The README version line and the Python and vibe-bench release-pin tests move to 1.1.77, and `plugin-version-bootstrap.test.mjs` reads the needed vibe-core version from `VIBE_CORE_MIN` instead of a literal; the committed vibe-workers bundles are rebuilt with the new `VIBE_CORE_MIN`.
 - The acceptance-criteria parsing (`criteriaStates`, `ticketCriteria`, `memberCriteria`) moves to `handoff/scripts/criteria-list.mjs`, so `criteria-audit.mjs` and `unit-review.mjs` share it without importing each other; `criteria-audit.mjs` re-exports it for its other importers.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 802 words longer than in 1.1.75 (origin/main at this update, e9d08920), most of it the new review step in references/ticket-units.md.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 802 words longer than in 1.1.76 (origin/main at this update, 08fe6b00), most of it the new review step in references/ticket-units.md.
+
+### vibe v1.1.76
+
+#### Fixed
+- The agent guard's refusal for the requirements and setup workers names the launcher's sessionless startup route: the shipped `claude-worker.mjs` path and the exact stdin request with `"sessionless": {"kind": "startup"}`. It no longer tells the caller to start a vibe session (ISS-13899). An orchestrator that needed only a pre-dispatch requirements check had been falling back to a general worker without the requirements worker's graph and ClosedLoop reads. fleet-orchestrator's pre-dispatch newest-ruling step now gives the same launch. The writer refusal is unchanged.
+- A PR takeover's adversarial and guardrails reviewers can run with no vibe session (ISS-13899; on 2026-11-10 a takeover of a symphony-alpha PR could launch neither and fell back to general agents with no receipts). The launcher accepts `sessionless: {kind: "takeover", evidence: {prUrl, headSha}}` for those two read-only roles in mode `pull-request`. It refuses a worktree whose HEAD is not that SHA (`TAKEOVER_HEAD_MISMATCH`), a checkout that holds a vibe session, and every other role or mode, writers included. The result carries the binding with the PR URL, head SHA and worktree. `review-receipts.mjs` records it, checks it against the reviewed source, and takes `--pr-url` and `--head` so a capture for any other head fails. pr-takeover section 2 names the launch and the capture, and the agent guard's refusal for both reviewers names them too.
+- A PR takeover's repair writer can run with no vibe session (ISS-13899). Under `takeover`, the launcher admits exactly one writer role, `vibe-change-worker`, with `sourceBranch` added to the evidence and no plan or record turn. Its first launch writes `vibe-takeover.json` in the worktree's git dir, binding the worktree and its branch to the PR URL and source branch; that record stands in for the session record of the writer ledger only. Later requests resume the same writer, at the current head. A writer for another PR or source branch, or a takeover writer on a worktree that already has a writer, is refused (`TAKEOVER_WRITER_BOUND`). Every other writer role is refused under `takeover`, and the writer keeps its no-commit, no-push contract. pr-takeover section 4 uses this route in Claude Code.
+- A launch that needs a vibe session and finds none returns `NO_VIBE_SESSION`, naming the takeover or startup route for roles that have one, instead of the generic `WORKER_TURN_FAILED`.
+- The agent guard's refusal for the seed-refresh workers (`vibe-seed-check-worker`, `vibe-seed-fix-worker`, `vibe-seed-pr-worker`) says seed refresh runs in Codex. Its old text told the caller to start a vibe session. The vibe-seed-refresh skill no longer claims a Claude Code `vibe:<name>` worker path or a Claude Code preflight.
+
+#### Changed
+- The pr-takeover URL-only eval also grades that the answer launches the reviewers on the sessionless takeover route and records review receipts.
+- vibe 1.1.76 needs vibe-core 1.0.1 (`VIBE_CORE_MIN`), whose `review-receipts.mjs` takes `--pr-url` and `--head` and whose agent guard names the routes above.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.76.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 482 words longer than in 1.1.75 (origin/main at this update, e9d089201a1b21cf3c71d5266de761f0f98fb812).
+
+### vibe-core v1.0.1
+
+#### Fixed
+- `hooks/agent-guard.mjs` (ISS-13899): the refusal for the requirements and setup workers gives the launcher's sessionless startup request; the refusal for the adversarial and guardrails reviewers adds the takeover launch and its `review-receipts.mjs --pr-url --head` capture; the refusal for the seed-refresh workers says seed refresh runs in Codex. The paths are vibe's install, found through `shared/vibe-install.mjs`. The writer refusal is unchanged.
+- `lib/handoff/scripts/review-receipts.mjs` records a takeover review's PR URL, head SHA and worktree, checks them against the reviewed source, and with `--pr-url` and `--head` refuses a capture for any other head.
 
 ### vibe v1.1.75
 

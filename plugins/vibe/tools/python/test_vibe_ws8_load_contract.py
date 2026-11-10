@@ -152,7 +152,7 @@ def test_current_version_and_prior_release_notes() -> None:
         assert json.loads((PLUGIN_ROOT / manifest / "plugin.json").read_text())["version"] == "1.1.77", manifest
     assert "Version `1.1.77`" in (PLUGIN_ROOT / "README.md").read_text()
     changelog = (PLUGIN_ROOT.parents[1] / "CHANGELOG.md").read_text()
-    assert "### vibe v1.1.75" in changelog
+    assert "### vibe v1.1.76" in changelog
     assert "### vibe v1.1.61" in changelog
     assert "### vibe v1.1.54" in changelog
     assert "Load-aware execution" in changelog
