@@ -34,7 +34,13 @@
 // Desktop") is never MET by typecheck, unit-test or source evidence alone: it
 // needs a MET screenshot row, or a test or script row whose ref is an e2e spec
 // or a control run. A PR once claimed such a criterion met by tests and
-// typecheck only. A unit (member tickets, or a PRD with `--prd <slug>=<body>`) also
+// typecheck only. When the person chose passing the work on instead of a pull
+// request (`--passing-on`), a criterion whose only gap is another ticket's
+// work may carry a PARTIAL row whose ref is `not met yet: waits on <ticket>`;
+// it is accepted when `--ticket-status <ticket>=<STATUS>` shows that ticket
+// open, and listed under `waiting` for the next owner. Without `--passing-on`
+// (handoff-gate never passes it), with no ticket named, with no status given,
+// or naming a DONE or CANCELED ticket, the row is refused. A unit (member tickets, or a PRD with `--prd <slug>=<body>`) also
 // needs `--review <review.json>`: unit-review.mjs checks that every member and
 // PRD criterion passed both a code review and a visual QA capture on each page
 // and surface it names, and its GAP lines join the problems.
@@ -59,6 +65,8 @@ const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
 const AUDIT_ROW = /^\|\s*((?:[A-Z]+-\d+:)?AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
+const WAITS_REF = /^not met yet: waits on(?:\s+([A-Z]+-\d+)\b)?/;
+const CLOSED_TICKET = new Set(["DONE", "CANCELED"]);
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
 const RUNTIME_REF = /\be2e\b|\.spec\.[cm]?[jt]sx?\b|\bplaywright\b|\bcontrol\b/i;
 
@@ -99,7 +107,7 @@ export function criteriaStates(ticket) {
 }
 
 /** Criteria with no valid MET row, rows that are not MET or are unproven, and rows for criteria the ticket does not list. */
-export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree) {
+export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree, { passingOn = false, statuses = {}, waiting = [] } = {}) {
   const rows = [...audit.matchAll(AUDIT_ROW)].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
   const problems = [];
   for (const { id, text } of criteria) {
@@ -108,8 +116,14 @@ export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.
       problems.push(`${id}: not audited`);
       continue;
     }
-    const rowProblems = entries.flatMap((row) => auditRowProblems(id, row, worktree, at));
+    const waits = entries.filter((row) => row.verdict === "PARTIAL" && WAITS_REF.test(row.ref));
+    const waitProblems = waits.flatMap((row) => waitingRowProblems(id, row, { passingOn, statuses }));
+    const rowProblems = [...waitProblems, ...entries.filter((row) => !waits.includes(row)).flatMap((row) => auditRowProblems(id, row, worktree, at))];
     problems.push(...rowProblems);
+    if (rowProblems.length === 0 && waits.length > 0) {
+      waiting.push(...waits.map((row) => `${id} waits on ${WAITS_REF.exec(row.ref)[1]}`));
+      continue;
+    }
     if (rowProblems.length === 0 && !entries.some((row) => row.verdict === "MET")) problems.push(`${id}: no MET audit row`);
     else if (rowProblems.length === 0 && RUNTIME_CRITERION.test(text ?? "") && !entries.some((row) => row.verdict === "MET" && isRuntimeRow(row))) {
       problems.push(`${id}: it needs the product running on a surface, so typecheck, unit-test or source evidence alone does not meet it; add a screenshot, e2e or control row`);
@@ -152,6 +166,20 @@ export function matrixProblems(matrix, criteria) {
     }
   }
   return problems;
+}
+
+/**
+ * A PARTIAL `not met yet: waits on <ticket>` row: accepted only when the person chose passing the work on
+ * (a pull request needs every criterion met) and the caller's `--ticket-status` shows that ticket still open.
+ */
+function waitingRowProblems(id, row, { passingOn, statuses }) {
+  const slug = WAITS_REF.exec(row.ref)[1];
+  if (!slug) return [`${id}: a waiting row names the ticket it waits on: not met yet: waits on <ticket>`];
+  if (!passingOn) return [`${id}: waits on ${slug}, but a pull request needs every criterion met; only a session passed on to its next owner may leave a criterion waiting`];
+  const status = statuses[slug];
+  if (!status) return [`${id}: waits on ${slug}, whose status was not given; pass --ticket-status ${slug}=<its status>`];
+  if (CLOSED_TICKET.has(status)) return [`${id}: waits on ${slug}, which is ${status}; check the criterion against the shipped work instead`];
+  return [];
 }
 
 /** A row that saw the product run: a screenshot, or a test or script run through e2e or the repo's control skill. */
@@ -217,26 +245,36 @@ function recordedMembers(worktree) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, at: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, slug: { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, at: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, slug: { type: "string" }, "passing-on": { type: "boolean" }, "ticket-status": { type: "string", multiple: true } } });
   if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
-    throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--review <review.json>] [--slug <ticket slug>]");
+    throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--review <review.json>] [--slug <ticket slug>] [--passing-on --ticket-status <slug>=<STATUS> ...]");
   }
   const own = ticketCriteria(readFileSync(values.ticket, "utf8"));
   const recorded = recordedMembers(values.worktree);
   const members = memberCriteria(values.member ?? [], recorded);
   const criteria = [...own, ...members.criteria];
   const at = values.at === EvidenceAt.Head ? EvidenceAt.Head : EvidenceAt.Worktree;
+  const waiting = [];
   const problems = [
     ...(own.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
     ...members.problems,
-    ...auditProblems(readFileSync(values.audit, "utf8"), criteria, values.worktree, at),
+    ...auditProblems(readFileSync(values.audit, "utf8"), criteria, values.worktree, at, { passingOn: values["passing-on"] === true, statuses: ticketStatuses(values["ticket-status"] ?? []), waiting }),
     ...matrixProblems(JSON.parse(readFileSync(values.matrix, "utf8")), criteria),
   ];
   const unit = unitReview(values, recorded, at);
   problems.push(...unit.problems);
   const exemptions = unit.notVisible.length ? { notVisible: unit.notVisible.map((entry) => `NOT-VISIBLE ${entry.ticket} ${entry.criterion}: ${entry.reason}`) } : {};
-  process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, criteria: criteria.map(({ id }) => id), problems, ...exemptions }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, criteria: criteria.map(({ id }) => id), problems, ...exemptions, ...(waiting.length ? { waiting } : {}) }, null, 2)}\n`);
   return problems.length === 0 ? 0 : 1;
+}
+
+/** `--ticket-status ISS-9=IN_PROGRESS` entries as a map. */
+function ticketStatuses(entries) {
+  return Object.fromEntries(entries.map((entry) => {
+    const match = /^([A-Z]+-\d+)=([A-Z_]+)$/.exec(entry);
+    if (!match) throw new Error(`--ticket-status needs <slug>=<STATUS>, got ${entry}`);
+    return [match[1], match[2]];
+  }));
 }
 
 /** A unit (member tickets, recorded or given, or a PRD) needs its review of the completed work: code and visual QA per criterion, page and surface. */
