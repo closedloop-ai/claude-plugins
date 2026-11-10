@@ -109,7 +109,7 @@ test("the loader names a missing or too old vibe-core and how to fix it", (t) =>
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const vibe = path.join(root, "plugins", "vibe");
   mkdirSync(path.join(vibe, ".claude-plugin"), { recursive: true });
-  writeFileSync(path.join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.69" }));
+  writeFileSync(path.join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.71" }));
   cpSync(path.join(VIBE, "shared"), path.join(vibe, "shared"), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
   const load = () => spawnSync(process.execPath, ["--input-type=module", "-e",
     `import { vibeCore } from ${JSON.stringify(pathToFileURL(path.join(vibe, "shared", "vibe-core.mjs")).href)}; await vibeCore("hooks/hook-dispatch.mjs");`], { encoding: "utf8" });
@@ -117,7 +117,7 @@ test("the loader names a missing or too old vibe-core and how to fix it", (t) =>
   const core = path.join(root, "plugins", "vibe-core");
   mkdirSync(path.join(core, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(core, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe-core", version: "0.9.0" }));
-  assert.match(load().stderr, new RegExp(`vibe 1\\.1\\.69 needs vibe-core ${VIBE_CORE_MIN.replaceAll(".", "\\.")} or newer, but vibe-core 0\\.9\\.0 is installed; update it`));
+  assert.match(load().stderr, new RegExp(`vibe 1\\.1\\.71 needs vibe-core ${VIBE_CORE_MIN.replaceAll(".", "\\.")} or newer, but vibe-core 0\\.9\\.0 is installed; update it`));
 });
 
 test("each command wrapper behaves as running its vibe-core module directly", (t) => {

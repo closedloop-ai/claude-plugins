@@ -6,9 +6,14 @@
 // after merge.
 //
 // Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--at head]
+//          [--member <ISS-124>=<that ticket's body .md> ...]
 //
 // The criteria are the ticket's `- Acceptance criteria:` checklist, numbered
-// AC-1, AC-2, ... in order.
+// AC-1, AC-2, ... in order. A fleet unit's session (ISS-13924) delivers other
+// tickets in the same PR; it records them with `vibe-sessions.mjs touch
+// --member-ticket`, and each needs `--member <slug>=<body>`, whose criteria are
+// <slug>:AC-1, <slug>:AC-2, ... in the audit and the matrix. A recorded member
+// with no `--member` body is a problem, so no member's criteria go unaudited.
 // The audit is a fresh-context reviewer's table given only those criteria and
 // the diff: one `| AC-n | MET|PARTIAL|MISSED | <type> | <ref> |` row per
 // criterion, so the verdict, its evidence type and its ref live in one place
@@ -32,6 +37,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
 
@@ -40,7 +48,7 @@ const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
 const HEADING = /^(#{1,6})\s/;
 const CHECKBOX = /^\s+-\s*\[([ xX])\]\s*(\S.*)$/;
 const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
-const AUDIT_ROW = /^\|\s*(AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
+const AUDIT_ROW = /^\|\s*((?:[A-Z]+-\d+:)?AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
 
@@ -166,14 +174,41 @@ function existsAtHead(worktree, file) {
   }
 }
 
-function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, at: { type: "string" } } });
-  if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
-    throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>");
+/** Each member ticket's criteria as <slug>:AC-n, and the recorded members that have no body. */
+export function memberCriteria(members, recorded = []) {
+  const problems = [];
+  const criteria = [];
+  const given = new Set();
+  for (const entry of members) {
+    const at = entry.indexOf("=");
+    const slug = entry.slice(0, at);
+    if (at <= 0 || !/^[A-Z]+-\d+$/.test(slug)) throw new Error(`--member needs <slug>=<ticket body file>, got ${entry}`);
+    given.add(slug);
+    const own = ticketCriteria(readFileSync(entry.slice(at + 1), "utf8")).map(({ id, text }) => ({ id: `${slug}:${id}`, text }));
+    if (own.length === 0) problems.push(`member ${slug} has no acceptance criteria checklist`);
+    criteria.push(...own);
   }
-  const criteria = ticketCriteria(readFileSync(values.ticket, "utf8"));
+  for (const slug of recorded) if (!given.has(slug)) problems.push(`member ${slug} is recorded on the session but has no --member body; its criteria are not audited`);
+  return { criteria, problems };
+}
+
+/** The member tickets the session recorded; none when the worktree has no session record. */
+function recordedMembers(worktree) {
+  try { return readSessionRecord(worktree)?.memberTickets ?? []; }
+  catch { return []; }
+}
+
+function main(argv) {
+  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, at: { type: "string" }, member: { type: "string", multiple: true } } });
+  if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
+    throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--member <slug>=<body> ...]");
+  }
+  const own = ticketCriteria(readFileSync(values.ticket, "utf8"));
+  const members = memberCriteria(values.member ?? [], recordedMembers(values.worktree));
+  const criteria = [...own, ...members.criteria];
   const problems = [
-    ...(criteria.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
+    ...(own.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
+    ...members.problems,
     ...auditProblems(readFileSync(values.audit, "utf8"), criteria, values.worktree, values.at === EvidenceAt.Head ? EvidenceAt.Head : EvidenceAt.Worktree),
     ...matrixProblems(JSON.parse(readFileSync(values.matrix, "utf8")), criteria),
   ];

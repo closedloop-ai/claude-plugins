@@ -64,7 +64,7 @@ export function vibeEnabled(install, cwd = process.cwd()) {
 
 /**
  * Why vibe-core's hooks should stand down for `install` (vibe's, or null), or null when they should run:
- * with no vibe, or a disabled one, there is nothing to guard, and a vibe from before the split (1.1.68 or
+ * with no vibe, or a disabled one, there is nothing to guard, and a vibe from before the split (1.1.70 or
  * older) still runs its own copy of these hooks, so running both would apply every guard twice.
  */
 export function hookStandDown(install = vibeInstall(), cwd = process.cwd()) {

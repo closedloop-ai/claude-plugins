@@ -42,4 +42,4 @@ each name the fix when vibe-core is missing or its hooks are not approved.
   runs a file from vibe's install.
 
 The hooks do nothing when vibe is not installed, or while the installed vibe
-still registers its own hooks (vibe 1.1.68 and older), so no guard runs twice.
+still registers its own hooks (vibe 1.1.70 and older), so no guard runs twice.

@@ -90,10 +90,10 @@ test("Claude Code: an old project-scope vibe beside a new user-scope vibe and vi
   const other = path.join(root, "other");
   mkdirSync(path.join(project, "src"), { recursive: true });
   mkdirSync(other);
-  const roots = install(home, [{ name: "vibe", version: "1.1.68", hooks: true }, { name: "vibe", version: "1.1.69" }, { name: "vibe-core", version: "1.0.0" }]);
+  const roots = install(home, [{ name: "vibe", version: "1.1.70", hooks: true }, { name: "vibe", version: "1.1.71" }, { name: "vibe-core", version: "1.0.0" }]);
   const write = (plugins) => writeFileSync(path.join(home, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins }));
   write({
-    "vibe@closedloop-ai": [{ scope: "project", projectPath: project, installPath: roots["vibe@1.1.68"] }, { scope: "user", installPath: roots["vibe@1.1.69"] }],
+    "vibe@closedloop-ai": [{ scope: "project", projectPath: project, installPath: roots["vibe@1.1.70"] }, { scope: "user", installPath: roots["vibe@1.1.71"] }],
     "vibe-core@closedloop-ai": [{ scope: "user", installPath: roots["vibe-core@1.0.0"] }],
   });
   const core = roots["vibe-core@1.0.0"];
@@ -110,7 +110,7 @@ test("Codex: a vibe disabled in config.toml stands the hooks down; another plugi
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-stand-down-codex-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, "codex");
-  const roots = install(home, [{ name: "vibe", version: "1.1.69" }, { name: "vibe-core", version: "1.0.0" }]);
+  const roots = install(home, [{ name: "vibe", version: "1.1.71" }, { name: "vibe-core", version: "1.0.0" }]);
   const core = roots["vibe-core@1.0.0"];
   assert.equal(standDown(core, root), null, "no config.toml: enabled");
   writeFileSync(path.join(home, "config.toml"), '[plugins."vibe-core@closedloop-ai"]\nenabled = false\n\n[plugins."vibe@closedloop-ai"]\nenabled = true\n');
@@ -128,7 +128,7 @@ test("a hook entry point runs once: never beside a vibe that still runs its own 
   cpSync(CORE, path.join(plugins, "vibe-core"), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
   const vibe = path.join(plugins, "vibe");
   mkdirSync(path.join(vibe, ".claude-plugin"), { recursive: true });
-  writeFileSync(path.join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.69" }));
+  writeFileSync(path.join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.71" }));
   const hook = path.join(plugins, "vibe-core", "hooks", "pre-tool-use.mjs");
   const run = () => spawnSync(process.execPath, [hook], { encoding: "utf8", env: { ...process.env, HOME: root },
     input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", cwd: root, tool_input: { command: FORCE_PUSH } }) });

@@ -1,7 +1,10 @@
 // The read side of the handoff gate: whether the exact source that passed the
 // final pull-request inventory, with its body and verifier run evidence, is
 // still what a pull request would open. The PR-create guard and the cloud
-// worker read it; vibe's handoff-gate.mjs records the witness.
+// worker read it; vibe's handoff-gate.mjs records the witness. With member
+// tickets recorded on the session (ISS-13924), the witness keeps the member
+// list, so a member added afterwards makes it stale, and the PR title and body
+// must name every member.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -9,6 +12,8 @@ import path from "node:path";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { evidenceFingerprint } from "./handoff-evidence.mjs";
 import { reviewReceiptProblems } from "./review-receipts.mjs";
+import { missingTicketNames } from "./ticket-names.mjs";
+import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
 const GATE_FILE = "vibe-handoff-gate.json";
 export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "audit", "matrix"]);
@@ -47,7 +52,7 @@ export function gatePath(worktree) {
 }
 
 /** Current gate problem, or null when the final inventory covered this source. */
-export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
+export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
   let record;
   try {
     const file = gatePath(worktree);
@@ -70,6 +75,10 @@ export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
       const saved = record.evidence?.[key];
       if (saved && JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved)) return `handoff ${key} evidence changed`;
     }
+    if (JSON.stringify(sessionMembers(worktree)) !== JSON.stringify(record.memberTickets ?? [])) return "the session's member tickets changed since the handoff gate";
+    const naming = memberNameProblems(record.memberTickets ?? [], title, readFileSync(bodyFile, "utf8"));
+    if (naming.length) return naming.join("; ");
+    if ((record.evidence?.members ?? []).some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff member ticket evidence changed";
     if (!Array.isArray(record.receipts) || record.receipts.some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff review receipt changed";
     if (reviewReceiptProblems(readReviewReceipts(record.receipts.map(item => item.path)), sourceIdentity(worktree)).problems.length) return "handoff review evidence is stale or incomplete";
     return null;
@@ -110,4 +119,19 @@ export function reviewFindingProblems(report, source) {
     if (finding?.blocking !== true) return [];
     return [`blocking review finding ${finding?.id ?? index + 1} remains on the current source`];
   });
+}
+
+/** The member tickets the session records, sorted, so the witness can tell when they change. */
+export function sessionMembers(worktree) {
+  return [...(readSessionRecord(worktree)?.memberTickets ?? [])].sort();
+}
+
+/** Every recorded member ticket the PR title or body leaves unnamed. */
+export function memberNameProblems(memberTickets, title, bodyText) {
+  if (memberTickets.length === 0) return [];
+  if (typeof title !== "string") return [`the session delivers member tickets ${memberTickets.join(", ")}; pass --title so the gate checks the PR names them`];
+  return [
+    ...missingTicketNames(title, memberTickets).map((slug) => `the PR title does not name member ticket ${slug}`),
+    ...missingTicketNames(bodyText, memberTickets).map((slug) => `the PR body does not name member ticket ${slug}`),
+  ];
 }

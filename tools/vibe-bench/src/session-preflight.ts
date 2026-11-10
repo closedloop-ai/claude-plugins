@@ -90,7 +90,7 @@ export function checkVibeVersion(
 }
 
 /**
- * One of vibe's skill helpers: from the vibe-core installed beside the pinned vibe when it has one (vibe 1.1.69
+ * One of vibe's skill helpers: from the vibe-core installed beside the pinned vibe when it has one (vibe 1.1.71
  * moved the modules its hooks run there, ISS-13869), else from the pinned vibe itself.
  */
 export function vibeHelper(vibeDir: string, name: string): string {

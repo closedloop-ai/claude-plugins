@@ -575,6 +575,7 @@ release. The queue settles later collisions (ISS-13321).
 Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
 `scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
+(add `--member <slug>=<body>` for each of the session's `memberTickets`, the other tickets a fleet unit delivers in this PR; their rows are `<slug>:AC-n`, and run rulings-check and rollout-gate for each member too)
 (every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
 `../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`

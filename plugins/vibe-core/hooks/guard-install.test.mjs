@@ -28,8 +28,8 @@ function claudeInstall(t) {
     }
     return dir;
   };
-  const projectVibe = vibe("1.1.70");
-  const userVibe = vibe("1.1.69");
+  const projectVibe = vibe("1.1.72");
+  const userVibe = vibe("1.1.71");
   const core = path.join(cache, "vibe-core", "1.0.0");
   cpSync(CORE, core, { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
   const project = path.join(root, "project");
@@ -76,7 +76,7 @@ process.stdout.write(JSON.stringify({
   freshElsewhere: skillFreshnessProblem(record, { worktree: ${JSON.stringify(f.elsewhere)} }),
 }));`);
   assert.equal(verdicts.guardInProject, null, "the project's own vibe loaded the evidence");
-  assert.match(verdicts.guardElsewhere, /loaded 1\.1\.70 from another skill definition/);
+  assert.match(verdicts.guardElsewhere, /loaded 1\.1\.72 from another skill definition/);
   assert.equal(verdicts.freshInProject, null);
-  assert.match(verdicts.freshElsewhere, /loaded 1\.1\.70 from another skill definition/);
+  assert.match(verdicts.freshElsewhere, /loaded 1\.1\.72 from another skill definition/);
 });

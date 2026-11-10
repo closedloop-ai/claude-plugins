@@ -1,4 +1,4 @@
-// A Codex vibe update installs no dependency, so vibe 1.1.69 can be installed with no vibe-core. These run the
+// A Codex vibe update installs no dependency, so vibe 1.1.71 can be installed with no vibe-core. These run the
 // startup commands from such an install (a copy of this vibe in Codex's cache layout), not from the checkout,
 // where vibe-core is always beside it.
 import assert from "node:assert/strict";
@@ -17,7 +17,7 @@ function codexInstall(t) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-no-core-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const cache = path.join(root, "codex-home", "plugins", "cache", "closedloop-ai");
-  const vibe = path.join(cache, "vibe", "1.1.69");
+  const vibe = path.join(cache, "vibe", "1.1.71");
   const keep = (file) => !file.endsWith(".test.mjs") && !file.includes(`${path.sep}dist${path.sep}`) && !file.endsWith(`${path.sep}dist`);
   for (const part of [".claude-plugin", ".codex-plugin", "shared", "skills/vibe/scripts", "skills/fleet-orchestrator/scripts"]) {
     cpSync(path.join(VIBE, part), path.join(vibe, part), { recursive: true, filter: keep });

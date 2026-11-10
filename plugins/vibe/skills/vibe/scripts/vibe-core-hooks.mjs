@@ -14,7 +14,7 @@ export const APPROVE_HOOKS = "open Codex once and approve vibe-core's hooks in /
 export const ADD_VIBE_CORE = VIBE_CORE_INSTALL.codex;
 
 /** The first vibe release whose hooks ship in vibe-core; an older vibe runs its own. */
-export const FIRST_SPLIT_VIBE = "1.1.69";
+export const FIRST_SPLIT_VIBE = "1.1.71";
 const HOOKS_PLUGIN = "vibe-core@";
 /** A vibe older than FIRST_SPLIT_VIBE registers hooks under its own id. */
 const OWN_HOOKS_PLUGIN = "vibe@";

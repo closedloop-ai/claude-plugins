@@ -311,10 +311,10 @@ test("a chosen update updates each outdated plugin in each installed harness, ve
 // vibe-core, and every hook, missing; the check names it and the chosen update installs it.
 test("a harness with vibe but no vibe-core is outdated, and the chosen update installs vibe-core there", async (t) => {
   const { home, bin } = sandbox(t);
-  const versions = { vibe: "1.1.69", "vibe-core": "1.0.0" };
+  const versions = { vibe: "1.1.71", "vibe-core": "1.0.0" };
   const main = await marketplace(t, { files: mainFiles(versions) });
-  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.1.69" }, { name: "vibe-core", version: "1.0.0" }], main: versions });
-  const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.69" }], main: versions });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.1.71" }, { name: "vibe-core", version: "1.0.0" }], main: versions });
+  const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.71" }], main: versions });
   const check = await run(home, ["check", ...both(claude, codex, main.url)]);
   assert.equal(check.result.status, "outdated");
   assert.equal(check.result.versions, "vibe-core: not installed, the latest is 1.0.0");
@@ -333,7 +333,7 @@ test("a harness with vibe but no vibe-core is outdated, and the chosen update in
 // Operator ruling (2026-11-09): the setup check names a missing vibe-core in Codex, and asks the developer to
 // approve its hooks only when Codex's hooks/list says one needs it.
 const APPROVE = "open Codex once and approve vibe-core's hooks in /hooks";
-const SPLIT = { vibe: "1.1.69", "vibe-core": "1.0.0", "closedloop-core": "1.6.2" };
+const SPLIT = { vibe: "1.1.71", "vibe-core": "1.0.0", "closedloop-core": "1.6.2" };
 const installedAt = (versions, names) => names.map((name) => ({ name, version: versions[name] }));
 
 async function firstBlock(t, codexState, claudeState = { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]) }) {
@@ -349,8 +349,8 @@ async function firstBlock(t, codexState, claudeState = { installed: installedAt(
 test("the first setup check in Codex names a missing vibe-core with its add command and the approval it will need", async (t) => {
   const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe"]) });
   assert.deepEqual(block.slice(1, 4), [
-    "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
-    "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core not installed",
+    "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
+    "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core not installed",
     `- Codex: vibe-core is not installed in Codex, so vibe's guards cannot run there: run \`codex plugin add vibe-core@closedloop-ai\`, then ${APPROVE}`,
   ]);
 });
@@ -363,8 +363,8 @@ test("the first setup check in Codex asks for approval only when a vibe-core hoo
   for (const hookTrust of ["trusted", "managed"]) {
     const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]), hookTrust });
     assert.deepEqual(block.slice(1, 3), [
-      "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
-      "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
+      "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
+      "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
     ]);
     assert.ok(!block.some((line) => line.includes("/hooks")), hookTrust);
   }
@@ -374,7 +374,7 @@ test("the first setup check in Codex asks for approval only when a vibe-core hoo
 
 test("Claude Code with vibe-core installed adds nothing to the setup check, and asks Codex nothing it lacks", async (t) => {
   const block = await firstBlock(t, { installed: [] });
-  assert.deepEqual(block, ["Setup check", "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.69 (latest), vibe-core 1.0.0 (latest)",
+  assert.deepEqual(block, ["Setup check", "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
     "- ClosedLoop connection: connected", "- closedloop-graph connection: connected"]);
 });
 
@@ -387,7 +387,7 @@ test("after an update, approval is named only when Codex's hooks/list says a vib
     const { home, bin } = sandbox(t);
     const main = await marketplace(t, { files: mainFiles(SPLIT) });
     const claude = fakeCli(bin, "claude", { installed: [] });
-    const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.68" }, { name: "vibe-core", version: "1.0.0" }], main: SPLIT, ...codexState });
+    const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.70" }, { name: "vibe-core", version: "1.0.0" }], main: SPLIT, ...codexState });
     await run(home, ["check", ...both(claude, codex, main.url)]);
     await run(home, ["choose", "--choice", "update"]);
     const { code, result } = await run(home, ["update", "--claude", claude.file, "--codex", codex.file]);

@@ -44,7 +44,7 @@ test("the two copies of the resolver are byte-identical and import only node bui
 
 test("repository checkout: the sibling is plugins/<name> beside the caller's plugin", (t) => {
   const plugins = path.join(base(t), "repo", "plugins");
-  const vibe = plugin(path.join(plugins, "vibe"), "vibe", "1.1.69");
+  const vibe = plugin(path.join(plugins, "vibe"), "vibe", "1.1.71");
   const core = plugin(path.join(plugins, "vibe-core"), "vibe-core", "1.0.0");
   assert.equal(siblingPluginRoot("vibe-core", { from: from(vibe) }), core);
   assert.equal(siblingPluginRoot("vibe", { from: from(core) }), vibe);
@@ -58,14 +58,14 @@ test("repository checkout: the sibling is plugins/<name> beside the caller's plu
 test("Claude Code: installed_plugins.json picks the version, never the cache's directory listing", (t) => {
   const config = path.join(base(t), "claude");
   const cache = path.join(config, "plugins", "cache", "closedloop-ai");
-  const vibe = plugin(path.join(cache, "vibe", "1.1.69"), "vibe", "1.1.69");
-  plugin(path.join(cache, "vibe", "1.1.68"), "vibe", "1.1.68");
+  const vibe = plugin(path.join(cache, "vibe", "1.1.71"), "vibe", "1.1.71");
+  plugin(path.join(cache, "vibe", "1.1.70"), "vibe", "1.1.70");
   const installedCore = plugin(path.join(cache, "vibe-core", "1.0.0"), "vibe-core", "1.0.0");
   // Newer and lexically later versions sit in the cache too (left behind, or not yet active).
   plugin(path.join(cache, "vibe-core", "1.0.1"), "vibe-core", "1.0.1");
   plugin(path.join(cache, "vibe-core", "2.0.0"), "vibe-core", "2.0.0");
   registry(config, {
-    "vibe@closedloop-ai": [{ scope: "user", installPath: vibe, version: "1.1.69" }],
+    "vibe@closedloop-ai": [{ scope: "user", installPath: vibe, version: "1.1.71" }],
     "vibe-core@closedloop-ai": [{ scope: "user", installPath: installedCore, version: "1.0.0" }],
   });
   assert.equal(siblingPluginRoot("vibe-core", { from: from(vibe) }), installedCore);
@@ -83,8 +83,8 @@ test("Claude Code: the session's project decides, local before project before us
   const config = path.join(root, "claude");
   const cache = path.join(config, "plugins", "cache", "closedloop-ai");
   const [p1, p2, elsewhere] = ["p1", "p2", "elsewhere"].map((name) => { mkdirSync(path.join(root, name, "src"), { recursive: true }); return path.join(root, name); });
-  const vibeP1 = plugin(path.join(cache, "vibe", "1.1.70"), "vibe", "1.1.70");
-  const vibeP2 = plugin(path.join(cache, "vibe", "1.1.69"), "vibe", "1.1.69");
+  const vibeP1 = plugin(path.join(cache, "vibe", "1.1.72"), "vibe", "1.1.72");
+  const vibeP2 = plugin(path.join(cache, "vibe", "1.1.71"), "vibe", "1.1.71");
   const core = plugin(path.join(cache, "vibe-core", "1.0.0"), "vibe-core", "1.0.0");
   // vibe in two projects and vibe-core at user scope: each session finds its own project's vibe.
   registry(config, {
@@ -123,7 +123,7 @@ test("Claude Code: the session's project decides, local before project before us
 
 test("Codex: the active version is the one Codex itself picks", (t) => {
   const cache = path.join(base(t), "codex", "plugins", "cache", "closedloop-ai");
-  const vibe = plugin(path.join(cache, "vibe", "1.1.69"), "vibe", "1.1.69", ".codex-plugin");
+  const vibe = plugin(path.join(cache, "vibe", "1.1.71"), "vibe", "1.1.71", ".codex-plugin");
   for (const version of ["1.0.9", "1.0.10", "1.0.10-beta.2"]) plugin(path.join(cache, "vibe-core", version), "vibe-core", version, ".codex-plugin");
   writeFileSync(path.join(cache, "vibe-core", "2.0.0"), "a file, not a version directory");
   mkdirSync(path.join(cache, "vibe-core", "bad version"));
@@ -136,7 +136,7 @@ test("Codex: the active version is the one Codex itself picks", (t) => {
 });
 
 test("a plugin outside every known layout names where it is", (t) => {
-  const vibe = plugin(path.join(base(t), "loose", "vibe"), "vibe", "1.1.69");
+  const vibe = plugin(path.join(base(t), "loose", "vibe"), "vibe", "1.1.71");
   assert.throws(() => siblingPluginRoot("vibe-core", { from: from(vibe) }), /is not in a checkout, Claude Code or Codex plugin layout, so vibe-core cannot be found/);
 });
 

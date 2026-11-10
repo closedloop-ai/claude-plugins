@@ -39,6 +39,7 @@ export function prCreateCalls(command, initialCwd) {
     let base = null;
     let bodyFile = null;
     let head = null;
+    let title;
     const repositoryOverrides = [];
     for (let i = 1; i < actionAt; i += 1) {
       const word = words[i];
@@ -59,13 +60,16 @@ export function prCreateCalls(command, initialCwd) {
       else if (word.startsWith("--head=")) head = word.slice(7);
       else if (word.startsWith("--repo=")) repositoryOverrides.push(word.slice(7));
       else if (/^-R.+/.test(word)) repositoryOverrides.push(word.slice(word.startsWith("-R=") ? 3 : 2));
+      else if (word === "--title" || word === "-t") title = words[++i];
+      else if (word.startsWith("--title=")) title = word.slice(8);
       else if (PR_CREATE_DATA_OPTIONS.has(word)) i += 1;
       else {
-        const attached = /^-([BFH])(?:=(.*)|(.+))$/.exec(word);
+        const attached = /^-([BFHt])(?:=(.*)|(.+))$/.exec(word);
         if (attached) {
           const value = attached[2] ?? attached[3];
           if (attached[1] === "B") base = value;
           else if (attached[1] === "F") bodyFile = value;
+          else if (attached[1] === "t") title = value;
           else head = value;
         }
       }
@@ -79,7 +83,7 @@ export function prCreateCalls(command, initialCwd) {
       if (environmentRepository === UNKNOWN_VALUE) repositoryOverrides.push(null);
       else if (typeof environmentRepository === "string" && environmentRepository !== "") repositoryOverrides.push(environmentRepository);
     }
-    calls.push({ cwd, base, head, bodyFile: bodyFile ? path.resolve(cwd, bodyFile) : null,
+    calls.push({ cwd, base, head, title, bodyFile: bodyFile ? path.resolve(cwd, bodyFile) : null,
       repositoryOverrides, remote, uncertainCwd, unresolvedTarget });
   }
   return calls;
@@ -266,7 +270,7 @@ export function prCreateGuard(event, home = os.homedir()) {
     // Cloud import readiness, its own rerun of the handoff gate included, is a separate protection the override does not clear.
     const cloudProblem = cloudPrProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile });
     if (cloudProblem) return refuse(cloudProblem, CLOUD_RETRY);
-    const problem = handoffGateProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile });
+    const problem = handoffGateProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile, title: call.title });
     if (problem && !override) return refuse(problem, `run the final handoff gate on the published source, or ${OVERRIDE_HINT}`);
   }
   return null;

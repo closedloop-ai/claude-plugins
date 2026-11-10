@@ -406,7 +406,7 @@ test('an App Server without hooks/list keeps launching; other listing failures r
   assert.match(await vibeHookTrustProblem(disabled, '/x'), /vibe-core@fixture-market:k is disabled/);
 });
 
-// vibe 1.1.69 ships no hooks of its own, and Codex installs no plugin dependency, so a vibe
+// vibe 1.1.71 ships no hooks of its own, and Codex installs no plugin dependency, so a vibe
 // update without vibe-core leaves every guard off; the launch says how to add it.
 test('a writer launch is refused when vibe-core lists no hooks, naming the add command and /hooks', async () => {
   const listing = (hooks) => ({ request: async () => ({ data: [{ cwd: '/x', hooks }] }) });

@@ -79,7 +79,7 @@
 // its test run stays targeted either way.
 //
 // The handoff and pull-request phases also report the pull request facts
-// (pr-facts.mjs); `--ticket` adds `asks`, `--overlap` adds `overlap` (one
+// (pr-facts.mjs); `--ticket` adds `asks` (repeat it for a fleet unit's member tickets), `--overlap` adds `overlap` (one
 // `gh pr list`, or `--prs-json`). In the pull-request phase `--body` adds
 // `blocking.prBody` and `--runs` with `--commit` adds `blocking.prEvidence`.
 //
@@ -140,7 +140,7 @@ const { values } = parseArgs({
   options: {
     worktree: { type: "string" },
     phase: { type: "string", default: "build" },
-    ticket: { type: "string" },
+    ticket: { type: "string", multiple: true },
     overlap: { type: "boolean" },
     "prs-json": { type: "string" },
     body: { type: "string" },
@@ -317,7 +317,7 @@ const result = withStableSource(worktree, () => {
       prs,
       ownBranch: branch,
       prBase: getComparison().branch,
-      ticketText: values.ticket ? readFileSync(values.ticket, "utf8") : undefined,
+      ticketText: values.ticket?.length ? values.ticket.map((file) => readFileSync(file, "utf8")).join("\n") : undefined,
       body: values.body ? readFileSync(values.body, "utf8") : undefined,
       runs: values.runs ? JSON.parse(readFileSync(values.runs, "utf8")) : undefined,
       commit: values.commit,
