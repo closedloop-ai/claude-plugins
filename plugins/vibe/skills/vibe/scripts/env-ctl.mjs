@@ -19,7 +19,7 @@
 //       environment is not requested again when every path changed since the session's
 //       lastDeployedCommit is one that cannot change a build (`NON_BUILD_PATH`, area-paths.mjs); the result says so in `skippedRedeploy`.
 //   env-ctl.mjs desktop  --worktree <path> [--person-email <email>]
-//   env-ctl.mjs pr       --worktree <path> --branch <vibe/slug> --commit <sha> --title <text> --body-file <file> --base <sha>
+//   env-ctl.mjs pr       --worktree <path> --branch <vibe/slug> --commit <sha> --title <text> --body-file <file> --base <sha> [--draft]
 //   env-ctl.mjs pr-update --worktree <path> --pr <number> --body-file <file> --title <text>
 //
 // `identity` (the distinct id and org id) comes from the worker's ClosedLoop
@@ -307,15 +307,15 @@ export function createEnvCtl({
     return { ...requested, pushed: published.pushed };
   }
 
-  /** Opens the pull request, or reports the open one. The body and title are the worker's. */
-  function openPullRequest({ worktree, branch, commit, title, bodyFile, base }) {
+  /** Opens the pull request, or reports the open one. The body and title are the worker's; `draft` is optional (ISS-13947). */
+  function openPullRequest({ worktree, branch, commit, title, bodyFile, base, draft = false }) {
     const remote = stdoutOf(run("git", ["-C", worktree, "ls-remote", "origin", branch]), "git ls-remote").split(/\s+/)[0];
     if (remote !== commit) return { status: Status.Blocked, error: `origin/${branch} is at ${remote || "nothing"}, not the verified commit; nothing was pushed.` };
     const existing = parseJson(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url,number"]).stdout, []);
     if (existing.length > 0) return { status: Status.Done, created: false, url: existing[0].url, number: existing[0].number };
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--base", base]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
-    const created = gh(["pr", "create", "--repo", repo, "--head", branch, "--base", "main", "--title", title, "--body-file", bodyFile]);
+    const created = gh(["pr", "create", "--repo", repo, "--head", branch, "--base", "main", "--title", title, "--body-file", bodyFile, ...(draft ? ["--draft"] : [])]);
     if (created.status !== 0) return { status: Status.Blocked, error: tailLines(created.stderr, 3) };
     return { status: Status.Done, created: true, url: created.stdout.trim().split("\n").pop() };
   }
@@ -339,7 +339,7 @@ async function main(argv) {
       mode: { type: "string" }, "person-email": { type: "string" }, "keep-flag-snapshot": { type: "string" },
       "poll-seconds": { type: "string" }, "find-seconds": { type: "string" }, "give-up-seconds": { type: "string" },
       since: { type: "string" }, branch: { type: "string" }, commit: { type: "string" }, title: { type: "string" },
-      "body-file": { type: "string" }, base: { type: "string" }, pr: { type: "string" },
+      "body-file": { type: "string" }, base: { type: "string" }, pr: { type: "string" }, draft: { type: "boolean", default: false },
     },
   });
   if (!values.worktree) throw new Error("--worktree is required.");
@@ -357,7 +357,7 @@ async function main(argv) {
     case "publish": return controller.publish({ worktree: values.worktree, since: values.since, stdin });
     case "redeploy": return controller.redeploy({ ...common, since: values.since, stdin, ...timing });
     case "desktop": return controller.request({ ...common, mode: "desktop", stdin, ...timing });
-    case "pr": return controller.openPullRequest({ worktree: values.worktree, branch: values.branch, commit: values.commit, title: values.title, bodyFile: values["body-file"], base: values.base });
+    case "pr": return controller.openPullRequest({ worktree: values.worktree, branch: values.branch, commit: values.commit, title: values.title, bodyFile: values["body-file"], base: values.base, draft: values.draft });
     case "pr-update": return controller.updatePullRequest({ worktree: values.worktree, pr: values.pr, bodyFile: values["body-file"], title: values.title });
     default: throw new Error("Usage: env-ctl.mjs flags|request|publish|redeploy|desktop|pr|pr-update --worktree <path> ...");
   }

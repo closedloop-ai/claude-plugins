@@ -12,6 +12,7 @@ import { migrationId, migrationProblems } from "../../vibe/scripts/migration-pub
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
+import { checkCommentRules } from "./comment-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
@@ -179,6 +180,7 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   }
   checkDesktopLane(live, repo, logged, add);
   checkTicketedComments(files, repo, logged, add);
+  checkCommentRules(live, repo, add);
   checkStories(live, files, repo, logged, add);
   checkFrozenRenders(files, repo, changeLog, add);
   checkLostStoryIds(files, repo, logged, add);

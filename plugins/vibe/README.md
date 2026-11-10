@@ -372,7 +372,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.77` contains 17 skills and 17 agents, and no hook manifest: its
+Version `1.1.78` contains 17 skills and 17 agents, and no hook manifest: its
 hooks, and every module they run, ship in the `vibe-core` plugin, which vibe
 declares as a dependency. vibe loads those modules from vibe-core through
 `shared/vibe-core.mjs`, and the commands among them keep thin wrappers at

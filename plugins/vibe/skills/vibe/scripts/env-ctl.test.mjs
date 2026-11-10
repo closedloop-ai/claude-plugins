@@ -306,6 +306,15 @@ test("the pull request is opened only when origin is at the verified commit, and
   assert.ok(!calls.some((call) => call.line.includes("--draft") || call.line.includes("merge")));
 });
 
+test("--draft opens the pull request as a draft and is never the default (ISS-13947)", () => {
+  const sha = "c".repeat(40);
+  const calls = [];
+  const create = createEnvCtl({ run: router([["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/5\n")]], calls) });
+  const made = create.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", bodyFile: "/b.md", base: "e".repeat(40), draft: true });
+  assert.deepEqual(made, { status: Status.Done, created: true, url: "https://github.com/x/pull/5" });
+  assert.ok(calls.some((call) => call.line.includes("pr create") && call.line.includes("--draft")));
+});
+
 test("a title or body the preflight refuses opens nothing", () => {
   const sha = "c".repeat(40);
   const calls = [];
