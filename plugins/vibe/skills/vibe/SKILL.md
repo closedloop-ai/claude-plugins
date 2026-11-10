@@ -1085,7 +1085,7 @@ Whenever the person asks to throw a session away (at any point, for any
    `exclusiveRecordTurn: true`, graph/live reads only, and `discardTarget`:
    `{worktree: "<wt>", confirmed: true, branch, operatorId, operatorEmail}`
    plus `liveTicket` and `liveTicketCreatedBySession` when present (`references/quality-loop.md`,
-   "Exactly three helper paths"). The worker stops the session's local
+   "Exactly four helper paths"). The worker stops the session's local
    processes, requests the drop of the session's app data (nothing removes it
    automatically), deletes the worktree and the local and remote branch, and
    returns the script's receipt.

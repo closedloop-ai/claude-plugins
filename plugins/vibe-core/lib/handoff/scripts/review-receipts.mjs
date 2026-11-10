@@ -42,16 +42,18 @@ function graphCalls(result, trace) {
 }
 
 /** Capture one mandatory reviewer's actual launcher result and graph trace. */
-export function captureReviewReceipt({ worktree, resultFile, outFile, role }) {
+export function captureReviewReceipt({ worktree, resultFile, outFile, role, takeover: expected }) {
   if (!REVIEW_ROLES.includes(role)) throw new Error(`unknown review role ${role}`);
   const resultEvidence = evidenceFingerprint(resultFile);
   const result = JSON.parse(readFileSync(resultEvidence.path, "utf8"));
   if (result.runtime !== "claude" || result.agentName !== role || result.status !== "DONE" || !result.sessionId || !result.requestId || !result.tracePath) {
     throw new Error(`${role}: launcher result needs matching role, DONE and completion identity`);
   }
-  if (!validSourceIdentity(result.source) || result.source.treeSha256 !== sourceIdentity(worktree).treeSha256) {
+  const current = sourceIdentity(worktree);
+  if (!validSourceIdentity(result.source) || result.source.treeSha256 !== current.treeSha256) {
     throw new Error(`${role}: launcher source differs from captured worktree`);
   }
+  const takeover = takeoverBinding(role, result, worktree, current, expected);
   const trace = evidenceFingerprint(result.tracePath);
   const facts = reviewTraceFacts(readFileSync(trace.path, "utf8"));
   if (facts.sessionId !== result.sessionId) throw new Error(`${role}: trace completion identity differs from launcher result`);
@@ -62,7 +64,7 @@ export function captureReviewReceipt({ worktree, resultFile, outFile, role }) {
   const source = result.source;
   const receipt = { role, runtime: result.runtime, worktree: realpathSync(worktree), source, result: resultEvidence, trace, sessionId: result.sessionId,
     requestId: result.requestId, graphStatus: result.graphToolAliases.length === 0 ? "unavailable" : "used",
-    graphCalls: usedGraphCalls, findings: result.data.findings };
+    graphCalls: usedGraphCalls, findings: result.data.findings, ...(takeover ? { takeover } : {}) };
   writeFileSync(outFile, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
   return receipt;
 }
@@ -168,11 +170,32 @@ export function reviewReceiptProblems(receipts, source) {
   return { problems, findings };
 }
 
+/**
+ * A PR takeover review runs with no vibe session; the launcher binds it to the PR URL, head commit and takeover
+ * worktree, and the receipt keeps that binding only while the reviewed source is still that head.
+ */
+function takeoverBinding(role, result, worktree, current, expected) {
+  const bound = result.takeover;
+  if (bound === undefined) {
+    if (expected) throw new Error(`${role}: launcher result has no takeover binding for ${expected.prUrl}`);
+    return undefined;
+  }
+  if (typeof bound?.prUrl !== "string" || !/^[0-9a-f]{40}$/.test(bound?.headSha ?? "") || typeof bound?.worktree !== "string"
+    || realpathSync(bound.worktree) !== realpathSync(worktree) || result.source.head !== bound.headSha || current.head !== bound.headSha) {
+    throw new Error(`${role}: takeover binding differs from the reviewed pull request head or worktree`);
+  }
+  if (expected && (expected.prUrl !== bound.prUrl || expected.headSha !== bound.headSha)) {
+    throw new Error(`${role}: takeover review is bound to ${bound.prUrl} at ${bound.headSha}, not the expected pull request head`);
+  }
+  return { prUrl: bound.prUrl, headSha: bound.headSha, worktree: realpathSync(bound.worktree) };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { values } = parseArgs({ options: { worktree: { type: "string" }, result: { type: "string" }, out: { type: "string" }, role: { type: "string" }, native: { type: "boolean" }, "orch-dir": { type: "string" }, helper: { type: "string" } } });
-  if (!values.worktree || !values.out || !values.role) throw new Error("Usage: review-receipts.mjs --worktree <wt> --role <role> --out <receipt.json> (--result <launcher-output.json> | --native --orch-dir <dir> --helper <name>)");
+  const { values } = parseArgs({ options: { worktree: { type: "string" }, result: { type: "string" }, out: { type: "string" }, role: { type: "string" }, native: { type: "boolean" }, "orch-dir": { type: "string" }, helper: { type: "string" }, "pr-url": { type: "string" }, head: { type: "string" } } });
+  if (!values.worktree || !values.out || !values.role || Boolean(values["pr-url"]) !== Boolean(values.head)) throw new Error("Usage: review-receipts.mjs --worktree <wt> --role <role> --out <receipt.json> (--result <launcher-output.json> [--pr-url <url> --head <sha>] | --native --orch-dir <dir> --helper <name>)");
+  const takeover = values.head ? { prUrl: values["pr-url"], headSha: values.head } : undefined;
   const receipt = values.native
     ? await captureNativeReviewReceipt({ worktree: values.worktree, orchDir: values["orch-dir"], helperName: values.helper, outFile: values.out, role: values.role })
-    : captureReviewReceipt({ worktree: values.worktree, resultFile: values.result, outFile: values.out, role: values.role });
+    : captureReviewReceipt({ worktree: values.worktree, resultFile: values.result, outFile: values.out, role: values.role, takeover });
   process.stdout.write(`${JSON.stringify(receipt)}\n`);
 }

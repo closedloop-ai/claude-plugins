@@ -158,6 +158,12 @@ process.stdin.on('end', () => {
     compact.data.environmentId = 'fixture-preview';
   }
   if (payload.input.includes('LONG_SUMMARY')) compact.summary = 'x'.repeat(5000);
+  if (payload.input.includes('REVIEW_RECEIPT')) {
+    const graphTool = option('--tools').split(',').find(tool => tool.startsWith('mcp__custom_graph__'));
+    process.stdout.write(JSON.stringify({ type: 'assistant', session_id: id,
+      message: { content: [{ type: 'tool_use', name: graphTool }] } }) + '\n');
+    compact.data.findings = [];
+  }
   if (mainSyncResult) compact.data.mainSyncResult = mainSyncResult;
   if (discardReceipt) compact.data.discardReceipt = discardReceipt;
   const result = { type: 'result', session_id: reportedId, is_error: false,
