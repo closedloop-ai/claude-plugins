@@ -11,7 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { hookStandDown } from "../shared/vibe-install.mjs";
+import { hookStandDown, vibeInstall } from "../shared/vibe-install.mjs";
 
 /** PreToolUse precedence when several decisions disagree: "deny > defer > ask > allow" (hooks docs, PreToolUse decision control). */
 export const DECISION_PRECEDENCE = Object.freeze(["deny", "defer", "ask", "allow"]);
@@ -68,13 +68,16 @@ export function mergeResults(eventName, results) {
 /**
  * Reads the event on stdin, runs `dispatch(event, report)` and prints its output, a string as plain
  * text (a PreCompact hook's stdout is the compaction instructions) and anything else as JSON; never exits nonzero.
- * Does nothing while hookStandDown() names a reason: no vibe install, or one that runs its own hooks.
+ * Does nothing while hookStandDown() names a reason for the vibe the event's session uses: none installed,
+ * one disabled, or one that runs its own hooks.
  */
 export function runHookScript(scriptName, dispatch) {
   const report = (line) => process.stderr.write(`${line}\n`);
   try {
-    if (hookStandDown()) return;
-    const output = dispatch(JSON.parse(readFileSync(0, "utf8") || "{}"), report);
+    const event = JSON.parse(readFileSync(0, "utf8") || "{}");
+    const cwd = eventCwd(event);
+    if (hookStandDown(vibeInstall(cwd), cwd)) return;
+    const output = dispatch(event, report);
     if (output) process.stdout.write(`${typeof output === "string" ? output : JSON.stringify(output)}\n`);
   } catch (error) {
     report(`${scriptName}: ${errorText(error)}`);

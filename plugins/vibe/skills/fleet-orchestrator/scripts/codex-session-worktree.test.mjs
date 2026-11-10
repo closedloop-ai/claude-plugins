@@ -365,7 +365,6 @@ test('a writer launch is refused while any vibe-core Codex hook is not trusted, 
   const listing = (trustStatus) => ({ data: [{ cwd: f.repo, hooks: [
     { key: 'vibe-core@fixture-market:hooks/hooks.json:user_prompt_submit:0:0', pluginId: 'vibe-core@fixture-market', trustStatus, enabled: true },
     { key: 'vibe-core@fixture-market:hooks/hooks.json:pre_tool_use:0:0', pluginId: 'vibe-core@fixture-market', trustStatus: 'trusted', enabled: true },
-    { key: 'vibe@fixture-market:hooks/hooks.json:pre_tool_use:0:0', pluginId: 'vibe@fixture-market', trustStatus: 'modified', enabled: true },
     { key: '/fixture/.codex/hooks.json:user_prompt_submit:0:0', pluginId: null, trustStatus: 'untrusted', enabled: true },
   ] }] });
   const future = join(f.repo, '.claude', 'worktrees', 'vibe-future');
@@ -387,6 +386,17 @@ test('a writer launch is refused while any vibe-core Codex hook is not trusted, 
   assert.equal(await launchWriter(trusted, { ...f.options(), cwd: future }), 'writer turn T1 U1');
 });
 
+// An older vibe registers its own hooks and vibe-core's stand down beside it, so the launch judges those.
+test('beside an older vibe the launch check judges the vibe hooks that will run, and demands no vibe-core', async () => {
+  const listing = (hooks) => ({ request: async () => ({ data: [{ cwd: '/x', hooks }] }) });
+  const hook = (pluginId, trustStatus) => ({ key: `${pluginId}:hooks/hooks.json:pre_tool_use:0:0`, pluginId, trustStatus, enabled: true });
+  assert.match(await vibeHookTrustProblem(listing([hook('vibe@fixture-market', 'modified'), hook('vibe-core@fixture-market', 'trusted')]), '/x'),
+    /^vibe's Codex hooks cannot run \(vibe@fixture-market:hooks\/hooks.json:pre_tool_use:0:0 is modified\); open Codex once and approve vibe's hooks in \/hooks/);
+  assert.equal(await vibeHookTrustProblem(listing([hook('vibe@fixture-market', 'trusted')]), '/x'), null, 'an older vibe needs no vibe-core');
+  assert.equal(await vibeHookTrustProblem(listing([hook('vibe@fixture-market', 'trusted'), hook('vibe-core@fixture-market', 'modified')]), '/x'), null,
+    "vibe-core's hooks stand down beside an older vibe, so they do not decide");
+});
+
 test('an App Server without hooks/list keeps launching; other listing failures refuse', async () => {
   const old = { request: async () => { throw new Error('unknown variant `hooks/list`'); } };
   assert.equal(await vibeHookTrustProblem(old, '/x'), null);
@@ -401,8 +411,7 @@ test('an App Server without hooks/list keeps launching; other listing failures r
 test('a writer launch is refused when vibe-core lists no hooks, naming the add command and /hooks', async () => {
   const listing = (hooks) => ({ request: async () => ({ data: [{ cwd: '/x', hooks }] }) });
   const userHook = { key: '/fixture/.codex/hooks.json:user_prompt_submit:0:0', pluginId: null, trustStatus: 'trusted', enabled: true };
-  const oldVibe = { key: 'vibe@fixture-market:hooks/hooks.json:pre_tool_use:0:0', pluginId: 'vibe@fixture-market', trustStatus: 'trusted', enabled: true };
-  for (const hooks of [[], [userHook], [userHook, oldVibe]]) {
+  for (const hooks of [[], [userHook]]) {
     assert.equal(await vibeHookTrustProblem(listing(hooks), '/x'),
       `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; run \`${VIBE_CORE_INSTALL.codex}\`, then open Codex once and approve vibe-core's hooks in /hooks, then launch again`);
   }

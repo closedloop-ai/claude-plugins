@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { HookStandDown, hookStandDown, vibeRoot } from "./vibe-install.mjs";
 
 const CORE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,10 +48,75 @@ test("the hooks stand down with no vibe, and while the installed vibe still regi
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-stand-down-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   assert.equal(hookStandDown(null), HookStandDown.NoVibe);
-  assert.equal(hookStandDown(root), null, "a vibe without hooks/hooks.json leaves the hooks to vibe-core");
+  const checkout = { root, layout: "checkout" };
+  assert.equal(hookStandDown(checkout, root), null, "a vibe without hooks/hooks.json leaves the hooks to vibe-core");
   mkdirSync(path.join(root, "hooks"));
   writeFileSync(path.join(root, "hooks", "hooks.json"), "{}");
-  assert.equal(hookStandDown(root), HookStandDown.VibeOwnsHooks);
+  assert.equal(hookStandDown(checkout, root), HookStandDown.VibeOwnsHooks);
+});
+
+/** A Claude Code or Codex install of vibe and vibe-core under `home`, with a runnable copy of vibe-core's shared modules. */
+function install(home, entries) {
+  const cache = path.join(home, "plugins", "cache", "closedloop-ai");
+  const roots = {};
+  for (const { name, version, hooks } of entries) {
+    const root = path.join(cache, name, version);
+    mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
+    writeFileSync(path.join(root, ".claude-plugin", "plugin.json"), JSON.stringify({ name, version }));
+    if (hooks) {
+      mkdirSync(path.join(root, "hooks"), { recursive: true });
+      writeFileSync(path.join(root, "hooks", "hooks.json"), "{}");
+    }
+    if (name === "vibe-core") cpSync(path.join(CORE, "shared"), path.join(root, "shared"), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
+    roots[`${name}@${version}`] = root;
+  }
+  return roots;
+}
+
+/** hookStandDown as the vibe-core copy at `core` computes it for a session in `cwd`. */
+function standDown(core, cwd) {
+  const script = `import { hookStandDown, vibeInstall } from ${JSON.stringify(pathToFileURL(path.join(core, "shared", "vibe-install.mjs")).href)};
+process.stdout.write(JSON.stringify(hookStandDown(vibeInstall(process.argv[1]), process.argv[1])));`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script, cwd], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+test("Claude Code: an old project-scope vibe beside a new user-scope vibe and vibe-core keeps its own hooks there, and a disabled vibe stands the hooks down", (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-stand-down-claude-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, "claude");
+  const project = path.join(root, "old-project");
+  const other = path.join(root, "other");
+  mkdirSync(path.join(project, "src"), { recursive: true });
+  mkdirSync(other);
+  const roots = install(home, [{ name: "vibe", version: "1.1.68", hooks: true }, { name: "vibe", version: "1.1.69" }, { name: "vibe-core", version: "1.0.0" }]);
+  const write = (plugins) => writeFileSync(path.join(home, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins }));
+  write({
+    "vibe@closedloop-ai": [{ scope: "project", projectPath: project, installPath: roots["vibe@1.1.68"] }, { scope: "user", installPath: roots["vibe@1.1.69"] }],
+    "vibe-core@closedloop-ai": [{ scope: "user", installPath: roots["vibe-core@1.0.0"] }],
+  });
+  const core = roots["vibe-core@1.0.0"];
+  assert.equal(standDown(core, path.join(project, "src")), HookStandDown.VibeOwnsHooks, "the old vibe runs these guards in its project");
+  assert.equal(standDown(core, other), null, "elsewhere the new vibe's hooks are vibe-core's");
+  writeFileSync(path.join(home, "settings.json"), JSON.stringify({ enabledPlugins: { "vibe@closedloop-ai": false } }));
+  assert.equal(standDown(core, other), HookStandDown.VibeDisabled);
+  mkdirSync(path.join(other, ".claude"));
+  writeFileSync(path.join(other, ".claude", "settings.local.json"), JSON.stringify({ enabledPlugins: { "vibe@closedloop-ai": true } }));
+  assert.equal(standDown(core, other), null, "a project's own setting wins over the user's");
+});
+
+test("Codex: a vibe disabled in config.toml stands the hooks down; another plugin's setting does not", (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-stand-down-codex-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, "codex");
+  const roots = install(home, [{ name: "vibe", version: "1.1.69" }, { name: "vibe-core", version: "1.0.0" }]);
+  const core = roots["vibe-core@1.0.0"];
+  assert.equal(standDown(core, root), null, "no config.toml: enabled");
+  writeFileSync(path.join(home, "config.toml"), '[plugins."vibe-core@closedloop-ai"]\nenabled = false\n\n[plugins."vibe@closedloop-ai"]\nenabled = true\n');
+  assert.equal(standDown(core, root), null);
+  writeFileSync(path.join(home, "config.toml"), 'model = "m"\n[plugins."vibe@closedloop-ai"]  # vibe\nenabled = false\n[other]\nenabled = true\n');
+  assert.equal(standDown(core, root), HookStandDown.VibeDisabled);
 });
 
 test("a hook entry point runs once: never beside a vibe that still runs its own hooks, nor with no vibe", (t) => {

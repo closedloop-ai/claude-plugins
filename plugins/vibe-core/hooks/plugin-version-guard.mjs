@@ -29,7 +29,7 @@ import os from "node:os";
 import path from "node:path";
 import { blockingProblem, markPending, readStartupRecord } from "../lib/vibe/scripts/startup-record.mjs";
 import { commandSegments } from "./command-segments.mjs";
-import { deny } from "./hook-dispatch.mjs";
+import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { conversationSkill, hookRuntime, recordHookSkill } from "./hook-session-scope.mjs";
 import { loadedSkillEvidenceProblem, loadedSkillRequired } from "../lib/vibe/scripts/loaded-skill.mjs";
 import { pluginScriptProblems } from "../lib/vibe/scripts/plugin-script-references.mjs";
@@ -114,6 +114,6 @@ export function pluginVersionGuard(event, home = os.homedir()) {
     || (tool === "Bash" && (launchesWorker(event?.tool_input?.command) || /(?:^|\s)claude\s+-p\b/.test(String(text ?? ""))));
   if (!writerLaunch && tool !== "Agent" && tool !== "SendMessage") return null;
   if (!writerLaunch && !inVibeConversation(event, home)) return null;
-  const problem = versionProblem(event?.session_id, home) ?? pluginScriptProblems(String(text ?? ""), vibeRoot(), event?.cwd).at(0);
+  const problem = versionProblem(event?.session_id, home) ?? pluginScriptProblems(String(text ?? ""), vibeRoot(eventCwd(event)), event?.cwd).at(0);
   return problem ? deny(problem) : null;
 }

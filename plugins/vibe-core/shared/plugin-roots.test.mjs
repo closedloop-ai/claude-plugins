@@ -27,6 +27,10 @@ function plugin(root, name, version, manifest = ".claude-plugin") {
 }
 
 const from = (root) => pathToFileURL(path.join(root, "shared", "plugin-roots.mjs")).href;
+const registry = (config, plugins) => {
+  mkdirSync(path.join(config, "plugins"), { recursive: true });
+  writeFileSync(path.join(config, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins }));
+};
 
 test("the two copies of the resolver are byte-identical and import only node builtins", () => {
   assert.equal(readFileSync(VIBE_COPY, "utf8"), readFileSync(CANONICAL, "utf8"),
@@ -60,40 +64,61 @@ test("Claude Code: installed_plugins.json picks the version, never the cache's d
   // Newer and lexically later versions sit in the cache too (left behind, or not yet active).
   plugin(path.join(cache, "vibe-core", "1.0.1"), "vibe-core", "1.0.1");
   plugin(path.join(cache, "vibe-core", "2.0.0"), "vibe-core", "2.0.0");
-  const registry = (entries) => writeFileSync(path.join(config, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: entries }));
-  registry({
+  registry(config, {
     "vibe@closedloop-ai": [{ scope: "user", installPath: vibe, version: "1.1.69" }],
     "vibe-core@closedloop-ai": [{ scope: "user", installPath: installedCore, version: "1.0.0" }],
   });
   assert.equal(siblingPluginRoot("vibe-core", { from: from(vibe) }), installedCore);
   assert.equal(siblingPluginRoot("vibe", { from: from(installedCore) }), vibe, "vibe-core finds vibe's install the same way");
-
-  // Several scopes: the one matching the caller's own entry wins, then the user scope.
-  const projectCore = path.join(cache, "vibe-core", "1.0.1");
-  registry({
-    "vibe@closedloop-ai": [{ scope: "project", projectPath: "/work/app", installPath: vibe, version: "1.1.69" }],
-    "vibe-core@closedloop-ai": [
-      { scope: "user", installPath: installedCore, version: "1.0.0" },
-      { scope: "project", projectPath: "/work/app", installPath: projectCore, version: "1.0.1" },
-      { scope: "project", projectPath: "/work/other", installPath: path.join(cache, "vibe-core", "2.0.0"), version: "2.0.0" },
-    ],
-  });
-  assert.equal(siblingPluginRoot("vibe-core", { from: from(vibe) }), projectCore);
-  registry({
-    "vibe@closedloop-ai": [{ scope: "local", projectPath: "/work/app", installPath: vibe, version: "1.1.69" }],
-    "vibe-core@closedloop-ai": [{ scope: "user", installPath: installedCore }, { scope: "project", projectPath: "/work/other", installPath: projectCore }],
-  });
-  assert.equal(siblingPluginRoot("vibe-core", { from: from(vibe) }), installedCore);
-  registry({
-    "vibe@closedloop-ai": [{ scope: "local", projectPath: "/work/app", installPath: vibe }],
-    "vibe-core@closedloop-ai": [{ scope: "project", projectPath: "/work/a", installPath: installedCore }, { scope: "project", projectPath: "/work/b", installPath: projectCore }],
-  });
-  assert.throws(() => siblingPluginRoot("vibe-core", { from: from(vibe) }), /vibe-core is installed in more than one Claude Code scope \(project, project\)/);
-
-  registry({ "vibe@closedloop-ai": [{ scope: "user", installPath: vibe }] });
+  registry(config, { "vibe@closedloop-ai": [{ scope: "user", installPath: vibe }] });
   assert.throws(() => siblingPluginRoot("vibe-core", { from: from(vibe) }), /vibe-core is not installed beside vibe \(claude layout\)/);
-  registry({ "vibe@closedloop-ai": [{ scope: "user", installPath: vibe }], "vibe-core@closedloop-ai": [{ scope: "user", installPath: path.join(cache, "vibe-core", "9.9.9") }] });
+  registry(config, { "vibe@closedloop-ai": [{ scope: "user", installPath: vibe }], "vibe-core@closedloop-ai": [{ scope: "user", installPath: path.join(cache, "vibe-core", "9.9.9") }] });
   assert.throws(() => siblingPluginRoot("vibe-core", { from: from(vibe) }), /vibe-core is not installed beside vibe \(claude layout\)/, "a recorded path that is gone");
+  registry(config, { "vibe-core@closedloop-ai": [{ scope: "user", installPath: installedCore }, { scope: "user", installPath: path.join(cache, "vibe-core", "1.0.1") }] });
+  assert.throws(() => siblingPluginRoot("vibe-core", { from: from(vibe) }), /more than one Claude Code user install/);
+});
+
+test("Claude Code: the session's project decides, local before project before user", (t) => {
+  const root = base(t);
+  const config = path.join(root, "claude");
+  const cache = path.join(config, "plugins", "cache", "closedloop-ai");
+  const [p1, p2, elsewhere] = ["p1", "p2", "elsewhere"].map((name) => { mkdirSync(path.join(root, name, "src"), { recursive: true }); return path.join(root, name); });
+  const vibeP1 = plugin(path.join(cache, "vibe", "1.1.70"), "vibe", "1.1.70");
+  const vibeP2 = plugin(path.join(cache, "vibe", "1.1.69"), "vibe", "1.1.69");
+  const core = plugin(path.join(cache, "vibe-core", "1.0.0"), "vibe-core", "1.0.0");
+  // vibe in two projects and vibe-core at user scope: each session finds its own project's vibe.
+  registry(config, {
+    "vibe@closedloop-ai": [{ scope: "project", projectPath: p1, installPath: vibeP1 }, { scope: "project", projectPath: p2, installPath: vibeP2 }],
+    "vibe-core@closedloop-ai": [{ scope: "user", installPath: core }],
+  });
+  assert.equal(siblingPluginRoot("vibe", { from: from(core), cwd: path.join(p1, "src") }), vibeP1);
+  assert.equal(siblingPluginRoot("vibe", { from: from(core), cwd: p2 }), vibeP2);
+  assert.throws(() => siblingPluginRoot("vibe", { from: from(core), cwd: elsewhere }), /vibe is not installed beside vibe-core \(claude layout\)/,
+    "vibe installed only for other projects is not this session's vibe");
+  assert.equal(siblingPluginRoot("vibe-core", { from: from(vibeP1), cwd: path.join(p1, "src") }), core, "user vibe-core serves a project vibe");
+  // vibe in /p2 only: a session elsewhere has no vibe, so the hooks have nothing to guard there.
+  registry(config, { "vibe@closedloop-ai": [{ scope: "project", projectPath: p2, installPath: vibeP2 }], "vibe-core@closedloop-ai": [{ scope: "user", installPath: core }] });
+  assert.equal(siblingPluginRootOrNull("vibe", { from: from(core), cwd: elsewhere }), null);
+  assert.equal(siblingPluginRoot("vibe", { from: from(core), cwd: p2 }), vibeP2);
+  // local beats project, project beats user, and the deepest project wins.
+  const nested = path.join(p1, "src");
+  registry(config, {
+    "vibe@closedloop-ai": [{ scope: "user", installPath: vibeP2 }, { scope: "project", projectPath: p1, installPath: vibeP1 }],
+    "vibe-core@closedloop-ai": [{ scope: "user", installPath: core }],
+  });
+  assert.equal(siblingPluginRoot("vibe", { from: from(core), cwd: nested }), vibeP1);
+  assert.equal(siblingPluginRoot("vibe", { from: from(core), cwd: elsewhere }), vibeP2);
+  registry(config, {
+    "vibe@closedloop-ai": [{ scope: "project", projectPath: p1, installPath: vibeP2 }, { scope: "project", projectPath: nested, installPath: vibeP1 },
+      { scope: "local", projectPath: p1, installPath: vibeP2 }],
+    "vibe-core@closedloop-ai": [{ scope: "user", installPath: core }],
+  });
+  assert.equal(siblingPluginRoot("vibe", { from: from(core), cwd: nested }), vibeP2, "local first");
+  registry(config, {
+    "vibe@closedloop-ai": [{ scope: "project", projectPath: p1, installPath: vibeP2 }, { scope: "project", projectPath: nested, installPath: vibeP1 }],
+    "vibe-core@closedloop-ai": [{ scope: "user", installPath: core }],
+  });
+  assert.equal(siblingPluginRoot("vibe", { from: from(core), cwd: nested }), vibeP1, "the deepest project");
 });
 
 test("Codex: the active version is the one Codex itself picks", (t) => {

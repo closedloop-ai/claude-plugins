@@ -12,7 +12,8 @@
 // - a repository checkout (or a plugin loaded in place): R is plugins/<self>
 //   and the sibling is plugins/<name> beside it;
 // - Claude Code: R is <config>/plugins/cache/<marketplace>/<self>/<version>
-//   and <config>/plugins/installed_plugins.json names the sibling's install;
+//   and <config>/plugins/installed_plugins.json names the sibling's install,
+//   the one a session in the given cwd loads (its project's, else the user's);
 // - Codex: the same cache shape with no installed_plugins.json; the sibling's
 //   version is the one Codex itself treats as active (rust-v0.167.0,
 //   core-plugin-common/src/installed.rs `active_plugin_version`).
@@ -31,6 +32,8 @@ const VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const NUMERIC = /^\d+$/;
 const SCOPE_FALLBACK = "user";
+/** Claude Code scopes tied to a project, nearest first. */
+const PROJECT_SCOPES = Object.freeze(["local", "project"]);
 
 /** The `name` and `version` a plugin root's manifest declares, or null when it has none. */
 export function pluginManifest(root) {
@@ -92,30 +95,50 @@ export function activeCodexVersion(versions) {
 }
 
 /**
- * The absolute root of sibling plugin `name`, found from the plugin that holds `from`.
- * Throws with the plugin's name and install commands when it is not installed there.
+ * Where the plugin holding `from` (a file URL or path) is installed: its root, name and version, its
+ * layout (null when it is in none of the three), and for an install the harness home (Claude Code's
+ * config folder or CODEX_HOME), the marketplace and the cache folder.
  */
-export function siblingPluginRoot(name, { from }) {
+export function pluginInstall(from) {
   const self = ownPluginRoot(from);
   const parent = path.dirname(self.root);
-  if (path.basename(parent) === "plugins") {
-    const candidate = path.join(parent, name);
-    if (pluginManifest(candidate)?.name === name) return realpathSync(candidate);
-    throw missing(name, self, Layout.Checkout);
-  }
+  if (path.basename(parent) === "plugins") return { ...self, layout: Layout.Checkout, plugins: parent };
   const marketplaceDir = path.dirname(parent);
   const cacheDir = path.dirname(marketplaceDir);
   const pluginsDir = path.dirname(cacheDir);
-  if (path.basename(cacheDir) !== "cache" || path.basename(pluginsDir) !== "plugins") {
+  if (path.basename(cacheDir) !== "cache" || path.basename(pluginsDir) !== "plugins") return { ...self, layout: null };
+  const registry = path.join(pluginsDir, "installed_plugins.json");
+  return { ...self, layout: isFile(registry) ? Layout.Claude : Layout.Codex, home: path.dirname(pluginsDir),
+    marketplace: path.basename(marketplaceDir), cacheDir, registry };
+}
+
+/**
+ * The install of sibling plugin `name` that a session in `cwd` uses, found from the plugin that holds `from`:
+ * { root, layout, home?, marketplace?, scope?, projectPath? }. In Claude Code a local or project install whose
+ * project holds `cwd` wins (local first, then the deepest project), else the one user install, as Claude Code
+ * loads them. Throws with the plugin's name and install commands when there is none.
+ */
+export function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
+  const self = pluginInstall(from);
+  if (self.layout === Layout.Checkout) {
+    const candidate = path.join(self.plugins, name);
+    if (pluginManifest(candidate)?.name === name) return { root: realpathSync(candidate), layout: Layout.Checkout };
+    throw missing(name, self, Layout.Checkout);
+  }
+  if (self.layout === null) {
     throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
   }
-  const marketplace = path.basename(marketplaceDir);
-  const registry = readRegistry(path.join(pluginsDir, "installed_plugins.json"));
-  const root = registry
-    ? claudeRoot(registry, name, marketplace, self)
-    : codexRoot(path.join(cacheDir, marketplace, name), name, self);
-  if (pluginManifest(root)?.name !== name) throw missing(name, self, registry ? Layout.Claude : Layout.Codex);
-  return realpathSync(root);
+  const found = self.layout === Layout.Claude
+    ? claudeEntry(readRegistry(self.registry), name, self, cwd)
+    : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
+  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
+  return { root: realpathSync(found.installPath), layout: self.layout, home: self.home, marketplace: self.marketplace,
+    ...(found.scope ? { scope: found.scope } : {}), ...(found.projectPath ? { projectPath: found.projectPath } : {}) };
+}
+
+/** The absolute root of sibling plugin `name` (`siblingPluginInstall`'s root). */
+export function siblingPluginRoot(name, options) {
+  return siblingPluginInstall(name, options).root;
 }
 
 /** `siblingPluginRoot`, or null when the sibling cannot be found. */
@@ -127,19 +150,24 @@ export function siblingPluginRootOrNull(name, options) {
   }
 }
 
-function claudeRoot(registry, name, marketplace, self) {
-  const entries = registry.plugins ?? {};
-  const own = (entries[`${self.name}@${marketplace}`] ?? []).find((entry) => samePath(entry?.installPath, self.root));
-  const candidates = (entries[`${name}@${marketplace}`] ?? [])
+function claudeEntry(registry, name, self, cwd) {
+  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? [])
     .filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const sameScope = own
-    ? candidates.filter((entry) => entry.scope === own.scope && (entry.projectPath ?? null) === (own.projectPath ?? null))
-    : [];
-  const userScope = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  const chosen = [sameScope, userScope, candidates].find((group) => group.length === 1);
-  if (chosen) return chosen[0].installPath;
-  if (candidates.length === 0) throw missing(name, self, Layout.Claude);
-  throw new Error(`${name} is installed in more than one Claude Code scope (${candidates.map((entry) => entry.scope).join(", ")}) and none matches ${self.name}'s; keep one`);
+  const here = realOrSame(path.resolve(cwd));
+  const holds = (project) => {
+    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
+    const root = realOrSame(project);
+    return here === root || here.startsWith(`${root}${path.sep}`);
+  };
+  for (const scope of PROJECT_SCOPES) {
+    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath))
+      .sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
+    if (matching.length > 0) return matching[0];
+  }
+  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
+  if (user.length === 1) return user[0];
+  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
+  throw missing(name, self, Layout.Claude);
 }
 
 function codexRoot(base, name, self) {
@@ -167,10 +195,17 @@ function readRegistry(file) {
   }
 }
 
-function samePath(candidate, root) {
-  if (typeof candidate !== "string") return false;
+function realOrSame(file) {
   try {
-    return realpathSync(candidate) === root;
+    return realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
+function isFile(file) {
+  try {
+    return statSync(file).isFile();
   } catch {
     return false;
   }

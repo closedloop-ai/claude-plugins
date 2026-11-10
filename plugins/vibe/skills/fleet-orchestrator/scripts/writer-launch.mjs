@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { ADD_VIBE_CORE, APPROVE_HOOKS, HookApproval, UNKNOWN_METHOD, vibeCoreHookApproval } from '../../vibe/scripts/vibe-core-hooks.mjs';
+import { ADD_VIBE_CORE, APPROVE_HOOKS, HookApproval, runningHookApproval, UNKNOWN_METHOD } from '../../vibe/scripts/vibe-core-hooks.mjs';
 
 export const VIBE_PROMPT = /^\s*\$vibe\b/;
 export const VIBE_BRIEF_TICKET = /^\s*\$vibe[^\r\n]*?\b((?:ISS|PRD|FEA)-\d+)\b/;
@@ -60,8 +60,9 @@ export function recoveryTurnProblem(saved, prompt) {
 }
 
 /**
- * Why vibe's guards cannot run in Codex for a writer started in `cwd`: vibe-core, which carries them, lists no
- * hooks there, or one is disabled or not approved. Null when all run; an App Server without hooks/list is not checked.
+ * Why vibe's guards cannot run in Codex for a writer started in `cwd`, judged on the hooks that will run there:
+ * an older vibe's own when it lists any, else vibe-core's, which must be listed, enabled and approved.
+ * Null when they all run; an App Server without hooks/list is not checked.
  */
 export async function vibeHookTrustProblem(client, cwd) {
   let listing;
@@ -71,7 +72,10 @@ export async function vibeHookTrustProblem(client, cwd) {
     if (UNKNOWN_METHOD.test(error.message)) return null;
     return `could not list Codex hooks: ${error.message}`;
   }
-  const approval = vibeCoreHookApproval(listing);
+  const approval = runningHookApproval(listing);
+  if (approval.plugin === "vibe" && approval.state === HookApproval.Needed) {
+    return `vibe's Codex hooks cannot run (${approval.blocked.join(', ')}); open Codex once and approve vibe's hooks in /hooks (each vibe release before vibe-core changes the plugin bundle Codex approved), then launch again`;
+  }
   if (approval.state === HookApproval.Missing) {
     return `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; run \`${ADD_VIBE_CORE}\`, then ${APPROVE_HOOKS}, then launch again`;
   }

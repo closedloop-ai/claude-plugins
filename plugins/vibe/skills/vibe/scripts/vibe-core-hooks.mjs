@@ -16,6 +16,8 @@ export const ADD_VIBE_CORE = VIBE_CORE_INSTALL.codex;
 /** The first vibe release whose hooks ship in vibe-core; an older vibe runs its own. */
 export const FIRST_SPLIT_VIBE = "1.1.69";
 const HOOKS_PLUGIN = "vibe-core@";
+/** A vibe older than FIRST_SPLIT_VIBE registers hooks under its own id. */
+const OWN_HOOKS_PLUGIN = "vibe@";
 const APPROVED = new Set(["trusted", "managed"]);
 export const UNKNOWN_METHOD = /unknown variant|method not found/i;
 const LIST_TIMEOUT_MS = 20_000;
@@ -25,8 +27,22 @@ const LIST_TIMEOUT_MS = 20_000;
  * needed when any is disabled or neither trusted nor managed (with `blocked` naming each), else approved.
  */
 export function vibeCoreHookApproval(listing) {
+  return pluginHookApproval(listing, HOOKS_PLUGIN);
+}
+
+/**
+ * The approval state of the vibe hooks that will actually run: an older vibe that lists hooks of its own
+ * runs those (and vibe-core's stand down beside it), so they must be approved; otherwise vibe-core's must.
+ * `plugin` names whose they are.
+ */
+export function runningHookApproval(listing) {
+  const own = pluginHookApproval(listing, OWN_HOOKS_PLUGIN);
+  return own.state === HookApproval.Missing ? { ...vibeCoreHookApproval(listing), plugin: "vibe-core" } : { ...own, plugin: "vibe" };
+}
+
+function pluginHookApproval(listing, prefix) {
   const hooks = (listing?.data ?? []).flatMap((entry) => entry?.hooks ?? [])
-    .filter((hook) => String(hook?.pluginId ?? "").startsWith(HOOKS_PLUGIN));
+    .filter((hook) => String(hook?.pluginId ?? "").startsWith(prefix));
   if (hooks.length === 0) return { state: HookApproval.Missing };
   const blocked = [...new Set(hooks.filter((hook) => hook.enabled === false || !APPROVED.has(hook.trustStatus))
     .map((hook) => `${hook.key} is ${hook.enabled === false ? "disabled" : hook.trustStatus}`))];

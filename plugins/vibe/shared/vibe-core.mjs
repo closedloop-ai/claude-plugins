@@ -23,11 +23,21 @@ export function vibeCoreRoot() {
   const installed = pluginManifest(root)?.version ?? null;
   if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
     const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
-    throw new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; `
-      + `update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`);
+    throw Object.assign(new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; `
+      + `update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`), { outdated: true });
   }
   cachedRoot = root;
   return root;
+}
+
+/** Why vibe-core cannot be loaded ({ message, outdated }), or null when it can. */
+export function vibeCoreProblem() {
+  try {
+    vibeCoreRoot();
+    return null;
+  } catch (error) {
+    return { message: error.message, outdated: error.outdated === true };
+  }
 }
 
 /** The absolute path of `relative` (for example "lib/vibe/scripts/session-record.mjs") inside vibe-core. */
@@ -40,8 +50,16 @@ export function vibeCore(relative) {
   return import(pathToFileURL(vibeCorePath(relative)).href);
 }
 
-/** Runs the vibe-core command-line module at `relative` as if node had been started with it. */
+/**
+ * Runs the vibe-core command-line module at `relative` as if node had been started with it. Without a
+ * usable vibe-core it prints why, with the fix, and exits 2 instead of failing with a stack trace.
+ */
 export async function runVibeCoreMain(relative) {
+  const problem = vibeCoreProblem();
+  if (problem) {
+    process.stderr.write(`${path.basename(relative)}: ${problem.message}\n`);
+    process.exit(2);
+  }
   process.argv[1] = vibeCorePath(relative);
   await import(pathToFileURL(process.argv[1]).href);
 }

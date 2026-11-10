@@ -4,5 +4,7 @@ export declare function pluginManifest(root: string): { name: string; version: s
 export declare function ownPluginRoot(from: string): { root: string; name: string; version: string | null };
 export declare function comparePluginVersions(left: string, right: string): number;
 export declare function activeCodexVersion(versions: string[]): string | null;
-export declare function siblingPluginRoot(name: string, options: { from: string }): string;
-export declare function siblingPluginRootOrNull(name: string, options: { from: string }): string | null;
+export declare function siblingPluginRoot(name: string, options: { from: string; cwd?: string }): string;
+export declare function siblingPluginRootOrNull(name: string, options: { from: string; cwd?: string }): string | null;
+export declare function pluginInstall(from: string): { root: string; name: string; version: string | null; layout: "checkout" | "claude" | "codex" | null; home?: string; marketplace?: string };
+export declare function siblingPluginInstall(name: string, options: { from: string; cwd?: string }): { root: string; layout: "checkout" | "claude" | "codex"; home?: string; marketplace?: string; scope?: string; projectPath?: string };

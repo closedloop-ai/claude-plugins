@@ -12216,6 +12216,7 @@ var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
 var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 var NUMERIC = /^\d+$/;
 var SCOPE_FALLBACK = "user";
+var PROJECT_SCOPES = Object.freeze(["local", "project"]);
 function pluginManifest(root) {
   for (const relative of MANIFESTS) {
     try {
@@ -12263,36 +12264,64 @@ function activeCodexVersion(versions) {
   if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
   return [...valid].sort(comparePluginVersions).at(-1);
 }
-function siblingPluginRoot(name, { from }) {
+function pluginInstall(from) {
   const self = ownPluginRoot(from);
   const parent = path.dirname(self.root);
-  if (path.basename(parent) === "plugins") {
-    const candidate = path.join(parent, name);
-    if (pluginManifest(candidate)?.name === name) return realpathSync5(candidate);
-    throw missing(name, self, Layout.Checkout);
-  }
+  if (path.basename(parent) === "plugins") return { ...self, layout: Layout.Checkout, plugins: parent };
   const marketplaceDir = path.dirname(parent);
   const cacheDir = path.dirname(marketplaceDir);
   const pluginsDir = path.dirname(cacheDir);
-  if (path.basename(cacheDir) !== "cache" || path.basename(pluginsDir) !== "plugins") {
+  if (path.basename(cacheDir) !== "cache" || path.basename(pluginsDir) !== "plugins") return { ...self, layout: null };
+  const registry = path.join(pluginsDir, "installed_plugins.json");
+  return {
+    ...self,
+    layout: isFile(registry) ? Layout.Claude : Layout.Codex,
+    home: path.dirname(pluginsDir),
+    marketplace: path.basename(marketplaceDir),
+    cacheDir,
+    registry
+  };
+}
+function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
+  const self = pluginInstall(from);
+  if (self.layout === Layout.Checkout) {
+    const candidate = path.join(self.plugins, name);
+    if (pluginManifest(candidate)?.name === name) return { root: realpathSync5(candidate), layout: Layout.Checkout };
+    throw missing(name, self, Layout.Checkout);
+  }
+  if (self.layout === null) {
     throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
   }
-  const marketplace = path.basename(marketplaceDir);
-  const registry = readRegistry(path.join(pluginsDir, "installed_plugins.json"));
-  const root = registry ? claudeRoot(registry, name, marketplace, self) : codexRoot(path.join(cacheDir, marketplace, name), name, self);
-  if (pluginManifest(root)?.name !== name) throw missing(name, self, registry ? Layout.Claude : Layout.Codex);
-  return realpathSync5(root);
+  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
+  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
+  return {
+    root: realpathSync5(found.installPath),
+    layout: self.layout,
+    home: self.home,
+    marketplace: self.marketplace,
+    ...found.scope ? { scope: found.scope } : {},
+    ...found.projectPath ? { projectPath: found.projectPath } : {}
+  };
 }
-function claudeRoot(registry, name, marketplace, self) {
-  const entries = registry.plugins ?? {};
-  const own = (entries[`${self.name}@${marketplace}`] ?? []).find((entry) => samePath(entry?.installPath, self.root));
-  const candidates = (entries[`${name}@${marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const sameScope = own ? candidates.filter((entry) => entry.scope === own.scope && (entry.projectPath ?? null) === (own.projectPath ?? null)) : [];
-  const userScope = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  const chosen = [sameScope, userScope, candidates].find((group) => group.length === 1);
-  if (chosen) return chosen[0].installPath;
-  if (candidates.length === 0) throw missing(name, self, Layout.Claude);
-  throw new Error(`${name} is installed in more than one Claude Code scope (${candidates.map((entry) => entry.scope).join(", ")}) and none matches ${self.name}'s; keep one`);
+function siblingPluginRoot(name, options) {
+  return siblingPluginInstall(name, options).root;
+}
+function claudeEntry(registry, name, self, cwd) {
+  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
+  const here = realOrSame(path.resolve(cwd));
+  const holds = (project) => {
+    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
+    const root = realOrSame(project);
+    return here === root || here.startsWith(`${root}${path.sep}`);
+  };
+  for (const scope of PROJECT_SCOPES) {
+    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
+    if (matching.length > 0) return matching[0];
+  }
+  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
+  if (user.length === 1) return user[0];
+  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
+  throw missing(name, self, Layout.Claude);
 }
 function codexRoot(base, name, self) {
   let versions;
@@ -12315,10 +12344,16 @@ function readRegistry(file) {
     return null;
   }
 }
-function samePath(candidate, root) {
-  if (typeof candidate !== "string") return false;
+function realOrSame(file) {
   try {
-    return realpathSync5(candidate) === root;
+    return realpathSync5(file);
+  } catch {
+    return file;
+  }
+}
+function isFile(file) {
+  try {
+    return statSync2(file).isFile();
   } catch {
     return false;
   }
@@ -12353,6 +12388,7 @@ function compareIdentifier(left, right) {
 
 // ../../plugins/vibe/shared/vibe-core.mjs
 var VIBE_CORE_MIN = "1.0.0";
+var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
 var cachedRoot = null;
 function vibeCoreRoot() {
   if (cachedRoot) return cachedRoot;
@@ -12360,7 +12396,7 @@ function vibeCoreRoot() {
   const installed = pluginManifest(root)?.version ?? null;
   if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
     const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
-    throw new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`codex plugin add vibe-core@closedloop-ai\` in Codex`);
+    throw Object.assign(new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`), { outdated: true });
   }
   cachedRoot = root;
   return root;

@@ -33,7 +33,7 @@ test("a version change with every vibe-core hook trusted says nothing", async (t
   assert.equal(asked.count, 2);
 });
 
-test("a version change that leaves a vibe-core hook modified raises one alert, and the next wake neither asks nor repeats it", async (t) => {
+test("a version change that leaves a vibe-core hook modified raises one alert, keeps it unchanged while it is needed, and clears it once approved", async (t) => {
   const dir = stateDir(t);
   const trusted = approvals({ state: HookApproval.Approved });
   await hookApprovalWatch("remote", dir, { versions: { vibe: "1.1.69", "vibe-core": "1.0.0" }, approval: trusted.approval });
@@ -41,10 +41,29 @@ test("a version change that leaves a vibe-core hook modified raises one alert, a
   const alert = await hookApprovalWatch("remote", dir, { versions: { vibe: "1.1.69", "vibe-core": "1.0.1" }, approval: modified.approval });
   assert.equal(alert.checked, true);
   assert.equal(alert.line, `HOOK-APPROVAL remote vibe 1.1.69 vibe-core 1.0.1: vibe-core's hooks are not approved in Codex (${KEY} is modified), so vibe's guards cannot run there: ${APPROVE_HOOKS}`);
-  // The watcher diffs whole passes: the same line on the next pass is no new event, and hooks/list is not asked again.
+  // The watcher diffs whole passes: the same line on the next pass is no new event. While it is needed, hooks/list
+  // is asked again so the line goes away once the person approves.
   const next = await hookApprovalWatch("remote", dir, { versions: { vibe: "1.1.69", "vibe-core": "1.0.1" }, approval: modified.approval });
-  assert.deepEqual(next, { line: alert.line, checked: false });
-  assert.equal(modified.asked.count, 1);
+  assert.deepEqual(next, { line: alert.line, checked: true });
+  assert.equal(modified.asked.count, 2);
+  const approved = await hookApprovalWatch("remote", dir, { versions: { vibe: "1.1.69", "vibe-core": "1.0.1" }, approval: trusted.approval });
+  assert.deepEqual(approved, { line: null, checked: true });
+  const settled = await hookApprovalWatch("remote", dir, { versions: { vibe: "1.1.69", "vibe-core": "1.0.1" }, approval: modified.approval });
+  assert.deepEqual(settled, { line: null, checked: false }, "an approved answer is final for that version: no re-ask, no re-alert");
+  assert.equal(modified.asked.count, 2);
+});
+
+test("an answer that could not be read is retried, and its alert still comes once the check succeeds", async (t) => {
+  const dir = stateDir(t);
+  const versions = { vibe: "1.1.69", "vibe-core": "1.0.0" };
+  const unchecked = approvals({ state: HookApproval.Unchecked, reason: "Codex hook listing timed out" });
+  const first = await hookApprovalWatch("local", dir, { versions, approval: unchecked.approval });
+  assert.equal(first.line, "HOOK-APPROVAL local vibe 1.1.69 vibe-core 1.0.0: couldn't check whether vibe-core's hooks are approved in Codex (Codex hook listing timed out)");
+  assert.deepEqual(await hookApprovalWatch("local", dir, { versions, approval: unchecked.approval }), { line: first.line, checked: true });
+  const needed = approvals({ state: HookApproval.Needed, blocked: [`${KEY} is untrusted`] });
+  const alert = await hookApprovalWatch("local", dir, { versions, approval: needed.approval });
+  assert.match(alert.line, /is untrusted\), so vibe's guards cannot run there: open Codex once and approve vibe-core's hooks in \/hooks$/);
+  assert.equal(unchecked.asked.count, 2);
 });
 
 test("a missing vibe-core names its add command; an older vibe, an unreadable listing or no hooks/list are handled plainly", async (t) => {

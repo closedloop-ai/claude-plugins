@@ -73,13 +73,22 @@
 // worker launches in Claude Code while it is (vibe-core's hooks/plugin-version-guard.mjs).
 
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { vibeCore, vibeCoreProblem } from "../../../shared/vibe-core.mjs";
 import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine } from "./vibe-core-hooks.mjs";
+import { BUNDLED_CODEX, findCli, installedPlugins, MARKETPLACE } from "./plugin-cli.mjs";
+import { Choice, Connection, runWithoutVibeCore } from "./plugin-version-bootstrap.mjs";
+
+// Without vibe-core (a Codex vibe update that did not add it) the modules below cannot load, so the
+// command line reports the missing dependency and how to add it, and stops here (ISS-13869).
+const missingCore = vibeCoreProblem();
+if (missingCore && process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  process.exit(await runWithoutVibeCore(process.argv.slice(2), missingCore));
+}
 
 const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -88,12 +97,10 @@ const { RELEASE_VERSION: VERSION, readJson, startupDir, writeJson } = startupRec
 export const { VersionStatus, blockingProblem, compareVersions, installedVibeVersion, loadedSkillProblem, markPending,
   readStartupRecord, startupFile } = startupRecord;
 
-export const MARKETPLACE = "closedloop-ai";
+export { BUNDLED_CODEX, findCli, installedPlugins, MARKETPLACE };
 export const LATEST_BASE = "https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main";
-export const BUNDLED_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
 export { Harness };
-export const Choice = Object.freeze({ Update: "update", Proceed: "proceed" });
-export const Connection = Object.freeze({ Connected: "connected", NotConnected: "not-connected" });
+export { Choice, Connection };
 export const StrandedMigration = Object.freeze({ Migrated: "migrated", OnResume: "on-resume", Failed: "failed" });
 const VIBE_BRANCH = "vibe/";
 const MANIFEST = Object.freeze({ claude: ".claude-plugin/plugin.json", codex: ".codex-plugin/plugin.json" });
@@ -130,27 +137,6 @@ export function loadedSkillForCheck(previous, current, conversation, runtime, no
     if (VERSION.test(priorVersion ?? "")) return { conversation, runtime, version: priorVersion, at: previous.checkedAt ?? now.toISOString(), inferred: true };
   }
   return null;
-}
-
-/** The CLI for `harness` that exists on this machine, or null: PATH first, then its usual install places. */
-export function findCli(harness, env = process.env, home = os.homedir()) {
-  const fallbacks = harness === Harness.Claude
-    ? [path.join(home, ".local", "bin", "claude"), path.join(home, ".claude", "local", "claude")]
-    : [BUNDLED_CODEX];
-  return onPath(harness, env) ?? fallbacks.find(isExecutable) ?? null;
-}
-
-/** The enabled closedloop-ai plugins one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
-export function installedPlugins(harness, listing) {
-  const parsed = typeof listing === "string" ? JSON.parse(listing) : listing;
-  if (harness === Harness.Claude) {
-    const rows = Array.isArray(parsed) ? parsed : [];
-    return rows.filter((row) => typeof row?.id === "string" && row.id.endsWith(`@${MARKETPLACE}`) && row.enabled !== false)
-      .map((row) => ({ name: row.id.slice(0, -MARKETPLACE.length - 1), id: row.id, version: row.version ?? null, scope: row.scope ?? null }));
-  }
-  const rows = Array.isArray(parsed?.installed) ? parsed.installed : [];
-  return rows.filter((row) => row?.marketplaceName === MARKETPLACE && row.installed !== false && row.enabled !== false && typeof row.name === "string")
-    .map((row) => ({ name: row.name, id: row.pluginId ?? `${row.name}@${MARKETPLACE}`, version: row.version ?? null, marketplace: marketplaceOf(row) }));
 }
 
 /** The per-plugin verdicts for one harness, given each plugin's latest version or the reason it is unknown. */
@@ -431,33 +417,6 @@ function latestNote(plugin) {
     return "latest";
   }
   return "couldn't check for a newer version";
-}
-
-function onPath(name, env) {
-  for (const dir of (env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
-    const candidate = path.join(dir, name);
-    if (isExecutable(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function isExecutable(file) {
-  try {
-    accessSync(file, constants.X_OK);
-    return statSync(file).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function marketplaceOf(row) {
-  const source = row.marketplaceSource;
-  if (source?.sourceType === "local" && typeof source.source === "string") {
-    return { type: "local", root: source.source };
-  }
-  return { type: source?.sourceType ?? "unknown" };
 }
 
 function listInstalled(harness, cli) {
