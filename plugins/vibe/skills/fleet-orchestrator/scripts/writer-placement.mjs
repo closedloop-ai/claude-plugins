@@ -32,7 +32,7 @@ export function readPlacementEvidence(file) {
 
 /** Records the check's decision for `ticket` from `evidence`, or the operator's `keepLocal` reason against a cloud decision. */
 export function recordPlacement(placements, ticket, { evidence, keepLocal }, at) {
-  if (!TICKET.test(ticket ?? "")) throw new Error("placement needs a ticket slug such as ISS-123.");
+  if (!TICKET.test(ticket ?? "")) throw new Error("placement needs a ticket slug: capital letters, a hyphen and a number.");
   if (evidence === undefined && keepLocal === undefined) {
     throw new Error("placement needs --evidence <file> (the check runs on it) or --keep-local <the operator's reason>.");
   }
@@ -60,7 +60,7 @@ export function writerPlacementProblem(placements, writer, tickets) {
     return `writer ${writer} names no ticket: pass --tickets <slug,slug> (or record its unit with --writer ${writer}) so its placement is checked.`;
   }
   const bad = tickets.filter((ticket) => !TICKET.test(ticket));
-  if (bad.length > 0) return `--tickets takes ticket slugs such as ISS-123, got ${bad.join(", ")}.`;
+  if (bad.length > 0) return `--tickets takes ticket slugs (capital letters, a hyphen and a number), got ${bad.join(", ")}.`;
   const problems = tickets.flatMap((ticket) => {
     const decision = placements[ticket];
     if (!decision) {

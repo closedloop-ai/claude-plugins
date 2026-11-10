@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - fleet-orchestrator's Cloud workers section states one rule: the placement is recorded before every writer start, whatever the off-by-default runtime routing says, and names the check's location in vibe-core (`lib/fleet-orchestrator/scripts/cloud-placement.mjs`) and the cloud worker's (`lib/vibe/scripts/`). The routing line says it never decides placement. The new-chat steps (references/state.md) and the setup checklist (references/setup.md) name the same location, and the writer row usage names `--tickets`.
 - Existing board, fleet-home and snapshot tests record a local placement for the ticket their writers start on.
 - The README version line and the Python and vibe-bench release-pin tests move to 1.1.80.
-- Across all plugin Markdown, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 100 words longer than in 1.1.78 (origin/main at this update, ffd0750a).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 100 words longer than in 1.1.78 (origin/main at this update, ffd0750a).
 ### vibe v1.1.78
 
 #### Added
