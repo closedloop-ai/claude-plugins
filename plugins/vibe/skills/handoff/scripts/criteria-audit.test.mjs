@@ -4,7 +4,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { auditProblems, EvidenceAt, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
+
+const SCRIPT = fileURLToPath(new URL("./criteria-audit.mjs", import.meta.url));
 
 const TICKET = `## Scope and acceptance criteria
 
@@ -85,6 +88,43 @@ test("a test ref must name a file that exists: in the worktree at a candidate au
     // The candidate audit runs before the first commit, so an uncommitted test the writer just wrote is real evidence.
     assert.deepEqual(auditProblems(rows("untracked.spec.ts"), criteria, dir), []);
     assert.deepEqual(auditProblems(rows("missing.spec.ts"), criteria, dir), ["AC-1: the test missing.spec.ts does not exist in the worktree; a planned test is not evidence"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a fleet unit's member tickets are audited with the session's ticket, as <slug>:AC-n (ISS-13924)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "criteria-members-"));
+  try {
+    execFileSync("git", ["init", "-q", dir], { stdio: "ignore" });
+    const gitDir = execFileSync("git", ["-C", dir, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+    writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ memberTickets: ["ISS-124"] }));
+    const ticket = path.join(dir, "ticket.md");
+    const member = path.join(dir, "member.md");
+    const audit = path.join(dir, "audit.md");
+    const matrix = path.join(dir, "matrix.json");
+    writeFileSync(ticket, TICKET);
+    writeFileSync(member, "- Acceptance criteria:\n  - [ ] The group header shows its count\n");
+    const met = (id) => `| ${id} | MET | script | pnpm test |\n`;
+    const cells = (ids) => JSON.stringify({ surfaces: ["web"], inputs: ["*"], flags: [], rows: ids.map((criterion) => ({ criterion, surface: "web", input: "*", evidence: "not input-driven: unit test" })) });
+    const run = (...extra) => {
+      try {
+        return { status: 0, json: JSON.parse(execFileSync(process.execPath, [SCRIPT, "--worktree", dir, "--ticket", ticket, "--audit", audit, "--matrix", matrix, ...extra], { encoding: "utf8" })) };
+      } catch (error) {
+        return { status: error.status, json: JSON.parse(error.stdout) };
+      }
+    };
+    writeFileSync(audit, met("AC-1") + met("AC-2"));
+    writeFileSync(matrix, cells(["AC-1", "AC-2"]));
+    assert.deepEqual(run().json.problems, ["member ISS-124 is recorded on the session but has no --member body; its criteria are not audited"]);
+    const unaudited = run("--member", `ISS-124=${member}`);
+    assert.equal(unaudited.status, 1);
+    assert.deepEqual(unaudited.json.problems, ["ISS-124:AC-1: not audited", "ISS-124:AC-1 x web x *: no test or QA evidence"]);
+    writeFileSync(audit, met("AC-1") + met("AC-2") + met("ISS-124:AC-1"));
+    writeFileSync(matrix, cells(["AC-1", "AC-2", "ISS-124:AC-1"]));
+    const passing = run("--member", `ISS-124=${member}`);
+    assert.equal(passing.status, 0);
+    assert.deepEqual(passing.json.criteria, ["AC-1", "AC-2", "ISS-124:AC-1"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

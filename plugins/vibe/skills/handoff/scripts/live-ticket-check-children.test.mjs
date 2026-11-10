@@ -102,3 +102,19 @@ test("the CLI reports the children gate beside the ticket check", (t) => {
   assert.equal(failed.status, 1);
   assert.equal(failed.json.children.ok, false);
 });
+
+test("every member ticket the session records is reconciled in the child map (ISS-13924)", (t) => {
+  const { home, checkout, base, facts } = fixture(t);
+  const map = { reviewer: "vibe-ticket-worker", pullRequest: PULL, children: [{ slug: "ISS-9393", classification: "delivered", items: [MET] }] };
+  assert.deepEqual(checkChildEvidence(map, facts, ["ISS-9393"]).inReview, ["ISS-9393"]);
+  const missing = checkChildEvidence(map, facts, ["ISS-9393", "ISS-9394"]);
+  assert.equal(missing.ok, false);
+  assert.deepEqual(missing.problems, [{ slug: "ISS-9394", problem: "is a member ticket of this session and is missing from the map; reconcile it like a child" }]);
+  const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home.home);
+  writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ memberTickets: ["ISS-9394"] }));
+  const ticket = path.join(home.root, "ticket.md");
+  writeFileSync(ticket, "## What this is\nFixture.\n");
+  const noMap = runNode(SCRIPT, ["--file", ticket, "--worktree", checkout, "--base-commit", base], home.home);
+  assert.equal(noMap.status, 1);
+  assert.deepEqual(noMap.json.children.problems, [{ slug: "ISS-9394", problem: "is a member ticket of this session; pass --child-evidence with it reconciled" }]);
+});

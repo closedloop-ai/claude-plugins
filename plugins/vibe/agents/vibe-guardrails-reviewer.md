@@ -204,7 +204,7 @@ path merely because another rule describes how its content should look.
      make a check pass (`guardrails.md`, "Checks") is blocking too. So is a new
      check nobody asked for: a gate, validator, lint rule, CI step or repo-wide
      test, or a shared test helper widened to support one, that the ticket, its
-     PRD or the person's requests do not name (`guardrails.md`, "Checks");
+     member tickets (`memberTickets`), their PRDs or the person's requests do not name (`guardrails.md`, "Checks");
      quote the ticket, PRD or request words you searched.
    - For each test file whose name, `describe` title or
      folder names a module the leftovers check in 8 found deleted or moved,
