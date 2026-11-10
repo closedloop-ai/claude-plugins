@@ -1193,6 +1193,15 @@ test("ISS-13846 final review L-NEG a card count excluding loading items in any f
   const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
   assert.deepEqual(candidates.filter(({ kind }) => kind === "layout").map(({ id }) => Number(id.split(":").at(-1))), [2, 3, 4, 5, 6],
     "only the positive aria-busy count on line 7 is a busy-state count (PC-2)");
+  const compared = changed("e2e/documents-summary-cards.spec.ts", [
+    'test("one summary card", async ({ page }) => {',
+    '  expect(cards.filter((card) => card.status !== "loading")).toHaveLength(1);',
+    '  expect(cards.filter((card) => card.dataset.busy === "false")).toHaveLength(1);',
+    "});",
+  ].join("\n"), ['!== "loading"', '=== "false"']);
+  assert.deepEqual(testIntegrityCandidates([compared.file], path => path === compared.file.path ? compared.source : null)
+    .filter(({ kind }) => kind === "layout").map(({ id }) => Number(id.split(":").at(-1))), [2, 3],
+    "a count filtered by an inequality or a false comparison counts ordinary cards");
 });
 
 test("ISS-13846 final review B1 B2 B3 a later query the gate can key is refused when ambiguous, and arrow helpers are attributed", t => {

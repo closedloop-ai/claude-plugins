@@ -528,6 +528,10 @@ export function prEvidenceValidationProblems(evidence, commit, options = {}) {
   const candidateProblem = Array.isArray(files) ? [] : ["changed proof candidates need an exact worktree or explicit test corpus"];
   if (!Array.isArray(files)) files = [];
   const readSource = options.readSource ?? (worktree ? file => proofSourceAt(worktree, file) : () => null);
+  // The changed corpus is read as main reads it; only evidence-named proof paths go through the bounded reader.
+  const readCandidates = options.readCandidates ?? (worktree ? file => {
+    try { return readFileSync(path.join(worktree, file), "utf8"); } catch { return null; }
+  } : readSource);
   const specs = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : [])
     .filter(entry => entry?.kind === "e2e").map(entry => entry.path);
   return [
@@ -538,7 +542,7 @@ export function prEvidenceValidationProblems(evidence, commit, options = {}) {
     ...sourceProblems,
     ...scopeProblems,
     ...candidateProblem,
-    ...testIntegrityProblems(evidence, files, readSource, commit, receiptDir),
+    ...testIntegrityProblems(evidence, files, readSource, commit, receiptDir, readCandidates),
     ...capabilityProbeProblems(evidence, worktree, commit, probeCapability, currentCommit),
   ];
 }

@@ -31,8 +31,9 @@ const NOT_BUSY = new RegExp([
   String.raw`!\s*(?:[A-Za-z_$][\w$]*\??\.)*(?:is)?(?:busy|loading)\b`,
   String.raw`(?:[A-Za-z_$][\w$]*\??\.)*(?:is)?(?:busy|loading)\s*(?:===?\s*false|!==?\s*true)\b`,
 ].join("|"), "i");
-// Any other negation in a busy-state count (`:not(...)`, `hasNot`, `hasNotText`) also keeps the layout check.
-const BUSY_NEGATION = /:not\(|\bhasNot(?:Text)?\b/i;
+// Any other negation in a busy-state count (`:not(...)`, `hasNot`, `hasNotText`, an inequality or a
+// comparison with false) also keeps the layout check.
+const BUSY_NEGATION = /:not\(|\bhasNot(?:Text)?\b|!==?|===?\s*["'`]?false\b/i;
 const PROOF_CLASSES = new Set(["responsive", "absence", "layout"]);
 const SHA = /^[a-f0-9]{40}$/;
 
@@ -494,8 +495,8 @@ export function testIntegrityProofShapeProblems(evidence, receiptDir, readSource
 }
 
 /** Missing, stale, or mismatched proof for candidates recomputed from the final diff. */
-export function testIntegrityProblems(evidence, files, read, commit, receiptDir) {
-  const candidates = testIntegrityCandidates(files, read);
+export function testIntegrityProblems(evidence, files, read, commit, receiptDir, readCandidates = read) {
+  const candidates = testIntegrityCandidates(files, readCandidates);
   if (candidates.length === 0) return [];
   const problems = [...testIntegrityProofShapeProblems(evidence, receiptDir, read)];
   const proofs = Array.isArray(evidence?.testIntegrityProofs) ? evidence.testIntegrityProofs : [];

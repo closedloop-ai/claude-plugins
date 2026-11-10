@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -210,6 +210,20 @@ test("ISS-13846 review DT-30 shared validator honors authenticated scoped files"
   const problems = prEvidenceValidationProblems(evidence, commit, { worktree: wt, files: [],
     readSource: file => readFileSync(path.join(wt, file), "utf8") });
   assert.doesNotMatch(problems.join("\n"), /failing-mutation proof|changed responsive, absence/i);
+});
+
+test("ISS-13846 final review F-READCAP a changed test the proof reader refuses still yields its candidate", t => {
+  const { wt } = iss13846Session(t);
+  const lines = ['test("linked", () => {', "  expect(", '    screen.queryByText("stale")', "  ).toBeNull();", "});"];
+  writeFileSync(path.join(wt, "linked-target.txt"), `${lines.join("\n")}\n`);
+  rmSync(path.join(wt, ISS13846_TEST));
+  symlinkSync(path.join(wt, "linked-target.txt"), path.join(wt, ISS13846_TEST));
+  const commit = git(wt, ["rev-parse", "HEAD"]);
+  const evidence = { ...ISS13846_SELECTED, targetedInventory: { ...ISS13846_SELECTED.targetedInventory, commit },
+    testIntegrityProofs: [], testRuns: [], touchFlows: [], touchFlowsReason: "fixture" };
+  const files = [{ path: ISS13846_TEST, status: "M", hunks: [{ added: [{ line: 3, text: lines[2] }] }] }];
+  assert.match(prEvidenceValidationProblems(evidence, commit, { worktree: wt, files }).join("\n"),
+    new RegExp(`absence:${ISS13846_TEST}:2: needs exactly one failing-mutation proof`));
 });
 
 
