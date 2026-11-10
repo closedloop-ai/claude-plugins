@@ -265,6 +265,16 @@ test("ISS-13846 positive presence assertions are not absence mutation candidates
   assert.deepEqual(testIntegrityCandidates([multiline.file], path => path === multiline.file.path ? multiline.source : null), []);
 });
 
+test("ISS-13846 final review ADV-1 a positive assertion does not hide an unparsed absence check on its line", () => {
+  const fixture = changed("src/presence.test.tsx", [
+    'test("mixed", () => {',
+    '  expect(screen.queryByText("a")).not.toBeNull(); expect(screen.queryByText("b")).toBeFalsy();',
+    "});",
+  ].join("\n"), ["toBeFalsy"]);
+  const candidates = testIntegrityCandidates([fixture.file], path => path === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.map(({ id }) => id), ["absence:src/presence.test.tsx:2"]);
+});
+
 test("ISS-13846 a busy-state count in a summary spec is not card-layout proof", () => {
   const fixture = changed("e2e/documents-summary-scope.spec.ts", [
     'test("one busy list", async () => {',

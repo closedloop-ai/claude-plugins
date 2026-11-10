@@ -133,7 +133,8 @@ function parsedAssertions(source, changedLines) {
     const endLine = lineNumberAt(source, matcherClose);
     if (!changedLines.some((entry) => entry.line >= line && entry.line <= endLine)) continue;
     const column = match.index - source.lastIndexOf("\n", match.index);
-    matches.push({ line, column, endLine, absence, text: source.slice(match.index, matcherClose + 1).replace(/\s+/g, " ") });
+    matches.push({ line, column, endLine, absence, start: match.index, end: matcherClose + 1,
+      text: source.slice(match.index, matcherClose + 1).replace(/\s+/g, " ") });
   }
   return matches;
 }
@@ -182,9 +183,9 @@ export function testIntegrityCandidates(files, read) {
         found.push(candidate("responsive", file.path, entry.line, caseName,
           "changed test names a narrow or mobile state"));
       }
-      const inParsedAssertion = parsedMatches.some((match) => entry.line >= match.line && entry.line <= match.endLine);
-      if (!inParsedAssertion && (ABSENCE_ASSERTION.test(entry.text)
-        || (QUERY_ASSERTION.test(entry.text) && /(?:toBeNull|not\.toBe|toHaveCount\(\s*0)/.test(context)))) {
+      const unparsed = unparsedLineText(source, entry.line, parsedMatches);
+      if (ABSENCE_ASSERTION.test(unparsed)
+        || (QUERY_ASSERTION.test(unparsed) && /(?:toBeNull|not\.toBe|toHaveCount\(\s*0)/.test(context))) {
         found.push(candidate("absence", file.path, entry.line, caseName,
           "changed assertion claims an element is absent", entry.text.trim(), "",
           `${file.path}:${entry.line}:${entry.text.search(/\S/) + 1}`));
@@ -648,4 +649,18 @@ function assertionKey(argument, source) {
 /** The attribute, class and id names a selector depends on. */
 function selectorTokens(selector) {
   return [...selector.matchAll(/[A-Za-z][\w-]*/g)].map((match) => match[0]).filter((token) => token.length > 2);
+}
+
+/** A source line with every parsed assertion's own text blanked, so the line fallback sees only the rest. */
+function unparsedLineText(source, line, matches) {
+  let start = 0;
+  for (let current = 1; current < line; current += 1) start = source.indexOf("\n", start) + 1;
+  const end = source.indexOf("\n", start) < 0 ? source.length : source.indexOf("\n", start);
+  let text = source.slice(start, end);
+  for (const match of matches) {
+    const from = Math.max(match.start, start) - start;
+    const to = Math.min(match.end, end) - start;
+    if (from < to) text = `${text.slice(0, from)}${" ".repeat(to - from)}${text.slice(to)}`;
+  }
+  return text;
 }
