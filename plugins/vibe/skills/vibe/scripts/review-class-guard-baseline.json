@@ -9,6 +9,7 @@
   "configurationEnvironment": [
     "FLEET_HOME",
     "FLEET_SUPERVISOR_LOCK",
+    "VIBE_CLOUD_CLAUDE_ENV",
     "VIBE_E2E_DOCKER",
     "VIBE_E2E_FOREIGN_COMPOSE",
     "VIBE_HEAVY_CORES",
