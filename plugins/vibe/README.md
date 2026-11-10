@@ -372,7 +372,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.77` contains 17 skills and 17 agents, and no hook manifest: its
+Version `1.1.80` contains 17 skills and 17 agents, and no hook manifest: its
 hooks, and every module they run, ship in the `vibe-core` plugin, which vibe
 declares as a dependency. vibe loads those modules from vibe-core through
 `shared/vibe-core.mjs`, and the commands among them keep thin wrappers at
@@ -383,5 +383,5 @@ helpers they share, and the `conftest.py` that applies the second. Runtime helpe
 `shared/` when reused across skills. They include vibe session and prototype records, the triage classifier and its manifest (recommendations off by default), local-plan publication guards, bundled
 persistent writer state, Claude launch/resume and shared main-sync publication
 helpers, handoff checks, sweep ownership and worker recovery, and the
-work-report renderer, the WS3 control scripts (`setup-ctl`, `env-ctl`, `graph-pack`, `guardrails-gate`, `verify-run`, `req-gather`, `prototype-share`, `ticket-ctl` and the handoff inventory's `bundle`) that run a worker's mechanical steps with no model, each optional for the worker that uses it, and the WS8 load-aware execution scripts (`heavy-budget`, `load-admission`, `lane-pool`, `verify-background`) that make `run-bounded` and `verify-run` cooperate under load, the fleet dispatch scripts (`dispatch-route`, `dispatch-budget`, `cloud-placement`), the Vibe `cloud-worker` command, and `references/` files split out of the handoff, vibe, quality-loop, guardrails and fleet-orchestrator text that each skill reads only when its stated condition holds (`skill-split.mjs` reads a split file whole for tests). Shared PR-monitor notification delivery and manual-QA
+work-report renderer, the WS3 control scripts (`setup-ctl`, `env-ctl`, `graph-pack`, `guardrails-gate`, `verify-run`, `req-gather`, `prototype-share`, `ticket-ctl` and the handoff inventory's `bundle`) that run a worker's mechanical steps with no model, each optional for the worker that uses it, and the WS8 load-aware execution scripts (`heavy-budget`, `load-admission`, `lane-pool`, `verify-background`) that make `run-bounded` and `verify-run` cooperate under load, the fleet dispatch scripts (`dispatch-route`, `dispatch-budget`, `cloud-placement`, `writer-placement`), the Vibe `cloud-worker` command, and `references/` files split out of the handoff, vibe, quality-loop, guardrails and fleet-orchestrator text that each skill reads only when its stated condition holds (`skill-split.mjs` reads a split file whole for tests). Shared PR-monitor notification delivery and manual-QA
 browser helpers live in `closedloop-core`.

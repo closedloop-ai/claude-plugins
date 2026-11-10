@@ -290,7 +290,9 @@ test('board lines are snapshot lines: a scope change the writer has not acknowle
   git('branch', 'pushed');
   git('branch', '--set-upstream-to=pushed');
   const boardRun = (...args) => spawnSync(process.execPath, [board, f.work, ...args], { encoding: 'utf8' });
-  assert.equal(boardRun('writer', 'w1', '--worktree', tree).status, 0);
+  writeFileSync(join(f.root, 'placement.json'), JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: [] }));
+  assert.equal(boardRun('placement', 'ISS-1', '--evidence', join(f.root, 'placement.json')).status, 0, 'a writer start needs its ticket placed');
+  assert.equal(boardRun('writer', 'w1', '--tickets', 'ISS-1', '--worktree', tree).status, 0);
   writeFileSync(join(f.work, 'plugin-version.json'), JSON.stringify({
     status: 'current',
     loadedSkill: loadedSkillEvidence('snapshot-orchestrator', 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved),

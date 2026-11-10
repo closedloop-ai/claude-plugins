@@ -4,6 +4,25 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe-core v1.0.4
+
+#### Changed
+- `lib/fleet-orchestrator/scripts/fleet-home.test.mjs` records the ticket placement that vibe 1.1.80's `board.mjs writer` now needs before its shape case starts a writer. No vibe-core code changes.
+
+### vibe v1.1.80
+
+#### Added
+- A fleet board writer start is refused until each of its tickets has a placement decision recorded on the board (ISS-13963). An orchestrator had started four local writers with no placement computed, one of them for a code-only ticket that met every cloud condition, while local test suites overloaded both laptops. `board.mjs <orchDir> placement <ticket> --evidence <file>` runs the existing check, vibe-core's `decideCloudPlacement`, over `{codeOnly, needsRunningApp, localEvidence[]}` (or a cloud-worker request's `placement`) and records its decision and reason; unreadable evidence is refused rather than read as local. `board.mjs writer` takes `--tickets <a,b>` (or the tickets of an open unit naming the writer), refuses a new writer naming no ticket, and checks each ticket a running writer newly names.
+- A ticket the check placed cloud is refused for any board writer, local or remote, until `board.mjs placement <ticket> --keep-local <reason>` records the operator's reason. Recording new evidence drops an earlier reason. The board page's new Placement section shows each decision with its reason and any keep-local reason.
+- `board.mjs status` prints `PLACEMENT <writer> <ticket> <cloud|local|none>: <reason>` for each ticket of each writer. These lines are informational and do not change the exit status.
+- The placement code lives in `fleet-orchestrator/scripts/writer-placement.mjs`, with its tests in `writer-placement.test.mjs`.
+
+#### Changed
+- fleet-orchestrator's Cloud workers section states one rule: the placement is recorded before every writer start, whatever the off-by-default runtime routing says, and names the check's location in vibe-core (`lib/fleet-orchestrator/scripts/cloud-placement.mjs`) and the cloud worker's (`lib/vibe/scripts/`). The routing line says it never decides placement. The new-chat steps (references/state.md) and the setup checklist (references/setup.md) name the same location, and the writer row usage names `--tickets`.
+- Existing board, fleet-home and snapshot tests record a local placement for the ticket their writers start on.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.80.
+- Across all plugin Markdown, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 100 words longer than in 1.1.77 (origin/main at this update, 00e62e6f).
+
 ### vibe-core v1.0.2
 
 #### Added

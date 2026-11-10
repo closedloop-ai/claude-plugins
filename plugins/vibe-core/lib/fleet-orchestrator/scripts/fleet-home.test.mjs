@@ -195,17 +195,20 @@ test('a program records its shape at start, resume says what applies, and the bo
   assert.match(run(['resume', '--home', home]).stdout, /^SHAPE no-writer: nobody writes code; the resume log, rulings, research and evidence rules apply/m);
 
   const board = (...args) => spawnSync(process.execPath, [path.join(VIBE_FLEET_SCRIPTS, 'board.mjs'), home, ...args], { encoding: 'utf8' });
-  const refused = board('writer', 'w1', '--runtime', 'claude');
+  const evidence = path.join(tempRoot(t), 'placement.json');
+  writeFileSync(evidence, JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: [] }));
+  assert.equal(board('placement', 'ISS-1', '--evidence', evidence).status, 0, 'a writer start needs its ticket placed');
+  const refused = board('writer', 'w1', '--tickets', 'ISS-1', '--runtime', 'claude');
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /recorded as no-writer; record its new shape with fleet-home\.mjs shape one-writer\|fleet before adding a writer/);
   assert.equal(run(['shape', 'one-writer', '--home', home]).status, 0);
-  assert.equal(board('writer', 'w1', '--runtime', 'claude').status, 0);
-  assert.equal(board('writer', 'w1', '--status', 'building').status, 0, 'the one writer keeps updating its row');
-  const second = board('writer', 'w2', '--runtime', 'codex');
+  assert.equal(board('writer', 'w1', '--tickets', 'ISS-1', '--runtime', 'claude').status, 0);
+  assert.equal(board('writer', 'w1', '--tickets', 'ISS-1', '--status', 'building').status, 0, 'the one writer keeps updating its row');
+  const second = board('writer', 'w2', '--tickets', 'ISS-1', '--runtime', 'codex');
   assert.equal(second.status, 2);
   assert.match(second.stderr, /recorded as one-writer \(writer w1\); record its new shape with fleet-home\.mjs shape fleet/);
   assert.equal(run(['shape', 'fleet', '--home', home]).status, 0);
-  assert.equal(board('writer', 'w2', '--runtime', 'codex').status, 0);
+  assert.equal(board('writer', 'w2', '--tickets', 'ISS-1', '--runtime', 'codex').status, 0);
   assert.equal(run(['shape', 'several', '--home', home]).status, 2);
 });
 

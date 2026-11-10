@@ -4,7 +4,8 @@
 // a QA guide never heard that its checkpoint was ready, and a UX ruling
 // reached one writer as text while another PR rendered the same behavior.
 //
-// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+// Usage: board.mjs <orchDir> writer <name> [--tickets <a,b>] [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+//        board.mjs <orchDir> placement <ticket> --evidence <file> | --keep-local <the operator's reason>
 //        board.mjs <orchDir> push-check <writer> --head <sha>
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
@@ -19,7 +20,11 @@
 // `writer` adds or updates a writer's row (owner, PR, head, status,
 // dependencies). It refuses a new row in a program whose recorded shape
 // (fleet-home.mjs) is `no-writer`, and a second writer in a `one-writer` one,
-// until the shape is changed. `deliver` records something each recipient must be told
+// until the shape is changed. A new writer names its tickets (`--tickets`, or an
+// open unit naming it as `--writer`), and is refused for a ticket with no
+// recorded `placement`, or one placed cloud with no keep-local reason
+// (writer-placement.mjs); `status` prints `PLACEMENT <writer> <ticket> ...`
+// for each. `deliver` records something each recipient must be told
 // directly (a ruling saved once as a reference file, a QA checkpoint that is
 // ready); `told` marks one recipient told. Every write re-renders
 // <orchDir>/board.md, the page every writer reads, with a log line.
@@ -96,6 +101,7 @@ import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
+import { placementLines, readPlacementEvidence, recordPlacement, renderPlacements, writerPlacementProblem, writerTickets } from "./writer-placement.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
@@ -241,6 +247,10 @@ export function render(board) {
     "",
     ...renderUnits(board.units, board.writers),
     "",
+    "## Placement",
+    "",
+    ...renderPlacements(board.placements),
+    "",
     "## Not yet told",
     "",
     ...(open.length > 0 ? open : ["- nothing"]),
@@ -259,7 +269,7 @@ export function render(board) {
 function read(orchDir) {
   const file = path.join(orchDir, STATE);
   const board = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
-  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, units: board.units ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
+  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, units: board.units ?? {}, placements: board.placements ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
 }
 
 function write(orchDir, board, line, at) {
@@ -389,7 +399,7 @@ function noHeadRows(board) {
     .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
 }
 
-const ACTIONS = ["writer", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
+const ACTIONS = ["writer", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
 
 /** A scope delivery's acknowledgements and each recipient's worktree head when it was sent; refuses a recipient status cannot watch. */
 function scopeBase(board, to, values, previous) {
@@ -478,6 +488,7 @@ function main(argv) {
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
       worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" }, tickets: { type: "string" }, writer: { type: "string" }, closed: { type: "string" },
+      evidence: { type: "string" }, "keep-local": { type: "string" },
     },
   });
   if (!workDir || !ACTIONS.includes(action)) {
@@ -533,6 +544,7 @@ function main(argv) {
       now, staleSeconds: configuredStaleSeconds(orchDir),
     }));
     for (const line of usage) process.stdout.write(`${line}\n`);
+    for (const line of placementLines(board)) process.stdout.write(`${line}\n`);
     const asked = [...unanswered, ...unacked, ...scope.unacked, ...scope.notStarted];
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
@@ -605,6 +617,13 @@ function main(argv) {
     recordUnit(orchDir, board, name, values, at);
     return 0;
   }
+  if (action === "placement") {
+    const evidence = values.evidence === undefined ? undefined : readPlacementEvidence(path.resolve(values.evidence));
+    const decision = recordPlacement(board.placements, name, { evidence, keepLocal: values["keep-local"] }, at);
+    write(orchDir, board, `placement ${name}: ${decision.placement}${decision.keepLocal ? `, kept local: ${decision.keepLocal.reason}` : ""} (${decision.reason})`, at);
+    process.stdout.write(`PLACEMENT ${name} ${decision.placement}: ${decision.reason}\n`);
+    return 0;
+  }
   if (action === "writer") {
     if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
       throw new Error("--runtime must be codex or claude.");
@@ -615,6 +634,10 @@ function main(argv) {
     const shapeProblem = board.writers[name] ? null : writerShapeProblem(programShape(orchDir), Object.keys(board.writers));
     if (shapeProblem) throw new Error(shapeProblem);
     const row = board.writers[name] ?? {};
+    const named = values.tickets === undefined ? [] : list(values.tickets);
+    const taking = board.writers[name] ? named.filter((ticket) => !(row.tickets ?? []).includes(ticket)) : writerTickets(board, name, { tickets: named });
+    const placementProblem = taking.length > 0 || !board.writers[name] ? writerPlacementProblem(board.placements, name, taking) : null;
+    if (placementProblem) throw new Error(placementProblem);
     const worktree = values.worktree === undefined ? undefined : path.resolve(values.worktree);
     const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree, where: values.where })
       .filter(([, value]) => value !== undefined));
@@ -648,6 +671,7 @@ function main(argv) {
     }
     if (values.ready) update.readyHeads = [...new Set([...(row.readyHeads ?? []), row.ready, values.ready].filter(Boolean))];
     const moved = values.head !== undefined && values.head !== row.head;
+    if (named.length > 0) update.tickets = [...new Set([...(row.tickets ?? []), ...named])];
     board.writers[name] = { ...row, ...update, ...(values.deps === undefined ? {} : { deps: list(values.deps) }), ...(moved ? { headAt: at } : {}), updatedAt: at };
     write(orchDir, board, `${name}: ${Object.entries(update).map(([key, value]) => `${key} ${value}`).join(", ") || "touched"}`, at);
     return 0;
