@@ -674,7 +674,7 @@ function onlyPositiveAssertionText(source, line, matches) {
   return covered && !/[^\s;,]/.test(text.replace(/\bawait\b/g, ""));
 }
 
-/** A frame inside the candidate's expect argument, at or after a nested expect/assert, belongs to that nested check. */
+/** A frame strictly inside the candidate's expect argument belongs to whatever ran there, not to the candidate's matcher. */
 function nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn) {
   const start = sourceOffset(source, expectedLine, expectedColumn);
   const head = /^(?:await\s+)?expect(?:\s*\.\s*soft)?\s*\(/.exec(source.slice(start));
@@ -683,7 +683,7 @@ function nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, 
   const close = matchingParenthesis(source, open);
   const actual = sourceOffset(source, actualLine, actualColumn);
   if (close < 0 || actual <= open || actual >= close) return false;
-  return [...source.slice(open + 1, close).matchAll(/\b(?:expect|assert)\b/g)].some((match) => open + 1 + match.index <= actual);
+  return true;
 }
 
 function sourceOffset(source, line, column) {

@@ -312,6 +312,30 @@ test("ISS-13846 final review ADV10-1 a frame on an assertion nested in the candi
   }
 });
 
+test("ISS-13846 final review F14 a frame inside the argument is not the candidate's failure, and an unreadable proof source cannot bind", () => {
+  const lines = ['test("helper", async () => {', "  expect(await expectBannerGone(screen)).toBeNull();",
+    '  expect(screen.getByText("other")).toBeVisible();', "});"];
+  const fixture = changed("src/argument-frame.test.tsx", lines.join("\n"), ["expectBannerGone"]);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "pnpm vitest src/argument-frame.test.tsx";
+  const proofAt = (line, column, assertionFailure) => withReceipt({ candidate: candidate.id, path: candidate.path,
+    case: candidate.case, class: "absence", mutation: "render the banner", presentState: "banner is present",
+    assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation, command,
+    observedFailure: "banner assertion failed", restoredPass: true, commit: COMMIT, ownerBoundary: "production",
+    mountedSignal: "owner mounted", mutationRun: { command, exitCode: 1,
+      assertionFailure: assertionFailure ?? `AssertionError: expected null at src/argument-frame.test.tsx:${line}:${column}` } }, fixture.source);
+  const problems = (proof, proofRead = read) => testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file],
+    proofRead, COMMIT, RECEIPT_DIR, read);
+  assert.notDeepEqual(problems(proofAt(2, lines[1].indexOf("expectBannerGone") + 1)), [], "a helper frame inside the argument");
+  assert.deepEqual(problems(proofAt(2, 3)), []);
+  assert.deepEqual(problems(proofAt(2, lines[1].indexOf(".toBeNull") + 2)), []);
+  const laterFrame = [` FAIL  src/argument-frame.test.tsx > ${candidate.case}`, "AssertionError: expected visible",
+    " ❯ src/argument-frame.test.tsx:3:3", `    2| ${lines[1]}`, `  > 3| ${lines[2]}`].join("\n");
+  // Without the proof source the receipt cannot bind, so the no-source frame match is never reached.
+  assert.match(problems(proofAt(3, 3, laterFrame), () => null).join("\n"), /receipt before hash does not match the tested source/);
+});
+
 test("ISS-13846 final review F11-1 a frame on another assertion sharing the candidate's closing line is not its failure", () => {
   const lines = ['test("closing", () => {', "  expect(", '    screen.queryByText("a")',
     '  ).toBeNull(); expect(screen.queryByText("b")).toBeTruthy();', "});"];
