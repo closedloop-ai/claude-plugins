@@ -79,9 +79,11 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
-import { git } from "./session-record.mjs";
 import { storyTypecheckLane } from "./story-typecheck.mjs";
-import { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;

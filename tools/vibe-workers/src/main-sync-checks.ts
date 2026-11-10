@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { MAX_CHECK_MS, MainSyncError, mainSyncStateSchema, type MainComparison, type MainSyncReceipt, type OriginProof, type e2eLimitationSchema } from "./main-sync-contracts.js";
 import { committedIdentity, digest, syncContext, readPrivateJson, saveSyncReceipt, MAIN_SYNC_FILE } from "./main-sync-state.js";
 import { CapturedMainComparison, comparisonLogs, runBounded } from "./main-sync-main-comparison.js";

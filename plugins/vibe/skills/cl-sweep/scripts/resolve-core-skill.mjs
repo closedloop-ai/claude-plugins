@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { harnessActor } from '../../vibe/scripts/harness-identity.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { codexAppServerRequest } from "../../vibe/scripts/codex-app-server.mjs";
+
+const { harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 
 const PROCESS_API = 'CLOSEDLOOP_APP_SERVER_CLIENT v1';
 const CORE_ID = 'closedloop-core@closedloop-ai';
@@ -22,48 +25,8 @@ function jsonCommand(executable, args, input) {
 
 /** Ask the supported skills/list API for the enabled installed skill's actual path. */
 export function codexSkills(executable, cwd) {
-  return new Promise((accept, reject) => {
-    const child = spawn(executable, ['app-server', '--stdio'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
-    let buffer = '';
-    let done = false;
-    const finish = (error, result) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      child.stdin.end();
-      child.kill();
-      const force = setTimeout(() => child.kill('SIGKILL'), 1000);
-      force.unref();
-      child.once('close', () => clearTimeout(force));
-      if (error) reject(error); else accept(result);
-    };
-    const timer = setTimeout(() => finish(new Error('Core skill discovery timed out')), DISCOVERY_STAGE_TIMEOUT_MS);
-    child.stderr.resume();
-    child.on('error', () => finish(new Error('Codex skill discovery could not start')));
-    child.on('close', () => finish(new Error('Codex skill discovery closed before returning skills')));
-    child.stdin.on('error', () => finish(new Error('Codex skill discovery input closed')));
-    child.stdout.setEncoding('utf8');
-    const send = value => child.stdin.write(`${JSON.stringify(value)}\n`);
-    child.stdout.on('data', chunk => {
-      buffer += chunk;
-      if (Buffer.byteLength(buffer) > 16 * 1024 * 1024) return finish(new Error('Core skill discovery response exceeded its bound'));
-      let boundary;
-      while ((boundary = buffer.indexOf('\n')) >= 0) {
-        let message;
-        try { message = JSON.parse(buffer.slice(0, boundary)); } catch { return finish(new Error('Codex skill discovery returned invalid JSON')); }
-        buffer = buffer.slice(boundary + 1);
-        if (message.error) return finish(new Error('Codex skill discovery request failed'));
-        if (message.id === 'initialize') {
-          send({ method: 'initialized' });
-          send({ id: 'skills', method: 'skills/list', params: { cwds: [cwd], forceReload: true } });
-        } else if (message.id === 'skills') finish(null, message.result);
-      }
-    });
-    send({ id: 'initialize', method: 'initialize', params: {
-      clientInfo: { name: 'closedloop_core_discovery', version: '1.0.0' },
-      capabilities: { experimentalApi: true },
-    } });
-  });
+  return codexAppServerRequest(executable, cwd, 'skills/list', { cwds: [cwd], forceReload: true },
+    { timeoutMs: DISCOVERY_STAGE_TIMEOUT_MS, label: 'Codex skill discovery', clientName: 'closedloop_core_discovery' });
 }
 
 /** Resolve only the core-owned monitor; unrelated or disabled names never satisfy the binding. */

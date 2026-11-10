@@ -15,19 +15,24 @@ remote_node() {
   e+=" RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${REMOTE_CONTINUE_PROMPT_FILE:-}"
   e+=" PASS_TIMEOUT_SECONDS=${PASS_TIMEOUT_SECONDS:-} LOG_MAX_BYTES=${LOG_MAX_BYTES:-} SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-}"
   e+=" CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-}"
-  local invoke="env $e node $d/$*"
-  local freshness=()
+  local m=$d/plugins/vibe/skills/codex-fleet-monitor/scripts
+  local invoke="env $e node $m/$*"
+  local ship=(skills/codex-fleet-monitor/scripts/{liveness,ratelimit,recover,usage-state,work-dir}.mjs)
+  [ "$1" = hook-approval.mjs ] && ship+=(skills/codex-fleet-monitor/scripts/hook-approval.mjs)
   if [ "$1" = skill-freshness.mjs ]; then
-    freshness=(-C $K/../.. fleet-orchestrator/scripts/skill-freshness.mjs codex-fleet-monitor/scripts/work-dir.mjs
-      vibe/scripts/loaded-skill.mjs vibe/scripts/plugin-script-references.mjs)
+    ship+=(skills/fleet-orchestrator/scripts/skill-freshness.mjs)
     shift
     # Resolve outside env: a bare `env VAR=...` would print the process environment.
     invoke='root=$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1); test -n "$root" && '
-    invoke+="env $e node $d/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
+    invoke+="env $e node $d/plugins/vibe/skills/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
   fi
-  COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs usage-state.mjs work-dir.mjs \
-    "${freshness[@]}" 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+  # These scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).
+  local stage; stage=$(node $K/../../../shared/ship-plugins.mjs $ship) || return 2
+  COPYFILE_DISABLE=1 tar -chf - -C $stage ${(f)"$(<$stage/files)"} 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
     ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL ${(q)invoke}" 2>/dev/null
+  local exit_status=$?
+  rm -rf $stage
+  return $exit_status
 }
 # A failed gh call prints nothing; keep the last non-empty value for that key so a blip is not an event.
 zmodload zsh/datetime
@@ -70,6 +75,10 @@ record_usage_readfail() {
     node $K/usage-state.mjs record-json $W >/dev/null
   echo "$line"
 }
+# A Codex vibe or vibe-core update can leave vibe-core's hooks unapproved, and with them every vibe guard;
+# each machine's line appears once per installed version change and only when a hook needs approval.
+node $K/hook-approval.mjs local $W 2>/dev/null
+[ -n "${REMOTE_HOST:-}" ] && remote_node hook-approval.mjs remote $REMOTE_STATE_DIR/.fleet-monitor
 codex_json=$(USAGE_HIGH_PERCENT=$HIGH node $K/ratelimit.mjs local --json --source snapshot --work-dir $W 2>/dev/null)
 if [ -n "$codex_json" ]; then echo "$codex_json" | jq -r .line; else record_usage_readfail codex local snapshot; fi
 [ "${CLAUDE_USAGE:-1}" = 0 ] || USAGE_HIGH_PERCENT=$HIGH CLAUDE_USAGE_SECONDS=${CLAUDE_USAGE_SECONDS:-} node $K/claude-usage.mjs $W local --source snapshot 2>/dev/null

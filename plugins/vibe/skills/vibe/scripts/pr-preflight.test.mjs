@@ -6,8 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { claimedCheckProblems, claimProblems, E2eKind, e2eClaimProblems, followUpTicketProblems, testedCommitProblems, titleProblems, workspacePackages } from "./pr-preflight.mjs";
-import { sourceIdentity } from "./tested-head.mjs";
 import { visualBaselineLedgerProblems } from "../../handoff/scripts/visual-baseline-ledger.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "pr-preflight.mjs");
 

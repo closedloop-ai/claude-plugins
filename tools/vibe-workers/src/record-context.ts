@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
 import { z } from "zod";
-import { sessionLiveTicket } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { sessionLiveTicket } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { identifierSchema } from "./contracts.js";
 import { checkoutLocation, location } from "./ledger.js";
 import { validationWitnessSchema } from "./main-sync-validation-contracts.js";

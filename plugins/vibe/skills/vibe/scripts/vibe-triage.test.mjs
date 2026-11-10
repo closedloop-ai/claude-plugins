@@ -8,13 +8,15 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify, parsePathList, pathKind, switchOn, validateManifest } from "./vibe-triage.mjs";
 import { chooseDispatch } from "../../fleet-orchestrator/scripts/dispatch-route.mjs";
-import { decideCloudPlacement } from "../../fleet-orchestrator/scripts/cloud-placement.mjs";
-import { cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } from "./cloud-worker.mjs";
-import { writeSessionRecord } from "./session-record.mjs";
-import { prCreateGuard } from "../../../hooks/pr-create-guard.mjs";
 import { recordHandoffGate } from "../../handoff/scripts/handoff-gate.mjs";
-import { captureReviewReceipt, REVIEW_ROLES } from "../../handoff/scripts/review-receipts.mjs";
-import { sourceIdentity } from "./tested-head.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
+const { cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
+const { writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
+const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
+const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-triage.mjs");
 const run = (args, env = {}) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, [SWITCH_ENV]: "", ...env } });

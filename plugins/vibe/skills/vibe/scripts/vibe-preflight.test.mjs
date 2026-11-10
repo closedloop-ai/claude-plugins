@@ -29,6 +29,9 @@ function fakeNode(dir, version) {
  * A home folder, a bin folder of fake tools first on PATH, and a fake login
  * shell. `freshBin` stands in for what a brand-new shell's profile puts first.
  */
+const INSTALLED_PLUGINS = JSON.stringify({ installed: ["closedloop-core", "vibe-core"]
+  .map((name) => ({ pluginId: `${name}@closedloop-ai`, installed: true, enabled: true })) });
+
 function setup(t, { nodeVersion = "v24.11.0", freshNodeVersion } = {}) {
   const fixture = makeHome("vibe-preflight-");
   t.after(fixture.cleanup);
@@ -36,7 +39,7 @@ function setup(t, { nodeVersion = "v24.11.0", freshNodeVersion } = {}) {
   const freshBin = path.join(fixture.root, "fresh-bin");
   mkdirSync(freshBin, { recursive: true });
   fakeNode(bin, nodeVersion);
-  writeExecutable(path.join(bin, "codex"), "printf '%s\\n' '{\"installed\":[{\"pluginId\":\"closedloop-core@closedloop-ai\",\"installed\":true,\"enabled\":true}]}'");
+  writeExecutable(path.join(bin, "codex"), `printf '%s\\n' '${INSTALLED_PLUGINS}'`);
   if (freshNodeVersion) {
     fakeNode(freshBin, freshNodeVersion);
   }
@@ -91,8 +94,24 @@ test("Codex requires an installed enabled core before remembering a checkout", (
     writeExecutable(path.join(env.bin, "codex"), `printf '%s\\n' '${output}'`);
     const result = runPreflight(env);
     assert.equal(result.status, 1);
-    assert.deepEqual(Object.keys(result.checks), ["closedloop-core"]);
+    assert.deepEqual(Object.keys(result.checks), ["closedloop-core", "vibe-core"]);
     assert.equal(result.checks["closedloop-core"].fix, `${path.join(env.bin, "codex")} plugin add closedloop-core@closedloop-ai`);
+    assert.equal(remembered(env.home), null);
+  }
+});
+
+// Codex installs no plugin dependency and vibe ships no hooks, so a vibe update without vibe-core leaves every guard off.
+test("Codex requires an installed enabled vibe-core, which carries vibe's hooks, before remembering a checkout", (t) => {
+  const core = '{"pluginId":"closedloop-core@closedloop-ai","installed":true,"enabled":true}';
+  for (const hooks of ['', ',{"pluginId":"vibe-core@closedloop-ai","installed":true,"enabled":false}', ',{"pluginId":"vibe-core@other","installed":true,"enabled":true}']) {
+    const env = setup(t);
+    writeExecutable(path.join(env.bin, "codex"), `printf '%s\\n' '{"installed":[${core}${hooks}]}'`);
+    const result = runPreflight(env);
+    assert.equal(result.status, 1);
+    assert.deepEqual(Object.keys(result.checks), ["closedloop-core", "vibe-core"]);
+    assert.equal(result.checks["closedloop-core"].ok, true);
+    assert.equal(result.checks["vibe-core"].ok, false);
+    assert.equal(result.checks["vibe-core"].fix, `${path.join(env.bin, "codex")} plugin add vibe-core@closedloop-ai`);
     assert.equal(remembered(env.home), null);
   }
 });
@@ -103,6 +122,7 @@ test("Codex query failure fails closed and Claude does not query Codex", (t) => 
   assert.equal(runPreflight(env).checks["closedloop-core"].ok, false);
   const claude = runPreflight(env, ["--runtime", "claude", "--prototype"]);
   assert.equal(claude.checks["closedloop-core"], undefined);
+  assert.equal(claude.checks["vibe-core"], undefined);
   assert.ok(claude.checks.repo);
 });
 
@@ -113,6 +133,7 @@ test("an explicit app-bundled Codex CLI works without codex on PATH", (t) => {
   renameSync(path.join(env.bin, "codex"), bundled);
   const result = runPreflight(env, ["--codex", bundled]);
   assert.equal(result.checks["closedloop-core"].ok, true);
+  assert.equal(result.checks["vibe-core"].ok, true);
   assert.ok(result.checks.repo);
 });
 

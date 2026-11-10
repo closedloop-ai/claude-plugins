@@ -30,8 +30,10 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { committedLocalPlans, isLocalPlanPath } from "./local-plans.mjs";
-import { git, readSessionRecord } from "./session-record.mjs";
 import { mainSyncFailure, prepareMainSync, readMainSyncInput } from "./dist/main-sync.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const MAX_SUBJECT_LENGTH = 72;
 const HOOK_OUTPUT_LINES = 40;

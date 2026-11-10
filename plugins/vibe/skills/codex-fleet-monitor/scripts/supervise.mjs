@@ -12,11 +12,13 @@ import {
   acquireLock, connectDaemon, DEFAULT_LOG_MAX_BYTES, heartbeatPath, positiveSetting, readConfig, restartDaemon,
   supervisorLockPath, timedPass, writeHeartbeat,
 } from './recover.mjs';
-import { isEntryPoint } from './liveness.mjs';
 import { rateLimitReading, readRateLimits } from './ratelimit.mjs';
 import { recordUsageReading } from './usage-state.mjs';
-import { resolveWorkDir } from './work-dir.mjs';
-import { hasPendingOwnedCleanups, sweepOwnedCleanups } from '../../vibe/scripts/owned-cleanup.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { isEntryPoint } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
+const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
+const { hasPendingOwnedCleanups, sweepOwnedCleanups } = await vibeCore("lib/vibe/scripts/owned-cleanup.mjs");
 
 export const DEFAULT_INTERVAL_SECONDS = 60;
 export const SUMMARY_INTERVAL_MS = 3_600_000;

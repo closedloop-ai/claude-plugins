@@ -9,7 +9,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
-import { git } from "../../vibe/scripts/session-record.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
@@ -22,6 +21,9 @@ import { frozenInputs, isFrozenGlobalInput, storybookPreviewImportClosure } from
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const PRIVATE_PLANS = ".closedloop-ai/vibe-plans/";
 const MIGRATION_DIR = /^packages\/database\/prisma\/migrations\/[^/]+\/migration\.sql$/;

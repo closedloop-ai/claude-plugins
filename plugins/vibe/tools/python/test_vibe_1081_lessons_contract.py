@@ -42,4 +42,4 @@ def test_env_less_sessions_push_and_qa_env_uses_vibe_up() -> None:
     assert "--head <HEAD> --source-hash <treeSha256>" in verify
     assert "`image-head.mjs` refuses stale images" in verify
     assert "position or scrolling the\n  diff changes, inspect every" in verify
-    assert "imageProblem(images)" in read("skills/vibe/scripts/e2e-lock.mjs")
+    assert "imageProblem(images)" in (ROOT.parent / "vibe-core" / "lib" / "vibe" / "scripts" / "e2e-lock.mjs").read_text()

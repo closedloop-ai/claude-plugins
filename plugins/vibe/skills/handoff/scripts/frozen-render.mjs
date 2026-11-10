@@ -61,7 +61,6 @@
 // under --out; read only the cropped diffs. Exits 0 when nothing blocks, 1
 // when something does, 2 on a usage or setup error.
 
-import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -77,6 +76,9 @@ import { cropDiffPng, decodePng, pixelHash, pngHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
 import { createImportClosure, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
 const RUN_BOUNDED = fileURLToPath(new URL("../../vibe/scripts/run-bounded.mjs", import.meta.url));

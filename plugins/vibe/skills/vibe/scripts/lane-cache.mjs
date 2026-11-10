@@ -18,7 +18,9 @@
 // `check --reuse-cache`.
 
 import { createHash } from "node:crypto";
-import { git } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const LANE_CACHE_VERSION = 1;
 export const Provenance = { Fresh: "fresh", Cached: "cached" };

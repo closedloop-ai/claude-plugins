@@ -1440,7 +1440,8 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
       "---\nname: vibe-change-worker\nmodel: sonnet\n---\n");
     writeFileSync(join(repo, "plugins/vibe/skills/vibe/SKILL.md"), "fixture skill\n");
     for (const name of ["tested-head.mjs", "session-record.mjs"]) {
-      cpSync(join(import.meta.dirname, `../../../plugins/vibe/skills/vibe/scripts/${name}`),
+      // The identity helper's code lives in vibe-core; the fixture places its bytes where the driver runs it.
+      cpSync(join(import.meta.dirname, `../../../plugins/vibe-core/lib/vibe/scripts/${name}`),
         join(repo, `plugins/vibe/skills/vibe/scripts/${name}`));
     }
     writeFileSync(join(repo, `plugins/vibe/evals/${CASE}/prompt.md`),

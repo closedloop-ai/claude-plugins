@@ -19,7 +19,9 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "../../handoff/scripts/visual-baseline-ledger.mjs";
 import { isDesktopE2eLane, isWebE2eLane, readRecords } from "./pre-pr-lanes.mjs";
-import { sourceIdentity } from "./tested-head.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 const CLAIM = /\b(?:(?:pixel|byte)[- ]identical|identical to|no (?:visual |pixel )?(?:diffs?|differences?)\b|match(?:es|ing)? (?:the )?(?:CI|baseline|snapshot|reference|golden|Linux|main)\b)/i;
 const MEASURED = /\b\d[\d,.]*\s*(?:%|px\b|pixels?\b|bytes?\b|lines?\b|differ\w*|diffs?\b|of\s+\d)/i;
