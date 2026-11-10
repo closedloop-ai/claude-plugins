@@ -21,7 +21,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - fleet-orchestrator's Cloud workers section states one rule: the placement is recorded before every writer start or fold, whatever the off-by-default runtime routing says, an imported cloud task given a local writer row records `--keep-local "cloud import <task id>"`, and names the check's location in vibe-core (`lib/fleet-orchestrator/scripts/cloud-placement.mjs`) and the cloud worker's (`lib/vibe/scripts/`). The routing line says it never decides placement. The new-chat steps (references/state.md) and the setup checklist (references/setup.md) name the same location, and the writer row usage names `--tickets`.
 - Existing board, fleet-home and snapshot tests record a local placement for the ticket their writers start on.
 - The README version line and the Python and vibe-bench release-pin tests move to 1.1.80.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 123 words longer than in 1.1.78 (origin/main at this update, ffd0750a).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 112 words longer than in 1.1.79 (origin/main at this update, 397210d7).
+### vibe-core v1.0.3
+
+#### Added
+- `cloud-worker.mjs validate --request <file>` runs a validation-only pass on a pushed branch and commit (ISS-13963), which the cloud path could not do: it started only implementation turns based on main. The request names the repository, branch, full commit SHA, model, lanes (`[{name, command}]`, each a documented check entry point with no shell control) and a local checkout of the repository as `worktree`; no Vibe session is needed. It starts a Claude cloud session through the same RemoteTrigger create, connector clearing, run and poll as a dispatch, with a brief that fetches the branch, checks out that exact commit, confirms `git rev-parse HEAD`, installs the way CI does (`uv sync --frozen --group dev` for claude-plugins, `pnpm install --frozen-lockfile` for symphony-alpha), runs each lane, changes no file and ends with one `VIBE_VALIDATION_RESULT` line. The result is read from the run log and refused when its commit differs from the requested one, when `git status --porcelain` shows any file, or when a lane is missing or has no exit code; otherwise it returns each lane's exit code bound to the commit. A receipt in the checkout's git directory lets a rerun resume the same session. Codex is refused with a named error, because `codex cloud` returns no task report to bind results to.
+- The existing implementation dispatch is unchanged: its brief still says "Base: main", the Claude routine is still named after the ticket, and Codex still starts on `--branch main`. The lane command check is now shared between `record-evidence` and `validate`.
+
+### vibe v1.1.79
+
+#### Changed
+- fleet-orchestrator's Cloud workers section names where the cloud code lives after the vibe-core move (ISS-13963): `../vibe/scripts/cloud-worker.mjs` is a wrapper for vibe-core's `lib/vibe/scripts/cloud-worker.mjs`, and the placement check is vibe-core's `lib/fleet-orchestrator/scripts/cloud-placement.mjs`. It also gives the new `validate` mode in one line.
+- `VIBE_CORE_MIN` moves to 1.0.3, the first vibe-core with `validate`, which the skill now documents; the bundled `dist/` workers are rebuilt with it.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.79.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 72 words longer than in 1.1.78 (origin/main at this update, ffd0750abf3fa65c648d47eeddecceaf7c0dd495).
+
 ### vibe v1.1.78
 
 #### Added
