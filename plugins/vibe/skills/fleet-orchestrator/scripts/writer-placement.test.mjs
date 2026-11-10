@@ -95,19 +95,53 @@ test('the decision comes only from the check over readable evidence', (t) => {
 });
 
 test('status lists each writer ticket with its placement and reason', (t) => {
-  const { run, evidence } = fixture(t);
+  const { dir, run, evidence } = fixture(t);
   assert.equal(run('placement', 'ISS-1', '--evidence', evidence('app', NEEDS_APP)).status, 0);
   assert.equal(run('placement', 'ISS-2', '--evidence', evidence('cloud', CODE_ONLY)).status, 0);
   assert.equal(run('placement', 'ISS-2', '--keep-local', 'operator wants it beside ISS-1').status, 0);
   assert.equal(run('writer', 'w1', '--tickets', 'ISS-1,ISS-2').status, 0);
   assert.equal(run('placement', 'ISS-5', '--evidence', evidence('app5', NEEDS_APP)).status, 0);
+  assert.equal(run('placement', 'ISS-6', '--evidence', evidence('app6', NEEDS_APP)).status, 0);
   assert.equal(run('writer', 'w2', '--tickets', 'ISS-5').status, 0);
   assert.equal(run('unit', 'ISS-5', '--tickets', 'ISS-5,ISS-6', '--writer', 'w2').status, 0, 'a fold after the start');
+  const file = path.join(dir, 'board.json');
+  const board = JSON.parse(readFileSync(file, 'utf8'));
+  board.writers.legacy = { status: 'started before placements were recorded' };
+  board.writers.old = { tickets: ['ISS-9'] };
+  writeFileSync(file, JSON.stringify(board));
   const lines = run('status').stdout.split('\n').filter((line) => line.startsWith('PLACEMENT'));
   assert.deepEqual(lines, [
     'PLACEMENT w1 ISS-1 local: ticket needs the running app or its status is unknown',
     'PLACEMENT w1 ISS-2 cloud, kept local: operator wants it beside ISS-1 (check: code-only ticket needs neither running app nor local evidence)',
     'PLACEMENT w2 ISS-5 local: ticket needs the running app or its status is unknown',
-    'PLACEMENT w2 ISS-6 none: no placement decision recorded',
+    'PLACEMENT w2 ISS-6 local: ticket needs the running app or its status is unknown',
+    'PLACEMENT legacy - none: no ticket recorded for this writer',
+    'PLACEMENT old ISS-9 none: no placement decision recorded',
   ]);
+});
+
+test('folding a ticket into a writer on the board is assigning it: the same placement check and keep-local rule apply', (t) => {
+  const { dir, run, evidence } = fixture(t);
+  const units = () => JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8')).units;
+  assert.equal(run('placement', 'ISS-1', '--evidence', evidence('app', NEEDS_APP)).status, 0);
+  assert.equal(run('writer', 'w1', '--tickets', 'ISS-1', '--where', 'local').status, 0);
+  assert.equal(run('unit', 'ISS-1', '--tickets', 'ISS-1', '--writer', 'w1').status, 0);
+  assert.equal(run('placement', 'ISS-2', '--evidence', evidence('cloud', CODE_ONLY)).status, 0);
+  const cloud = run('unit', 'ISS-1', '--tickets', 'ISS-2');
+  assert.equal(cloud.status, 2);
+  assert.match(cloud.stderr, /ISS-2 is placed cloud \(code-only ticket needs neither running app nor local evidence\): dispatch it with \.\.\/vibe\/scripts\/cloud-worker\.mjs, or record the operator's reason with board\.mjs <orchDir> placement ISS-2 --keep-local <reason>/);
+  assert.deepEqual(units()['ISS-1'].tickets, ['ISS-1'], 'a refused fold records nothing');
+  const undecided = run('unit', 'ISS-1', '--tickets', 'ISS-3');
+  assert.equal(undecided.status, 2);
+  assert.match(undecided.stderr, /no placement decision for ISS-3/);
+  assert.equal(run('placement', 'ISS-2', '--keep-local', 'cloud import task_01').status, 0);
+  assert.equal(run('unit', 'ISS-1', '--tickets', 'ISS-2').status, 0);
+  assert.deepEqual(units()['ISS-1'].tickets, ['ISS-1', 'ISS-2']);
+
+  assert.equal(run('unit', 'ISS-5', '--tickets', 'ISS-5').status, 0, 'a unit with no writer yet waits for the writer start');
+  const moved = run('unit', 'ISS-5', '--writer', 'w1', '--tickets', 'ISS-5');
+  assert.equal(moved.status, 2, 'handing a unit to a running writer checks all its tickets');
+  assert.match(moved.stderr, /no placement decision for ISS-5/);
+  assert.equal(run('unit', 'ISS-7', '--tickets', 'ISS-7', '--writer', 'later').status, 0, 'a writer not on the board is checked at its start');
+  assert.match(run('writer', 'later').stderr, /no placement decision for ISS-7/);
 });

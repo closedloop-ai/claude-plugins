@@ -463,6 +463,7 @@ test('a scope change needs content and a writer whose worktree status can read; 
 
 test('a unit lists its tickets on the board page and in the resume log; a fold adds and a ticket has one unit', (t) => {
   const dir = tempDir(t);
+  for (const ticket of ['ISS-2', 'ISS-3']) placeLocal(t, dir, ticket);
   assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--pr', '7', '--repo', 'o/r']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1', '--repo', 'o/r', '--now', '2026-11-09T10:00:00Z']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-3', '--now', '2026-11-09T11:00:00Z']).status, 0);
@@ -479,6 +480,7 @@ test('a unit lists its tickets on the board page and in the resume log; a fold a
 
 test('a unit closes only with its writer row\'s PR and a passing review; the board and log show it, and a new unit takes the next free name', (t) => {
   const dir = tempDir(t);
+  for (const ticket of ['ISS-2', 'ISS-3']) placeLocal(t, dir, ticket);
   assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--pr', '7', '--repo', 'o/r']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1', '--now', '2026-11-09T10:00:00Z']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-9', '--closed', '7']).status, 2, 'only a recorded unit closes');
@@ -513,6 +515,7 @@ test('a unit closes only with its writer row\'s PR and a passing review; the boa
 
 test('status flags a unit whose writer has not recorded every other ticket, and every case it cannot check', (t) => {
   const dir = tempDir(t);
+  for (const ticket of ['ISS-2', 'ISS-3', 'ISS-4', 'ISS-5', 'ISS-6']) placeLocal(t, dir, ticket);
   const worktree = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-unit-wt-'));
   const plain = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-unit-plain-'));
   t.after(() => { rmSync(worktree, { recursive: true, force: true }); rmSync(plain, { recursive: true, force: true }); });

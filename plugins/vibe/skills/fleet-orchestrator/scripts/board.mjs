@@ -23,7 +23,8 @@
 // until the shape is changed. A new writer names its tickets (`--tickets`, or an
 // open unit naming it as `--writer`), and is refused for a ticket with no
 // recorded `placement`, or one placed cloud with no keep-local reason
-// (writer-placement.mjs); `status` prints `PLACEMENT <writer> <ticket> ...`
+// (writer-placement.mjs); `unit` refuses the same when it assigns a ticket
+// to a writer already on the board; `status` prints `PLACEMENT <writer> <ticket> ...`
 // for each. `deliver` records something each recipient must be told
 // directly (a ruling saved once as a reference file, a QA checkpoint that is
 // ready); `told` marks one recipient told. Every write re-renders
@@ -471,6 +472,11 @@ function recordUnit(orchDir, board, name, values, at) {
     ...(values.repo ? { repo: values.repo } : {}),
     at: previous?.at ?? at,
   };
+  const assigned = unit.writer !== previous?.writer ? unit.tickets : added;
+  if (unit.writer && board.writers[unit.writer] && assigned.length > 0) {
+    const problem = writerPlacementProblem(board.placements, unit.writer, assigned);
+    if (problem) throw new Error(problem);
+  }
   board.units[name] = unit;
   const change = previous ? (added.length ? `folded ${added.join(", ")}` : "updated") : "started";
   write(orchDir, board, `unit ${name} ${change}: ${unit.tickets.join(", ")}`, at);
