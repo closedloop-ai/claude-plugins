@@ -263,6 +263,10 @@ test("ISS-13846 positive presence assertions are not absence mutation candidates
     "export const Live: Story = {", "  play: async () => {", "    expect(cell)", "      .not", "      .toBeNull();", "  },", "};",
   ].join("\n"), [".toBeNull"]);
   assert.deepEqual(testIntegrityCandidates([multiline.file], path => path === multiline.file.path ? multiline.source : null), []);
+  const awaited = changed("apps/storybook/stories/surfaces-v2/v2-documents-list.stories.tsx", [
+    "export const Live: Story = {", "  play: async () => {", "    await expect(idle).not.toBeNull();", "  },", "};",
+  ].join("\n"), ["not.toBeNull"]);
+  assert.deepEqual(testIntegrityCandidates([awaited.file], path => path === awaited.file.path ? awaited.source : null), []);
 });
 
 test("ISS-13846 final review ADV-1 a positive assertion does not hide an unparsed absence check on its line", () => {

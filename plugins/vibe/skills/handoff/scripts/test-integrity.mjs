@@ -183,9 +183,10 @@ export function testIntegrityCandidates(files, read) {
         found.push(candidate("responsive", file.path, entry.line, caseName,
           "changed test names a narrow or mobile state"));
       }
-      const unparsed = unparsedLineText(source, entry.line, parsedMatches);
-      if (ABSENCE_ASSERTION.test(unparsed)
-        || (QUERY_ASSERTION.test(unparsed) && /(?:toBeNull|not\.toBe|toHaveCount\(\s*0)/.test(context))) {
+      const inParsedAssertion = absenceMatches.some((match) => entry.line >= match.line && entry.line <= match.endLine)
+        || onlyPositiveAssertionText(source, entry.line, parsedMatches);
+      if (!inParsedAssertion && (ABSENCE_ASSERTION.test(entry.text)
+        || (QUERY_ASSERTION.test(entry.text) && /(?:toBeNull|not\.toBe|toHaveCount\(\s*0)/.test(context)))) {
         found.push(candidate("absence", file.path, entry.line, caseName,
           "changed assertion claims an element is absent", entry.text.trim(), "",
           `${file.path}:${entry.line}:${entry.text.search(/\S/) + 1}`));
@@ -651,16 +652,19 @@ function selectorTokens(selector) {
   return [...selector.matchAll(/[A-Za-z][\w-]*/g)].map((match) => match[0]).filter((token) => token.length > 2);
 }
 
-/** A source line with every parsed assertion's own text blanked, so the line fallback sees only the rest. */
-function unparsedLineText(source, line, matches) {
+/** Whether positive parsed assertions cover the whole line, so a `.not.toBeNull()` alone is not read as absence (PC-2). */
+function onlyPositiveAssertionText(source, line, matches) {
   let start = 0;
   for (let current = 1; current < line; current += 1) start = source.indexOf("\n", start) + 1;
   const end = source.indexOf("\n", start) < 0 ? source.length : source.indexOf("\n", start);
   let text = source.slice(start, end);
-  for (const match of matches) {
+  let covered = false;
+  for (const match of matches.filter((entry) => !entry.absence)) {
     const from = Math.max(match.start, start) - start;
     const to = Math.min(match.end, end) - start;
-    if (from < to) text = `${text.slice(0, from)}${" ".repeat(to - from)}${text.slice(to)}`;
+    if (from >= to) continue;
+    text = `${text.slice(0, from)}${" ".repeat(to - from)}${text.slice(to)}`;
+    covered = true;
   }
-  return text;
+  return covered && !/[^\s;,]/.test(text.replace(/\bawait\b/g, ""));
 }
