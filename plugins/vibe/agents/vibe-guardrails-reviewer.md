@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, each new mechanism's reuse and cost scaling, and tech debt and flag keys without a cited reason or the person's approval). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction or removal, capability removed by a main sync, flag retirement against a recorded hold, each new mechanism's reuse and cost scaling, and tech debt and flag keys without a cited reason or the person's approval). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -173,6 +173,18 @@ path merely because another rule describes how its content should look.
    - Adjacent comments: for each edited function, prop or callsite, read its
      nearby comments and JSDoc against the new behavior. A comment describing
      a retired path, old owner or impossible state is a blocking stale comment.
+   - After a removal (a branch, row, prop, condition or variable the diff
+     deleted): for each value the removed code read or passed, read every
+     remaining use. An expression the removed branch was the only reason for
+     is blocking: a prop or condition that is now constant, such as
+     `readOnly={!editMode.isEditing}` inside a value mounted only under
+     `editMode.isEditing` (PR #9732, ISS-13947). Then run
+     `node ../skills/handoff/scripts/comment-rules.mjs --worktree <wt> --base <base>`
+     and judge each `candidates` entry: a comment that still names the
+     removed shape, or still cites a source the diff corrected in another
+     comment of the same file (DI-13 kept at two lines after one was
+     corrected), is blocking unless that source is still right there. Its
+     `blocking` entries are already inventory `diffRules` findings.
 9. Tests and checks: an added or deleted test file (`*.test.*`, `*.spec.*`,
    `__tests__/`, `e2e/`, or a snapshot or fixture a test reads), a changed
    snapshot, or a changed test that is not a pure repair is blocking in the
