@@ -4,7 +4,8 @@
 // worker read it; vibe's handoff-gate.mjs records the witness. With member
 // tickets recorded on the session (ISS-13924), the witness keeps the member
 // list, so a member added afterwards makes it stale, and the PR title and body
-// must name every member.
+// must name every member. A unit's review of the completed work, its PRD and
+// its plan (handoff-gate.mjs --review, --prd, --plan) are bound the same way.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -16,7 +17,8 @@ import { missingTicketNames } from "./ticket-names.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
 const GATE_FILE = "vibe-handoff-gate.json";
-export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "audit", "matrix"]);
+export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "audit", "matrix", "review"]);
+const DOCUMENT_EVIDENCE = Object.freeze({ members: "member ticket", prds: "PRD", plans: "plan" });
 
 /** The parsed review receipts the given files fingerprint. */
 export function readReviewReceipts(files) {
@@ -78,7 +80,9 @@ export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
     if (JSON.stringify(sessionMembers(worktree)) !== JSON.stringify(record.memberTickets ?? [])) return "the session's member tickets changed since the handoff gate";
     const naming = memberNameProblems(record.memberTickets ?? [], title, readFileSync(bodyFile, "utf8"));
     if (naming.length) return naming.join("; ");
-    if ((record.evidence?.members ?? []).some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff member ticket evidence changed";
+    for (const [key, label] of Object.entries(DOCUMENT_EVIDENCE)) {
+      if ((record.evidence?.[key] ?? []).some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return `handoff ${label} evidence changed`;
+    }
     if (!Array.isArray(record.receipts) || record.receipts.some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff review receipt changed";
     if (reviewReceiptProblems(readReviewReceipts(record.receipts.map(item => item.path)), sourceIdentity(worktree)).problems.length) return "handoff review evidence is stale or incomplete";
     return null;
