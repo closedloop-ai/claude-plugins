@@ -104,7 +104,7 @@ import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
 import { buildInventoryBundle } from "./inventory-bundle.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
-import { loadOpenPrs, pullRequestFacts } from "./pr-facts.mjs";
+import { loadOpenPrs, proofCorpusBase, pullRequestFacts } from "./pr-facts.mjs";
 import {
   isUnversionedStory,
   keepsStoryIdentity,
@@ -176,7 +176,7 @@ const result = withStableSource(worktree, () => {
   const localFixTickets = localFixTicketsByPath(record);
   const mainSync = record?.status === "active" && record?.operator ? readMainSyncProvenance(worktree) : undefined;
   let comparison;
-  const baseCommit = mainSync?.mainSha ?? git(["merge-base", "HEAD", getComparison().operand]);
+  const baseCommit = proofCorpusBase(worktree, () => getComparison().operand);
   const { policy: pathPolicy, file: pathPolicyFile, problem: pathPolicyProblem,
     source: pathPolicySource } = readPathPolicy();
   const allChangedFiles = listChangedFiles(baseCommit);

@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.73
+### vibe v1.1.76
 
 #### Fixed
 - The agent guard's refusal for the requirements and setup workers names the launcher's sessionless startup route: the shipped `claude-worker.mjs` path and the exact stdin request with `"sessionless": {"kind": "startup"}`. It no longer tells the caller to start a vibe session (ISS-13899). An orchestrator that needed only a pre-dispatch requirements check had been falling back to a general worker without the requirements worker's graph and ClosedLoop reads. fleet-orchestrator's pre-dispatch newest-ruling step now gives the same launch. The writer refusal is unchanged.
@@ -15,15 +15,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - The pr-takeover URL-only eval also grades that the answer launches the reviewers on the sessionless takeover route and records review receipts.
-- vibe 1.1.73 needs vibe-core 1.0.1 (`VIBE_CORE_MIN`), whose `review-receipts.mjs` takes `--pr-url` and `--head` and whose agent guard names the routes above.
-- The README version line and the Python and vibe-bench release-pin tests move to 1.1.73.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 482 words longer than in 1.1.71 (origin/main at this update, 182af94e9c6c3362f2eb8a1cc33f9ca55da6d0f7).
+- vibe 1.1.76 needs vibe-core 1.0.1 (`VIBE_CORE_MIN`), whose `review-receipts.mjs` takes `--pr-url` and `--head` and whose agent guard names the routes above.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.76.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 482 words longer than in 1.1.75 (origin/main at this update, e9d089201a1b21cf3c71d5266de761f0f98fb812).
 
 ### vibe-core v1.0.1
 
 #### Fixed
 - `hooks/agent-guard.mjs` (ISS-13899): the refusal for the requirements and setup workers gives the launcher's sessionless startup request; the refusal for the adversarial and guardrails reviewers adds the takeover launch and its `review-receipts.mjs --pr-url --head` capture; the refusal for the seed-refresh workers says seed refresh runs in Codex. The paths are vibe's install, found through `shared/vibe-install.mjs`. The writer refusal is unchanged.
 - `lib/handoff/scripts/review-receipts.mjs` records a takeover review's PR URL, head SHA and worktree, checks them against the reviewed source, and with `--pr-url` and `--head` refuses a capture for any other head.
+
+### vibe v1.1.75
+
+#### Fixed
+- The handoff mutation-proof gate accepts a real Storybook runner failure at a changed `.stories.tsx` primary assertion, including a browser-prefixed failure header and a play helper that an exported story calls. A setup error, an unrelated or earlier assertion, a frame inside the assertion's own argument (a nested check or a helper call), a proof whose test source cannot be read, another assertion on a multiline assertion's closing line, a sibling story's failure, a mutation of another file, any assertion that runs after the mutation and could also see it, including inside helpers and the stories that call them (which the Storybook instrumenter cannot tell apart), a comment-only mutation, and authored failure text that only names the coordinate are refused.
+- Every absence proof binds a private raw runner receipt: its command, exact head, mutation and restored exits, before and mutated source hashes, the restored output hash, and the one mutation edit, applied literally so mutation text containing `$&`, `$'`, `` $` `` or `$$` still binds. Package-relative Vitest paths and matcher or multiline coordinates, and Playwright output, are matched against the repo-relative candidate without loosening its identity.
+- A line holding only positive `.not.toBeNull()` presence assertions, with no check or callback nested in their arguments, is no longer treated as an absence candidate, and a busy-state count is no longer treated as card-layout proof because a nearby line mentions a card. Real absent-element and card-layout assertions still need their proofs, including a count whose card or summary comes only from its test context and a count that excludes busy or loading items in a form the gate recognizes: `busy: false`, `aria-busy="false"`, `:not(...)`, `hasNot` or `hasNotText`, `!card.loading`, an inequality, or a comparison with false.
+- A Desktop E2E spec on a selected remote tier can be carried to CI as not run only when a live probe of that runner at the exact head (a full commit SHA; anything else never reaches the remote shell) finds no supported displayless Electron route and the selected lane, spec record and post-merge `desktop-e2e/validated` owner agree. A runner whose native Desktop slot runs keeps the spec required. The handoff inventory and the PR evidence comment use one decision and one proof-candidate base.
+- `pr-evidence-schema.mjs` takes the worktree and checks proofs against the tested source, which it reads only as a regular file of at most 2 MB inside the worktree, the verifier documents the remote-tier Desktop record, and the handoff skill documents a credential-free route for web E2E mutation proofs through a repository-owned Playwright project.
+
+#### Changed
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.75.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 2 words shorter than in 1.1.71 (origin/main at this update, 182af94e9c6c3362f2eb8a1cc33f9ca55da6d0f7).
 
 ### vibe-core v1.0.0
 
