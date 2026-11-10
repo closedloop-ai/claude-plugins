@@ -406,7 +406,8 @@ function rawProofReceipt(proof, receiptDir, readSource) {
         throw new Error("absence receipt mutation must change executable source, not only comments or whitespace");
       }
       if (edit) {
-        const changed = targetSource.replace(edit.old, edit.new);
+        // A literal edit: String#replace would expand $&, $', $` and $$ in the mutation text.
+        const changed = targetSource.split(edit.old).join(edit.new);
         const candidateLine = Number(proof.assertionLocation?.match(/:(\d+):\d+$/)?.[1]);
         const editLine = lineNumberAt(targetSource, targetSource.indexOf(edit.old));
         const column = Number(proof.assertionLocation?.match(/:(\d+)$/)?.[1]);

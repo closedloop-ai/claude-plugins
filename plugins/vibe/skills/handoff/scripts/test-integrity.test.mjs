@@ -31,15 +31,15 @@ function runnerOutput(proof, source) {
   return lines.join("\n");
 }
 
-function withReceipt(input, source) {
+function withReceipt(input, source, mutation = ' void "intentional mutation";') {
   const hash = value => createHash("sha256").update(value).digest("hex");
   const proof = { ...input, mutationRun: { ...input.mutationRun, assertionFailure: runnerOutput(input, source) } };
   const old = source.split("\n")[0];
-  const mutationEdit = { old, new: `${old} void "intentional mutation";` };
+  const mutationEdit = { old, new: `${old}${mutation}` };
   const receipt = { candidate: proof.candidate, target: proof.path, command: proof.command,
     mutationExit: proof.mutationRun.exitCode, mutationOutput: proof.mutationRun.assertionFailure,
     restoredExit: 0, restoredOutput: "Test Files 1 passed", head: proof.commit,
-    beforeSha256: hash(source), mutatedSha256: hash(source.replace(mutationEdit.old, mutationEdit.new)), mutationEdit };
+    beforeSha256: hash(source), mutatedSha256: hash(source.split(mutationEdit.old).join(mutationEdit.new)), mutationEdit };
   const name = `proof-${receiptNumber++}.json`;
   const bytes = JSON.stringify(receipt);
   writeFileSync(path.join(RECEIPT_DIR, name), bytes);
@@ -363,6 +363,23 @@ test("ISS-13846 final review ADV15-1 an unreadable test source cannot bind a lat
   const readProof = path => path === "src/owner.tsx" ? owner : null;
   assert.match(testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], readProof, COMMIT, RECEIPT_DIR,
     readCandidates).join("\n"), /exact assertion failure|proof source/);
+});
+
+test("ISS-13846 final review R16D-1 a genuine mutation containing replacement tokens binds its receipt", () => {
+  const lines = ['test("price", () => {', '  expect(screen.queryByText("stale")).toBeNull();', "});"];
+  const fixture = changed("src/price.test.tsx", lines.join("\n"), ["toBeNull"]);
+  const read = path => path === fixture.file.path ? fixture.source : null;
+  const [candidate] = testIntegrityCandidates([fixture.file], read);
+  const command = "pnpm vitest src/price.test.tsx";
+  const proof = { candidate: candidate.id, path: candidate.path, case: candidate.case, class: "absence",
+    mutation: "render stale", presentState: "stale is present", assertionLine: candidate.assertionLine,
+    assertionLocation: candidate.assertionLocation, command, observedFailure: "stale assertion failed", restoredPass: true,
+    commit: COMMIT, ownerBoundary: "production", mountedSignal: "owner mounted",
+    mutationRun: { command, exitCode: 1, assertionFailure: "AssertionError: expected null at src/price.test.tsx:2:3" } };
+  for (const token of ["$'", "$`", "$&", "$$"]) {
+    const bound = withReceipt(proof, fixture.source, ` void formatPrice("${token}");`);
+    assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [bound] }, [fixture.file], read, COMMIT, RECEIPT_DIR), [], token);
+  }
 });
 
 test("ISS-13846 final review F11-1 a frame on another assertion sharing the candidate's closing line is not its failure", () => {
