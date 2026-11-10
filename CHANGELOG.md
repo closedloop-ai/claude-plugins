@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `pr-evidence-schema.mjs` takes the worktree and checks proofs against the tested source, the verifier documents the remote-tier Desktop record, and the handoff skill documents a credential-free route for web E2E mutation proofs through a repository-owned Playwright project.
 
 #### Changed
+- The handoff test-integrity gate imports the shared `escapeRegExp` helper from `source-imports.mjs` instead of keeping its own copy.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 2 words shorter than in 1.1.67 (origin/main at this update, 0868e5d6fe942ce578df0cbc0011eef849e417da).
 
 ### vibe v1.1.67

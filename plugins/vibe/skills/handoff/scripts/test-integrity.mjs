@@ -7,6 +7,7 @@ import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { escapeRegExp } from "./source-imports.mjs";
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
 const RESPONSIVE_NAME = /(?:narrow|mobile)/i;
@@ -574,10 +575,6 @@ function laterAssertionCouldFail(source, following, matcher, ambiguity, depth = 
     if (close > open && depth < 2 && laterAssertionCouldFail(source, source.slice(open, close), matcher, ambiguity, depth + 1)) return true;
   }
   return false;
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const ARROW_HELPER = String.raw`^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)`;
