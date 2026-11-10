@@ -89,14 +89,16 @@ import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } f
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { promptProblems } from "./skill-freshness.mjs";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
-import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
+const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
+const { homeProblems, programShape, Shape } = await vibeCore("lib/fleet-orchestrator/scripts/fleet-home.mjs");
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const STATE = "board.json";
 const PAGE = "board.md";

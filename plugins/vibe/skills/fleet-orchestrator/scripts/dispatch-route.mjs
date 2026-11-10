@@ -27,7 +27,9 @@ import { parseArgs } from "node:util";
 import { UsageState } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
 import { DEFAULT_STALE_SECONDS } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { CLASSES, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
-import { decideCloudPlacement } from "./cloud-placement.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
 
 export const DISPATCH_ROUTE_SCHEMA = "vibe.fleet-dispatch-route/1";
 export const SWITCH_ENV = "FLEET_CLASS_ROUTING";

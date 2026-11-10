@@ -1,0 +1,268 @@
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { writeRemoteCodexStub } from '../../../../vibe/skills/fleet-orchestrator/scripts/fleet-test-support.mjs';
+import { vibeRoot } from '../../../shared/vibe-install.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = vibeRoot();
+// fleet.sh and board.mjs stay in vibe; these cases run them against this module.
+const VIBE_FLEET_SCRIPTS = path.join(PLUGIN_ROOT, 'skills', 'fleet-orchestrator', 'scripts');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'codex', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
+const MONITOR = path.join(HERE, '..', '..', 'codex-fleet-monitor', 'scripts');
+const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'fleet-home.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+const tempRoot = (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'fleet-home-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+};
+
+test('a new program reads none of an earlier program; resume names the active one and its Claude writers to relaunch', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.match(run(['resume', '--home', home]).stdout, /^NO-ACTIVE-PROGRAM/m);
+  assert.equal(run(['start', 'iss-1', '--shape', 'fleet', '--home', home]).status, 0);
+  const first = path.join(home, 'programs', 'iss-1');
+  writeFileSync(path.join(first, 'resume-log.md'), '## old program\n');
+  writeFileSync(path.join(first, 'board.json'), JSON.stringify({ writers: { 'green-keeper': { runtime: 'claude' }, w1: { runtime: 'codex' } } }));
+  writeFileSync(path.join(first, 'prompts', 'green-keeper-01-start.md'), 'start\n');
+  writeFileSync(path.join(first, 'prompts', 'green-keeper-02-resume.md'), 'resume\n');
+  writeFileSync(path.join(home, 'lessons.md'), 'ledger\n');
+  const resumed = run(['resume'], { FLEET_HOME: home }).stdout;
+  assert.match(resumed, new RegExp(`^READ ${path.join(home, 'lessons.md')}$`, 'm'), 'the reusable layer is read by every program');
+  assert.match(resumed, new RegExp(`^ACTIVE iss-1 ${first}$`, 'm'));
+  assert.match(resumed, new RegExp(`^RELAUNCH green-keeper ${path.join(first, 'prompts', 'green-keeper-02-resume.md')}$`, 'm'));
+  assert.doesNotMatch(resumed, /RELAUNCH w1/, 'Codex writers resume through fleet.sh, not a relaunch');
+
+  const refused = run(['start', 'iss-2', '--shape', 'fleet', '--home', home]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /^ACTIVE iss-1: close it/m);
+  assert.equal(run(['close', '--home', home]).status, 0);
+  assert.equal(run(['start', 'iss-2', '--shape', 'fleet', '--home', home]).status, 0);
+  const second = run(['resume', '--home', home]).stdout;
+  assert.match(second, /^ACTIVE iss-2 /m);
+  assert.doesNotMatch(second, /^ACTIVE iss-1 |\/programs\/iss-1(?:\/|$)/m, 'the new program is shown nothing of the earlier one');
+  assert.equal(readFileSync(path.join(home, 'programs', 'iss-2', 'resume-log.md'), 'utf8'), '');
+});
+
+test('check reports state written outside the home or the program, and passes once it is inside', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  run(['start', 'iss-1', '--shape', 'fleet', '--home', home]);
+  const program = path.join(home, 'programs', 'iss-1');
+  assert.equal(run(['check', '--home', home]).status, 0);
+  writeFileSync(path.join(root, 'resume-log.md'), 'outside\n');
+  symlinkSync(path.join(root, 'resume-log.md'), path.join(program, 'resume-log-old.md'));
+  writeFileSync(path.join(home, 'prs.txt'), '');
+  writeFileSync(path.join(home, 'config.env'), `LOCAL_STATE_DIR=${root}/state\nREMOTE_STATE_DIR=/srv/vibe-remote\n`);
+  writeFileSync(path.join(program, 'sessions.txt'), 'remote prd723-vibe\nlocal w1\nlocal audit tid-1\n');
+  writeFileSync(path.join(program, 'w9-local.json'), JSON.stringify({ threadId: 't9', cwd: '/x' }));
+  const out = run(['check', '--home', home]);
+  assert.equal(out.status, 1);
+  const lines = out.stdout.split('\n').filter(Boolean).map((line) => line.split(':')[0]);
+  assert.deepEqual(lines.sort(), [
+    'CONFIG LOCAL_STATE_DIR',
+    `OUTSIDE programs/iss-1/resume-log-old.md -> ${path.join(root, 'resume-log.md')}`,
+    'FLAT prs.txt',
+    'SHARED-REMOTE REMOTE_STATE_DIR is shared by every program',
+    'UNMANAGED local audit',
+    'UNMANAGED local w1',
+    'UNMANAGED remote prd723-vibe',
+    `UNMANAGED-STATE ${path.join(program, 'w9-local.json')}`,
+  ].sort());
+  rmSync(path.join(program, 'resume-log-old.md'));
+  rmSync(path.join(home, 'prs.txt'));
+  rmSync(path.join(program, 'w9-local.json'));
+  writeFileSync(path.join(home, 'config.env'), 'REMOTE_FLEET_HOME=/srv/fleet\n');
+  writeFileSync(path.join(program, 'sessions.txt'), 'remote prd723-vibe\nlocal w1\n');
+  writeFileSync(path.join(program, 'sessions', 'prd723-vibe.remote.json'), '{}\n');
+  writeFileSync(path.join(program, 'sessions', 'w1.json'), JSON.stringify({ threadId: 't1' }));
+  assert.equal(run(['check', '--home', home]).status, 0, run(['check', '--home', home]).stdout);
+});
+
+test('check reports a pending remote marker as recoverable rather than unmanaged', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'iss-1', '--shape', 'fleet', '--home', home]).status, 0);
+  const program = path.join(home, 'programs', 'iss-1');
+  writeFileSync(path.join(program, 'sessions.txt'), 'remote writer\n');
+  const pending = path.join(program, 'sessions', 'writer.remote.pending.json');
+  writeFileSync(pending, '{"host":"box","stateDir":"/remote/sessions","owner":{"pid":99,"started":"prior","attempt":"one"}}\n');
+  const checked = run(['check', '--home', home]);
+  assert.equal(checked.status, 1);
+  assert.match(checked.stdout, /^PENDING-REMOTE remote writer:/m);
+  assert.doesNotMatch(checked.stdout, /^UNMANAGED remote writer:/m);
+  rmSync(path.join(program, 'sessions.txt'));
+  const withoutRoster = run(['check', '--home', home]);
+  assert.match(withoutRoster.stdout, /^PENDING-REMOTE remote writer:/m,
+    'pending ownership remains discoverable before the roster names the writer');
+  const legacy = path.join(program, 'sessions', 'legacy.remote.pending');
+  mkdirSync(legacy);
+  writeFileSync(path.join(program, 'sessions.txt'), 'remote legacy\n');
+  const withLegacy = run(['check', '--home', home]);
+  assert.match(withLegacy.stdout, /^PENDING-REMOTE-LEGACY remote legacy:/m);
+  assert.doesNotMatch(withLegacy.stdout, /^UNMANAGED remote legacy:/m);
+});
+
+test('every script resolves the home to the active program, with per-program state dirs derived', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  run(['start', 'iss-1', '--shape', 'fleet', '--home', home]);
+  writeFileSync(path.join(home, 'config.env'), 'CODEX_MODEL=m1\nREMOTE_FLEET_HOME=/srv/fleet\n');
+  writeFileSync(path.join(home, 'programs', 'iss-1', 'config.env'), 'CODEX_MODEL=m2\n');
+  const shell = (dir) => spawnSync('bash', ['-c', `lines=$(node ${JSON.stringify(path.join(MONITOR, 'work-dir.mjs'))} sh "$1") || exit 2; eval "$lines"; echo "$W|$CODEX_MODEL|$LOCAL_STATE_DIR|$REMOTE_STATE_DIR"`, 'x', dir], { encoding: 'utf8' });
+  const program = path.join(home, 'programs', 'iss-1');
+  const expected = `${program}|m2|${program}/sessions|/srv/fleet/programs/iss-1/sessions\n`;
+  assert.equal(shell(home).stdout, expected);
+  assert.equal(shell(program).stdout, expected);
+  run(['close', '--home', home]);
+  assert.equal(shell(home).status, 2, 'a home with no active program runs nothing');
+});
+
+test('fleet.sh in a home keeps local sessions and remote session markers in the program dir', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  run(['start', 'iss-1', '--shape', 'fleet', '--home', home]);
+  const bin = path.join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`, { mode: 0o755 });
+  writeFileSync(path.join(bin, 'ssh'), '#!/usr/bin/env bash\nexec bash -c "${@: -1}"\n', { mode: 0o755 });
+  writeRemoteCodexStub(bin, PLUGIN_ROOT);
+  writeFileSync(path.join(home, 'config.env'), `REMOTE_HOST=box\nREMOTE_FLEET_HOME=${root}/remote\nREMOTE_SHELL="bash -c"\nCODEX_MODEL=m\nCODEX_EFFORT=high\n`);
+  const prompt = path.join(home, 'programs', 'iss-1', 'prompts', 'w1-01.md');
+  writeFileSync(prompt, '$vibe ISS-1\n');
+  const fleet = (...args) => spawnSync('bash', [path.join(VIBE_FLEET_SCRIPTS, 'fleet.sh'), home, ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  const local = fleet('local', 'session', 'turn', 'w1', '--prompt-file', prompt);
+  assert.match(local.stdout, new RegExp(`^arg:${path.join(home, 'programs', 'iss-1', 'sessions')}$`, 'm'));
+  const remote = fleet('remote', 'session', 'turn', 'w2', '--prompt-file', prompt);
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.match(remote.stdout, new RegExp(`^arg:${root}/remote/programs/iss-1/sessions$`, 'm'));
+  assert.ok(existsSync(path.join(home, 'programs', 'iss-1', 'sessions', 'w2.remote.json')));
+});
+
+test('migrate turns a flat work dir into a home in place and repoints links beside it', (t) => {
+  const root = tempRoot(t);
+  const flat = path.join(root, 'orch');
+  mkdirSync(path.join(flat, 'local-codex-state'), { recursive: true });
+  mkdirSync(path.join(flat, 'prompts'));
+  writeFileSync(path.join(flat, 'config.env'), `LOCAL_STATE_DIR=${flat}/local-codex-state\nCODEX_MODEL=m\n`);
+  for (const name of ['lessons.md', 'handover.md', 'resume-log.md', 'rulings.md', 'prs.txt']) writeFileSync(path.join(flat, name), `${name}\n`);
+  writeFileSync(path.join(flat, 'sessions.txt'), 'local w1\nremote prd723-vibe\n');
+  writeFileSync(path.join(flat, 'local-codex-state', 'w1.json'), '{"threadId":"t1"}\n');
+  symlinkSync(path.join(flat, 'resume-log.md'), path.join(root, 'program-resume.md'));
+  symlinkSync(path.join(flat, 'lessons.md'), path.join(root, 'ledger.md'));
+  symlinkSync(path.join(flat, 'resume-log.md'), path.join(flat, 'prompts', 'latest-log.md'));
+  const dry = run(['migrate', '--from', flat, '--program', 'iss-1', '--dry-run']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, new RegExp(`^MOVE ${flat}/local-codex-state -> ${flat}/programs/iss-1/sessions$`, 'm'));
+  assert.match(dry.stdout, /^SPLIT-RULINGS /m);
+  assert.ok(existsSync(path.join(flat, 'resume-log.md')), 'a dry run moves nothing');
+
+  const watcher = spawn('sleep', ['30']);
+  t.after(() => watcher.kill());
+  mkdirSync(path.join(flat, 'watch.lock'));
+  writeFileSync(path.join(flat, 'watch.lock', 'pid'), `${watcher.pid}\n`);
+  const live = run(['migrate', '--from', flat, '--program', 'iss-1']);
+  assert.equal(live.status, 2);
+  assert.match(live.stderr, /^WATCHER-LIVE /m);
+  rmSync(path.join(flat, 'watch.lock'), { recursive: true });
+
+  assert.equal(run(['migrate', '--from', flat, '--program', 'iss-1']).status, 0);
+  const program = path.join(flat, 'programs', 'iss-1');
+  for (const name of ['lessons.md', 'handover.md', 'config.env']) assert.ok(existsSync(path.join(flat, name)), name);
+  for (const name of ['resume-log.md', 'rulings.md', 'prs.txt', 'sessions.txt', 'prompts', 'sessions/w1.json']) assert.ok(existsSync(path.join(program, name)), name);
+  assert.equal(readlinkSync(path.join(root, 'program-resume.md')), path.join(program, 'resume-log.md'));
+  assert.equal(readlinkSync(path.join(program, 'prompts', 'latest-log.md')), path.join(program, 'resume-log.md'), 'an absolute link inside the moved state follows it');
+  assert.ok(lstatSync(path.join(root, 'ledger.md')).isSymbolicLink() && readlinkSync(path.join(root, 'ledger.md')) === path.join(flat, 'lessons.md'), 'a link to a reusable file is unchanged');
+  assert.match(readFileSync(path.join(flat, 'config.env'), 'utf8'), /^# derived per program since vibe 1\.0\.78: LOCAL_STATE_DIR=/m);
+  const check = run(['check', '--home', flat]);
+  assert.match(check.stdout, /^UNMANAGED remote prd723-vibe/m, 'a remote session started without fleet.sh stays reported');
+  assert.doesNotMatch(check.stdout, /^UNMANAGED local w1/m, 'the moved state dir is the program sessions dir');
+  assert.doesNotMatch(check.stdout, /^(FLAT|CONFIG|OUTSIDE)/m);
+});
+
+test('a program records its shape at start, resume says what applies, and the board refuses a writer the shape does not allow', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  const missing = run(['start', 'solo', '--home', home]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /--shape must be one of no-writer, one-writer, fleet/);
+  const started = run(['start', 'solo', '--shape', 'no-writer', '--home', home]);
+  assert.equal(started.status, 0, started.stderr);
+  const program = path.join(home, 'programs', 'solo');
+  assert.deepEqual(JSON.parse(readFileSync(path.join(program, 'program.json'), 'utf8')), { shape: 'no-writer' });
+  assert.match(run(['resume', '--home', home]).stdout, /^SHAPE no-writer: nobody writes code; the resume log, rulings, research and evidence rules apply/m);
+
+  const board = (...args) => spawnSync(process.execPath, [path.join(VIBE_FLEET_SCRIPTS, 'board.mjs'), home, ...args], { encoding: 'utf8' });
+  const refused = board('writer', 'w1', '--runtime', 'claude');
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /recorded as no-writer; record its new shape with fleet-home\.mjs shape one-writer\|fleet before adding a writer/);
+  assert.equal(run(['shape', 'one-writer', '--home', home]).status, 0);
+  assert.equal(board('writer', 'w1', '--runtime', 'claude').status, 0);
+  assert.equal(board('writer', 'w1', '--status', 'building').status, 0, 'the one writer keeps updating its row');
+  const second = board('writer', 'w2', '--runtime', 'codex');
+  assert.equal(second.status, 2);
+  assert.match(second.stderr, /recorded as one-writer \(writer w1\); record its new shape with fleet-home\.mjs shape fleet/);
+  assert.equal(run(['shape', 'fleet', '--home', home]).status, 0);
+  assert.equal(board('writer', 'w2', '--runtime', 'codex').status, 0);
+  assert.equal(run(['shape', 'several', '--home', home]).status, 2);
+});
+
+test('resume tells a new chat to run the plugin version check, and flags an outdated plugin nobody answered', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  run(['start', 'p1', '--shape', 'one-writer', '--home', home]);
+  const program = path.join(home, 'programs', 'p1');
+  assert.match(run(['resume', '--home', home]).stdout, new RegExp(`^PLUGIN-VERSION-UNCHECKED: run \`node \\S+/vibe/scripts/plugin-version\\.mjs check --state ${program}/plugin-version\\.json\``, 'm'));
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'vibe: you have 1.0.84, the latest is 1.0.85', checkedAt: 'then' }));
+  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION-UNANSWERED vibe: you have 1\.0\.84, the latest is 1\.0\.85: ask the operator to update now or proceed knowing an outdated plugin could give worse results/m);
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'v', checkedAt: 'then', choice: { choice: 'proceed' },
+    runtime: 'codex', loadedSkill: actorLoad('c'), harnesses: [] }));
+  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION outdated proceed at then: run `.+` in every chat; in the same chat it keeps the recorded answer$/m);
+  assert.equal(run(['check', '--home', home]).status, 0, 'program.json and plugin-version.json are program state, not strays');
+});
+
+test('resume refuses a stale loaded skill until the current installed release is recorded', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  run(['start', 'p1', '--shape', 'one-writer', '--home', home]);
+  const program = path.join(home, 'programs', 'p1');
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'then', loadedSkill: { ...actorLoad('same-chat'), version: '1.0.85' }, harnesses: [] }));
+  assert.match(run(['resume', '--home', home]).stdout, /PLUGIN-RELOAD-REQUIRED: target actor loaded 1\.0\.85/);
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: actorLoad('new-chat'), harnesses: [] }));
+  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION current at now/m);
+});
+
+test('resume writes the editable context-guard file once and never overwrites an edited one', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'one-writer', '--home', home]).status, 0);
+  const guardFile = path.join(home, 'context-guard.json');
+  assert.equal(run(['resume', '--home', home]).status, 0);
+  const seeded = JSON.parse(readFileSync(guardFile, 'utf8'));
+  assert.deepEqual([seeded.enabled, seeded.compactWindowTokens, seeded.flushAtPercent], [true, 300000, 85]);
+  assert.equal(run(['check', '--home', home]).status, 0, run(['check', '--home', home]).stdout);
+  writeFileSync(guardFile, JSON.stringify({ compactWindowTokens: 400000 }));
+  run(['resume', '--home', home]);
+  assert.deepEqual(JSON.parse(readFileSync(guardFile, 'utf8')), { compactWindowTokens: 400000 }, 'an edited file is never overwritten');
+  for (const broken of ['{broken', JSON.stringify({ compactWindowTokens: 2000000 })]) {
+    writeFileSync(guardFile, broken);
+    assert.match(run(['resume', '--home', home]).stdout, new RegExp(`^CONTEXT-GUARD-INVALID ${guardFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `, 'm'), broken);
+  }
+  assert.equal(run(['resume', '--home', path.join(home, 'absent')]).status, 0);
+  assert.equal(existsSync(path.join(home, 'absent')), false, 'resume creates no home');
+});
+
+test('a resume that cannot seed context-guard.json still prints the whole reading list', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'one-writer', '--home', home]).status, 0);
+  chmodSync(home, 0o555);
+  let result;
+  try {
+    result = run(['resume', '--home', home]);
+  } finally {
+    chmodSync(home, 0o755);
+  }
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^CONTEXT-GUARD-UNSEEDED .*context-guard\.json: /m);
+  assert.match(result.stdout, /^ACTIVE prog-a /m);
+  assert.equal(existsSync(path.join(home, 'context-guard.json')), false);
+});

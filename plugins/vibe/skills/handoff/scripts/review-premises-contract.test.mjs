@@ -23,10 +23,10 @@ test("rung 4 text pin: every vibe and fleet review surface carries the premise a
     "plugins/vibe/skills/fleet-orchestrator/references/templates.md",
   ]) assert.match(read(file), /review-premises\.md|premise verification contract/, file);
   assert.match(read("tools/vibe-workers/src/claude-worker.ts"), /verify each material premise/);
-  assert.match(read("plugins/vibe/skills/handoff/scripts/review-receipts.mjs"), /premiseProblems/);
-  assert.match(read("plugins/vibe/skills/handoff/scripts/review-receipts.mjs"), /"vibe-verify-worker"/);
-  assert.match(read("plugins/vibe/skills/handoff/scripts/review-receipts.mjs"), /managed Codex App Server thread/);
-  assert.match(read("plugins/vibe/skills/fleet-orchestrator/scripts/helpers.mjs"), /--kind <kind> --brief <file> --worktree <dir>/);
+  assert.match(read("plugins/vibe-core/lib/handoff/scripts/review-receipts.mjs"), /premiseProblems/);
+  assert.match(read("plugins/vibe-core/lib/handoff/scripts/review-receipts.mjs"), /"vibe-verify-worker"/);
+  assert.match(read("plugins/vibe-core/lib/handoff/scripts/review-receipts.mjs"), /managed Codex App Server thread/);
+  assert.match(read("plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.mjs"), /--kind <kind> --brief <file> --worktree <dir>/);
   assert.match(read("plugins/vibe/skills/vibe/references/review-premises.md"), /Before endorsing or forwarding/);
 });
 

@@ -5,7 +5,9 @@ import { existsSync, mkdirSync, realpathSync, renameSync, statSync } from "node:
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { git } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 /**
  * Moves one named control run to private git storage after control is down.

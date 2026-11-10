@@ -36,8 +36,10 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
 

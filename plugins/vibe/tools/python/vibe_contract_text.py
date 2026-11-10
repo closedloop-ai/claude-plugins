@@ -45,7 +45,11 @@ def agent(name: str) -> str:
 
 
 def hook_guard_routed(plugin: Path, event: str, guard: str, tool: str | None = None) -> bool:
-    """Whether hooks.json's one `event` command runs `guard` (for `tool`, when given, through its matcher and route)."""
+    """Whether vibe's hooks run `guard` for `event` (for `tool`, when given, through its matcher and route).
+
+    `plugin` is vibe's root; its hooks ship in the vibe-core plugin beside it, whose hooks.json has one command per event.
+    """
+    plugin = plugin.parent / "vibe-core"
     entries = json.loads((plugin / "hooks" / "hooks.json").read_text())["hooks"][event]
     commands = [(entry.get("matcher", ""), hook["command"]) for entry in entries for hook in entry["hooks"]]
     if len(commands) != 1:

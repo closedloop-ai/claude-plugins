@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import ts from "typescript";
 import { z } from "zod";
 import { MainSyncError, originFileSchema } from "./main-sync-contracts.js";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { digest } from "./main-sync-state.js";
 import { producerPackage, type InputProducer } from "./main-sync-input-catalog.js";
 import { type OriginFile } from "./main-sync-input-files.js";

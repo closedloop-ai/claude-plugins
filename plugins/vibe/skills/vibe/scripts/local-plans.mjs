@@ -1,7 +1,9 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { git } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 /** The exact worktree-local planning folder, never part of a session's deliverable. */
 export const LOCAL_PLAN_PREFIX = ".closedloop-ai/vibe-plans/";

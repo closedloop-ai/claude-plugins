@@ -24,6 +24,9 @@ import yaml
 
 EVALS = Path(__file__).resolve().parents[1]
 PLUGIN = EVALS.parent
+# The identity helper and its session-record import live in vibe-core beside vibe; vibe keeps only a wrapper.
+IDENTITY_SCRIPTS = PLUGIN.parent / "vibe-core/lib/vibe/scripts"
+IDENTITY = IDENTITY_SCRIPTS / "tested-head.mjs"
 MANIFESTS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
 PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestrator-"}
 SKILLS = ("pr-takeover", "fleet-orchestrator", "handoff", "vibe")
@@ -51,16 +54,22 @@ def default_codex_model() -> str:
     return model
 
 
+def payload_plugins(plugins: Path) -> list[str]:
+    """The plugins a payload installs: vibe and closedloop-core, and vibe-core where the payload has it (older ones do not)."""
+    return ["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
+
+
 def snapshot_metadata(output: Path) -> dict[str, Any]:
     """Identify actual copied payloads through the shared Claude/Codex identity helper."""
     script = output / "receipt-helper/tested-head.mjs"
-    if not script.is_file():
-        script = output / "market/plugins/vibe/skills/vibe/scripts/tested-head.mjs"
+    for installed in ("market/plugins/vibe-core/lib/vibe/scripts", "market/plugins/vibe/skills/vibe/scripts"):
+        if not script.is_file():
+            script = output / installed / "tested-head.mjs"
     payloads = {
         name: json.loads(subprocess.check_output(
             ["node", str(script), "tree", str(output / "market/plugins" / name)], text=True
         ))
-        for name in ("vibe", "closedloop-core")
+        for name in payload_plugins(output / "market/plugins")
     }
     suite = json.loads(subprocess.check_output(
         ["node", str(script), "tree", str(output / "suite")], text=True
@@ -243,13 +252,13 @@ def install(
         catalog = market / ".agents/plugins"
         catalog.mkdir(parents=True)
         entries = []
-        for name in ["vibe", "closedloop-core"]:
+        for name in payload_plugins(plugin.parent):
             source = plugin if name == "vibe" else plugin.parent / name
             target = market / "plugins" / name
             target.parent.mkdir(exist_ok=True)
             # Both runtimes use the same Git-selected, symlink-confined copier.
             subprocess.check_output(
-                ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(source), str(target)],
+                ["node", str(IDENTITY), "copy", str(source), str(target)],
                 text=True, timeout=min(60, budget.remaining()),
             )
             entries.append(
@@ -264,12 +273,12 @@ def install(
             json.dumps({"name": "vibe-eval", "plugins": entries})
         )
         subprocess.check_output(
-            ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(plugin / "evals"), str(output / "suite")],
+            ["node", str(IDENTITY), "copy", str(plugin / "evals"), str(output / "suite")],
             text=True, timeout=min(60, budget.remaining()),
         )
         # Freeze the hashing runtime separately so older model payloads remain byte-for-byte unchanged.
         subprocess.check_output(
-            ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(PLUGIN / "skills/vibe/scripts"), str(output / "receipt-helper")],
+            ["node", str(IDENTITY), "copy", str(IDENTITY_SCRIPTS), str(output / "receipt-helper")],
             text=True, timeout=min(60, budget.remaining()),
         )
         (output / "snapshot.json").write_text(json.dumps(snapshot_metadata(output), indent=2))
@@ -281,7 +290,7 @@ def install(
             60,
             output / "marketplace.json",
         )
-        for name in ["vibe", "closedloop-core"]:
+        for name in payload_plugins(market / "plugins"):
             command(
                 [codex_binary, "plugin", "add", name + "@vibe-eval", "--json"],
                 output,
@@ -720,6 +729,8 @@ def run_case(
                     'plugins."vibe@vibe-eval".enabled=false',
                     "-c",
                     'plugins."closedloop-core@vibe-eval".enabled=false',
+                    "-c",
+                    'plugins."vibe-core@vibe-eval".enabled=false',
                     "--output-schema",
                     str(schema),
                     "--",
@@ -826,7 +837,7 @@ def main() -> int:
             prior_handlers[signum] = signal.signal(signum, interrupt)
         env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin)
         private_home = Path(env["CODEX_HOME"])
-        identity_script = PLUGIN / "skills/vibe/scripts/tested-head.mjs"
+        identity_script = IDENTITY
         snapshot = json.loads((output / "snapshot.json").read_text())
         source_sha = args.source_sha
         if source_sha is None:

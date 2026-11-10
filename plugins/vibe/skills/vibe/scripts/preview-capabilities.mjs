@@ -4,8 +4,10 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
-import { sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
-import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { sourceIdentity, validSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 
 export const PREVIEW_CAPABILITIES = Object.freeze(["app-preview", "feature-flags", "collaboration"]);
 

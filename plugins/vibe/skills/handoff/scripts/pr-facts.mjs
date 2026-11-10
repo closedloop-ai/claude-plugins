@@ -3,7 +3,6 @@
 // files), assertion and export changes, new apps/api refusals, ticket asks and
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
 
-import { withStableSource, validSourceIdentity, committedSourceIdentity, committedFile } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
@@ -21,6 +20,9 @@ import { prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { testIntegrityProblems } from "./test-integrity.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { withStableSource, validSourceIdentity, committedSourceIdentity, committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;

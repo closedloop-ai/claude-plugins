@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
-import { git, readSessionRecord, writeSessionRecord } from "./session-record.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git, readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const PROTOTYPE_BRANCH_PREFIX = "prototype/";
 const SLUG = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;

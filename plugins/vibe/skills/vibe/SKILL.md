@@ -179,8 +179,9 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
 Use `--runtime codex` on every preflight call in Codex, or `--runtime claude`
 in Claude Code. Preserve it in setup-worker briefs and reruns. Claude resolves
-`closedloop-core` through this plugin's manifest dependency; Codex's preflight
-stops until core is explicitly installed and enabled.
+`closedloop-core` and `vibe-core` (which carries vibe's hooks) through this
+plugin's manifest dependencies; Codex's preflight stops until both are
+explicitly installed and enabled.
 - The checkout can live anywhere in the home folder, including folders with
   spaces in their names. Quote every path you pass to a command.
 - Paths like `scripts/...` and `references/...` are relative to this skill's
@@ -316,14 +317,18 @@ a plugin script the installed release no longer has.
   with this version as requested, though an older version could give worse
   results." and continue in the same turn, without asking.
 - On "update", run `choose --choice update`, then `node
-  scripts/plugin-version.mjs update`; this is the one plugin change you make,
+  scripts/plugin-version.mjs update --choice update`, passing `--choice update`
+  only because the person said update (without vibe-core nothing records their
+  answer, so the update refuses without it); this is the one plugin change you make,
   and only on the person's choice (`references/guardrails.md`, "Plugins and
   tooling"). It updates every outdated ClosedLoop plugin in Claude Code and
   in Codex, whichever has one, and checks each reached the latest version.
   Its `sessions` names each vibe session whose writer was bound to the
   release it replaced: `migrated` needs nothing more, and `on-resume` is
   migrated when that session resumes (`references/quality-loop.md`,
-  "Recorded definition migration"). Neither is news for the person.
+  "Recorded definition migration"). Neither is news for the person. When its
+  output has `hookApproval`, tell the person that line in plain words (it
+  appears only when Codex says a vibe-core hook needs approval).
   Whatever its status, tell the person, for each harness in its `restart`,
   in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
@@ -338,9 +343,10 @@ a plugin script the installed release no longer has.
 ### Setup check
 
 When the check prints `"print":true` (the escalated run's output, when there
-was one), its `block` (the installed closedloop-core and vibe versions for
-each installed harness, each marked latest, newer available or not checked,
-and both connections) opens your first reply word for word, before the
+was one), its `block` (the installed closedloop-core, vibe and vibe-core
+versions for each installed harness, each marked latest, newer available or
+not checked, a Codex line when vibe-core is missing there or its hooks need
+approval, and both connections) opens your first reply word for word, before the
 version question or the endings line. Send that reply as soon as you have the
 block, before you read any other file, run the preflight or dispatch a
 worker. `"print":false` means this conversation already showed it (a
@@ -348,6 +354,12 @@ compaction or a later turn): show nothing. If the check could not run at all,
 `node scripts/plugin-version.mjs status --closedloop <state> --graph <state>`
 prints the same block from the versions installed here. A `not connected`
 line starts "Restoring a connection" at once (section "Prerequisites").
+A Codex line saying vibe-core is not installed, or its hooks are not
+approved, means vibe's guards are off in Codex: tell the person right away in
+one plain line. Installing vibe-core goes through the update flow below.
+Approving its hooks is always the person's own step, never a worker's: they
+need to open Codex once and approve vibe-core's hooks in /hooks. Say nothing
+about approval when the block has no such line.
 
 ### Prerequisites
 

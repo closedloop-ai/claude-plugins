@@ -10,8 +10,10 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { git } from "./session-record.mjs";
 import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 function recordPath(worktree, port) {
   return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), `vibe-verify-storybook-${port}.json`);

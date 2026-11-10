@@ -5,10 +5,12 @@
 // default 80), so ordinary use is not an event, and `HIGH(<used percent floored to 10>%)` from N up.
 // Needs liveness.mjs beside it; snapshot.sh ships both files to the remote host.
 // Also the plugin's one reader and classifier of Codex usage: vibe/scripts/codex-usage.mjs imports it.
-import { connectStdio, connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint } from './liveness.mjs';
 import { parseArgs } from 'node:util';
 import { defaultUsageWorkDir, recordUsageReading } from './usage-state.mjs';
-import { resolveWorkDir } from './work-dir.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { connectStdio, connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
+const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 export const UsageState = Object.freeze({
   Ok: 'ok',

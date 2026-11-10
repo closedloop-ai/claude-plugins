@@ -7,9 +7,11 @@ import { existsSync, readFileSync, statfsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
-import { git } from "../../vibe/scripts/session-record.mjs";
 import { NO_DISPLAYLESS_ELECTRON, REQUIRED_CONTAINER_IDENTITY } from "./e2e-tier.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const GIB = 1024 ** 3;
 const MIN_MEMORY_GIB = 20;
