@@ -256,7 +256,8 @@ function runnerAssertionAt(failure, actualLine, actualColumn, expectedLine, expe
     const sameLineFallback = actualLine === expectedLine
       && lines[expectedLine - 1]?.slice(expectedColumn - 1).replace(/\s+/g, " ").includes(assertionLine);
     if ((!candidate && !sameLineFallback) || candidate && actualLine > candidate.endLine
-      || !sourceLine?.trim().startsWith(snippet) || actualColumn > sourceLine.length + 1) return false;
+      || !sourceLine?.trim().startsWith(snippet) || actualColumn > sourceLine.length + 1
+      || nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn)) return false;
   } else if (!assertionLine.includes(snippet) && !snippets.map((match) => match[2]).join(" ").replace(/\s+/g, " ").includes(assertionLine)) return false;
   if (actualLine < expectedLine) return false;
   if (actualLine === expectedLine) return actualColumn >= expectedColumn
@@ -670,4 +671,21 @@ function onlyPositiveAssertionText(source, line, matches) {
     covered = true;
   }
   return covered && !/[^\s;,]/.test(text.replace(/\bawait\b/g, ""));
+}
+
+/** A frame inside the candidate's expect argument, at or after a nested expect/assert, belongs to that nested check. */
+function nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn) {
+  const offsetAt = (line, column) => {
+    let start = 0;
+    for (let current = 1; current < line; current += 1) start = source.indexOf("\n", start) + 1;
+    return start + column - 1;
+  };
+  const start = offsetAt(expectedLine, expectedColumn);
+  const head = /^(?:await\s+)?expect(?:\s*\.\s*soft)?\s*\(/.exec(source.slice(start));
+  if (!head) return false;
+  const open = start + head[0].length - 1;
+  const close = matchingParenthesis(source, open);
+  const actual = offsetAt(actualLine, actualColumn);
+  if (close < 0 || actual <= open || actual >= close) return false;
+  return [...source.slice(open + 1, close).matchAll(/\b(?:expect|assert)\b/g)].some((match) => open + 1 + match.index <= actual);
 }

@@ -285,6 +285,33 @@ test("ISS-13846 final review ADV-1 a positive assertion does not hide an unparse
   assert.deepEqual(candidates.map(({ id }) => id), ["absence:src/presence.test.tsx:2"]);
 });
 
+test("ISS-13846 final review ADV10-1 a frame on an assertion nested in the candidate's argument is not its failure", () => {
+  const shapes = [
+    ['test("multi", async () => {', "  expect(",
+      '    await waitFor(() => { expect(screen.queryByText("b")).toBeTruthy(); return screen.queryByText("a"); })',
+      "  ).toBeNull();", "});"],
+    ['test("same", async () => {',
+      '  expect(await waitFor(() => expect(screen.queryByText("b")).toBeTruthy())).toBeNull();', "});"],
+  ];
+  for (const lines of shapes) {
+    const fixture = changed("src/nested-frame.test.tsx", lines.join("\n"), ["toBeNull"]);
+    const read = path => path === fixture.file.path ? fixture.source : null;
+    const [candidate] = testIntegrityCandidates([fixture.file], read);
+    const command = "pnpm vitest src/nested-frame.test.tsx";
+    const proofAt = (line, column) => withReceipt({ candidate: candidate.id, path: candidate.path, case: candidate.case,
+      class: "absence", mutation: "render a", presentState: "a is present", assertionLine: candidate.assertionLine,
+      assertionLocation: candidate.assertionLocation, command, observedFailure: "a assertion failed", restoredPass: true,
+      commit: COMMIT, ownerBoundary: "production", mountedSignal: "owner mounted",
+      mutationRun: { command, exitCode: 1, assertionFailure: `AssertionError: expected null at src/nested-frame.test.tsx:${line}:${column}` } }, fixture.source);
+    const problems = proof => testIntegrityProblems({ testIntegrityProofs: [proof] }, [fixture.file], read, COMMIT, RECEIPT_DIR);
+    const innerLine = lines.findIndex(text => text.includes("expect(screen.queryByText")) + 1;
+    const matcherLine = lines.findIndex(text => text.includes(").toBeNull()")) + 1;
+    assert.notDeepEqual(problems(proofAt(innerLine, lines[innerLine - 1].indexOf("expect(screen") + 1)), [], lines[1]);
+    assert.deepEqual(problems(proofAt(matcherLine, lines[matcherLine - 1].lastIndexOf(".toBeNull") + 2)), [], lines[1]);
+    assert.deepEqual(problems(proofAt(2, 3)), [], lines[1]);
+  }
+});
+
 test("ISS-13846 a busy-state count in a summary spec is not card-layout proof", () => {
   const fixture = changed("e2e/documents-summary-scope.spec.ts", [
     'test("one busy list", async () => {',
