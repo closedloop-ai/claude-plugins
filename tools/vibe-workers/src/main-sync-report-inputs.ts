@@ -5,7 +5,7 @@ import { reportCommandEntries } from "./main-sync-report-command.js";
 import { verifyReportClosure } from "./main-sync-report-closure.js";
 import { committedIdentity } from "./main-sync-state.js";
 import { withCommittedTree } from "./main-sync-committed-tree.js";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 
 /** Actual structured recipe argv is checked again; caller text cannot authorize replay or retained-result verdicts. */
 export function verifyReportRecipe(commands: readonly CheckCommand[]) {

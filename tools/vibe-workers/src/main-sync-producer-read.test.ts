@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { readProducerMetadata, fallbackProducerMetadata, type FirstProducerHead } from "./main-sync-producer-read.js";
 import { committedInputs, inspectInputInventory } from "./main-sync-checks.js";
 import * as catalog from "./main-sync-input-catalog.js";
@@ -13,8 +13,8 @@ import { MainSyncError } from "./main-sync-contracts.js";
 
 const control = vi.hoisted(() => ({ calls: [] as string[][],
   reply: undefined as undefined | ((root: string, args: string[]) => string | undefined) }));
-vi.mock("../../../plugins/vibe/skills/vibe/scripts/session-record.mjs", async importOriginal => {
-  const actual = await importOriginal<typeof import("../../../plugins/vibe/skills/vibe/scripts/session-record.mjs")>();
+vi.mock("../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs")>();
   return { ...actual, git: (root: string, args: string[], options?: { timeout?: number }) => {
     control.calls.push([...args]);
     const reply = control.reply?.(root, args);

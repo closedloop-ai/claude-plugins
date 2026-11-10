@@ -7,7 +7,9 @@ import { linkSync, lstatSync, readFileSync, renameSync, unlinkSync, writeFileSyn
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { processIdentityStatus, readProcessIdentity, readProcessStart } from '../../../shared/process-identity.mjs';
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
 function pathAbsent(target) {
   try { lstatSync(target); return false; } catch (error) { return error?.code === 'ENOENT'; }

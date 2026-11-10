@@ -26,8 +26,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { escapeRegExp } from "../../handoff/scripts/source-imports.mjs";
-import { git } from "./session-record.mjs";
 import { isTestFile } from "./test-files.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const MIGRATION = /(?:^|\/)migrations\/(?:([^/]+)\/[^/]+|([^/]+))\.sql$/;
 const PER_ROW_WORK = /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?(?:TRIGGER|FUNCTION|PROCEDURE)\b|\bFOR\s+EACH\s+ROW\b/i;

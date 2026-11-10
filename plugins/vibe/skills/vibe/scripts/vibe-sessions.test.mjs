@@ -5,7 +5,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, mainSyncAdmission, mainSyncRecipeFiles, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
-import { LoadBasis, loadedSkillEvidence } from "./loaded-skill.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-sessions.mjs");
 const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..", "..");

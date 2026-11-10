@@ -20,10 +20,12 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { git } from "../../vibe/scripts/session-record.mjs";
 import { criteriaStates } from "./criteria-audit.mjs";
 import { rulingNamesScope } from "./rulings-check.mjs";
 import { escapeRegExp } from "./source-imports.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 export const ROLLOUT = /\b(?:feature (?:flag|switch)|flag(?:-gated|ged)?|closed[- ]by[- ]default|default[- ]off|rollback|roll back|legacy|cohort|staged rollout|rollout|kill switch|percentage rollout)\b/i;
 const FLAG = /\b(?:feature (?:flag|switch)|flag|closed[- ]by[- ]default|default[- ]off|kill switch)\b/i;

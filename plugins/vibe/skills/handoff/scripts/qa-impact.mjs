@@ -13,9 +13,11 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs, TextDecoder } from "node:util";
-import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { commentlessAst, sourceComments } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 export const QaImpact = Object.freeze({ None: "None", LanesOnly: "Lanes only", Visual: "Visual QA" });
 

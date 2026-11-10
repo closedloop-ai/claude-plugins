@@ -30,11 +30,19 @@ it("Claude dispatch binds the exact installed definition root and script referen
 
 it("protected path support requires a regular installed hook, not a missing or symlinked script", async () => {
   const value = setup();
-  await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/missing or unreadable/);
-  mkdirSync(join(value.agentRoot, "hooks"));
-  symlinkSync(join(bundleDirectory, "../../../..", "hooks/protected-write-guard.mjs"),
-    join(value.agentRoot, "hooks/protected-write-guard.mjs"));
-  await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/regular file/);
+  await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/vibe-core is missing/);
+  // The guard lives in vibe-core beside vibe; lay the two out as a checkout.
+  const plugins = join(value.base, "layout", "plugins");
+  const vibe = join(plugins, "vibe");
+  const core = join(plugins, "vibe-core");
+  mkdirSync(join(vibe, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.0.0" }));
+  mkdirSync(join(core, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(core, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe-core", version: "1.0.0" }));
+  await expect(checkProtectedWriteSupportAsync(vibe, join(value.bin, "claude"))).rejects.toThrow(/missing or unreadable/);
+  mkdirSync(join(core, "hooks"));
+  symlinkSync(join(bundleDirectory, "../../../../../vibe-core", "hooks/protected-write-guard.mjs"), join(core, "hooks/protected-write-guard.mjs"));
+  await expect(checkProtectedWriteSupportAsync(vibe, join(value.bin, "claude"))).rejects.toThrow(/regular file/);
 });
 
 it("accepts a supported suffixed Claude version and still refuses one below the floor", async () => {
@@ -186,7 +194,7 @@ describe("production Claude CLI adapter", () => {
 
   it("routes a protected Python write through the writer-only Bash matcher", () => {
     const value = setup();
-    const hook = join(bundleDirectory, "../../../..", "hooks/protected-write-guard.mjs");
+    const hook = join(bundleDirectory, "../../../../../vibe-core", "hooks/protected-write-guard.mjs");
     const settings = JSON.parse(protectedWriteSettings(hook, value.worktree));
     const route = settings.hooks.PreToolUse[0];
     expect(new RegExp(route.matcher).test("Bash")).toBe(true);

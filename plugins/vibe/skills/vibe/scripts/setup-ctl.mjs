@@ -83,7 +83,7 @@ export function classifyChecks(lines) {
   const plan = { auto: [], needsPerson: [], blocked: [], delegated: [], unknown: [] };
   for (const check of failed) {
     const fix = String(check.fix ?? "");
-    if (fix.includes("plugin add")) plan.blocked.push({ check: check.check, fix, reason: "never run plugin add; a human installs closedloop-core as INSTALL.md describes" });
+    if (fix.includes("plugin add")) plan.blocked.push({ check: check.check, fix, reason: `never run plugin add; a human installs ${check.check} as INSTALL.md describes` });
     else if (fix in AUTO_FIXES) plan.auto.push({ check: check.check, fix });
     else if (fix in PERSON_FIXES) plan.needsPerson.push({ check: check.check, fix, detail: check.detail, ...PERSON_FIXES[fix](check) });
     else if (fix in BLOCKED_FIXES) plan.blocked.push({ check: check.check, fix, reason: BLOCKED_FIXES[fix], detail: check.detail });

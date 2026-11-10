@@ -2,11 +2,13 @@
 // verifier writes this evidence; neither consumer may reinterpret a path-only
 // object as exact test coverage.
 
-import { validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { testIntegrityProofShapeProblems } from "./test-integrity.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { validSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 export const TEST_SELECTORS = Object.freeze(["code_tests_for", "related", "e2e-reference"]);
 

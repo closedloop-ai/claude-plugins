@@ -119,8 +119,6 @@ import { pageLink, storyLink } from "./person-links.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
-import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
-import { registerWorktreeRetirement, sweepOwnedCleanups } from "./owned-cleanup.mjs";
 import {
   buildDispatchInputs,
   DISPATCH_WORKFLOW,
@@ -134,6 +132,10 @@ import {
   validateOperator,
   vercelAliases,
 } from "./vibe-session-data.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { git, readSessionRecord, sessionLiveTicket, writeSessionRecord: writeRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { registerWorktreeRetirement, sweepOwnedCleanups } = await vibeCore("lib/vibe/scripts/owned-cleanup.mjs");
 
 const BRANCH_PREFIX = "vibe/";
 const SYMPHONY_REPOSITORY = "closedloop-ai/symphony-alpha";

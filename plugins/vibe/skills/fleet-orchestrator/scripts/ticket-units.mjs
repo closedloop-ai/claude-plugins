@@ -70,8 +70,10 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { missingTicketNames } from "../../handoff/scripts/ticket-names.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
+const { missingTicketNames } = await vibeCore("lib/handoff/scripts/ticket-names.mjs");
 
 const SLUG = /^[A-Z]+-\d+$/;
 const PRD = /^PRD-\d+$/;

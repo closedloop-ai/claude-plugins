@@ -5,10 +5,12 @@ import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { blockingProblem, compareVersions, conversationRuntime, loadedSkillForCheck, loadedSkillProblem, markPending, updateCommands, versionsText } from "./plugin-version.mjs";
-import { readSessionRecord, writeSessionRecord } from "./session-record.mjs";
-import { LoadBasis, loadedSkillEvidence } from "./loaded-skill.mjs";
+import { blockingProblem, conversationRuntime, loadedSkillForCheck, loadedSkillProblem, updateCommands, versionsText } from "./plugin-version.mjs";
 import { makeHome } from "./test-fixtures.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "plugin-version.mjs");
 const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..", "..");
@@ -79,15 +81,36 @@ const line = a.join(" ");
 s.calls.push(line);
 const save = () => fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify(s));
 if (s.fail && line.startsWith(s.fail)) { save(); process.stderr.write("boom: " + line + "\\n"); process.exit(1); }
+// A Codex App Server that answers hooks/list from the installed plugins: one vibe-core hook, \`hookTrust\` (default trusted),
+// or an App Server without hooks/list when \`noHooksList\` is set.
+if (a[0] === "app-server") {
+  save();
+  require("node:readline").createInterface({ input: process.stdin }).on("line", (text) => {
+    const message = JSON.parse(text);
+    const reply = (value) => process.stdout.write(JSON.stringify({ id: message.id, ...value }) + "\\n");
+    if (message.id === "initialize") reply({ result: {} });
+    else if (message.id && message.method === "hooks/list") {
+      if (s.noHooksList) return reply({ error: { message: "unknown variant \`hooks/list\`" } });
+      const core = s.installed.some((p) => p.name === "vibe-core");
+      reply({ result: { data: [{ cwd: process.cwd(), hooks: core ? [{ key: "vibe-core@closedloop-ai:hooks/hooks.json:pre_tool_use:0:0",
+        pluginId: "vibe-core@closedloop-ai", trustStatus: s.hookTrust ?? "trusted", enabled: true }] : [] }] } });
+    }
+  });
+  return;
+}
 const kind = ${JSON.stringify(kind)};
-const refresh = (name) => { const p = s.installed.find((x) => x.name === name); if (p && s.refreshed && !s.stuck) p.version = s.main[name]; };
+const refresh = (name) => {
+  const p = s.installed.find((x) => x.name === name);
+  if (p && s.refreshed && !s.stuck) p.version = s.main[name];
+  else if (!p && s.refreshed && !s.stuck && s.main[name]) s.installed.push({ name, version: s.main[name] });
+};
 const localVersion = (name) => JSON.parse(fs.readFileSync(s.root + "/plugins/" + name + "/.codex-plugin/plugin.json", "utf8")).version;
 if (line === "plugin list --json") {
   if (kind === "claude") process.stdout.write(JSON.stringify(s.installed.map((p) => ({ id: p.name + "@" + (p.market ?? "closedloop-ai"), version: p.version, scope: "user", enabled: p.enabled !== false }))));
   else process.stdout.write(JSON.stringify({ installed: s.installed.map((p) => ({ pluginId: p.name + "@" + (p.market ?? "closedloop-ai"), name: p.name, marketplaceName: p.market ?? "closedloop-ai", version: p.version, installed: true, enabled: p.enabled !== false, marketplaceSource: s.root ? { sourceType: "local", source: s.root } : { sourceType: "git", source: "https://example.invalid/claude-plugins.git" } })), available: [] }));
 } else if (line === "plugin marketplace update closedloop-ai" || line === "plugin marketplace upgrade closedloop-ai") {
   s.refreshed = true;
-} else if (kind === "claude" && a[0] === "plugin" && a[1] === "update") {
+} else if (kind === "claude" && a[0] === "plugin" && (a[1] === "update" || a[1] === "install")) {
   refresh(a[2].split("@")[0]);
 } else if (kind === "codex" && a[0] === "plugin" && a[1] === "add") {
   const name = a[2].split("@")[0];
@@ -123,15 +146,6 @@ function run(home, args, env = {}) {
 
 const startup = (home) => JSON.parse(readFileSync(path.join(home, ".codex", "vibe", "plugin-version", `${CONVERSATION}.json`), "utf8"));
 const both = (claude, codex, url) => ["--claude", claude.file, "--codex", codex.file, "--latest-base", url];
-
-test("versions compare numerically and anything else is not comparable", () => {
-  assert.equal(compareVersions("1.0.52", "1.0.53"), -1);
-  assert.equal(compareVersions("1.0.53", "1.0.53"), 0);
-  assert.equal(compareVersions("1.0.100", "1.0.99"), 1);
-  assert.equal(compareVersions("1.10.0", "1.9.9"), 1);
-  assert.equal(compareVersions("1.0", "1.0.0"), null);
-  assert.equal(compareVersions("1.0.52", undefined), null);
-});
 
 test("every closedloop-ai plugin in both harnesses is compared with main, and the result is recorded for the conversation", async (t) => {
   const { home, bin } = sandbox(t);
@@ -293,6 +307,103 @@ test("a chosen update updates each outdated plugin in each installed harness, ve
   assert.equal(startup(home).update.status, "updated");
 });
 
+// vibe's hooks ship in vibe-core, and Codex installs no plugin dependency, so a vibe update there can leave
+// vibe-core, and every hook, missing; the check names it and the chosen update installs it.
+test("a harness with vibe but no vibe-core is outdated, and the chosen update installs vibe-core there", async (t) => {
+  const { home, bin } = sandbox(t);
+  const versions = { vibe: "1.1.71", "vibe-core": "1.0.0" };
+  const main = await marketplace(t, { files: mainFiles(versions) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.1.71" }, { name: "vibe-core", version: "1.0.0" }], main: versions });
+  const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.71" }], main: versions });
+  const check = await run(home, ["check", ...both(claude, codex, main.url)]);
+  assert.equal(check.result.status, "outdated");
+  assert.equal(check.result.versions, "vibe-core: not installed, the latest is 1.0.0");
+  assert.deepEqual(check.result.outdated, [{ harness: "codex", plugin: "vibe-core", installed: null, latest: "1.0.0", missing: true }]);
+  await run(home, ["choose", "--choice", "update"]);
+  const { code, result } = await run(home, ["update", "--claude", claude.file, "--codex", codex.file]);
+  assert.equal(code, 0);
+  assert.equal(result.status, "updated");
+  assert.deepEqual(result.plugins.map((plugin) => `${plugin.harness} ${plugin.plugin} ${plugin.before}->${plugin.after} ${plugin.status}`),
+    ["codex vibe-core null->1.0.0 updated"]);
+  assert.deepEqual(codex.state().calls.slice(1), ["plugin marketplace upgrade closedloop-ai", "plugin add vibe-core@closedloop-ai", "plugin list --json", "app-server --stdio"]);
+  assert.equal(result.hookApproval, undefined, "every vibe-core hook is trusted, so nothing is said about approval");
+  assert.deepEqual(claude.state().calls.slice(1), []);
+});
+
+// Operator ruling (2026-11-09): the setup check names a missing vibe-core in Codex, and asks the developer to
+// approve its hooks only when Codex's hooks/list says one needs it.
+const APPROVE = "open Codex once and approve vibe-core's hooks in /hooks";
+const SPLIT = { vibe: "1.1.71", "vibe-core": "1.0.0", "closedloop-core": "1.6.2" };
+const installedAt = (versions, names) => names.map((name) => ({ name, version: versions[name] }));
+
+async function firstBlock(t, codexState, claudeState = { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]) }) {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles(SPLIT) });
+  const claude = fakeCli(bin, "claude", claudeState);
+  const codex = fakeCli(bin, "codex", codexState);
+  const { result } = await run(home, ["check", ...both(claude, codex, main.url), "--closedloop", "connected", "--graph", "connected"]);
+  assert.equal(result.print, true, JSON.stringify(result));
+  return result.block.split("\n");
+}
+
+test("the first setup check in Codex names a missing vibe-core with its add command and the approval it will need", async (t) => {
+  const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe"]) });
+  assert.deepEqual(block.slice(1, 4), [
+    "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
+    "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core not installed",
+    `- Codex: vibe-core is not installed in Codex, so vibe's guards cannot run there: run \`codex plugin add vibe-core@closedloop-ai\`, then ${APPROVE}`,
+  ]);
+});
+
+test("the first setup check in Codex asks for approval only when a vibe-core hook is untrusted or modified", async (t) => {
+  for (const hookTrust of ["untrusted", "modified"]) {
+    const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]), hookTrust });
+    assert.equal(block[3], `- Codex: vibe-core's hooks are not approved in Codex (vibe-core@closedloop-ai:hooks/hooks.json:pre_tool_use:0:0 is ${hookTrust}), so vibe's guards cannot run there: ${APPROVE}`);
+  }
+  for (const hookTrust of ["trusted", "managed"]) {
+    const block = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]), hookTrust });
+    assert.deepEqual(block.slice(1, 3), [
+      "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
+      "- Codex: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
+    ]);
+    assert.ok(!block.some((line) => line.includes("/hooks")), hookTrust);
+  }
+  const unchecked = await firstBlock(t, { installed: installedAt(SPLIT, ["closedloop-core", "vibe", "vibe-core"]), noHooksList: true });
+  assert.equal(unchecked[3], "- Codex: couldn't check whether vibe-core's hooks are approved in Codex (this Codex App Server has no hooks/list)");
+});
+
+test("Claude Code with vibe-core installed adds nothing to the setup check, and asks Codex nothing it lacks", async (t) => {
+  const block = await firstBlock(t, { installed: [] });
+  assert.deepEqual(block, ["Setup check", "- Claude Code: closedloop-core 1.6.2 (latest), vibe 1.1.71 (latest), vibe-core 1.0.0 (latest)",
+    "- ClosedLoop connection: connected", "- closedloop-graph connection: connected"]);
+});
+
+test("after an update, approval is named only when Codex's hooks/list says a vibe-core hook needs it", async (t) => {
+  for (const [codexState, expected] of [
+    [{}, undefined],
+    [{ hookTrust: "modified" }, `vibe-core's hooks are not approved in Codex (vibe-core@closedloop-ai:hooks/hooks.json:pre_tool_use:0:0 is modified), so vibe's guards cannot run there: ${APPROVE}`],
+    [{ noHooksList: true }, "couldn't check whether vibe-core's hooks are approved in Codex (this Codex App Server has no hooks/list)"],
+  ]) {
+    const { home, bin } = sandbox(t);
+    const main = await marketplace(t, { files: mainFiles(SPLIT) });
+    const claude = fakeCli(bin, "claude", { installed: [] });
+    const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.70" }, { name: "vibe-core", version: "1.0.0" }], main: SPLIT, ...codexState });
+    await run(home, ["check", ...both(claude, codex, main.url)]);
+    await run(home, ["choose", "--choice", "update"]);
+    const { code, result } = await run(home, ["update", "--claude", claude.file, "--codex", codex.file]);
+    assert.equal(code, 0);
+    assert.equal(result.hookApproval, expected, JSON.stringify(codexState));
+  }
+});
+
+test("update commands install a missing required plugin in its dependent's Claude scope and add it in Codex", () => {
+  const missing = { name: "vibe-core", id: "vibe-core@closedloop-ai", missing: true, scope: "project" };
+  assert.deepEqual(updateCommands("claude", "claude", [missing]),
+    [["claude", "plugin", "marketplace", "update", "closedloop-ai"], ["claude", "plugin", "install", "vibe-core@closedloop-ai", "--scope", "project"]]);
+  assert.deepEqual(updateCommands("codex", "codex", [{ ...missing, scope: undefined }]),
+    [["codex", "plugin", "marketplace", "upgrade", "closedloop-ai"], ["codex", "plugin", "add", "vibe-core@closedloop-ai"]]);
+});
+
 test("an update only touches the harness that is outdated", async (t) => {
   const { home, bin } = sandbox(t);
   const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53" }) });
@@ -443,22 +554,11 @@ test("adopt moves the conversation's record onto a new session and refuses one n
   assert.equal(readSessionRecord(worktree).pluginVersion.choice.choice, "proceed");
 });
 
-test("a started session is pending until the check runs, and a later start keeps what was recorded", async (t) => {
+test("the pending command marks a conversation pending", async (t) => {
   const { home } = sandbox(t);
-  const pending = markPending(CONVERSATION, home);
-  assert.equal(pending.status, "pending");
-  assert.match(blockingProblem(pending), /has not run/);
-  writeFileSync(path.join(home, ".codex", "vibe", "plugin-version", `${CONVERSATION}.json`), JSON.stringify({ status: "outdated", versions: "vibe: x", choice: { choice: "proceed" } }));
-  assert.equal(markPending(CONVERSATION, home).choice.choice, "proceed");
-  assert.equal(blockingProblem({ status: "outdated", versions: "vibe: x" }), "plugins are outdated (vibe: x) and the person has not chosen to update or to proceed");
-  assert.equal(blockingProblem({ status: "unknown" }), null, "no load-evidence source: the earlier behavior");
-  assert.equal(blockingProblem({ status: "unknown", loadedSkill: loaded() }), null);
-  assert.match(blockingProblem({ status: "unknown", loadedSkillRequired: true }), /recorded no load of the current vibe\/fleet skill/);
-  assert.equal(blockingProblem(null), null);
   const cli = await run(home, ["pending", "--conversation", "other-conversation"]);
   assert.equal(cli.result.status, "pending");
   assert.ok(existsSync(path.join(home, ".codex", "vibe", "plugin-version", "other-conversation.json")));
-  assert.throws(() => markPending("../escape", home), /invalid conversation id/);
 });
 
 test("versions are listed once per plugin and update commands keep paths with spaces whole", () => {
@@ -485,8 +585,8 @@ test("the setup check block lists closedloop-core and vibe per installed harness
   assert.equal(first.result.print, true);
   assert.equal(first.result.block, [
     "Setup check",
-    "- Claude Code: closedloop-core 1.5.3 (latest), vibe 1.1.2 (latest)",
-    "- Codex: closedloop-core not installed, vibe 1.1.1 (1.1.2 available)",
+    "- Claude Code: closedloop-core 1.5.3 (latest), vibe 1.1.2 (latest), vibe-core not installed",
+    "- Codex: closedloop-core not installed, vibe 1.1.1 (1.1.2 available), vibe-core not installed",
     "- ClosedLoop connection: connected",
     "- closedloop-graph connection: not connected",
   ].join("\n"));
@@ -535,9 +635,17 @@ test("the setup check block never claims versions it did not read, and refuses c
 });
 
 
-/** A vibe release in a fake plugin cache, carrying the real writer agent and the shipped writer-state command. */
+/**
+ * A vibe release in a fake Codex plugin cache, carrying the real writer agent and the shipped writer-state command,
+ * beside the checkout's vibe-core, which that command loads its record modules from.
+ */
 function cachedRelease(cache, version) {
-  const root = path.join(cache, "vibe", version);
+  const core = path.join(cache, "closedloop-ai", "vibe-core", "1.0.0");
+  if (!existsSync(core)) {
+    mkdirSync(path.dirname(core), { recursive: true });
+    symlinkSync(path.join(PLUGIN_ROOT, "..", "vibe-core"), core);
+  }
+  const root = path.join(cache, "closedloop-ai", "vibe", version);
   mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
   mkdirSync(path.join(root, "agents"));
   mkdirSync(path.join(root, "skills", "vibe", "scripts", "dist"), { recursive: true });
@@ -574,7 +682,7 @@ test("an update names the vibe sessions whose writer it strands and migrates the
   execFileSync("git", ["-C", repo, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "init"]);
   mkdirSync(path.join(home, ".codex", "vibe"), { recursive: true });
   writeFileSync(path.join(home, ".codex", "vibe", "config.json"), JSON.stringify({ repo }));
-  const cache = path.join(root, "cache");
+  const cache = path.join(root, "codex-home", "plugins", "cache");
   const old = cachedRelease(cache, "1.0.52");
   const current = cachedRelease(cache, "1.0.53");
   const claudeWriter = blockedSession(root, repo, "table-fixes", "claude", old);
@@ -619,7 +727,7 @@ test("with no check of this conversation, the setup check still lists the versio
   assert.equal(code, 0);
   assert.equal(result.block, [
     "Setup check",
-    "- Codex: closedloop-core 1.5.3 (couldn't check for a newer version), vibe 1.1.12 (couldn't check for a newer version)",
+    "- Codex: closedloop-core 1.5.3 (couldn't check for a newer version), vibe 1.1.12 (couldn't check for a newer version), vibe-core not installed",
     "- ClosedLoop connection: connected",
     "- closedloop-graph connection: connected",
   ].join("\n"));

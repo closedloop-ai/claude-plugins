@@ -36,6 +36,7 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 | [**code**](plugins/code/) | Code generation, implementation planning, and iterative development loop |
 | [**vibe**](plugins/vibe/) | Vibe sessions and ClosedLoop ticket workflows |
 | [**closedloop-core**](plugins/closedloop-core/) | Shared planning, intelligence, diagrams, review, QA, measurement, and PR monitoring |
+| [**vibe-core**](plugins/vibe-core/) | The hooks behind vibe sessions and the modules they run, released apart from vibe |
 | [**code-review**](plugins/code-review/) | Automated code review with inline GitHub PR comments |
 | [**platform**](plugins/platform/) | Claude Code expert guidance, prompt engineering, and artifact management |
 | [**self-learning**](plugins/self-learning/) | Pattern capture and organizational knowledge sharing |
@@ -64,14 +65,17 @@ claude /plugin marketplace install closedloop
 
 ### Codex example
 
-The `code`, `vibe`, `closedloop-core`, and `code-review` plugins include Codex
-manifests and marketplace entries:
+The `code`, `vibe`, `vibe-core`, `closedloop-core`, and `code-review` plugins
+include Codex manifests and marketplace entries:
 
 ```bash
 codex plugin marketplace add https://github.com/closedloop-ai/claude-plugins
 codex plugin add closedloop-core@closedloop-ai
 codex plugin add vibe@closedloop-ai
+codex plugin add vibe-core@closedloop-ai
 ```
+
+vibe's hooks ship in `vibe-core`: open Codex once and approve vibe-core's hooks in /hooks.
 
 Engineers can also install `code@closedloop-ai` and `code-review@closedloop-ai`.
 Codex requires core to be installed explicitly; Claude Code installs it through

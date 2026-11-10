@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
 import { MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
 import { committedInputReferences, explicitPlanningReference, referenceMatches } from "./main-sync-input-references.js";
