@@ -320,15 +320,21 @@ test("older lane and inventory evidence requires a recomputed impact key", (t) =
 
 test("the inventory reports the facts and gates only the pull-request phase", (t) => {
   const s = session(t);
+  git(s.wt, ["add", "-A"], s.home);
+  git(s.wt, ["commit", "--quiet", "-m", "checked fixture"], s.home);
+  const commit = git(s.wt, ["rev-parse", "HEAD"], s.home);
+  const selected = { ...SELECTED, source: sourceIdentity(s.wt),
+    targetedInventory: { ...SELECTED.targetedInventory, commit },
+    testRuns: SELECTED.testRuns.map(run => ({ ...run, commit })) };
   const prs = s.file("prs.json", PRS);
   const ticket = s.file("ticket.md", "Say why POST vs DELETE in the PR.\n");
   const handoff = runNode(INVENTORY, ["--worktree", s.wt, "--phase", "handoff", "--ticket", ticket], s.home);
   assert.equal(handoff.json.serverOnly, true);
   assert.equal(handoff.json.overlap, null);
   assert.equal("prBody" in handoff.json.blocking, false);
-  const run = (body, evidence = SELECTED) => runNode(INVENTORY, ["--worktree", s.wt, "--phase", "pull-request", "--ticket", ticket, "--prs-json", prs,
+  const run = (body, evidence = selected) => runNode(INVENTORY, ["--worktree", s.wt, "--phase", "pull-request", "--ticket", ticket, "--prs-json", prs,
     "--body", s.file("body.md", body), "--runs", s.file("runs.json", { touchFlows: [], touchFlowsReason: "server only", runs: [], ...evidence }),
-    "--commit", "a".repeat(40)], s.home);
+    "--commit", commit], s.home);
   const failing = run("Summary only.");
   assert.equal(failing.status, 1);
   assert.equal(failing.json.blocking.prBody, false);
@@ -382,8 +388,14 @@ test("pull-request inventory treats missing base templates as optional and enfor
 
 test("test selection covers the whole branch diff, and every selected, required or edited test passed on the commit (#8963)", (t) => {
   const s = session(t);
-  const commit = "a".repeat(40);
-  const gate = (runs, requiredTests = []) => facts(s, { runs: { touchFlows: [], touchFlowsReason: "server only", runs: [], ...runs }, commit, requiredTests }).prEvidenceProblems;
+  git(s.wt, ["add", "-A"], s.home);
+  git(s.wt, ["commit", "--quiet", "-m", "checked fixture"], s.home);
+  const commit = git(s.wt, ["rev-parse", "HEAD"], s.home);
+  const gate = (runs, requiredTests = []) => facts(s, { runs: { touchFlows: [], touchFlowsReason: "server only", runs: [],
+    ...runs, source: sourceIdentity(s.wt),
+    ...(runs.targetedInventory ? { targetedInventory: { ...runs.targetedInventory, commit } } : {}),
+    ...(runs.testRuns ? { testRuns: runs.testRuns.map(run => ({ ...run,
+      commit: run.commit === "a".repeat(40) ? commit : run.commit })) } : {}) }, commit, requiredTests }).prEvidenceProblems;
   assert.deepEqual(gate(SELECTED), []);
   const empty = gate({});
   for (const file of SOURCES) {
@@ -877,6 +889,11 @@ test("unchanged lanes retain the older QA-boundary result through the repaired p
 
 test("the comment adapter verifies workflow/tree carry through the same gate and names the source honestly", t => {
   const f = siblingCarry(t);
+  f.evidence.touchFlows = [];
+  f.evidence.touchFlowsReason = "fixture";
+  f.evidence.testSelection = [
+    { file: "service.mjs", selector: "related", tests: [] },
+    { file: "service.mjs", selector: "e2e-reference", tests: [] }];
   f.evidence.e2eCapability = { selectedTier: null, container: { dockerPresent: false, dockerReachable: false,
     memoryGiB: 0, diskGiB: 0, minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "fixture probe" },
     native: { available: false, forbidden: false }, remote: { available: false } };
