@@ -203,7 +203,7 @@ test("a new writer whose brief lacks the lead's binding, or names another, is re
   const client = stubClient({});
   writeFileSync(brief, '$vibe ISS-1 build it\n');
   await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', 'ISS-1'])), /carries the lead's binding on its own line: "Provider: none"/);
-  writeFileSync(brief, '$vibe ISS-1 build it\nProvider: vibe-closedloop-provider\n');
+  writeFileSync(brief, '$vibe ISS-1 build it\nProvider: example-provider\n');
   await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', 'ISS-1'])), /this lead is bound as "Provider: none"/);
   assert.deepEqual(client.calls, []);
 });
@@ -1180,12 +1180,12 @@ test('an ended actor cannot reopen a reload behind its released fence', async (t
 
 test("a new writer's $vibe brief carries the lead's binding, and one naming another binding is refused", async () => {
   const { briefProviderProblem, providerLine } = await import("./writer-launch.mjs");
-  const bound = { state: "bound", name: "vibe-closedloop-provider" };
-  assert.equal(providerLine(bound), "Provider: vibe-closedloop-provider");
+  const bound = { state: "bound", name: "example-provider" };
+  assert.equal(providerLine(bound), "Provider: example-provider");
   assert.equal(providerLine(null), "Provider: none");
   assert.equal(briefProviderProblem("$vibe #12 fix it\nProvider: none\n", null), null);
-  assert.equal(briefProviderProblem("$vibe ISS-12 fix it\nProvider: vibe-closedloop-provider\n", bound), null);
-  assert.match(briefProviderProblem("$vibe ISS-12 fix it\n", bound), /carries the lead's binding on its own line: "Provider: vibe-closedloop-provider"/);
-  assert.match(briefProviderProblem("$vibe #12 fix it\nProvider: vibe-closedloop-provider\n", null), /this lead is bound as "Provider: none"/);
+  assert.equal(briefProviderProblem("$vibe ISS-1 fix it\nProvider: example-provider\n", bound), null);
+  assert.match(briefProviderProblem("$vibe ISS-1 fix it\n", bound), /carries the lead's binding on its own line: "Provider: example-provider"/);
+  assert.match(briefProviderProblem("$vibe #12 fix it\nProvider: example-provider\n", null), /this lead is bound as "Provider: none"/);
   assert.equal(briefProviderProblem("continue the work", bound), null, "only a $vibe brief starts a writer");
 });

@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { codeowners, createGraphPack, featureMapIds, graphCallsStillOwed, ownersPattern, PACK_SCHEMA } from "./graph-pack.mjs";
-import { makeCheckout, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+import { bindProviderInProcess, makeCheckout, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const GRAPH_CALLS_STILL_OWED = graphCallsStillOwed(PROVIDER_BINDING);
 

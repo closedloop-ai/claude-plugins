@@ -55,6 +55,7 @@ test("each module vibe-core holds has one home: at most a thin command wrapper s
     "skills/vibe/scripts/e2e-lock.mjs",
     "skills/vibe/scripts/image-head.mjs",
     "skills/vibe/scripts/owned-state.mjs",
+    "skills/vibe/scripts/provider.mjs",
     "skills/vibe/scripts/tested-head.mjs",
   ]);
   assert.ok(!existsSync(path.join(VIBE, "hooks", "hooks.json")), "vibe registers no hooks; vibe-core's hooks.json does");
@@ -80,7 +81,7 @@ test("vibe's bundles load vibe-core's modules at run time instead of carrying co
     assert.deepEqual(inlined, [], path.basename(bundle));
   }
   assert.match(readFileSync(path.join(VIBE, "skills", "vibe", "scripts", "dist", "writer-state.mjs"), "utf8"),
-    /^\/\/ vibe-core:lib\/vibe\/scripts\/session-record\.mjs\nvar module = await vibeCore\("lib\/vibe\/scripts\/session-record\.mjs"\);$/m);
+    /^\/\/ vibe-core:lib\/vibe\/scripts\/session-record\.mjs\nvar module\d* = await vibeCore\("lib\/vibe\/scripts\/session-record\.mjs"\);$/m);
 });
 
 test("vibe asks vibe-core only for modules and names it has, at a release no older than VIBE_CORE_MIN", async () => {

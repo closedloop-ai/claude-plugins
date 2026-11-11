@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   approvalQuestion, approvalQuestionKey, flagKeyProblems, listedFlagKeys, proposals, renderFlagKeys, validateFlagKeys,
 } from "./flag-keys.mjs";
-import { git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+import { bindProviderInProcess, git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "flag-keys.mjs");

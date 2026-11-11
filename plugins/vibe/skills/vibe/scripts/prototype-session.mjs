@@ -33,9 +33,9 @@ export function validatePrototypePublication(result, record, headSha) {
   } catch {
     throw new Error("The prototype preview URL is invalid.");
   }
-  const deploymentHost = url.hostname.endsWith(".vercel.app") || deploymentHost(url.hostname);
+  const deployment = url.hostname.endsWith(".vercel.app") || deploymentHost(url.hostname);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash ||
-    !deploymentHost || url.hostname.includes("-git-") ||
+    !deployment || url.hostname.includes("-git-") ||
     url.pathname !== `/p/${record.slug}`) {
     throw new Error("Use the canonical deployment's immutable HTTPS preview URL with /p/<slug>, not an alias.");
   }

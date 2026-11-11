@@ -60,7 +60,7 @@ export function writerPlacementProblem(placements, writer, tickets) {
     return `writer ${writer} names no ticket: pass --tickets <slug,slug> (or record its unit with --writer ${writer}) so its placement is checked.`;
   }
   const bad = tickets.filter((ticket) => !workItem().test(ticket));
-  if (bad.length > 0) return `--tickets takes ticket slugs (capital letters, a hyphen and a number), got ${bad.join(", ")}.`;
+  if (bad.length > 0) return `--tickets takes work items (the tracker's ticket slugs, or #numbers with no tracker), got ${bad.join(", ")}.`;
   const problems = tickets.flatMap((ticket) => {
     const decision = placements[ticket];
     if (!decision) {

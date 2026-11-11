@@ -126,12 +126,13 @@ export function mainSyncRecipeFiles() {
 /**
  * Runs `script` as a session in the repository the ClosedLoop provider serves: the provider is bound for the
  * fixture chat unless `extraEnv` names another chat (or none, with empty CLAUDE_CODE_SESSION_ID and
- * CODEX_THREAD_ID, for a session with no provider).
+ * CODEX_THREAD_ID, for a session with no provider). The script runs in `cwd`, else in the fixture home: the
+ * session repository resolves from the working directory's checkout first, so it must never be this one.
  */
-export function runNode(script, args, home, extraEnv = {}, input, { cwd } = {}) {
+export function runNode(script, args, home, extraEnv = {}, input, { cwd = home } = {}) {
   const result = spawnSync(process.execPath, [script, ...args], {
     env: { ...gitEnv(home), ...bindProvider(home), ...extraEnv },
-    ...(cwd ? { cwd } : {}),
+    cwd,
     encoding: "utf8",
     input: input === undefined ? undefined : JSON.stringify(input),
   });

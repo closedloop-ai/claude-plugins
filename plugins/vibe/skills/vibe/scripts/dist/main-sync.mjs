@@ -224153,6 +224153,9 @@ var { assertVibeCreatedWorktree, git, readSessionRecord, sessionLiveTicket, writ
 var { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 var GENERIC_BACKEND = /(?:^|\/)(?:prisma|migrations)\/|\.sql$|schema\.prisma$/;
 var GENERIC_AREAS = Object.freeze({ ui: [], desktopHost: [], desktopRelevant: [], prototype: null, backend: GENERIC_BACKEND });
+function prototypeRecipe(binding = sessionBinding(null)) {
+  return providerDataOr(binding, "recipes", "prototypes", null);
+}
 
 // ../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs
 var { git: git2, readSessionRecord: readSessionRecord2, writeSessionRecord: writeSessionRecord2 } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -224179,8 +224182,8 @@ function validatePrototypePublication(result, record, headSha) {
   } catch {
     throw new Error("The prototype preview URL is invalid.");
   }
-  const deploymentHost = url.hostname.endsWith(".vercel.app") || deploymentHost(url.hostname);
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || !deploymentHost || url.hostname.includes("-git-") || url.pathname !== `/p/${record.slug}`) {
+  const deployment = url.hostname.endsWith(".vercel.app") || deploymentHost(url.hostname);
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || !deployment || url.hostname.includes("-git-") || url.pathname !== `/p/${record.slug}`) {
     throw new Error("Use the canonical deployment's immutable HTTPS preview URL with /p/<slug>, not an alias.");
   }
   const verifiedAt = result.verifiedAt === void 0 ? (/* @__PURE__ */ new Date()).toISOString() : result.verifiedAt;
@@ -224197,6 +224200,10 @@ function requirePrototypePublication(record, headSha) {
     throw new Error("The stored prototype publication has no verification timestamp.");
   }
   return validatePrototypePublication(record.prototype, record, headSha);
+}
+function deploymentHost(host) {
+  const pattern = prototypeRecipe()?.deploymentHost;
+  return typeof pattern === "string" && new RegExp(pattern).test(host);
 }
 
 // vibe-core:lib/vibe/scripts/provider.mjs

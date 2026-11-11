@@ -3,11 +3,15 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { writeRemoteCodexStub } from '../../../../vibe/skills/fleet-orchestrator/scripts/fleet-test-support.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
+import { bindProviderInProcess } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = vibeRoot();
