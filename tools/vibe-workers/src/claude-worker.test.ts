@@ -2,7 +2,9 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
+import { providerAware } from "./cli.js";
+import { ProviderBroken } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
@@ -852,6 +854,33 @@ describe("production Claude CLI adapter", () => {
     expect(generic).toContain("Run the lanes the repository documents.");
     expect(generic).not.toContain("pnpm test:lanes");
     expect(generic).not.toContain("> Provider");
+  });
+  it("reports a broken bound provider as PROVIDER_BROKEN with its reason and fix, and a CLI entry exits 4 on one", async () => {
+    const broken = new ProviderBroken("the provider acme this session is bound to is no longer installed at /gone", "acme");
+    expect(safeFailure(broken)).toEqual({ code: "PROVIDER_BROKEN", summary: broken.message });
+    expect(broken.message).toMatch(/Fix: reinstall or update the acme plugin/);
+    expect(safeFailure(new Error("other")).code).toBe("WORKER_TURN_FAILED");
+    const written: string[] = [];
+    const write = process.stdout.write;
+    process.stdout.write = ((chunk: string) => { written.push(chunk); return true; }) as typeof process.stdout.write;
+    try {
+      expect(await providerAware(() => { throw broken; })([])).toBe(4);
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(written).toEqual([`provider-broken: ${broken.message}\n`]);
+    await expect(providerAware(() => { throw new Error("other"); })([])).rejects.toThrow("other");
+  });
+  it("refuses to launch a role whose bound provider lacks a block, naming the reason and fix instead of keeping the generic text", () => {
+    const value = setup();
+    const body = "<!-- generic: nowhere -->\nRun the lanes the repository documents.\n<!-- end generic: nowhere -->\n"
+      + "> Provider `recipes` (block `nowhere` of `agents/vibe-verify-worker.md`)\n";
+    writeFileSync(join(value.agentRoot, "agents", "vibe-verify-worker.md"),
+      `---\nname: vibe-verify-worker\ndescription: Fixture role\nmodel: sonnet\ntools: Read, Grep, Glob, Bash, Skill\n---\n${body}`);
+    expect(() => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities: graph, mode: "request" }))
+      .toThrow(/has no block nowhere\. Fix: reinstall or update the vibe-closedloop-provider plugin/);
   });
   it("launches a brief that names the lead's binding only in a session bound the same way", () => {
     const value = setup();

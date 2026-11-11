@@ -5,7 +5,6 @@ Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
 Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: requested-pull-request -->
-<!-- generic: tests-then-push -->
 When the person explicitly asks for a pull request to
 be raised, full tests for every change in the session are required before it
 opens. Resume the SAME writer in `pull-request` mode, the only turn whose
@@ -14,12 +13,13 @@ unsuperseded row, production wiring and failure paths, on web and Desktop
 where their adapters differ, and every entry on the missing tests list. Run
 `node scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request`,
 then step 3's guardrail check, step 5's checks with the new tests included and
+<!-- generic: tests-then-push -->
 step 6's review on the result, then the remaining step 6 candidate gates
 before step 7's commit and its push through `vibe-environment-worker` in
 handover mode. The pull request does not open
-until those tests pass, their independent review is clean and step 9's gate passes.
 <!-- end generic: tests-then-push -->
 > Provider `recipes` (block `tests-then-push` of `handoff/handoff-pr.md`)
+until those tests pass, their independent review is clean and step 9's gate passes.
 
 During that turn, run `node scripts/parallel-prep.mjs --writer-state running
 --pull-request` and dispatch each lane. Prep may draft evidence, warm E2E,
@@ -78,31 +78,37 @@ invalidates it; finish the affected handoff steps and rerun this gate. The
 PreToolUse guard refuses `gh pr create` without a current witness; its refusal
 names each way forward, including the gate-bug exception.
 
-<!-- generic: pr-dispatch -->
 Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
+<!-- generic: pr-dispatch -->
 worktree, the confirmed summary, the final verified pushed commit, the tests
 the `pull-request` turn wrote and step 5's check results. It opens the pull request on the already pushed branch,
+<!-- end generic: pr-dispatch -->
+> Provider `tickets` (block `pr-dispatch` of `handoff/handoff-pr.md`)
 blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` and
 `../vibe/scripts/pre-pr-lanes.mjs check` pass
 (`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, record the
+<!-- generic: pr-dispatch-2 -->
 reason in the handoff summary as a verified human-only blocker does
+<!-- end generic: pr-dispatch-2 -->
+> Provider `tickets` (block `pr-dispatch-2` of `handoff/handoff-pr.md`)
 (`../vibe/references/guardrails.md`, "Plugins and tooling"), tell the
 person in one plain line what prevented the pull request and which paths
 were tried. Check for a safe retry or accepted alternative first. When it
 remains a verified engineering-only block, offer to pass the pushed work
 to someone now; never give them the branch to merge instead. When they name
+<!-- generic: pr-dispatch-3 -->
 someone, pass it on as steps 8 and 9 say. Then mark the
+<!-- end generic: pr-dispatch-3 -->
+> Provider `tickets` (block `pr-dispatch-3` of `handoff/handoff-pr.md`)
 session handed off as below.
-<!-- end generic: pr-dispatch -->
-> Provider `tickets` (block `pr-dispatch` of `handoff/handoff-pr.md`)
 <!-- generic: prd-children -->
 After it returns the URL, in Codex, arm the core `$gh-monitor-pr` on it when already set up,
-never asking for a restart.
 <!-- end generic: prd-children -->
 > Provider `tickets` (block `prd-children` of `handoff/handoff-pr.md`)
+never asking for a restart.
 <!-- end: step-9-pull-request -->
 
 <!-- block: section-10-changes -->
@@ -141,10 +147,10 @@ never asking for a restart.
 <!-- generic: fix-push -->
 5. Step 7: ROOT commits the fixes, and
    `vibe-environment-worker` in handover mode pushes the validated commit to
-   the SAME branch through the normal pre-push hook. Never a force push,
-   never a new branch or a second pull request.
 <!-- end generic: fix-push -->
 > Provider `recipes` (block `fix-push` of `handoff/handoff-pr.md`)
+   the SAME branch through the normal pre-push hook. Never a force push,
+   never a new branch or a second pull request.
 <!-- generic: ticket-refresh -->
 6. Step 8's summary refresh: `vibe-handoff-summarizer` refreshes the
    handoff summary from the session record and the final diff.

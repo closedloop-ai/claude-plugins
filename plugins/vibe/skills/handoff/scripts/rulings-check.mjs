@@ -44,6 +44,9 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { issueKey, requirementsKey, trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { criteriaStates } from "./criteria-audit.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
@@ -341,7 +344,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

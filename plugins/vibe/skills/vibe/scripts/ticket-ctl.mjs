@@ -39,6 +39,7 @@ import { execCommand, parseJson, printedStdout } from "./ws3-exec.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { providerPath, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // The bound tracker provider's live ticket template; the ticket worker runs only with a tracker bound.
@@ -244,7 +245,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

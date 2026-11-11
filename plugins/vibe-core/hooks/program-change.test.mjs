@@ -73,3 +73,18 @@ test("a move between work items is named the way the session's tracker reference
   assert.equal(programChange(event("Drop PRD-802 and switch to PRD-800", "bound-chat"), home)?.context, PROGRAM_CHANGE_REMINDER);
   assert.equal(programChange(event("Why is PRD-802 so large?", "bound-chat"), home), null);
 });
+
+test("a broken bound provider warns the person and the reminder still runs on the generic references", (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), "program-change-broken-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  recordHookSkill("fleet-broken", "vibe:fleet-orchestrator", home);
+  const record = path.join(home, ".codex", "vibe", "plugin-version", "fleet-broken.json");
+  mkdirSync(path.dirname(record), { recursive: true });
+  writeFileSync(record, JSON.stringify({ conversation: "fleet-broken",
+    provider: { state: "bound", name: "acme-provider", root: path.join(home, "gone"), capabilities: ["tickets"] } }));
+  const event = (prompt) => ({ session_id: "fleet-broken", prompt, transcript_path: null, cwd: home });
+  const moved = programChange(event("Drop #802 and switch to #800 instead"), home);
+  assert.equal(moved.context, PROGRAM_CHANGE_REMINDER, "the generic GitHub references still match");
+  assert.match(moved.systemMessage, /^vibe program-change: provider-broken: the provider acme-provider .*no longer installed.*Fix: reinstall or update/);
+  assert.deepEqual(programChange(event("What is the kernel?"), home), { systemMessage: moved.systemMessage }, "it warns even when nothing fires");
+});

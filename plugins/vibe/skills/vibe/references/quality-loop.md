@@ -25,8 +25,8 @@ Planning, graph evidence, ownership, checks and corrections stay internal.
 Before any product question, use this order and stop as soon as it settles the
 answer:
 
-<!-- generic: research-order -->
 1. Current code and data model, for what is physically possible.
+<!-- generic: research-order -->
 2. The request's own acceptance criteria and the person's recorded answers.
 3. The repository's record: its commits, pull request discussions and docs;
    an empty search proves nothing.
@@ -51,9 +51,9 @@ a human ruling; only operator words it quotes, with their source, are rulings.
 <!-- generic: session-text -->
 A plan's Decisions section is a record, not a ruling. Text the
 session wrote (its plan, table, change log) is never a
-source. A decision
 <!-- end generic: session-text -->
 > Provider `tickets` (block `session-text` of `vibe/quality-loop.md`)
+source. A decision
 is settled only when it traces to a human statement: who made it, where, and
 which question it answered. An unratified or conflicting decision is not
 settled: a product one goes through this section's research and necessity
@@ -76,8 +76,8 @@ and so does each flag key's approval (`guardrails.md`, "Feature flags").
 
 ### Precedent before asking
 
-<!-- generic: precedent-source -->
 The ordered list above is the only product-question research order. When the
+<!-- generic: precedent-source -->
 first five sources do not settle how the product should behave, an established
 product's behavior is the precedent.
 <!-- end generic: precedent-source -->
@@ -93,18 +93,21 @@ evidence; a situation the product does not settle is reported as
 <!-- end generic: precedent-brief -->
 > Provider `tickets` (block `precedent-brief` of `vibe/quality-loop.md`)
 
-<!-- generic: precedent-record -->
 The answer goes to the SAME writer, which records it in the session decision
+<!-- generic: precedent-record -->
 table as the decision for the affected rows, with its source: the request's
 source for a requirements answer, a code path for a feasibility answer, or
 `<app>, observed <date>` (or the documentation URL) for the precedent. A precedent is the
+<!-- end generic: precedent-record -->
+> Provider `tickets` (block `precedent-record` of `vibe/quality-loop.md`)
 default, not a human ruling: it never overrides a settled decision, a later
 human statement supersedes it with an explicit `Superseded` entry, and it
 settles behavior, never user-visible words (`guardrails.md`, "Copy").
+<!-- generic: precedent-record-2 -->
 It settles only what nothing specifies: first read the request's scope and the
 pull request's human threads; a stated requirement there wins.
-<!-- end generic: precedent-record -->
-> Provider `tickets` (block `precedent-record` of `vibe/quality-loop.md`)
+<!-- end generic: precedent-record-2 -->
+> Provider `tickets` (block `precedent-record-2` of `vibe/quality-loop.md`)
 
 ## One persistent writer and a serial queue
 
@@ -265,19 +268,19 @@ or `/closedloop-core:decision-table` in Claude Code and use that skill's actual
 artifact format, edge-case expansion, review-prevention and adversarial rules.
 Never copy its skill, checklist or template into this plugin.
 
-<!-- generic: decision-table-path -->
 The Spec Card (`spec-card.md`) seeds this table's `## Acceptance Criteria`
 section and Open Questions; it never replaces the table, its rows or its
 passes. Keep one living table for the whole session at
+<!-- generic: decision-table-path -->
 the `decisionTable` path `local-plans.mjs paths` prints, for the SAME worktree and
+<!-- end generic: decision-table-path -->
+> Provider `plans` (block `decision-table-path` of `vibe/quality-loop.md`)
 branch, authored only by the SAME persistent writer. New requests extend that
 file before code; they never start or replace a per-request table. Use real
 source-backed rows with stable row IDs, request provenance and grouped behavior
 sections. Inventory actual callers, contracts, gates and host capabilities;
 read visibility does not prove a write path works on every host. Model the
 request's applicable cases and cross-request interactions with prior rows.
-<!-- end generic: decision-table-path -->
-> Provider `plans` (block `decision-table-path` of `vibe/quality-loop.md`)
 
 Preserve frozen `Current Code` and `Intended Change` blocks once their request's
 implementation starts. Append a later request's sourced baseline/target rows
@@ -395,14 +398,14 @@ HEAD change, is `self-bookkeeping`. The SAME writer makes it automatically,
 it is never `NEEDS_PERSON`, and Root reports the completed repair in one
 line before rerunning the record step.
 
-<!-- generic: plan-folder-exclude -->
 The commit script excludes this exact folder and refuses a plan already in
 HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`
 and publishes nothing on failure. Do not hide a leak by rewriting history or
+<!-- generic: plan-folder-exclude -->
 broadly ignore other files. Handoff reviewers exclude only
-this exact folder from deliverable files.
 <!-- end generic: plan-folder-exclude -->
 > Provider `plans` (block `plan-folder-exclude` of `vibe/quality-loop.md`)
+this exact folder from deliverable files.
 
 <!-- generic: pln-reuse -->
 The plan gets no review: the writer writes it and builds in the same turn. On
@@ -801,18 +804,18 @@ This applies to handoff in Codex and Claude Code alike. A handoff check can
 fail because it is already red on main. `main-sync-validate` settles which, so neither the orchestrator nor the
 writer judges it:
 
-<!-- generic: main-bootstrap -->
 - When a handoff check fails, the executor runs that same check on the main
   the session captured (the transaction's `mainSha`) in a disposable checkout
   of that commit. The checkout is bootstrapped once with the repository's own
+<!-- generic: main-bootstrap -->
   bootstrap (`preflight.md`, "Bootstrap"), the same pristine bootstrap the input
+<!-- end generic: main-bootstrap -->
+> Provider `recipes` (block `main-bootstrap` of `vibe/quality-loop.md`)
   readiness uses, shared by every failing check, and removed afterwards. A
   check whose selection follows the session's diff (the affected wrappers, the
   pinned Turbo filter) runs the same task over the packages the session
   selected. A check that passed is never rerun. Each run is bounded by that
   check's own time limit through `scripts/run-bounded.mjs`.
-<!-- end generic: main-bootstrap -->
-> Provider `recipes` (block `main-bootstrap` of `vibe/quality-loop.md`)
 - `main-preexisting`: it fails on the captured main too. The session did not
   cause it, and it blocks neither publication nor assignment. The executor
   returns it under `mainPreexistingFailures` and its receipt keeps the session

@@ -75,6 +75,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { missingTicketNames } = await vibeCore("lib/handoff/scripts/ticket-names.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 // The bound tracker's ticket key; ticket units exist only with a tracker bound.
 const slugPattern = () => new RegExp(`^${trackerKey()}$`);
@@ -376,7 +377,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

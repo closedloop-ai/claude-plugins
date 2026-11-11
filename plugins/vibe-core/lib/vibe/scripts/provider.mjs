@@ -18,24 +18,30 @@
 //
 // Usage:
 //   provider.mjs show   [--worktree <wt>] [--conversation <id>]          the binding, as JSON
+//   provider.mjs assemble [--blocks] [--worktree <wt>] [--conversation <id>] <file>
 //   provider.mjs block  [--worktree <wt>] [--conversation <id>] <capability> <file> <id>
 //   provider.mjs path   [--worktree <wt>] [--conversation <id>] <capability> <file>
 //   provider.mjs data   [--worktree <wt>] [--conversation <id>] <capability> <key>
 // `block` prints one block of a provider reference; `path` prints the absolute path of a whole provider
 // reference (provider text names one as `provider:<file>`), relative to its references folder; `data`
-// prints one contract data value as JSON. Each exits 3 with one line when no provider with that capability
-// is bound, so a generic session reads nothing.
+// prints one contract data value as JSON; `assemble` prints the path of `file` rendered for the binding (with
+// `--blocks`, of only the blocks it serves, for a file already in context). Each exits 3 with one `provider: ...` line when no provider with
+// that capability is bound, so a generic session reads nothing. In a session bound to a provider whose text
+// cannot be read (the provider is gone, a block or reference is missing, any other error), each exits 4 with
+// one `provider-broken: ...` line naming the reason and the fix, and the step stops instead of going generic.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { pluginManifest, siblingPluginInstall, siblingPluginNames } from "../../../shared/plugin-roots.mjs";
 import { pluginEnabled } from "../../../shared/vibe-install.mjs";
 import { harnessActor } from "./harness-identity.mjs";
-import { readSessionRecord } from "./session-record.mjs";
-import { readStartupRecord } from "./startup-record.mjs";
+import { sessionRecordPath } from "./session-record.mjs";
+import { startupFile } from "./startup-record.mjs";
 
 export const PROVIDER_PROTOCOL = 1;
 export const CONTRACT_FILE = "provider.json";
@@ -63,8 +69,69 @@ const URL_REFERENCE = String.raw`https?:\/\/\S+`;
 const GITHUB_NUMBER = String.raw`(?<![\w/&])#\d+\b`;
 const PROVIDER_RULE = /^Lines that start `> Provider` follow `[^`]*provider-text\.md`\.(?: [^\n]*)?\n\n/m;
 
+const EXIT_COMMAND = 2;
+const EXIT_UNBOUND = 3;
+const EXIT_BROKEN = 4;
+const USAGE = "usage: provider.mjs show|block <capability> <file> <id>|path <capability> <relative>|data <capability> <key>"
+  + "|assemble [--blocks] <file> [--worktree <wt>] [--conversation <id>]";
+const ASSEMBLED_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** A command line or vibe file the CLI cannot use: exit 2, never read as a provider answer. */
+class CommandError extends Error {}
+
 /** Thrown when a provider file or value is asked for without a bound provider that has the capability. */
 export class ProviderUnavailable extends Error {}
+
+/**
+ * Thrown when a session bound to a provider cannot read that provider's text: the provider is gone, or a block or
+ * reference it should hold is missing or unreadable. The step stops; it never falls back to the generic text.
+ */
+export class ProviderBroken extends Error {
+  constructor(reason, name, fix = null) {
+    super(`${reason}. Fix: ${fix ?? `reinstall or update the ${name ?? "provider"} plugin, then start a new chat so vibe binds it again`}`);
+    this.name = "ProviderBroken";
+  }
+}
+
+/** Whether `error` is a ProviderBroken, from this copy of the module or another. */
+export function isProviderBroken(error) {
+  return error instanceof ProviderBroken || error?.name === "ProviderBroken";
+}
+
+/** A script's exit code for `error` caught at its top level when it reports the error itself: 4 for a ProviderBroken. */
+export function scriptExitCode(error, fallback) {
+  return isProviderBroken(error) ? EXIT_BROKEN : fallback;
+}
+
+/**
+ * For a script entry that catches nothing: an uncaught ProviderBroken prints its `provider-broken: ...` line and exits
+ * 4, as provider.mjs answers; any other uncaught error still prints its stack and exits 1.
+ */
+export function exitOnProviderBroken() {
+  const handle = (error) => {
+    if (!isProviderBroken(error)) {
+      process.stderr.write(`${error?.stack ?? String(error)}\n`);
+      process.exit(1);
+    }
+    process.stdout.write(`provider-broken: ${error.message}\n`);
+    process.exit(EXIT_BROKEN);
+  };
+  process.on("uncaughtException", handle);
+  process.on("unhandledRejection", handle);
+}
+
+/**
+ * A script's exit code for `error` caught at its top level: for a ProviderBroken, 4 with one `provider-broken: ...`
+ * line on stdout, as provider.mjs answers; for anything else `fallback`, with the message on stderr.
+ */
+export function failScript(error, fallback) {
+  if (isProviderBroken(error)) {
+    process.stdout.write(`provider-broken: ${error.message}\n`);
+    return EXIT_BROKEN;
+  }
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  return fallback;
+}
 
 // A script run with `--worktree <path>` works on that session, so its sessionBinding() reads that worktree first.
 let activeWorktree = worktreeArgument(process.argv);
@@ -271,24 +338,33 @@ export function providerCandidate({ cwd = process.cwd(), providers = installedPr
   return { state: "candidate", name, skill: `${name}:${contract.skill}`, connections: contract.connections ?? {} };
 }
 
-/** The binding recorded for a session worktree or a conversation (worktree first), or null. */
+/**
+ * The binding recorded for a session worktree or a conversation (worktree first), or null when neither has a record.
+ * A record that exists but cannot be read throws ProviderBroken: it may hold a binding, so it is never read as none.
+ */
 export function recordedBinding({ worktree = null, conversation = null, home } = {}) {
   if (worktree) {
-    try {
-      const binding = readSessionRecord(worktree)?.provider;
-      if (binding) return binding;
-    } catch {
-      // Not a vibe worktree: fall back to the conversation.
-    }
+    let file = null;
+    try { file = sessionRecordPath(worktree); } catch { file = null; } // Not a git checkout: fall back to the conversation.
+    const binding = file ? recordBinding(file) : null;
+    if (binding) return binding;
   }
   if (conversation) {
-    try {
-      return readStartupRecord(conversation, home)?.provider ?? null;
-    } catch {
-      return null;
-    }
+    let file;
+    try { file = startupFile(conversation, home); } catch { return null; } // Not a conversation id this harness writes.
+    return recordBinding(file);
   }
   return null;
+}
+
+function recordBinding(file) {
+  if (!existsSync(file)) return null;
+  try {
+    return JSON.parse(readFileSync(file, "utf8"))?.provider ?? null;
+  } catch (error) {
+    throw new ProviderBroken(`the record ${file} cannot be read (${error.code ?? error.message})`, null,
+      `repair ${file} (it must be valid JSON), then run the step again`);
+  }
 }
 
 /**
@@ -327,16 +403,18 @@ export function useSessionWorktree(worktree) {
 
 /**
  * `binding` when it is bound with `capability` and its provider is still installed (where it was bound, or where an
- * update put it); else null. A provider removed since no longer answers, so a bound session keeps its local work and
- * stops its provider steps with one named failure (`requireProvider`). Disabling one takes effect at the next start's
- * probe; its files stay where the binding recorded them, so a session already bound keeps reading them.
+ * update put it); null when the binding does not claim `capability`. A claimed provider removed since throws
+ * ProviderBroken, so no caller mistakes a broken bound session for an unbound one. Disabling one takes effect at the
+ * next start's probe; its files stay where the binding recorded them, so a session already bound keeps reading them.
  */
 export function boundWith(binding, capability) {
-  if (binding?.state !== ProviderState.Bound || !binding.capabilities?.includes(capability)) return null;
+  if (!claims(binding, capability)) return null;
   const root = currentRoot(binding);
-  if (!root) return null;
-  const contract = readContract(root);
-  return contract?.name === binding.name ? { ...binding, root, contract } : null;
+  const contract = root ? readContract(root) : null;
+  if (contract?.name !== binding.name) {
+    throw new ProviderBroken(`the provider ${binding.name} this session is bound to is no longer installed at ${binding.root}`, binding.name);
+  }
+  return { ...binding, root, contract };
 }
 
 /**
@@ -360,10 +438,6 @@ const movedRoots = new Map();
 export function requireProvider(binding, capability) {
   const bound = boundWith(binding, capability);
   if (bound) return bound;
-  if (binding?.state === ProviderState.Bound && binding.capabilities?.includes(capability)) {
-    throw new ProviderUnavailable(`the provider ${binding.name} this session was bound to is no longer installed at ${binding.root}; `
-      + "its steps stop here and the session's local work stays as it is");
-  }
   throw new ProviderUnavailable(`no provider with ${capability} is bound to this session`);
 }
 
@@ -372,7 +446,7 @@ export function providerPath(binding, capability, file) {
   const bound = requireProvider(binding, capability);
   const references = path.resolve(bound.root, bound.contract.references);
   const resolved = path.resolve(references, String(file).replace(/^provider:/, ""));
-  if (!resolved.startsWith(`${references}${path.sep}`)) throw new ProviderUnavailable(`${file} is outside the provider's references`);
+  if (!resolved.startsWith(`${references}${path.sep}`)) throw new ProviderBroken(`${file} is outside the provider's references`, bound.name);
   return resolved;
 }
 
@@ -381,27 +455,33 @@ export function providerPath(binding, capability, file) {
  * join several with "+" (a block that needs each of them).
  */
 export function providerBlock(binding, capability, file, id) {
-  if (!REFERENCE.test(file) || !BLOCK_ID.test(id)) throw new ProviderUnavailable(`not a provider block: ${file} ${id}`);
   const [first, ...rest] = String(capability).split("+");
   for (const other of rest) requireProvider(binding, other);
   const bound = requireProvider(binding, first);
-  capability = first;
-  const text = readFileSync(providerPath(bound, capability, file), "utf8");
+  if (!REFERENCE.test(file) || !BLOCK_ID.test(id)) throw new ProviderBroken(`not a provider block: ${file} ${id}`, bound.name);
+  const reference = providerPath(bound, first, file);
+  let text;
+  try {
+    text = readFileSync(reference, "utf8");
+  } catch (error) {
+    throw new ProviderBroken(`${file} in ${bound.name} cannot be read (${error.code ?? error.message})`, bound.name);
+  }
   const found = new RegExp(`<!-- block: ${id} -->\\n([\\s\\S]*?)\\n<!-- end: ${id} -->`).exec(text);
-  if (!found) throw new ProviderUnavailable(`${file} in ${bound.name} has no block ${id}`);
+  if (!found) throw new ProviderBroken(`${file} in ${bound.name} has no block ${id}`, bound.name);
   return found[1];
 }
 
 /**
  * Markdown `text` as a reader with `binding` sees it: the rule pointer gone and, with the provider bound,
  * every `> Provider` stub replaced by its block and every generic region dropped; with none (or with a
- * capability unbound), the generic regions kept and the stubs dropped. The same assembly as
+ * capability unbound), the generic regions kept and the stubs dropped. A capability the binding claims whose provider
+ * is gone or lacks the block throws ProviderBroken; it never falls back to the generic text. The same assembly as
  * tools/python/skill_split.py `assembled`.
  */
 export function assembleProviderText(text, binding) {
   if (!PROVIDER_STUB.test(text)) return text;
   const body = text.replace(PROVIDER_RULE, "");
-  const served = (capability) => capability.split("+").every((one) => boundWith(binding, one));
+  const served = (capability) => servedCapability(binding, capability);
   const providerIds = new Set();
   for (const [, capability, id] of body.matchAll(PROVIDER_STUB_LINES)) {
     if (served(capability)) providerIds.add(id);
@@ -413,6 +493,19 @@ export function assembleProviderText(text, binding) {
       if (!served(capability)) return "";
       return `${providerBlock(binding, capability, file, id)}${line.endsWith("\n") ? "\n" : ""}`;
     });
+}
+
+/**
+ * Every stub of `text` the binding serves, in file order, with its block: what a reader that already has `text` in
+ * context (a loaded SKILL.md) puts in place of the generic region of the same id. Throws ProviderBroken as
+ * assembleProviderText does.
+ */
+export function servedProviderBlocks(text, binding) {
+  const blocks = [];
+  for (const [, capability, id, file] of text.matchAll(PROVIDER_STUB_LINES)) {
+    if (servedCapability(binding, capability)) blocks.push({ id, capability, file, text: providerBlock(binding, capability, file, id) });
+  }
+  return blocks;
 }
 
 /**
@@ -467,20 +560,27 @@ function repositoryRoot(cwd) {
 }
 
 function main(argv) {
-  const [command, ...rest] = argv;
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true,
-    options: { worktree: { type: "string" }, conversation: { type: "string" } } });
-  let binding = values.conversation
-    ? recordedBinding({ worktree: values.worktree ?? null, conversation: values.conversation })
-    : sessionBinding(values.worktree ?? null);
-  // A checkout that holds no session (preflight names the repository's main checkout) is judged as that repository:
-  // its own opt-in decides, not the folder the chat's check ran in.
-  if (values.worktree && !recordedBinding({ worktree: values.worktree })) binding = bindForRepository(binding, values.worktree);
-  if (command === "show") {
-    process.stdout.write(`${JSON.stringify(binding ?? { state: ProviderState.None })}\n`);
-    return 0;
-  }
+  let binding = null;
   try {
+    const [command, ...rest] = argv;
+    let parsed;
+    try {
+      parsed = parseArgs({ args: rest, allowPositionals: true,
+        options: { worktree: { type: "string" }, conversation: { type: "string" }, blocks: { type: "boolean" } } });
+    } catch (error) {
+      throw new CommandError(error.message);
+    }
+    const { values, positionals } = parsed;
+    binding = values.conversation
+      ? recordedBinding({ worktree: values.worktree ?? null, conversation: values.conversation })
+      : sessionBinding(values.worktree ?? null);
+    // A checkout that holds no session (preflight names the repository's main checkout) is judged as that repository:
+    // its own opt-in decides, not the folder the chat's check ran in.
+    if (values.worktree && !recordedBinding({ worktree: values.worktree })) binding = bindForRepository(binding, values.worktree);
+    if (command === "show") {
+      process.stdout.write(`${JSON.stringify(binding ?? { state: ProviderState.None })}\n`);
+      return 0;
+    }
     if (command === "block" && positionals.length === 3) {
       process.stdout.write(`${providerBlock(binding, ...positionals)}\n`);
       return 0;
@@ -493,13 +593,79 @@ function main(argv) {
       process.stdout.write(`${JSON.stringify(providerData(binding, ...positionals) ?? null)}\n`);
       return 0;
     }
+    if (command === "assemble" && positionals.length === 1) return assembleCommand(binding, positionals[0], values.blocks === true);
+    throw new CommandError(USAGE);
   } catch (error) {
-    if (!(error instanceof ProviderUnavailable)) throw error;
-    process.stdout.write(`provider: ${error.message}\n`);
-    return 3;
+    if (error instanceof ProviderUnavailable) {
+      process.stdout.write(`provider: ${error.message}\n`);
+      return EXIT_UNBOUND;
+    }
+    // A command error (usage, the vibe file itself) is no provider's fault, and nor is any error with no binding claimed.
+    if (error instanceof CommandError || (!isProviderBroken(error) && binding?.state !== ProviderState.Bound)) {
+      process.stderr.write(`provider.mjs: ${error?.message ?? error}\n`);
+      return EXIT_COMMAND;
+    }
+    const broken = isProviderBroken(error) ? error
+      : new ProviderBroken(`unexpected error reading the provider: ${error?.message ?? error}`, binding?.name);
+    process.stdout.write(`provider-broken: ${broken.message}\n`);
+    return EXIT_BROKEN;
   }
-  process.stderr.write("usage: provider.mjs show|block <capability> <file> <id>|path <capability> <relative>|data <capability> <key> [--worktree <wt>] [--conversation <id>]\n");
-  return 2;
+}
+
+/**
+ * `assemble <file>`: writes `file` as the binding renders it (or, with `blocks`, only the blocks it serves, each
+ * labelled by id) to a content-keyed file outside the repository, rewritten on every call, and prints that path, so a
+ * reader opens it in parts. Nothing is written when it fails. With `blocks` and no stub served, it answers as `block`
+ * does for an unbound capability.
+ */
+function assembleCommand(binding, file, blocksOnly) {
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    throw new CommandError(`${file} cannot be read (${error.code ?? error.message})`);
+  }
+  let output;
+  if (blocksOnly) {
+    const blocks = servedProviderBlocks(text, binding);
+    if (!blocks.length) throw new ProviderUnavailable(`no provider bound to this session serves a stub of ${path.basename(file)}`);
+    output = blocks.map((block) => `<!-- block: ${block.id} -->\n${block.text}\n<!-- end: ${block.id} -->\n`).join("");
+  } else {
+    output = assembleProviderText(text, binding);
+  }
+  const directory = path.join(homedir(), ".codex", "vibe", "provider-text");
+  const target = path.join(directory, `${createHash("sha256").update(output).digest("hex").slice(0, 16)}-${blocksOnly ? "blocks-" : ""}${path.basename(file)}`);
+  try {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    pruneAssembled(directory);
+    writeFileSync(target, output, { mode: 0o600 });
+  } catch (error) {
+    throw new CommandError(`${target} cannot be written (${error.code ?? error.message})`);
+  }
+  process.stdout.write(`${target}\n`);
+  return 0;
+}
+
+/** Drops assembled files no call has rewritten for a day, so the folder holds only current output. */
+function pruneAssembled(directory, now = Date.now()) {
+  for (const name of readdirSync(directory)) {
+    const file = path.join(directory, name);
+    try {
+      if (now - statSync(file).mtimeMs > ASSEMBLED_MAX_AGE_MS) rmSync(file, { force: true });
+    } catch {
+      // Another call removed or is rewriting it.
+    }
+  }
+}
+
+/** Whether a stub naming `capability` (several joined with "+") takes its block; throws ProviderBroken for a claimed one gone. */
+function servedCapability(binding, capability) {
+  return capability.split("+").every((one) => boundWith(binding, one));
+}
+
+/** Whether `binding` says this session is bound to a provider with `capability`, installed or not. */
+function claims(binding, capability) {
+  return binding?.state === ProviderState.Bound && Boolean(binding.capabilities?.includes(capability));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main(process.argv.slice(2));

@@ -9,7 +9,7 @@ import { inVibeSession } from "./foreground-guard.mjs";
 import { handoffGateProblem } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { cloudPrProblem } from "../lib/vibe/scripts/cloud-worker.mjs";
 import { githubRepository } from "../lib/vibe/scripts/github-remote.mjs";
-import { providerDataOr, recordedBinding, ticketReference } from "../lib/vibe/scripts/provider.mjs";
+import { isProviderBroken, providerDataOr, recordedBinding, ticketReference } from "../lib/vibe/scripts/provider.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import os from "node:os";
 
@@ -220,7 +220,11 @@ function hasTicketedGateOverride(bodyFile, binding) {
     const issue = providerDataOr(binding, "tickets", "issuePattern", null)?.replace(/^\^/, "").replace(/\$$/, "");
     const declaration = new RegExp(`^Vibe gate override: (?:${issue ?? ticketReference(binding).source}):\\s*\\S.*$`);
     return readFileSync(bodyFile, "utf8").split(/\r?\n/).some(line => declaration.test(line));
-  } catch { return false; }
+  } catch (error) {
+    // A broken bound provider cannot say which override it accepts; the dispatcher refuses the PR with its fix.
+    if (isProviderBroken(error)) throw error;
+    return false;
+  }
 }
 
 /** A Vibe-named head the guard cannot resolve stays refused rather than falling back to the command cwd. */
@@ -254,7 +258,7 @@ export function prCreateGuard(event, home = os.homedir()) {
     if (call.uncertainCwd) {
       return refuse(`unresolved shell cwd ${call.unresolvedTarget ?? "unknown"} from ${call.cwd} cannot prove a local vibe handoff gate`, LITERAL_CWD_RETRY);
     }
-    const override = hasTicketedGateOverride(call.bodyFile, recordedBinding({ worktree: call.cwd, conversation: event?.session_id ?? null, home }));
+    const override = () => hasTicketedGateOverride(call.bodyFile, recordedBinding({ worktree: call.cwd, conversation: event?.session_id ?? null, home }));
     let target = targets[index];
     if (!target && !vibeNamedHead(call.head)) {
       // An unresolvable non-Vibe head (remote-only, a fork, another repository) is judged by the
@@ -264,19 +268,19 @@ export function prCreateGuard(event, home = os.homedir()) {
     }
     if (target?.nonVibe) continue;
     if (target?.unownedVibe || target?.uncertain) {
-      if (override) continue;
+      if (override()) continue;
       return refuse(target.unownedVibe ? "no vibe session record for the PR head branch" : "PR head ownership cannot be verified", OVERRIDE_HINT);
     }
     if (!target) return refuse("PR head branch cannot be proved local and unrelated to a vibe session", LOCAL_RETRY);
     if (!inVibeSession(target.cwd)) {
-      if (vibeWorktree(target.cwd) === false || override) continue;
+      if (vibeWorktree(target.cwd) === false || override()) continue;
       return refuse("no vibe session record in the command worktree", OVERRIDE_HINT);
     }
     // Cloud import readiness, its own rerun of the handoff gate included, is a separate protection the override does not clear.
     const cloudProblem = cloudPrProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile });
     if (cloudProblem) return refuse(cloudProblem, CLOUD_RETRY);
     const problem = handoffGateProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile, title: call.title });
-    if (problem && !override) return refuse(problem, `run the final handoff gate on the published source, or ${OVERRIDE_HINT}`);
+    if (problem && !override()) return refuse(problem, `run the final handoff gate on the published source, or ${OVERRIDE_HINT}`);
   }
   return null;
 }

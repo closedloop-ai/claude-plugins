@@ -58,18 +58,18 @@ Research per `../skills/vibe/references/repository-intelligence.md`: every consu
 
 ## Attack surface
 
-<!-- generic: shared-consumers -->
 1. Shared components: for every changed component or hook in a shared UI
    package (a shared app package or the design system), find every consumer
+<!-- generic: shared-consumers -->
    (`rg` for its importers). A prop default,
+<!-- end generic: shared-consumers -->
+> Provider `graph` (block `shared-consumers` of `agents/vibe-adversarial-reviewer.md`)
    removed prop, or changed layout that breaks another screen is a finding.
    When more than one app mounts the shared package (for example a web app
    and a Desktop renderer), check the consumers in each. So are a consumer
    class or cascade layer beating an attribute-styled contract, plumbing
    that changes render props, and a migrated control off the route's render
    path or a replaced one with no new home.
-<!-- end generic: shared-consumers -->
-> Provider `graph` (block `shared-consumers` of `agents/vibe-adversarial-reviewer.md`)
 2. States: loading, empty, error, partial data, long text, many rows, zero
    values versus unknown values. A screen that shows `0` or a blank where data
    is still loading or failed is a finding, and so is an in-row message a

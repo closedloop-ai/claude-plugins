@@ -3,7 +3,6 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: research-order -->
-1. Current code and data model, for what is physically possible.
 2. The ticket's acceptance criteria, its PRD and sourced rulings.
 3. `ticket_detail`, `fts_search`, `search_memory_facts` and material decisions
    or comments fetched through live ClosedLoop; an empty graph result proves
@@ -17,11 +16,9 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 <!-- block: session-text -->
 A ticket's or plan's Decisions section is a record, not a ruling. Text the
 session wrote (its live ticket, PLN, plan, table, change log) is never a
-source. A decision
 <!-- end: session-text -->
 
 <!-- block: precedent-source -->
-The ordered list above is the only product-question research order. When the
 first five sources do not settle how the product should behave, live Asana is
 the precedent. Public help centers, documentation and search results are not a
 substitute for observing the interaction in the operator's signed-in Chrome.
@@ -62,29 +59,19 @@ screenshot or marked `needs a write to test` for the operator.
 <!-- end: precedent-brief -->
 
 <!-- block: precedent-record -->
-The answer goes to the SAME writer, which records it in the session decision
 table as the decision for the affected rows, with its source: the ticket or
 PRD slug for a requirements answer, a code path for a feasibility answer, or
 `Asana, observed <date>` for the live precedent. A precedent is the
-default, not a human ruling: it never overrides a settled decision, a later
-human statement supersedes it with an explicit `Superseded` entry, and it
-settles behavior, never user-visible words (`guardrails.md`, "Copy").
+<!-- end: precedent-record -->
+
+<!-- block: precedent-record-2 -->
 It settles only what nothing specifies: first read the ticket's scope, the
 pull request's human threads and DONE or open sibling tickets; a stated
 requirement there wins.
-<!-- end: precedent-record -->
+<!-- end: precedent-record-2 -->
 
 <!-- block: decision-table-path -->
-The Spec Card (`spec-card.md`) seeds this table's `## Acceptance Criteria`
-section and Open Questions; it never replaces the table, its rows or its
-passes. Keep one living table for the whole session at
 `.closedloop-ai/decision-tables/<session-slug>.md`, in the SAME worktree and
-branch, authored only by the SAME persistent writer. New requests extend that
-file before code; they never start or replace a per-request table. Use real
-source-backed rows with stable row IDs, request provenance and grouped behavior
-sections. Inventory actual callers, contracts, gates and host capabilities;
-read visibility does not prove a write path works on every host. Model the
-request's applicable cases and cross-request interactions with prior rows.
 <!-- end: decision-table-path -->
 
 <!-- block: plans-pln -->
@@ -116,11 +103,7 @@ approval milestones.
 <!-- end: local-plan -->
 
 <!-- block: plan-folder-exclude -->
-The commit script excludes this exact folder and refuses a plan already in
-HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`
-and publishes nothing on failure. Do not hide a leak by rewriting history or
 broadly ignore other ClosedLoop artifacts. Handoff reviewers exclude only
-this exact folder from deliverable files.
 <!-- end: plan-folder-exclude -->
 
 <!-- block: pln-reuse -->
@@ -139,13 +122,5 @@ second PLN or build/deploy pause. Later changes return to that writer.
 <!-- end: control-read -->
 
 <!-- block: main-bootstrap -->
-- When a handoff check fails, the executor runs that same check on the main
-  the session captured (the transaction's `mainSha`) in a disposable checkout
-  of that commit. The checkout is bootstrapped once with the repository's own
   `.closedloop-ai/loops-setup.sh`, the same pristine bootstrap the input
-  readiness uses, shared by every failing check, and removed afterwards. A
-  check whose selection follows the session's diff (the affected wrappers, the
-  pinned Turbo filter) runs the same task over the packages the session
-  selected. A check that passed is never rerun. Each run is bounded by that
-  check's own time limit through `scripts/run-bounded.mjs`.
 <!-- end: main-bootstrap -->

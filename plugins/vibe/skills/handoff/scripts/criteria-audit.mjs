@@ -60,6 +60,7 @@ import { reviewUnit } from "./unit-review.mjs";
 export { criteriaStates, memberCriteria, ticketCriteria };
 
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
 
@@ -240,7 +241,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

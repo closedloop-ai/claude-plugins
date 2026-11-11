@@ -11417,39 +11417,17 @@ var coerce = {
 var NEVER = INVALID;
 
 // src/cli.ts
-import { realpathSync } from "node:fs";
-import { fileURLToPath, pathToFileURL as pathToFileURL2 } from "node:url";
-
-// ../shared/cli.ts
-import { pathToFileURL } from "node:url";
-function runWhenMain(metaUrl, main2) {
-  const entry = process.argv[1];
-  if (!entry) return;
-  if (metaUrl !== pathToFileURL(entry).href) return;
-  Promise.resolve(main2(process.argv.slice(2))).then(
-    (code) => process.exit(code),
-    (err) => {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-  );
-}
-
-// src/cli.ts
-function runFromCanonicalEntry(metaUrl, main2) {
-  const entry = process.argv[1];
-  if (!entry || realpathSync(fileURLToPath(metaUrl)) !== realpathSync(entry)) return;
-  runWhenMain(pathToFileURL2(entry).href, main2);
-}
+import { realpathSync as realpathSync2 } from "node:fs";
+import { fileURLToPath as fileURLToPath2, pathToFileURL as pathToFileURL3 } from "node:url";
 
 // ../../plugins/vibe/shared/vibe-core.mjs
 import path2 from "node:path";
-import { pathToFileURL as pathToFileURL3 } from "node:url";
+import { pathToFileURL } from "node:url";
 
 // ../../plugins/vibe/shared/plugin-roots.mjs
-import { readFileSync, readdirSync, realpathSync as realpathSync2, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { fileURLToPath } from "node:url";
 var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
 var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
 var CODEX_LOCAL_VERSION = "local";
@@ -11471,8 +11449,8 @@ function pluginManifest(root) {
   return null;
 }
 function ownPluginRoot(from) {
-  const file = String(from).startsWith("file:") ? fileURLToPath2(from) : String(from);
-  let dir = path.dirname(realpathSync2(file));
+  const file = String(from).startsWith("file:") ? fileURLToPath(from) : String(from);
+  let dir = path.dirname(realpathSync(file));
   for (; ; ) {
     const manifest = pluginManifest(dir);
     if (manifest) return { root: dir, name: manifest.name, version: manifest.version };
@@ -11527,7 +11505,7 @@ function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
   const self = pluginInstall(from);
   if (self.layout === Layout.Checkout) {
     const candidate = path.join(self.plugins, name);
-    if (pluginManifest(candidate)?.name === name) return { root: realpathSync2(candidate), layout: Layout.Checkout };
+    if (pluginManifest(candidate)?.name === name) return { root: realpathSync(candidate), layout: Layout.Checkout };
     throw missing(name, self, Layout.Checkout);
   }
   if (self.layout === null) {
@@ -11536,7 +11514,7 @@ function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
   const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
   if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
   return {
-    root: realpathSync2(found.installPath),
+    root: realpathSync(found.installPath),
     layout: self.layout,
     home: self.home,
     marketplace: self.marketplace,
@@ -11587,7 +11565,7 @@ function readRegistry(file) {
 }
 function realOrSame(file) {
   try {
-    return realpathSync2(file);
+    return realpathSync(file);
   } catch {
     return file;
   }
@@ -11649,12 +11627,46 @@ function vibeCorePath(relative) {
   return path2.join(vibeCoreRoot(), relative);
 }
 function vibeCore(relative) {
-  return import(pathToFileURL3(vibeCorePath(relative)).href);
+  return import(pathToFileURL(vibeCorePath(relative)).href);
 }
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module;
+
+// ../shared/cli.ts
+import { pathToFileURL as pathToFileURL2 } from "node:url";
+function runWhenMain(metaUrl, main2) {
+  const entry = process.argv[1];
+  if (!entry) return;
+  if (metaUrl !== pathToFileURL2(entry).href) return;
+  Promise.resolve(main2(process.argv.slice(2))).then(
+    (code) => process.exit(code),
+    (err) => {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  );
+}
+
+// src/cli.ts
+function runFromCanonicalEntry(metaUrl, main2) {
+  const entry = process.argv[1];
+  if (!entry || realpathSync2(fileURLToPath2(metaUrl)) !== realpathSync2(entry)) return;
+  runWhenMain(pathToFileURL3(entry).href, providerAware(main2));
+}
+function providerAware(main2) {
+  return async (argv) => {
+    try {
+      return await main2(argv);
+    } catch (error) {
+      if (!isProviderBroken(error)) throw error;
+      process.stdout.write(`provider-broken: ${error.message}
+`);
+      return 4;
+    }
+  };
+}
 
 // src/contracts.ts
 function capabilityOperations(binding = sessionBinding()) {
@@ -12412,7 +12424,7 @@ import { join as join5, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module2 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module2;
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module2;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);

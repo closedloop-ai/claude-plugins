@@ -24,6 +24,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 const { sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const CLAIM = /\b(?:(?:pixel|byte)[- ]identical|identical to|no (?:visual |pixel )?(?:diffs?|differences?)\b|match(?:es|ing)? (?:the )?(?:CI|baseline|snapshot|reference|golden|Linux|main)\b)/i;
 const MEASURED = /\b\d[\d,.]*\s*(?:%|px\b|pixels?\b|bytes?\b|lines?\b|differ\w*|diffs?\b|of\s+\d)/i;
@@ -79,8 +80,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }
 

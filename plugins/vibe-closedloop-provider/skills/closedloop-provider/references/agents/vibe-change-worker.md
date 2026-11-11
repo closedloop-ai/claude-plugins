@@ -23,7 +23,6 @@ one workflow-memory query when available. Apply its owner rules: behavior
 <!-- end: prep-step -->
 
 <!-- block: flag-retire -->
-Before you delete a feature flag's read, key constant or gate, read the
 comments on every ticket linked to it (the live ticket, its PRD, and the
 tickets `fts_search` finds for the key) with the ClosedLoop MCP
 `get-document-comments`. A recorded hold, rollout pause or parity list with
@@ -31,8 +30,6 @@ no later human answer allowing the retirement means the flag stays:
 <!-- end: flag-retire -->
 
 <!-- block: local-plan -->
-Load core `plan-structure` by name (`$plan-structure` in Codex or
-`/closedloop-core:plan-structure` in Claude Code), read its own template, and
 write the exact-template local plan under `.closedloop-ai/vibe-plans/`.
 Never commit it, deploy it or paste it into the ticket: the ticket worker
 publishes it as the session's PLN (`quality-loop.md`, "Local plan"), so write
@@ -42,14 +39,6 @@ private session inputs. A plan problem the ticket worker returns is yours to
 fix in the local plan. A `self-bookkeeping` repair to vibe's private plan or
 records has no scope, code, test or HEAD change: make it without permission,
 never return `NEEDS_PERSON`, and report the completed repair in one line. Name scope,
-owners, dependencies and checks, including every NEW Storybook component the
-request needs (or none). When the plan adds periodic or cross-surface work (a
-poller, interval, background lane, socket, subscription, feed or watcher), it
-carries a Cost Scaling table with the columns and rules in
-`../skills/cl-execute/references/planning-and-gates.md`, "Cost Scaling".
-The plan gets no review: build in the same turn right after it
-(`quality-loop.md`, "Lean build loop"). No technical plan goes to the person
-running the session for approval.
 <!-- end: local-plan -->
 
 <!-- block: precedent -->
@@ -81,15 +70,9 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it:
 <!-- end: version-history -->
 
 <!-- block: copy-docs -->
-Use supplied copy verbatim or the existing matching string/label map or
-helper, never a retyped copy of wording a shared helper renders. Do not
 invent product text, and never edit `apps/web/content/docs/` nor the internal `docs/` folder:
 nothing agent-written goes into public docs (`guardrails.md`, "Copy" and
 "Feature docs at handoff"). Read-only
-specialists may advise on uncertainties; their
-findings return here for you to verify and correct. Fix all confirmed issues
-before completion, including shared-owner restructuring and its sibling sweep
-from `design-pass.md`. Never revert another person's changes.
 <!-- end: copy-docs -->
 
 <!-- block: lane-discovery -->
@@ -98,7 +81,6 @@ from `design-pass.md`. Never revert another person's changes.
 <!-- end: lane-discovery -->
 
 <!-- block: desktop-lane -->
-- `requiredE2eComplete: false` blocks final coverage/alignment/assignment,
   not safe preview publication with its explicit preparation evidence. The
   Desktop Electron lane never runs on a vibe machine: the executor returns it
   under `e2eLeftForCi`, covered by the post-merge `desktop-e2e/validated`
@@ -106,23 +88,20 @@ from `design-pass.md`. Never revert another person's changes.
 <!-- end: desktop-lane -->
 
 <!-- block: criteria -->
-Keep the session decision table's `## Acceptance Criteria` section and, after
-each build or fix and its quick checks, check every criterion the change
-touches before returning `DONE`, under `quality-loop.md`, "Acceptance criteria
 before ready": the criteria from the ticket, its PRD and the person's own
 words, each checked with an existing test run alone, a throwaway script, one
 bounded control read or an end-to-end source trace, and each result recorded.
 Fix a criterion that is not met; one you cannot finish now is reported
 `not met yet` with the reason, never claimed. At handoff, start the
-whole-table alignment from that list. A criterion that depends on a collector,
-selector, monitor, service or other work outside this branch stays `not met
+<!-- end: criteria -->
+
+<!-- block: criteria-2 -->
 yet` until the deployed external dependency evidence exists. A planned ticket,
 missing task or source-only assertion is not that evidence, and the related
 PLN task cannot be marked complete.
-<!-- end: criteria -->
+<!-- end: criteria-2 -->
 
 <!-- block: test-lane -->
-- Each test goes in the suite and lane that owns its subject: the owning
   package's test config, the e2e or Desktop lane the repo's `AGENTS.md` files
   name for it, confirmed with `pnpm test:lanes`. A test that no lane CI runs
   for its path does not count.
@@ -136,7 +115,4 @@ longer matches what was built, or that none covers the changed features, in
 the change log for the ticket's Feature docs line. Nothing agent-written goes
 into public docs or the internal engineering `docs/` folder; an edit found
 there is removed and recorded instead. Once the table is
-aligned, add its `## Frozen Behavior` section with the row IDs the person
-accepted (`quality-loop.md`, "Frozen behavior at handoff"), and refresh it
-whenever a handoff answer changes the table.
 <!-- end: feature-docs -->

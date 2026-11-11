@@ -41,6 +41,7 @@ import { parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const FINDINGS_SCHEMA = "vibe.guardrails-findings/1";
 export const Severity = Object.freeze({ High: "high", Medium: "medium", Low: "low" });
@@ -407,7 +408,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

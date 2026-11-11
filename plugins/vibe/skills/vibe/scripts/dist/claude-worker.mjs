@@ -11634,7 +11634,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module;
 
 // src/contracts.ts
 function capabilityOperations(binding = sessionBinding()) {
@@ -11943,7 +11943,19 @@ function runWhenMain(metaUrl, main2) {
 function runFromCanonicalEntry(metaUrl, main2) {
   const entry = process.argv[1];
   if (!entry || realpathSync3(fileURLToPath2(metaUrl)) !== realpathSync3(entry)) return;
-  runWhenMain(pathToFileURL3(entry).href, main2);
+  runWhenMain(pathToFileURL3(entry).href, providerAware(main2));
+}
+function providerAware(main2) {
+  return async (argv) => {
+    try {
+      return await main2(argv);
+    } catch (error) {
+      if (!isProviderBroken(error)) throw error;
+      process.stdout.write(`provider-broken: ${error.message}
+`);
+      return 4;
+    }
+  };
 }
 
 // src/definition.ts
@@ -12477,7 +12489,7 @@ import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module5 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module5;
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module5;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -13222,7 +13234,7 @@ function boundDefinition(definition, input) {
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${assembleProviderText(definition.prompt, binding)}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. Open every other vibe file that has provider stubs through \`node ${join8(definition.root, "skills/vibe/scripts/provider.mjs")} assemble --worktree "${input.worktree}" <file>\` and read only the file it names (skills/vibe/references/provider-text.md). ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -13701,6 +13713,7 @@ function safeFailure(error) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
   if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
+  if (error instanceof ProviderBroken) return { code: "PROVIDER_BROKEN", summary: error.message };
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
@@ -13777,7 +13790,7 @@ async function main(argv) {
     };
     process.stdout.write(`${JSON.stringify(result)}
 `);
-    return 1;
+    return "code" in result && result.code === "PROVIDER_BROKEN" ? 4 : 1;
   }
 }
 var REFERENCE_IMAGE_ROLES = /* @__PURE__ */ new Set(["vibe-change-worker", "vibe-requirements-worker", "vibe-verify-worker"]);
@@ -13841,6 +13854,7 @@ export {
   protectedWriteSettings,
   remainingWorkerTurnBudget,
   runWorker,
+  safeFailure,
   testAuthoringGranted,
   workerSessionName
 };

@@ -31,11 +31,14 @@ a test (`guardrails.md`, "Tests").
 <!-- generic: read-list -->
 `../skills/vibe/references/repository-intelligence.md`,
 `../skills/vibe/references/quality-loop.md` (internal quality and product questions), and
-`../skills/vibe/references/guardrails-ui.md` ("Missing primitives" steps 2 to 4
-are yours; the orchestrator sends the step 5 notice and does not wait). The repo's
-Storybook and design-system `AGENTS.md` files and any Storybook skill it ships.
 <!-- end generic: read-list -->
 > Provider `graph+recipes` (block `read-list` of `agents/vibe-primitive-worker.md`)
+`../skills/vibe/references/guardrails-ui.md` ("Missing primitives" steps 2 to 4
+are yours; the orchestrator sends the step 5 notice and does not wait). The repo's
+<!-- generic: read-list-2 -->
+Storybook and design-system `AGENTS.md` files and any Storybook skill it ships.
+<!-- end generic: read-list-2 -->
+> Provider `graph+recipes` (block `read-list-2` of `agents/vibe-primitive-worker.md`)
 
 ## Implementation guidance (sole writer only)
 

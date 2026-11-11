@@ -7,17 +7,17 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 <!-- block: step-4-storybook -->
 ## 4. Storybook
 
-<!-- generic: placement-record -->
 Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
 gaps in handoff mode: its precedent search covers every story or shared
 component the session added, retitled or moved, checked against the Placement
+<!-- generic: placement-record -->
 blocks in the writer's local plan. Each placement goes on the handoff summary's
 Storybook placement line; the SAME writer logs each Conflict with its
 audience, never to the person.
 Every new story follows the repo's Storybook taxonomy document, a v1.0
-story file is never edited beyond a compile-only repair and any other existing
 <!-- end generic: placement-record -->
 > Provider `tickets+recipes` (block `placement-record` of `handoff/handoff-ui.md`)
+story file is never edited beyond a compile-only repair and any other existing
 story file keeps its title and tag
 (`../vibe/references/guardrails-ui.md`, "Storybook taxonomy"); the inventory's
 `v1Stories` and `retitledStories` block handoff, judged by the scheme of the
@@ -41,9 +41,9 @@ Source inspection alone does not clear a compiled warning or prove appearance.
 <!-- end: step-4-storybook -->
 
 <!-- block: running-app-verification -->
-<!-- generic: control-verification -->
 Before the first commit or push, dispatch read-only `vibe-verify-worker` control
 mode on every locally served uncommitted candidate screen, naming HEAD plus
+<!-- generic: control-verification -->
 diff/tree hashes. It drives the running app headless (Playwright, or the
 browser harness the repository documents), never a visible window, and keeps
 its captures in private Git storage. Return captures, console/page errors,

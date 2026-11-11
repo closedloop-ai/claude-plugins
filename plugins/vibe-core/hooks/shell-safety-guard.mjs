@@ -19,6 +19,8 @@ import { commandPrefix, commandSegments } from "./command-segments.mjs";
 import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { providerGuardRule, recordedBinding } from "../lib/vibe/scripts/provider.mjs";
 
+const E2E_SCRIPT = /e2e/i;
+
 const TOKEN = /(?:\b(?:gh_token|github_token|[a-z][a-z0-9_]*token)\b|\$\{?[a-z][a-z0-9_]*token\}?|--password(?:-stdin)?\b|(?:^|\s)-p(?:\s|$)|["']?auth["']?\s*:)/i;
 const CREDENTIAL_ROUTE = /(?:\bDOCKER_CONFIG\b|\bdocker\s+login\b|["']?auths["']?\s*:)/i;
 const SHELLS = new Set(["bash", "sh", "zsh"]);
@@ -167,6 +169,17 @@ export function shellSafetyGuard(event) {
   const problem = credentialProblem(command) ?? forcePushProblem(command) ?? watcherLaunchProblem(event.tool_input)
     ?? wordSplitProblem(command) ?? equalsWordProblem(command) ?? e2eSlotProblem(command, e2eSlotRule(event));
   return problem ? deny(problem) : null;
+}
+
+/**
+ * Whether `event` runs a script named for e2e: with the bound provider broken, its slot wrapper's name cannot be read,
+ * so the dispatcher refuses every such command rather than run one unchecked.
+ */
+export function runsE2eScript(event) {
+  const command = event?.tool_input?.command;
+  if (typeof command !== "string") return false;
+  return commandSegments(command, { expandShellPayloads: true })
+    .some(({ words }) => E2E_SCRIPT.test(path.basename(words[invocationIndex(words)] ?? "")));
 }
 
 /** The bound provider's e2e slot rule for this event's chat (its session worktree, then the chat), or null. */

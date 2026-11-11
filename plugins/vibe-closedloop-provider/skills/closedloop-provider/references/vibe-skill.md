@@ -3,11 +3,6 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: root-may -->
-- You may talk to the person; run this skill's scripts
-  (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
-  `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
-  `scripts/session-questions.mjs`, `scripts/run-bounded.mjs`,
-  `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`,
   `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`); run
   `plugin-version.mjs update` only when the person chose to update;
   call ClosedLoop `get-me`
@@ -18,17 +13,13 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 <!-- end: root-may -->
 
 <!-- block: brief-auth -->
-- Every worker brief says: after the first authentication failure, use CI logs
-  or the API for the same fact, or stop and ask; never write, export or route
   around credentials. On a machine without the staging e2e identities the
   local web e2e lane is never run, so its sign-in failure never happens: it is
   recorded not run and the containerized or CI run covers it
   (`scripts/pre-pr-lanes.mjs`; operator ruling, 2026-10-28). Never force-push; this covers every remote. Proof and
-  scratch commits use a fresh `proof/<sha>-<n>` ref.
 <!-- end: brief-auth -->
 
 <!-- block: product-research -->
-Research product questions in the single order in `references/quality-loop.md`.
 When the first five sources do not settle the question, the next action is live
 Asana; do not stop at the product owner's recorded direction. Interrupt only
 for one necessary unresolved question with full context. Never re-ask a settled
@@ -66,7 +57,6 @@ decision; a decision is settled only when it traces to a human statement
 <!-- end: environment-row -->
 
 <!-- block: prerequisites-posthog -->
-Run `scripts/vibe-preflight.sh --prototype` for the common prerequisites
 before choosing a session. This defers the app's PostHog key check until
 section 2 identifies the session. For an app session, re-run the default
 `scripts/vibe-preflight.sh` and resolve its failures before section 3.
@@ -103,14 +93,6 @@ mention it to the person.
 <!-- end: pln-executed -->
 
 <!-- block: start-new-first -->
-1. Your first reply to the new session carries the endings line (section 5,
-   "Notices that never wait"), after the plugin version check (section 1,
-   "Plugin version"): when the version is current or unknown it goes in the
-   very first reply; when it is outdated and the opening message did not
-   already say to proceed, the version question comes first on its own and the
-   endings line goes in the first reply after the person answers it. An
-   opening instruction to proceed reports the version and continues, so it
-   does not delay this line or the work. Use the work the person already described.
    Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. If they clearly want a mockup or an
    exploration with made-up data, start the prototype session below yourself. The person only types `$vibe` and
@@ -145,7 +127,6 @@ mention it to the person.
 <!-- end: starting-data -->
 
 <!-- block: session-new -->
-4. `node scripts/vibe-sessions.mjs new --slug <slug> --summary "<one line>"
    --mode <seeded|blank> [--ticket <slug>] [--repo <checkout>] [--worktree <path>]
    --operator-id <id> --operator-email <email> --operator-name "<firstName lastName>"`,
    passing the `--repo` and `--worktree` a fleet brief names (the worktree
@@ -174,8 +155,6 @@ mention it to the person.
 <!-- end: bootstrap-ticket -->
 
 <!-- block: resume-push -->
-Resuming: use the session's `worktree`, and run the matching `codex-sessions`
-or `claude-sessions` command again so a
 new conversation is recorded too. Existing tickets use quality-loop's plan
 rule. A resumed session gets no endings line. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
@@ -287,38 +266,19 @@ the app?" Default to straight into the app when no unresolved decision is needed
 <!-- end: labs-placement -->
 
 <!-- block: request-forward -->
-1. When the person attached an image or gave one as a file path, first save
-   it: `node scripts/reference-images.mjs attached --worktree "<wt>"
-   --request-id <id>` (or `save --file <path>`), which records it on the
    session. Forward the person's request/annotation verbatim, session/branch, live
    ticket, known rulings and supplied copy to the SAME writer, plus, with the
-   first request, the requirements worker's quoted acceptance criteria, and
-   every saved reference image path. Never send your own description of an
-   image in place of its path. It performs
+<!-- end: request-forward -->
+
+<!-- block: request-forward-2 -->
    graph/owner prep and writes the canonical core-template plan locally.
    It locks the Spec Card before any code (`references/spec-card.md`). It
    always creates or extends the one session decision table at
    `.closedloop-ai/decision-tables/<session-slug>.md` before any code, using
    the named core skill in quality-loop.md. Include its path and affected/
-   interacting row IDs in every applicable worker brief. Later requests append
-   to this same artifact with provenance; no per-request table or history reset.
-   No upfront summary, technical question or plan approval reaches the person.
-   When the request names an outside product as its reference, or gives a
-   screenshot of one, the reference-product notice below runs first and its
-   list goes to the writer with the request.
-<!-- end: request-forward -->
+<!-- end: request-forward-2 -->
 
 <!-- block: implement-order -->
-3. The writer implements in dependency order. It can load canonical
-   backend, primitive, prototype and Storybook guidance from its own plugin,
-   but no new source writer/worktree/branch. Read-only specialists advise;
-   their findings return to this writer. Preserve real visual/product approvals.
-   Before it creates, retitles or moves a story or adds a shared component,
-   it returns `NEEDS_STORYBOOK` with the capability and planned files;
-   dispatch read-only `vibe-storybook-decomposer` in placement mode and resume
-   the SAME writer with its Placement block, which the writer records in its
-   local plan before writing. That block is a read-only lookup in quick prep,
-   not a review. The writer logs a Conflict in it with its audience, `design`
    or `engineering`, for the live ticket (`provider:ticket-template.md`,
    "Conflicts"), never a question for the person.
    A part that needs a path the writer may never edit is logged as
@@ -326,13 +286,9 @@ the app?" Default to straight into the app when no unresolved decision is needed
    checklist while the writer builds the rest (`references/guardrails.md`,
    "What may change"); it never stops the request and is never a question
    for the person.
-   When its plan needs NEW Storybook components, it builds them first and
-   returns `STORIES_READY`; send the new-components notice below and resume
-   it at once to build the feature.
 <!-- end: implement-order -->
 
 <!-- block: record-pln -->
-6. Record scope/progress/backend facts through the writer's explicit serial
    record continuation or the authorized ticket helper, never simultaneously.
    Once the writer's turn ends with a plan written for the request (`DONE`,
    or a stop such as `NEEDS_PERSON` or `BLOCKED` before the build finished),
@@ -377,19 +333,17 @@ that waited, and one deploy after the last of them carries them all. A
 3. After preparation and SAME-writer conflict/source correction, ROOT commits
    the staged ordinary merge and any checked fixes (nothing is pushed yet):
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
-   The subject stays under 72 characters and never mentions AI tools. The
-   script leaves out the session's `localFixes` and files that never belong
-   in a commit, and the repository's commit hook runs. Add `--exclude <path>`
-   for each untracked file the inventory lists as `forbidden` or
-   `outsideAllowed` that the session did not write (a person's own files);
+<!-- end: deploy -->
+
+<!-- block: deploy-2 -->
    the commit goes ahead without them and without asking anyone to move them. `committed: false`
    means nothing changed; continue. `"ok":false` means the hook refused:
    resume the SAME persistent writer in fix mode with the error, then commit
    again. An existing test or fixture the change broke is repaired there
    (`references/guardrails.md`, "Repair, don't author"). When the writer
-   returns `BLOCKED` because a test of live behavior would need changed
-   assertions, first check the alternative paths in `references/guardrails.md`,
-   "Plugins and tooling". If the block remains, record the exact cause and
+<!-- end: deploy-2 -->
+
+<!-- block: deploy-3 -->
    tried paths, then offer the supported pushed handover. Never ask the person
    to repair the test.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
@@ -428,7 +382,7 @@ that waited, and one deploy after the last of them carries them all. A
    quick checks before committing and redeploying again (steps 3 and 4). Keep the repair details internal.
 
 Never deploy a change before the writer's quick checks pass.
-<!-- end: deploy -->
+<!-- end: deploy-3 -->
 
 <!-- block: flag-snapshot -->
 The environment uses the production flag values captured when it was created
@@ -447,7 +401,6 @@ request or reaches design and engineering. On "throw it away", follow section 9.
 <!-- end: keep-it -->
 
 <!-- block: discard-lost -->
-2. Tell them in plain words what will be lost (the session's summary, its
    unsaved files, and their Vercel copy of the app and its data). When
    `liveTicketCreatedBySession` is true, also say that session-created ticket
    is canceled. A bound pre-existing ticket is not canceled or reassigned.
@@ -455,7 +408,6 @@ request or reaches design and engineering. On "throw it away", follow section 9.
 <!-- end: discard-lost -->
 
 <!-- block: discard-run -->
-3. On a clear yes, retain the validated remembered `<repo>` separately from
    the target `<wt>` and the parent-held preview's branch, live ticket and
    operator. Dispatch `vibe-setup-worker` from that stable `<repo>` with
    `sessionless: {kind: "startup"}`, mode `record`, `recordAction: "discard"`,

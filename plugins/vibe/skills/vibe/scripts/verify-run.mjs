@@ -62,6 +62,7 @@ import { execCommand, execCommandAsync, parseJson, stdoutOf, tailLines, toolDidN
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const SCHEMA = "vibe.verify-evidence/1";
 export const Status = Object.freeze({
@@ -484,8 +485,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exit(2);
+      process.exit(failScript(error, 2));
     },
   );
 }

@@ -38,6 +38,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { LOCKFILE_INSTALLS } = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const Status = Object.freeze({ Ok: "OK", NeedsPerson: "NEEDS_PERSON", Blocked: "BLOCKED", NeedsAgent: "NEEDS_AGENT" });
 // references/preflight.md, the `claude-auth-login` row, word for word.
@@ -345,7 +346,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     },
     (error) => {
       process.stdout.write(`${JSON.stringify({ status: Status.Blocked, error: error instanceof Error ? error.message : String(error) })}\n`);
-      process.exit(2);
+      process.exit(scriptExitCode(error, 2));
     },
   );
 }

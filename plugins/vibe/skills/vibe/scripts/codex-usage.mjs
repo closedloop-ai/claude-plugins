@@ -32,6 +32,9 @@ import { parseArgs } from "node:util";
 import { classifyUsage, rateLimitReading, readRateLimits, UsageState, UsageTransport } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
 import { defaultUsageWorkDir, recordUsageReading } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { BUNDLED_CODEX, findCli, Harness } from "./plugin-version.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const UsageStatus = Object.freeze({
   Ok: "ok",
@@ -131,8 +134,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exit(2);
+      process.exit(failScript(error, 2));
     }
   );
 }

@@ -34,6 +34,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 const { sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const MAX_SURFACES = 50;
 const MAX_KEYS_PER_SURFACE = 20;
@@ -572,6 +573,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.stdout.write(`${JSON.stringify({ ok: true, ...run(process.argv.slice(2)) })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
-    process.exit(1);
+    process.exit(scriptExitCode(error, 1));
   }
 }

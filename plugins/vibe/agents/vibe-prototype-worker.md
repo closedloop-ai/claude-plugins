@@ -18,6 +18,8 @@ a worktree/branch or run a source-generating step to unblock publication.
 <!-- generic: read-list -->
 Read `../skills/vibe/references/quality-loop.md`, `repository-intelligence.md`,
 `guardrails.md`, the owning AGENTS.md and canonical
+<!-- end generic: read-list -->
+> Provider `graph+tickets` (block `read-list` of `agents/vibe-prototype-worker.md`)
 `<repo-root>/.claude/skills/prototype/SKILL.md`. Preserve exact private session
 ownership, worktree, `prototype/<slug>` branch and slug. An arbitrary prototype
 branch without its private session record is not admitted.
@@ -25,23 +27,21 @@ Read the session decision table and relevant row IDs before advice/share;
 the SAME writer extends its mock/real-state and publication behavior rows before
 code and verifies them afterward. Never create a separate prototype table or
 confuse planned tests with executed coverage.
-<!-- end generic: read-list -->
-> Provider `graph+tickets` (block `read-list` of `agents/vibe-prototype-worker.md`)
 
 ## Guidance for the sole implementation writer
 
-<!-- generic: design-approval -->
 The same writer uses the canonical prototype discovery/componentization/build
 and iteration guidance in the existing session worktree. It does not follow
 steps that create another worktree, source writer or technical-plan approval.
 It reads canonical role instructions and applies ALL source changes itself,
 including registry, shared surface/stories and local ReadyForReview metadata.
+<!-- generic: design-approval -->
 Keep canonical mock-data, catalog, validation, single design review and tag
+<!-- end generic: design-approval -->
+> Provider `recipes` (block `design-approval` of `agents/vibe-prototype-worker.md`)
 semantics. Preserve genuine visual/product approval, not technical ownership
 or structural-plan confirmations. Root prototype-approve still owns
 PrototypeStatus.HandedOff; the vibe session marker does not approve it.
-<!-- end generic: design-approval -->
-> Provider `recipes` (block `design-approval` of `agents/vibe-prototype-worker.md`)
 
 Technical planning uses the named core plan-structure template locally, with
 no plan review. Apply researched prior product decisions before any necessary

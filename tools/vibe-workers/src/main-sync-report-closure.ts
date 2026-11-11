@@ -52,7 +52,7 @@ function walkReportClosure(execution: ReportExecution, entries: readonly ReportC
     const source = readInputModule(execution.root, entry.file, nativeEnvironment(entry.context, entry.argv));
     const collected = new Set<string>();
     if (inputModuleReferences(execution.root, entry.file, (file, reference) => {
-      // A file name under an unbound directory, such as a module's own `join(outDir, "results.json")`, locates no retained report (ISS-14015).
+      // A file name under an unbound directory, such as a module's own `join(outDir, "results.json")`, locates no retained report.
       if (inputUnlocatedFileName(reference)) return false;
       if (reference.kind !== "path") {
         for (const candidate of tracked) {

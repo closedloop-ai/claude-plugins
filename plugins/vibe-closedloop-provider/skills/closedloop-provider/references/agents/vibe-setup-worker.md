@@ -43,9 +43,6 @@ open tickets, and `blast_radius_tickets` on a file you suspect.
   `nohup pnpm --filter storybook exec storybook dev -p <port> --ci --no-open > "$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-storybook.log" 2>&1 &`.
   Wait until the log shows its `Local:` line and `http://localhost:<port>`
   answers, then record it, keeping anything else the stack lists:
-  `vibe-sessions.mjs touch --worktree "<wt>" --stack '{"storybookUrl":"http://localhost:<port>","storybookPid":<pid>, ...}'`.
-  If the stack already lists a Storybook whose process is alive and whose URL
-  answers, reuse it.
 <!-- end: storybook -->
 
 <!-- block: desktop -->
@@ -82,10 +79,6 @@ open tickets, and `blast_radius_tickets` on a file you suspect.
 <!-- end: desktop -->
 
 <!-- block: discard -->
-- Discard (only when the orchestrator says the person confirmed): stop the
-  session's processes (as above), then run
-  `node ../skills/vibe/scripts/vibe-sessions.mjs discard --worktree "<target-wt>" --confirm`
-  from the retained execution checkout, never the target or a child of it.
   It refuses a handed-off session; otherwise, for a pushed session, it
   requests the drop of the session's preview schema and stored files
   (the repository's `cleanup-preview-schemas.yml` workflow through `gh`, since
@@ -99,7 +92,6 @@ open tickets, and `blast_radius_tickets` on a file you suspect.
 <!-- end: discard -->
 
 <!-- block: repo-bug -->
-1. Diagnose it: the failing command, the error, the root cause file and line,
    and the smallest fix. Check closedloop-graph (`fts_search` on the error,
    `blast_radius_tickets` on the file) and ClosedLoop `search` for an open
    ticket that already reports it; if one does, use that ticket and do not

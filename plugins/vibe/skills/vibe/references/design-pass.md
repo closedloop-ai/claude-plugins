@@ -14,34 +14,34 @@ behavior goes in the parent and a child keeps only what is specific to that
 child. The first fitting rule decides without asking the person.
 Nobody asks the person where code goes.
 
-<!-- generic: owner-slot -->
 1. Behavior that the children of a shared parent share goes into that parent
    as a generic, domain-free slot or extension point, and each child opts in
    (one prop or one hook call) instead of reimplementing it. When the parent
+<!-- generic: owner-slot -->
    is in the shared design-system package, the slot is typed without domain
    nouns, because design-system code cannot import domain packages. The domain
    wiring (data hooks, API calls, nouns, labels) stays in the owning feature
    package, or its shared feature folder when more than one feature uses it,
    and is passed
+<!-- end generic: owner-slot -->
+> Provider `recipes` (block `owner-slot` of `vibe/design-pass.md`)
    in. A slot alone is not an owner: the shared state and its handlers
    (selection, grouping, collapse, paging) live in the parent or in one
    shared hook the parent calls, and a child passes only its domain wiring.
    Two children that each keep their own copy of that state behind the
    parent's slot is the red flag the root `AGENTS.md` names under shared
    behavior in the shared parent, even when the slot exists.
-<!-- end generic: owner-slot -->
-> Provider `recipes` (block `owner-slot` of `vibe/design-pass.md`)
 2. A child asking for what this session already built into a sibling (another
    child of the same parent) is rule 1: move it into the parent and have both
    opt in, never copy it.
 3. Something a shared component already renders is extended there (a new
    prop or variant beside the existing default), never copied.
-<!-- generic: owner-surface -->
 4. Behavior specific to one child stays in that child, in its feature package
+<!-- generic: owner-surface -->
    in its feature package (route shells stay thin), on the surface that already
-   owns the entity (`guardrails.md`, "Where code goes").
 <!-- end generic: owner-surface -->
 > Provider `recipes` (block `owner-surface` of `vibe/design-pass.md`)
+   owns the entity (`guardrails.md`, "Where code goes").
 
 An opt-in slot changes nothing for children that do not pass it; only altering
 what they show raises the "everywhere or just here" question.
@@ -68,21 +68,21 @@ no second design, no questions, no approval.
 3. Existing components: the repository's component catalog, its feature
    packages and shared helpers, for anything that already renders the
    concept, plus the paved paths and shared-surface rules in the nearest
-   `AGENTS.md` of each directory involved.
 <!-- end generic: prep-components -->
 > Provider `recipes` (block `prep-components` of `vibe/design-pass.md`)
+   `AGENTS.md` of each directory involved.
 > Provider `memory` (block `prep-memory` of `vibe/design-pass.md`)
-<!-- generic: prep-precedent -->
 5. Precedent: where the same capability already exists for a sibling
    entity (another entity's list or detail surface): the component that
    provides it, how its hosts consume it, and where its stories live
+<!-- generic: prep-precedent -->
    (`rg` on the capability's names and on imports of that
+<!-- end generic: prep-precedent -->
+> Provider `graph` (block `prep-precedent` of `vibe/design-pass.md`)
    component). Where the owner rules, the repo's `AGENTS.md` ("Shared behavior
    belongs in the shared parent") and its docs already say how, follow them;
    where they do not, mirror the precedent's ownership, component and
    Storybook structure, never its root or version.
-<!-- end generic: prep-precedent -->
-> Provider `graph` (block `prep-precedent` of `vibe/design-pass.md`)
 6. Placement: before a story is created, retitled or moved or a shared
    component is added, the writer returns `NEEDS_STORYBOOK` and
    `vibe-storybook-decomposer` answers with its Placement block (`SKILL.md`,
@@ -181,14 +181,14 @@ A fix that moves behavior to its owner works through, in its own reasoning:
   the owner's internal rules to opt in; rethink the owner before going on.
 - Stories at the owning level: the slot's stories live where the owner's
   stories are collected, and each child's story only shows it opted in.
-<!-- generic: sibling-sweep -->
 - Sibling sweep: after the fix, look for the same shape or defect at sibling
+<!-- generic: sibling-sweep -->
   sites (the other children of the owner through its importers and
   callers, and repeated strings or calls through `rg` in the worktree) and consolidate repeats in the
-  session's own code. Do not opt in children the person did not name; list
-  them.
 <!-- end generic: sibling-sweep -->
 > Provider `graph` (block `sibling-sweep` of `vibe/design-pass.md`)
+  session's own code. Do not opt in children the person did not name; list
+  them.
 - Tests and checks: no tests are authored; an existing test the restructure
   broke is repaired without changing what it asserts, handoff lists the
   missing ones for engineering (`guardrails.md`, "Tests"), and a failing check

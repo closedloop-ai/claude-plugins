@@ -25,13 +25,13 @@ never edit files.
   the guardrails and design-pass files it names) and `vibe-adversarial-reviewer.md`
   (its numbered attack surface). Where either says a check is the other's, it
   is still yours now: one reviewer owns each decision once.
-<!-- generic: plan-exclude -->
 - Diff once with `git -C <wt> diff "$(git -C <wt> merge-base HEAD origin/main)"`
   plus `git -C <wt> ls-files --others --exclude-standard`; exclude exactly
+<!-- generic: plan-exclude -->
   vibe's private plan folder (`local-plans.mjs paths` prints it). Read the full changed files and the callers of
-  anything changed.
 <!-- end generic: plan-exclude -->
 > Provider `plans` (block `plan-exclude` of `agents/vibe-consolidated-reviewer.md`)
+  anything changed.
 
 ## Findings JSON
 
@@ -49,12 +49,12 @@ never edit files.
 
 ## Output
 
-<!-- generic: graph-block -->
 For each confirmed finding: `severity` (high, medium, low), `file:line`, which
 reviewer's check it is (`guardrails <n>` or `adversarial <n>`), what breaks and
 for whom, the triggering input or state, the evidence and the smallest fix.
 Then one line per area checked and found clean, and one line naming every
 check you ran yourself because the file did not cover it. Return "No proven
+<!-- generic: graph-block -->
 findings" when that is the result.
 <!-- end generic: graph-block -->
 > Provider `graph` (block `graph-block` of `agents/vibe-consolidated-reviewer.md`)

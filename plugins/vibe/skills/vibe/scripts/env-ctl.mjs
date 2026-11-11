@@ -46,6 +46,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 export const REDEPLOY_UI_ONLY_ENV = "VIBE_REDEPLOY_UI_ONLY";
 export const RUN_FAILURES = new Set(["failure", "cancelled", "timed_out"]);
 // agents/vibe-environment-worker.md, the sentence it returns when no analytics key can be found.
@@ -409,7 +410,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     },
     (error) => {
       process.stdout.write(`${JSON.stringify({ status: Status.Blocked, error: error instanceof Error ? error.message : String(error) })}\n`);
-      process.exit(2);
+      process.exit(scriptExitCode(error, 2));
     },
   );
 }

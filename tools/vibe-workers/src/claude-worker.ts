@@ -13,7 +13,7 @@ import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWri
   readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
-import { assembleProviderText, boundWith, connectionLabel, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { assembleProviderText, boundWith, connectionLabel, ProviderBroken, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { briefProviderProblem } from "../../../plugins/vibe-core/lib/vibe/scripts/provider-brief.mjs";
 import { recordWorkerScope } from "../../../plugins/vibe-core/lib/vibe/scripts/worker-scope.mjs";
 import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
@@ -213,9 +213,12 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       + "through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, "
       + "tests or live records, and never adopt an unrecorded process. " : "";
   // The role's provider stubs are resolved here against the session's binding, as provider-text.md promises a
-  // Claude-launched worker; with no provider bound each stub's generic text stays.
+  // Claude-launched worker; with no provider bound each stub's generic text stays. A bound provider whose text cannot
+  // be read throws ProviderBroken, so the launch fails with its reason and fix instead of running generic text.
   const prompt = `${assembleProviderText(definition.prompt, binding)}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
+    + `Open every other vibe file that has provider stubs through \`node ${join(definition.root, "skills/vibe/scripts/provider.mjs")} assemble --worktree "${input.worktree}" <file>\` `
+    + "and read only the file it names (skills/vibe/references/provider-text.md). "
     + pushPolicy(input) + phasePolicy
     + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "")
     + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName)
@@ -582,12 +585,13 @@ class WorkerLaunchError extends Error {
   }
 }
 
-function safeFailure(error: unknown): { code: string; summary: string; personAction?: string } {
+export function safeFailure(error: unknown): { code: string; summary: string; personAction?: string } {
   const message = error instanceof Error ? error.message : "";
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...(error.personAction ? { personAction: error.personAction } : {}) };
   }
   if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
+  if (error instanceof ProviderBroken) return { code: "PROVIDER_BROKEN", summary: error.message };
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error
     && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
@@ -657,7 +661,7 @@ export async function main(argv: string[]): Promise<number> {
       workerId: writer?.workerId, sessionId: writer?.runtime === "claude" ? writer.workerId : undefined,
       leaseRetained: writer?.running };
     process.stdout.write(`${JSON.stringify(result)}\n`);
-    return 1;
+    return "code" in result && result.code === "PROVIDER_BROKEN" ? 4 : 1;
   }
 }
 

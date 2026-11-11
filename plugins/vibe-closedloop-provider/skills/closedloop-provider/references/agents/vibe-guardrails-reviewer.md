@@ -25,9 +25,7 @@ holds the shape). It wraps the repository's Biome and `pnpm check:source-gates`
 <!-- end: constant-branch -->
 
 <!-- block: taxonomy -->
-10. Storybook taxonomy (`guardrails-ui.md`, "Storybook taxonomy"): read the
     repo's `apps/storybook/TAXONOMY.md` as the session's base has it; the
-    inventory's `storybookScheme` names that base's scheme. A new story file
 <!-- end: taxonomy -->
 
 <!-- block: version-history -->
@@ -40,10 +38,7 @@ holds the shape). It wraps the repository's Biome and `pnpm check:source-gates`
 <!-- end: channel-row -->
 
 <!-- block: flag-retirement -->
-14. Flag retirement: for each feature flag read, key constant or gate the
     diff deletes, read the comments on every ticket linked to the flag (the
     live ticket, its PRD, and the tickets `fts_search` finds for the key) with
     the ClosedLoop MCP `get-document-comments`. A recorded hold, rollout
-    pause or parity list on the flag with no later human answer allowing the
-    retirement is a blocking `engineering decision` finding, quoting the
 <!-- end: flag-retirement -->

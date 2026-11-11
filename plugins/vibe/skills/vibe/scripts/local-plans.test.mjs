@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -54,4 +54,18 @@ test("every installed provider's plan folder is known, bound or not, and a commi
   })();
   assert.equal(check.status, 1, "a session with nothing bound still refuses the committed plan");
   assert.deepEqual(JSON.parse(check.out).committedLocalPlans, [".closedloop-ai/vibe-plans/plan.md"]);
+});
+
+test("the script stops with exit 4 and the reason and fix when its session's bound provider is gone", (t) => {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "local-plans-broken-")));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const worktree = path.join(home, "wt");
+  execFileSync("git", ["init", "-q", worktree]);
+  writeFileSync(path.join(worktree, ".git", "vibe-session.json"), JSON.stringify({ worktree, branch: "vibe/broken",
+    provider: { state: "bound", name: "acme-provider", root: path.join(home, "gone"), capabilities: ["plans", "tickets", "recipes"] } }));
+  const env = { ...process.env, HOME: home };
+  for (const key of ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"]) Reflect.deleteProperty(env, key);
+  const run = spawnSync(process.execPath, [SCRIPT, "--worktree", worktree], { encoding: "utf8", env });
+  assert.equal(run.status, 4, run.stdout + run.stderr);
+  assert.match(JSON.parse(run.stdout).error, /acme-provider this session is bound to is no longer installed.*Fix: reinstall or update the acme-provider plugin/);
 });

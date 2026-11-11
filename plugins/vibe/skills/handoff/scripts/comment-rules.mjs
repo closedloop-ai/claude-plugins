@@ -32,6 +32,7 @@ import { parseUnifiedDiff } from "./diff-rules.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { providerDataOr, sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const CODE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*|\{\s*\/\*)/;
@@ -187,6 +188,7 @@ function escape(value) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  exitOnProviderBroken();
   const { values } = parseArgs({ options: { worktree: { type: "string" }, base: { type: "string" } } });
   if (!values.worktree || !values.base) {
     process.stderr.write("Usage: comment-rules.mjs --worktree <path> --base <sha>\n");

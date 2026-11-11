@@ -66,6 +66,7 @@ import { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetir
 import { captureOwnedDockerResources, plannedLocalTags, reconcileGeneratedE2E, recordE2EChild,
   removeOwnedDockerResources, reserveGeneratedE2E } from './owned-docker.mjs';
 import { e2eWaitersDir, readE2eWaiters, waitForReloadFence, writeAtomic } from './owned-state.mjs';
+import { failScript } from "./provider.mjs";
 
 export { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
 export { installOwnedBuildShim, ownedBuildEnvironment, prepareRunOwnedBuild, recordBuiltTags } from './owned-builder.mjs';
@@ -547,8 +548,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     },
     (error) => {
       if (isSandboxRefusal(error)) process.stdout.write(`${JSON.stringify(escalation(error, ESCALATION_JUSTIFICATION))}\n`);
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exit(2);
+      process.exit(failScript(error, 2));
     }
   );
 }

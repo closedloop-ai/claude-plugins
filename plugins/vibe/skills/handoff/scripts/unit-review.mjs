@@ -71,6 +71,7 @@ const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evid
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { unitReviewFile } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const Part = Object.freeze({ Code: "code", Visual: "visual", Measured: "measured" });
 export const Origin = Object.freeze({ Ticket: "ticket", Prd: "prd" });
@@ -397,7 +398,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

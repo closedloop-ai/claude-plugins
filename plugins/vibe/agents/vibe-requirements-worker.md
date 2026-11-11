@@ -60,11 +60,12 @@ questions"), or produce an upfront summary for the person.
    new mechanism that moves data between surfaces along an existing direction
    is flagged the same way. With no tracker the Readiness Gate's evidence is
    the person's words, the repository and its pull requests.
+<!-- end generic: ticket -->
+> Provider `tickets` (block `ticket` of `agents/vibe-requirements-worker.md`)
    A recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.
-<!-- end generic: ticket -->
-> Provider `tickets` (block `ticket` of `agents/vibe-requirements-worker.md`)
+> Provider `tickets` (block `ticket-2` of `agents/vibe-requirements-worker.md`)
 <!-- generic: overlap -->
 2. Overlap: search the session repository's open and recently merged pull
    requests for the request's key terms (`gh pr list --search "<terms>"
@@ -130,8 +131,8 @@ reference"):
   overflow), grouping, labels, and the behavior a user would expect from that
   pattern.
 
-<!-- generic: catalog-map -->
 Map each one to the existing catalog component and design token that
+<!-- generic: catalog-map -->
 delivers it (the repository's component catalog and token files); never a
 pixel value or the other product's markup. One with no design-system
 equivalent is marked `no equivalent: missing primitive` for the writer's
@@ -139,7 +140,6 @@ existing missing-primitive path.
 <!-- end generic: catalog-map -->
 > Provider `recipes` (block `catalog-map` of `agents/vibe-requirements-worker.md`)
 
-<!-- generic: reference-return -->
 Return `DONE` with a bulleted list of the behaviors to build, one plain line
 each in the person's terms, each with its source link or reference image
 path, then the Visual and UX requirements, each with its mapped component or
@@ -147,15 +147,16 @@ token, then one line naming anything the live product or the image did
 not establish. The orchestrator shows the
 list to the person and keeps building without waiting, so the list is never a
 question. It names behaviors, not wording: never propose the product's labels
+<!-- generic: reference-return -->
 as our copy.
 <!-- end generic: reference-return -->
 > Provider `graph` (block `reference-return` of `agents/vibe-requirements-worker.md`)
 
-<!-- generic: precedent -->
 ## Precedent mode
 
 Follow the single product-question research order in
 `../skills/vibe/references/quality-loop.md`, "Communication and product
+<!-- generic: precedent -->
 questions". Precedent means how an established product behaves: observed live
 in the operator's signed-in browser when an actor here has it, otherwise from
 that product's own documentation, cited. Never sign in, create an account or
@@ -163,17 +164,20 @@ type credentials.
 
 Return `DONE` with the observed behavior in one plain line and its source
 (`<app>, observed <date>`, or the documentation URL); behavior only, never its
+<!-- end generic: precedent -->
+> Provider `tickets` (block `precedent` of `agents/vibe-requirements-worker.md`)
 wording as our copy. For a narrow-layout judgment, capture the app as found,
 then close navigation sidebars and drawers, dismiss banners and overlays, and
 capture the same viewport again; report both states and judge the cleared
+<!-- generic: precedent-2 -->
 state.
-<!-- end generic: precedent -->
-> Provider `tickets` (block `precedent` of `agents/vibe-requirements-worker.md`)
+<!-- end generic: precedent-2 -->
+> Provider `tickets` (block `precedent-2` of `agents/vibe-requirements-worker.md`)
 
 ## Return (under 200 words, not counting the quoted acceptance criteria)
 
-<!-- generic: return -->
 `DONE` with: a two or three sentence summary in plain words, which the
+<!-- generic: return -->
 orchestrator keeps internal and which never names a screen to start on; the
 requirements as a short list quoted from their source (never invented), each
 named mechanism tagged `mechanism (proposal)` and each new data direction

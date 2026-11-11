@@ -24,6 +24,9 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { pathMatcher } from "../../handoff/scripts/path-gates.mjs";
 import { bumpLevel, readStorybookRules } from "../../handoff/scripts/storybook-rules.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 
@@ -102,7 +105,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

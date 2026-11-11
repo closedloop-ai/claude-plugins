@@ -13,6 +13,7 @@ import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const GIB = 1024 ** 3;
 const MIN_MEMORY_GIB = 20;
@@ -88,6 +89,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.stdout.write(`${JSON.stringify({ ok: true, probe })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
-    process.exitCode = 1;
+    process.exitCode = scriptExitCode(error, 1);
   }
 }

@@ -26,6 +26,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { workItem } from "../../vibe/scripts/tracker-key.mjs";
 
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 /** What is missing from each finding, or an empty list when every finding can be acted on. */
 export function findingProblems(findings, exists = existsSync) {
@@ -124,7 +125,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

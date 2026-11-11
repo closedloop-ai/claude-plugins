@@ -94,7 +94,5 @@ On Claude Code (checked on 2026-10-28 with Claude Code 2.1.308 the same way),
 <!-- end: clone-app -->
 
 <!-- block: reconnecting -->
-Before dispatching `vibe-setup-worker` for a sign-in on Codex, tell the
 person in one line: "I'm reconnecting <ClosedLoop|GitHub> for you. If ChatGPT
-asks whether it can run a command, click Allow once." If they deny it,
 <!-- end: reconnecting -->

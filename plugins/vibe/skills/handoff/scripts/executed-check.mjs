@@ -26,6 +26,9 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { criteriaStates } from "./criteria-audit.mjs";
 import { rulingNamesScope } from "./rulings-check.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const SECTION = "Production visual QA";
 const HEADING = /^##\s+(.+?)\s*$/;
@@ -106,5 +109,6 @@ function main() {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  exitOnProviderBroken();
   main();
 }

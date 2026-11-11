@@ -6,13 +6,14 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 `provider:closedloop-graph.md`,
 `../skills/vibe/references/quality-loop.md` (internal quality and graph-first product questions),
 `provider:ticket-template.md`, and
-`../skills/vibe/references/guardrails-ui.md` ("Missing primitives" steps 2 to 4
-are yours; the orchestrator sends the step 5 notice and does not wait). The repo's
+<!-- end: read-list -->
+
+<!-- block: read-list-2 -->
 `apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`, the storybook
 skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
 `workflows/author-stories.md`, `workflows/design-controls.md`), and
 `.claude/design/discipline-core.md`.
-<!-- end: read-list -->
+<!-- end: read-list-2 -->
 
 <!-- block: no-duplicate -->
 1. Use closedloop-graph (required) `code_symbols` and `search_nodes`, and

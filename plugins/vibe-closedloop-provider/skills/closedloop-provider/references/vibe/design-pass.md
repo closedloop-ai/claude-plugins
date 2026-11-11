@@ -3,26 +3,15 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: owner-slot -->
-1. Behavior that the children of a shared parent share goes into that parent
-   as a generic, domain-free slot or extension point, and each child opts in
-   (one prop or one hook call) instead of reimplementing it. When the parent
    is in `packages/design-system`, the slot is typed without domain nouns,
    because design-system code cannot import `packages/app`, `@repo/api`, or
    `@repo/database`. The domain wiring (data hooks, API calls, nouns, labels)
    stays in the owning feature package in `packages/app`, or
    `packages/app/shared` when more than one feature uses it, and is passed
-   in. A slot alone is not an owner: the shared state and its handlers
-   (selection, grouping, collapse, paging) live in the parent or in one
-   shared hook the parent calls, and a child passes only its domain wiring.
-   Two children that each keep their own copy of that state behind the
-   parent's slot is the red flag the root `AGENTS.md` names under shared
-   behavior in the shared parent, even when the slot exists.
 <!-- end: owner-slot -->
 
 <!-- block: owner-surface -->
-4. Behavior specific to one child stays in that child, in its feature package
    in `packages/app` (route shells stay thin), on the surface that already
-   owns the entity (`guardrails.md`, "Where code goes").
 <!-- end: owner-surface -->
 
 <!-- block: prep-screens -->
@@ -47,7 +36,6 @@ Each block replaces the stub of the same id there, in a session bound to this pr
    the `packages/app` feature packages, and `packages/app/shared` for
    anything that already renders the concept, plus the paved paths and
    shared-surface rules in `packages/app/AGENTS.md` and the nearest
-   `AGENTS.md` of each directory involved.
 <!-- end: prep-components -->
 
 <!-- block: prep-memory -->
@@ -60,14 +48,7 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 <!-- end: prep-memory -->
 
 <!-- block: prep-precedent -->
-5. Precedent: where the same capability already exists for a sibling
-   entity (another entity's list or detail surface): the component that
-   provides it, how its hosts consume it, and where its stories live
    (`code_symbols` on the capability's names, `code_importers` on that
-   component). Where the owner rules, the repo's `AGENTS.md` ("Shared behavior
-   belongs in the shared parent") and its docs already say how, follow them;
-   where they do not, mirror the precedent's ownership, component and
-   Storybook structure, never its root or version.
 <!-- end: prep-precedent -->
 
 <!-- block: plan-screens -->
@@ -80,10 +61,7 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 <!-- end: plan-components -->
 
 <!-- block: sibling-sweep -->
-- Sibling sweep: after the fix, look for the same shape or defect at sibling
   sites (the other children of the owner through `code_importers` and
   `code_callers`, repeated strings or calls through `code_grep`, then `rg` in
   the worktree for the session's own code) and consolidate repeats in the
-  session's own code. Do not opt in children the person did not name; list
-  them.
 <!-- end: sibling-sweep -->

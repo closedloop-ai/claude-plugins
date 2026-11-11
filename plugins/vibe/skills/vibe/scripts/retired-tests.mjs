@@ -22,6 +22,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { issueKey, requirementsKey } from "./tracker-key.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const RECORD_FILE = "vibe-retired-tests.json";
 const MAX_TEXT = 500;
@@ -102,6 +103,6 @@ if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpath
     process.stdout.write(`${JSON.stringify({ ok: true, retiredTests })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error.message })}\n`);
-    process.exitCode = 1;
+    process.exitCode = scriptExitCode(error, 1);
   }
 }

@@ -33,6 +33,7 @@ import { checkPublishableText } from "./publishable-text.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const PLAN_SEPARATOR = "\n\n---\n\n";
 export const SELF_APPROVED_MARKER = "> Self-approved: vibe sets this plan's status and no human approved it; an exclusion here counts only where it cites a ticket AC, a PRD or an operator ruling.";
@@ -127,6 +128,6 @@ if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpath
     process.exitCode = result.ok ? 0 : 1;
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
-    process.exitCode = 1;
+    process.exitCode = scriptExitCode(error, 1);
   }
 }

@@ -32,17 +32,20 @@ changes are shown through the writer's checks and screenshots.
 
 <!-- generic: storybook-links -->
 Every Storybook link given to the person opens
+<!-- end generic: storybook-links -->
+> Provider `recipes` (block `storybook-links` of `vibe/environment.md`)
 the full Storybook UI, with its sidebar and controls: the Storybook base
 alone, or `<storybook-base>/?path=/story/<story-id>` for one story. The base
+<!-- generic: storybook-links-2 -->
 is the local `storybookUrl` in the session's stack. Never give the bare canvas,
 `<storybook-base>/iframe.html?id=<story-id>&viewMode=story`, which shows the
 story without the sidebar or controls. This section is the rule's one
 canonical statement; the skills and the workers point at
+<!-- end generic: storybook-links-2 -->
+> Provider `recipes` (block `storybook-links-2` of `vibe/environment.md`)
 it. `scripts/vibe-sessions.mjs link --story <story-id>` builds the link from
 the session record, and a link given to the person also follows
 `plain-words.md`, "Links to what the person should look at".
-<!-- end generic: storybook-links -->
-> Provider `recipes` (block `storybook-links` of `vibe/environment.md`)
 
 > Provider `recipes` (block `flags-and-redeploy` of `vibe/environment.md`)
 
@@ -63,11 +66,11 @@ references").
 - **Looking at an image.** Both harnesses can: `Read` on the path in Claude
   Code, `view_image` on the path in Codex. A reference the person attached is
   already a saved file (`scripts/reference-images.mjs`).
-<!-- generic: reference-link -->
 - **A reference link.** A prototype preview, a Storybook story, an existing
   page in our product or a public page of another product: a throwaway
   headless Playwright script kept outside the worktree and deleted
   afterwards (the acceptance check's quick-script rule), which opens the URL
+<!-- generic: reference-link -->
   and saves a screenshot. Never sign in to another product or type a
   credential. Save the image with `reference-images.mjs save --file`, then
   read it like any other reference.

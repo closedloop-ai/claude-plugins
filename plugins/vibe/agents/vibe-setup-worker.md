@@ -134,11 +134,11 @@ Without the script, follow the steps below unchanged.
   (`"$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-storybook.log"`).
   Wait until `http://localhost:<port>` answers, then record it, keeping
   anything else the stack lists:
+<!-- end generic: storybook -->
+> Provider `recipes` (block `storybook` of `agents/vibe-setup-worker.md`)
   `vibe-sessions.mjs touch --worktree "<wt>" --stack '{"storybookUrl":"http://localhost:<port>","storybookPid":<pid>, ...}'`.
   If the stack already lists a Storybook whose process is alive and whose URL
   answers, reuse it.
-<!-- end generic: storybook -->
-> Provider `recipes` (block `storybook` of `agents/vibe-setup-worker.md`)
 <!-- generic: desktop -->
 - Local app: start the app with the command the repository documents for
   local development (`environment.md`, "Running the app locally"), detached
@@ -159,11 +159,11 @@ Without the script, follow the steps below unchanged.
   checking each is still the process you started) and clear the stack with
   `touch --stack '{}'`. Never touch another session's files, and never stop
   a process by name or pattern (`pkill`, `killall`).
-<!-- generic: discard -->
 - Discard (only when the orchestrator says the person confirmed): stop the
   session's processes (as above), then run
   `node ../skills/vibe/scripts/vibe-sessions.mjs discard --worktree "<target-wt>" --confirm`
   from the retained execution checkout, never the target or a child of it.
+<!-- generic: discard -->
   It refuses a handed-off session; otherwise it deletes the remote
   `vibe/<slug>` branch when one was pushed, the worktree, and the local
   branch. Return `DONE` with the successful script receipt, including
@@ -180,8 +180,8 @@ Without the script, follow the steps below unchanged.
 
 ## A bug in the repository itself
 
-<!-- generic: repo-bug -->
 1. Diagnose it: the failing command, the error, the root cause file and line,
+<!-- generic: repo-bug -->
    and the smallest fix. Look for an open issue in the repository that already
    reports it (`gh issue list --search "<error words>"`).
 2. Return the diagnosis, with that issue's link when there is one, to the

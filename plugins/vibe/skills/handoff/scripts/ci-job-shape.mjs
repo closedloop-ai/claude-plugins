@@ -28,6 +28,7 @@ const { committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { agentsTestCommand } = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
 export { agentsTestCommand };
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 export { workflowLaneDefinitions };
 
 const JOB_KEY = /^ {2}([A-Za-z0-9_-]+):\s*$/;
@@ -175,6 +176,7 @@ function main(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  exitOnProviderBroken();
   process.exitCode = main(process.argv.slice(2));
 }
 

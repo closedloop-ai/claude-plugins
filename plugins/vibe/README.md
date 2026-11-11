@@ -19,7 +19,6 @@ bound it also follows that provider's text and data.
 <!-- end generic: intro -->
 > Provider `tickets+recipes` (block `intro` of `readme.md`)
 
-<!-- generic: audience -->
 It is built for executives, designers, product managers and engineers:
 
 - **Executives and product managers** describe a change in plain words, or
@@ -28,12 +27,13 @@ It is built for executives, designers, product managers and engineers:
 - **Designers** work from a reference screenshot or iterate on the look of a
   screen. vibe maps what the reference shows onto the design system's tokens
   and components, compares each touched screen with it (in light and dark
+<!-- generic: audience -->
   where the screen has both), and runs the repository's own visual QA when it has one.
+<!-- end generic: audience -->
+> Provider `recipes` (block `audience` of `readme.md`)
 - **Engineers** build fast with the same guardrails, Storybook rules and
   handoff review as everyone else, and take the pull request through review
   and merge themselves.
-<!-- end generic: audience -->
-> Provider `recipes` (block `audience` of `readme.md`)
 
 <!-- generic: record -->
 Everything a session does is recorded in its local plan and decision table,
@@ -52,8 +52,8 @@ runs one run at a time per machine under a lock.
 
 ## What a session looks like
 
-<!-- generic: session-steps -->
 1. **Start.** The person types `$vibe` in Codex (`/vibe:vibe` in Claude Code)
+<!-- generic: session-steps -->
    in the repository's checkout and describes the change. vibe checks its own
    version, shows a short setup check (the installed vibe versions for each
    harness, and each provider connection when a provider is enabled), installs
@@ -62,23 +62,29 @@ runs one run at a time per machine under a lock.
    A lost GitHub sign-in is restored by the setup worker: the person only
    signs in in the browser and clicks Allow once when Codex asks to run a
    setup command.
+<!-- end generic: session-steps -->
+> Provider `tickets+graph+recipes` (block `session-steps` of `readme.md`)
 2. **Ask for changes.** They click Annotate in the browser toolbar (or press
    Cmd + .), point at what they want changed and type a comment, or they just
    describe it in chat. A designer can attach a reference screenshot,
    including one of another product, or ask for changes to the look; anyone
    can name a product to work like.
+<!-- generic: session-steps-2 -->
 3. **See it live.** Each finished change is running for them without being
    asked. vibe says when it is ready to look at, and names any acceptance
    criterion that is not done yet instead of claiming it.
+<!-- end generic: session-steps-2 -->
+> Provider `tickets+graph+recipes` (block `session-steps-2` of `readme.md`)
 4. **Answer only what only they can answer.** Product questions are researched
    first. A question reaches the person only when nothing else settles it, one
    at a time, and never twice.
 5. **Finish.** They say they are done. Whoever will take it through review
    and merge themselves, often an engineer, gets a pull request opened for
+<!-- generic: session-steps-3 -->
    them, with full tests written first. Otherwise vibe passes the work to the
    person they name.
-<!-- end generic: session-steps -->
-> Provider `tickets+graph+recipes` (block `session-steps` of `readme.md`)
+<!-- end generic: session-steps-3 -->
+> Provider `tickets+graph+recipes` (block `session-steps-3` of `readme.md`)
 
 A short example (the replies are paraphrased, apart from the endings line):
 
@@ -97,8 +103,8 @@ You:   Looks good. Send it to design.
 vibe:  "Who should I pass it to? A name or email is fine."
 ```
 
-<!-- generic: mockup -->
 A request for a mockup with made-up data runs the repository's prototype
+<!-- generic: mockup -->
 workflow instead, when it has one.
 <!-- end generic: mockup -->
 > Provider `recipes` (block `mockup` of `readme.md`)
@@ -111,19 +117,19 @@ from the first request to handoff. Specialists for backend, components,
 Storybook and requirements advise it and never write code themselves. No agent
 commits; the orchestrator commits through the repository's normal hooks.
 
-<!-- generic: design-system -->
 **Built from the design system, frontend and backend.** The writer reuses the
+<!-- generic: design-system -->
 component catalog and the repository's paved paths before building
+<!-- end generic: design-system -->
+> Provider `recipes` (block `design-system` of `readme.md`)
 anything new, uses design tokens instead of hardcoded colors or pixel values,
 and builds accessible controls. When a screen needs data or an action the API
 does not provide, the same writer builds that backend too.
-<!-- end generic: design-system -->
-> Provider `recipes` (block `design-system` of `readme.md`)
 
-<!-- generic: no-invented -->
 **No invented product decisions or words.** User-visible words come from the
 person, or from strings the product already renders; agents never compose
 labels, empty states or error text. Product questions follow one research
+<!-- generic: no-invented -->
 order: the code and data model, the request and its sources, the repository's
 recorded decisions, and then how an established product behaves, observed
 live or from its own documentation. No agent adds a feature flag; the person
@@ -131,16 +137,16 @@ approves each key.
 <!-- end generic: no-invented -->
 > Provider `tickets+graph` (block `no-invented` of `readme.md`)
 
-<!-- generic: criteria -->
 **Acceptance criteria are checked before "ready".** Before a change is called
 ready, the writer checks every acceptance criterion it touches, from the
+<!-- generic: criteria -->
 request, its sources and the person's own words, and records the result in the
+<!-- end generic: criteria -->
+> Provider `tickets` (block `criteria` of `readme.md`)
 session's decision table. When the person gave a reference image, the writer
 reads it itself, turns what it shows into criteria mapped to tokens and
 components, and compares a screenshot of each touched screen with it, in light
 and in dark wherever the screen supports both, before saying it is ready.
-<!-- end generic: criteria -->
-> Provider `tickets` (block `criteria` of `readme.md`)
 
 **Tests are never weakened.** The writer repairs an existing test its change
 broke without changing what the test asserts, and handoff lists missing tests
@@ -164,9 +170,9 @@ with the Storybook changes, screenshots and known gaps.
 <!-- end generic: complete-record -->
 > Provider `tickets+plans` (block `complete-record` of `readme.md`)
 
-<!-- generic: real-review -->
 **A real review at handoff.** The build loop stays fast; the heavy checks run
 once, at the end. Handoff runs a guardrails review and a separate adversarial
+<!-- generic: real-review -->
 review, the existing tests that cover each changed file, and the lint, type
 check and other checks the repository documents. A review gate the repository
 ships as its own skill runs when it is there and is recorded as unsupported,
@@ -183,10 +189,10 @@ to the same branch and answers each review thread.
 
 ### Storybook placement
 
-<!-- generic: storybook-placement -->
 Before the writer creates, retitles or moves a story or adds a shared
 component, the read-only `vibe-storybook-decomposer` places it: it finds where
 the same capability already exists for sibling entities and returns the owner
+<!-- generic: storybook-placement -->
 and story placement, following the repository's Storybook taxonomy document
 where it has one, and mirroring that precedent's structure where it does not.
 Stories cover the components consumers render, not internal render pieces.
@@ -205,15 +211,18 @@ same title, since a retitle breaks every link to its stories.
 
 <!-- generic: engineering-paths -->
 When a request needs a change in a path vibe never edits, such as
+<!-- end generic: engineering-paths -->
+> Provider `recipes` (block `engineering-paths` of `readme.md`)
 `.github/**` or an `AGENTS.md`, the writer leaves it alone, builds no
 substitute elsewhere, logs it as `Engineering needed (forbidden path)` and
+<!-- generic: engineering-paths-2 -->
 builds the rest; handoff lists each one for engineering.
 
 Nothing agent-written goes into product docs. The writer edits no docs page
 and lists the existing pages that describe a changed feature, for design or
 engineering to update.
-<!-- end generic: engineering-paths -->
-> Provider `recipes` (block `engineering-paths` of `readme.md`)
+<!-- end generic: engineering-paths-2 -->
+> Provider `recipes` (block `engineering-paths-2` of `readme.md`)
 
 ## The skills
 

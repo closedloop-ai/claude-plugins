@@ -22,6 +22,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { sessionLocalPlanPrefix } from "./local-plans.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const EVIDENCE_TYPES = ["test", "script", "screenshot", "api-read", "source-trace"];
 export const ASSUMPTION_TAGS = ["grounded", "unverified"];
@@ -289,8 +292,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }
 

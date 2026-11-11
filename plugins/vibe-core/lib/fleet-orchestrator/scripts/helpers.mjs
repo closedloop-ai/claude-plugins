@@ -69,6 +69,7 @@ import { vibeRoot } from "../../../shared/vibe-install.mjs";
 
 import { captureScratchLease, reconcileExpiredScratchHelpers, registerScratchProgram, runScratchStack,
   scratchLeaseTerminal } from './scratch-cleanup.mjs';
+import { failScript } from "../../vibe/scripts/provider.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
@@ -644,8 +645,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exit(2);
+      process.exit(failScript(error, 2));
     }
   );
 }

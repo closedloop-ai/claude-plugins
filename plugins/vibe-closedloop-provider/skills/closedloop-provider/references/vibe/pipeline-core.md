@@ -4,5 +4,4 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 
 <!-- block: lane-source -->
 Lanes and end-to-end specs come from `pnpm test:lanes` and the target
-repository's e2e path filter, never from the class.
 <!-- end: lane-source -->

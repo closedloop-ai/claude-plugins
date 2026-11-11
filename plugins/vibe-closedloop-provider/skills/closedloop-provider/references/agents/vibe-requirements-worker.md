@@ -64,9 +64,9 @@ must not be written as if it had been made. Without the script, work as below.
      these lines:
      `Prior removal: <slug>`
      `none found (searched: <searches>)`
-   A recorded decision is settled only when it traces to a human statement
-   (`quality-loop.md`, "Communication and product questions"); report each
-   with its source, and an unratified or conflicting one as not settled.
+<!-- end: ticket -->
+
+<!-- block: ticket-2 -->
    When the source is a PRD, load every child before defining scope. List each
    open child as a scope unit and classify it as untouched, active by someone
    else, delivered, superseded by a cited human ruling, or uncovered. Existing
@@ -74,7 +74,7 @@ must not be written as if it had been made. Without the script, work as below.
    is reported and excluded from the build, never claimed, built, canceled or
    superseded. Never narrow the targets a PRD names; list each one the request
    will not build as unadopted.
-<!-- end: ticket -->
+<!-- end: ticket-2 -->
 
 <!-- block: overlap -->
 2. Overlap: for a ticket or a description, run `query_collisions` with the
@@ -108,7 +108,6 @@ must not be written as if it had been made. Without the script, work as below.
 <!-- end: in-flight -->
 
 <!-- block: catalog-map -->
-Map each one to the existing catalog component and design token that
 delivers it (`packages/design-system/storybook/component-catalog.ts` and the
 token files); never a pixel value or the other product's markup. One with no
 design-system equivalent is marked `no equivalent: missing primitive` for the
@@ -116,21 +115,10 @@ writer's existing missing-primitive path.
 <!-- end: catalog-map -->
 
 <!-- block: reference-return -->
-Return `DONE` with a bulleted list of the behaviors to build, one plain line
-each in the person's terms, each with its source link or reference image
-path, then the Visual and UX requirements, each with its mapped component or
-token, then one line naming anything the live product or the image did
-not establish. The orchestrator shows the
-list to the person and keeps building without waiting, so the list is never a
-question. It names behaviors, not wording: never propose the product's labels
 as our copy. End with the Graph block.
 <!-- end: reference-return -->
 
 <!-- block: precedent -->
-## Precedent mode
-
-Follow the single product-question research order in
-`../skills/vibe/references/quality-loop.md`, "Communication and product
 questions". Precedent means live Asana in the operator's signed-in Chrome,
 never a public help center, documentation page or web-search result. Whoever
 has that browser runs the interaction; never sign in, create an account or
@@ -141,14 +129,13 @@ orchestrator with the exact interaction still to observe. Under fleet
 orchestration the orchestrator performs it before asking the operator. If the
 live interaction is available, return `DONE` with the observed behavior in
 one plain line and source `Asana, observed <date>`; behavior only, never its
-wording as our copy. For a narrow-layout judgment, capture the app as found,
-then close navigation sidebars and drawers, dismiss banners and overlays, and
-capture the same viewport again; report both states and judge the cleared
-state. End with the Graph block.
 <!-- end: precedent -->
 
+<!-- block: precedent-2 -->
+state. End with the Graph block.
+<!-- end: precedent-2 -->
+
 <!-- block: return -->
-`DONE` with: a two or three sentence summary in plain words, which the
 orchestrator keeps internal and which never names a screen to start
 on; the requirements as a short list quoted from their source (never
 invented), each named mechanism tagged `mechanism (proposal)` and each new

@@ -30,6 +30,7 @@ import { execCommand, parseJson, stdoutOf } from "./ws3-exec.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { boundWith, providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const EVIDENCE_SCHEMA = "vibe.req-evidence/1";
 const MAX_RESULT_BYTES = 200_000;
@@ -130,7 +131,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

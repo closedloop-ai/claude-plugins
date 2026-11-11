@@ -3,7 +3,6 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: prototype-paths -->
-For an owned `prototype/<slug>` mockup session, the repository's canonical
 `<repo-root>/.claude/skills/prototype/SKILL.md` owns sandbox rules instead of
 the full-app rules in this section. Its allowed host paths are exactly
 `apps/prototypes/app/p/<slug>/`, the generated registry, and the exact portable
@@ -71,7 +70,6 @@ Backend, built by that same writer using canonical backend guidance, each under 
 <!-- end: decision-table -->
 
 <!-- block: heavy-validation -->
-- Reviews and heavy validation run at handoff: the guardrails and
   adversarial reviews, browser E2E, visual QA, logical QA, product-contract
   QA, the targeted existing tests (the ones `code_tests_for` returns for each
   changed file, never a full suite) and two review passes when backend code
@@ -91,26 +89,13 @@ a count. The handoff inventory checks the file only shrank.
 When a request genuinely needs a change in a Never path beyond that one
 exception (a source gate under `scripts/**`, a workflow under `.github/**`, a
 rule in an `AGENTS.md`), that part is engineering's. The writer never edits
-the path and never builds a substitute for it in an allowed path, such as a
-copied gate or a workflow step moved into a package script. It logs the need
-in the session change log as
-`Engineering needed (forbidden path): <path or area>; why: <need>` and keeps
-building every allowed part of the request. The need is not `BLOCKED`, not a
+<!-- end: forbidden-path -->
+
+<!-- block: forbidden-path-2 -->
 question for the person, and never stops the session; the ticket worker
 carries each one to the live ticket's Engineering checklist
 (`ticket-template.md`, "Engineering needed"). The same holds for a path
-outside the allowed table: the writer does not edit it in the loop either.
-A pre-build intake whose complete planned file list is outside these paths has
-no allowed session work to continue: record every item with the canonical
-`Engineering needed (forbidden path)` line, make no source edit, and return
-`BLOCKED` so Root can route the untouched request to engineering. A mixed plan
-still builds all allowed work and does not block on its engineering entries.
-A visible part of the request that needs such a path keeps its acceptance
-criterion `not met yet` with the reason that engineering must make it, and
-the ready message tells the person so in plain words, so they never accept a
-change the branch cannot keep. A vibe tooling defect follows "Plugins and
-tooling" above; it does not stop the allowed work by itself.
-<!-- end: forbidden-path -->
+<!-- end: forbidden-path-2 -->
 
 <!-- block: flag-rule -->
 Vibe work is headed for `main`, so the target repo's flag rule decides which
@@ -142,34 +127,18 @@ team's design standard.
 <!-- end: reuse-first -->
 
 <!-- block: copy-helpers -->
-Wording the product already renders is reused through its helper, never
-retyped. Before writing any label, count or selection wording (for example
-"3 selected"), `rg` the words and the helpers that build them in
 `packages/app/shared` and the owning feature package; a second spelling of a
-string a shared helper already produces is a copy (`design-pass.md`, "Red
-flags"), even when the words match.
 <!-- end: copy-helpers -->
 
 <!-- block: feature-docs -->
-Nothing agent-written goes into public docs.
-This section is the rule's one canonical statement; the writer, the guardrails
-reviewer, the ticket worker and the handoff skill point at it.
-
 - No worker edits, creates or drafts anything under `apps/web/content/docs/`
   (product docs pages, `meta.json`, generated pages) or the repo's internal
-  engineering `docs/` folder, in the build loop, at handoff or in a requested
-  pull request. Docs belong to the humans who review and finish the work.
-- At handoff the same writer only records which existing product docs pages
-  describe a changed feature, found by searching that folder for the changed
+<!-- end: feature-docs -->
+
+<!-- block: feature-docs-2 -->
   screens, routes, components, flags and FEATURE_MAP ids, with the passage
   that no longer matches what was built. The ticket's Feature docs line lists
-  them for design or engineering to update; it never carries drafted words.
-  When no page covers a changed feature, record that.
-- The handoff inventory reports any change under either folder as outside the
-  allowed paths in every phase. An edit found there is removed by the same
-  writer and recorded on the Feature docs line instead, never kept as a
-  draft.
-<!-- end: feature-docs -->
+<!-- end: feature-docs-2 -->
 
 <!-- block: flag-snapshot -->
 - The ticket's Production flag snapshot section shows "Keys to see this work"
@@ -188,18 +157,13 @@ on for them; both keys follow "Feature flags".
 
 <!-- block: running-tests -->
 Handoff runs the existing affected tests: the feature-complete `code_tests_for` tests plus
-`diffRules.requiredTests`. Later, `qa-impact.mjs` selects lanes or screens;
-`None` runs nothing locally. Files that map to no tests
-(changelog, README, version text, Storybook Version History) run none; CI
-confirms them. When one fails, the SAME persistent
-`vibe-change-worker` fixes the session's own code, never what the test asserts
-(a broken import or setup is a repair, above). Coverage
-the session still needs is recorded internally as it is found and, at
+<!-- end: running-tests -->
+
+<!-- block: running-tests-2 -->
 handoff, listed on the live ticket under Missing tests as engineering's scope
 of work: each behavior and stable row ID that needs a test, and the files to
 cover (`ticket-template.md`). Engineering writes those tests in its pull
-request, alongside the tests for every frozen row.
-<!-- end: running-tests -->
+<!-- end: running-tests-2 -->
 
 <!-- block: repo-rules -->
 The code style rules in the root `AGENTS.md` bind every edit; the Biome and

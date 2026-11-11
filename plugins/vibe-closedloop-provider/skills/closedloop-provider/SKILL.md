@@ -18,6 +18,9 @@ bound session:
 - `provider.mjs block <capability> <file> <id>` prints one block of a file in
   `references/`. A line in a vibe skill, reference or agent of the form
   ``> Provider `<capability>` (block `<id>` of `<file>`)`` stands for that block.
+- `provider.mjs assemble <file>` writes a vibe file with every block it serves
+  in place, and `assemble --blocks <file>` only those blocks, for a file already
+  read; each prints the path it wrote.
 - `provider.mjs data <capability> <key>` prints one value of `provider.json`'s
   `data`.
 - `provider.mjs path <capability> provider:<file>` prints where a whole

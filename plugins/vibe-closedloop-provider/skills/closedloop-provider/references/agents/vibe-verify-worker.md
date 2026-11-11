@@ -277,11 +277,6 @@ Browser automation is headless. Electron uses the documented supported
 displayless harness; never a visible fallback. If no supported local path
 exists, record the exact limitation and use automatically started CI evidence
 when policy permits. Never trigger CI/reviews manually.
-
-A failure returns its command, owning files and evidence to the sole writer.
-Do not change code, suppress a check, shrink an allowlist yourself, skip an
-assertion, raise a timeout or update a snapshot to clear it. List pre-existing
-failures accurately. Existing tests run; nobody writes them in vibe or handoff.
 <!-- end: existing-checks -->
 
 <!-- block: footprint -->
@@ -376,14 +371,6 @@ build loop.
 <!-- end: control -->
 
 <!-- block: return -->
-`DONE` with check/footprint/coverage/control evidence and failures or gaps
-requiring the writer; never claim you fixed them. `BLOCKED` names a precise validation
 limitation. All modes involving code or coverage end with the required Graph
 block. Technical diagnostics remain internal, not questions for the person running the session.
-A story or page named for the person to look at carries a link that opens it,
-never a bare story ID, path or route pattern: give its story ID or the page's
-real path for the example data, and the link comes from
-`../skills/vibe/scripts/vibe-sessions.mjs link`
-(`../skills/vibe/references/plain-words.md`, "Links to what the person should
-look at").
 <!-- end: return -->

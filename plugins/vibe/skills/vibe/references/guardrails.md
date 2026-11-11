@@ -99,8 +99,8 @@ lane-source metadata only when base, freshly fetched merge target and candidate
 share one regular workflow with identical bytes/modes and unchanged permission
 fields.
 
-<!-- generic: prototype-paths -->
 For an owned `prototype/<slug>` mockup session, the repository's canonical
+<!-- generic: prototype-paths -->
 prototype skill owns sandbox rules instead of the full-app rules in this
 section, and its allowed paths are the ones that skill names. Mock state stays
 in the sandbox; no backend stubs are added. Only a branch-matching private
@@ -161,8 +161,8 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"):
   "Acceptance criteria before ready"): one cheap existing test, script,
   control read or source trace per touched criterion, never a suite or QA
   pass.
-<!-- generic: heavy-validation -->
 - Reviews and heavy validation run at handoff: the guardrails and
+<!-- generic: heavy-validation -->
   adversarial reviews, browser E2E, visual QA, the targeted existing tests
   (the ones related to each changed file, never a full suite) and two review
   passes when backend code changed, the running app driven headless, and the
@@ -178,13 +178,18 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"):
 <!-- generic: forbidden-path -->
 When a request genuinely needs a change in a Never path (a source gate, a
 workflow under `.github/**`, a rule in an `AGENTS.md`), that part is engineering's. The writer never edits
+<!-- end generic: forbidden-path -->
+> Provider `tickets` (block `forbidden-path` of `vibe/guardrails.md`)
 the path and never builds a substitute for it in an allowed path, such as a
 copied gate or a workflow step moved into a package script. It logs the need
 in the session change log as
 `Engineering needed (forbidden path): <path or area>; why: <need>` and keeps
 building every allowed part of the request. The need is not `BLOCKED`, not a
+<!-- generic: forbidden-path-2 -->
 question for the person, and never stops the session; handoff carries
 each one to the handoff summary's Engineering list. The same holds for a path
+<!-- end generic: forbidden-path-2 -->
+> Provider `tickets` (block `forbidden-path-2` of `vibe/guardrails.md`)
 outside the allowed table: the writer does not edit it in the loop either.
 A pre-build intake whose complete planned file list is outside these paths has
 no allowed session work to continue: record every item with the canonical
@@ -196,8 +201,6 @@ criterion `not met yet` with the reason that engineering must make it, and
 the ready message tells the person so in plain words, so they never accept a
 change the branch cannot keep. A vibe tooling defect follows "Plugins and
 tooling" above; it does not stop the allowed work by itself.
-<!-- end generic: forbidden-path -->
-> Provider `tickets` (block `forbidden-path` of `vibe/guardrails.md`)
 
 <!-- generic: flag-rule -->
 Vibe work is headed for the default branch, so the target repo's flag rule
@@ -246,39 +249,42 @@ apply `quality-loop.md`'s graph-first product research and necessity gate.
 There is no exception: product docs pages are user-visible words too ("Feature
 docs at handoff").
 
-<!-- generic: copy-helpers -->
 Wording the product already renders is reused through its helper, never
 retyped. Before writing any label, count or selection wording (for example
 "3 selected"), `rg` the words and the helpers that build them in
+<!-- generic: copy-helpers -->
 the repository's shared UI helpers and the owning feature package; a second spelling of a
-string a shared helper already produces is a copy (`design-pass.md`, "Red
-flags"), even when the words match.
 <!-- end generic: copy-helpers -->
 > Provider `recipes` (block `copy-helpers` of `vibe/guardrails.md`)
+string a shared helper already produces is a copy (`design-pass.md`, "Red
+flags"), even when the words match.
 
 ## Feature docs at handoff
 
-<!-- generic: feature-docs -->
 Nothing agent-written goes into public docs.
 This section is the rule's one canonical statement; the writer, the guardrails
 reviewer, the ticket worker and the handoff skill point at it.
 
+<!-- generic: feature-docs -->
 - No worker edits, creates or drafts anything under the repository's public product docs
   (its docs pages, their metadata and generated pages) or the repo's internal
+<!-- end generic: feature-docs -->
+> Provider `recipes+tickets` (block `feature-docs` of `vibe/guardrails.md`)
   engineering `docs/` folder, in the build loop, at handoff or in a requested
   pull request. Docs belong to the humans who review and finish the work.
 - At handoff the same writer only records which existing product docs pages
   describe a changed feature, found by searching that folder for the changed
+<!-- generic: feature-docs-2 -->
   screens, routes, components, flags and screen map ids, with the passage
   that no longer matches what was built. The handoff summary's Feature docs line lists
+<!-- end generic: feature-docs-2 -->
+> Provider `recipes+tickets` (block `feature-docs-2` of `vibe/guardrails.md`)
   them for design or engineering to update; it never carries drafted words.
   When no page covers a changed feature, record that.
 - The handoff inventory reports any change under either folder as outside the
   allowed paths in every phase. An edit found there is removed by the same
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
-<!-- end generic: feature-docs -->
-> Provider `recipes+tickets` (block `feature-docs` of `vibe/guardrails.md`)
 
 ## Feature map lines
 
@@ -389,6 +395,8 @@ next to Missing tests so engineering sees them.
 
 <!-- generic: running-tests -->
 Handoff runs the existing affected tests: the tests related to each changed file plus
+<!-- end generic: running-tests -->
+> Provider `graph+tickets` (block `running-tests` of `vibe/guardrails.md`)
 `diffRules.requiredTests`. Later, `qa-impact.mjs` selects lanes or screens;
 `None` runs nothing locally. Files that map to no tests
 (changelog, README, version text, Storybook Version History) run none; CI
@@ -396,12 +404,13 @@ confirms them. When one fails, the SAME persistent
 `vibe-change-worker` fixes the session's own code, never what the test asserts
 (a broken import or setup is a repair, above). Coverage
 the session still needs is recorded internally as it is found and, at
+<!-- generic: running-tests-2 -->
 handoff, listed in the handoff summary under Missing tests as engineering's scope
 of work: each behavior and stable row ID that needs a test, and the files to
 cover. Engineering writes those tests in its pull
+<!-- end generic: running-tests-2 -->
+> Provider `graph+tickets` (block `running-tests-2` of `vibe/guardrails.md`)
 request, alongside the tests for every frozen row.
-<!-- end generic: running-tests -->
-> Provider `graph+tickets` (block `running-tests` of `vibe/guardrails.md`)
 
 The exception: when the person explicitly asks for a pull request to be
 raised, full tests for every change in the session are required before it

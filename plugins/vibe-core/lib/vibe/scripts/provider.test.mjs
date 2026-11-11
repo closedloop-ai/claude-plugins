@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  assembleProviderText, boundWith, Capability, installedProviders, probeProvider, providerBlock, providerData, providerDataOr, providerPath,
-  bindForRepository, ProviderState, ProviderUnavailable, readContract, recordedBinding, ticketReference,
+  assembleProviderText, boundWith, Capability, installedProviders, probeProvider, providerBlock, providerData, providerDataOr, providerPath, servedProviderBlocks,
+  bindForRepository, ProviderBroken, ProviderState, ProviderUnavailable, readContract, recordedBinding, ticketReference,
 } from "./provider.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -145,10 +145,13 @@ test("provider files and data answer only a bound session with the capability", 
   assert.throws(() => providerBlock(null, "tickets", "vibe-skill.md", "intake"), /no provider with tickets/);
   assert.equal(providerPath(binding, "tickets", "provider:vibe-skill.md"), path.join(acme, "skills/acme/references/vibe-skill.md"));
   assert.throws(() => providerPath(binding, "tickets", "../../etc/passwd"), /outside the provider/);
-  assert.throws(() => providerBlock(binding, "tickets", "../x.md", "intake"), ProviderUnavailable);
+  assert.throws(() => providerBlock(binding, "tickets", "../x.md", "intake"), ProviderBroken, "a bad reference in a bound session stops");
+  assert.throws(() => providerBlock(null, "tickets", "../x.md", "intake"), ProviderUnavailable, "with nothing bound it is only unbound");
   rmSync(acme, { recursive: true });
-  assert.equal(boundWith(binding, "tickets"), null);
-  assert.throws(() => providerBlock(binding, "tickets", "vibe-skill.md", "intake"), /no longer installed/);
+  assert.throws(() => boundWith(binding, "tickets"), ProviderBroken, "a claimed provider that is gone is broken, never unbound");
+  assert.equal(boundWith(binding, "graph"), null, "a capability the binding never claimed is still unbound");
+  assert.throws(() => providerBlock(binding, "tickets", "vibe-skill.md", "intake"), ProviderBroken);
+  assert.throws(() => providerBlock(binding, "tickets", "vibe-skill.md", "intake"), /no longer installed.*Fix: reinstall or update the acme-provider plugin/);
 });
 
 test("the binding comes from the session record first, then the conversation's startup record", (t) => {
@@ -289,5 +292,142 @@ test("a binding whose release an update replaced finds the same provider where i
   assert.ok(installed, "this checkout's provider is installed beside vibe-core");
   const stale = { state: "bound", name: installed.name, root: path.join(checkout, "no-such-release"), capabilities: ["tickets"] };
   assert.equal(boundWith(stale, "tickets")?.root, installed.root);
-  assert.equal(boundWith({ ...stale, name: "gone-provider" }, "tickets"), null, "a provider no longer installed binds nothing");
+  assert.throws(() => boundWith({ ...stale, name: "gone-provider" }, "tickets"), /gone-provider this session is bound to is no longer installed/,
+    "a provider no longer installed is broken, never read as unbound");
+});
+
+/** Runs provider.mjs in a chat whose startup record holds `binding`. */
+function runBound(home, binding, ...args) {
+  write(path.join(home, ".codex", "vibe", "plugin-version", "chat-b.json"), { conversation: "chat-b", provider: binding });
+  return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8",
+    env: { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "chat-b", CODEX_THREAD_ID: "" } });
+}
+
+test("only an unbound capability means the generic text; every failure in a bound session stops with the reason and fix", (t) => {
+  const home = tree(t);
+  const acme = plugin(path.join(home, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const binding = { state: ProviderState.Bound, name: "acme-provider", root: acme, capabilities: ["tickets"] };
+  const unbound = runBound(home, binding, "block", "graph", "vibe-skill.md", "intake");
+  assert.deepEqual([unbound.status, unbound.stdout], [3, "provider: no provider with graph is bound to this session\n"]);
+  const fine = runBound(home, binding, "block", "tickets", "vibe-skill.md", "intake");
+  assert.deepEqual([fine.status, fine.stdout], [0, "Ask for the ticket.\nThen read it.\n"]);
+
+  const missing = runBound(home, binding, "block", "tickets", "vibe-skill.md", "nowhere");
+  assert.equal(missing.status, 4);
+  assert.match(missing.stdout, /^provider-broken: vibe-skill\.md in acme-provider has no block nowhere\. Fix: reinstall or update the acme-provider plugin/);
+
+  mkdirSync(path.join(acme, CONTRACT.references, "folder.md"));
+  const unreadable = runBound(home, binding, "block", "tickets", "folder.md", "intake");
+  assert.equal(unreadable.status, 4, "an unexpected read error never reads as unbound");
+  assert.match(unreadable.stdout, /^provider-broken: folder\.md in acme-provider cannot be read \(EISDIR\)/);
+  assert.equal(unreadable.stderr, "", "no stack trace");
+
+  rmSync(acme, { recursive: true });
+  for (const args of [["block", "tickets", "vibe-skill.md", "intake"], ["path", "tickets", "provider:vibe-skill.md"], ["data", "tickets", "x"]]) {
+    const gone = runBound(home, binding, ...args);
+    assert.equal(gone.status, 4, args.join(" "));
+    assert.match(gone.stdout, /^provider-broken: the provider acme-provider this session is bound to is no longer installed at .*Fix: reinstall or update/);
+  }
+});
+
+test("assembled text for a launched worker fails on a broken bound provider instead of keeping the generic text", (t) => {
+  const root = tree(t);
+  const acme = plugin(path.join(root, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const binding = { state: ProviderState.Bound, name: "acme-provider", root: acme, capabilities: ["tickets"] };
+  const text = (id) => `<!-- generic: ${id} -->\nDescribe the change.\n<!-- end generic: ${id} -->\n> Provider \`tickets\` (block \`${id}\` of \`vibe-skill.md\`)\n`;
+  assert.equal(assembleProviderText(text("intake"), null), "Describe the change.\n", "unbound keeps the generic text");
+  assert.throws(() => assembleProviderText(text("nowhere"), binding), ProviderBroken, "a missing block stops");
+  rmSync(acme, { recursive: true });
+  assert.throws(() => assembleProviderText(text("intake"), binding), /no longer installed/, "a removed provider stops");
+});
+
+const REAL_PROVIDER = path.resolve(HERE, "../../../../vibe-closedloop-provider");
+const VIBE = path.resolve(HERE, "../../../../vibe");
+
+/** Runs provider.mjs with HOME and TMPDIR in `home`, in a chat whose startup record holds `binding`. */
+function runIn(home, binding, ...args) {
+  write(path.join(home, ".codex", "vibe", "plugin-version", "chat-a.json"), { conversation: "chat-a", provider: binding });
+  const tmp = path.join(home, "tmp");
+  mkdirSync(tmp, { recursive: true });
+  return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", cwd: home,
+    env: { ...process.env, HOME: home, TMPDIR: tmp, CLAUDE_CODE_SESSION_ID: "chat-a", CODEX_THREAD_ID: "" } });
+}
+
+test("assemble writes a file exactly as assembleProviderText renders it for no, one and every capability", (t) => {
+  const home = tree(t);
+  const all = Object.values(Capability);
+  const bindings = [{ state: ProviderState.None }, ...all.map((one) => [one]), all].map((capabilities) => (capabilities.state ? capabilities
+    : { state: ProviderState.Bound, name: "vibe-closedloop-provider", root: REAL_PROVIDER, capabilities }));
+  for (const file of ["skills/vibe/references/guardrails.md", "agents/vibe-environment-worker.md", "skills/vibe/references/spec-card.md"]) {
+    const text = readFileSync(path.join(VIBE, file), "utf8");
+    for (const binding of bindings) {
+      const run = runIn(home, binding, "assemble", path.join(VIBE, file));
+      assert.equal(run.status, 0, run.stdout + run.stderr);
+      const written = run.stdout.trim();
+      assert.ok(written.startsWith(path.join(home, ".codex", "vibe", "provider-text")), "outside the repository, in the vibe home");
+      assert.equal(readFileSync(written, "utf8"), assembleProviderText(text, binding), `${file} ${JSON.stringify(binding.capabilities ?? "none")}`);
+    }
+  }
+});
+
+test("assemble --blocks prints every block the binding serves, in file order, each labelled by its id", (t) => {
+  const home = tree(t);
+  const file = path.join(VIBE, "skills/vibe/SKILL.md");
+  const text = readFileSync(file, "utf8");
+  const binding = { state: ProviderState.Bound, name: "vibe-closedloop-provider", root: REAL_PROVIDER, capabilities: ["tickets", "plans"] };
+  const stubs = [...text.matchAll(/^> Provider `([a-z+]+)` \(block `([a-z0-9-]+)` of `([^`]+)`\)/gm)];
+  const expected = stubs.filter(([, capability]) => capability.split("+").every((one) => binding.capabilities.includes(one)))
+    .map(([, capability, id, reference]) => ({ id, text: providerBlock(binding, capability, reference, id) }));
+  assert.ok(expected.length > 1 && expected.length < stubs.length, "the fixture serves some stubs and not others");
+  assert.deepEqual(servedProviderBlocks(text, binding).map(({ id, text: body }) => ({ id, text: body })), expected);
+  const run = runIn(home, binding, "assemble", "--blocks", file);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const printed = readFileSync(run.stdout.trim(), "utf8");
+  const labelled = [...printed.matchAll(/<!-- block: ([a-z0-9-]+) -->\n([\s\S]*?)\n<!-- end: \1 -->\n/g)]
+    .map(([, id, body]) => ({ id, text: body }));
+  assert.deepEqual(labelled, expected);
+  assert.equal(labelled.reduce((n, { id, text: body }) => n + `<!-- block: ${id} -->\n${body}\n<!-- end: ${id} -->\n`.length, 0), printed.length, "nothing else printed");
+  const unbound = runIn(home, { state: ProviderState.None }, "assemble", "--blocks", file);
+  assert.deepEqual([unbound.status, unbound.stdout], [3, "provider: no provider bound to this session serves a stub of SKILL.md\n"]);
+});
+
+test("assemble fails closed: a broken bound provider stops with the reason and fix and writes nothing", (t) => {
+  const home = tree(t);
+  const acme = plugin(path.join(home, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const binding = { state: ProviderState.Bound, name: "acme-provider", root: acme, capabilities: ["tickets"] };
+  const file = path.join(home, "skill.md");
+  write(file, "Keep.\n<!-- generic: intake -->\nDescribe the change.\n<!-- end generic: intake -->\n> Provider `tickets` (block `intake` of `vibe-skill.md`)\n");
+  const fine = runIn(home, binding, "assemble", file);
+  assert.equal(fine.status, 0, fine.stdout + fine.stderr);
+  assert.equal(readFileSync(fine.stdout.trim(), "utf8"), "Keep.\nAsk for the ticket.\nThen read it.\n");
+  rmSync(path.join(home, ".codex", "vibe", "provider-text"), { recursive: true, force: true });
+  rmSync(acme, { recursive: true });
+  for (const args of [["assemble", file], ["assemble", "--blocks", file]]) {
+    const run = runIn(home, binding, ...args);
+    assert.equal(run.status, 4, args.join(" "));
+    assert.match(run.stdout, /^provider-broken: the provider acme-provider this session is bound to is no longer installed at .*Fix: reinstall or update/);
+    assert.ok(!existsSync(path.join(home, ".codex", "vibe", "provider-text")), "no assembled file is left for a reader to open");
+  }
+  const missing = runIn(home, { state: ProviderState.None }, "assemble", path.join(home, "absent.md"));
+  assert.deepEqual([missing.status, missing.stdout], [2, ""], "a vibe file that cannot be read is a command error, never unbound or a broken provider");
+  assert.match(missing.stderr, /absent\.md cannot be read \(ENOENT\)/);
+  const bogus = runIn(home, binding, "block", "--bogus", "tickets", "vibe-skill.md", "intake");
+  assert.deepEqual([bogus.status, bogus.stdout], [2, ""], "a bad flag is a command error with no stack trace");
+  assert.doesNotMatch(bogus.stderr, /\n\s+at /);
+});
+
+test("a binding record that exists but cannot be read is a broken provider, never no binding", (t) => {
+  const home = tree(t);
+  const startup = path.join(home, ".codex", "vibe", "plugin-version", "chat-c.json");
+  write(startup, "{not json");
+  assert.throws(() => recordedBinding({ conversation: "chat-c", home }), /the record .*chat-c\.json cannot be read.*Fix: repair/);
+  assert.equal(recordedBinding({ conversation: "chat-none", home }), null, "no record at all is still no binding");
+  const run = spawnSync(process.execPath, [SCRIPT, "block", "tickets", "vibe-skill.md", "intake"], { encoding: "utf8", cwd: home,
+    env: { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "chat-c", CODEX_THREAD_ID: "" } });
+  assert.equal(run.status, 4);
+  assert.match(run.stdout, /^provider-broken: the record .*chat-c\.json cannot be read/);
+  const worktree = path.join(home, "wt");
+  spawnSync("git", ["init", "-q", worktree]);
+  write(path.join(worktree, ".git", "vibe-session.json"), "{");
+  assert.throws(() => recordedBinding({ worktree }), /vibe-session\.json cannot be read/);
 });

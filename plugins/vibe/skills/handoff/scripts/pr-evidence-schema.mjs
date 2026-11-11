@@ -10,6 +10,7 @@ import { proofSourceAt, testIntegrityProofShapeProblems } from "./test-integrity
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { validSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 // The selector a graph's test lookup records (the evidence file's version-skewed contract keeps its name).
 export const GRAPH_SELECTOR = "code_tests_for";
@@ -158,6 +159,7 @@ export function treeEquivalentCarryShapeProblems(carry) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  exitOnProviderBroken();
   const { values } = parseArgs({ options: { file: { type: "string" }, worktree: { type: "string" } } });
   if (!values.file) throw new Error("Usage: pr-evidence-schema.mjs --file <private vibe-pr-evidence.json>");
   const problems = prEvidenceShapeProblems(JSON.parse(readFileSync(values.file, "utf8")), dirname(values.file),

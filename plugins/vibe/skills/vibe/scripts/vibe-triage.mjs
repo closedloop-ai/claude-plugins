@@ -38,6 +38,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { GENERIC_AREAS, sessionAreas } from "./area-paths.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const SCHEMA_VERSION = 1;
 
@@ -371,6 +374,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error.message })}\n`);
-    process.exit(1);
+    process.exit(scriptExitCode(error, 1));
   }
 }

@@ -27,9 +27,9 @@ changes who reads the diff, never whether it is read.
 
 <!-- generic: lane-source -->
 Lanes and end-to-end specs come from the repository's lane source and the target
-repository's e2e path filter, never from the class.
 <!-- end generic: lane-source -->
 > Provider `recipes` (block `lane-source` of `vibe/pipeline-core.md`)
+repository's e2e path filter, never from the class.
 
 ## PC-4 Words the person sees
 

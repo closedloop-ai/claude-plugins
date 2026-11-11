@@ -3,8 +3,6 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: intro -->
-The person ran `vibe` and built something they are happy with. You
-orchestrate making it safe and complete for the next people, without asking
 them to understand any of the engineering. The session's live ClosedLoop
 ticket was created when the session started and the workers kept it current;
 handoff checks it is complete rather than writing it. The session ends one
@@ -21,7 +19,6 @@ them the branch to merge.
 <!-- end: intro -->
 
 <!-- block: graph-and-ticket-briefs -->
-summary in plain words (`../vibe/references/guardrails.md`, "Checks"). Every
 worker brief says closedloop-graph is required
 (`provider:closedloop-graph.md`): a worker that locates, changes or
 reviews code ends with a Graph block listing its calls; otherwise dispatch the worker again saying so. On `unreachable` the step goes on; dispatch `vibe-setup-worker` to restore the connection before the next one. Every worker that edits the live ticket
@@ -33,9 +30,6 @@ follows `provider:ticket-template.md`. You and every worker leave
 <!-- end: control-row -->
 
 <!-- block: pick-session -->
-Run `node ../vibe/scripts/vibe-sessions.mjs list` (it uses the checkout the
-vibe preflight remembered). Use the session whose worktree you are in. If you
-are not in one and more than one session is `active`, list them in plain
 words and ask which one they want to finish. Read its `liveTicket` and `localFixes`.
 
 If the session has no `liveTicket` (it started before live tickets existed),
@@ -52,88 +46,35 @@ request it opened: then follow section 10.
 <!-- end: pick-session -->
 
 <!-- block: background-lanes -->
-When `../vibe/scripts/verify-run.mjs` exists and the worktree is clean at its
-head (it refuses a dirty one), start the CPU-bound checks now, before steps 2
-to 6, and keep working while they run:
-`node ../vibe/scripts/verify-run.mjs --background --worktree "<wt>" --head "<full SHA>"`
-prints a run id at once. Record it. The summary, the guardrail and adversarial
 reviews, the Storybook work and the ticket worker's and PLN work that does not
-need the lane result all proceed while it runs; the lanes are scheduled, never
-skipped. With uncommitted work, or without the script, start nothing and
-run the steps below unchanged. A new head after a fix needs a new run.
 <!-- end: background-lanes -->
 
 <!-- block: selected-tests -->
-Read-only verify checks mode runs the same targeted checks whether or not
-backend changed (`../../agents/vibe-verify-worker.md`, "Existing checks"):
-Biome without write flags on the changed files, gates, the affected typecheck
-and only the tests selected for each file of the whole branch diff
 (`code_tests_for`, the repo's related-test command where the graph has none,
 and e2e specs by reference), never a broad or full local suite. Backend changes add the two review passes, not a
-wider test run. It reports defects back to this same writer.
-Do not weaken tests, skip required coverage or fall back to visible automated
-browser/Electron windows. Record exact unsupported local limitations.
 <!-- end: selected-tests -->
 
 <!-- block: feature-docs -->
-Nothing agent-written goes into public docs (`../vibe/references/guardrails.md`,
-"Feature docs at handoff"). In the same handoff continuation the SAME writer only
 records which existing product docs pages under `apps/web/content/docs/`
 describe a feature this session changed, with the passage that no longer
 matches, or that no page covers them, for the ticket's Feature docs line. It
-edits, creates and drafts nothing there or in the internal engineering
-`docs/` folder; design or engineering updates those pages. The inventory
-reports any change under either folder as outside the allowed paths in every
-phase, and step 3 sends it back to the writer to remove. Owned prototype
-sessions skip this step.
 <!-- end: feature-docs -->
 
 <!-- block: alignment -->
 Exclude exactly `.closedloop-ai/vibe-plans/` and historical `localFixes` from
-deliverable review, not other artifacts. Reviewers may read the local plans
-for context. Pass phase handoff, the inventory's `testRepairs` and
-`retiredTests`, and the writer's missing tests list.
-Pass the whole session decision table and actual row/test evidence to each
-reviewer. The alignment below starts from the table's Acceptance Criteria
-list and the writer's latest check of each criterion; a criterion not met is
-a source gap for the SAME writer or a product question under "Answers from
-the person", never counted as met. They read the actual artifact and use named core decision-table's
-consistency, review-prevention and applicable adversarial rules. Missing source,
-existing-test run or independent-review evidence blocks final handoff; a test
-that does not exist yet is listed under Missing tests instead. Require defensible
-`Final Alignment Status: Aligned` for the whole table before step 7 or final
-ticket completion; Not aligned is a stop, not a success with a test-later note.
-The missing tests list may say `None` only when every acceptance criterion has
-executed coverage through both the real web host adapter and the real Desktop
-host adapter. Coverage on one host, a shared unit test or a mocked router
-leaves a named missing test for the uncovered host.
-No criterion or PLN task that depends on external work is complete until the
-deployed collector, selector, monitor or other dependency evidence is present.
-An explicitly missing dependency keeps final alignment open, with one
-exception: when the person chose passing it on, a criterion whose
-only gap is work another ticket owns (an API or data ticket that has not
-shipped) is marked `not met yet: waits on <ticket>`, and the table may then
-say `Final Alignment Status: Aligned except criteria waiting on <tickets>`.
-Each such criterion goes on the Engineering checklist (`provider:ticket-template.md`,
-"Criteria waiting on other work"), so the people who close the dependency
-receive the work. A requested pull request still needs every criterion met.
 <!-- end: alignment -->
 
+<!-- block: alignment-2 -->
+No criterion or PLN task that depends on external work is complete until the
+<!-- end: alignment-2 -->
+
+<!-- block: alignment-3 -->
+Each such criterion goes on the Engineering checklist (`provider:ticket-template.md`,
+"Criteria waiting on other work"), so the people who close the dependency
+<!-- end: alignment-3 -->
+
 <!-- block: extra-gates -->
-Triage manifest (ITEM 2 = A, the owner's ruling): when the session has a
-triage manifest file (`../vibe/references/triage.md`), add
-`--manifest <file>` to that command, and run it for the manifest even when no
-findings file exists (the decision is then the existing full review). The script reads the manifest only when
-it passes `vibe-triage.mjs check`; a missing or invalid one changes nothing.
-When its `triage.applied` is `true` (the triage switch was on at classify
-time), also run each `triage.addedReviews` entry (`vibe-adversarial-reviewer`
-beside the consolidated reviewer, when the manifest scope asks for it) and each
 `triage.extraGates` entry (`workflow-code-review`, `logical-qa`) as an
-additional gate on the final diff, skipping one this handoff already ran for
-this head; their confirmed findings are handled like any handoff reviewer's.
-The manifest only adds review work: `mode` and its reasons stay as the diff
-decided them, so it never removes a review. With `applied` `false`, run
-nothing extra.
 <!-- end: extra-gates -->
 
 <!-- block: e2e-mutation-proof -->
@@ -148,25 +89,18 @@ restore its bytes and record the passing run. Never handle or bypass a credentia
 - Run them through the repo's containerized path (the `local-ci` skill's
   `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
   "Existing checks"), never natively on the person's Mac. The lock gives
-  each run its own compose project, so a teardown removes only its own
-  stack; `--foreign-compose <project>` names a stack started outside the
-  lock, which keeps the machine busy while it runs.
+<!-- end: e2e-path -->
+
+<!-- block: e2e-path-2 -->
 - A missing Docker or Dagger is recorded as that exact limitation, never a
   pass.
 
 No worker claims what CI runs or ran without first reading
 `.github/pr-test-event-tiers.md` and citing the job's tier.
-<!-- end: e2e-path -->
+<!-- end: e2e-path-2 -->
 
 <!-- block: join-lanes -->
 Before `Final Alignment Status: Aligned`, before the PLN is left Approved and
-before anything is called ready, join the run from step 1:
-`node ../vibe/scripts/verify-run.mjs --wait <run id> --worktree "<wt>" --head "<the head under review>"`.
-Only `state: passed` (exit 0) joins. `running` (4) means keep waiting;
-`failed` (1) goes to the SAME writer; `orphaned` (3) and `head-moved` (5) mean
-start a new run at the current head. None of these is a pass, and the result's
-head must be the head under review. A required check that was a no-op with its reason (no file Biome checks, nothing for the lane report to cover) counts toward `passed`. Nothing here is counted as aligned, approved or ready
-while the lanes are pending, running or failed.
 <!-- end: join-lanes -->
 
 <!-- block: qa-passes -->
@@ -196,7 +130,6 @@ prototype sessions keep their canonical single design review instead.
 <!-- end: qa-passes -->
 
 <!-- block: candidate-audits -->
-Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
 `scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
 (add `--member <slug>=<body>` for each of the session's `memberTickets`, the other tickets a fleet unit delivers in this PR; their rows are `<slug>:AC-n`, and run rulings-check and rollout-gate for each member too)
@@ -215,8 +148,6 @@ selected lanes; CI remains per push. Re-audit only criteria on affected screens.
 <!-- end: candidate-audits -->
 
 <!-- block: next-owner -->
-When they chose passing it on, use a next owner the person already named for
-this handoff; never re-ask that settled choice or infer an owner from a
 company default. If nobody was named, have the ticket worker check the
 current session's prior decisions first. Only if the necessary choice remains
 unresolved, ask one plain question in exactly these words:
@@ -299,12 +230,9 @@ the ticket is still assigned to the session's operator, the person who ran it
 (if engineering or design already took it, it returns `BLOCKED` and you stop:
 that branch is theirs now), assigns it and its PLN to the next owner, and
 leaves the ticket status In Progress.
+<!-- end: hand-over -->
 
-Then mark the session handed off. For a requested PR, parse the returned URL
-for its repository and number, use the already verified pushed commit as its
-head, and record all three through the root-owned transition:
-`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off --pr-repo <owner/repo> --pr-number <n> --pr-head <full pushed sha>`.
-The command reads the live PR and refuses a different repository, branch or
+<!-- block: hand-over-2 -->
 head. For an owner-assignment handoff without a PR, use
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`.
 The PR worker never writes session state. Then stop local Storybook and Desktop with
@@ -314,9 +242,9 @@ Run `node ../vibe/scripts/e2e-lock.mjs cleanup-sweep sweep` from a retained chec
 after the stop; a live PR leaves its retirement record pending for a fleet
 supervisor or the next vibe session-entry sweep. The sweep never removes the
 executing checkout.
+<!-- end: hand-over-2 -->
 
-Tell them, in a few lines, each as a link that opens it
-(`../vibe/references/plain-words.md`, "Links to what the person should look
+<!-- block: hand-over-3 -->
 at"): the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
 creation), the Storybook link (the full Storybook UI per
@@ -329,11 +257,9 @@ comments on the ticket on sign-off, then engineering finishes it). Say that the 
 signing in to Vercel with a team account. If you open it and land on a
 `vercel.com` sign-in or `sso-api` page, say exactly that rather than that
 Storybook is broken, and do not try to get around it.
-<!-- end: hand-over -->
+<!-- end: hand-over-3 -->
 
 <!-- block: upload -->
-ROOT commits the reviewed deliverable LOCALLY once through normal hooks, still
-unpushed, excluding private plans/localFix source:
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<ticket>: <summary>" --body "<fixes>"`.
 Its tree must match the accepted candidate.
 Then follow [Main-sync before publication](../vibe/references/environment.md#main-sync-before-publication)

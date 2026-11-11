@@ -79,6 +79,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
 const RUN_BOUNDED = fileURLToPath(new URL("../../vibe/scripts/run-bounded.mjs", import.meta.url));
@@ -635,6 +636,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exitCode = summary.ok ? 0 : 1;
   } catch (error) {
     process.stdout.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = 2;
+    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = scriptExitCode(error, 2);
   }
 }

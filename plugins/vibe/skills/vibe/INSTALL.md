@@ -7,9 +7,9 @@ hands-on time; the `vibe` skill installs everything else on its first run.
 
 ## Before you start
 
-<!-- generic: before -->
 - The vibe user needs:
   - Codex Desktop (inside the ChatGPT app) installed and signed in.
+<!-- generic: before -->
   - A GitHub account with push access to the repository they will work in
     (every session pushes a `vibe/<slug>` branch).
 - claude-plugins `main` carries the skills. Every vibe session starts from
@@ -19,6 +19,8 @@ hands-on time; the `vibe` skill installs everything else on its first run.
 
 <!-- generic: install -->
 ## 1. Install the plugins
+<!-- end generic: install -->
+> Provider `tickets+graph` (block `install` of `vibe/install.md`)
 
 In Terminal on the vibe user's Mac:
 
@@ -28,9 +30,8 @@ CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 "$CODEX" plugin add vibe@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
 "$CODEX" plugin add vibe-core@closedloop-ai
+> Provider `tickets+graph` (block `install-2` of `vibe/install.md`)
 ```
-<!-- end generic: install -->
-> Provider `tickets+graph` (block `install` of `vibe/install.md`)
 
 vibe-core carries vibe's hooks. Codex runs a plugin's hooks only after you
 approve them: open Codex once and approve vibe-core's hooks in /hooks. Each
@@ -41,11 +42,11 @@ says when Codex reports that an approval is needed.
 
 Check:
 
-<!-- generic: check -->
 ```bash
 "$CODEX" plugin list | grep vibe@closedloop-ai   # installed, enabled
 "$CODEX" plugin list | grep closedloop-core@closedloop-ai   # installed, enabled
 "$CODEX" plugin list | grep vibe-core@closedloop-ai   # installed, enabled
+<!-- generic: check -->
 ```
 <!-- end generic: check -->
 > Provider `tickets+graph` (block `check` of `vibe/install.md`)
@@ -72,13 +73,16 @@ Click New chat in the sidebar and type `$vibe`. On the first run it:
 - installs whatever is missing (Homebrew, Node, the repository's package
   manager, `gh`, and `jq`), and puts a Node that satisfies the repo's
   `engines` range first on PATH for every new shell.
+<!-- end generic: first-run -->
+> Provider `recipes` (block `first-run` of `vibe/install.md`)
 - signs `gh` in to GitHub through the browser
 
 The vibe user only has to type their Mac password when an installer asks for
+<!-- generic: first-run-2 -->
 it. After that, `$vibe` asks what they want to work on, starts the app the way
 the repository documents, and opens it in the in-app browser.
-<!-- end generic: first-run -->
-> Provider `recipes` (block `first-run` of `vibe/install.md`)
+<!-- end generic: first-run-2 -->
+> Provider `recipes` (block `first-run-2` of `vibe/install.md`)
 
 If a step fails, run the preflight on its own to see which check is red:
 

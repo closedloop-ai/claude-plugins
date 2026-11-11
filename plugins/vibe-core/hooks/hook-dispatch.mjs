@@ -7,10 +7,14 @@
 // `systemMessage` (a line the harness shows the user). Every guard
 // fails open on its own, as each did when it was a separate script: one that
 // throws contributes nothing, is reported on stderr under its name, and the
-// others still run. The script always exits 0.
+// others still run. A guard that throws because its bound provider is broken is the
+// exception: the person sees the reason and fix, and a guard whose `guards(event)`
+// names this event refuses it rather than relax to its generic default. The script
+// always exits 0.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { isProviderBroken } from "../lib/vibe/scripts/provider.mjs";
 import { hookStandDown, vibeInstall } from "../shared/vibe-install.mjs";
 import { activated } from "./activation.mjs";
 
@@ -40,7 +44,7 @@ export function isMain(metaUrl) {
 export function runGuards(guards, event, report, isActivated = activated) {
   const results = [];
   let active;
-  for (const { name, run, activated: gated } of guards) {
+  for (const { name, run, activated: gated, guards: guardsEvent } of guards) {
     try {
       if (gated) {
         active ??= isActivated(event) === true;
@@ -49,10 +53,24 @@ export function runGuards(guards, event, report, isActivated = activated) {
       const result = run(event);
       if (result) results.push(result);
     } catch (error) {
-      report(`${name}: ${errorText(error)}`);
+      if (isProviderBroken(error)) results.push(providerBrokenResult(name, error, guardsEvent, event));
+      else report(`${name}: ${errorText(error)}`);
     }
   }
   return results;
+}
+
+/**
+ * A guard whose bound provider is broken: one line for the person with the reason and fix, and, when the guard's
+ * `guardsEvent(event)` says this event is the action it guards, a deny, since its generic default would relax the
+ * bound rule it cannot read. Any other guard falls back to its generic default, which is doing nothing here.
+ */
+function providerBrokenResult(name, error, guardsEvent, event) {
+  const systemMessage = `vibe ${name}: provider-broken: ${error.message}`;
+  let refuse = false;
+  try { refuse = guardsEvent?.(event) === true; } catch { refuse = true; }
+  return refuse ? { decision: "deny", reason: `${name} cannot read its bound provider rule, so it refuses this action: ${error.message}`, systemMessage }
+    : { systemMessage };
 }
 
 /**

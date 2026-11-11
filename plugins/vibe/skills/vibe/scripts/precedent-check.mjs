@@ -50,6 +50,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { escalation, isSandboxRefusal } = await vibeCore("lib/vibe/scripts/sandbox-refusal.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const TEMP_PROJECT = "zz vibe precedent check (temp)";
 export const TASK_PREFIX = "zz test";
@@ -288,7 +289,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.stdout.write(`${JSON.stringify(await main())}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, ...(isSandboxRefusal(error) ? escalation(error, ESCALATION_JUSTIFICATION) : { error: error.message }) })}\n`);
-    process.exitCode = 1;
+    process.exitCode = scriptExitCode(error, 1);
   }
 }
 

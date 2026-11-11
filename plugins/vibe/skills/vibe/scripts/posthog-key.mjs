@@ -23,6 +23,8 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
+
 export const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 const POSTHOG_KEY = /^phc_[A-Za-z0-9]{20,100}$/;
 const POSTHOG_HOST = /^https:\/\/[a-z0-9-]+(?:\.i)?\.posthog\.com$/;
@@ -125,6 +127,7 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  exitOnProviderBroken();
   await main();
 }
 

@@ -39,6 +39,7 @@ import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.m
 import { checkCloudSetup, createRefusal, resolveClaudeEnvironment, runNotCreated } from "./cloud-environment.mjs";
 import { codexEnvironment, installInstruction, PROVENANCE_COMMAND, provenanceProblem, resolveRepository } from "./cloud-repository.mjs";
 import { connectionLabel, providerDataOr, sessionBinding } from "./provider.mjs";
+import { failScript } from "./provider.mjs";
 
 const MAX_WALL_MS = 35 * 60 * 1000;
 const DEFAULT_WALL_MS = 35 * 60 * 1000;
@@ -684,7 +685,6 @@ export async function validateCommit(request, { remote = (name, input) => remote
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main(process.argv.slice(2)).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`)).catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
+    process.exitCode = failScript(error, 2);
   });
 }

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { runWhenMain } from "../../shared/cli.js";
+import { providerAware } from "./cli.js";
 
 const DEFAULT_INVENTORY = fileURLToPath(new URL("../../../handoff/scripts/handoff-inventory.mjs", import.meta.url));
 const PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
@@ -182,4 +183,4 @@ async function main(argv: string[]) {
   }
 }
 
-runWhenMain(import.meta.url, main);
+runWhenMain(import.meta.url, providerAware(main));

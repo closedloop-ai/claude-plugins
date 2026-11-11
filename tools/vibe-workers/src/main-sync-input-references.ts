@@ -737,7 +737,7 @@ function nativeArgumentChoices(environment: NativeReferenceEnvironment, indexes:
   return choices;
 }
 
-/** An uncertain path whose every known piece is the file name names no directory, so it locates no nested file (ISS-14015). */
+/** An uncertain path whose every known piece is the file name names no directory, so it locates no nested file. */
 export function inputUnlocatedFileName(reference: InputReference) {
   if (reference.kind !== "path" || !(reference.possibleOnly || reference.unknownPrefix || reference.value.includes(UNKNOWN))) return false;
   const terms = [reference.unknownPrefix ? `${UNKNOWN}${reference.value}` : reference.value, ...reference.uncertainTerms];

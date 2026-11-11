@@ -14,18 +14,7 @@ or passes the work to the next owner, usually design and then engineering.
 <!-- end: intro -->
 
 <!-- block: audience -->
-It is built for executives, designers, product managers and engineers:
-
-- **Executives and product managers** describe a change in plain words, or
-  point at the screen and comment, and see it working in the real product a
-  few minutes later.
-- **Designers** work from a reference screenshot or iterate on the look of a
-  screen. vibe maps what the reference shows onto the design system's tokens
-  and components, compares each touched screen with it (in light and dark
   where the screen has both), and can run a visual QA pass when the change is ready to polish.
-- **Engineers** build fast with the same guardrails, Storybook rules and
-  handoff review as everyone else, and take the pull request through review
-  and merge themselves.
 <!-- end: audience -->
 
 <!-- block: record -->
@@ -35,7 +24,6 @@ still open.
 <!-- end: record -->
 
 <!-- block: session-steps -->
-1. **Start.** The person types `$vibe` in Codex (`/vibe:vibe` in Claude Code)
    and names a ClosedLoop ticket or describes the change. vibe checks its own
    version, shows a short setup check (the installed closedloop-core and vibe
    versions for each harness, and whether the ClosedLoop and closedloop-graph
@@ -48,44 +36,32 @@ still open.
    company that already has people and work in it, or empty when the request
    is about what a new account looks like. Desktop opens as a second tab when
    it is available.
-2. **Ask for changes.** They click Annotate in the browser toolbar (or press
-   Cmd + .), point at what they want changed and type a comment, or they just
-   describe it in chat. A designer can attach a reference screenshot,
-   including one of another product, or ask for changes to the look; anyone
-   can name a product to work like.
+<!-- end: session-steps -->
+
+<!-- block: session-steps-2 -->
 3. **See it live.** Each finished change deploys to their copy of the app
    without being asked. vibe says when it is ready to look at, and names any
    acceptance criterion that is not done yet instead of claiming it.
-4. **Answer only what only they can answer.** Product questions are researched
-   first. A question reaches the person only when nothing else settles it, one
-   at a time, and never twice.
-5. **Finish.** They say they are done. Whoever will take it through review
-   and merge themselves, often an engineer, gets a pull request opened for
+<!-- end: session-steps-2 -->
+
+<!-- block: session-steps-3 -->
    them, with full tests written first. Otherwise vibe passes the ticket to
    the person they name. The ticket stays In Progress either way.
-<!-- end: session-steps -->
+<!-- end: session-steps-3 -->
 
 <!-- block: example-setup -->
 vibe:  Sets up, creates the ticket and opens your copy of the app.
 <!-- end: example-setup -->
 
 <!-- block: mockup -->
-A request for a mockup with made-up data runs the repository's prototype
 workflow instead and returns a shareable Vercel preview link.
 <!-- end: mockup -->
 
 <!-- block: design-system -->
-**Built from the design system, frontend and backend.** The writer reuses the
 component catalog and the paved paths in `packages/app` before building
-anything new, uses design tokens instead of hardcoded colors or pixel values,
-and builds accessible controls. When a screen needs data or an action the API
-does not provide, the same writer builds that backend too.
 <!-- end: design-system -->
 
 <!-- block: no-invented -->
-**No invented product decisions or words.** User-visible words come from the
-person, or from strings the product already renders; agents never compose
-labels, empty states or error text. Product questions follow one research
 order: the code and data model, the ticket and its PRD, the ClosedLoop graph
 and live decisions, the product owner's direction, the approved prototype, and
 then live Asana observed in the operator's signed-in browser. Public help
@@ -94,13 +70,7 @@ the person approves each key.
 <!-- end: no-invented -->
 
 <!-- block: criteria -->
-**Acceptance criteria are checked before "ready".** Before a change is called
-ready, the writer checks every acceptance criterion it touches, from the
 ticket, its PRD and the person's own words, and records the result in the
-session's decision table. When the person gave a reference image, the writer
-reads it itself, turns what it shows into criteria mapped to tokens and
-components, and compares a screenshot of each touched screen with it, in light
-and in dark wherever the screen supports both, before saying it is ready.
 <!-- end: criteria -->
 
 <!-- block: complete-record -->
@@ -112,8 +82,6 @@ known gaps) and an Engineering checklist.
 <!-- end: complete-record -->
 
 <!-- block: real-review -->
-**A real review at handoff.** The build loop stays fast; the heavy checks run
-once, at the end. Handoff runs a guardrails review and a separate adversarial
 review, the existing tests that cover each changed file, lint, source gates
 and the affected typecheck, browser E2E, visual QA, logical QA and
 product-contract QA. It also drives each touched screen in the running web app
@@ -122,9 +90,6 @@ fails on main is recorded for engineering instead of blamed on the session.
 <!-- end: real-review -->
 
 <!-- block: storybook-placement -->
-Before the writer creates, retitles or moves a story or adds a shared
-component, the read-only `vibe-storybook-decomposer` places it: it finds where
-the same capability already exists for sibling entities and returns the owner
 and story placement, following symphony-alpha's `apps/storybook/TAXONOMY.md`
 and Storybook skill where they say how, and mirroring that precedent's
 structure, never its root or version, where they do not. Stories cover the
@@ -155,8 +120,9 @@ syncs main, and a sync is never blamed for the renames it imported.
 The writer may edit all of `apps/storybook/**`, including its `.storybook/`
 config, `TAXONOMY.md` and `apps/storybook/scripts/`. When a request needs a
 change in a path vibe never edits, such as the repo-root `scripts/**`,
-`.github/**` or an `AGENTS.md`, the writer leaves it alone, builds no
-substitute elsewhere, logs it as `Engineering needed (forbidden path)` and
+<!-- end: engineering-paths -->
+
+<!-- block: engineering-paths-2 -->
 builds the rest; handoff puts each one on the live ticket's Engineering
 checklist.
 
@@ -164,7 +130,7 @@ Nothing agent-written goes into product docs. The writer edits nothing under
 `apps/web/content/docs/` and lists, under the ticket's Feature docs, the
 existing pages that describe a changed feature, for design or engineering to
 update.
-<!-- end: engineering-paths -->
+<!-- end: engineering-paths-2 -->
 
 <!-- block: seed-refresh -->
 ### `vibe-seed-refresh`

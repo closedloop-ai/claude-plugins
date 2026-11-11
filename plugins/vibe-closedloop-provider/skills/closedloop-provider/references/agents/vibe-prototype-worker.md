@@ -5,25 +5,10 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 <!-- block: read-list -->
 Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,
 `guardrails.md`, `ticket-template.md`, the owning AGENTS.md and canonical
-`<repo-root>/.claude/skills/prototype/SKILL.md`. Preserve exact private session
-ownership, worktree, `prototype/<slug>` branch and slug. An arbitrary prototype
-branch without its private session record is not admitted.
-Read the session decision table and relevant row IDs before advice/share;
-the SAME writer extends its mock/real-state and publication behavior rows before
-code and verifies them afterward. Never create a separate prototype table or
-confuse planned tests with executed coverage.
 <!-- end: read-list -->
 
 <!-- block: design-approval -->
-The same writer uses the canonical prototype discovery/componentization/build
-and iteration guidance in the existing session worktree. It does not follow
-steps that create another worktree, source writer or technical-plan approval.
-It reads canonical role instructions and applies ALL source changes itself,
-including registry, shared surface/stories and local ReadyForReview metadata.
 Keep canonical mock-data, catalog, validation, single design-review and tag
-semantics. Preserve genuine visual/product approval, not technical ownership
-or structural-plan confirmations. Root prototype-approve still owns
-PrototypeStatus.HandedOff; the vibe session marker does not approve it.
 <!-- end: design-approval -->
 
 <!-- block: ticket-refresh -->

@@ -60,15 +60,17 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 1. Ground it (`repository-intelligence.md`): `rg` for the closest existing
    route, service, and model and for every consumer of anything you will
    change, and `gh pr list` for open work on the files you will edit. Reuse an existing endpoint
+<!-- end generic: ground -->
+> Provider `graph` (block `ground` of `agents/vibe-backend-worker.md`)
    or service when one already fits, and place new code by the owner rules in
    `design-pass.md`: an action the children of a shared parent need gets one generic
    endpoint and service they all call, not one per child.
-<!-- end generic: ground -->
-> Provider `graph` (block `ground` of `agents/vibe-backend-worker.md`)
-<!-- generic: decision-table -->
 2. Decision table first for every request, not only backend. Extend the existing
    session decision table per the `decision-table` skill
+<!-- generic: decision-table -->
    (the `decisionTable` path `local-plans.mjs paths` prints): inputs, auth and org
+<!-- end generic: decision-table -->
+> Provider `plans` (block `decision-table` of `agents/vibe-backend-worker.md`)
    scoping, validation and error paths, empty and partial data, writes and
    their side effects, version skew with older Desktop builds. Use the person's
    stated rules verbatim; where a rule is missing and the code cannot decide it,
@@ -79,8 +81,6 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    identifying fields. A test that expects no
    warning or error is not evidence when the repository contract requires that
    monitored event.
-<!-- end generic: decision-table -->
-> Provider `plans` (block `decision-table` of `agents/vibe-backend-worker.md`)
 3. Implement to the table, following the repository's `AGENTS.md`
    placement rules:
    - Shared types in the repository's canonical shared types module.
@@ -120,17 +120,17 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 
 ## Return (under 150 words)
 
-<!-- generic: plan-publish -->
 The advisor never performs the writing/recording steps above. Never publish a
+<!-- generic: plan-publish -->
 technical plan or put its body in a ticket; the plan stays in the local plan files.
 <!-- end generic: plan-publish -->
 > Provider `plans` (block `plan-publish` of `agents/vibe-backend-worker.md`)
 
-<!-- generic: return -->
 `DONE` with existing or needed endpoint/type contracts, `Owner: <path>`,
 migration/seed considerations and evidence for the sole writer. Never claim
 advice was built. Or `NEEDS_PERSON`
 with the product question, phrased in plain words for the person running the
+<!-- generic: return -->
 session. Or `BLOCKED` with why.
 <!-- end generic: return -->
 > Provider `graph` (block `return` of `agents/vibe-backend-worker.md`)

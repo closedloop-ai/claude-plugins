@@ -42,6 +42,7 @@ import { documentKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 /** Every section of the live ticket, in template order. */
 export const TICKET_SECTIONS = [
@@ -472,5 +473,6 @@ export function parseAddedLines(diff) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  exitOnProviderBroken();
   main();
 }

@@ -59,8 +59,8 @@ Each step in `steps` is `required (policy)` with an `effective` value. Only
 - `environment`: `defer` means create it on first need (the person asks to see
   the app, UI evidence is requested, or the writer asks) instead of at session
   start. It is never skipped.
-<!-- generic: desktop-surface -->
 - `desktop`: `skip` means leave Desktop out; the evidence names no Desktop-relevant
+<!-- generic: desktop-surface -->
   surface (a desktop app, a package a desktop app mounts, or a request that names Desktop).
 <!-- end generic: desktop-surface -->
 > Provider `recipes` (block `desktop-surface` of `vibe/triage.md`)
@@ -71,14 +71,14 @@ Every `defer` or `skip` recommendation is logged in `skipped[]` with its step,
 action, reason, evidence and whether it was applied. `check` fails when a
 recommendation is missing from the log or has no reason or evidence.
 
-<!-- generic: extra-gates -->
 `review.scope` names who reads the final diff and `extraGates` lists what a
+<!-- generic: extra-gates -->
 class adds (`workflow-code-review` for `backend`, and a repository gate the provider's
 recipes add for a class). `e2e.source` is the repository's lane source.
-Both review steps carry an `effective` value, `apply` with the switch on and
-`as-today` with it off, which the handoff reads (below).
 <!-- end generic: extra-gates -->
 > Provider `recipes` (block `extra-gates` of `vibe/triage.md`)
+Both review steps carry an `effective` value, `apply` with the switch on and
+`as-today` with it off, which the handoff reads (below).
 
 ## What the handoff does with the review steps
 

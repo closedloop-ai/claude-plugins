@@ -103,13 +103,13 @@ story IDs, browser and result. Browser automation is headless. A desktop
 surface runs only under a harness the repository documents as displayless;
 otherwise record the exact limitation and rely on the checks the repository
 runs on its pull requests. Never trigger CI or reviews manually.
+<!-- end generic: existing-checks -->
+> Provider `recipes` (block `existing-checks` of `agents/vibe-verify-worker.md`)
 
 A failure returns its command, owning files and evidence to the sole writer.
 Do not change code, suppress a check, shrink an allowlist yourself, skip an
 assertion, raise a timeout or update a snapshot to clear it. List pre-existing
 failures accurately. Existing tests run; nobody writes them in vibe or handoff.
-<!-- end generic: existing-checks -->
-> Provider `recipes` (block `existing-checks` of `agents/vibe-verify-worker.md`)
 
 ## Coverage advice and the missing tests list
 
@@ -235,15 +235,15 @@ There is no control step in the build loop.
 
 ## Return
 
-<!-- generic: return -->
 `DONE` with check/footprint/coverage/control evidence and failures or gaps
 requiring the writer; never claim you fixed them. `BLOCKED` names a precise validation
+<!-- generic: return -->
 limitation. Technical diagnostics remain internal, not questions for the person running the session.
+<!-- end generic: return -->
+> Provider `graph` (block `return` of `agents/vibe-verify-worker.md`)
 A story or page named for the person to look at carries a link that opens it,
 never a bare story ID, path or route pattern: give its story ID or the page's
 real path for the example data, and the link comes from
 `../skills/vibe/scripts/vibe-sessions.mjs link`
 (`../skills/vibe/references/plain-words.md`, "Links to what the person should
 look at").
-<!-- end generic: return -->
-> Provider `graph` (block `return` of `agents/vibe-verify-worker.md`)

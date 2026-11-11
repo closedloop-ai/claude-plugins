@@ -58,6 +58,8 @@ taxonomy"). For placement, use that skill's placement pieces:
 Read the Storybook package's `AGENTS.md` for
 where stories must live to be collected, and the repo's
 Storybook taxonomy document (when it has one), which places every new story: a current root,
+<!-- end generic: storybook-docs -->
+> Provider `recipes` (block `storybook-docs` of `agents/vibe-storybook-decomposer.md`)
 its page tree, one lifecycle tag and the release bump, never a frozen v1.0
 root (`../skills/vibe/references/guardrails-ui.md`, "Storybook taxonomy"). Read
 that doc as the session's base has it: on a base older than the lifecycle
@@ -69,8 +71,6 @@ those states and invariants when advising on stories or extraction; the sole
 writer adds missing rows before code and verifies preservation afterward.
 Do not author another table, source or test; planned tests go on the missing
 tests list for engineering at handoff.
-<!-- end generic: storybook-docs -->
-> Provider `recipes` (block `storybook-docs` of `agents/vibe-storybook-decomposer.md`)
 
 <!-- generic: graph-required -->
 Research the code with `../skills/vibe/references/repository-intelligence.md` (relative to this file): find existing stories and similar components to match by name, list each precedent's providing component's hosts from its importers, and find every import site before extracting a component so each is updated.
@@ -83,18 +83,21 @@ Do this first, in both modes.
 
 1. Name the capability without the entity (grouping, saved views, an
    inline editor), so its implementations on other entities match.
-<!-- generic: precedent-search -->
 2. Find every place the same capability already exists for a sibling entity
+<!-- generic: precedent-search -->
    (another entity's list or detail surface): `rg` on its names
    and on imports of the component that provides it, then the built
+<!-- end generic: precedent-search -->
+> Provider `graph+recipes` (block `precedent-search` of `agents/vibe-storybook-decomposer.md`)
    Storybook index, not a title grep. Read `<storybookUrl>/index.json` from the session's running local
    Storybook (`vibe-sessions.mjs show`); when none runs, read
+<!-- generic: precedent-search-2 -->
    the repository's component catalog and the story
+<!-- end generic: precedent-search-2 -->
+> Provider `graph+recipes` (block `precedent-search-2` of `agents/vibe-storybook-decomposer.md`)
    files on main. Match story names as well as titles, and every story file
    that renders the providing component or passes the capability's prop.
    Leave out the session's own stories.
-<!-- end generic: precedent-search -->
-> Provider `graph+recipes` (block `precedent-search` of `agents/vibe-storybook-decomposer.md`)
 3. Report everything found, not a pick: the component that provides the
    capability and its path; how each host consumes it (a prop, a hook, a
    wrapper, its own copy); and every existing story that exercises it, with
@@ -109,7 +112,6 @@ Do this first, in both modes.
    writer first moves it into such a module and imports it in both files.
    Never re-type it in a new story file: a copy drifts from the original on
    the next fix, and the repo's Storybook checks may fail it.
-<!-- generic: placement-rules -->
 4. Decide in this order.
    - First: a change to an existing component (new states or variants, an
      extra column action, a new footer) never retitles, re-tags or moves its
@@ -119,7 +121,10 @@ Do this first, in both modes.
        `deprecated`) is frozen and never edited, not even to add a story: the
        new states go in a new entry for that component in the current root
        holding only the new states, its name descriptive, permanent, per
+<!-- generic: placement-rules -->
        Storybook taxonomy document and without a version number, with the
+<!-- end generic: placement-rules -->
+> Provider `recipes` (block `placement-rules` of `agents/vibe-storybook-decomposer.md`)
        lifecycle tag its place in the tree takes, and the v1.0 stories stay
        where they are.
      - The one exception is a compile-only repair after a rename elsewhere:
@@ -137,13 +142,19 @@ Do this first, in both modes.
        gets a new entry and a place in the current roots.
      - This outranks reading a touched story file as moving to the current
        roots or taking a new lifecycle tag.
+<!-- generic: placement-rules-2 -->
    - Then: where the repo's Storybook taxonomy document or
+<!-- end generic: placement-rules-2 -->
+> Provider `recipes` (block `placement-rules-2` of `agents/vibe-storybook-decomposer.md`)
      `.claude/skills/storybook/` already say how, follow them; where they do
      not, mirror the precedent: the same owner, the same way of consuming it,
      the component that carries its stories, how granular they are and which
      states get variants. Mirroring copies structure only, never location or
      lifecycle: the root, lifecycle tag and tree position always come from
+<!-- generic: placement-rules-3 -->
      Storybook taxonomy document, and a precedent in a v1.0 root never puts
+<!-- end generic: placement-rules-3 -->
+> Provider `recipes` (block `placement-rules-3` of `agents/vibe-storybook-decomposer.md`)
      new work in v1.0.
    - The lifecycle tag of a new entry also follows its flags (operator ruling,
      2026-10-27): list each PostHog flag that gates the surface where it is
@@ -153,7 +164,10 @@ Do this first, in both modes.
      file at `flagSnapshot.file` in `vibe-sessions.mjs show`). A surface
      reachable only behind a flag that is off or missing there gets the
      `preview` tag wherever it sits in the tree, never `stable`, and its story
+<!-- generic: placement-rules-4 -->
      file names that flag the way the repo's Storybook taxonomy document
+<!-- end generic: placement-rules-4 -->
+> Provider `recipes` (block `placement-rules-4` of `agents/vibe-storybook-decomposer.md`)
      says (a `// Preview: <flag key> is off in production` comment). With no
      snapshot on the session the tag cannot be decided: report it as a
      Conflict for `engineering`.
@@ -166,8 +180,6 @@ Do this first, in both modes.
    - A whole-page flow (the page a route renders, or several sections
      composed into one flow) is never a Composite entry: it goes in named
      `Surfaces/` stories for that page, per the doc's Surfaces row.
-<!-- end generic: placement-rules -->
-> Provider `recipes` (block `placement-rules` of `agents/vibe-storybook-decomposer.md`)
 5. A precedent that disagrees with those docs, or precedents that disagree
    with each other, is a Conflict. Decide it by the same order. Where the
    docs say nothing, mirror one precedent, chosen in this order: built on
@@ -179,12 +191,12 @@ Do this first, in both modes.
    `engineering` for everything else; when unsure it is `engineering`. The writer logs it for the
    live ticket; it is never a question for the person running the session.
 
-<!-- generic: placement-citation -->
 Never invent a placement: every Owner and Stories line cites the
+<!-- generic: placement-citation -->
 taxonomy document or Storybook guidance section, or the
-precedent path, it follows.
 <!-- end generic: placement-citation -->
 > Provider `recipes` (block `placement-citation` of `agents/vibe-storybook-decomposer.md`)
+precedent path, it follows.
 
 ```
 Placement:
@@ -235,9 +247,9 @@ Placement:
 <!-- generic: location -->
 5. Location. A story goes where the repository's Storybook configuration collects it
    (a story outside its globs is never collected). Never write or edit a
-   test (`../skills/vibe/references/guardrails.md`, "Tests").
 <!-- end generic: location -->
 > Provider `recipes` (block `location` of `agents/vibe-storybook-decomposer.md`)
+   test (`../skills/vibe/references/guardrails.md`, "Tests").
 
 ## Verify
 
@@ -258,7 +270,6 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence:
 
-<!-- generic: frozen-base -->
 - Frozen renders: run `../skills/handoff/scripts/frozen-render.mjs --repo
   <worktree> --base <base> --base-dir <prepared base worktree> --story-file
   <file> ... --out <dir>` once with every story file the inventory's
@@ -266,7 +277,10 @@ evidence:
   is the repo's Storybook served from a disposable worktree made by
   `../skills/handoff/scripts/frozen-render.mjs prepare-base --repo <worktree>
   --base <base> --story-file <file> ... --dir <dir>` with the same story
+<!-- generic: frozen-base -->
   files, bootstrapped the way the repository documents and removed
+<!-- end generic: frozen-base -->
+> Provider `recipes` (block `frozen-base` of `agents/vibe-storybook-decomposer.md`)
   afterwards (`git worktree remove`); never copy or edit a file in it
   yourself. It is the base commit with each compile-only repaired story file
   (same title, tags and story names) taken from the session, so a repaired
@@ -293,8 +307,6 @@ evidence:
   phrase it as something the person running the session does
   (`../skills/vibe/references/plain-words.md`, "What the person is asked to
   do").
-<!-- end generic: frozen-base -->
-> Provider `recipes` (block `frozen-base` of `agents/vibe-storybook-decomposer.md`)
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry. Inventory each existing page/list story
   that consumes the changed component; a new component-only story does not
@@ -316,12 +328,12 @@ evidence:
   `preview` wherever it sits in the tree.
 - Sidebar folds: every new `!dev` marker and the person's explicit request for
   sidebar reduction that authorizes it. Without that request it is a finding.
-<!-- generic: version-history -->
 - Version History: the session's new entries in `Start Here/Version History`
+<!-- generic: version-history -->
   against the base's Storybook package `version`; anything but
-  one entry at the next version is a finding.
 <!-- end generic: version-history -->
 > Provider `recipes` (block `version-history` of `agents/vibe-storybook-decomposer.md`)
+  one entry at the next version is a finding.
 
 Design Review evidence comes from the verified final diff and existing
 Storybook tooling, not invented copy or a technical plan. Report the detailed

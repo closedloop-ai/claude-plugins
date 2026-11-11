@@ -135,12 +135,12 @@ checkout: it is found again on the next run.
 In "Full access" mode there is no prompt and the command just runs. This
 holds for a spawned worker too: its request reaches the person the same way.
 
-<!-- generic: reconnecting -->
 Before dispatching `vibe-setup-worker` for a sign-in on Codex, tell the
+<!-- generic: reconnecting -->
 person in one line: "I'm reconnecting GitHub for you. If ChatGPT
-asks whether it can run a command, click Allow once." If they deny it,
 <!-- end generic: reconnecting -->
 > Provider `tickets` (block `reconnecting` of `vibe/preflight.md`)
+asks whether it can run a command, click Allow once." If they deny it,
 return `BLOCKED` with the command for engineering; never ask again in other
 words.
 

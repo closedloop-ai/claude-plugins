@@ -36,14 +36,17 @@ packet; a preliminary summary is refreshed against the final delivered diff.
 
 <!-- generic: read-graph -->
 `../skills/vibe/references/repository-intelligence.md`; the inventory; the session
+<!-- end generic: read-graph -->
+> Provider `graph` (block `read-graph` of `agents/vibe-handoff-summarizer.md`)
 change log `$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`;
 `git -C <wt> diff --stat <inventory baseCommit>` (the session's redeploy
 commits and anything not committed yet) and the diff of each changed file.
+<!-- generic: read-graph-2 -->
 Use `rg` for each changed component's importers to name the screens it
 appears on, and `gh pr list` for other open pull requests touching the
 changed files.
-<!-- end generic: read-graph -->
-> Provider `graph` (block `read-graph` of `agents/vibe-handoff-summarizer.md`)
+<!-- end generic: read-graph-2 -->
+> Provider `graph` (block `read-graph-2` of `agents/vibe-handoff-summarizer.md`)
 
 The inventory's `bundle` (handoff and pull-request phases, from
 `../skills/handoff/scripts/inventory-bundle.mjs`) already holds the backend
@@ -64,17 +67,21 @@ before.
    narration of backend/building-block/check work.
 <!-- generic: ticket-lists -->
 2. For the handoff summary, as short lists: screens (route), production
+<!-- end generic: ticket-lists -->
+> Provider `graph+recipes` (block `ticket-lists` of `agents/vibe-handoff-summarizer.md`)
    components added/changed/removed (paths and effects if merged, shared-parent
    consumers and relevant web/Desktop effects, not already shipped), backend
    files (paths), every removed or changed guard or gate predicate with
    `file:line`, exact new/existing modified/removed flag keys with gate/evidence
+<!-- generic: ticket-lists-2 -->
    references, researched Open Questions or None, open pull requests
    touching the same files, and design decisions for
+<!-- end generic: ticket-lists-2 -->
+> Provider `graph+recipes` (block `ticket-lists-2` of `agents/vibe-handoff-summarizer.md`)
    engineering: one line per non-trivial request from the change log (the
    owner it was built in and the owner rule that chose it), or "none: only
    copy, color, or spacing changed".
-<!-- end generic: ticket-lists -->
-> Provider `graph+recipes` (block `ticket-lists` of `agents/vibe-handoff-summarizer.md`)
+> Provider `graph+recipes` (block `ticket-lists-3` of `agents/vibe-handoff-summarizer.md`)
 
 For Design Review, return compact evidence/path references to the SAME writer
 and ticket helper; do not truncate the detailed component/story inventory to

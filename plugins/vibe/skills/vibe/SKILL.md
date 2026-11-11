@@ -23,12 +23,12 @@ Keep your context for the conversation and session state; NEVER do the work:
   independent review and verification before the first PR commit. Each result
   names HEAD plus the diff/tree hashes (`scripts/tested-head.mjs`). This extends
   the fleet-orchestrator push-ready ruling, whose human source is cited once there.
-<!-- generic: root-may -->
 - You may talk to the person; run this skill's scripts
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
   `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
   `scripts/session-questions.mjs`, `scripts/run-bounded.mjs`,
   `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`,
+<!-- generic: root-may -->
   `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`,
   `scripts/provider.mjs`); run `plugin-version.mjs update` only when the
   person chose to update; make the connection calls `plugin-version.mjs
@@ -44,13 +44,13 @@ Keep your context for the conversation and session state; NEVER do the work:
   source file yourself.
 - Give workers only the worktree, session summary and mode, ticket, request,
   and an annotation's text, element and route. Ask for short results, not files.
-<!-- generic: brief-auth -->
 - Every worker brief says: after the first authentication failure, use CI logs
   or the API for the same fact, or stop and ask; never write, export or route
+<!-- generic: brief-auth -->
   around credentials. Never force-push; this covers every remote. Proof and
-  scratch commits use a fresh `proof/<sha>-<n>` ref.
 <!-- end generic: brief-auth -->
 > Provider `recipes` (block `brief-auth` of `vibe-skill.md`)
+  scratch commits use a fresh `proof/<sha>-<n>` ref.
 
 Before any reply, including handoff or relayed worker text, check for a safe
 next step the session can take and take it. Do not tell the person they need
@@ -117,8 +117,8 @@ completed feature, unmet criteria and current work. Other messages are only:
 - the setup check block, once per conversation (section 1, "Setup check");
 - the visual QA offer and its results (section 6, step 5).
 
-<!-- generic: product-research -->
 Research product questions in the single order in `references/quality-loop.md`.
+<!-- generic: product-research -->
 Interrupt only for one necessary unresolved question with full context. Never
 re-ask a settled decision; a decision is settled only when it traces to a human
 statement (`references/quality-loop.md`, "Communication and product questions").
@@ -129,15 +129,19 @@ This skill works in any git checkout. The repository's `AGENTS.md` and docs say
 how to set it up, run it, check it and preview it (`references/preflight.md`).
 
 Lines of the form ``> Provider `<capability>` (block `<id>` of `<file>`)`` stand
-for an optional provider's text. When the plugin version check bound a provider
-with that capability (its output's `provider.capabilities`, or
-`node scripts/provider.mjs show`), print the block with
-`node scripts/provider.mjs block <capability> <file> <id>` and follow it in place
-of any text between `<!-- generic: <id> -->` and `<!-- end generic: <id> -->`
-just above it. Otherwise skip the line and follow the generic text. Read every
-stub in a file you read this way, in this skill's references and its workers'
-files alike; workers do the same with `--worktree "<wt>"`. In provider text, a
-file named `provider:<file>` is one of the provider's references:
+for an optional provider's text, read as `references/provider-text.md` says
+(add `--worktree "<wt>"` to each command once the session exists). When the
+plugin version check bound a provider (its output's `provider.capabilities`,
+or `node scripts/provider.mjs show`), run
+`node scripts/provider.mjs assemble --blocks <this file>` once and read the
+file whose path it prints: each block there replaces the generic region of the
+same id, and every other stub keeps its generic text. Open each reference and
+worker file through `node scripts/provider.mjs assemble <file>` and read only
+the file whose path it prints. `provider: ...` (exit 3) means no provider with
+that capability is bound: follow the generic text. `provider-broken: ...`
+(exit 4) or any other failure: never follow the generic text; stop that step
+and tell the person what it printed. In provider text, a file named
+`provider:<file>` is one of the provider's references:
 `node scripts/provider.mjs path <capability> provider:<file>` prints where it is.
 
 ## Harness notes
@@ -392,8 +396,8 @@ about approval when the block has no such line.
 
 ### Prerequisites
 
-<!-- generic: prerequisites-posthog -->
 Run `scripts/vibe-preflight.sh --prototype` for the common prerequisites
+<!-- generic: prerequisites-posthog -->
 before choosing a session. For an app session, re-run the default
 `scripts/vibe-preflight.sh` and resolve its failures before section 3.
 <!-- end generic: prerequisites-posthog -->
@@ -516,7 +520,6 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
 
 ### Starting new
 
-<!-- generic: start-new-first -->
 1. Your first reply to the new session carries the endings line (section 5,
    "Notices that never wait"), after the plugin version check (section 1,
    "Plugin version"): when the version is current or unknown it goes in the
@@ -525,6 +528,7 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    endings line goes in the first reply after the person answers it. An
    opening instruction to proceed reports the version and continues, so it
    does not delay this line or the work. Use the work the person already described.
+<!-- generic: start-new-first -->
    Only when they have not supplied it, ask what they want to work on, in
    their own words; a link or reference they give is kept as text. If they
    clearly want a mockup or an exploration with made-up data, start the
@@ -548,8 +552,8 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
 > Provider `recipes` (block `starting-data` of `vibe-skill.md`)
 3. Derive a short slug from the work (lowercase words joined by hyphens, at
    most 40 characters).
-<!-- generic: session-new -->
 4. `node scripts/vibe-sessions.mjs new --slug <slug> --summary "<one line>"
+<!-- generic: session-new -->
    [--repo <checkout>] [--worktree <path>]`, passing the `--repo` and
    `--worktree` a fleet brief names (the worktree must be
    `<checkout>/.claude/worktrees/vibe-<slug>`; `new` refuses a `--repo` of
@@ -586,9 +590,9 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
 
 > Read `references/vibe-mockup.md` (block `mockup-flow`) when the request is a pure mockup or the session is an owned prototype.
 
-<!-- generic: resume-push -->
 Resuming: use the session's `worktree`, and run the matching `codex-sessions`
 or `claude-sessions` command again so a
+<!-- generic: resume-push -->
 new conversation is recorded too. A resumed session gets no endings line.
 Starting new or resuming stops any other session's local app or Storybook
 (dispatch `vibe-setup-worker` to stop what that session's `stack` lists) but
@@ -688,32 +692,34 @@ evidence, never by replacing the writer.
 
 ### One request through completion
 
-<!-- generic: request-forward -->
 1. When the person attached an image or gave one as a file path, first save
    it: `node scripts/reference-images.mjs attached --worktree "<wt>"
    --request-id <id>` (or `save --file <path>`), which records it on the
+<!-- generic: request-forward -->
    session. Forward the person's request/annotation verbatim, session/branch,
    known rulings and supplied copy to the SAME writer, plus, with the
+<!-- end generic: request-forward -->
+> Provider `plans` (block `request-forward` of `vibe-skill.md`)
    first request, the requirements worker's quoted acceptance criteria, and
    every saved reference image path. Never send your own description of an
    image in place of its path. It performs
+<!-- generic: request-forward-2 -->
    owner prep and writes the canonical core-template plan locally.
    It locks the Spec Card before any code (`references/spec-card.md`). It
    always creates or extends the one session decision table at the
    `decisionTable` path `node scripts/local-plans.mjs paths --worktree "<wt>"`
    prints, before any code, using the named core skill in quality-loop.md.
    Include its path and affected/
+<!-- end generic: request-forward-2 -->
+> Provider `plans` (block `request-forward-2` of `vibe-skill.md`)
    interacting row IDs in every applicable worker brief. Later requests append
    to this same artifact with provenance; no per-request table or history reset.
    No upfront summary, technical question or plan approval reaches the person.
    When the request names an outside product as its reference, or gives a
    screenshot of one, the reference-product notice below runs first and its
    list goes to the writer with the request.
-<!-- end generic: request-forward -->
-> Provider `plans` (block `request-forward` of `vibe-skill.md`)
 2. There is no plan review. The writer builds right after its plan and table
    rows, in the same request.
-<!-- generic: implement-order -->
 3. The writer implements in dependency order. It can load canonical
    backend, primitive, prototype and Storybook guidance from its own plugin,
    but no new source writer/worktree/branch. Read-only specialists advise;
@@ -724,17 +730,18 @@ evidence, never by replacing the writer.
    the SAME writer with its Placement block, which the writer records in its
    local plan before writing. That block is a read-only lookup in quick prep,
    not a review. The writer logs a Conflict in it with its audience, `design`
+<!-- generic: implement-order -->
    or `engineering`, in the session's handoff summary, never a question for
    the person.
    A part that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` in that same summary while the writer
    builds the rest (`references/guardrails.md`, "What may change"); it never
    stops the request and is never a question for the person.
+<!-- end generic: implement-order -->
+> Provider `tickets` (block `implement-order` of `vibe-skill.md`)
    When its plan needs NEW Storybook components, it builds them first and
    returns `STORIES_READY`; send the new-components notice below and resume
    it at once to build the feature.
-<!-- end generic: implement-order -->
-> Provider `tickets` (block `implement-order` of `vibe-skill.md`)
 4. The writer runs only the quick checks the commit hooks need (Biome on the
    changed files, the affected typecheck, the source gates) and repairs any
    existing test or fixture its change broke without changing what it
@@ -759,8 +766,8 @@ evidence, never by replacing the writer.
    question, one at a time with full context. Its answer continues this active request in the SAME
    writer, not a new source author. Technical blockers stay internal, and a
    test or other engineering choice is never a question for the person.
-<!-- generic: record-pln -->
 6. Record scope/progress/backend facts through the writer's explicit serial
+<!-- generic: record-pln -->
    record continuation, never simultaneously. The plan stays in the local plan
    files; nothing publishes it. A repair only to vibe's private plan or
    records, with no scope, code, test or HEAD change, is `self-bookkeeping`:
@@ -895,19 +902,25 @@ steps; nothing leaves this machine until the session ends (section 8).
 2. After the writer's quick checks, ROOT commits the checked deliverable with
    the existing commit script and normal hooks:
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<plain imperative summary of the change>" --body "<the screens changed, one per line>"`.
+<!-- end generic: deploy -->
+> Provider `recipes` (block `deploy` of `vibe-skill.md`)
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
    in a commit, and the repository's commit hook runs. Add `--exclude <path>`
    for each untracked file the inventory lists as `forbidden` or
    `outsideAllowed` that the session did not write (a person's own files);
+<!-- generic: deploy-2 -->
    the commit goes ahead without them and without asking anyone to move them.
    `committed: false` means nothing changed; continue. `"ok":false` means the
    hook refused: resume the SAME persistent writer in fix mode with the error,
    then commit again. An existing test or fixture the change broke is repaired
    there (`references/guardrails.md`, "Repair, don't author"). When the writer
+<!-- end generic: deploy-2 -->
+> Provider `recipes` (block `deploy-2` of `vibe-skill.md`)
    returns `BLOCKED` because a test of live behavior would need changed
    assertions, first check the alternative paths in `references/guardrails.md`,
    "Plugins and tooling". If the block remains, record the exact cause and
+<!-- generic: deploy-3 -->
    tried paths, then offer to pass the saved work to someone. Never ask the
    person to repair the test.
 3. Reload the app tab (and the Storybook tab if open), look at it yourself,
@@ -930,8 +943,8 @@ steps; nothing leaves this machine until the session ends (section 8).
    session".
 
 Never commit a change before the writer's quick checks pass.
-<!-- end generic: deploy -->
-> Provider `recipes` (block `deploy` of `vibe-skill.md`)
+<!-- end generic: deploy-3 -->
+> Provider `recipes` (block `deploy-3` of `vibe-skill.md`)
 
 ## 7. Feature flags
 
@@ -991,14 +1004,14 @@ Whenever the person asks to throw a session away (at any point, for any
    `--confirm` it changes nothing). It refuses a `handed-off` session: tell
    the person it is already finished (a pull request was opened, or it went
    to design and engineering) and stop.
-<!-- generic: discard-lost -->
 2. Tell them in plain words what will be lost (the session's summary, its
+<!-- generic: discard-lost -->
    unsaved files, and any app data its own setup created). Ask them to
    confirm.
 <!-- end generic: discard-lost -->
 > Provider `tickets+recipes` (block `discard-lost` of `vibe-skill.md`)
-<!-- generic: discard-run -->
 3. On a clear yes, retain the validated remembered `<repo>` separately from
+<!-- generic: discard-run -->
    the target `<wt>`. Dispatch `vibe-setup-worker` from that stable `<repo>`
    with `sessionless: {kind: "startup"}`, mode `record`, `recordAction:
    "discard"`, `exclusiveRecordTurn: true`, read capabilities only, and

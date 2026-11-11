@@ -15,15 +15,21 @@ When nothing in the catalog fits:
 2. Decide reuse, extend or create from the repository's component catalog and
    its design-system docs (or a design-system agent or skill the repository
    ships, given the need):
+<!-- end generic: missing-primitive-steps -->
+> Provider `recipes` (block `missing-primitive-steps` of `vibe/guardrails-ui.md`)
    - Reuse: an existing component covers it. Use it and continue.
    - Extend: add a variant or prop to an existing component. Never change an
      existing default; add the new behavior beside it.
+<!-- generic: missing-primitive-steps-2 -->
    - Create: a new component, placed where the repository's docs put shared,
      domain-free UI and where they put its feature UI.
+<!-- end generic: missing-primitive-steps-2 -->
+> Provider `recipes` (block `missing-primitive-steps-2` of `vibe/guardrails-ui.md`)
 
    For Extend and Create, the spec covers the whole component: every variant
    and size, phone and desktop widths, accessibility (name, keyboard, focus,
    ARIA state) and every state (default, hover, focus, disabled, loading,
+<!-- generic: missing-primitive-steps-3 -->
    empty, error). State text follows the Copy rules below.
 3. Build it to the repository's Storybook and design-system rules (their
    `AGENTS.md` files and any Storybook skill it ships): stories go where
@@ -34,8 +40,8 @@ When nothing in the catalog fits:
 4. Run the Storybook tests for the new or changed story files only, with the
    repository's own Storybook test command, never the whole suite, and
    confirm the new stories pass.
-<!-- end generic: missing-primitive-steps -->
-> Provider `recipes` (block `missing-primitive-steps` of `vibe/guardrails-ui.md`)
+<!-- end generic: missing-primitive-steps-3 -->
+> Provider `recipes` (block `missing-primitive-steps-3` of `vibe/guardrails-ui.md`)
    A story or play that requests a viewport uses a MINIMAL_VIEWPORTS name
    (`mobile1`, `mobile2`, `tablet`, or `desktop`) or a name actually registered
    in `parameters.viewport.options`. Handoff's Storybook diff rule blocks an
@@ -50,10 +56,10 @@ When nothing in the catalog fits:
 
 <!-- generic: taxonomy-doc -->
 Read the repo's Storybook taxonomy document (when it has one) and follow it for every story
-the session adds, moves, renames or touches; that doc is the authority, so its
-rules are not copied here. The bare minimum:
 <!-- end generic: taxonomy-doc -->
 > Provider `recipes` (block `taxonomy-doc` of `vibe/guardrails-ui.md`)
+the session adds, moves, renames or touches; that doc is the authority, so its
+rules are not copied here. The bare minimum:
 
 - New stories go in the current roots, titled under the plain level
   (`Foundations/`, `Primitives/`, `Composites/`, `Patterns/`, `Surfaces/`),
@@ -88,18 +94,18 @@ rules are not copied here. The bare minimum:
   `Not In The Live App`; never `deprecated`, which only the v1.0 roots carry.
   A story that differs from its file overrides it per story
   (`tags: ["!stable", "experimental"]`).
-<!-- generic: version-history -->
 - Adding, moving or renaming stories is a Storybook release: the version bump
   and Version History entry the doc names, in the same change. A session is
   one release: exactly one new Version History entry, at the next version
+<!-- generic: version-history -->
   after the `version` in the Storybook package's `package.json` on the main it last
+<!-- end generic: version-history -->
+> Provider `recipes` (block `version-history` of `vibe/guardrails-ui.md`)
   synced, describing only what the session changed, with `package.json` bumped
   to match. Never add an entry for a version main does not have beyond that
   one, renumber or reword main's entries, or special-case a validator, test or
   key (a duplicate-key exception) so two entries can coexist. After a main
   sync, the session's entry moves to the next version after main's.
-<!-- end generic: version-history -->
-> Provider `recipes` (block `version-history` of `vibe/guardrails-ui.md`)
 - Moving or retitling a story changes its ID: the inventory's
   `lost-story-id` findings name every reference left. One in a test or e2e
   spec is repaired in the same change (a renamed symbol, "Repair, don't
@@ -111,7 +117,6 @@ rules are not copied here. The bare minimum:
   moves it to this scheme: its own new entries then take the plain root and a
   lifecycle tag.
 
-<!-- generic: precedent-stories -->
 The handoff inventory judges story files by the scheme of the session's base
 (`storybookScheme`, read from that base's own Storybook sources). It blocks a
 new story file titled under or tagged for a v1.0 root and any other edit or
@@ -130,6 +135,7 @@ block: the repo docs where they say how, otherwise the structure a sibling
 entity's precedent set, never its root or version. The "existing story files
 in the same area" that the repo skill's `workflows/author-stories.md` step 1
 says to match are the stories for the same capability that block reports, read with
+<!-- generic: precedent-stories -->
 Storybook taxonomy document, never the neighbors in the same folder.
 <!-- end generic: precedent-stories -->
 > Provider `recipes` (block `precedent-stories` of `vibe/guardrails-ui.md`)
@@ -145,16 +151,16 @@ or raise a missing primitive.
 This section is the rule's one canonical statement; the writer and the
 guardrails reviewer point at it.
 
-<!-- generic: bundled-tokens -->
 - Before writing or accepting any hardcoded color, shadow or dark-mode
   override, read the tokens the touched surface actually bundles: each
   stylesheet it loads or inlines (for app and Desktop screens,
+<!-- generic: bundled-tokens -->
   the design system's global stylesheet; for a static or generated page,
+<!-- end generic: bundled-tokens -->
+> Provider `recipes` (block `bundled-tokens` of `vibe/guardrails-ui.md`)
   the CSS its generator writes or inlines) and, in each, its `:root` block and
   its `.dark` (or `prefers-color-scheme: dark`) block. Search them for the
   property's token family (`--shadow-`, `--color-`, `--radius`, and so on).
-<!-- end generic: bundled-tokens -->
-> Provider `recipes` (block `bundled-tokens` of `vibe/guardrails-ui.md`)
 - A bundled token that delivers the property is used as `var(--token)`.
   Where such a token exists, a raw `rgb()`, hex or pixel value, a page-local
   custom property re-declaring its value, or a dark override of a value its

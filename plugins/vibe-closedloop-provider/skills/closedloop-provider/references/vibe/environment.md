@@ -82,17 +82,15 @@ once `environment-result` has recorded a verified result:
 
 <!-- block: storybook-links -->
 Every Storybook link given to the person or written on the live ticket opens
-the full Storybook UI, with its sidebar and controls: the Storybook base
-alone, or `<storybook-base>/?path=/story/<story-id>` for one story. The base
+<!-- end: storybook-links -->
+
+<!-- block: storybook-links-2 -->
 is the verified Vercel `storybookUrl` or the local `storybookUrl` in the
 session's stack. Never give the bare canvas,
 `<storybook-base>/iframe.html?id=<story-id>&viewMode=story`, which shows the
 story without the sidebar or controls. This section is the rule's one
 canonical statement; the skills, the ticket template and the workers point at
-it. `scripts/vibe-sessions.mjs link --story <story-id>` builds the link from
-the session record, and a link given to the person also follows
-`plain-words.md`, "Links to what the person should look at".
-<!-- end: storybook-links -->
+<!-- end: storybook-links-2 -->
 
 <!-- block: flags-and-redeploy -->
 ## The production flag snapshot
@@ -140,10 +138,6 @@ force push.
 <!-- end: what-runs -->
 
 <!-- block: reference-link -->
-- **A reference link.** A prototype preview, a Storybook story, an existing
-  page in our product or a public page of another product: a throwaway
-  headless Playwright script kept outside the worktree and deleted
-  afterwards (the acceptance check's quick-script rule), which opens the URL
   and saves a screenshot, or the control skill's `screenshot` for a screen
   in our product under its own rules (hidden, never `--allow-write`, `eval`
   or `eval-main`, `pnpm control down` for every session it started). Never

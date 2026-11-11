@@ -96,8 +96,8 @@ When a ticket or PRD says "across all" or the person says "shared", the plan
 must name one owning parent component and every consumer that inherits it,
 plus each consumer's approved prototype route.
 
-<!-- generic: flag-retire -->
 Before you delete a feature flag's read, key constant or gate, read the
+<!-- generic: flag-retire -->
 recorded decisions about it: the request's own source, the session's recorded
 answers, and the repository's record of the key (its commit messages and pull
 request discussions). A recorded hold, rollout pause or parity list with no
@@ -135,9 +135,9 @@ for Storybook placement, taxonomy, story granularity or a visual or UX
 choice, `engineering` for everything else and when unsure; it is never a
 `NEEDS_PERSON` question.
 
-<!-- generic: local-plan -->
 Load core `plan-structure` by name (`$plan-structure` in Codex or
 `/closedloop-core:plan-structure` in Claude Code), read its own template, and
+<!-- generic: local-plan -->
 write the exact-template local plan at the `plan` path
 `node ../skills/vibe/scripts/local-plans.mjs paths --worktree "<wt>"` prints.
 Never commit it or deploy it, and write it for an engineer who never saw the
@@ -146,6 +146,8 @@ personal emails, secrets, credentials or private session inputs. A
 `self-bookkeeping` repair to vibe's private plan or records has no scope,
 code, test or HEAD change: make it without permission, never return
 `NEEDS_PERSON`, and report the completed repair in one line. Name scope,
+<!-- end generic: local-plan -->
+> Provider `plans` (block `local-plan` of `agents/vibe-change-worker.md`)
 owners, dependencies and checks, including every NEW Storybook component the
 request needs (or none). When the plan adds periodic or cross-surface work (a
 poller, interval, background lane, socket, subscription, feed or watcher), it
@@ -154,8 +156,6 @@ carries a Cost Scaling table with the columns and rules in
 The plan gets no review: build in the same turn right after it
 (`quality-loop.md`, "Lean build loop"). No technical plan goes to the person
 running the session for approval.
-<!-- end generic: local-plan -->
-> Provider `plans` (block `local-plan` of `agents/vibe-change-worker.md`)
 
 After the plan names every planned file, run
 `node <plugin-root>/skills/vibe/scripts/dist/scope-intake.mjs --worktree "<wt>" --phase <pull-request for a pull-request turn, otherwise build> --path <each planned file>`
@@ -349,18 +349,18 @@ local metadata/registry changes yourself; canonical visual/product approvals
 and publication contracts remain. Operational sharing may publish only the
 checked committed result, never silently generate or fix source.
 
-<!-- generic: copy-docs -->
 Use supplied copy verbatim or the existing matching string/label map or
 helper, never a retyped copy of wording a shared helper renders. Do not
+<!-- generic: copy-docs -->
 invent product text, and never edit the repository's public product docs or
 its internal engineering docs: nothing agent-written goes into them
 (`guardrails.md`, "Copy" and "Feature docs at handoff"). Read-only
+<!-- end generic: copy-docs -->
+> Provider `recipes` (block `copy-docs` of `agents/vibe-change-worker.md`)
 specialists may advise on uncertainties; their
 findings return here for you to verify and correct. Fix all confirmed issues
 before completion, including shared-owner restructuring and its sibling sweep
 from `design-pass.md`. Never revert another person's changes.
-<!-- end generic: copy-docs -->
-> Provider `recipes` (block `copy-docs` of `agents/vibe-change-worker.md`)
 
 An extraction, move or deletion is finished only when nothing it orphaned is
 left (`design-pass.md`, "Red flags", leftovers): import the new owner at
@@ -435,8 +435,8 @@ Throughout:
 - Resume this SAME actor/transaction after CI; do not repeatedly merge/fetch
   main, reset binding or author tests in a record turn. CI remains per push;
   `qa-impact.mjs` alone selects repeated local evidence.
-<!-- generic: desktop-lane -->
 - `requiredE2eComplete: false` blocks final coverage/alignment/assignment,
+<!-- generic: desktop-lane -->
   not safe preview publication with its explicit preparation evidence.
 <!-- end generic: desktop-lane -->
 > Provider `recipes` (block `desktop-lane` of `agents/vibe-change-worker.md`)
@@ -466,22 +466,25 @@ harness or records the precise local limitation, never a visible fallback.
 A partial unit is not a completed feature. Preserve the request and its local
 plan while waiting for a product answer.
 
-<!-- generic: criteria -->
 Keep the session decision table's `## Acceptance Criteria` section and, after
 each build or fix and its quick checks, check every criterion the change
 touches before returning `DONE`, under `quality-loop.md`, "Acceptance criteria
+<!-- generic: criteria -->
 before ready": the criteria from the request, its source and the person's own
 words, each checked with an existing test run alone, a throwaway script, one
 bounded read of the running app or an end-to-end source trace, and each
 result recorded. Fix a criterion that is not met; one you cannot finish now is
 reported `not met yet` with the reason, never claimed. At handoff, start the
+<!-- end generic: criteria -->
+> Provider `plans` (block `criteria` of `agents/vibe-change-worker.md`)
 whole-table alignment from that list. A criterion that depends on a collector,
 selector, monitor, service or other work outside this branch stays `not met
+<!-- generic: criteria-2 -->
 yet` until the deployed external dependency evidence exists. A planned task
 or source-only assertion is not that evidence, and the related plan task
 cannot be marked complete.
-<!-- end generic: criteria -->
-> Provider `plans` (block `criteria` of `agents/vibe-change-worker.md`)
+<!-- end generic: criteria-2 -->
+> Provider `plans` (block `criteria-2` of `agents/vibe-change-worker.md`)
 
 Read every reference (`quality-loop.md`, "Visual references"). A reference
 given as a link, a page or screen, or "make it look like X" is captured as an
@@ -630,8 +633,8 @@ These rules also bind every test you write there:
 
 - Every entry on the missing tests list is written in this turn. None stays
   listed as missing once the person asked for a pull request.
-<!-- generic: test-lane -->
 - Each test goes in the suite and lane that owns its subject: the owning
+<!-- generic: test-lane -->
   package's test config, or the e2e lane the repo's `AGENTS.md` files name
   for it. A test that no lane CI runs for its path does not count.
 <!-- end generic: test-lane -->
@@ -672,11 +675,11 @@ at handoff": each page and the passage that no longer matches what was built,
 or that none covers the changed features, in the change log. Nothing
 agent-written goes into public docs or internal engineering docs; an edit
 found there is removed and recorded instead. Once the table is
+<!-- end generic: feature-docs -->
+> Provider `recipes` (block `feature-docs` of `agents/vibe-change-worker.md`)
 aligned, add its `## Frozen Behavior` section with the row IDs the person
 accepted (`quality-loop.md`, "Frozen behavior at handoff"), and refresh it
 whenever a handoff answer changes the table.
-<!-- end generic: feature-docs -->
-> Provider `recipes` (block `feature-docs` of `agents/vibe-change-worker.md`)
 
 ## Return
 

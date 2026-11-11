@@ -14,9 +14,9 @@ change to a file with that name.
 
 Lines that start `> Provider` follow `../vibe/references/provider-text.md`.
 
-<!-- generic: intro -->
 The person ran `vibe` and built something they are happy with. You
 orchestrate making it safe and complete for the next people, without asking
+<!-- generic: intro -->
 them to understand any of the engineering. The session ends one of two ways.
 The person can ask for a pull request they take through review and merge
 themselves ("A requested pull request"): handoff opens it as its last step.
@@ -54,8 +54,8 @@ premise against its cited code line, read-only result or current official
 document. A citation alone does not prove a premise, and an idle notice is not
 a final report. Every
 check narrowed or left for CI is named in the existing progress or handoff
-<!-- generic: graph-and-ticket-briefs -->
 summary in plain words (`../vibe/references/guardrails.md`, "Checks"). Every
+<!-- generic: graph-and-ticket-briefs -->
 worker brief points at `../vibe/references/repository-intelligence.md` for
 researching the code. You and every worker leave
 <!-- end generic: graph-and-ticket-briefs -->
@@ -180,10 +180,10 @@ never answered with a branch to merge.
 
 ## 0. Pick the session
 
-<!-- generic: pick-session -->
 Run `node ../vibe/scripts/vibe-sessions.mjs list` (it uses the checkout the
 vibe preflight remembered). Use the session whose worktree you are in. If you
 are not in one and more than one session is `active`, list them in plain
+<!-- generic: pick-session -->
 words and ask which one they want to finish. Read its `localFixes`.
 
 If it is `handed-off` and its pull request is still open, read its threads
@@ -296,18 +296,18 @@ the lighter versus backend validation and review weights below.
 
 ### Start the lane run in the background
 
-<!-- generic: background-lanes -->
 When `../vibe/scripts/verify-run.mjs` exists and the worktree is clean at its
 head (it refuses a dirty one), start the CPU-bound checks now, before steps 2
 to 6, and keep working while they run:
 `node ../vibe/scripts/verify-run.mjs --background --worktree "<wt>" --head "<full SHA>"`
 prints a run id at once. Record it. The summary, the guardrail and adversarial
+<!-- generic: background-lanes -->
 reviews, and the Storybook work that does not
+<!-- end generic: background-lanes -->
+> Provider `tickets` (block `background-lanes` of `handoff-skill.md`)
 need the lane result all proceed while it runs; the lanes are scheduled, never
 skipped. With uncommitted work, or without the script, start nothing and
 run the steps below unchanged. A new head after a fix needs a new run.
-<!-- end generic: background-lanes -->
-> Provider `tickets` (block `background-lanes` of `handoff-skill.md`)
 
 ## 2. Summarize internally
 
@@ -382,33 +382,33 @@ every required unsuperseded row, including earlier requests. Planned coverage
 is not executed coverage; a row without an existing test goes on the missing
 tests list, never counted as covered.
 
-<!-- generic: selected-tests -->
 Read-only verify checks mode runs the same targeted checks whether or not
 backend changed (`../../agents/vibe-verify-worker.md`, "Existing checks"):
 Biome without write flags on the changed files, gates, the affected typecheck
 and only the tests selected for each file of the whole branch diff
+<!-- generic: selected-tests -->
 (the repo's related-test command, and e2e specs by reference), never a broad or full local suite. Backend changes add the two review passes, not a
+<!-- end generic: selected-tests -->
+> Provider `graph` (block `selected-tests` of `handoff-skill.md`)
 wider test run. It reports defects back to this same writer.
 Do not weaken tests, skip required coverage or fall back to visible automated
 browser/Electron windows. Record exact unsupported local limitations.
-<!-- end generic: selected-tests -->
-> Provider `graph` (block `selected-tests` of `handoff-skill.md`)
 
 ### Existing feature docs
 
-<!-- generic: feature-docs -->
 Nothing agent-written goes into public docs (`../vibe/references/guardrails.md`,
 "Feature docs at handoff"). In the same handoff continuation the SAME writer only
+<!-- generic: feature-docs -->
 records which existing pages of the repository's public product docs
 describe a feature this session changed, with the passage that no longer
 matches, or that no page covers them, for the handoff summary's Feature docs line. It
+<!-- end generic: feature-docs -->
+> Provider `recipes+tickets` (block `feature-docs` of `handoff-skill.md`)
 edits, creates and drafts nothing there or in the internal engineering
 `docs/` folder; design or engineering updates those pages. The inventory
 reports any change under either folder as outside the allowed paths in every
 phase, and step 3 sends it back to the writer to remove. Owned prototype
 sessions skip this step.
-<!-- end generic: feature-docs -->
-> Provider `recipes+tickets` (block `feature-docs` of `handoff-skill.md`)
 
 Before step 6, stop Desktop, pin current `origin/main`, and prepare its merge
 without committing. The SAME writer resolves the final candidate uncommitted;
@@ -419,6 +419,8 @@ this preparation before independent review.
 
 <!-- generic: alignment -->
 Exclude exactly vibe's private plan folder and historical `localFixes` from
+<!-- end generic: alignment -->
+> Provider `tickets+plans` (block `alignment` of `handoff-skill.md`)
 deliverable review, not other artifacts. Reviewers may read the local plans
 for context. Pass phase handoff, the inventory's `testRepairs` and
 `retiredTests`, and the writer's missing tests list.
@@ -436,17 +438,21 @@ The missing tests list may say `None` only when every acceptance criterion has
 executed coverage through both the real web host adapter and the real Desktop
 host adapter. Coverage on one host, a shared unit test or a mocked router
 leaves a named missing test for the uncovered host.
+<!-- generic: alignment-2 -->
 No criterion or plan task that depends on external work is complete until the
+<!-- end generic: alignment-2 -->
+> Provider `tickets+plans` (block `alignment-2` of `handoff-skill.md`)
 deployed collector, selector, monitor or other dependency evidence is present.
 An explicitly missing dependency keeps final alignment open, with one
 exception: when the person chose passing it on, a criterion whose
 only gap is work another ticket owns (an API or data ticket that has not
 shipped) is marked `not met yet: waits on <ticket>`, and the table may then
 say `Final Alignment Status: Aligned except criteria waiting on <tickets>`.
+<!-- generic: alignment-3 -->
 Each such criterion goes on the handoff summary's Engineering list, so the people who close the dependency
+<!-- end generic: alignment-3 -->
+> Provider `tickets+plans` (block `alignment-3` of `handoff-skill.md`)
 receive the work. A requested pull request still needs every criterion met.
-<!-- end generic: alignment -->
-> Provider `tickets+plans` (block `alignment` of `handoff-skill.md`)
 
 Consolidated review, off unless `VIBE_CONSOLIDATED_REVIEW=1`: when a
 precomputed findings file exists (`vibe.guardrails-findings/1`), run
@@ -458,7 +464,6 @@ the backend passes still run. Any other output, a missing script or file, a
 skipped check or an error means the existing reviewers run unchanged. The
 escalation numbers are `REVIEW_SCOPE_DEFAULTS` in that script, unruled.
 
-<!-- generic: extra-gates -->
 Triage manifest (ITEM 2 = A, the owner's ruling): when the session has a
 triage manifest file (`../vibe/references/triage.md`), add
 `--manifest <file>` to that command, and run it for the manifest even when no
@@ -467,14 +472,15 @@ it passes `vibe-triage.mjs check`; a missing or invalid one changes nothing.
 When its `triage.applied` is `true` (the triage switch was on at classify
 time), also run each `triage.addedReviews` entry (`vibe-adversarial-reviewer`
 beside the consolidated reviewer, when the manifest scope asks for it) and each
+<!-- generic: extra-gates -->
 `triage.extraGates` entry (`workflow-code-review`, or a gate the provider's recipes name) as an
+<!-- end generic: extra-gates -->
+> Provider `recipes` (block `extra-gates` of `handoff-skill.md`)
 additional gate on the final diff, skipping one this handoff already ran for
 this head; their confirmed findings are handled like any handoff reviewer's.
 The manifest only adds review work: `mode` and its reasons stay as the diff
 decided them, so it never removes a review. With `applied` `false`, run
 nothing extra.
-<!-- end generic: extra-gates -->
-> Provider `recipes` (block `extra-gates` of `handoff-skill.md`)
 
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
@@ -519,6 +525,8 @@ run. Never handle or bypass a credential.
 
 <!-- generic: join-lanes -->
 Before `Final Alignment Status: Aligned` and
+<!-- end generic: join-lanes -->
+> Provider `plans` (block `join-lanes` of `handoff-skill.md`)
 before anything is called ready, join the run from step 1:
 `node ../vibe/scripts/verify-run.mjs --wait <run id> --worktree "<wt>" --head "<the head under review>"`.
 Only `state: passed` (exit 0) joins. `running` (4) means keep waiting;
@@ -526,8 +534,6 @@ Only `state: passed` (exit 0) joins. `running` (4) means keep waiting;
 start a new run at the current head. None of these is a pass, and the result's
 head must be the head under review. A required check that was a no-op with its reason (no file Biome checks, nothing for the lane report to cover) counts toward `passed`. Nothing here is counted as aligned, approved or ready
 while the lanes are pending, running or failed.
-<!-- end generic: join-lanes -->
-> Provider `plans` (block `join-lanes` of `handoff-skill.md`)
 
 ### Browser E2E and the repository's QA passes
 
@@ -540,17 +546,20 @@ step 5's checks and step 7's validation:
 - Run them headless through the browser E2E command the repository's
   AGENTS.md documents, in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
   "Existing checks"). The lock gives
+<!-- end generic: e2e-path -->
+> Provider `recipes` (block `e2e-path` of `handoff-skill.md`)
   each run its own compose project, so a teardown removes only its own
   stack; `--foreign-compose <project>` names a stack started outside the
   lock, which keeps the machine busy while it runs.
+<!-- generic: e2e-path-2 -->
 - A repository that documents no browser E2E command, or a tool that command
   needs and this machine lacks, is recorded as that exact limitation, never a
   pass.
 
 No worker claims what CI runs or ran without first citing the workflow job
 that runs it.
-<!-- end generic: e2e-path -->
-> Provider `recipes` (block `e2e-path` of `handoff-skill.md`)
+<!-- end generic: e2e-path-2 -->
+> Provider `recipes` (block `e2e-path-2` of `handoff-skill.md`)
 
 <!-- generic: qa-passes -->
 For the screens the session touched, run the repository's own read-only QA
@@ -594,8 +603,8 @@ release. The queue settles later collisions.
 
 ### Candidate audits and pre-PR verification
 
-<!-- generic: candidate-audits -->
 Before the first commit/push, after independent review and running-app
+<!-- generic: candidate-audits -->
 verification, audit the uncommitted candidate against the session decision
 table's `## Acceptance Criteria`: every criterion gets a row with its verdict,
 its evidence type and its ref (`../vibe/references/spec-card.md`, "Audit
@@ -641,9 +650,9 @@ below, never a readiness-only refusal or rewrite of a published commit.
 
 ## 7. Upload the last changes
 
-<!-- generic: upload -->
 ROOT commits the reviewed deliverable LOCALLY once through normal hooks, still
 unpushed, excluding private plans/localFix source:
+<!-- generic: upload -->
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<plain imperative summary>" --body "<fixes>"`.
 Its tree must match the accepted candidate.
 
@@ -739,9 +748,9 @@ On a requested pull request (step 0), skip the question and the lookup: the
 next owner is the session's operator, the person who ran it, and the ticket
 stays with them.
 
-<!-- generic: next-owner -->
 When they chose passing it on, use a next owner the person already named for
 this handoff; never re-ask that settled choice or infer an owner from a
+<!-- generic: next-owner -->
 default. Only if nobody was named, ask one plain question in exactly these
 words:
 
@@ -776,12 +785,15 @@ to the pushed tree; it never substitutes a new source-validation round.
 When they chose passing it on, dispatch `vibe-environment-worker` in
 handover mode to push the branch through the repository's normal pre-push
 checks.
+<!-- end generic: hand-over -->
+> Provider `tickets+recipes` (block `hand-over` of `handoff-skill.md`)
 
 Then mark the session handed off. For a requested PR, parse the returned URL
 for its repository and number, use the already verified pushed commit as its
 head, and record all three through the root-owned transition:
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off --pr-repo <owner/repo> --pr-number <n> --pr-head <full pushed sha>`.
 The command reads the live PR and refuses a different repository, branch or
+<!-- generic: hand-over-2 -->
 head. When passing it on, use
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`.
 The PR worker never writes session state. Then stop the session's local app
@@ -789,16 +801,19 @@ and Storybook with `node ../vibe/scripts/vibe-sessions.mjs stop --worktree "<wt>
 which signals only a recorded process it proves is still the session's own.
 Run `node ../vibe/scripts/e2e-lock.mjs cleanup-sweep sweep` from a retained
 checkout after the stop.
+<!-- end generic: hand-over-2 -->
+> Provider `tickets+recipes` (block `hand-over-2` of `handoff-skill.md`)
 
 Tell them, in a few lines, each as a link that opens it
 (`../vibe/references/plain-words.md`, "Links to what the person should look
+<!-- generic: hand-over-3 -->
 at"), what happens next. On a requested pull request: the pull request link,
 and that they take it through review and merge from there; never the branch
 to merge. When passing it on: the branch name, the next owner by name, and
 the handoff summary to send them, which says what was built, what was checked
 and what engineering still has to do.
-<!-- end generic: hand-over -->
-> Provider `tickets+recipes` (block `hand-over` of `handoff-skill.md`)
+<!-- end generic: hand-over-3 -->
+> Provider `tickets+recipes` (block `hand-over-3` of `handoff-skill.md`)
 
 ## 10. Changes on the open pull request
 

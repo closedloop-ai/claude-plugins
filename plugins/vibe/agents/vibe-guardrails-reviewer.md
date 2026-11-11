@@ -268,12 +268,12 @@ path merely because another rule describes how its content should look.
      renumbered criterion or test name that drops the recorded source
      provenance is blocking; preserve the source's existing identifier instead
      of creating one for the test.
-<!-- generic: taxonomy -->
 10. Storybook taxonomy (`guardrails-ui.md`, "Storybook taxonomy"): read the
+<!-- generic: taxonomy -->
     repo's Storybook taxonomy document as the session's base has it; the
-    inventory's `storybookScheme` names that base's scheme. A new story file
 <!-- end generic: taxonomy -->
 > Provider `recipes` (block `taxonomy` of `agents/vibe-guardrails-reviewer.md`)
+    inventory's `storybookScheme` names that base's scheme. A new story file
     titled under or tagged for a frozen v1.0 root (a `<Level> v1.0/` root or
     the `deprecated` tag; on a version-scheme base, a plain root or the
     `v1.0` tag), or any edit or move of a story file that is v1.0 on main
@@ -370,15 +370,15 @@ path merely because another rule describes how its content should look.
     blocking capability removal unless the ticket or a cited human ruling
     retires it; so is a test the merge or a later session commit changed to
     pin the reduced behavior. Quote both sides.
-<!-- generic: flag-retirement -->
 14. Flag retirement: for each feature flag read, key constant or gate the
+<!-- generic: flag-retirement -->
     diff deletes, read the recorded decisions about the flag (the request's
     source, the session's recorded answers, and the repository's commit
     messages and pull request discussions for the key). A recorded hold, rollout
-    pause or parity list on the flag with no later human answer allowing the
-    retirement is a blocking `engineering decision` finding, quoting the
 <!-- end generic: flag-retirement -->
 > Provider `tickets` (block `flag-retirement` of `agents/vibe-guardrails-reviewer.md`)
+    pause or parity list on the flag with no later human answer allowing the
+    retirement is a blocking `engineering decision` finding, quoting the
     comment and its ticket, even when an acceptance criterion asks for the old
     path to go. A deletion with no evidence of that read is blocking until the
     comments are read.

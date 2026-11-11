@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { agentLaunchProblem } from "./agent-guard.mjs";
 import { AWAY_CHECKLIST } from "./away-protocol.mjs";
-import { mergeResults } from "./hook-dispatch.mjs";
+import { mergeResults, runGuards } from "./hook-dispatch.mjs";
 import { killProblems } from "./kill-guard.mjs";
 import { TASKSTOP_REMINDER } from "./pause-guard.mjs";
-import { PRE_TOOL_USE_ROUTES, scratchCreationProblem } from "./pre-tool-use.mjs";
+import { MCP_ROUTE, PRE_TOOL_USE_ROUTES, scratchCreationProblem } from "./pre-tool-use.mjs";
 import { forcePushProblem } from "./shell-safety-guard.mjs";
 import { recordHookSkill } from "./hook-session-scope.mjs";
 
@@ -200,4 +200,41 @@ test("the Codex hook path: default hooks.json location, CLAUDE_PLUGIN_ROOT comma
   const result = spawnSync(process.execPath, [PRE_TOOL_USE], { input: JSON.stringify(codexEvent), encoding: "utf8", env: { ...process.env, HOME: dir } });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny");
+});
+
+/** A git checkout whose vibe session record binds a provider that is no longer installed. */
+function brokenSession(t) {
+  const worktree = mkdtempSync(path.join(tmpdir(), "vibe-broken-provider-"));
+  t.after(() => rmSync(worktree, { recursive: true, force: true }));
+  spawnSync("git", ["init", "-q", worktree]);
+  writeFileSync(path.join(worktree, ".git", "vibe-session.json"), JSON.stringify({ worktree, branch: "vibe/broken",
+    provider: { state: "bound", name: "acme-provider", root: path.join(worktree, "gone"), capabilities: ["tickets", "recipes"] } }));
+  return worktree;
+}
+
+test("a guard whose bound provider is broken refuses the action it guards, with the reason and fix, and only warns on others", (t) => {
+  const cwd = brokenSession(t);
+  const run = (route, event) => mergeResults("PreToolUse", runGuards(route, { cwd, ...event }, () => {}, () => true));
+  const write = run(MCP_ROUTE, { tool_name: "mcp__tracker__update-document", tool_input: { documentId: "ISS-1", status: "DONE" } });
+  assert.equal(write.hookSpecificOutput.permissionDecision, "deny", "the generic default (no status rule) would relax the bound rule");
+  assert.match(write.hookSpecificOutput.permissionDecisionReason, /unit-status-guard cannot read its bound provider rule.*no longer installed.*Fix: reinstall or update the acme-provider plugin/);
+  assert.match(write.systemMessage, /^vibe unit-status-guard: provider-broken: /);
+  const read = run(MCP_ROUTE, { tool_name: "mcp__tracker__get-document-comments", tool_input: { documentId: "ISS-1", status: "OPEN" } });
+  assert.equal(read.hookSpecificOutput.permissionDecision, undefined, "a read that filters by status is not the guarded write");
+  assert.match(read.systemMessage, /provider-broken: .*no longer installed/);
+
+  const bash = PRE_TOOL_USE_ROUTES.Bash.filter((guard) => guard.name === "shell-safety-guard");
+  const e2e = run(bash, { tool_name: "Bash", tool_input: { command: "~/vibe-remote/e2e-slot.sh run-tests ISS-1" } });
+  assert.equal(e2e.hookSpecificOutput.permissionDecision, "deny", "the slot wrapper's rule cannot be read, so an e2e script is refused");
+  assert.match(e2e.hookSpecificOutput.permissionDecisionReason, /Fix: reinstall or update the acme-provider plugin/);
+  for (const command of ["grep -n e2e-slot.sh scripts/run.sh", "cat ~/vibe-remote/e2e-slot.sh", "node scripts/check.mjs --spec e2e/home.spec.ts"]) {
+    assert.equal(run(bash, { tool_name: "Bash", tool_input: { command } }).hookSpecificOutput.permissionDecision, undefined,
+      `${command}: an e2e name in an argument or a path is not the executed script`);
+  }
+  const plain = run(bash, { tool_name: "Bash", tool_input: { command: "ls -la" } });
+  assert.equal(plain.hookSpecificOutput.permissionDecision, undefined);
+  assert.match(plain.systemMessage, /^vibe shell-safety-guard: provider-broken: /);
+  const forced = run(bash, { tool_name: "Bash", tool_input: { command: "git push --force origin main" } });
+  assert.equal(forced.hookSpecificOutput.permissionDecision, "deny", "the generic checks still run first");
+  assert.equal(forced.systemMessage, undefined);
 });

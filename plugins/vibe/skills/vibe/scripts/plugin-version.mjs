@@ -98,7 +98,7 @@ if (missingCore && process.argv[1] && import.meta.url === pathToFileURL(path.res
 const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const startupRecord = await vibeCore("lib/vibe/scripts/startup-record.mjs");
-const { bindForRepository, probeProvider, providerCandidate } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { bindForRepository, probeProvider, providerCandidate, scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { RELEASE_VERSION: VERSION, readJson, startupDir, writeJson } = startupRecord;
 export const { VersionStatus, blockingProblem, compareVersions, installedVibeVersion, loadedSkillProblem, markPending,
   readStartupRecord, startupFile } = startupRecord;
@@ -781,7 +781,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     const command = process.argv.slice(2).find((word) => COMMANDS.includes(word)) ?? "check";
     // The check itself never fails a session; the other commands report a refusal.
     process.stdout.write(`${JSON.stringify(command === "check" ? { status: VersionStatus.Unknown, reason: error.message } : { ok: false, error: error.message })}\n`);
-    process.exitCode = command === "check" ? 0 : 1;
+    // A broken bound provider is the exception: every command, the check included, stops with its reason and fix.
+    process.exitCode = scriptExitCode(error, command === "check" ? 0 : 1);
   }
 }
 

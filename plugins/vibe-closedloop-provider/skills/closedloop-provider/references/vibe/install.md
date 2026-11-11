@@ -3,8 +3,6 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: before -->
-- The vibe user needs:
-  - Codex Desktop (inside the ChatGPT app) installed and signed in.
   - A GitHub account in the `closedloop-ai` org with push access to
     `symphony-alpha` (every session pushes a `vibe/<slug>` branch and starts
     its Vercel environment through a GitHub workflow).
@@ -23,18 +21,11 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 
 <!-- block: install -->
 ## 1. Install the plugins and connect ClosedLoop
-
-In Terminal on the vibe user's Mac:
-
-```bash
-CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
-"$CODEX" plugin marketplace add closedloop-ai/claude-plugins
-"$CODEX" plugin add vibe@closedloop-ai
-"$CODEX" plugin add closedloop-core@closedloop-ai
-"$CODEX" plugin add vibe-core@closedloop-ai
-"$CODEX" mcp add closedloop --url https://mcp.closedloop.ai/mcp
-```
 <!-- end: install -->
+
+<!-- block: install-2 -->
+"$CODEX" mcp add closedloop --url https://mcp.closedloop.ai/mcp
+<!-- end: install-2 -->
 
 <!-- block: connections -->
 The last command opens the browser. Have the vibe user sign in to ClosedLoop
@@ -49,10 +40,6 @@ worker restore it (`references/preflight.md`, "Restoring a connection").
 <!-- end: connections -->
 
 <!-- block: check -->
-```bash
-"$CODEX" plugin list | grep vibe@closedloop-ai   # installed, enabled
-"$CODEX" plugin list | grep closedloop-core@closedloop-ai   # installed, enabled
-"$CODEX" plugin list | grep vibe-core@closedloop-ai   # installed, enabled
 "$CODEX" mcp list                                # closedloop (OAuth) and closedloop-graph
 ```
 <!-- end: check -->
@@ -64,16 +51,16 @@ worker restore it (`references/preflight.md`, "Restoring a connection").
   clone one into the person's usual source folder. It then bootstraps it
 - installs whatever is missing (Homebrew, Node, pnpm, `gh`, and `jq`), and puts a Node that satisfies the repo's `engines` range first on
   PATH for every new shell. Docker is not needed: the app runs on Vercel.
-- signs `gh` in to GitHub through the browser
+<!-- end: first-run -->
 
-The vibe user only has to type their Mac password when an installer asks for
+<!-- block: first-run-2 -->
 it. After that, `$vibe` asks what they want to work on and whether to start
 with sample data (seeded) or empty (blank), sets up that session's own
 Vercel environment (web app, API, and Storybook; a few minutes), and opens
 it in the in-app browser, where they sign in as themselves. Nothing of the
 web app runs on the Mac. The Desktop app runs on the Mac for every session,
 signed in to that environment, and opens as a second in-app browser tab.
-<!-- end: first-run -->
+<!-- end: first-run-2 -->
 
 <!-- block: daily -->
 | "redeploy" (in a vibe session) | Put the latest changes on their Vercel copy of the app |
