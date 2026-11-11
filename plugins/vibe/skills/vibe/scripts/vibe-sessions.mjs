@@ -5,20 +5,20 @@
 //
 // Usage:
 //   vibe-sessions.mjs repo
-//   vibe-sessions.mjs list            [--repo <symphony-alpha checkout>]
+//   vibe-sessions.mjs list            [--repo <checkout>]
 //   vibe-sessions.mjs show            --worktree <path>
 //   vibe-sessions.mjs new             [--repo <checkout>] [--worktree <checkout>/.claude/worktrees/vibe-<slug>]
 //                                     --slug <slug> --summary <text>
-//                                     --mode seeded|blank [--ticket ISS-123]
-//                                     --operator-id <id> --operator-email <email> [--operator-name <name>]
+//                                     [--mode seeded|blank] [--ticket <tracker slug>]
+//                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs new-prototype   same ownership/summary options, without --mode
 //   vibe-sessions.mjs prototype-result --worktree <path> --file <canonical result.json>
-//   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
-//                                     [--status active|handed-off] [--live-ticket ISS-123]
-//                                     [--created-live-ticket] [--member-ticket ISS-124 ...]
-//                                     [--live-plan PLN-123] [--live-plan-status DRAFT|APPROVED|EXECUTED]
+//   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket <slug>]
+//                                     [--status active|handed-off] [--live-ticket <slug>]
+//                                     [--created-live-ticket] [--member-ticket <slug> ...]
+//                                     [--live-plan <plan slug>] [--live-plan-status DRAFT|APPROVED|EXECUTED]
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
-//                                     [--clerk-org-id org_...]
+//                                     [--environment-org <id>]
 //                                     [--pr-repo <owner/repo> --pr-number <n> --pr-head <sha>]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
@@ -36,7 +36,7 @@
 //   vibe-sessions.mjs ticket-sections --worktree <path>
 //   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
 //                                     --request-id <id>
-//   vibe-sessions.mjs local-fix       --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
+//   vibe-sessions.mjs local-fix       --worktree <path> --ticket <bug reference> --path <file> [--path <file> ...]
 //   vibe-sessions.mjs story-replacement --worktree <path> --path <story file> --replacement <component>
 //   vibe-sessions.mjs discard         --worktree <path> [--confirm]
 //
@@ -44,8 +44,8 @@
 // ~/.codex/vibe/config.json; `repo` prints it. On `new`, `--worktree` names the
 // checkout that owns that path instead, and a `--repo` of another repository is
 // refused. `local-fix` records files the
-// sole implementation writer changed to work around a symphony-alpha bug (filed as the
-// ticket), so no redeploy or handoff commits them. `story-replacement` records
+// sole implementation writer changed to work around a bug in the repository (its
+// reference names the report), so no redeploy or handoff commits them. `story-replacement` records
 // an existing story file whose title changed because it became the entry of a
 // sibling replacement component (such as a V3); handoff blocks any other
 // retitled existing story file (design ruling, 2026-10-15).
@@ -56,20 +56,23 @@
 // as `pluginVersion`. It refuses while that check found an outdated plugin and
 // the person has not chosen to update or proceed.
 //
-// `operator` is the person running the session, from ClosedLoop `get-me`
-// (`--operator-*`, required on `new`; `touch` sets it on an older record):
-// the live ticket is assigned to them and handoff checks it still is.
-// The live ticket (ISS-12057) is `liveTicket`; `--handoff-ticket` and a
+// `operator` is the person running the session: the bound provider's user
+// (`--operator-*`; `touch` sets it on an older record), else the GitHub login
+// `gh` reports with git's user email. A provider's live ticket is assigned to
+// them and handoff checks it still is.
+// Tracker slugs (`--ticket`, `--live-ticket`, `--member-ticket`, `--live-plan`)
+// take the bound provider's slug patterns; with no tracker bound there is no
+// live ticket. The live ticket is `liveTicket`; `--handoff-ticket` and a
 // record's `handoffTicket` are read as the same field for sessions started
 // before it. `liveTicketCreatedBySession` distinguishes a ticket create mode
 // made from a pre-existing issue that the session only bound. `memberTickets`
 // (`touch --member-ticket`, only ever added to) are the other tickets a
-// fleet unit delivers in this session's one PR (ISS-13924); handoff audits each
+// fleet unit delivers in this session's one PR; handoff audits each
 // one's criteria and the scope checks count them as asked for. `livePlan` is the session plan's implementation plan document
-// (PLN) that the ticket worker publishes from the local plans and links from
+// that the ticket worker publishes from the local plans and links from
 // the live ticket, and `livePlanStatus` the status it last set on it
 // (operator ruling, 2026-10-19). `flag-snapshot` validates and saves the production flag snapshot
-// (ISS-12048) next to the record; `list` also shows the keys flag-keys.mjs
+// next to the record; `list` also shows the keys flag-keys.mjs
 // recorded and the person's approval of each; `codex-sessions` records this Codex thread
 // (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
 // `claude-sessions` records a Claude Code orchestrator only from its witnessed
@@ -77,24 +80,24 @@
 // `ticket-sections` prints the live ticket's Environment, Production flag
 // snapshot, and Sessions sections from the record, with the branch's current
 // merge-base as its base commit. `dispatch-inputs` writes
-// the inputs for the symphony-alpha vibe environment request workflow as a
+// the inputs for the provider's environment request workflow as a
 // JSON file for `gh workflow run <workflow> --ref main --json < <file>`, so no
 // JSON is ever quoted on a command line, with a fresh request id that names
-// the runs it starts. `touch --clerk-org-id` records the stage org a seeded
+// the runs it starts. `touch --environment-org` records the stage org a seeded
 // session's person chose when they belong to more than one; every later
 // request sends it. `desktop-auth` validates and saves the Desktop profile's
 // auth claim (`pnpm --filter desktop vibe:profile auth-claim`) next to the
 // record; every later request sends it too, so the environment signs that
 // profile in. `desktop-launched` records a running `vibe:profile launch`
 // (its pid and log) and the Desktop browser tab's URL it printed on the
-// session's stack (ISS-12182), or no URL for a worktree whose launcher
+// session's stack, or no URL for a worktree whose launcher
 // predates the tab (the Desktop window still runs); `stop` stops the recorded
 // Storybook and Desktop, each only when it is still the session's own process,
 // and `discard --confirm` stops them first; `desktop-tab` reports
 // whether that launch is still running and its URL only while it is, so a tab
 // is never reopened on a closed Desktop's port. The URL carries the launch's bridge token, so the record is written
 // owner-only and the URL never goes on the ticket. `link` prints the link to
-// give the person for one story or one real app page (`person-links.mjs`). `environment-result` checks the result `vibe-environment.yml`
+// give the person for one story or one real app page (`person-links.mjs`). `environment-result` checks the result the environment workflow
 // published for a request (its `vibe-environment-result` artifact) against
 // that request and the worktree's HEAD and only then records the verified
 // URLs, deployment ids, and deployed commit; nothing else records them, and
@@ -121,7 +124,6 @@ import { captureSessionProcessIdentities, stopSessionProcesses } from "./session
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import {
   buildDispatchInputs,
-  DISPATCH_WORKFLOW,
   DispatchInput,
   findCodexSubagents,
   findDesktopBrowserUrl,
@@ -130,31 +132,31 @@ import {
   renderRecordSections,
   validateFlagSnapshot,
   validateOperator,
+  validEnvironmentOrgId,
   vercelAliases,
 } from "./vibe-session-data.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git, readSessionRecord, sessionLiveTicket, writeSessionRecord: writeRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 const { registerWorktreeRetirement, sweepOwnedCleanups } = await vibeCore("lib/vibe/scripts/owned-cleanup.mjs");
 
 const BRANCH_PREFIX = "vibe/";
-const SYMPHONY_REPOSITORY = "closedloop-ai/symphony-alpha";
-const SCHEMA_CLEANUP_WORKFLOW = "cleanup-preview-schemas.yml";
 const WORKTREE_DIR = ".claude/worktrees";
 const WORKTREE_NAME_PREFIX = "vibe-";
 const SNAPSHOT_FILE = "vibe-flag-snapshot.json";
 const DESKTOP_AUTH_FILE = "vibe-desktop-auth.json";
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// A bug reference with no tracker bound: a URL, `#123`, or another token without spaces.
+const GENERIC_REFERENCE = /^[A-Za-z0-9#][A-Za-z0-9#._:/?=&%+-]{0,299}$/;
 // Vercel's per-branch preview aliases are `<project>-git-vibe-<slug>`, and a
 // DNS label longer than 63 characters gets truncated and hashed, which would
 // make the session's URLs unpredictable.
 const MAX_SLUG_LENGTH = 40;
-// Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
+// Written by vibe-preflight.sh; holds {"repo": "<the checkout it used last>"}.
 const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
-const TICKET_PATTERN = /^[A-Z]+-\d+$/;
-const ISSUE_PATTERN = /^(?:ISS|FEA)-\d+$/;
-const PLAN_PATTERN = /^PLN-\d+$/;
-// The PLN's status follows the work (operator ruling, 2026-10-19): DRAFT while
+// The plan document's status follows the work (operator ruling, 2026-10-19): DRAFT while
 // its plan is not built yet, APPROVED once the session wrote and checked the
 // code (at the latest when handoff opens the pull request), EXECUTED once the
 // pull request merged.
@@ -165,11 +167,10 @@ const PlanStatus = {
 };
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLAUDE_SESSION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
 const STORY_FILE_PATTERN = /\.stories\.tsx?$/;
 const MAX_REPLACEMENT_LENGTH = 200;
-// What symphony-alpha's Desktop main process logs once its window is shown.
+// What the Desktop app's main process logs once its window is shown.
 const DESKTOP_WINDOW_VISIBLE = /Desktop window visible/;
 
 const SessionStatus = {
@@ -185,8 +186,9 @@ const MainMerge = {
   Final: "final",
 };
 
-// Seeded: the session's Vercel environment is filled by the vibe seed under
-// Acme Co. Blank: no data; the person creates their own org (ISS-12056).
+// A hosted environment's starting data, with the provider's recipes: seeded
+// with the example company, or blank. A session with no hosted environment has
+// no mode.
 const SessionMode = {
   Seeded: "seeded",
   Blank: "blank",
@@ -217,6 +219,8 @@ const { positionals, values } = parseArgs({
     transcript: { type: "string" },
     out: { type: "string" },
     "person-email": { type: "string" },
+    "environment-org": { type: "string" },
+    // The same option under its name before the environment recipe moved to the provider.
     "clerk-org-id": { type: "string" },
     "request-id": { type: "string" },
     "keep-flag-snapshot": { type: "string" },
@@ -321,7 +325,7 @@ function requireOption(name) {
 
 function readRecord(worktree) {
   const record = readSessionRecord(worktree);
-  return record ? withDefaults(record) : null;
+  return record ? withDefaults(record, worktree) : null;
 }
 
 function requireRecord(worktree) {
@@ -380,7 +384,7 @@ function listSessions(repo) {
         livePlanStatus: record?.livePlanStatus ?? null,
         createdAt: record?.createdAt ?? null,
         lastActiveAt: record?.lastActiveAt ?? null,
-        vercel: isOwnedPrototypeSession(record) ? null : record?.vercel ?? vercelDefaults(entry.branch),
+        vercel: isOwnedPrototypeSession(record) ? null : record?.vercel ?? vercelDefaults(entry.branch, environmentRecipe(entry.worktree)),
         ...(isOwnedPrototypeSession(record) && record.prototype ? { prototype: record.prototype } : {}),
         flagSnapshotTakenAt: record?.flagSnapshot?.takenAt ?? null,
         flagKeys: listedFlagKeys(record?.flagKeys ?? null),
@@ -404,15 +408,17 @@ function compareLastActive(a, b) {
 function newSession({ prototype = false } = {}) {
   const slug = requireOption("slug");
   const summary = requireOption("summary");
-  const mode = prototype ? null : requireMode(requireOption("mode"));
   if (prototype && (values.mode || !/^[a-z]/.test(slug))) {
     throw new Error("A prototype slug must start with a letter and has no seeded or blank mode.");
   }
-  const operator = operatorFromArgs({ required: true });
   const versionProblem = blockingProblem(readStartupRecord(conversationId()));
   if (versionProblem) {
     throw new Error(`${versionProblem}; ask the person and record the answer with plugin-version.mjs choose before starting a session.`);
   }
+  // Before the record exists the binding is this conversation's.
+  const environment = prototype ? null : environmentRecipe(null);
+  const mode = sessionMode(environment);
+  const givenOperator = operatorFromArgs({ required: false });
   if (!SLUG_PATTERN.test(slug) || slug.length > MAX_SLUG_LENGTH) {
     throw new Error(
       `Slug must be lowercase words joined by hyphens, at most ${MAX_SLUG_LENGTH} characters.`
@@ -421,6 +427,7 @@ function newSession({ prototype = false } = {}) {
   const branch = `${prototype ? PROTOTYPE_BRANCH_PREFIX : BRANCH_PREFIX}${slug}`;
   const worktreeName = `${prototype ? "prototype-" : WORKTREE_NAME_PREFIX}${slug}`;
   const repo = newSessionRepo(worktreeName);
+  const operator = givenOperator ?? operatorFromArgs({ required: true, cwd: repo });
   const worktree = path.join(git(repo, ["rev-parse", "--show-toplevel"]), WORKTREE_DIR, worktreeName);
   if (existsSync(worktree)) {
     throw new Error(`A session already exists at ${worktree}. Resume it or pick another slug.`);
@@ -433,7 +440,8 @@ function newSession({ prototype = false } = {}) {
   }
   const base = baseBranch(repo);
   git(repo, ["fetch", "origin", base]);
-  if (prototype && git(repo, ["ls-tree", "--name-only", `origin/${base}`, `apps/prototypes/app/p/${slug}`])) {
+  const prototypeRoot = prototype ? providerDataOr(sessionBinding(null), "recipes", "prototypes", null)?.sessionRoot : null;
+  if (prototypeRoot && git(repo, ["ls-tree", "--name-only", `origin/${base}`, `${prototypeRoot}/${slug}`])) {
     throw new Error(`Prototype ${slug} already exists on the fresh base. Pick another slug.`);
   }
   git(repo, ["worktree", "add", "--no-track", "-b", branch, worktree, `origin/${base}`]);
@@ -446,16 +454,16 @@ function newSession({ prototype = false } = {}) {
     status: SessionStatus.Active,
     mode,
     operator,
-    liveTicket: ISSUE_PATTERN.test(values.ticket ?? "") ? values.ticket : null,
+    liveTicket: trackerPattern(null, "tickets", "issuePattern")?.test(values.ticket ?? "") ? values.ticket : null,
     liveTicketCreatedBySession: false,
     livePlan: null,
     livePlanStatus: null,
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),
     createdAt: now,
     lastActiveAt: now,
-    vercel: prototype ? null : vercelDefaults(branch),
+    vercel: prototype ? null : vercelDefaults(branch, environment),
     flagSnapshot: null,
-    clerkOrgId: null,
+    environmentOrgId: null,
     desktopAuthSavedAt: null,
     codexSessions: { orchestrators: [], subagents: [] },
     claudeSessions: { orchestrators: [] },
@@ -471,29 +479,24 @@ function newSession({ prototype = false } = {}) {
 function touchSession() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
-  if (isOwnedPrototypeSession(record) && (values.mode || values["clerk-org-id"])) {
-    throw new Error("Prototype sessions do not have app data modes or Clerk organizations.");
+  const orgId = values["environment-org"] ?? values["clerk-org-id"];
+  if (isOwnedPrototypeSession(record) && (values.mode || orgId)) {
+    throw new Error("Prototype sessions do not have app data modes or environment organizations.");
   }
   if (values.status && !Object.values(SessionStatus).includes(values.status)) {
     throw new Error(`--status must be one of: ${Object.values(SessionStatus).join(", ")}.`);
   }
   const liveTicket = values["live-ticket"] ?? values["handoff-ticket"];
-  if (liveTicket !== undefined && !TICKET_PATTERN.test(liveTicket)) {
-    throw new Error("--live-ticket must be a ClosedLoop slug such as ISS-123.");
-  }
+  if (liveTicket !== undefined) requireTrackerSlug(worktree, liveTicket, "live-ticket", "tickets", "slugPattern");
   if (values["created-live-ticket"] &&
     !(liveTicket && (record.liveTicket === null ||
       (record.liveTicketCreatedBySession === true && record.liveTicket === liveTicket)))) {
     throw new Error("--created-live-ticket requires the newly created --live-ticket, not a bound existing ticket.");
   }
   const members = values["member-ticket"] ?? [];
-  if (members.some((slug) => !TICKET_PATTERN.test(slug))) {
-    throw new Error("--member-ticket must be a ClosedLoop slug such as ISS-124.");
-  }
+  for (const slug of members) requireTrackerSlug(worktree, slug, "member-ticket", "tickets", "slugPattern");
   const livePlan = values["live-plan"];
-  if (livePlan !== undefined && !PLAN_PATTERN.test(livePlan)) {
-    throw new Error("--live-plan must be an implementation plan slug such as PLN-123.");
-  }
+  if (livePlan !== undefined) requireTrackerSlug(worktree, livePlan, "live-plan", "plans", "planPattern");
   const livePlanStatus = values["live-plan-status"];
   if (livePlanStatus !== undefined && !Object.values(PlanStatus).includes(livePlanStatus)) {
     throw new Error(`--live-plan-status must be one of: ${Object.values(PlanStatus).join(", ")}.`);
@@ -538,13 +541,13 @@ function touchSession() {
     ticket: values.ticket ?? record.ticket,
     status: values.status ?? record.status,
     mode: values.mode ? requireMode(values.mode) : record.mode,
-    operator: operatorFromArgs({ required: false }) ?? record.operator,
+    operator: operatorFromArgs({ required: false, cwd: worktree }) ?? record.operator,
     liveTicket: liveTicket ?? record.liveTicket,
     liveTicketCreatedBySession: values["created-live-ticket"] || record.liveTicketCreatedBySession,
     ...(members.length || record.memberTickets ? { memberTickets: [...new Set([...(record.memberTickets ?? []), ...members])] } : {}),
     livePlan: livePlan ?? record.livePlan,
     livePlanStatus: livePlanStatus ?? record.livePlanStatus,
-    clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
+    environmentOrgId: orgId ? requireEnvironmentOrgId(orgId, environmentRecipe(worktree)) : record.environmentOrgId,
     stack: values.stack ? captureSessionProcessIdentities(worktree, JSON.parse(values.stack), { previous: record.stack }) : record.stack,
     pullRequest,
     ...(mainMerge ?? record.mainMerge ? { mainMerge: mainMerge ?? record.mainMerge } : {}),
@@ -567,9 +570,9 @@ function showSession() {
 
 /**
  * Without `--confirm`, reports what discarding would lose. With it, requests
- * the drop of a pushed session's preview schema and its stored files
- * (symphony-alpha's `cleanup-preview-schemas.yml` with the branch; its daily
- * sweep never drops a `vibe/` schema, ISS-12135), then deletes the remote
+ * the drop of a pushed session's preview data when its environment recipe
+ * names a cleanup workflow (`previewCleanupWorkflow`, run with the branch in
+ * the repository the session's `origin` names), then deletes the remote
  * branch, the worktree, and the local branch, in that order, so a failed
  * request or remote delete leaves the session intact. A handed-off session is never
  * discarded. The result carries the live ticket and operator read from the
@@ -620,14 +623,16 @@ async function discardSession() {
   if (executionRoot === targetRoot || executionRoot.startsWith(`${targetRoot}${path.sep}`)) {
     throw new Error("Confirmed discard must run from a retained checkout outside its target.");
   }
-  // A discarded worktree's Storybook and Desktop would otherwise keep running with nothing left to stop them (ISS-13321).
+  // A discarded worktree's Storybook and Desktop would otherwise keep running with nothing left to stop them.
+  const cleanupWorkflow = prototype ? null : environmentRecipe(worktree)?.previewCleanupWorkflow ?? null;
   const stopped = await stopRecorded(worktree, record);
   const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const repo = path.dirname(commonDir);
-  if (wouldLose.pushed && !prototype) {
+  const cleanupRequested = Boolean(wouldLose.pushed && cleanupWorkflow);
+  if (cleanupRequested) {
     execFileSync(
       "gh",
-      ["workflow", "run", SCHEMA_CLEANUP_WORKFLOW, "--repo", SYMPHONY_REPOSITORY, "--ref", "main", "-f", `branch=${branch}`],
+      ["workflow", "run", cleanupWorkflow, "--repo", originRepository(worktree), "--ref", "main", "-f", `branch=${branch}`],
       { stdio: ["ignore", "pipe", "pipe"] }
     );
   }
@@ -640,7 +645,7 @@ async function discardSession() {
     discarded: true,
     processes: stopped,
     remoteBranchDeleted: wouldLose.pushed,
-    schemaCleanupRequested: wouldLose.pushed && !prototype,
+    schemaCleanupRequested: cleanupRequested,
     wouldLose,
     ...(wouldLose.liveTicket && wouldLose.liveTicketCreatedBySession ? { cancelEvidence: {
       discarded: true, branch, liveTicket: wouldLose.liveTicket, liveTicketCreatedBySession: true,
@@ -660,7 +665,7 @@ function requireOwnedSession(worktree, record, action) {
   }
   const operator = validateOperator({ id: record.operator?.id, email: record.operator?.email,
     ...(record.operator?.name ? { name: record.operator.name } : {}) });
-  if (record.liveTicket !== null && !TICKET_PATTERN.test(record.liveTicket)) {
+  if (record.liveTicket !== null && !recordedTicketOk(worktree, record.liveTicket)) {
     throw new Error(`${action} requires a valid recorded live ticket or no ticket.`);
   }
   if (typeof record.liveTicketCreatedBySession !== "boolean" ||
@@ -676,7 +681,7 @@ function requireOwnedSession(worktree, record, action) {
 
 /**
  * The branch new sessions start from: `main`, unless the checkout sets git
- * config `vibe.baseRef` (a temporary override while the symphony-alpha vibe
+ * config `vibe.baseRef` (a temporary override while the repository's vibe
  * environment is not on main yet; unset it once it is).
  */
 function baseBranch(cwd) {
@@ -687,13 +692,6 @@ function baseBranch(cwd) {
   }
 }
 
-function requireClerkOrgId(id) {
-  if (!CLERK_ORG_PATTERN.test(id)) {
-    throw new Error("--clerk-org-id must be a Clerk organization id (org_...).");
-  }
-  return id;
-}
-
 function requireMode(mode) {
   if (!Object.values(SessionMode).includes(mode)) {
     throw new Error(`--mode must be one of: ${Object.values(SessionMode).join(", ")}.`);
@@ -702,12 +700,17 @@ function requireMode(mode) {
 }
 
 /**
- * The symphony-alpha checkout: `--repo` when given, otherwise the one
- * vibe-preflight.sh remembered.
+ * The session repository's checkout, in vibe-preflight.sh's order: `--repo`
+ * when given, then the checkout that owns the working directory (a worktree
+ * resolves to its main checkout), then the one vibe-preflight.sh remembered.
  */
 function resolveRepo() {
   if (values.repo) {
     return values.repo;
+  }
+  const here = cwdCheckout();
+  if (here) {
+    return here;
   }
   let config = null;
   try {
@@ -718,7 +721,7 @@ function resolveRepo() {
   const repo = typeof config?.repo === "string" ? config.repo : "";
   if (!repo) {
     throw new Error(
-      `No symphony-alpha checkout is remembered in ${CONFIG_FILE}. Run vibe-preflight.sh first, or pass --repo.`
+      `No checkout is remembered in ${CONFIG_FILE}. Run vibe-preflight.sh first, or pass --repo.`
     );
   }
   if (!existsSync(repo)) {
@@ -732,7 +735,7 @@ function resolveRepo() {
 /**
  * The checkout a new session starts in. A requested `--worktree` names it: the path must be
  * `<checkout>/.claude/worktrees/<worktreeName>`, and a `--repo` of another repository is refused,
- * so a claude-plugins session never lands in the remembered symphony-alpha checkout (ISS-13834).
+ * so a session for one repository never lands in another repository's remembered checkout.
  * Without `--worktree`, `--repo` or the remembered checkout as before.
  */
 function newSessionRepo(worktreeName) {
@@ -774,8 +777,10 @@ function gitCommonDir(dir) {
 function recordLocalFix() {
   const worktree = requireOption("worktree");
   const ticket = requireOption("ticket");
-  if (!TICKET_PATTERN.test(ticket)) {
-    throw new Error("--ticket must be a ClosedLoop slug such as ISS-123.");
+  if (!recordedTicketOk(worktree, ticket)) {
+    throw new Error(trackerPattern(worktree, "tickets", "slugPattern")
+      ? "--ticket must be a tracker slug of the bound provider's form."
+      : "--ticket must name the bug report: its URL, `#<number>` or another reference without spaces.");
   }
   const paths = (values.path ?? []).map(normalizeRepoPath);
   if (paths.length === 0) {
@@ -810,9 +815,11 @@ function normalizeRepoPath(raw) {
   return normalized.replace(/\/$/, "");
 }
 
-function vercelDefaults(branch) {
+/** The hosted environment's record fields for a new session, or null with no environment recipe. */
+function vercelDefaults(branch, environment) {
+  if (!environment) return null;
   return {
-    ...vercelAliases(branch),
+    ...vercelAliases(branch, environment),
     lastDeployedCommit: null,
     lastDeployedAt: null,
     deploymentIds: null,
@@ -821,12 +828,13 @@ function vercelDefaults(branch) {
 }
 
 /**
- * Fills fields added after a record was written, reads the pre-ISS-12057
- * `handoffTicket` as `liveTicket`, and drops the retired draft/full `scope`
- * (every session is built frontend and backend).
+ * Fills fields added after a record was written, reads an older record's
+ * `handoffTicket` as `liveTicket` and its `clerkOrgId` as `environmentOrgId`,
+ * and drops the retired draft/full `scope` (every session is built frontend
+ * and backend).
  */
-function withDefaults(record) {
-  const { handoffTicket, scope: _retiredScope, ...rest } = record;
+function withDefaults(record, worktree) {
+  const { handoffTicket, clerkOrgId: legacyOrgId, scope: _retiredScope, ...rest } = record;
   return {
     ...rest,
     mode: rest.mode ?? null,
@@ -836,10 +844,10 @@ function withDefaults(record) {
       ? sessionLiveTicket(record) !== null : rest.liveTicketCreatedBySession,
     livePlan: rest.livePlan ?? null,
     livePlanStatus: rest.livePlanStatus ?? null,
-    vercel: vercelWithDefaults(rest),
+    vercel: vercelWithDefaults(rest, worktree),
     flagSnapshot: rest.flagSnapshot ?? null,
     flagKeys: rest.flagKeys ?? null,
-    clerkOrgId: rest.clerkOrgId ?? null,
+    environmentOrgId: rest.environmentOrgId ?? legacyOrgId ?? null,
     desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
     claudeSessions: rest.claudeSessions ?? { orchestrators: [] },
@@ -847,14 +855,14 @@ function withDefaults(record) {
   };
 }
 
-function vercelWithDefaults(record) {
+function vercelWithDefaults(record, worktree) {
   if (isOwnedPrototypeSession(record)) {
     return null;
   }
   if (record.vercel) {
     return { deploymentIds: null, verifiedAt: null, ...record.vercel };
   }
-  return record.branch ? vercelDefaults(record.branch) : null;
+  return record.branch ? vercelDefaults(record.branch, environmentRecipe(worktree)) : null;
 }
 
 function snapshotPath(worktree) {
@@ -873,7 +881,7 @@ function saveFlagSnapshot() {
     throw new Error(`Could not read a JSON flag snapshot from ${file}: ${error instanceof Error ? error.message : String(error)}`);
   }
   const snapshot = validateFlagSnapshot(parsed);
-  // ISS-12135 bug 43: the snapshot is taken once, when the session starts,
+  // The snapshot is taken once, when the session starts,
   // and replaced only when the person asks (flags mode passes --replace).
   if (record.flagSnapshot && !values.replace) {
     throw new Error(
@@ -971,7 +979,7 @@ function ticketSections() {
   const record = requireRecord(worktree);
   const implementationWriter = readWriterSummary(worktree);
   return renderRecordSections({ ...record, baseCommit: currentBaseCommit(worktree, record),
-    ...(implementationWriter ? { implementationWriter } : {}) }, readSnapshot(worktree, record));
+    ...(implementationWriter ? { implementationWriter } : {}) }, readSnapshot(worktree, record), environmentRecipe(worktree));
 }
 
 /** Writes the environment request workflow's inputs for this session to `--out`. */
@@ -979,7 +987,11 @@ async function dispatchInputs() {
   const worktree = requireOption("worktree");
   const out = requireOption("out");
   const record = requireRecord(worktree);
-  // ISS-12135 bug 43: a snapshot is kept only when this session's previous
+  const environment = environmentRecipe(worktree);
+  if (!environment?.requestWorkflow) {
+    throw new Error("This session has no hosted environment: no provider recipe names a request workflow for the repository.");
+  }
+  // A snapshot is kept only when this session's previous
   // request published a verified result. A run that failed (perhaps before
   // posting the snapshot into a schema it built) gets it posted again.
   const previousVerified =
@@ -990,10 +1002,11 @@ async function dispatchInputs() {
     record,
     snapshot: readSnapshot(worktree, record),
     personEmail: values["person-email"],
-    clerkOrgId: record.clerkOrgId ?? undefined,
+    environmentOrgId: record.environmentOrgId ?? undefined,
     desktopAuth: readDesktopAuth(worktree, record),
     requestId: randomUUID(),
     keepFlagSnapshot,
+    environment,
   });
   try {
     const mainSync = admitMainSyncRequest(await readMainSyncInput(worktree));
@@ -1007,7 +1020,7 @@ async function dispatchInputs() {
   writeFileSync(out, `${JSON.stringify(inputs)}\n`);
   writeRecord(worktree, { ...record, lastRequestId: inputs[DispatchInput.RequestId] });
   return {
-    workflow: DISPATCH_WORKFLOW,
+    workflow: environment.requestWorkflow,
     ref: "main",
     out,
     requestId: inputs[DispatchInput.RequestId],
@@ -1043,14 +1056,21 @@ function readDesktopAuth(worktree, record) {
   return record.desktopAuthSavedAt && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
 }
 
-/** The `--operator-*` options as a validated operator, or undefined when none is given and none is required. */
-function operatorFromArgs({ required }) {
+/**
+ * The `--operator-*` options as a validated operator, or undefined when none is given and none is required.
+ * With a tracker bound they are required (its user lookup names the person); without one the operator is
+ * the GitHub login `gh` reports, with git's user email in `cwd`.
+ */
+function operatorFromArgs({ required, cwd }) {
   const given = ["operator-id", "operator-email", "operator-name"].some((name) => values[name] !== undefined);
   if (!given && !required) {
     return undefined;
   }
+  if (!given && trackerPattern(null, "tickets", "slugPattern")) {
+    throw new Error("--operator-id and --operator-email are required: the person running the session, from the bound tracker's user lookup.");
+  }
   if (!given) {
-    throw new Error("--operator-id and --operator-email are required: the person running the session, from ClosedLoop get-me.");
+    return gitHubOperator(cwd);
   }
   return validateOperator({
     id: values["operator-id"],
@@ -1103,7 +1123,7 @@ function recordEnvironmentResult() {
 
 /**
  * The branch's base as the handoff inventory computes it: its merge-base with
- * the base branch, which moves when the session merges main (ISS-12135). The
+ * the base branch, which moves when the session merges main. The
  * commit the session started from is only the fallback when there is none.
  */
 function currentBaseCommit(worktree, record) {
@@ -1122,7 +1142,7 @@ function currentBaseCommit(worktree, record) {
  * Records a running `vibe:profile launch` on the session's stack, keeping what
  * else the stack lists: its pid, its log, and the Desktop browser tab's URL
  * from that log. A log that shows the window up but no URL is a worktree whose
- * launcher predates the tab (symphony-alpha before ISS-12182): the launch is
+ * launcher predates the tab: the launch is
  * recorded with no URL, so Desktop still runs as its own window. A log with
  * neither is refused: Desktop has not started.
  */
@@ -1140,7 +1160,7 @@ function recordDesktopLaunch() {
   } catch (error) {
     throw new Error(`Could not read the Desktop launch log ${log}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const desktopBrowserUrl = findDesktopBrowserUrl(text);
+  const desktopBrowserUrl = findDesktopBrowserUrl(text, environmentRecipe(worktree));
   if (desktopBrowserUrl === null && !DESKTOP_WINDOW_VISIBLE.test(text)) {
     throw new Error(`${log} shows neither a "Desktop browser URL:" line nor "Desktop window visible": Desktop has not started yet.`);
   }
@@ -1229,5 +1249,92 @@ function refuseLateMigrations(worktree) {
   const { problems } = migrationOrderProblems(worktree);
   if (problems.length > 0) {
     throw new MainSyncError(`Nothing was pushed: ${problems.join("; ")}`, "NEEDS_CHANGE");
+  }
+}
+
+/** The bound provider's hosted environment recipe for the session at `worktree` (or this conversation), or null. */
+function environmentRecipe(worktree) {
+  return providerDataOr(sessionBinding(worktree), "recipes", "environment", null);
+}
+
+/** The bound provider's `data[capability][key]` slug pattern, or null with no such provider. */
+function trackerPattern(worktree, capability, key) {
+  const pattern = providerDataOr(sessionBinding(worktree), capability, key, null);
+  return typeof pattern === "string" ? new RegExp(pattern) : null;
+}
+
+function requireTrackerSlug(worktree, value, option, capability, key) {
+  const pattern = trackerPattern(worktree, capability, key);
+  if (!pattern) {
+    throw new Error(`--${option} needs a bound provider with ${capability}; this session has none.`);
+  }
+  if (!pattern.test(value)) {
+    throw new Error(`--${option} must be a slug of the form ${pattern.source}.`);
+  }
+}
+
+/** A recorded ticket reference: the bound tracker's slug form, else any reference without spaces. */
+function recordedTicketOk(worktree, ticket) {
+  const pattern = trackerPattern(worktree, "tickets", "slugPattern");
+  return typeof ticket === "string" && (pattern ? pattern.test(ticket) : GENERIC_REFERENCE.test(ticket));
+}
+
+/**
+ * A seeded or blank start for a hosted environment (required with one); none without, where `--mode` is
+ * refused because there is no environment for it to seed.
+ */
+function sessionMode(environment) {
+  if (environment) return requireMode(requireOption("mode"));
+  if (values.mode) {
+    throw new Error("--mode needs a hosted environment, and no provider recipe names one for this repository.");
+  }
+  return null;
+}
+
+function requireEnvironmentOrgId(id, environment) {
+  if (!validEnvironmentOrgId(id, environment)) {
+    throw new Error(environment
+      ? `--environment-org must be an organization id of the form ${environment.orgIdPattern}.`
+      : "--environment-org needs a hosted environment, and this session has none.");
+  }
+  return id;
+}
+
+/** The `<owner>/<repo>` the session's `origin` names on GitHub. */
+function originRepository(worktree) {
+  // The configured URL, before any `insteadOf` rewrite.
+  const url = git(worktree, ["config", "--get", "remote.origin.url"]);
+  const repository = githubRepository(url);
+  if (!repository) throw new Error(`origin (${url}) is not a GitHub repository.`);
+  return repository;
+}
+
+/** The person running a session with no tracker: their GitHub login and name from `gh`, with git's user email. */
+function gitHubOperator(cwd) {
+  let user;
+  try {
+    user = JSON.parse(execFileSync("gh", ["api", "user"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  } catch {
+    throw new Error("No operator: pass --operator-id and --operator-email, or sign in with `gh auth login`.");
+  }
+  let email = "";
+  try {
+    email = git(cwd, ["config", "--get", "user.email"]);
+  } catch {
+    email = "";
+  }
+  if (!email) {
+    throw new Error("No operator email: set git's user.email in the repository, or pass --operator-email.");
+  }
+  return validateOperator({ id: user?.login, email, ...(user?.name ? { name: user.name } : {}) });
+}
+
+/** The main checkout that owns the working directory, or null outside a git checkout. */
+function cwdCheckout() {
+  try {
+    if (git(process.cwd(), ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
+    return path.dirname(git(process.cwd(), ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
+  } catch {
+    return null;
   }
 }

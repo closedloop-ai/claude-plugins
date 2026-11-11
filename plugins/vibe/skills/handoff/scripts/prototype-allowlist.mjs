@@ -1,5 +1,7 @@
+import { prototypeRecipe } from "../../vibe/scripts/area-paths.mjs";
 /** The canonical sandbox checker, with one exact-module extension point. */
-export const PORTABLE_SURFACE_CHECKER = "apps/prototypes/scripts/check-catalog-imports.mjs";
+/** The repository's prototype catalog checker (the provider's prototype recipe), or null without one. */
+export const portableSurfaceChecker = () => prototypeRecipe()?.portableSurfaceChecker ?? null;
 const DECLARATION = "const portableSurfaceAllowlist = new Set([";
 const END = "\n]);";
 const STRING_LINE = /^\s*("(?:[^"\\]|\\.)*")\s*,?\s*$/;

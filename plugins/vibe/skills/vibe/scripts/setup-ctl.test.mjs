@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  AUTO_FIXES, classifyChecks, CLAUDE_SIGN_IN_WORDS, createSetupCtl, DESKTOP_UNAVAILABLE, folderAccessWords, freePort, parsePreflight, Status, STORYBOOK_PORTS,
+  AUTO_FIXES, classifyChecks, CLAUDE_SIGN_IN_WORDS, createSetupCtl, DESKTOP_UNAVAILABLE, freePort, parsePreflight, Status, STORYBOOK_PORTS,
 } from "./setup-ctl.mjs";
 
 const ok = (stdout = "") => ({ status: 0, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr: "" });
@@ -27,14 +27,14 @@ function clock() {
 test("preflight lines are parsed and every failed check is classified by its fix, never guessed", () => {
   const checks = parsePreflight([
     line("node", true, "24", ""), "not json", line("pnpm", false, "not installed", "install-pnpm"),
-    line("claude-login", false, "signed out", "claude-auth-login"), line("repo", false, "a|b", "choose-repo"),
+    line("claude-login", false, "signed out", "claude-auth-login"), line("repo", false, "no checkout", "ask-for-repo-path"),
     line("gh", false, "no", "gh-auth-login"), line("odd", false, "?", "something-new"),
     line("closedloop-core", false, "missing", "codex plugin add closedloop-core@closedloop-ai"),
   ].join("\n"));
   const plan = classifyChecks(checks);
   assert.deepEqual(plan.auto.map((item) => item.fix), ["install-pnpm"]);
   assert.deepEqual(plan.needsPerson.map((item) => item.fix), ["claude-auth-login"]);
-  assert.deepEqual(plan.blocked.map((item) => item.fix), ["choose-repo", "codex plugin add closedloop-core@closedloop-ai"]);
+  assert.deepEqual(plan.blocked.map((item) => item.fix), ["ask-for-repo-path", "codex plugin add closedloop-core@closedloop-ai"]);
   assert.deepEqual(plan.delegated.map((item) => item.fix), ["gh-auth-login"]);
   assert.deepEqual(plan.unknown.map((item) => item.fix), ["something-new"]);
 });
@@ -42,13 +42,11 @@ test("preflight lines are parsed and every failed check is classified by its fix
 test("a person's exit carries only the sentence preflight.md writes; one with no written sentence has message null and a reference", () => {
   const plan = classifyChecks([
     { check: "claude-login", ok: false, detail: "x", fix: "claude-auth-login" },
-    { check: "folders", ok: false, detail: "Documents", fix: "allow-folder-access" },
     { check: "git", ok: false, detail: "no", fix: "install-xcode-clt" },
   ]);
   assert.equal(plan.needsPerson[0].message, CLAUDE_SIGN_IN_WORDS);
-  assert.equal(plan.needsPerson[1].message, folderAccessWords("Documents"));
-  assert.equal(plan.needsPerson[2].message, null);
-  assert.match(plan.needsPerson[2].reference, /install-xcode-clt/);
+  assert.equal(plan.needsPerson[1].message, null);
+  assert.match(plan.needsPerson[1].reference, /install-xcode-clt/);
 });
 
 test("without --apply the preflight fix only reports; with it only the no-person fixes run, then the preflight runs again", () => {
@@ -88,16 +86,34 @@ test("a fix that fails is reported with its output and the check stays unresolve
   assert.equal(result.status, Status.NeedsAgent);
 });
 
-test("bootstrap runs loops-setup.sh bounded in the worktree: OK, NEEDS_AGENT with output on failure, BLOCKED on time out or no script", () => {
+// The bootstrap command is the bound provider's recipe; this one is the recipe the ClosedLoop provider declares.
+const PROVIDER_BOOTSTRAP = (worktree, key) => (key === "bootstrap" ? { command: "./.closedloop-ai/loops-setup.sh", fix: "run-loops-setup" } : null);
+
+test("bootstrap runs the provider's bootstrap bounded in the worktree: OK, NEEDS_AGENT with output on failure, BLOCKED on time out or no script", () => {
   const calls = [];
-  const present = (result) => createSetupCtl({ run: router([["run-bounded.mjs 1800 ./.closedloop-ai/loops-setup.sh", result]], calls), exists: () => true });
+  const present = (result) => createSetupCtl({ run: router([["run-bounded.mjs 1800 ./.closedloop-ai/loops-setup.sh", result]], calls), exists: () => true, recipe: PROVIDER_BOOTSTRAP });
   assert.equal(present(ok()).bootstrap({ worktree: "/wt" }).status, Status.Ok);
   assert.equal(calls[0].options.cwd, "/wt");
   const failed = present(bad("missing DATABASE_URL")).bootstrap({ worktree: "/wt" });
   assert.equal(failed.status, Status.NeedsAgent);
   assert.match(failed.evidenceTail, /DATABASE_URL/);
   assert.equal(present(bad("", 124)).bootstrap({ worktree: "/wt" }).status, Status.Blocked);
-  assert.equal(createSetupCtl({ run: router([]), exists: () => false }).bootstrap({ worktree: "/wt" }).status, Status.Blocked);
+  assert.equal(createSetupCtl({ run: router([]), exists: () => false, recipe: PROVIDER_BOOTSTRAP }).bootstrap({ worktree: "/wt" }).status, Status.Blocked);
+  assert.deepEqual(classifyChecks([{ check: "repo-bootstrap", ok: false, fix: "run-loops-setup" }], "run-loops-setup").delegated.map((item) => item.fix),
+    ["run-loops-setup"], "the provider's bootstrap fix is delegated like install-dependencies");
+});
+
+test("without a provider recipe the bootstrap is the lockfile's install, and with no lockfile the worker reads the repository's docs", () => {
+  const calls = [];
+  const lockfile = (name) => createSetupCtl({ run: router([["run-bounded.mjs 1800", ok()]], calls), recipe: () => null,
+    exists: (file) => file.endsWith(name) });
+  assert.equal(lockfile("package-lock.json").bootstrap({ worktree: "/wt" }).command, "npm ci");
+  assert.equal(lockfile("pnpm-lock.yaml").bootstrap({ worktree: "/wt" }).command, "pnpm install --frozen-lockfile");
+  assert.ok(calls.every((call) => call.options.cwd === "/wt"));
+  const none = createSetupCtl({ run: router([]), recipe: () => null, exists: () => false }).bootstrap({ worktree: "/wt" });
+  assert.equal(none.status, Status.NeedsAgent);
+  assert.match(none.reason, /AGENTS\.md or README/);
+  assert.equal(classifyChecks([{ check: "repo-bootstrap", ok: false, fix: "install-dependencies" }]).delegated.length, 1);
 });
 
 test("a free port is the first in the range that answers free, null when none", async () => {
@@ -123,9 +139,13 @@ function storybookCtl({ record, probes = {}, logs = "Local: http://localhost:610
     alive,
     exists: () => true,
     readFile: () => logs,
+    recipe: (worktree, key) => (key === "storybook" ? STORYBOOK_RECIPE : null),
   });
   return { ctl, calls, detached };
 }
+
+// The Storybook command the ClosedLoop provider's recipes declare.
+const STORYBOOK_RECIPE = { command: ["pnpm", "--filter", "storybook", "exec", "storybook", "dev", "-p", "{port}", "--ci", "--no-open"] };
 
 test("a Storybook that is alive and answers is reused, never started a second time", async () => {
   const { ctl, detached } = storybookCtl({ record: { stack: { storybookUrl: "http://localhost:6101", storybookPid: 9 } }, probes: { "http://localhost:6101": true } });
@@ -139,7 +159,7 @@ test("a stale recorded Storybook is replaced: started on the first free port, re
   });
   const result = await ctl.storybook({ worktree: "/wt" });
   assert.deepEqual(result, { status: Status.Ok, reused: false, url: "http://localhost:6100", pid: 4242 });
-  assert.deepEqual(detached[0].args, ["--filter", "storybook", "exec", "storybook", "dev", "-p", "6100", "--ci", "--no-open"]);
+  assert.deepEqual([detached[0].command, ...detached[0].args], ["pnpm", "--filter", "storybook", "exec", "storybook", "dev", "-p", "6100", "--ci", "--no-open"]);
   assert.equal(detached[0].options.logFile, "/gd/vibe-storybook.log");
   const touch = calls.find((call) => call.line.includes("vibe-sessions.mjs touch")).line;
   assert.match(touch, /"desktopPid":77/);
@@ -264,4 +284,17 @@ test("discard refuses when the retained checkout is the target, and a discard th
   const result = partial.discard({ worktree: "/target", confirmed: true });
   assert.equal(result.status, Status.Blocked);
   assert.equal(result.error, "push refused");
+});
+
+test("without a provider recipe Storybook starts through the package's own storybook script", async () => {
+  const detached = [];
+  const ctl = createSetupCtl({
+    run: router([["vibe-sessions.mjs show", ok({ ok: true, session: { stack: {} } })], ["rev-parse --absolute-git-dir", ok("/gd\n")],
+      ["vibe-sessions.mjs touch", ok({ ok: true })]]),
+    ...clock(), isPortFree: async (port) => port === 6100, probe: async (url) => url === "http://localhost:6100",
+    detach: (command, args) => { detached.push([command, ...args]); return 7; }, alive: () => true, readFile: () => "Local: x",
+    exists: (file) => file.endsWith("yarn.lock") || file.endsWith("vibe-storybook.log"), recipe: () => null,
+  });
+  assert.equal((await ctl.storybook({ worktree: "/wt" })).status, Status.Ok);
+  assert.deepEqual(detached[0], ["yarn", "run", "storybook", "--", "-p", "6100", "--ci", "--no-open"]);
 });

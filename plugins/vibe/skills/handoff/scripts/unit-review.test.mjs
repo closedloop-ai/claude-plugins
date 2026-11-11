@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +11,10 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
 const { unitStatusProblem } = await vibeCore("hooks/unit-status-guard.mjs");
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tickets exist only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL("./unit-review.mjs", import.meta.url));
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);

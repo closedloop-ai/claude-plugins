@@ -2,7 +2,7 @@
 // A pull request may open only for the exact source that passed the final
 // pull-request inventory, including its body and verifier run evidence. This
 // records that witness; vibe-core's handoff-gate-check.mjs reads it.
-// A fleet unit's member tickets (`--member <slug>=<body>`, ISS-13924) are
+// A fleet unit's member tickets (`--member <slug>=<body>`) are
 // audited with the session's ticket and bound into the witness the same way.
 // With members recorded on the session, the gate needs `--title`, and the
 // title and body must name every member; the witness keeps the member list,

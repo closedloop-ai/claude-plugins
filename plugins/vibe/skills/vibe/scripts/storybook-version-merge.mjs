@@ -3,7 +3,7 @@
 // the version file and the Version History. Main ships a Storybook release
 // several times a day and so does every session that changes a story, so
 // nearly every main sync conflicted on those two files, and resolving them by
-// hand each time kept a publication from ever converging (ISS-13321).
+// hand each time kept a publication from ever converging.
 //
 // It takes main's version, bumps it by the level the session bumped its own
 // base version (major, minor or patch), writes that into main's version file,

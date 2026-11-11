@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { hookStandDown, vibeInstall } from "../shared/vibe-install.mjs";
+import { activated } from "./activation.mjs";
 
 /** PreToolUse precedence when several decisions disagree: "deny > defer > ask > allow" (hooks docs, PreToolUse decision control). */
 export const DECISION_PRECEDENCE = Object.freeze(["deny", "defer", "ask", "allow"]);
@@ -31,11 +32,20 @@ export function isMain(metaUrl) {
   return Boolean(process.argv[1]) && metaUrl === pathToFileURL(process.argv[1]).href;
 }
 
-/** The non-null results of `guards` for `event`; `report(line)` receives each throwing guard's error. */
-export function runGuards(guards, event, report) {
+/**
+ * The non-null results of `guards` for `event`; `report(line)` receives each throwing guard's error.
+ * A guard with `activated: true` runs only in a chat that activated vibe (activation.mjs); that is
+ * decided once, the first time such a guard comes up, by `isActivated(event)`.
+ */
+export function runGuards(guards, event, report, isActivated = activated) {
   const results = [];
-  for (const { name, run } of guards) {
+  let active;
+  for (const { name, run, activated: gated } of guards) {
     try {
+      if (gated) {
+        active ??= isActivated(event) === true;
+        if (!active) continue;
+      }
       const result = run(event);
       if (result) results.push(result);
     } catch (error) {

@@ -1,6 +1,8 @@
+import { issueKey, requirementsKey } from "../../vibe/scripts/tracker-key.mjs";
 const IMAGE = /\.(?:png|jpe?g|webp)$/i;
 const BASELINE_PATH = /(?:^|\/)(?:__screenshots__|snapshots?|baselines?|goldens?)(?:\/|$)/i;
-const HUMAN_SOURCE = /^(?:(?:ISS|PRD|FEA)-\d+\s+(?:AC(?:-?\d+)?|acceptance criterion|ruling)\b|operator ruling\b)/i;
+// A cited human source: a tracker ticket's criterion or ruling (tracker-key.mjs), or an operator ruling.
+const humanSource = () => new RegExp(String.raw`^(?:(?:${issueKey()}|${requirementsKey()})\s+(?:AC(?:-?\d+)?|acceptance criterion|ruling)\b|operator ruling\b)`, "i");
 
 /** Whether a changed path is a visual test baseline rather than an ordinary image asset. */
 export function isVisualBaseline(file) {
@@ -37,7 +39,7 @@ export function visualBaselineLedgerProblems(body, files) {
     }
     for (const element of elements) {
       const parsed = /^(.*?):\s*(.*?):\s*(.*)$/.exec(element);
-      if (!parsed || parsed[1].trim() !== surface || !parsed[2].trim() || !HUMAN_SOURCE.test(parsed[3].trim())) {
+      if (!parsed || parsed[1].trim() !== surface || !parsed[2].trim() || !humanSource().test(parsed[3].trim())) {
         problems.push(`${file}: each \`Baseline element\` must name the inventory surface, the element, and its ticket acceptance criterion or ruling; "plausibly intended" is not a source`);
       }
     }

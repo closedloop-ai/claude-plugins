@@ -1,23 +1,21 @@
 #!/usr/bin/env node
-// One context pack for the writer and the Spec Card (PRD-823, WS3 D3,
-// ISS-13345): for each file or directory a request will touch, the owner,
-// the importing hosts, the tests and stories that cover it, the FEATURE_MAP
-// entries that name it, and the precedents for the request's terms, read from
-// the worktree in one pass. It replaces the three advisor launches that each
-// searched for the same things (`vibe-backend-worker`, `vibe-primitive-worker`,
-// `vibe-storybook-decomposer` placement mode), and it is exactly the evidence
-// `closedloop-graph.md` names as the fallback ("searched with rg and
-// FEATURE_MAP") when the graph is unreachable.
+// One context pack for the writer and the Spec Card: for each file or directory a request will touch, the owner,
+// the importing hosts, the tests and stories that cover it, the feature map
+// entries that name it (when the bound provider's recipe names the
+// repository's feature map file), and the precedents for the request's terms,
+// read from the worktree in one pass. It replaces the three advisor launches
+// that each searched for the same things (`vibe-backend-worker`,
+// `vibe-primitive-worker`, `vibe-storybook-decomposer` placement mode), and it
+// is the evidence a session without a graph reads in its place.
 //
-// It is worktree evidence, not graph evidence: the closedloop-graph tools are
-// MCP calls this script cannot make, so the pack lists them under
-// `graphCallsStillOwed`, and the writer's required Graph block is not
-// satisfied by it. In-flight tickets (`blast_radius_tickets`, `query_wip`)
-// are only in the graph and are owed the same way.
+// It is worktree evidence, not graph evidence: a bound graph provider's tools
+// are MCP calls this script cannot make, so the pack lists them under
+// `graphCallsStillOwed` (the provider's `data.graph.packCallsOwed`; none
+// without one), and a required Graph block is not satisfied by it.
 //
 // Usage: graph-pack.mjs --worktree <path> --paths <a,b,...> [--terms <t1,t2,...>] [--out <file>]
 // Prints the pack JSON (`vibe.graph-pack/1`); with --out writes it too. Reads
-// only: `git ls-files`, `git grep`, the CODEOWNERS and FEATURE_MAP files.
+// only: `git ls-files`, `git grep`, the CODEOWNERS and feature map files.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -26,14 +24,14 @@ import { parseArgs } from "node:util";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "../../handoff/scripts/source-imports.mjs";
 import { isTestFile } from "./test-files.mjs";
 import { execCommand } from "./ws3-exec.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const PACK_SCHEMA = "vibe.graph-pack/1";
-export const GRAPH_CALLS_STILL_OWED = Object.freeze([
-  "query_collisions", "code_symbols", "code_callers", "code_importers", "code_tests_for", "blast_radius_tickets",
-]);
 const STORY = /\.stories\.[jt]sx?$/;
 const COMPONENT = /\.[jt]sx$/;
-const FEATURE_MAP = /(?:^|\/)FEATURE_MAP\.md$/;
+const WORKTREE_SOURCE = "worktree: git ls-files, git grep and CODEOWNERS";
 const CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
 const MAX_LIST = 25;
 const MAX_PRECEDENTS = 10;
@@ -63,7 +61,7 @@ export function codeowners(text, file) {
   return owners;
 }
 
-/** The FEATURE_MAP entry ids whose block names `file`, or a folder holding it, in backticks. */
+/** The feature map entry ids whose block names `file`, or a folder holding it, in backticks. */
 export function featureMapIds(text, file) {
   const ids = [];
   for (const block of text.split(/^### /m).slice(1)) {
@@ -75,7 +73,15 @@ export function featureMapIds(text, file) {
   return ids;
 }
 
-export function createGraphPack({ run = execCommand, read = (file) => readFileSync(file, "utf8") } = {}) {
+/** The graph calls a pack leaves owed for `binding`: the bound graph provider's, or none. */
+export function graphCallsStillOwed(binding) {
+  return Object.freeze([...providerDataOr(binding, "graph", "packCallsOwed", [])]);
+}
+
+/**
+ * `binding` is the session's provider binding (by default the one recorded for the worktree each pack reads).
+ */
+export function createGraphPack({ run = execCommand, read = (file) => readFileSync(file, "utf8"), binding } = {}) {
   const git = (worktree, args) => run("git", ["-C", worktree, ...args]);
 
   function trackedFiles(worktree) {
@@ -161,6 +167,8 @@ export function createGraphPack({ run = execCommand, read = (file) => readFileSy
   }
 
   function pack({ worktree, paths, terms = [] }) {
+    const bound = binding === undefined ? sessionBinding(worktree) : binding;
+    const featureMap = providerDataOr(bound, "recipes", "featureMap", null);
     const tracked = trackedFiles(worktree);
     const readIf = (candidates) => {
       const found = candidates.find((file) => tracked.has(file));
@@ -168,15 +176,15 @@ export function createGraphPack({ run = execCommand, read = (file) => readFileSy
     };
     const texts = {
       codeowners: readIf(CODEOWNERS_PATHS),
-      featureMap: readIf([...tracked].filter((file) => FEATURE_MAP.test(file)).slice(0, 1)),
+      featureMap: featureMap ? readIf([...tracked].filter((file) => new RegExp(featureMap).test(file)).slice(0, 1)) : null,
     };
     return {
       schema: PACK_SCHEMA,
       head: git(worktree, ["rev-parse", "HEAD"]).stdout.trim(),
-      source: "worktree: git ls-files, git grep, CODEOWNERS and FEATURE_MAP.md; not the closedloop-graph",
+      source: providerDataOr(bound, "graph", "packSource", WORKTREE_SOURCE),
       paths: paths.map((file) => describePath(worktree, file, tracked, texts)),
       precedents: terms.filter((term) => term.length >= MIN_TERM).map((term) => precedents(worktree, term)),
-      graphCallsStillOwed: GRAPH_CALLS_STILL_OWED,
+      graphCallsStillOwed: graphCallsStillOwed(bound),
     };
   }
 

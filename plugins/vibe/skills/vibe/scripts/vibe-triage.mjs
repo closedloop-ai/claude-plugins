@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Deterministic task triage for a vibe session (PRD-823): classify the
+// Deterministic task triage for a vibe session: classify the
 // request into one class and print the step manifest, with the reason and the
 // evidence for the class. No model, no network, no git: the same input always
 // gives the same manifest.
 //
 // Usage:
-//   vibe-triage.mjs classify --request <text> [--ticket-file <file>]
+//   vibe-triage.mjs classify --request <text> [--ticket-file <file>] [--worktree <session>]
 //                            [--paths <a,b,...> | --paths-file <file>] [--path-sources-file <file>] [--out <file>]
 //       Prints (and with --out writes) the manifest JSON. The paths are the
 //       likelyFiles of the requirements brief (ITEM 1 = B, the owner's ruling
@@ -26,18 +26,18 @@
 // switch VIBE_TRIAGE_APPLY_RECOMMENDATIONS is set to 1 when `classify` runs.
 // The switch is off by default and `classify` is its only reader. Whether
 // relaxing "Start Desktop for every session" and starting without an eager
-// environment is allowed awaits the owner (ISS-13333, ISS-13334).
+// environment is allowed awaits the owner.
 //
 // A request the evidence does not decide is class "unknown": no pipeline skill,
 // no recommendation, today's flow. The class is never guessed.
 //
-// Lane and e2e selection are never decided here: they come from `pnpm test:lanes`
-// and the target repository's e2e path filter.
+// Lane and e2e selection are never decided here: they come from the target
+// repository's lane report and its e2e path filter.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { BACKEND_PATH, UI_PREFIXES } from "./area-paths.mjs";
+import { GENERIC_AREAS, sessionAreas } from "./area-paths.mjs";
 
 export const SCHEMA_VERSION = 1;
 
@@ -66,7 +66,9 @@ export const NO_SOURCE = "source not recorded";
 export const POLICY_STEPS = Object.freeze(["environment", "desktop", "ticket", "planPublish", "decisionTable", "redeploy", "handoffSteps"]);
 export const RECOMMENDABLE_STEPS = Object.freeze(["environment", "desktop"]);
 
-export const E2E_SOURCE = "pnpm test:lanes and the e2e path filter";
+export const E2E_SOURCE = "the repository's lane report and its e2e path filter";
+// The value manifests written before the source was named generically carry; still valid.
+const LEGACY_E2E_SOURCE = "pnpm test:lanes and the e2e path filter";
 
 // Who reads the final diff and the extra gates a class adds on top of the
 // handoff every class gets.
@@ -81,7 +83,6 @@ const CLASS_REVIEW = Object.freeze({
 });
 
 const TEST_PATH = /(^|\/)(__tests__|__mocks__)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)e2e\/.*\.spec\.[jt]s$/;
-const PROTOTYPE_PATH = /^apps\/prototypes\//;
 const METRIC_PATH = /(^|\/)(metrics?|analytics|cost|reconcil\w*|aggregat\w*)(\/|[-.])/i;
 const UI_EXTENSION = /\.(tsx|css|scss)$/;
 const DOCS_PATH = /(^|\/)(docs?|\.github|\.claude|\.agents|\.husky|\.dagger|scripts|e2e)\/|(^|\/)(AGENTS|CLAUDE|README|CHANGELOG)\.md$|\.mdx?$|\.ya?ml$|\.toml$|\.jsonc?$|\.sh$|(^|\/)\.[a-z]+rc(\.[a-z]+)?$/i;
@@ -93,7 +94,7 @@ const UI_WORDS = /\b(page|screen|table|columns?|chips?|buttons?|menus?|dialog|dr
 const BACKEND_WORDS = /\b(api|endpoint|route|migration|schema|database|webhook|audit|ledger|write paths?|backend|server-only|atomic upsert)\b/i;
 const DOCS_WORDS = /\b(docs?(?![-\w])|documentation|readme|skills?|config|configuration|agents\.md|runbooks?|runners?|dagger|ci)\b/i;
 const BIG_WORDS = /\b(new (page|screen|flow|table|view|feature)|redesign|workflow|bulk|drawer|dialog|pagination|settings|flags?|sort\w*|filter\w*|select\w*|click\w*|press\w*|order\w*|default|clear\w*|state|mouse|keyboard|group\w*|status|move|drag\w*)\b/i;
-const DESKTOP_WORDS = /\b(desktop|electron)\b|packages\/app/i;
+const DESKTOP_WORDS = /\b(desktop|electron)\b/i;
 
 /** Normalizes a path list given as a comma list or lines. */
 export function parsePathList(text) {
@@ -103,19 +104,17 @@ export function parsePathList(text) {
     .filter(Boolean);
 }
 
-const isUiPath = (file) => UI_EXTENSION.test(file) || UI_PREFIXES.some((prefix) => file.startsWith(prefix));
-// Any file under apps/desktop/ can change what Desktop does (its main process included), so this is wider than
-// the shared DESKTOP_HOST list of the surfaces Desktop renders.
-const DESKTOP_RELEVANT_PREFIXES = ["apps/desktop/", "packages/app/"];
-const isDesktopHostPath = (file) => DESKTOP_RELEVANT_PREFIXES.some((prefix) => file.startsWith(prefix));
+const isUiPath = (file, areas) => UI_EXTENSION.test(file) || areas.ui.some((prefix) => file.startsWith(prefix));
+// The paths that can change what Desktop does (its main process included), wider than the surfaces Desktop renders.
+const isDesktopHostPath = (file, areas) => areas.desktopRelevant.some((prefix) => file.startsWith(prefix));
 
-/** Which kind of file `file` is: test, prototype, metric, ui, backend, docs or other. */
-export function pathKind(file) {
+/** Which kind of file `file` is in the repository's `areas` (area-paths.mjs): test, prototype, metric, ui, backend, docs or other. */
+export function pathKind(file, areas = GENERIC_AREAS) {
   if (TEST_PATH.test(file)) return "test";
-  if (PROTOTYPE_PATH.test(file)) return "prototype";
-  if (METRIC_PATH.test(file) && (isUiPath(file) || BACKEND_PATH.test(file))) return "metric";
-  if (isUiPath(file)) return "ui";
-  if (BACKEND_PATH.test(file)) return "backend";
+  if (areas.prototype?.test(file)) return "prototype";
+  if (METRIC_PATH.test(file) && (isUiPath(file, areas) || areas.backend.test(file))) return "metric";
+  if (isUiPath(file, areas)) return "ui";
+  if (areas.backend.test(file)) return "backend";
   if (DOCS_PATH.test(file)) return "docs";
   return "other";
 }
@@ -125,14 +124,14 @@ function words(regex, text) {
   return [...new Set([...String(text).matchAll(new RegExp(regex.source, flags))].map((match) => match[0].toLowerCase()))].sort();
 }
 
-function classifyByPaths(paths) {
-  const products = paths.filter((file) => pathKind(file) !== "test");
+function classifyByPaths(paths, areas) {
+  const products = paths.filter((file) => pathKind(file, areas) !== "test");
   const considered = products.length ? products : paths;
-  const kinds = considered.map(pathKind);
+  const kinds = considered.map((file) => pathKind(file, areas));
   const has = (kind) => kinds.includes(kind);
   if (has("other")) return { cls: CLASSES.Unknown, reason: ["a likely file is in no known area"] };
   if (has("metric")) return { cls: CLASSES.DataMetric, reason: ["a likely file is a metric or cost surface"] };
-  if (kinds.every((kind) => kind === "prototype")) return { cls: CLASSES.Mockup, reason: ["every likely file is under apps/prototypes"] };
+  if (kinds.every((kind) => kind === "prototype")) return { cls: CLASSES.Mockup, reason: ["every likely file is in the repository's prototype folder"] };
   const ui = kinds.filter((kind) => kind === "ui" || kind === "prototype").length;
   if (ui > 0) {
     if (ui === 1 && !has("backend")) return { cls: CLASSES.TrivialUi, reason: ["one UI file and no backend file"] };
@@ -167,15 +166,16 @@ function classifyByText(text) {
 }
 
 // Desktop relevance: true or false only on evidence, otherwise null (unknown).
-function desktopRelevance(cls, paths, text) {
+function desktopRelevance(cls, paths, text, areas) {
   const evidence = [];
-  const files = paths.filter((file) => pathKind(file) !== "test");
-  const desktopFiles = files.filter(isDesktopHostPath);
+  const files = paths.filter((file) => pathKind(file, areas) !== "test");
+  const desktopFiles = files.filter((file) => isDesktopHostPath(file, areas));
   if (desktopFiles.length) return { relevant: true, evidence: desktopFiles.map((file) => `path ${file}`) };
-  const mentions = words(DESKTOP_WORDS, text);
+  const mentions = [...words(DESKTOP_WORDS, text), ...areas.desktopHost.filter((prefix) => text.toLowerCase().includes(prefix.replace(/\/$/, "").toLowerCase()))];
   if (mentions.length) return { relevant: true, evidence: mentions.map((word) => `text "${word}"`) };
-  if (files.length && cls !== CLASSES.Unknown && files.every((file) => ["ui", "backend", "docs", "metric"].includes(pathKind(file)))) {
-    return { relevant: false, evidence: [`no touched file is under ${DESKTOP_RELEVANT_PREFIXES.join(" or ")} (${files.length} files)`] };
+  if (areas.desktopRelevant.length && files.length && cls !== CLASSES.Unknown
+    && files.every((file) => ["ui", "backend", "docs", "metric"].includes(pathKind(file, areas)))) {
+    return { relevant: false, evidence: [`no touched file is under ${areas.desktopRelevant.join(" or ")} (${files.length} files)`] };
   }
   return { relevant: null, evidence };
 }
@@ -213,15 +213,15 @@ function effectiveFor(recommendation, applied) {
 /**
  * Classifies one request. Touched paths, when known, decide the class; the
  * request and ticket text decide it before any path exists. `apply` is the
- * switch's state (see SWITCH_ENV).
+ * switch's state (see SWITCH_ENV); `areas` are the repository's (area-paths.mjs).
  */
-export function classify({ request = "", ticketText = "", paths = [], pathSources = [], apply = false }) {
+export function classify({ request = "", ticketText = "", paths = [], pathSources = [], apply = false, areas = GENERIC_AREAS }) {
   const text = `${request}\n${ticketText}`;
-  const byPaths = paths.length ? classifyByPaths(paths) : null;
+  const byPaths = paths.length ? classifyByPaths(paths, areas) : null;
   const byText = classifyByText(text);
   const sources = byPaths ? ["paths"] : ["text"];
   const chosen = byPaths ?? byText;
-  const desktop = desktopRelevance(chosen.cls, paths, text);
+  const desktop = desktopRelevance(chosen.cls, paths, text, areas);
   const steps = {};
   const skipped = [];
   for (const id of POLICY_STEPS) steps[id] = { state: POLICY, effective: ACTIONS.Run };
@@ -297,7 +297,7 @@ export function validateManifest(manifest) {
   for (const id of ["review", "extraGates"]) {
     if (steps[id].effective !== reviewWanted) fail(`step ${id} effective must be "${reviewWanted}" with applyRecommendations ${manifest.applyRecommendations}`);
   }
-  if (steps.e2e?.source !== E2E_SOURCE) fail("step e2e must take its source from test:lanes");
+  if (steps.e2e?.source !== E2E_SOURCE && steps.e2e?.source !== LEGACY_E2E_SOURCE) fail("step e2e must take its source from the repository's lane report");
   if (!Array.isArray(manifest.skipped)) fail("skipped must be an array");
   const skippedIds = manifest.skipped.map((entry) => entry?.step).sort();
   if (JSON.stringify(skippedIds) !== JSON.stringify([...logged].sort())) fail("skipped must log exactly the steps whose recommendation is defer or skip");
@@ -346,11 +346,12 @@ function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({
     args: rest,
-    options: { request: { type: "string" }, "ticket-file": { type: "string" }, paths: { type: "string" }, "paths-file": { type: "string" }, "path-sources-file": { type: "string" }, manifest: { type: "string" }, out: { type: "string" } },
+    options: { worktree: { type: "string" }, request: { type: "string" }, "ticket-file": { type: "string" }, paths: { type: "string" }, "paths-file": { type: "string" }, "path-sources-file": { type: "string" }, manifest: { type: "string" }, out: { type: "string" } },
   });
   if (command === "classify") {
     const ticketText = values["ticket-file"] ? readFileSync(values["ticket-file"], "utf8") : "";
-    const manifest = classify({ request: values.request ?? "", ticketText, paths: readPaths(values), pathSources: readPathSources(values["path-sources-file"]), apply: switchOn() });
+    const manifest = classify({ request: values.request ?? "", ticketText, paths: readPaths(values), pathSources: readPathSources(values["path-sources-file"]), apply: switchOn(),
+      areas: sessionAreas(values.worktree ?? null) });
     const text = `${JSON.stringify(manifest, null, 2)}\n`;
     if (values.out) writeFileSync(values.out, text);
     process.stdout.write(text);

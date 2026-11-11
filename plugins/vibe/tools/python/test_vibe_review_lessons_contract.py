@@ -12,14 +12,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
 GUARDRAILS = REFERENCES / "guardrails.md"
 DESIGN_PASS = REFERENCES / "design-pass.md"
 QUALITY = REFERENCES / "quality-loop.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
@@ -263,7 +263,7 @@ def test_an_outdated_plugin_question_comes_before_the_endings_line() -> None:
     endings = flat(VIBE_SKILL.read_text())
     assert "The one thing that comes before it is an outdated plugin's version question" in endings
     order = [
-        endings.index("Every `$vibe` start, new or resume, first checks whether the ClosedLoop plugins installed on this machine"),
+        endings.index("Every `$vibe` start, new or resume, first checks whether the plugins from vibe's marketplace installed on this machine"),
         endings.index("1. Your first reply to the new session carries the endings line"),
     ]
     assert order == sorted(order)

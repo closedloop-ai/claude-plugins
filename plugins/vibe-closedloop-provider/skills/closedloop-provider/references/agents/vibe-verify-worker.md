@@ -1,0 +1,389 @@
+# Provider text for agents/vibe-verify-worker.md
+
+Each block replaces the stub of the same id there, in a session bound to this provider.
+
+<!-- block: lane-default -->
+Command-based repositories default to `pnpm test:lanes`; their existing
+`pre-pr-lanes.mjs check --report` path is unchanged.
+<!-- end: lane-default -->
+
+<!-- block: read-graph -->
+Read `../skills/vibe/references/closedloop-graph.md`, `quality-loop.md`,
+`guardrails.md` and the root/owning AGENTS.md (Test Practices, Test Modification
+Guardrail and runtime launch paths). Graph `code_tests_for` is required.
+<!-- end: read-graph -->
+
+<!-- block: read-ticket-fields -->
+At handoff read `../skills/vibe/references/ticket-template.md` and the SAME
+writer's detailed final packet/report paths for Production impact, Flag changes
+and gates, and Open Questions. These are metadata checks, not a new validation
+mode or permission to change production flags or machine snapshot fields.
+<!-- end: read-ticket-fields -->
+
+<!-- block: script -->
+When `../skills/vibe/scripts/verify-run.mjs` exists, run
+`node ../skills/vibe/scripts/verify-run.mjs --worktree "<wt>" --head "<full SHA>" [--base <sha>] [--tests-file <file>]`
+once at the final head instead of running the bounded checks below by hand. It
+wraps the repository's own Biome, `pnpm check:source-gates`,
+`pnpm typecheck:affected`, the lanes `pnpm test:lanes` names (through
+`pre-pr-lanes.mjs`) and the commands in your `--tests-file`, which is the
+`code_tests_for` selection you make (it is an MCP tool the script cannot call).
+It writes one evidence JSON that keeps `passed`, `failed`, `blocked`, `cached`,
+`main-preexisting`, `no-op`, `skipped` and `not-run` apart: a skipped, no-op,
+cached or not-run entry is never reported as a pass, and a `cached` entry is a
+pass at the same head and command from an earlier run. Its `leftToWorker` list
+(E2E specs, story plays, touch flows, the control sweep) is still yours, as are
+failure triage, reference-image comparison and the private PR evidence. Without
+the script, run the checks below unchanged. When the handoff orchestrator already
+started a background run (`verify-run.mjs --background`) and gives you its run
+id, join it with `--wait <run id> --worktree "<wt>" --head "<SHA>"` and use its
+evidence file instead of running the script again; only `state: passed` is a pass.
+<!-- end: script -->
+
+<!-- block: existing-checks -->
+Read `environment.md`, "Main-sync before publication", and captured original
+base/synced main/import provenance. Verify actual checked inputs equal committed
+HEAD, including tracked localFix code: commit exclusions do not excuse dirty
+executable input. Preserve/report it to the SAME writer; no stash/copy/deletion
+or assumed PASS. Rerun nonwriting checks only, never generators/receipt issuance.
+Flags/Desktop request-only grants are not prepare/push authority. Match exact
+validated-SHA push and handoff no-op to actual proof, not a compact status or
+stale origin/main alone.
+Read named `e2eLimitations` and actual `ciEvidence`, not publicationReady as
+coverage. The source validator uses structured lane discovery and supported
+headless/displayless paths; never blindly execute `test:lanes --exec`.
+An exact preview may precede external required E2E, but final handoff cannot.
+ROOT alone supplies any CI permission/actual bound locator internally; no
+automatic technical approval question for the vibe coder. Verify real canonical
+run/attempt/job/step and checked-out source evidence, not run.head_sha or a
+generic log SHA; missing/unsupported evidence remains a precise final gap.
+
+Validation is targeted. Run nonwriting Biome on changed files, source gates
+and `pnpm typecheck:affected`. Only the tests closedloop-graph's
+`code_tests_for` returns for each changed file, plus
+`diffRules.requiredTests` and `requiredChecks`, through their owning package
+commands. Run a required
+`flagStates` test on and off. If graph coverage is empty or unknown, use the
+repository's related-test command, never a wider suite.
+Commands come from `.vibe/path-gates.json` or the `checks` of its
+`.vibe/storybook-rules.json`; record flag pairs with `flag: "on"` or `flag: "off"`.
+
+Never run `pnpm test`, `pnpm verify`, `pnpm test:affected` or a blind
+`pnpm test:lanes --exec`. Select over
+the whole branch diff. Record import and E2E-reference selections in
+`testSelection`, and commands, cases, flags, results and SHAs in `testRuns` of
+`<gitdir>/vibe-pr-evidence.json`. `blocking.prEvidence` names gaps; skipped CI
+is not a run or permission to write one.
+
+The private PR evidence uses the canonical structure checked by
+`../skills/handoff/scripts/pr-evidence-schema.mjs`. `testSelection` is an
+array of `{ file: "<full repo-relative source path>", selector:
+"code_tests_for" | "related" | "e2e-reference", tests: ["<full repo-relative
+test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
+When the graph cannot establish tests, a `code_tests_for` row may use
+`tests: null` only with the repository's `related` selection for that file.
+`targetedInventory` has `actor: "read-only"`,
+`source: "working-tree"`, the actual tested HEAD as `commit`, top-level
+`source` from `tested-head.mjs source`, and the complete
+`qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
+`impactKey`; never trust a stored classifier result. It also has a `laneReport`
+with `matches` from its repository source: legacy `command: "pnpm test:lanes"`,
+or typed `source` from the committed root declaration
+`vibe-handoff-paths.json`. For `github-workflow`, bind the workflow path,
+commit and SHA-256; use every job/matrix recipe from
+`ci-job-shape.mjs` export `workflowLaneDefinitions`, not a pnpm substitute. It has
+`entries` containing each exact test `kind`, `path`, nonempty `cases` and
+`command`. A lane result in `testRuns` uses `status: "passed"` with its
+exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
+its exact path, cases and command. Always write `rerunCycles: []` when no
+failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
+Older runs default to ancestor-based QA-impact recomputation. Sibling
+publications require the versioned `TreeEquivalentCarry` contract from
+`pr-evidence-schema.mjs`. Preserve original results/keys and historical lane
+selections; bind the current `scopeKey`. List non-ancestor source snapshots
+in `proofs` using pinned `CarryPoint` values. The gates check Git/source/receipt
+consistency. Render with `pr-evidence-comment.mjs --worktree "<wt>"`.
+Also write `testIntegrityProofs: []`, populated for every candidate recomputed
+by the final handoff inventory. Each entry carries its exact `candidate`,
+`path`, `case`, `class`, intentional `mutation`, exact `command`,
+`observedFailure`, `restoredPass: true`, and tested `commit`. Responsive proof
+adds `viewportSource: "registered"` and `desktopWidthMutation`; absence proof
+adds `ownerBoundary: "production"`, a positive `mountedSignal`, the exact changed
+`assertionLine`, `assertionLocation` (repo path, line and column), and
+`presentState` describing where the element was made
+present. Record `mutationRun: { command, exitCode, assertionFailure }` from the
+actual mutation run. Name its private receipt JSON in the git dir as
+`rawReceipt` with `rawReceiptSha256` and `restoredOutputSha256`; the receipt
+holds `candidate`, `target`, `command`, `head`, `mutationExit`,
+`mutationOutput` (raw runner output), `restoredExit`, `restoredOutput`,
+`beforeSha256`, `mutatedSha256` and the one `mutationEdit: { old, new }`. If the runner cannot identify the assertion column, put each
+assertion on its own line and rerun the mutation through a runner that reports
+the source column. Layout proof
+adds the official grid or prototype `baseline` and the `layoutAssertion` that
+failed when the card moved. Never infer these fields from a green normal run.
+After writing the private JSON, run
+`node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
+"<gitdir>/vibe-pr-evidence.json" --worktree "<wt>"` and fix every reported shape problem before
+returning. The handoff inventory still checks the actual selections and runs.
+
+In `pre-pr` mode, read the final uncommitted change identified by HEAD plus
+diff/tree hashes, never the plan, and write
+`targetedInventory` in that file as a read-only actor. Read its declared lane
+source for repository-owned names and exact recipes; run `pnpm test:lanes`
+only for the command-based source. Inventory exact commands,
+files and cases for every selected Vitest package, importing test, changed or
+importing Storybook story, referenced web/Desktop E2E spec and matching
+post-merge-only lane. Run that set once. For command-based repositories, run
+each named lane by the command
+`pnpm test:lanes` prints (`testRuns` entry with `lane`); workflow-backed
+repositories use their exact declared job recipes. A changed check, CI
+script or workflow reruns in its job's shape from
+`../skills/handoff/scripts/ci-job-shape.mjs` (`ciCheckRepros`). After a writer fixes an isolated
+failure, refresh the inventory and rerun only that failed case and any target
+the fix newly reaches, never the whole set. `qa-impact.mjs` decides reuse and
+names any lanes or screens. A selected failure runs once more on captured main (the main-sync
+`mainSha`; for a lane, `../skills/vibe/scripts/pre-pr-lanes.mjs run
+--main-worktree <that checkout> --main-sha <mainSha>` with the same `--report`
+or `--impact` selection file). When it fails there
+too, record it `status: "main-preexisting"` with that `mainSha`: it does not
+block the pull request, and the body lists it under Known main failures
+(ISS-13321). One that passes on main stays a failure for the writer. A
+Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
+`testRuns` the same way, with its `reason`.
+For each selected or edited E2E spec that this machine cannot run under an
+available tier, also record one spec-level `testRuns` item with its full
+repo-relative `path`, `status: "not-run"`, the exact final `commit`,
+`selectionSource: "e2e-reference"`, and `laneReportSource` from the typed lane source
+(`laneReportLabel` in `ci-job-shape.mjs`),
+and `reason` equal to the relevant exported `NOT_RUN_NO_IDENTITY` or
+`NOT_RUN_NO_DESKTOP_HARNESS` value in `pre-pr-lanes.mjs`. The `ciOwner` is
+`e2e-test.yml:e2e` for web specs and
+`desktop-e2e-validation.yml:desktop-e2e/validated` for Desktop specs, each
+also named exactly in `e2eCapability.ciCoverage`. List the spec in
+`e2eCapability.unavailableSpecs`, set `selectedTier: null` only when the
+capability probe found no permitted local or remote tier, and include it in
+an `e2e-reference` selection row. Desktop additionally needs the
+`desktop-e2e` lane's exact not-run command, reason and commit copied from
+`pre-pr-lanes.mjs check` and the matching lane from the saved
+`pnpm test:lanes` report. This is a carry to authoritative CI, never a
+passing local result. Do not label a spec `passed` unless its exact command
+and cases actually ran at the recorded commit.
+The runtime tier is selected from the actual machine probe even when an
+authenticated spec cannot execute there. Never set `dockerPresent: false`
+or `selectedTier: null` to explain missing credentials on a working Docker
+machine. For a selected E2E spec, run
+`node ../skills/handoff/scripts/e2e-capability-probe.mjs --worktree "<wt>"
+--head "<tested source SHA>"` and copy its `probe.container`, `probe.desktopHarness`
+and `probe.probedCommit` into the private evidence without changing its
+boolean results. It checks Docker and Dagger directly, reads disk capacity,
+and reports only whether existing required credentials are present, never
+their values. A failed probe is a limitation, not permission to record Docker
+as absent. For Tier A, bind the probe to the final `probedCommit`. When an
+E2E spec is carried to CI, the PR gate probes the same machine again and
+compares Docker presence, reachability, resource thresholds, required-key
+presence and displayless harness. A change in those facts needs a fresh
+private evidence record; never edit the probe booleans to preserve a pass.
+When an authenticated web spec lacks required keys, record `container.command`,
+`container.runnable: false`, and `secretsSet` booleans
+for `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and
+`DEVOPS_CLOSEDLOOP_APP_PWD` without printing values. Name every missing
+required key in `container.notRunnableReason` and in each web spec's exact
+`missingPrerequisites` array; each spec-level not-run item also names
+`selectedTier: "A"`. `LIVEBLOCKS_SECRET` is optional in the repository's
+container instructions and never counts as a missing required key. For a
+Desktop spec with no supported displayless Linux Electron harness, record
+`desktopHarness: { available: false, reason: "no supported displayless Linux
+Electron harness", probe: "<actual platform and harness check>" }` and
+the same `displaylessLimitation` plus `selectedTier: "A"` on its not-run
+item. Tier C records `remote.available: true`, `source`, `runnerHost`,
+`runnerWorktree`, `probeOwner`, its `~/vibe-remote/e2e-slot.sh --head <final sha>`
+`command` and that `desktopHarness` plus `probedCommit`, with `selectedTier: "C"`;
+the gate reprobes the runner. If the selected tier can actually execute a
+spec, run it and record the result; do not carry it to CI.
+
+For targeted E2E, record the repository's capability probe and choose:
+
+1. Tier A: its container path (`run-containerized.sh` or Dagger) only when
+   Docker is present and reachable and reported memory and disk meet the
+   repository's documented thresholds.
+2. Tier B: otherwise run the same specs natively, headless, against the local
+   stack with the CI sandbox identity, quarantine exclusion and retries off.
+   Do not run host-browser visual-regression specs against Linux baselines;
+   list them as `not run locally, covered by CI`.
+3. Tier C: otherwise use the operator's configured remote runner through its
+   real `e2e-slot.sh --head <HEAD> <owner> <command...>` interface, on a clean
+   worktree at the push-ready local commit, building fresh after a switch
+   (`image-head.mjs` refuses stale images). A failure is fixed uncommitted,
+   then the still-unpushed commit is amended and transferred before rerunning.
+
+Record dirty E2E through `e2e-lock.mjs`; retain its `<gitdir>/vibe-e2e-results`
+receipt with `--head <HEAD> --source-hash <treeSha256>`, not the HEAD-only
+prepush ledger. The external `e2e-slot.sh --head <HEAD> <owner> <command...>`
+runs only on a clean worktree; its imported `testedHead` enforces that boundary.
+Never pass it `--source-hash` or infer another interface.
+
+`git config --bool vibe.noNativeE2e` is the machine-local operator override;
+when true, skip Tier B and use C or report no tier. If no tier is available,
+list every unrun spec and its automatic CI lane. Never silently skip E2E.
+Three more rules:
+
+- Select every E2E spec the session touched or that references a touched
+  screen's route, test IDs, accessible names, channels, fields or flag keys
+  across every E2E root. Run only those specs through the chosen tier and the
+  repository's serialization lock; a busy or unavailable runner is a named
+  limitation, never a pass.
+- Before you claim that CI runs, or ran, a check or test, read
+  `.github/pr-test-event-tiers.md` and cite the tier of the job that runs
+  it. A `batch-only` job does not run on the pull request, and its `skipped`
+  conclusion there means admission, not validation.
+- For every new or changed story with a `play` function, and every story
+  file with a `play` on a component whose layout, position or scrolling the
+  diff changes, inspect every
+  `storybook/test` interaction and report any call that is not awaited. Then
+  execute the touched stories' plays in a real browser with the repository's
+  Storybook test runner or Playwright against its containerized Storybook
+  service. A jsdom result, source inspection or successful build is not play
+  evidence or a play count to report. Judge each play with
+  `../skills/vibe/scripts/story-play-verdict.mjs` over the channel events its
+  recorder captured, never by `storyFinished`'s status (it reports success
+  for a play that threw), and record the verdicts as `playVerdicts` on the
+  `storybook-plays` run. Report the command, story IDs, browser and result, plus axe
+  `color-contrast` on every new or changed story state; a failing node blocks.
+- For every responsive, absence, and card-layout candidate reported by the
+  handoff inventory, run its intentional failing mutation and then its restored
+  case. An absence test uses the production owner and waits for a positive
+  mounted signal before asserting absence. Make the missing element present
+  in the exact container and state used by the assertion, then confirm that
+  assertion fails. In PR #9575, the range readout was a sibling of the
+  pagination nav; a zero count inside the nav would stay green if the readout
+  returned outside it. A responsive test runs once with
+  its registered viewport and once with desktop width. A metric, summary, or
+  card test checks its grid or official prototype layout; a count-only check is
+  not evidence. Record all results in `testIntegrityProofs` so the PR evidence
+  comment exposes them.
+- When cards or a narrow layout have any interaction, run the relevant flow
+  with real touch through Playwright's WebKit iPhone descriptor and Chromium
+  Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not
+  count, and neither do a Storybook fixture standing in for the consumed
+  surface or synthetic `dispatchEvent` pointer events for the gesture under
+  test. Judge an iOS tap by its user-visible result in both device runs, even
+  when its click reports `pointerType` as `mouse`.
+  Record runs of the inventory's `requiredLanes` (with `webkit-iphone` and
+  `chromium-pixel` for `touchFlows`) as `{lane, status, command, commit,
+  outcome}` in `<gitdir>/vibe-pr-evidence.json`; the pull request stays
+  blocked until `blocking.prEvidence` passes.
+
+Browser automation is headless. Electron uses the documented supported
+displayless harness; never a visible fallback. If no supported local path
+exists, record the exact limitation and use automatically started CI evidence
+when policy permits. Never trigger CI/reviews manually.
+
+A failure returns its command, owning files and evidence to the sole writer.
+Do not change code, suppress a check, shrink an allowlist yourself, skip an
+assertion, raise a timeout or update a snapshot to clear it. List pre-existing
+failures accurately. Existing tests run; nobody writes them in vibe or handoff.
+<!-- end: existing-checks -->
+
+<!-- block: footprint -->
+Run `pnpm vibe storybook-diff` into existing private Git metadata and report
+added/changed components, story counts, net rows and governance problems.
+Missing stories/catalog fixes go to the sole writer, never this helper.
+Immediately before pull request creation, rerun footprint mode against the
+pinned pull request base. Compare release history, package version and
+component and story counts, then inspect every in-flight Storybook train pull
+request for its reserved version and counts. A wrong bump relative to the
+pinned base or a count mismatch is blocking evidence, not an advisory. A
+version another open pull request reserves, and main moving on after the
+pin, are reported for the packet and never block: the next free version is
+taken and named there (ISS-13321).
+<!-- end: footprint -->
+
+<!-- block: control -->
+At handoff only, after the final publication, drive the running web app and
+Desktop on the final commit with the repository's control skill. Read
+`<repo-root>/.claude/skills/control/SKILL.md` and its `references/cli.md`
+first and follow their rules. From the session worktree, for each screen the
+session touched:
+
+1. Resolve it to its `FEATURE_MAP.md` entry with `pnpm control feature list`
+   and `pnpm control feature show <id>`; a screen with no entry is reported as
+   unmapped, never guessed.
+2. Start the sessions it needs, each under its own `--session <name>`:
+   `pnpm control up web --isolated` for web, and for Desktop
+   run `pnpm -C apps/desktop build` first. Only after it succeeds, verify
+   `apps/desktop/dist` exists, contains the documented Electron entry and its
+   main bundle's workspace imports resolve. If
+   the build fails or that output is absent, return the exact limitation and
+   abort the Desktop scenario without calling any Electron or `control up
+   desktop` launch command. With verified output, run
+   `pnpm control up desktop --mode e2e`,
+   adding `--flag <key>=true` for a gated surface. Run `pnpm control doctor`
+   when one fails to start. Never pass `--headed`: without it the browser and
+   app stay hidden, so no window opens on the person's Mac. On Linux, Desktop
+   runs displayless under the supported displayless harness. Never pass
+   `--allow-write`, and never use `eval` or `eval-main`.
+3. For each screen: `pnpm control goto <id>`, `pnpm control wait --settled`,
+   `pnpm control capture --name <id>-after`, `pnpm control console --level error`,
+   `pnpm control console --level pageerror` and `pnpm control network`. Add
+   `pnpm control api GET <path>` for the record the screen shows, and
+   `pnpm control ipc <namespace.method>` read calls for a Desktop screen,
+   where relevant. For shared scope, compare each consumer page against that
+   page's approved prototype route; report every control present in the
+   prototype but missing in production, and report every control with no
+   source on that surface.
+4. When a baseline exists (an earlier control capture of the same entry on
+   the merge-base or current main, never a commit that is not an ancestor),
+   return its artifact paths beside the new ones and say what changed. When the session recorded reference images
+   (`referenceImages`), open each as an image (`Read` in Claude Code,
+   `view_image` in Codex) beside the matching capture and report every
+   visible difference in shadow, elevation, font size, weight, color,
+   spacing, radius, borders, alignment and icons as a finding for the SAME
+   writer (`quality-loop.md`, "Visual references").
+5. `pnpm control down --session <name>` for every session you started, even
+   after a failure.
+
+For a shared component, capture every surface it reaches with the flag off
+at 390, 412, 1024 and 1280 px wide, rendering the exact shipped story or route
+and main's render of the same one; a difference is a finding.
+
+A static or generated page control cannot drive (an HTML page a script or a
+main-process module writes, such as Desktop's sign-in return page) is still
+rendered: produce its HTML with the repo's own
+generator or the exported function that builds it, in a throwaway script kept
+outside the worktree and deleted afterwards, open that HTML headless with
+Playwright, and capture it in light and in dark (`colorScheme` and the `dark`
+class on `<html>`, as `../skills/vibe/references/environment.md`, "Capturing
+for the reference check", says) wherever the page supports both. Compare the
+captures with any reference images as step 4 says and report console errors.
+"Could not drive" is never the result for such a page; only a surface that
+is neither drivable nor directly renderable returns a limitation.
+
+Return each relocated private artifact path (or the throwaway render's
+path for a static page) with what it proves, per screen, host and theme. A
+screen you could neither drive nor render directly returns the exact control
+command and the reason, with the render attempt, never a claimed pass. A console error, page error,
+failed request or broken screen this session's change caused is a finding for
+the SAME writer. This mode changes no source, test or record; control writes
+only its gitignored `.control/` artifacts while control runs. Before returning,
+run `node ../skills/vibe/scripts/control-evidence.mjs --worktree "<wt>"
+--run "<this turn's .control/runs directory>"` for each run this turn started.
+It moves those captures into `<gitdir>/vibe-control-runs/`, retaining their
+run directory and filenames. Report the new paths. Leave any other session's
+captures alone. Confirm no
+owned `.control/runs/` files remain in the worktree before publication; a
+failure to move them is a named `BLOCKED` limitation. There is no control step in the
+build loop.
+<!-- end: control -->
+
+<!-- block: return -->
+`DONE` with check/footprint/coverage/control evidence and failures or gaps
+requiring the writer; never claim you fixed them. `BLOCKED` names a precise validation
+limitation. All modes involving code or coverage end with the required Graph
+block. Technical diagnostics remain internal, not questions for the person running the session.
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").
+<!-- end: return -->

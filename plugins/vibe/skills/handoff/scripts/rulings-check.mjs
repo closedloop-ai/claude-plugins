@@ -6,7 +6,7 @@
 //
 // Usage: rulings-check.mjs --ticket <ticket body .md> --record <QA record or resume log> [--record <file>]... [--criteria-before <earlier body>]
 //        rulings-check.mjs --program <rulings.md> --record <orchestrator transcript or QA record> [--record <file>]...
-//        rulings-check.mjs --plan <get-document JSON of a PLN> [--plan-body <its latest version text>] [--plan ...]
+//        rulings-check.mjs --plan <the tracker's plan document JSON> [--plan-body <its latest version text>] [--plan ...]
 //        rulings-check.mjs --ruling <file with the cited ruling's words> --scope <ticket slug>[,<PRD slug>]
 //        rulings-check.mjs --sequencing <candidate rulings.md> [--pr-tickets <PR-number-to-ticket JSON>]
 //        rulings-check.mjs --record-sequencing <candidate ruling> --program <rulings.md>
@@ -23,7 +23,7 @@
 // amends it by its earlier id: an agent once reworded a human's "reject moves
 // beyond four levels" to "display-only" to match its code.
 //
-// A plan with no human approver (`approverId` null; vibe sets a PLN's status
+// A plan with no human approver (`approverId` null; vibe sets a plan document's status
 // but never its approver) is not a ruling, so each exclusion in it must cite
 // a human source: a ticket AC (`<slug> AC-<n>`), a PRD, an operator ruling, or
 // a plan approved by a named human. An exclusion is an item on an
@@ -42,6 +42,7 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { issueKey, requirementsKey, trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { criteriaStates } from "./criteria-audit.mjs";
 
 const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
@@ -49,15 +50,16 @@ const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const AMENDS = /;\s*amends:\s*(\S.*)$/;
 const PROGRAM_RULING = /^\s*[-*]\s*Ruling\s+(\d{4}-\d{2}-\d{2})\s+\((operator message|AskUserQuestion|ticket):\s*(\S.*?)\):\s*(\S.*)$/gm;
 const SEQUENCING_RELATION = /^(.*?)\b(?:waits?\s+(?:until|on|for)|follows?|is\s+blocked\s+by)\b(.*)$/i;
-const RELATION_PARTY_REFERENCE = /^\s*(?:the\s+)?(?:\b(?:ISS|FEA)-\d+\b|#\d+\b)/i;
-const OBJECT_CONTEXT = /(?:;|,\s*(?:per|see|for|because|since|as)\b|\s+(?:per|see|for|because|since|as)\s+(?=(?:ISS|FEA)-\d+\b|#\d+\b))/i;
-const TICKET_REFERENCE = /\b(?:ISS|FEA)-\d+\b/gi;
+// The bound tracker's issue key (tracker-key.mjs); these checks run only with a tracker bound.
+const relationPartyReference = () => new RegExp(String.raw`^\s*(?:the\s+)?(?:\b${issueKey()}\b|#\d+\b)`, "i");
+const objectContext = () => new RegExp(String.raw`(?:;|,\s*(?:per|see|for|because|since|as)\b|\s+(?:per|see|for|because|since|as)\s+(?=${issueKey()}\b|#\d+\b))`, "i");
+const ticketReference = () => new RegExp(String.raw`\b${issueKey()}\b`, "gi");
 const PULL_REQUEST_REFERENCE = /#(\d+)\b/g;
 
 const EXCLUSION_LABEL = /^\s*(?:[-*]\s+)?(?:\[[ xX]\]\s*)?\**\s*(out[- ]of[- ]scope|non-?goals?|excluded|exclusions?|deferred|descoped|obsolete|not covered|GAP(?:-\d+)?)\s*\**\s*:\s*\**\s*(.*)$/i;
 const EXCLUSION_HEADING = /^#{2,6}\s+(?:out[- ]of[- ]scope|non-?goals?|excluded|exclusions|deferred|descoped|obsolete|not covered|gaps?)\b/i;
 const EXCLUSION_PHRASE = /\b(?:out[- ]of[- ]scope|outside (?:of )?(?:this|the) (?:\w+ )?scope|not covered|deferred|descoped|obsolete)\b/i;
-const HUMAN_SOURCE = /\bPRD-\d+\b|\b[A-Z]{2,}-\d+\s+AC-?\d+\b|\bacceptance criteri(?:on|a)\b|\boperator\b|\brulings?\b|\bruled\b|\bapproved by\b/i;
+const humanSource = () => new RegExp(String.raw`\b${requirementsKey()}\b|\b${trackerKey()}\s+AC-?\d+\b|\bacceptance criteri(?:on|a)\b|\boperator\b|\brulings?\b|\bruled\b|\bapproved by\b`, "i");
 const SELF_APPROVED = /^>\s*Self-approved:/m;
 const NOTHING = /^(?:none|nothing|n\/a|-)\.?$/i;
 
@@ -83,7 +85,7 @@ export function uncitedExclusions(body) {
       }
     }
     for (const item of items.map((text) => text.trim().replace(/^\*+|\*+$/g, "").trim()).filter(Boolean)) {
-      if (!NOTHING.test(item) && !HUMAN_SOURCE.test(item)) uncited.push(item);
+      if (!NOTHING.test(item) && !humanSource().test(item)) uncited.push(item);
     }
   }
   return uncited;
@@ -104,14 +106,14 @@ function withoutQuotedCitations(line) {
 /** Items of a list line; a trailing citation clause ("..., per operator ruling") stays with its item. */
 function splitItems(text) {
   const items = [];
-  for (const part of text.split(/;\s*|,\s*(?:and\s+)?|\s+and\s+(?=[A-Z]{2,}-\d)/)) {
+  for (const part of text.split(new RegExp(String.raw`;\s*|,\s*(?:and\s+)?|\s+and\s+(?=${trackerKey()})`))) {
     if (items.length > 0 && /^\s*(?:\(|per\b|source\b|see\b|as ruled\b|ruled\b|approved by\b)/i.test(part)) items[items.length - 1] += `, ${part}`;
     else items.push(part);
   }
   return items;
 }
 
-/** Problems with a plan read through get-document: uncited exclusions in a plan no human approved. */
+/** Problems with a plan read from the tracker: uncited exclusions in a plan no human approved. */
 export function planProblems(doc, body = doc?.version?.content) {
   const name = doc?.slug ?? "plan";
   if (doc?.approverId) return [];
@@ -187,9 +189,9 @@ export function sequencingRequirements(program, pullRequestTickets = {}) {
     const ruling = match[4];
     const relation = ruling.match(SEQUENCING_RELATION);
     if (!relation) continue;
-    // A trailing attribution such as "the deploy for ISS-7" does not make the
+    // A trailing attribution such as "the deploy for <ticket>" does not make the
     // ticket the subject or object of the sequencing relation.
-    if (!RELATION_PARTY_REFERENCE.test(relation[1]) && !RELATION_PARTY_REFERENCE.test(relation[2])) continue;
+    if (!relationPartyReference().test(relation[1]) && !relationPartyReference().test(relation[2])) continue;
     const left = resolvedTicketReferences(relation[1], pullRequestTickets);
     unresolved.push(...left.unresolved.map((reference) => ({ reference, ruling })));
     const targets = left.tickets;
@@ -200,7 +202,7 @@ export function sequencingRequirements(program, pullRequestTickets = {}) {
     const blocked = targets[0];
     // Stop at a contextual citation rather than treating every ticket in
     // the sentence as another object of the sequencing verb.
-    const dependencyClause = relation[2].split(OBJECT_CONTEXT, 1)[0].trim();
+    const dependencyClause = relation[2].split(objectContext(), 1)[0].trim();
     const right = resolvedTicketReferences(dependencyClause, pullRequestTickets);
     if (right.hasReferences) right.unresolved.push(...namedDependencyReferences(dependencyClause));
     unresolved.push(...right.unresolved.map((reference) => ({ reference, ruling })));
@@ -215,7 +217,7 @@ export function sequencingRequirements(program, pullRequestTickets = {}) {
 }
 
 function ticketReferences(text) {
-  return [...text.matchAll(TICKET_REFERENCE)].map((match) => match[0].toUpperCase());
+  return [...text.matchAll(ticketReference())].map((match) => match[0].toUpperCase());
 }
 
 function resolvedTicketReferences(text, pullRequestTickets) {
@@ -225,14 +227,14 @@ function resolvedTicketReferences(text, pullRequestTickets) {
   for (const pr of text.matchAll(PULL_REQUEST_REFERENCE)) {
     hasReferences = true;
     const resolved = pullRequestTickets[pr[1]] ?? pullRequestTickets[Number(pr[1])];
-    if (typeof resolved === "string" && /^(?:ISS|FEA)-\d+$/i.test(resolved)) tickets.push(resolved.toUpperCase());
+    if (typeof resolved === "string" && new RegExp(`^${issueKey()}$`, "i").test(resolved)) tickets.push(resolved.toUpperCase());
     else unresolved.push(`#${pr[1]}`);
   }
   return { tickets: [...new Set(tickets)], unresolved, hasReferences };
 }
 
 function namedDependencyReferences(text) {
-  const remainder = text.replace(TICKET_REFERENCE, " ").replace(PULL_REQUEST_REFERENCE, " ");
+  const remainder = text.replace(ticketReference(), " ").replace(PULL_REQUEST_REFERENCE, " ");
   return [...remainder.matchAll(/\b(?:the\s+)?(?:[a-z][a-z0-9-]*\s+){1,3}(?:ticket|issue|pull request)\b/gi)]
     .map((match) => match[0].replace(/^(?:and|or)\s+/i, "").trim());
 }
@@ -320,7 +322,7 @@ function main(argv) {
   const rulingMode = Boolean(values.ticket || values.program);
   const before = values["criteria-before"];
   if ((before && !values.ticket) || (rulingMode && ((!values.record?.length && !before) || (values.ticket && values.program))) || (!rulingMode && plans.length === 0) || bodies.length > plans.length) {
-    throw new Error("Usage: rulings-check.mjs (--ticket <ticket body .md> [--criteria-before <earlier body>] | --program <rulings.md>) --record <file>... | --plan <get-document JSON> [--plan-body <text>]...");
+    throw new Error("Usage: rulings-check.mjs (--ticket <ticket body .md> [--criteria-before <earlier body>] | --program <rulings.md>) --record <file>... | --plan <plan document JSON> [--plan-body <text>]...");
   }
   const records = (values.record ?? []).map((file) => readFileSync(file, "utf8"));
   const problems = [];

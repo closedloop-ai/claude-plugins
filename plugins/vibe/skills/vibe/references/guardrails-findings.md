@@ -1,5 +1,7 @@
 # The guardrails findings file
 
+Lines that start `> Provider` follow `references/provider-text.md`.
+
 `../../handoff/scripts/guardrails-gate.mjs` runs the guardrails checks a script
 can run, before any model reads the diff, and writes one JSON file. The
 consolidated reviewer (WS4 R1) and `vibe-guardrails-reviewer` read it instead
@@ -51,7 +53,10 @@ Checks:
 | Check | What it is |
 |---|---|
 | `biome` | The repository's `pnpm exec biome check` on the changed files; the script re-implements none of its rules |
-| `source-gates` | The repository's `pnpm check:source-gates` |
+<!-- generic: source-gates-row -->
+| `source-gates` | The repository's own source gates, when it has them |
+<!-- end generic: source-gates-row -->
+> Provider `recipes` (block `source-gates-row` of `vibe/guardrails-findings.md`)
 | `diff-rules` | `diff-rules.mjs`'s blocking findings, the same ones `handoff-inventory.mjs` reports |
 | `tokens` | Hardcoded hex colors, arbitrary pixel values and inline styles in added UI and CSS lines |
 | `conventions` | TypeScript `enum`, `as` casts, `console` calls, raw internal `<a href>`, inline `import()` and files over 1,000 lines |

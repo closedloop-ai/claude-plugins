@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync, unlinkSync, renameSync, symlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeHome, makeCheckout, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
-import { jobShapes, tierOf, workflowJobs, workflowLaneDefinitions, laneSourceBootstrap } from "./ci-job-shape.mjs";
+import { agentsTestCommand, jobShapes, repositoryLaneReportProblems, tierOf, workflowJobs, workflowLaneDefinitions, laneSourceBootstrap } from "./ci-job-shape.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "ci-job-shape.mjs");
 const WORKFLOW = `name: PR Tests
@@ -155,4 +156,31 @@ test("candidate workflow additions, removals, renames, bytes, symlinks and modes
     assert.ok(laneSourceBootstrap(wt, base, base), "positive control"); mutate();
     assert.equal(laneSourceBootstrap(wt, base, base), null); reset();
   }
+});
+
+
+test("AGENTS.md names the test command: the first command span on a line about tests", () => {
+  assert.equal(agentsTestCommand("Build with `pnpm build`.\nRun the suite with `pnpm test` before pushing."), "pnpm test");
+  assert.equal(agentsTestCommand("- `uv run pytest plugins` runs the tests"), "uv run pytest plugins");
+  assert.equal(agentsTestCommand("Test the change with `npm run test:unit`."), "npm run test:unit");
+  assert.equal(agentsTestCommand("Tests: see the CI workflow."), null);
+  assert.equal(agentsTestCommand(undefined), null);
+});
+
+test("with no declaration a lane command is the AGENTS.md test command, and a committed workflow is a lane source", (t) => {
+  const { root, home, cleanup } = makeHome("lane-default-");
+  t.after(cleanup);
+  const checkout = path.join(root, "repo");
+  makeCheckout({ root, home, checkout, files: { "AGENTS.md": "Run `npm test` before you push.\n",
+    ".github/workflows/ci.yml": "name: CI\non: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n" } });
+  const commit = git(checkout, ["rev-parse", "HEAD"], home);
+  const report = (source) => ({ source, matches: [] });
+  assert.deepEqual(repositoryLaneReportProblems(report({ kind: "command", command: "npm test" }), checkout, commit), []);
+  assert.match(repositoryLaneReportProblems(report({ kind: "command", command: "npm run lint" }), checkout, commit)[0],
+    /test command AGENTS\.md names/);
+  const content = readFileSync(path.join(checkout, ".github/workflows/ci.yml"));
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const workflow = { kind: "github-workflow", path: ".github/workflows/ci.yml", commit, sha256 };
+  const lanes = workflowLaneDefinitions(content.toString("utf8"));
+  assert.deepEqual(repositoryLaneReportProblems({ source: workflow, matches: lanes.map(({ name, command }) => ({ name, command })) }, checkout, commit), []);
 });

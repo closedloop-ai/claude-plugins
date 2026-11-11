@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A typecheck for changed Storybook stories whose package has no typecheck
-// script. PR #9732 (ISS-13947) said typecheck passed for `storybook`, which has
+// script. PR #9732 said typecheck passed for `storybook`, which has
 // no such script, and shipped a TS2345 in a changed story: no repository lane
 // typechecks those stories. pre-pr-lanes.mjs adds this lane to the selected
 // lanes whenever the diff changes such a story, so it is run and recorded like
@@ -13,7 +13,7 @@
 // --pretty false -p tsconfig.json` in that package. It fails on any error on a
 // line the diff adds (committed, uncommitted or untracked) and on a tsc
 // failure it cannot attribute to a file. Errors on other lines are counted and
-// printed but do not fail: symphony-alpha's storybook tsconfig already reports
+// printed but do not fail: one repository's storybook tsconfig already reports
 // about 150 errors on main (most are TS2307 for the `@/` alias the Storybook
 // bundler resolves), so a whole-package or whole-file verdict would either
 // always fail or, recorded main-preexisting, hide the new error. Exits 0 when

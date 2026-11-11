@@ -16,6 +16,7 @@ import { parseArgs, TextDecoder } from "node:util";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { commentlessAst, sourceComments } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
@@ -32,7 +33,6 @@ const UI_PACKAGES = new Set(["react", "react-dom", "next", "tailwindcss", "story
 const UI_PACKAGE_SCOPES = ["@radix-ui/", "@tailwindcss/", "@storybook/", "@floating-ui/", "@tanstack/", "@tiptap/"];
 const UI_CONFIG = /(?:^|\/)(?:tailwind|postcss)\.config\.(?:[cm]?[jt]s)$|(?:^|\/)\.storybook\/preview\.(?:[cm]?[jt]sx?)$/i;
 const VERSIONED_JSON = /(?:^|\/)(?:package|plugin)\.json$/;
-const FEATURE_MAP_DEFAULT = ".claude/skills/control/feature-map.json";
 const CONFIG_DEFAULT = ".vibe/qa-impact.json";
 const BARE_FIXTURE = /(?:^|\/)fixtures\//;
 const BEHAVIOR_DIRECTIVE = /(?:@jsx(?:ImportSource|Runtime)?\b|webpack(?:ChunkName|Mode|Prefetch|Preload|Ignore|Exports|FetchPriority)\b|@vite-ignore\b|@ts-(?:ignore|expect-error|nocheck|check)\b|(?:eslint|stylelint|oxlint)-(?:disable|enable)\b|(?:prettier|biome|format)-ignore\b|deno-lint-ignore\b)/i;
@@ -489,7 +489,9 @@ function main(argv) {
     process.stdout.write(`${JSON.stringify(qaImpactRequest(values.worktree, load(values.request, "classification request")), null, 2)}\n`);
     return;
   }
-  const featureMapFile = values["feature-map"] ?? path.join(values.worktree, FEATURE_MAP_DEFAULT);
+  // The repository's feature map (the provider's layout recipe), when it has one.
+  const featureMapDefault = repositoryLayout().qaFeatureMap;
+  const featureMapFile = values["feature-map"] ?? (featureMapDefault ? path.join(values.worktree, featureMapDefault) : null);
   const configFile = values.config ?? path.join(values.worktree, CONFIG_DEFAULT);
   const result = qaImpact({
     worktree: values.worktree,

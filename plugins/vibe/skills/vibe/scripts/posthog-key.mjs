@@ -1,27 +1,29 @@
 #!/usr/bin/env node
 // Resolves the PostHog public project key (`phc_`) and API host the vibe
-// environment worker evaluates the production flag snapshot with (ISS-12048).
-// The key is public: it ships in every browser bundle of the product. Order:
-//   1. a checkout's `apps/app/.env.local`, when it holds a valid `phc_` key;
-//   2. the public production app's sign-in page, which embeds the key and the
-//      API host in its PostHog provider props.
+// environment worker evaluates the production flag snapshot with. The key is
+// public: it ships in every browser bundle of the product. Where to look comes
+// from the bound provider's recipes (`data.recipes.posthog`: `envFile`, a path
+// in the checkout, and `pageUrl`, a public page of the production app). Order:
+//   1. a checkout's env file, when it holds a valid `phc_` key;
+//   2. the production app's page, which embeds the key and the API host in its
+//      PostHog provider props.
 // Never needs a Vercel sign-in. Prints one JSON object
 // {"ok":true,"key":...,"host":...,"source":...} or {"ok":false,"error":...}
 // and exits non-zero when neither source has a valid key.
 //
-// Usage: posthog-key.mjs [--checkout <path> ...] [--page-url <url>]
+// Usage: posthog-key.mjs [--checkout <path> ...] [--env-path <relative path>] [--page-url <url>]
 // `--checkout` may repeat (a session worktree, then its main checkout);
-// `--page-url` (or VIBE_POSTHOG_PAGE_URL) replaces the production page, for
-// tests.
+// `--env-path` and `--page-url` (or VIBE_POSTHOG_PAGE_URL) replace the
+// provider's values, for tests. With neither a provider value nor an argument
+// there is no flag snapshot source, which is an error.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
 
-export const PRODUCTION_PAGE_URL = "https://app.closedloop.ai/sign-in";
 export const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
-const ENV_FILE = path.join("apps", "app", ".env.local");
 const POSTHOG_KEY = /^phc_[A-Za-z0-9]{20,100}$/;
 const POSTHOG_HOST = /^https:\/\/[a-z0-9-]+(?:\.i)?\.posthog\.com$/;
 const ENV_LINE = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/;
@@ -67,9 +69,10 @@ function normalizeHost(value) {
   return POSTHOG_HOST.test(host) ? host : null;
 }
 
-export async function resolvePosthogKey({ checkouts, pageUrl, fetchImpl = fetch }) {
-  for (const checkout of checkouts) {
-    const file = path.join(checkout, ENV_FILE);
+export async function resolvePosthogKey({ checkouts, envFile, pageUrl, fetchImpl = fetch }) {
+  if (!envFile && !pageUrl) throw new Error("no flag snapshot source: the session's provider names no PostHog env file or page");
+  for (const checkout of envFile ? checkouts : []) {
+    const file = path.join(checkout, envFile);
     if (existsSync(file)) {
       const found = keyFromEnvText(readFileSync(file, "utf8"));
       if (found) {
@@ -77,6 +80,7 @@ export async function resolvePosthogKey({ checkouts, pageUrl, fetchImpl = fetch 
       }
     }
   }
+  if (!pageUrl) throw new Error(`No PostHog key in ${checkouts.map((c) => path.join(c, envFile)).join(", ") || "any checkout"}, and the provider names no page to read it from.`);
   let page;
   try {
     const response = await fetchImpl(pageUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -86,7 +90,7 @@ export async function resolvePosthogKey({ checkouts, pageUrl, fetchImpl = fetch 
     page = await response.text();
   } catch (error) {
     throw new Error(
-      `No PostHog key in ${checkouts.length ? checkouts.map((c) => path.join(c, ENV_FILE)).join(", ") : "any checkout"}, and ${pageUrl} could not be read: ${error instanceof Error ? error.message : String(error)}.`
+      `No PostHog key in ${envFile && checkouts.length ? checkouts.map((c) => path.join(c, envFile)).join(", ") : "any checkout"}, and ${pageUrl} could not be read: ${error instanceof Error ? error.message : String(error)}.`
     );
   }
   const found = keyFromPageText(page);
@@ -100,21 +104,32 @@ async function main() {
   const { values } = parseArgs({
     options: {
       checkout: { type: "string", multiple: true },
+      "env-path": { type: "string" },
       "page-url": { type: "string" },
     },
   });
   try {
+    const checkouts = values.checkout ?? [];
+    const source = await providerSource(checkouts[0]);
     const result = await resolvePosthogKey({
-      checkouts: values.checkout ?? [],
-      pageUrl: values["page-url"] ?? process.env.VIBE_POSTHOG_PAGE_URL ?? PRODUCTION_PAGE_URL,
+      checkouts,
+      envFile: values["env-path"] ?? source.envFile,
+      pageUrl: values["page-url"] ?? process.env.VIBE_POSTHOG_PAGE_URL ?? source.pageUrl,
     });
     process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
-    process.exit(1);
+    // An exit code, not process.exit: a piped stdout on macOS is written asynchronously, and exit drops it.
+    process.exitCode = 1;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   await main();
+}
+
+/** The bound provider's `data.recipes.posthog` for the session in `worktree` (or this conversation), else {}. */
+async function providerSource(worktree) {
+  const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+  return providerDataOr(sessionBinding(worktree ?? null), "recipes", "posthog", {});
 }

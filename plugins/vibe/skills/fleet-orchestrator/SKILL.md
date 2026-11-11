@@ -3,6 +3,8 @@ name: fleet-orchestrator
 description: 'Use when you run delivery work for a human operator who does QA and merges: several workers at once (Codex or vibe sessions and Claude subagents) delivering parallel pull requests on one machine or several, one writer delivering one pull request, or a session with no writer at all (design, research or analysis). Covers who may write where, orchestration state that survives a reboot, restart or compaction, starting, resuming and steering Codex threads bound to a worktree, Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e stack slot locks across machines, agent-first QA and review before merge, pushback on flags and extra code paths, a lessons ledger, and how to report to the operator. Pairs with codex-fleet-monitor for watching the fleet.'
 ---
 
+Lines that start `> Provider` follow `../vibe/references/provider-text.md`.
+
 # fleet-orchestrator
 
 You run a program (several PRs at once, one writer on one PR, or research and design with no writer): you plan, route, review, push back and report; workers write; the operator does QA, merges and makes product calls. Each script named below carries the incident behind its rule in its header.
@@ -16,7 +18,10 @@ You run a program (several PRs at once, one writer on one PR, or research and de
    Every question to the operator names where you checked the code first (`checked in code: <file>:<line>`); drop one the code already answers.
 
    A human-sourced line that conflicts with the ruling goes to the operator as a question with a recommendation. Record every ruling with its source in the resume log as `- Ruling (<who>): <decision>`, and have the writer add it to the ticket with the criteria it amends (`../handoff/scripts/rulings-check.mjs` fails until it is there) and cite it on the relevant thread.
-   Before recording a sequencing ruling, run `node ../handoff/scripts/rulings-check.mjs --sequencing <candidate-ruling.md> --pr-tickets <pr-number-to-ticket.json>`, resolve every pull request number to its ticket, and report every reference that cannot be resolved. For each resolved dependency, call `create-artifact-link` with `BLOCKS` from the prerequisite ticket to the waiting ticket and list the links to confirm them. Normalize that receipt as blocker-to-blocked link JSON, then run `node ../handoff/scripts/rulings-check.mjs --record-sequencing <candidate-ruling.md> --program <orchDir>/rulings.md --pr-tickets <pr-number-to-ticket.json> --links <confirmed-links.json>`. This command is the only sequencing-ruling writer: it refuses a missing link and appends only after every receipt matches. A direction authored by the orchestrator stays operational text marked `(orchestrator)` and never enters `rulings.md`; only quoted operator words with their source use this path.
+<!-- generic: sequencing-ruling -->
+   Before recording a sequencing ruling, resolve every pull request number it names to the work it delivers, and report every reference that cannot be resolved.
+<!-- end generic: sequencing-ruling -->
+> Provider `tickets` (block `sequencing-ruling` of `fleet-skill.md`)
 
 2. **Sanity-check every worker output; never just relay it.** When a change looks absurd, oversized or irrational (several flags for one screen, a docs file nobody asked for, a plugin PR that only adds, a stale head, a weakened test, a claim the evidence does not support), push back to the worker with a simpler alternative before the operator sees it, then tell the operator what you caught.
 
@@ -28,9 +33,12 @@ Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come 
 
 ## Setup
 
-Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh`, this plugin and the closedloop-graph MCP server on each. Prerequisites, `config.env` keys and the checklist: [references/setup.md](./references/setup.md).
+<!-- generic: machines -->
+Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh` and this plugin on each, and each connection the bound provider names. Prerequisites, `config.env` keys and the checklist: [references/setup.md](./references/setup.md).
+<!-- end generic: machines -->
+> Provider `graph` (block `machines` of `fleet-skill.md`)
 
-- Plugin version, first in every chat: make both connection calls (`get-me`, `sync_status`), then run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`; no `--state` before a program exists) with the two connection flags added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says, escalated from the first try in Codex, and again escalated when its output has `"escalate":true`. On `outdated`, ask the operator: "A newer version of the plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results." Record the answer with `plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log. On update, run `plugin-version.mjs update --choice update --state <same file>`, `--choice update` only because the operator said update; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them. On `unknown`, say the check could not run and carry on.
+- Plugin version, first in every chat: run `node ../vibe/scripts/plugin-version.mjs provider` and make each connection call it names, then run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`; no `--state` before a program exists) with the connection flags added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says, escalated from the first try in Codex, and again escalated when its output has `"escalate":true`. On `outdated`, ask the operator: "A newer version of the plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results." Record the answer with `plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log. On update, run `plugin-version.mjs update --choice update --state <same file>`, `--choice update` only because the operator said update; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them. On `unknown`, say the check could not run and carry on.
 - After this current skill file is loaded, reconcile its hook-observed Skill/UserPrompt load evidence with `plugin-version.mjs loaded --runtime codex|claude --state <orchDir>/plugin-version.json`. The command cannot create load evidence itself; where no hook has recorded this conversation (Codex before its hooks are trusted) it answers `enforced: false`. Where enforced, on every wake `fleet-home.mjs resume` and prompt preflight refuse another brief when the exact actor/root/version/definition digest is absent, malformed or stale. Reload the current skill (or restart when the harness requires it), reconcile it again, and never continue from remembered steps.
 - Setup check, once per chat, from that same check run: as vibe's [Setup check](../vibe/SKILL.md#setup-check) says, on `"print":true` show the operator its `block` word for word; on `"print":false` show nothing. A `not connected` line gets restored at once as vibe's [Restoring a connection](../vibe/references/preflight.md#restoring-a-connection) says, by you or a setup worker, never handed to the operator. A Codex line saying vibe-core is not installed or its hooks are not approved means no vibe guard runs in Codex: tell the operator right away in one plain line, before any writer launch. Installing goes through the update flow; approving is always the operator's own step, never a worker's: they need to open Codex once and approve vibe-core's hooks in /hooks.
 - First run: when `<fleetHome>/config.env` is missing, or lacks a key this run needs, ask the operator once before launching anything, as one structured question set with the [first-run questions](./references/setup.md#first-run-interview) and their defaults. When the operator runs vibe, or the program is `one-writer` or `no-writer`, ask nothing: write the defaults and report them in one plain line. Write `config.env` and run the checklist's verification before replying; stating that you plan to do either action does not count. Report what passed.
@@ -38,7 +46,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 
 ## Roles
 
-- Every ticket writer is a vibe session: Codex writers start or resume with a `$vibe` prompt naming the ticket or PRD (`fleet.sh` refuses a new session without it), and Claude writers invoke `vibe:vibe` and follow its resume path. Vibe's scope, guardrails and ticket records only bind work done inside it. A bounded fleet helper on a separate branch is not a second writer in that ticket session and owns no ticket or plan record.
+- Every ticket writer is a vibe session: Codex writers start or resume with a `$vibe` prompt naming the work item (`fleet.sh` refuses a new session without one), and Claude writers invoke `vibe:vibe` and follow its resume path. Vibe's scope, guardrails and ticket records only bind work done inside it. A bounded fleet helper on a separate branch is not a second writer in that ticket session and owns no ticket or plan record.
   The first new `$vibe` turn creates the session record; every later turn on the saved fleet thread must find a current active record for that worktree and branch. A hand-written stub does not count.
   `codex-session.mjs turn` refuses an existing `--cwd` without a Vibe-created active record matching the `$vibe` brief (and `--ticket` when present); pass a not-yet-existing path for `vibe new`, or use `cloud-worker.mjs` / pr-takeover for imported work.
   A not-yet-existing `--cwd` must be `<checkout>/.claude/worktrees/vibe-<slug>` in the repository the ticket changes; the thread's first turn runs in that checkout, so vibe's Codex hooks can record its load, and the brief tells the writer to run `vibe-sessions.mjs new --repo <checkout> --worktree <that path>`. A ticket in any repository other than the app checkout vibe-preflight remembered needs that `--repo`; without it `new` uses the remembered checkout.
@@ -54,7 +62,10 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 
 | Role | Agent or skill | Plugin | Fallback when not installed |
 |---|---|---|---|
-| Ticket overlap, scope collisions, "did a human ask for this", drift tracing | `closedloop-core:closedloop-intel`, read-only, over the closedloop-graph MCP server | closedloop-core | closedloop-graph tools directly |
+<!-- generic: intel-row -->
+| Overlap between work items, scope collisions, "did a human ask for this", drift tracing | `rg` over the code and `gh pr list --search` in each repository, read-only | none | none |
+<!-- end generic: intel-row -->
+> Provider `graph` (block `intel-row` of `fleet-skill.md`)
 | QA plan per PR (plan-only) and the QA-guide session (one checkpoint at a time) | `closedloop-core:guided-manual-qa` in a Claude worker | closedloop-core | a written checklist from the criteria trace |
 | Pre-merge local CI | the repo's local-CI skill (for example a `local-ci` skill wrapping dagger) | target repo | the repo's documented verify command |
 | Design and visual review of a PR's UI, headless against the deployed preview | the repo's design-review and visual-qa skills and critic agents (for example `design-critic`, `visual-qa-critic`) | target repo | a Claude reviewer reading headless captures |
@@ -67,32 +78,32 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 
 For one writer on one PR, or nobody writing code (design, research, analysis): `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the shape, `fleet-home.mjs shape` changes it before the program grows, and `board.mjs writer` refuses a writer the shape does not allow. Which sections apply:
 
-- Both shapes: Principles (evidence before every claim), Setup, Research with closedloop-graph, State and persistence (resume log, rulings), Pushback, Lessons loop, Artifacts people read, Reporting to the operator.
+<!-- generic: shapes -->
+- Both shapes: Principles (evidence before every claim), Setup, Research, State and persistence (resume log, rulings), Pushback, Lessons loop, Artifacts people read, Reporting to the operator.
+<!-- end generic: shapes -->
+> Provider `graph` (block `shapes` of `fleet-skill.md`)
 - one-writer, also: Roles, Related tickets become one unit, Monitoring, Codex sessions, Claude workers, Machines and CPU, Program practices; Quality gates and QA except merge order and shared version-file conflicts; from Fleet board and direct messages only its row and deliveries; from Moving work between runtimes and accounts only a takeover of its writer, which keeps the writer's board row name.
 - no-writer, also: only read-only helpers from Roles and Claude workers, a heavy check you run from Machines and CPU, repo knowledge from Program practices; nothing else.
 
-## Research with closedloop-graph
+<!-- generic: research -->
+## Research
 
-The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](../vibe/references/closedloop-graph.md).
+Decide from evidence, not guesses (vibe's [repository-intelligence reference](../vibe/references/repository-intelligence.md)).
 
-- Before assigning work or ruling between PRs, check `query_collisions` and `blast_radius_tickets`, read PRD lineage with `ticket_detail`, and resolve tickets to screen map entries when the repo publishes them. Shared entries count as overlap across files; assign one owner or an explicit merge order.
-- Every status sweep includes the current `rulings.md` text, the PR-number-to-ticket resolutions, and the live BLOCKS links in the `status-audit.mjs` snapshot. Fix every `SEQUENCING-BLOCKS-MISSING` finding by creating and confirming that blocker-to-blocked link; report `SEQUENCING-UNRESOLVED` references instead of skipping them.
-- Before dispatching a ticket, and in every QA-prep brief, run vibe's newest-ruling search ([requirements worker](../../agents/vibe-requirements-worker.md), Newest ruling); on a hit, stop and ask the operator. It needs no vibe session. In Claude Code, run the requirements worker through the launcher in sessionless startup mode, never through the native Agent tool and never as a general worker in its place: `node ../vibe/scripts/dist/claude-worker.mjs` with one JSON object on stdin, `{"worktree": "<checkout root>", "agentName": "vibe-requirements-worker", "mode": "request", "requestId": "<id>", "input": "<brief>", "capabilities": [<every graph and live read you can see>], "sessionless": {"kind": "startup"}}`.
-- In the same step, check every plan linked to the ticket (`list-artifact-links`, PRODUCES) with `node ../handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`. Each exclusion it reports is scope the brief tells the writer to build, or you escalate; never one to skip.
-- Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
+- Before assigning work or ruling between PRs, check the open PRs that touch the same files (`gh pr list` and each PR's changed files). Shared files count as overlap; assign one owner or an explicit merge order.
+- Before dispatching an item, and in every QA-prep brief, check `rulings.md` and the operator's recorded answers for a newer ruling on the same capability; on a hit, stop and ask the operator.
+- Before a shared change, read its callers and importers (`rg`).
+<!-- end generic: research -->
+> Provider `graph+tickets` (block `research` of `fleet-skill.md`)
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
 - Attribute a file's origin or a first failure from local history only through `scripts/history-origin.mjs --repo <repo> --path <file>`.
 
 ## Related tickets become one unit
 
-Related tickets go to one writer, one branch and one PR; each keeps its own criteria and statuses. When the program works a PRD, every open ticket under it assigned to the operator is one unit per repository. Steps and the candidate sources: [references/ticket-units.md](./references/ticket-units.md).
-
-1. Before starting any writer, on resume, after a merge and when new tickets arrive, gather the candidates (each with its PRD and whether the operator is its assignee) and run `scripts/ticket-units.mjs group --candidates <file> --board <orchDir>`.
-2. Tell the operator its lines: one per unit, with what joined, what stayed apart and why.
-3. Record each unit with `board.mjs <orchDir> unit`; fold a related ticket into the running writer, never a second one.
-4. Before calling the unit ready, record its review of the completed work: `../handoff/scripts/unit-review.mjs ... --record <orchDir> --unit <name>`. Every member criterion and the PRD's criteria for the touched pages each need a code review row and a visual QA capture per page and surface it names. Send its `GAP` lines to the operator by ticket and criterion number; the unit is not ready until there are none.
-5. Move each ticket yourself (In Progress at start, In Review at PR open once the review passed, Done at merge), audit with `status-audit.mjs --board`, and close the unit with `board.mjs <orchDir> unit <name> --closed <PR>` once every member is reconciled; both refuse a unit without a passing review.
-
+<!-- generic: units -->
+With no provider, each work item the operator gives goes to its own writer, branch and PR; nothing groups items into units. A provider that has the `tickets` capability supplies the grouping.
+<!-- end generic: units -->
+> Provider `tickets` (block `units` of `fleet-skill.md`)
 ## State and persistence
 
 - All state lives in one fleet home, never `/tmp` or a scratchpad: reused files at its top, each program under `programs/<slug>/` ([layout and a new chat's steps](./references/state.md)). `<orchDir>` below is the home or the program dir; `board.mjs status` fails on state written outside it.
@@ -114,7 +125,7 @@ Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-mo
 - Answer a writer's question within 15 minutes, echoing its id (`board.mjs <orchDir> answered <writer> --id <id> --text <answer>`); send other mid-run changes to what it builds as `deliver <id> --kind scope --to <writer> --text <change>`, a message naming the id, then `told`. The watcher and `board.mjs status` flag `QUESTION-UNANSWERED`, `UNACKED` and `UNACKED-SCOPE` after 15 minutes, and `SCOPE-NOT-STARTED` for a worktree still clean at its old head 30 minutes on.
 - On a `HOOK-APPROVAL <machine>` line (that machine's Codex vibe or vibe-core changed version and a vibe-core hook now needs approval), relay it to the operator at once in one plain line; approving is theirs, never a worker's.
 - On `STALE-PR` (a PR needing its writer with no push for 45 minutes), ask the owning writer for an ETA, unblock it, or reassign it, whatever it reports being busy with.
-- Push only a declared push-ready head (`--ready <sha>`). Review and verification accept the uncommitted diff before its first commit; then commit once, declare, push once and open the PR. `writer --base <remote-ref|OID>` records the verified pre-PR parent; parent commits are never ready. The live GitHub base is authoritative afterward. `push-check` must print `READY`; `status`/`watch-lines` flag undeclared local commits as `UNREADY-COMMIT` and unreadable history/base as `PUSH-READY-UNKNOWN`. Restore evidence before pushing; cadence never authorizes checkpoint commits. Operator ruling quoted in ISS-13430 v1, 2026-10-29: "every commit to an open PR is a sign of a bad orchestration framework. we should codify this to never happen again. we don't commit until we're sure that commit is push ready."
+- Push only a declared push-ready head (`--ready <sha>`). Review and verification accept the uncommitted diff before its first commit; then commit once, declare, push once and open the PR. `writer --base <remote-ref|OID>` records the verified pre-PR parent; parent commits are never ready. The live GitHub base is authoritative afterward. `push-check` must print `READY`; `status`/`watch-lines` flag undeclared local commits as `UNREADY-COMMIT` and unreadable history/base as `PUSH-READY-UNKNOWN`. Restore evidence before pushing; cadence never authorizes checkpoint commits. Operator ruling, 2026-10-29: "every commit to an open PR is a sign of a bad orchestration framework. we should codify this to never happen again. we don't commit until we're sure that commit is push ready."
 - For an in-flight branch that already has old checkpoint commits, treat its current pushed PR head as historical baseline. Never rewrite it or declare its ancestors ready; keep the next repair uncommitted until one new head is push-ready. A remote board row uses `--where remote --base <full OID>`: `NO-HEAD` is informational because its owning machine checks history, while this board still requires the exact declared ready head before push.
 - Before opening a PR, reviewers inspect the uncommitted change identified by HEAD plus diff/tree hashes. After opening, compare published evidence with the pushed PR head (`gh pr view <n> --json headRefOid`); observe automatically started checks and reviews, never manually trigger another review.
 
@@ -140,9 +151,12 @@ Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-mo
 
 `scripts/board.mjs` keeps `<orchDir>/board.md`, the page every writer reads:
 
-- The status sweep, a standing `status-sweep` duty. At every writer assignment and every merge, and at every status report, snapshot each in-scope PRD's children (status, writer, PRs, latest body of each merged or DONE one, plans, absorbing umbrella) and run `node scripts/status-audit.mjs --snapshot <file>` until each `MISMATCH`, `UNOWNED`, `UNREAD`, `UNCHECKED`, `PLAN-OPEN` and `ABSORBED-OPEN` child is fixed or under `outOfScope` with who ruled it out. Closing an umbrella closes its absorbed children in the same step. A merge alone never makes a ticket DONE: its criteria are checked against the merged code first. Pass `--at assignment|merge|report`; with `FLEET_TRIM_STATUS_AUDIT=1` (off by default) a `report` run is skipped.
+> Provider `tickets` (block `status-sweep` of `fleet-skill.md`)
 - When you launch a writer, add its row (`board.mjs <orchDir> writer <name> --tickets <a,b> --runtime codex|claude --where local|remote --worktree <path> --pr <n> --repo <owner/repo> --head <sha> --status <text> --deps <a,b>`) and its PR's `<owner/repo> <n> <writer>` line to `prs.txt`. Update the row on every push report.
-- A settled UX ruling is saved once as a reference file with its screenshots in a shared evidence location. Find every renderer of the behavior with `code_grep` across each open PR's diff and main, then `board.mjs <orchDir> deliver <ruling> --kind ruling --reference <file> --to <every owning writer and QA guide>`. Every QA plan for that behavior cites it; one shared component beats each PR building its own.
+<!-- generic: ruling-renderers -->
+- A settled UX ruling is saved once as a reference file with its screenshots in a shared evidence location. Find every renderer of the behavior with `rg` across each open PR's diff and main, then `board.mjs <orchDir> deliver <ruling> --kind ruling --reference <file> --to <every owning writer and QA guide>`. Every QA plan for that behavior cites it; one shared component beats each PR building its own.
+<!-- end generic: ruling-renderers -->
+> Provider `graph` (block `ruling-renderers` of `fleet-skill.md`)
 - When QA prep marks a human checkpoint ready, or rebinds results, `deliver <checkpoint> --kind checkpoint --head <sha> --to <guide>` and message the guide yourself with the checkpoint, its launch steps and the head.
 - After each message, `board.mjs <orchDir> told <item> <recipient>`. Run `board.mjs <orchDir> status` with every monitor event and act on each line: `STALE` (the board misses a pushed head), `UNTOLD`, `UNOWNED-DUTY`. A `SLOW` row is a Codex writer 30 minutes without a push on a PR with unresolved human threads: have it push and hand the branch to a Claude writer.
 

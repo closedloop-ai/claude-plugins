@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const policy = {
   version: 1,

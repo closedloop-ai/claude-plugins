@@ -1,20 +1,20 @@
 {
   "name": "vibe",
-  "version": "1.1.80",
-  "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows",
+  "version": "1.1.81",
+  "description": "Vibe sessions and handoff in any git repository, with fleet orchestration, seed refresh and ticket workflows",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
   "homepage": "https://github.com/closedloop-ai/claude-plugins",
   "repository": "https://github.com/closedloop-ai/claude-plugins",
   "license": "Apache-2.0",
-  "keywords": ["closedloop", "vibe-coding", "handoff", "ticket-workflows"],
+  "keywords": ["vibe-coding", "handoff", "ticket-workflows"],
   "skills": "./skills/",
   "interface": {
     "displayName": "ClosedLoop Vibe",
-    "shortDescription": "Vibe sessions and ClosedLoop ticket workflows.",
-    "longDescription": "Vibe sessions let anyone (an executive, designer, product manager or engineer) build product UI in the in-app browser on their own Vercel copy of symphony-alpha, kept on a live ClosedLoop ticket, and finish it as a pull request they take through review or pass it to design and engineering.",
+    "shortDescription": "Vibe sessions and handoff in any git repository.",
+    "longDescription": "Vibe sessions let anyone (an executive, designer, product manager or engineer) change a product in any git repository from the in-app browser, with its local plan and decision table as the record, and finish it as a pull request they take through review or pass it to design and engineering. An optional provider plugin adds one tracker's, organization's or repository's knowledge.",
     "developerName": "ClosedLoop",
     "category": "Development",
     "capabilities": ["Write", "Analyze"],
-    "defaultPrompt": ["Start a vibe session.", "Hand this vibe session off to design and engineering.", "Refresh the vibe seed.", "Analyze this ClosedLoop ticket."]
+    "defaultPrompt": ["Start a vibe session.", "Hand this vibe session off to design and engineering.", "Refresh the vibe seed."]
   }
 }

@@ -2,15 +2,21 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkLiveTicket, parseSections, TICKET_SECTIONS } from "./live-ticket-check.mjs";
 import { renderRecordSections, vercelAliases } from "../../vibe/scripts/vibe-session-data.mjs";
-import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
+import { bindProviderInProcess, PROVIDER_BINDING, git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+
+// The live ticket exists only with a tracker bound, so these run bound to the ClosedLoop provider.
+bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "live-ticket-check.mjs");
-const TEMPLATE = path.join(HERE, "..", "..", "vibe", "references", "ticket-template.md");
+const PROVIDER = path.join(HERE, "..", "..", "..", "..", "vibe-closedloop-provider");
+const TEMPLATE = path.join(PROVIDER, "skills", "closedloop-provider", "references", "ticket-template.md");
+const RECIPE = JSON.parse(readFileSync(path.join(PROVIDER, "provider.json"), "utf8")).data.recipes.environment;
 const TEMPLATE_BODY = /````markdown\n([\s\S]*?)\n````\n?$/;
 
 const ENVIRONMENT = [
@@ -165,11 +171,11 @@ test("the sections ticket-sections renders from a finished record pass the check
     branch,
     baseCommit: "abcdef1234567890",
     mode: "seeded",
-    vercel: { ...vercelAliases(branch), lastDeployedCommit: null, lastDeployedAt: null },
+    vercel: { ...vercelAliases(branch, RECIPE), lastDeployedCommit: null, lastDeployedAt: null },
     flagSnapshot: null,
     codexSessions: { orchestrators: [], subagents: [] },
   };
-  const rendered = parseSections(renderRecordSections(fresh, null));
+  const rendered = parseSections(renderRecordSections(fresh, null, RECIPE));
   const pending = checkLiveTicket(completeTicket(Object.fromEntries(rendered)));
   assert.deepEqual(
     pending.problems.map(({ section }) => section),
@@ -198,13 +204,13 @@ test("the sections ticket-sections renders from a finished record pass the check
   };
   const snapshot = { takenAt: "2026-10-06T15:00:00Z", distinctId: "user_1", flags: { a: true } };
   // Operator ruling, 2026-10-20: the keys to see the work stay Pending until recorded.
-  const unrecordedKeys = parseSections(renderRecordSections(finished, snapshot));
+  const unrecordedKeys = parseSections(renderRecordSections(finished, snapshot, RECIPE));
   assert.deepEqual(checkLiveTicket(completeTicket(Object.fromEntries(unrecordedKeys))).problems, [
     { section: "Production flag snapshot", problem: "still has a Pending. marker" },
   ]);
 
   const flagKeys = { surfaces: [{ surface: "Tags", hosts: ["web"], keys: [{ key: "a", origin: "existing", readAt: ["apps/app/tags.tsx"] }] }] };
-  const filled = parseSections(renderRecordSections({ ...finished, flagKeys }, snapshot));
+  const filled = parseSections(renderRecordSections({ ...finished, flagKeys }, snapshot, RECIPE));
   assert.deepEqual(checkLiveTicket(completeTicket(Object.fromEntries(filled))).problems, []);
 });
 
@@ -232,14 +238,15 @@ test("a flag snapshot without the keys to see the work fails the check", () => {
 
 test("a ticket naming a path on the operator's machine or a local plan fails the check", () => {
   const body = completeTicket({ Handoff: "- Screenshot: /Users/x/file.png\n- Log: ~/foo\n- Capture: `.control/runs/a.png`\n- QA plan: .closedloop-ai/vibe-plans/qa.md\n- Attached: `qa-plan.md`\n- Assumptions: None: no Spec Card" });
-  const problems = checkLiveTicket(body).problems;
+  // The provider keeps the plans in its in-worktree folder.
+  const problems = checkLiveTicket(body, { planPrefix: localPlanPrefix(PROVIDER_BINDING) }).problems;
   const lines = body.split("\n");
   assert.deepEqual(problems.map(({ section, problem }) => [section, lines[Number(/^line (\d+)/.exec(problem)[1]) - 1]]), [
     ["Body", "- Screenshot: /Users/x/file.png"], ["Body", "- Log: ~/foo"], ["Body", "- Capture: `.control/runs/a.png`"],
     ["Body", "- QA plan: .closedloop-ai/vibe-plans/qa.md"],
   ]);
   assert.match(problems[0].problem, /upload and embed/);
-  assert.match(problems[3].problem, /link the PLN or attach the file/);
+  assert.match(problems[3].problem, /link the plan document or attach the file/);
   assert.ok(problems.every(({ problem }) => !problem.includes("/Users/x") && !problem.includes("~/foo")));
 });
 
@@ -275,7 +282,7 @@ test("a session with local plans needs its PLN recorded and APPROVED before the 
   const record = { branch: "vibe/tags", livePlan: null, livePlanStatus: null, flagKeys: { surfaces: [] } };
   assert.deepEqual(checkLiveTicket(ticket, { record, planCount: 0 }).problems, []);
   assert.deepEqual(checkLiveTicket(ticket, { record, planCount: 1 }).problems, [
-    { section: "Session plan", problem: "the session has a local plan but no PLN is recorded" },
+    { section: "Session plan", problem: "the session has a local plan but no plan document is recorded" },
   ]);
   assert.deepEqual(checkLiveTicket(ticket, { record: { ...record, livePlan: "PLN-7", livePlanStatus: "DRAFT" }, planCount: 1 })
     .problems, [{ section: "Session plan", problem: "PLN-7 is DRAFT, not APPROVED" }]);

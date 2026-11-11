@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Cross-run worker budget (PRD-823, WS8 load-aware execution, W1, ISS-13584). Every vitest or turbo run sizes
+// Cross-run worker budget (load-aware execution). Every vitest or turbo run sizes
 // its workers to the core count without knowing about other runs, so concurrent runs
 // multiply each other. Before a heavy command starts, this counts what is already
 // running on the machine and leaves the command what is left of
@@ -35,7 +35,7 @@ export const DEFAULTS = Object.freeze({
   minWorkers: 2,
   // The ambient turbo test fan-out of the target repository (scripts/test-affected.sh uses 2); never raised above the caller's own value.
   turboTestConcurrency: 2,
-  // W2 (ISS-13585): wait for capacity, then retry a load failure once at half the workers.
+  // W2: wait for capacity, then retry a load failure once at half the workers.
   maxWaitSeconds: 600,
   pollSeconds: 5,
   pollBackoffFactor: 1.5,
@@ -43,7 +43,7 @@ export const DEFAULTS = Object.freeze({
   retries: 1,
   retryWorkerDivisor: 2,
   highLoadPerCore: 1.5,
-  // W4 (ISS-13587): independent verify lanes run in a pool this large at most, fewer when the budget has less to spare.
+  // W4: independent verify lanes run in a pool this large at most, fewer when the budget has less to spare.
   poolSize: 2,
 });
 

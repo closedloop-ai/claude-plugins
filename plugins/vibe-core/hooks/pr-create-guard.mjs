@@ -9,11 +9,12 @@ import { inVibeSession } from "./foreground-guard.mjs";
 import { handoffGateProblem } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { cloudPrProblem } from "../lib/vibe/scripts/cloud-worker.mjs";
 import { githubRepository } from "../lib/vibe/scripts/github-remote.mjs";
+import { recordedBinding, ticketReference } from "../lib/vibe/scripts/provider.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import os from "node:os";
 
 const VIBE_BRANCH = "vibe/";
-const OVERRIDE_HINT = "if every real check and review passed and a known Vibe gate bug is the only blocker (operator ruling 2026-11-08), add the line `Vibe gate override: ISS-<number>: <reason>` naming that bug's ticket to the PR body file";
+const OVERRIDE_HINT = "if every real check and review passed and a known Vibe gate bug is the only blocker (operator ruling 2026-11-08), add the line `Vibe gate override: <ticket>: <reason>` naming that bug's ticket (its tracker reference, GitHub issue `#<number>` or URL) to the PR body file";
 const LOCAL_RETRY = "run gh pr create on this machine from a checkout of the target repository so the guard can find the session that owns the head";
 const LITERAL_CWD_RETRY = "cd to a literal checkout path, then run gh pr create";
 const CLOUD_RETRY = "pass the handoff gate, then finish the cloud task with cloud-worker.mjs import, the opposite-harness review and refresh-import, and rerun gh pr create";
@@ -206,14 +207,17 @@ function prHeadTarget(cwd, head, repositoryOverrides) {
   return target;
 }
 
-/** A bounded, explicit PR-body declaration names the blocking Vibe issue and a nonempty reason. */
-function hasTicketedGateOverride(bodyFile) {
+/**
+ * A bounded, explicit PR-body declaration names the blocking Vibe issue, as a reference the session's tracker
+ * recognizes (`ticketReference`), and a nonempty reason.
+ */
+function hasTicketedGateOverride(bodyFile, binding) {
   if (!bodyFile) return false;
   try {
     const stat = lstatSync(bodyFile);
     if (!stat.isFile() || stat.size > 65536) return false;
-    return readFileSync(bodyFile, "utf8").split(/\r?\n/).some(line =>
-      /^Vibe gate override: ISS-\d+:\s*\S.*$/.test(line));
+    const declaration = new RegExp(`^Vibe gate override: (?:${ticketReference(binding).source}):\\s*\\S.*$`);
+    return readFileSync(bodyFile, "utf8").split(/\r?\n/).some(line => declaration.test(line));
   } catch { return false; }
 }
 
@@ -248,7 +252,7 @@ export function prCreateGuard(event, home = os.homedir()) {
     if (call.uncertainCwd) {
       return refuse(`unresolved shell cwd ${call.unresolvedTarget ?? "unknown"} from ${call.cwd} cannot prove a local vibe handoff gate`, LITERAL_CWD_RETRY);
     }
-    const override = hasTicketedGateOverride(call.bodyFile);
+    const override = hasTicketedGateOverride(call.bodyFile, recordedBinding({ worktree: call.cwd, conversation: event?.session_id ?? null, home }));
     let target = targets[index];
     if (!target && !vibeNamedHead(call.head)) {
       // An unresolvable non-Vibe head (remote-only, a fork, another repository) is judged by the

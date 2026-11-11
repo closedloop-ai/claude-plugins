@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, paragraph, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +27,7 @@ AGENTS = PLUGIN_ROOT / "agents"
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 GUARDRAILS = VIBE / "references" / "guardrails.md"
 DESIGN_PASS = VIBE / "references" / "design-pass.md"
-TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 README = PLUGIN_ROOT / "README.md"

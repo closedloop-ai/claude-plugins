@@ -104,6 +104,7 @@ import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
 import { placementLines, readPlacementEvidence, recordPlacement, renderPlacements, writerPlacementProblem, writerTickets } from "./writer-placement.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { workItem } from "../../vibe/scripts/tracker-key.mjs";
 
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
@@ -274,6 +275,13 @@ function read(orchDir) {
 }
 
 function write(orchDir, board, line, at) {
+  // A program kept outside a fleet home is invisible to the hooks that read the home after a
+  // compaction (fleet-resume, the PreCompact summary, the unit-status board leg), which then act on
+  // a stale program (operator ruling, 2026-11-11). Reads still work, so status can say how to migrate.
+  if (!resolveWorkDir(orchDir).home) {
+    throw new Error(`${orchDir} is not a program in a fleet home, so the board will not write there: `
+      + "migrate it first with fleet-home.mjs migrate --from <dir> --program <slug>, then pass the home or its program dir");
+  }
   board.log.push(`${at} ${line}`);
   board.log = board.log.slice(-LOG_LINES);
   for (const [name, text] of [[STATE, `${JSON.stringify(board, null, 2)}\n`], [PAGE, render(board)]]) {
@@ -457,7 +465,7 @@ function recordUnit(orchDir, board, name, values, at) {
     return;
   }
   const tickets = list(values.tickets);
-  if (tickets.length === 0 || tickets.some((slug) => !/^[A-Z]+-\d+$/.test(slug))) {
+  if (tickets.length === 0 || tickets.some((slug) => !workItem().test(slug))) {
     throw new Error("unit needs --tickets <slug,slug>: every ticket the unit delivers.");
   }
   if (board.units[name]?.closed) throw new Error(`unit ${name} is closed; start the new unit as ${freeUnitName(name, Object.keys(board.units))}, the name ticket-units.mjs group prints`);

@@ -10,9 +10,11 @@ import { CapturedMainComparison, comparisonLogs, runBounded } from "./main-sync-
 import { comparisonBudgetMs } from "./main-sync-validation-recipe.js";
 import { discoverRequiredE2eLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
-import { committedLocalPlans, isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { committedLocalPlans } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { artifactRootOf, isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
 import { verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
-import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, reportOutputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
+import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
+import { checkSteps, reportOutputsFor, type MainSyncStep } from "./main-sync-recipe.js";
 import { originIdentity, sameOriginFiles } from "./main-sync-input-files.js";
 import { readWriterSummary } from "./ledger.js";
 import { bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
@@ -28,7 +30,7 @@ const BIOME_PATHS_PER_COMMAND = 120;
 const SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 const PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
 const CACHE_SEGMENTS = new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
-/** A person's own agent and editor config: ignored files here are never a validation input (ISS-13291). */
+/** A person's own agent and editor config: ignored files here are never a validation input. */
 const LOCAL_CONFIG_DIRS = new Set([".codex", ".claude", ".agents", ".vscode", ".idea"]);
 const turboTasksSchema = z.object({ tasks: z.array(z.object({ taskId: z.string(), package: z.string().optional() }).passthrough()) }).passthrough();
 
@@ -56,6 +58,7 @@ export function inspectInputInventory(root: string) {
 function inspectInventory(root: string, completion: "standalone" | "origin") {
   const before = trackedInputs(root);
   verifyPrivateRoot(root);
+  const reportOutputs = reportOutputsFor(root);
   for (const path of reportOutputs) {
     if (lstatSync(join(root, path), { throwIfNoEntry: false })) verifyEvidencePath(root, path, "Retained report");
   }
@@ -71,13 +74,14 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
       untracked.push(file);
       if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
       if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) continue;
-      if (isLocalPlanPath(file)) {
+      if (isPlanFile(root, file)) {
         if (!ignored) throw new MainSyncError(`Private planning evidence must remain ignored: ${file}`, "NEEDS_CHANGE");
         verifyPrivateInput(root, file, before.headSha);
         continue;
       }
-      if (PRIVATE_ARTIFACT.test(file) && (file.startsWith(".closedloop-ai/decision-tables/") || file.startsWith(".control/"))) continue;
-      if (producerFor(file)) {
+      const artifactRoot = artifactRootOf(root);
+      if (PRIVATE_ARTIFACT.test(file) && ((artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`)) || file.startsWith(".control/"))) continue;
+      if (producerFor(root, file)) {
         if (!ignored) throw new MainSyncError(`Canonical generated dependency must remain ignored: ${file}`, "NEEDS_CHANGE");
         continue;
       }
@@ -97,7 +101,7 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
       if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
     }
   }
-  const plans = committedLocalPlans((args) => git(root, args));
+  const plans = committedLocalPlans((args) => git(root, args), planPrefixOf(root));
   if (plans.length) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   if (recognizedDerivative) {
     const after = trackedInputs(root);
@@ -187,36 +191,24 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync(join(root, file)));
   const commands: CheckCommand[] = [];
   const e2eLimitations: z.infer<typeof e2eLimitationSchema>[] = [];
-  // operator ruling, 2026-10-13: a build-loop deploy runs only what the commit hooks run
-  // (affected typecheck and Biome on the changed source); the test suites run at handoff.
+  // The repository's check matrix (its main-sync recipe, else its AGENTS.md test command), selected by purpose and
+  // expanded against the session's actual scope: the changed source paths, the captured main and the session slug.
+  const purpose = value.purpose === "build" ? "build" : prototype ? "prototype" : "handoff";
+  const { steps, final } = checkSteps(root, purpose);
+  const expand = (step: MainSyncStep) => {
+    if ("biome" in step) commands.push(...biomeCheckCommands(paths));
+    else if ("laneDiscovery" in step) e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
+    else if (!step.when || files.some((file) => new RegExp(step.when!).test(file))) {
+      commands.push({ argv: step.argv.map((word) => word.replaceAll("{mainSha}", receipt.mainSha).replaceAll("{slug}", value.place.session.slug)) });
+    }
+  };
+  steps.forEach(expand);
   if (value.purpose === "build") {
-    commands.push(...biomeCheckCommands(paths));
-    commands.push({ argv: ["pnpm", "typecheck:affected"] });
     verifyReportRecipe(commands);
     const bound = bindCheckBudgets(commands);
     return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };
   }
-  if (prototype) {
-    commands.push({ argv: ["pnpm", "--filter", "prototypes", "generate:registry"] },
-      { argv: ["pnpm", "--filter", "prototypes", "typecheck"] },
-      { argv: ["pnpm", "--filter", "prototypes", "test"] },
-      { argv: ["pnpm", "exec", "biome", "check", "apps/prototypes"] },
-      { argv: ["node", ".claude/skills/prototype-approve/scripts/read-decision-log.mjs", `apps/prototypes/app/p/${value.place.session.slug}/decisions.md`] });
-  } else {
-    // operator ruling, 2026-10-19: no broad or full local suite runs here. The verify worker runs the tests
-    // closedloop-graph's code_tests_for selects per changed file, and CI runs the broad suites on the PR and after merge.
-    commands.push(...biomeCheckCommands(paths));
-    e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
-    commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
-  }
-  // Operator ruling, 2026-10-28 (ISS-13321): the session's own diff against the main it captured, as Biome uses.
-  // Pinned to the last deploy, every main merge widened the typecheck by all of main's changes since then.
-  const filter = `...[${receipt.mainSha}]`;
-  commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] });
-  if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
-    commands.push({ argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
-  }
-  commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
+  final.forEach(expand);
   verifyReportRecipe(commands);
   const bound = bindCheckBudgets(commands);
   // operator ruling, 2026-10-16: a handoff failure is compared against the captured main; the reserve bounds that.

@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-// The mechanical checks of `vibe-guardrails-reviewer` (PRD-823, WS3 D4,
-// ISS-13346), run before any model reads the diff, as one findings JSON the
-// consolidated reviewer (WS4 R1) reads instead of re-deriving them. It WRAPS the
+// The mechanical checks of `vibe-guardrails-reviewer`, run before any model reads the diff, as one findings JSON the
+// consolidated reviewer reads instead of re-deriving them. It WRAPS the
 // target repository's own gates and `diff-rules.mjs`; it re-implements neither:
 //
 //   biome         `pnpm exec biome check` on the changed files
-//   source-gates  `pnpm check:source-gates`
+//   source-gates  the repository's source gates (the provider verify recipe's `source-gates` check)
 //   diff-rules    `runDiffRules` (diff-rules.mjs), the same findings handoff-inventory reports
 //
 // and adds the added-line scans the reviewer's prose asked a model to do:
@@ -36,8 +35,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { execCommand, stdoutOf, tailLines, toolDidNotRun } from "../../vibe/scripts/ws3-exec.mjs";
+import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const FINDINGS_SCHEMA = "vibe.guardrails-findings/1";
 export const Severity = Object.freeze({ High: "high", Medium: "medium", Low: "low" });
@@ -330,14 +333,16 @@ export function createGuardrailsGate({
       return report;
     }
     const diffText = git(worktree, ["diff", "--no-color", "--unified=0", "-M", baseSha]).stdout;
-    const files = parseUnifiedDiff(diffText);
+    const files = parseUnifiedDiff(diffText, sessionLocalPlanPrefix(worktree));
     const changedPaths = new Set(files.filter((file) => file.status !== "D").map((file) => file.path));
     const scripts = exists(path.join(worktree, "package.json")) ? (JSON.parse(read(path.join(worktree, "package.json")))?.scripts ?? {}) : {};
 
     const biomeTargets = [...changedPaths].filter((file) => BIOME_FILE.test(file));
     if (biomeTargets.length === 0) handle.skip(Check.Biome, "no changed file is one Biome checks");
     else wrappedGate({ name: Check.Biome, args: ["exec", "biome", "check", ...biomeTargets], worktree, changed: changedPaths, scripts, report: handle });
-    wrappedGate({ name: Check.SourceGates, script: "check:source-gates", args: ["check:source-gates"], worktree, changed: new Set(), scripts, report: handle });
+    const sourceGates = (providerDataOr(sessionBinding(worktree), "recipes", "verify", null)?.checks ?? []).find((check) => check.name === Check.SourceGates);
+    if (sourceGates) wrappedGate({ name: Check.SourceGates, script: sourceGates.script, args: [sourceGates.script], worktree, changed: new Set(), scripts, report: handle });
+    else handle.skip(Check.SourceGates, "the repository's recipe names no source gates");
 
     try {
       const rules = diffRulesFn({ worktree, base: baseSha, phase: "handoff" });

@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { killProblems, recordedOwn } from "./kill-guard.mjs";
+import { ACTIVATED_SESSION, activatedChat } from "./activation-test-support.mjs";
+import { recordHookSkill } from "./hook-session-scope.mjs";
 
 // No test here sends a signal: every case asks the guard for a decision only. The
 // commands are assembled from words (`sh`) so the repository's signal and
@@ -78,7 +80,9 @@ test("a recorded pid is own only from its directory and while the same process r
 test("the hook denies a refused Bash command and stays silent otherwise", (t) => {
   const home = mkdtempSync(path.join(tmpdir(), "kill-guard-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
-  const run = (event) => spawnSync(process.execPath, [GUARD], { input: JSON.stringify(event), encoding: "utf8", env: { ...process.env, HOME: home } });
+  const chat = activatedChat(t, { ...process.env, HOME: home });
+  const run = (event) => spawnSync(process.execPath, [GUARD], { input: JSON.stringify(chat.payload(event)), encoding: "utf8", env: { ...chat.env, HOME: home } });
+  recordHookSkill(ACTIVATED_SESSION, "vibe:vibe", home);
   const denied = run({ tool_name: "Bash", cwd: home, tool_input: { command: sh(byName("p"), "-f", '"turbo test"') } });
   assert.equal(denied.status, 0);
   const decision = JSON.parse(denied.stdout).hookSpecificOutput;

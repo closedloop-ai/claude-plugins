@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import picomatch from "picomatch";
 import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
-import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
 import { isCommittedFile } from "./main-sync-committed-tree.js";
 
 const MODULE_PATH = /\.(?:[cm]?[jt]sx?|json)$/;
@@ -29,8 +29,8 @@ export type NativeReferenceEnvironment = { cwd?: string; argv: readonly (string 
 const nativeEnvironments = new WeakMap<ts.SourceFile, NativeReferenceEnvironment>();
 
 /** Public code/config paths supported by the shared parser; other imported files remain data. */
-export function isInputModulePath(file: string) {
-  return MODULE_PATH.test(file) && !isLocalPlanPath(file);
+export function isInputModulePath(file: string, root: string) {
+  return MODULE_PATH.test(file) && !isPlanFile(root, file);
 }
 
 /** Receiver-specific references preserve complete targets; unknown pieces never become separate paths. */
@@ -41,13 +41,13 @@ export type InputReference = { kind: "path"; value: string; base: "module" | "ru
 /** One finite syntax owner serves both private evidence and retained-report admission. */
 export function committedInputReferences(root: string, matches: (file: string, reference: InputReference) => boolean) {
   const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
-  return files.some((file) => isInputModulePath(file)
+  return files.some((file) => isInputModulePath(file, root)
     && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
 }
 
 /** The global private walk and selected report walk share the same syntax/binding owner. */
 export function readInputModule(root: string, file: string, environment?: NativeReferenceEnvironment) {
-  if (!isInputModulePath(file)) throw new Error("Input module is not a public committed source path");
+  if (!isInputModulePath(file, root)) throw new Error("Input module is not a public committed source path");
   if (!isCommittedFile(root, file)) throw new Error("Selected input module is not committed");
   return parseInputModule(root, file, environment);
 }
@@ -127,14 +127,18 @@ export function explicitPlanningReference(root: string, file: string, reference:
   if (reference.kind !== "path") return false;
   if (reference.value.includes(UNKNOWN) || reference.possibleOnly || reference.unknownPrefix) {
     const suffix = reference.value.slice(reference.value.lastIndexOf(UNKNOWN) + UNKNOWN.length).replace(/^\/+/, "");
-    return suffix === ".closedloop-ai/vibe-plans" || suffix.startsWith(".closedloop-ai/vibe-plans/")
-      || reference.uncertainTerms.some((term) => term.includes(".closedloop-ai/vibe-plans"))
-      || (reference.uncertainTerms.includes(".closedloop-ai") && reference.uncertainTerms.includes("vibe-plans"));
+    const prefix = planPrefixOf(root);
+    if (!prefix) return false;
+    const folder = prefix.slice(0, -1);
+    const [artifactRoot, plans] = [folder.slice(0, folder.lastIndexOf("/")), folder.slice(folder.lastIndexOf("/") + 1)];
+    return suffix === folder || suffix.startsWith(prefix)
+      || reference.uncertainTerms.some((term) => term.includes(folder))
+      || (reference.uncertainTerms.includes(artifactRoot) && reference.uncertainTerms.includes(plans));
   }
   const target = reference.base === "runtime" && !isAbsolute(reference.value)
     ? normalize(reference.value).replace(LEADING_PARENTS, "")
     : relative(root, resolve(dirname(join(root, file)), reference.value));
-  return isLocalPlanPath(target) || target === ".closedloop-ai/vibe-plans";
+  return isPlanFile(root, target);
 }
 
 function callName(expression: ts.Expression): string {
@@ -578,7 +582,7 @@ function importedConstant(root: string, source: ts.SourceFile, declaration: ts.I
   const files = [stem, stem.replace(/\.js$/, ".ts"), `${stem}.ts`, `${stem}.mjs`, `${stem}/index.ts`];
   const name = (declaration.propertyName ?? declaration.name).text;
   for (const file of files) {
-    if (!existsSync(join(root, file)) || !MODULE_PATH.test(file) || isLocalPlanPath(file)) continue;
+    if (!existsSync(join(root, file)) || !MODULE_PATH.test(file) || isPlanFile(root, file)) continue;
     const module = readInputModule(root, file, environment);
     for (const statement of module.statements) {
       if (!ts.isVariableStatement(statement) || !statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)

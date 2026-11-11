@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { assembleProviderText, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { capabilitiesSchema, type Capability } from "./contracts.js";
 import { missingMcpTools } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
@@ -41,11 +42,11 @@ function capabilitiesFor(worker: typeof workers[number], runtime: keyof typeof r
   const capabilities: Capability[] = [{ name: toolName("closedloop-graph", graphOperation, runtime),
     service: "graph", operation: graphOperation, access: "read" }];
   for (const operation of requiredReads[worker] ?? []) capabilities.push({
-    name: toolName("closedloop", operation, runtime), service: "closedloop", operation, access: "read",
+    name: toolName("closedloop", operation, runtime), service: "tracker", operation, access: "read",
   });
-  const writes = new Set(Object.values(recordModes[worker] ?? {}).flat());
+  const writes = new Set(Object.values(recordModes()[worker] ?? {}).flat());
   for (const operation of writes) capabilities.push({
-    name: toolName("closedloop", operation, runtime), service: "closedloop", operation, access: "write",
+    name: toolName("closedloop", operation, runtime), service: "tracker", operation, access: "write",
   });
   return capabilities;
 }
@@ -73,6 +74,17 @@ describe("vibe worker cross-runtime tool contract", () => {
     }
   });
 
+  it("keeps every role's record actions with no tracker bound, each writing nothing in a tracker", () => {
+    const bound = recordModes();
+    const generic = recordModes(null);
+    expect(Object.keys(generic)).toEqual(Object.keys(bound));
+    for (const [role, actions] of Object.entries(generic)) {
+      expect(Object.keys(actions), role).toEqual(Object.keys(bound[role] ?? {}));
+      for (const operations of Object.values(actions)) expect(operations).toEqual([]);
+    }
+    expect(bound["vibe-ticket-worker"]?.handoff).toContain("upload_attachment");
+  });
+
   it("treats hyphenated and underscored operation aliases as the same granted MCP tool", () => {
     expect(missingMcpTools(["mcp__closedloop__create-document"],
       ["mcp__closedloop__create_document"])).toEqual([]);
@@ -85,9 +97,9 @@ describe("vibe worker cross-runtime tool contract", () => {
   it("binds the ticket worker's exact Claude document tools", () => {
     const capabilities = capabilitiesFor("vibe-ticket-worker", "claude");
     expect(capabilities).toEqual(expect.arrayContaining([
-      { name: "mcp__closedloop__create-document", service: "closedloop", operation: "create_document", access: "write" },
-      { name: "mcp__closedloop__update-document", service: "closedloop", operation: "update_document", access: "write" },
-      { name: "mcp__closedloop__create-artifact-link", service: "closedloop", operation: "create_artifact_link", access: "write" },
+      { name: "mcp__closedloop__create-document", service: "tracker", operation: "create_document", access: "write" },
+      { name: "mcp__closedloop__update-document", service: "tracker", operation: "update_document", access: "write" },
+      { name: "mcp__closedloop__create-artifact-link", service: "tracker", operation: "create_artifact_link", access: "write" },
     ]));
     expect(missingMcpTools(capabilities.map(({ name }) => name), ["mcp__closedloop__create_document"])).toEqual([]);
   });
@@ -120,8 +132,9 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(templateText).toContain("Invoke vibe:vibe first:");
   });
   it("uses current ClosedLoop grants after sign-in and relocates owned control captures", () => {
-    const environment = readFileSync(join(pluginRoot, "agents", "vibe-environment-worker.md"), "utf8");
-    const verify = readFileSync(join(pluginRoot, "agents", "vibe-verify-worker.md"), "utf8");
+    // Both roles' text here is the ClosedLoop provider's, assembled into each role as it runs bound.
+    const environment = assembleProviderText(readFileSync(join(pluginRoot, "agents", "vibe-environment-worker.md"), "utf8"), sessionBinding());
+    const verify = assembleProviderText(readFileSync(join(pluginRoot, "agents", "vibe-verify-worker.md"), "utf8"), sessionBinding());
     expect(environment).toContain("statusShown.closedloop");
     expect(environment).toContain("currently loaded ClosedLoop tool");
     expect(verify).toContain("vibe-control-runs/");

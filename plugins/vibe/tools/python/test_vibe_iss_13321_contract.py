@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -69,7 +69,7 @@ def test_the_person_is_only_asked_to_do_what_only_a_human_can() -> None:
 def test_a_check_that_times_out_on_main_too_is_this_machines_limit() -> None:
     loop = section((REFERENCES / "quality-loop.md").read_text(), "## Failures already on main")
     assert "`machine-limited`: it ran out of its time limit on the session commit and on the captured main alike" in loop
-    template = flat((REFERENCES / "ticket-template.md").read_text())
+    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
     assert "`- [ ] Check ran out of time on this machine: <check>; also on captured main <mainSha>; limit <minutes> min; run it on a faster machine or CI`" in template
 
 
@@ -90,7 +90,7 @@ def test_passing_it_on_carries_criteria_that_wait_on_another_ticket() -> None:
     assert "A requested pull request still needs every criterion met." in handoff
     ticket = flat((AGENTS / "vibe-ticket-worker.md").read_text())
     assert "`Aligned except criteria waiting on <tickets>`" in ticket
-    template = flat((REFERENCES / "ticket-template.md").read_text())
+    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
     assert "`- [ ] Criterion waits on <ticket>: <criterion>; not met until it ships`" in template
 
 

@@ -83,10 +83,14 @@ test('registered terminal PR retires only its exact published worktree and prese
   assert.equal(hasPendingOwnedCleanups({ home: f.home }), false, 'empty ledger costs the supervisor only a marker read');
 });
 
+const PROVIDER_BINDING = { state: 'bound', name: 'vibe-closedloop-provider', capabilities: ['tickets', 'plans', 'graph', 'memory', 'recipes'],
+  root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../vibe-closedloop-provider') };
+const PROVIDER_GENERATED = ['.closedloop-ai/.env.setup', '.closedloop-ai/vibe-plans/session.md', '.biome-noscan.jsonc'];
+
 test('bootstrapped symphony outputs are regenerable while unknown ignored content still blocks retirement', async (t) => {
   const f = fixture(t);
   writeFileSync(f.sessionFile, JSON.stringify({ status: 'handed-off', pullRequest: { repo: f.pr.repo, number: f.pr.number, head: f.pr.head },
-    livePlan: 'PLN-1', livePlanStatus: 'APPROVED' }));
+    livePlan: 'PLN-1', livePlanStatus: 'APPROVED', provider: PROVIDER_BINDING }));
   for (const file of ['.husky/_/pre-commit', 'apps/app/.env.local', '.closedloop-ai/.env.setup',
     '.closedloop-ai/vibe-plans/session.md', '.biome-noscan.jsonc', 'tsconfig.tsbuildinfo',
     'containers/claude-runner/node_modules/package']) {
@@ -100,6 +104,7 @@ test('bootstrapped symphony outputs are regenerable while unknown ignored conten
   assert.deepEqual(retired.removed, [f.worktree], JSON.stringify(retired));
 
   const unpublished = fixture(t);
+  writeFileSync(unpublished.sessionFile, JSON.stringify({ ...JSON.parse(readFileSync(unpublished.sessionFile, 'utf8')), provider: PROVIDER_BINDING }));
   mkdirSync(path.join(unpublished.worktree, '.closedloop-ai', 'vibe-plans'), { recursive: true });
   writeFileSync(path.join(unpublished.worktree, '.closedloop-ai', 'vibe-plans', 'private.md'), 'private plan');
   assert.ok(unpublished.register());
@@ -521,4 +526,24 @@ test('worktree retirement waits for scratch TTL cleanup so its lease proof survi
   writeFileSync(file, JSON.stringify({ scratch: { kind: 'scratch', worktree: f.worktree, stoppedAt: '2026-11-03T00:00:00Z' } }));
   const retired = await f.sweep({}, { now: Date.now() + 31 * 60_000 });
   assert.deepEqual(retired.removed, [f.worktree]);
+});
+
+test('without a provider recipe only the generic generated paths are regenerable', async (t) => {
+  for (const file of PROVIDER_GENERATED) {
+    const f = fixture(t);
+    writeFileSync(f.sessionFile, JSON.stringify({ status: 'handed-off', pullRequest: { repo: f.pr.repo, number: f.pr.number, head: f.pr.head },
+      livePlan: 'PLN-1', livePlanStatus: 'APPROVED', provider: { state: 'none' } }));
+    mkdirSync(path.dirname(path.join(f.worktree, file)), { recursive: true });
+    writeFileSync(path.join(f.worktree, file), 'generated');
+    assert.ok(f.register());
+    assert.deepEqual((await f.sweep()).removed, [], `${file} is another repository's own output, so it blocks retirement`);
+    assert.equal(existsSync(path.join(f.worktree, file)), true);
+  }
+  const plain = fixture(t);
+  writeFileSync(plain.sessionFile, JSON.stringify({ status: 'handed-off', pullRequest: { repo: plain.pr.repo, number: plain.pr.number, head: plain.pr.head },
+    provider: { state: 'none' } }));
+  mkdirSync(path.join(plain.worktree, 'node_modules'));
+  writeFileSync(path.join(plain.worktree, 'node_modules', 'package'), 'generated');
+  assert.ok(plain.register());
+  assert.deepEqual((await plain.sweep()).removed, [plain.worktree], 'a generic build output never blocks retirement');
 });

@@ -1,15 +1,13 @@
 #!/usr/bin/env node
-// The offline, mechanical parts of `vibe-ticket-worker` (PRD-823, WS3 D9,
-// ISS-13351): templating the live ticket body from structured input. It is
-// ONLY those parts. The ClosedLoop REST client the plan names is blocked on an
-// owner ruling about long-lived static credentials (the repository's AGENTS.md
-// calls them an anti-pattern; ticket creation currently goes through the
-// ClosedLoop MCP), so this file has no client, reads no token, key or
-// credential from the environment or any file, and invents no auth mechanism.
+// The offline, mechanical parts of `vibe-ticket-worker`: templating the live ticket body from structured input. It is
+// ONLY those parts. A tracker REST client is blocked on an owner ruling about
+// long-lived static credentials (ticket creation goes through the tracker's
+// MCP), so this file has no client, reads no token, key or credential from the
+// environment or any file, and invents no auth mechanism.
 // Reading and writing a ticket stays with the worker's MCP tools; this script
 // transforms the body text the worker already holds.
 //
-// What it does, with `ticket-template.md` as the authority for every format:
+// What it does, with the tracker provider's `ticket-template.md` as the authority for every format:
 //   checklist         render Engineering checklist lines from the handoff's structured entries
 //                     (conflicts, forbidden paths, engineering decisions, known main failures,
 //                     frozen stories, machine-limited checks, E2E left for CI, waiting criteria,
@@ -38,9 +36,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { parseSections, TICKET_SECTIONS } from "../../handoff/scripts/live-ticket-check.mjs";
 import { execCommand, parseJson, printedStdout } from "./ws3-exec.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerPath, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const TEMPLATE = path.join(here, "..", "references", "ticket-template.md");
+// The bound tracker provider's live ticket template; the ticket worker runs only with a tracker bound.
+const template = () => providerPath(sessionBinding(null), "tickets", "ticket-template.md");
 const SECTION_HEADING = /^## (.+?)\s*$/;
 
 /** The sections each step may change (ticket-template.md, the "Written by" table); anything else stays exactly as it is. */
@@ -85,7 +87,7 @@ const IDENTITY = Object.freeze({
   machineLimited: "check", e2eLeftForCi: "lane", criteriaWait: "criterion", toolingBlockers: "what", compileOnly: "file",
 });
 
-/** Wraps angle-bracketed text in a code span: ClosedLoop strips it otherwise (ticket-template.md). */
+/** Wraps angle-bracketed text in a code span: the tracker strips it otherwise (ticket-template.md). */
 export function protectAngles(text) {
   return String(text).split(/(`[^`\n]*`)/).map((part) => (part.startsWith("`") && part.endsWith("`") && part.length > 1 ? part : part.replace(/<[^<>\n]+>/g, (match) => `\`${match}\``))).join("");
 }
@@ -186,7 +188,7 @@ export function createTicketCtl({ transport = null, run = execCommand } = {}) {
 
   /** Reads the latest body through the injected transport, applies `change`, writes the whole body back. */
   async function update({ slug, change }) {
-    if (!transport) throw new Error("No transport is configured: reading and writing a ticket stays with the ClosedLoop MCP until the credential ruling (ISS-13351).");
+    if (!transport) throw new Error("No transport is configured: reading and writing a ticket stays with the tracker's MCP until the credential ruling.");
     const latest = await transport.getDocument(slug);
     const next = change(latest.body);
     if (next === latest.body) return { slug, written: false };
@@ -221,7 +223,7 @@ function main(argv) {
       return 0;
     }
     case "grading":
-      process.stdout.write(`${gradingSection(readFileSync(values.template ?? TEMPLATE, "utf8"))}\n`);
+      process.stdout.write(`${gradingSection(readFileSync(values.template ?? template(), "utf8"))}\n`);
       return 0;
     case "replace-sections": {
       if (!values["sections-file"] || !values.owner) throw new Error("--sections-file and --owner are required.");

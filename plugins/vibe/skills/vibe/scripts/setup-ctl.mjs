@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// The mechanical half of `vibe-setup-worker` (PRD-823, WS3 D1, ISS-13343):
-// apply the preflight fixes that need no person, bootstrap a worktree, start
-// local Storybook, build and launch the session's Desktop profile, stop what
-// a session runs and discard a confirmed session. It wraps `vibe-preflight.sh`,
-// `./.closedloop-ai/loops-setup.sh`, `run-bounded.mjs` and the `vibe-sessions.mjs`
+// The mechanical half of `vibe-setup-worker`: apply the preflight fixes that
+// need no person, bootstrap a worktree, start local Storybook, build and launch
+// the session's Desktop profile, stop what a session runs and discard a
+// confirmed session. It wraps `vibe-preflight.sh`, the repository's bootstrap
+// (the bound provider's recipe, else an install from the lockfile),
+// `run-bounded.mjs` and the `vibe-sessions.mjs`
 // subcommands (`touch`, `desktop-auth`, `desktop-launched`, `desktop-tab`,
 // `stop`, `discard`); it re-implements none of them. The worker keeps every
 // judgment: a repository defect, an unfamiliar failure and anything it must
@@ -33,12 +34,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import { execCommand, parseJson, printedStdout, stdoutOf, tailLines } from "./ws3-exec.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { LOCKFILE_INSTALLS } = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
 
 export const Status = Object.freeze({ Ok: "OK", NeedsPerson: "NEEDS_PERSON", Blocked: "BLOCKED", NeedsAgent: "NEEDS_AGENT" });
 // references/preflight.md, the `claude-auth-login` row, word for word.
 export const CLAUDE_SIGN_IN_WORDS = "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done.";
-// references/preflight.md, the `allow-folder-access` row; `<folder>` is the preflight's own detail.
-export const folderAccessWords = (folder) => `Your Mac is asking whether Codex can open your ${folder} folder; click Allow.`;
 // references/environment.md, "Desktop": the sentence for a Desktop that cannot start.
 export const DESKTOP_UNAVAILABLE = "DESKTOP_UNAVAILABLE";
 export const STORYBOOK_PORTS = Object.freeze({ first: 6100, last: 6999 });
@@ -47,28 +50,26 @@ export const LIMITS = Object.freeze({ bootstrap: 1800, desktopPrepare: 900, sign
 /** Mechanical fixes with no person in the loop: the exact command from `preflight.md`'s fix table. */
 export const AUTO_FIXES = Object.freeze({
   "install-pnpm": { command: "sh", args: ["-c", "corepack enable && corepack prepare pnpm@latest --activate"], display: "corepack enable && corepack prepare pnpm@latest --activate" },
+  "install-yarn": { command: "sh", args: ["-c", "corepack enable && corepack prepare yarn@latest --activate"], display: "corepack enable && corepack prepare yarn@latest --activate" },
   "brew-install-jq": { command: "brew", args: ["install", "jq"], display: "brew install jq" },
   "brew-install-gh": { command: "brew", args: ["install", "gh"], display: "brew install gh" },
 });
 // Fixes that need the person at the Mac or a sign-in the script must not drive.
 const PERSON_FIXES = Object.freeze({
   "claude-auth-login": () => ({ message: CLAUDE_SIGN_IN_WORDS, reference: "preflight.md, claude-auth-login" }),
-  "allow-folder-access": (check) => ({ message: folderAccessWords(check.detail), reference: "preflight.md, allow-folder-access" }),
   "install-xcode-clt": () => ({ message: null, reference: "preflight.md, install-xcode-clt" }),
   "install-homebrew": () => ({ message: null, reference: "preflight.md, install-homebrew (asks for the Mac password through sudo)" }),
 });
 // Fixes the preflight says stop, or that are the worker's judgment.
 const BLOCKED_FIXES = Object.freeze({
   "unsupported-os": "this flow supports macOS only",
-  "choose-repo": "more than one checkout; resolve it from the active workspace or recorded session",
-  "ask-for-repo-path": "the folder is not a checkout of the repository; resolve it from the recorded checkout",
+  "ask-for-repo-path": "no git checkout to use; resolve it from the active workspace or recorded session, else ask which folder",
   "posthog-key-missing": "the public analytics key could not be found; see preflight.md",
 });
 const DELEGATED_FIXES = Object.freeze({
   "install-node": "preflight.md, Supported Node",
   "gh-auth-login": "preflight.md, Signing in to GitHub",
-  "clone-repo": "preflight.md, clone-repo",
-  "run-loops-setup": "setup-ctl.mjs bootstrap --worktree <repo> after preflight.md, run-loops-setup",
+  "install-dependencies": "setup-ctl.mjs bootstrap --worktree <repo> after preflight.md, install-dependencies",
 });
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -77,8 +78,11 @@ const BOUNDED = script("run-bounded.mjs");
 const PREFLIGHT = script("vibe-preflight.sh");
 const SESSIONS = script("vibe-sessions.mjs");
 
-/** The failed checks (one JSON object per preflight line), classified by their `fix`. */
-export function classifyChecks(lines) {
+/**
+ * The failed checks (one JSON object per preflight line), classified by their `fix`. `bootstrapFix` is the
+ * bound provider's name for its bootstrap fix, delegated like `install-dependencies`.
+ */
+export function classifyChecks(lines, bootstrapFix = null) {
   const failed = lines.filter((check) => check.ok === false);
   const plan = { auto: [], needsPerson: [], blocked: [], delegated: [], unknown: [] };
   for (const check of failed) {
@@ -88,6 +92,7 @@ export function classifyChecks(lines) {
     else if (fix in PERSON_FIXES) plan.needsPerson.push({ check: check.check, fix, detail: check.detail, ...PERSON_FIXES[fix](check) });
     else if (fix in BLOCKED_FIXES) plan.blocked.push({ check: check.check, fix, reason: BLOCKED_FIXES[fix], detail: check.detail });
     else if (fix in DELEGATED_FIXES) plan.delegated.push({ check: check.check, fix, reference: DELEGATED_FIXES[fix], detail: check.detail });
+    else if (bootstrapFix && fix === bootstrapFix) plan.delegated.push({ check: check.check, fix, reference: `setup-ctl.mjs bootstrap --worktree <repo> after preflight.md, ${fix}`, detail: check.detail });
     else plan.unknown.push({ check: check.check, fix, detail: check.detail });
   }
   return plan;
@@ -142,6 +147,7 @@ export function createSetupCtl({
   readFile = (file) => readFileSync(file, "utf8"),
   writeFile = (file, text) => writeFileSync(file, text),
   exists = existsSync,
+  recipe = providerRecipe,
 } = {}) {
   const sessions = (args, options) => parseJson(printedStdout(run(process.execPath, [SESSIONS, ...args], options), "vibe-sessions"), {});
   const bounded = (seconds, command, args, options) => run(process.execPath, [BOUNDED, String(seconds), command, ...args], { ...options, timeoutMs: (seconds + 30) * 1000 });
@@ -159,7 +165,8 @@ export function createSetupCtl({
     const args = preflightArgs(options);
     const first = parsePreflight(printedStdout(run("bash", [PREFLIGHT, ...args]), "preflight"));
     if (first.length === 0) return { status: Status.Blocked, error: "vibe-preflight.sh printed no checks" };
-    let plan = classifyChecks(first);
+    const bootstrapFix = recipe(options.repo ?? null, "bootstrap")?.fix ?? null;
+    let plan = classifyChecks(first, bootstrapFix);
     const applied = [];
     if (options.apply) {
       for (const item of plan.auto) {
@@ -167,21 +174,45 @@ export function createSetupCtl({
         const result = bounded(LIMITS.bootstrap, fix.command, fix.args);
         applied.push({ fix: item.fix, command: fix.display, ok: result.status === 0, ...(result.status === 0 ? {} : { evidenceTail: tailLines(`${result.stdout}\n${result.stderr}`, 4) }) });
       }
-      if (applied.length > 0) plan = classifyChecks(parsePreflight(printedStdout(run("bash", [PREFLIGHT, ...args]), "preflight")));
+      if (applied.length > 0) plan = classifyChecks(parsePreflight(printedStdout(run("bash", [PREFLIGHT, ...args]), "preflight")), bootstrapFix);
     }
     return { status: overallStatus(plan), applied, ...plan, passing: first.filter((check) => check.ok === true).map((check) => check.check) };
   }
 
+  /** The bound provider's bootstrap command for the worktree, else the lockfile's install, else null. */
+  function bootstrapCommand(worktree) {
+    const command = recipe(worktree, "bootstrap")?.command;
+    if (typeof command === "string" && command) {
+      return exists(path.join(worktree, command)) ? { command, args: [], display: command } : { missing: command };
+    }
+    const found = LOCKFILE_INSTALLS.find(([lockfile]) => exists(path.join(worktree, lockfile)));
+    return found ? { command: found[1], args: found[2], display: [found[1], ...found[2]].join(" ") } : null;
+  }
+
   function bootstrap({ worktree }) {
-    const setup = path.join(worktree, ".closedloop-ai", "loops-setup.sh");
-    if (!exists(setup)) return { status: Status.Blocked, error: "the worktree has no .closedloop-ai/loops-setup.sh" };
-    const result = bounded(LIMITS.bootstrap, "./.closedloop-ai/loops-setup.sh", [], { cwd: worktree });
-    if (result.status === 0) return { status: Status.Ok };
+    const chosen = bootstrapCommand(worktree);
+    if (chosen?.missing) return { status: Status.Blocked, error: `the worktree has no ${chosen.missing}` };
+    if (!chosen) {
+      return { status: Status.NeedsAgent, reason: "no provider bootstrap and no lockfile: read the repository's AGENTS.md or README for its setup (preflight.md, Bootstrap)" };
+    }
+    const result = bounded(LIMITS.bootstrap, chosen.command, chosen.args, { cwd: worktree });
+    if (result.status === 0) return { status: Status.Ok, command: chosen.display };
     return {
-      status: result.status === 124 ? Status.Blocked : Status.NeedsAgent, exitCode: result.status,
-      reason: result.status === 124 ? `stopped after ${LIMITS.bootstrap}s on this machine` : "loops-setup.sh failed; read its output for a missing prerequisite",
+      status: result.status === 124 ? Status.Blocked : Status.NeedsAgent, exitCode: result.status, command: chosen.display,
+      reason: result.status === 124 ? `stopped after ${LIMITS.bootstrap}s on this machine` : `${chosen.display} failed; read its output for a missing prerequisite`,
       evidenceTail: tailLines(`${result.stdout}\n${result.stderr}`, 20),
     };
+  }
+
+  /** The command that serves Storybook on `port`: the provider's recipe, else the package's `storybook` script. */
+  function storybookCommand(worktree, port) {
+    const fill = (words) => words.map((word) => word.replaceAll("{port}", String(port)));
+    const configured = recipe(worktree, "storybook");
+    if (Array.isArray(configured?.command) && configured.command.length > 0) {
+      return { command: configured.command[0], args: fill(configured.command.slice(1)) };
+    }
+    const manager = LOCKFILE_INSTALLS.find(([lockfile]) => exists(path.join(worktree, lockfile)))?.[1] ?? "npm";
+    return { command: manager, args: ["run", "storybook", "--", "-p", String(port), "--ci", "--no-open"] };
   }
 
   async function waitFor(condition, limitMs) {
@@ -202,7 +233,8 @@ export function createSetupCtl({
     const port = await freePort(isPortFree);
     if (port === null) return { status: Status.Blocked, error: `no free port from ${STORYBOOK_PORTS.first} to ${STORYBOOK_PORTS.last}` };
     const logFile = path.join(gitDir(worktree), "vibe-storybook.log");
-    const pid = detach("pnpm", ["--filter", "storybook", "exec", "storybook", "dev", "-p", String(port), "--ci", "--no-open"], { cwd: worktree, logFile });
+    const served = storybookCommand(worktree, port);
+    const pid = detach(served.command, served.args, { cwd: worktree, logFile });
     const url = `http://localhost:${port}`;
     const up = await waitFor(async () => (exists(logFile) && /Local:/.test(readFile(logFile))) && await probe(url), LIMITS.storybookWaitMs);
     if (!up) {
@@ -316,4 +348,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
       process.exit(2);
     },
   );
+}
+
+/** The bound provider's recipe value `key` for the session in `worktree` (or this conversation), else null. */
+function providerRecipe(worktree, key) {
+  return providerDataOr(sessionBinding(worktree), "recipes", key, null);
 }

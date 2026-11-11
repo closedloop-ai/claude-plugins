@@ -1,19 +1,23 @@
 # Handoff: UI steps
 
+Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+
 Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: step-4-storybook -->
 ## 4. Storybook
 
+<!-- generic: placement-record -->
 Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
 gaps in handoff mode: its precedent search covers every story or shared
 component the session added, retitled or moved, checked against the Placement
-blocks in the writer's local plan. Each placement goes on the live ticket's
+blocks in the writer's local plan. Each placement goes on the handoff summary's
 Storybook placement line; the SAME writer logs each Conflict with its
-audience, and the ticket worker places it by that audience
-(`../vibe/references/ticket-template.md`, "Conflicts"), never to the person.
-Every new story follows the repo's `apps/storybook/TAXONOMY.md`, a v1.0
+audience, never to the person.
+Every new story follows the repo's Storybook taxonomy document, a v1.0
 story file is never edited beyond a compile-only repair and any other existing
+<!-- end generic: placement-record -->
+> Provider `tickets+recipes` (block `placement-record` of `handoff/handoff-ui.md`)
 story file keeps its title and tag
 (`../vibe/references/guardrails-ui.md`, "Storybook taxonomy"); the inventory's
 `v1Stories` and `retitledStories` block handoff, judged by the scheme of the
@@ -37,16 +41,15 @@ Source inspection alone does not clear a compiled warning or prove appearance.
 <!-- end: step-4-storybook -->
 
 <!-- block: running-app-verification -->
+<!-- generic: control-verification -->
 Before the first commit or push, dispatch read-only `vibe-verify-worker` control
 mode on every locally served uncommitted candidate screen, naming HEAD plus
-diff/tree hashes. Use the repository's control skill
-(`<repo-root>/.claude/skills/control/SKILL.md`, `pnpm control`): hidden browser
-and displayless Desktop only, never `--headed` or `--allow-write`. Close owned
-sessions with `pnpm control down`; its throwaway Desktop profile stays separate
-from the session's stopped profile. Relocate captures with
-`../vibe/scripts/control-evidence.mjs` into private Git storage. Return captures,
-console/page errors, network/API/IPC evidence and baseline comparisons with
-what each proves.
+diff/tree hashes. It drives the running app headless (Playwright, or the
+browser harness the repository documents), never a visible window, and keeps
+its captures in private Git storage. Return captures, console/page errors,
+network evidence and baseline comparisons with what each proves.
+<!-- end generic: control-verification -->
+> Provider `recipes` (block `control-verification` of `handoff/handoff-ui.md`)
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is

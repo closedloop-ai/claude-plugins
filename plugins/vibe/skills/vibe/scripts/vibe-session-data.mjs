@@ -1,31 +1,24 @@
-// Pure helpers behind vibe-sessions.mjs: the session's Vercel URLs, the
-// production flag snapshot contract (ISS-12048), the orchestrator session ids that
+// Pure helpers behind vibe-sessions.mjs: the session's hosted environment URLs, the
+// production flag snapshot contract, the orchestrator session ids that
 // worked on it, the person running it, the environment run's verified result,
 // and the live ticket sections rendered from the session record (the keys to
-// see the work come from flag-keys.mjs).
+// see the work come from flag-keys.mjs). The hosted environment's names (its
+// preview domain, projects, request workflow and inputs) are the bound
+// provider's recipe data (`data.recipes.environment`), passed in as `environment`;
+// a session without one has no hosted environment, so its URLs stay null.
 
 import { closeSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import path from "node:path";
 import { FLAG_KEYS_HEADING, renderFlagKeys } from "./flag-keys.mjs";
 import { isOwnedPrototypeSession } from "./prototype-session.mjs";
 
-// Vercel mints `<project>-git-<branch>` aliases on this domain for every
-// pushed branch. A DNS label longer than 63 characters is truncated and
-// hashed, so the alias is only predictable below that.
-const PREVIEW_DOMAIN = ".preview.closedloop-stage.ai";
+// Vercel mints `<project>-git-<branch>` aliases on the environment's preview
+// domain for every pushed branch. A DNS label longer than 63 characters is
+// truncated and hashed, so the alias is only predictable below that.
 const MAX_DNS_LABEL = 63;
-export const VercelProject = {
-  App: "app-stage",
-  Api: "api-stage",
-  // Storybook is served by the prototypes project under /storybook
-  // (symphony-alpha apps/storybook/AGENTS.md).
-  Storybook: "prototypes",
-};
-const STORYBOOK_PATH = "/storybook";
 export const VERCEL_URL_KEYS = ["appUrl", "apiUrl", "storybookUrl"];
 
-// The snapshot contract in symphony-alpha
-// packages/api/src/types/feature-flag-snapshot.ts (ISS-12048).
+// The flag snapshot contract the environment's API reads.
 const SNAPSHOT_KEYS = new Set(["takenAt", "distinctId", "orgId", "flags"]);
 const MAX_ID_LENGTH = 200;
 const MAX_FLAG_KEY_LENGTH = 200;
@@ -41,21 +34,19 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const PENDING = "Pending.";
 
-// The permission-less request workflow in symphony-alpha that starts the
-// session's environment (ISS-12056). It runs from main; the workflow holding
-// the cloud credential (`vibe-environment.yml`) runs after it on
+// The inputs of the provider's permission-less request workflow
+// (`environment.requestWorkflow`), which starts the session's environment from
+// main; the workflow holding the cloud credential runs after it on
 // `workflow_run`, never dispatched here. Both runs are titled
 // `Vibe environment <branch> (<request_id>)`.
-export const DISPATCH_WORKFLOW = "vibe-environment-dispatch.yml";
 export const DispatchInput = {
   Branch: "branch",
   Mode: "mode",
   FlagSnapshot: "flag_snapshot",
   PersonEmail: "person_email",
-  ClerkOrgId: "clerk_org_id",
   DesktopAuth: "desktop_auth",
   RequestId: "request_id",
-  // ISS-12135 bug 43: optional, sent only when the workflow on main declares
+  // Optional, sent only when the workflow on main declares
   // it. "true" keeps a ready environment's snapshot; "false" is a flag refresh.
   KeepFlagSnapshot: "keep_flag_snapshot",
 };
@@ -64,18 +55,16 @@ export const DispatchInput = {
 const DESKTOP_AUTH_KEYS = ["refreshTokenHash", "publicKeySpki", "gatewayId"];
 const MAX_DESKTOP_AUTH_VALUE = 4096;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CLERK_ORG_ID = /^org_[A-Za-z0-9]+$/;
 export const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
-const OPERATOR_ID = /^[A-Za-z0-9_-]{1,200}$/;
+const OPERATOR_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const HTTPS_URL = /^https:\/\/\S+$/;
 const MAX_DEPLOYMENT_ID = 200;
-// The fields of `vibe-environment-result.json`, which symphony-alpha's
-// `vibe-environment.yml` uploads as the `vibe-environment-result` artifact
-// once the branch head's app, API, and Storybook deployments are READY and
-// their aliases verified against them (symphony-alpha #8476). Any
-// `*.preview.closedloop-stage.ai` host without its own deployment is served by
-// the stage production app, so only this result says a URL is safe.
+// The fields of `vibe-environment-result.json`, which the environment's
+// workflow uploads as the `vibe-environment-result` artifact once the branch
+// head's app, API, and Storybook deployments are READY and their aliases
+// verified against them. A preview host without its own deployment is served
+// by the stage production app, so only this result says a URL is safe.
 const ENVIRONMENT_RESULT_KEYS = [
   "requestId",
   "branch",
@@ -90,23 +79,27 @@ const ENVIRONMENT_RESULT_KEYS = [
 const DEPLOYMENT_ID_KEYS = ["app", "api", "storybook"];
 const MAX_OPERATOR_NAME = 200;
 
-/** The stable per-branch Vercel URLs for a vibe branch, or null when unpredictable. */
-export function vercelAliases(branch) {
+/**
+ * The stable per-branch Vercel URLs for a vibe branch on `environment` (the provider's recipe), or null
+ * where unpredictable; all null with no hosted environment.
+ */
+export function vercelAliases(branch, environment = null) {
+  if (!environment?.previewDomain || !environment.projects) return { appUrl: null, apiUrl: null, storybookUrl: null };
   const slug = branch.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const host = (project) => {
     const label = `${project}-git-${slug}`;
-    return label.length > MAX_DNS_LABEL ? null : `https://${label}${PREVIEW_DOMAIN}`;
+    return label.length > MAX_DNS_LABEL ? null : `https://${label}${environment.previewDomain}`;
   };
-  const storybookHost = host(VercelProject.Storybook);
+  const storybookHost = host(environment.projects.storybook);
   return {
-    appUrl: host(VercelProject.App),
-    apiUrl: host(VercelProject.Api),
-    storybookUrl: storybookHost ? `${storybookHost}${STORYBOOK_PATH}` : null,
+    appUrl: host(environment.projects.app),
+    apiUrl: host(environment.projects.api),
+    storybookUrl: storybookHost ? `${storybookHost}${environment.storybookPath ?? ""}` : null,
   };
 }
 
 /**
- * Validates a flag snapshot against the ISS-12048 contract and returns it
+ * Validates a flag snapshot against the flag snapshot contract and returns it
  * re-serialized with keys in a fixed order. Throws with every problem found.
  */
 export function validateFlagSnapshot(snapshot) {
@@ -304,15 +297,15 @@ function stringOrNull(value) {
  * Sessions. Workers paste this markdown over those three sections instead of
  * writing them by hand.
  */
-export function renderRecordSections(record, snapshot) {
+export function renderRecordSections(record, snapshot, environment = null) {
   return [
-    renderEnvironment(record),
+    renderEnvironment(record, environment),
     renderFlagSnapshot(record, snapshot),
     renderSessions(record),
   ].join("\n\n");
 }
 
-function renderEnvironment(record) {
+function renderEnvironment(record, environment) {
   if (isOwnedPrototypeSession(record)) {
     const publication = record.prototype;
     const base = record.baseCommit ? ` (base: origin/main at \`${record.baseCommit.slice(0, 10)}\`)` : "";
@@ -338,9 +331,9 @@ function renderEnvironment(record) {
     "## Environment",
     "",
     `- Branch: \`${record.branch}\`${base}`,
-    `- Data: ${modeLabel(record.mode)}`,
-    // ISS-12135 bug 56: the app's root sends a signed-out visitor to account
-    // creation, so the ticket links the sign-in page.
+    `- Data: ${modeLabel(record.mode, environment)}`,
+    // The app's root sends a signed-out visitor to account creation, so the
+    // ticket links the sign-in page.
     `- App: ${url(vercel.appUrl && `${vercel.appUrl}/sign-in`)}`,
     `- API: ${url(vercel.apiUrl)}`,
     `- Storybook: ${url(vercel.storybookUrl)}`,
@@ -348,9 +341,9 @@ function renderEnvironment(record) {
   ].join("\n");
 }
 
-function modeLabel(mode) {
+function modeLabel(mode, environment) {
   if (mode === "seeded") {
-    return "seeded (Acme Co sample data)";
+    return environment?.seededLabel ?? "seeded";
   }
   if (mode === "blank") {
     return "blank (no data)";
@@ -412,14 +405,16 @@ function renderSessions(record) {
  * The request workflow's inputs, every value a string: the branch, the mode,
  * the snapshot as compact JSON, and the request id that names both runs. A
  * seeded session also sends the person's email (the stage API finds their
- * Clerk user and org from it) and, only when they belong to more than one
- * stage org, the Clerk id of the one they chose. A session that touches
- * Desktop also sends its saved Desktop auth claim, in either mode, with the
- * person's email so the Desktop session belongs to them (symphony-alpha's
- * request check refuses the claim without it). A blank session without a
- * Desktop claim sends no email, and a blank session never sends a Clerk org.
+ * user and org from it) and, only when they belong to more than one stage
+ * org, the id of the one they chose, under the environment's `orgInput`. A
+ * session that touches Desktop also sends its saved Desktop auth claim, in
+ * either mode, with the person's email so the Desktop session belongs to them
+ * (the environment's request check refuses the claim without it). A blank
+ * session without a Desktop claim sends no email, and a blank session never
+ * sends an org.
  */
-export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId, desktopAuth, requestId, keepFlagSnapshot }) {
+export function buildDispatchInputs({ record, snapshot, personEmail, environmentOrgId, desktopAuth, requestId, keepFlagSnapshot,
+  environment = null }) {
   if (record.mode !== "seeded" && record.mode !== "blank") {
     throw new Error("The session has no seeded or blank mode yet; set it with touch --mode.");
   }
@@ -443,8 +438,8 @@ export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId,
     inputs[DispatchInput.DesktopAuth] = JSON.stringify(validateDesktopAuth(desktopAuth));
   }
   if (record.mode === "blank") {
-    if (clerkOrgId) {
-      throw new Error("A Clerk org is only sent for a seeded session.");
+    if (environmentOrgId) {
+      throw new Error("An environment org is only sent for a seeded session.");
     }
     if (!desktopAuth) {
       if (personEmail) {
@@ -456,19 +451,19 @@ export function buildDispatchInputs({ record, snapshot, personEmail, clerkOrgId,
   if (!EMAIL.test(personEmail ?? "")) {
     throw new Error(
       desktopAuth
-        ? "A request with a Desktop auth claim needs --person-email (the email ClosedLoop get-me returns), so the Desktop session belongs to the person."
-        : "A seeded session needs --person-email (the email ClosedLoop get-me returns)."
+        ? "A request with a Desktop auth claim needs --person-email (the operator's email), so the Desktop session belongs to the person."
+        : "A seeded session needs --person-email (the operator's email)."
     );
   }
   inputs[DispatchInput.PersonEmail] = personEmail;
   if (record.mode === "blank") {
     return inputs;
   }
-  if (clerkOrgId !== undefined) {
-    if (!CLERK_ORG_ID.test(clerkOrgId)) {
-      throw new Error("--clerk-org-id must be a Clerk organization id (org_...).");
+  if (environmentOrgId !== undefined) {
+    if (!validEnvironmentOrgId(environmentOrgId, environment) || !environment?.orgInput) {
+      throw new Error("--environment-org must be an organization id of the form the environment's recipe names.");
     }
-    inputs[DispatchInput.ClerkOrgId] = clerkOrgId;
+    inputs[environment.orgInput] = environmentOrgId;
   }
   return inputs;
 }
@@ -492,17 +487,23 @@ export function validateDesktopAuth(claim) {
   return Object.fromEntries(DESKTOP_AUTH_KEYS.map((key) => [key, claim[key]]));
 }
 
+/** Whether `id` is an organization id of the form `environment.orgIdPattern` names. */
+export function validEnvironmentOrgId(id, environment) {
+  return typeof environment?.orgIdPattern === "string" && new RegExp(environment.orgIdPattern).test(id ?? "");
+}
+
 /**
- * The person running the session, from ClosedLoop `get-me`: their user id and
- * email (the live ticket is assigned to that user and compared by id and exact
- * email, never by display name) and, when given, their name for the ticket.
+ * The person running the session: the bound provider's user, or the GitHub
+ * login with git's user email, as an id and email (a provider's live ticket
+ * is assigned to that user and compared by id and exact email, never by
+ * display name) and, when given, their name for the ticket.
  */
 export function validateOperator({ id, email, name }) {
   if (!OPERATOR_ID.test(id ?? "")) {
-    throw new Error("--operator-id must be the ClosedLoop user id get-me returns.");
+    throw new Error("--operator-id must be the operator's user id (letters, digits, `_`, `-`, `:` or `.`).");
   }
   if (!EMAIL.test(email ?? "")) {
-    throw new Error("--operator-email must be the email get-me returns.");
+    throw new Error("--operator-email must be the operator's email.");
   }
   const trimmed = name?.trim() ?? "";
   if (name !== undefined && (trimmed === "" || trimmed.length > MAX_OPERATOR_NAME)) {
@@ -566,14 +567,12 @@ export function validateEnvironmentResult(result, { requestId, branch, mode, hea
   };
 }
 
-// What symphony-alpha's Desktop dev launcher prints once Electron is up with
-// the browser bridge (`apps/desktop/scripts/dev-launch.mjs`), which
-// `vibe:profile launch` runs since ISS-12182. The token is the launch's
-// reader credential (`desktopBrowserBridgeTokenParam`, at least
-// `desktopBrowserBridgeMinimumTokenLength` characters).
+// What the Desktop dev launcher prints once Electron is up with the browser
+// bridge, which `vibe:profile launch` runs. The token is the launch's reader
+// credential, under the query parameter the environment's recipe names
+// (`desktopBridgeTokenParam`), at least 43 characters.
 const DESKTOP_BROWSER_URL_LINE = /^Desktop browser URL: (\S+)\s*$/gm;
 const DESKTOP_BROWSER_PATH = "/design-system/browser.html";
-const DESKTOP_BRIDGE_TOKEN_PARAM = "closedloopBridgeToken";
 const DESKTOP_BRIDGE_TOKEN = /^[A-Za-z0-9_-]{43,}$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost"]);
 
@@ -584,7 +583,8 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost"]);
  * reached Electron yet, or the worktree's launcher predates the bridge).
  * Throws when the line is there but is not a loopback bridge URL with a token.
  */
-export function findDesktopBrowserUrl(log) {
+export function findDesktopBrowserUrl(log, environment = null) {
+  const tokenParam = environment?.desktopBridgeTokenParam;
   const lines = [...log.matchAll(DESKTOP_BROWSER_URL_LINE)];
   const last = lines.at(-1)?.[1];
   if (last === undefined) {
@@ -596,7 +596,7 @@ export function findDesktopBrowserUrl(log) {
   } catch {
     throw new Error("The Desktop browser URL in the launch log is not a URL.");
   }
-  const token = url.searchParams.get(DESKTOP_BRIDGE_TOKEN_PARAM) ?? "";
+  const token = tokenParam ? url.searchParams.get(tokenParam) ?? "" : "";
   if (
     url.protocol !== "http:" ||
     !LOOPBACK_HOSTS.has(url.hostname) ||
@@ -605,7 +605,7 @@ export function findDesktopBrowserUrl(log) {
     !DESKTOP_BRIDGE_TOKEN.test(token)
   ) {
     throw new Error(
-      `The Desktop browser URL in the launch log is not a loopback ${DESKTOP_BROWSER_PATH} URL with a ${DESKTOP_BRIDGE_TOKEN_PARAM}.`
+      `The Desktop browser URL in the launch log is not a loopback ${DESKTOP_BROWSER_PATH} URL with a ${tokenParam ?? "bridge token"}.`
     );
   }
   return url.href;

@@ -13,10 +13,10 @@
 
 import { readFileSync } from "node:fs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { workItem } from "../../vibe/scripts/tracker-key.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
 
-const TICKET = /^[A-Z]+-\d+$/;
 const Placement = Object.freeze({ Cloud: "cloud", Local: "local" });
 
 /** The placement evidence a file holds: the object itself, or a cloud-worker request's `placement`. */
@@ -32,7 +32,7 @@ export function readPlacementEvidence(file) {
 
 /** Records the check's decision for `ticket` from `evidence`, or the operator's `keepLocal` reason against a cloud decision. */
 export function recordPlacement(placements, ticket, { evidence, keepLocal }, at) {
-  if (!TICKET.test(ticket ?? "")) throw new Error("placement needs a ticket slug: capital letters, a hyphen and a number.");
+  if (!workItem().test(ticket ?? "")) throw new Error("placement needs a work item: the tracker's ticket slug, or a #number with no tracker.");
   if (evidence === undefined && keepLocal === undefined) {
     throw new Error("placement needs --evidence <file> (the check runs on it) or --keep-local <the operator's reason>.");
   }
@@ -59,7 +59,7 @@ export function writerPlacementProblem(placements, writer, tickets) {
   if (tickets.length === 0) {
     return `writer ${writer} names no ticket: pass --tickets <slug,slug> (or record its unit with --writer ${writer}) so its placement is checked.`;
   }
-  const bad = tickets.filter((ticket) => !TICKET.test(ticket));
+  const bad = tickets.filter((ticket) => !workItem().test(ticket));
   if (bad.length > 0) return `--tickets takes ticket slugs (capital letters, a hyphen and a number), got ${bad.join(", ")}.`;
   const problems = tickets.flatMap((ticket) => {
     const decision = placements[ticket];

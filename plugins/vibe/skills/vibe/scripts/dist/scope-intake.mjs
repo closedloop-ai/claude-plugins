@@ -26,22 +26,22 @@ function runWhenMain(metaUrl, main2) {
 // src/scope-intake.ts
 var DEFAULT_INVENTORY = fileURLToPath(new URL("../../../handoff/scripts/handoff-inventory.mjs", import.meta.url));
 var PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
-var PROTOTYPE_CHECKER = "apps/prototypes/scripts/check-catalog-imports.mjs";
+var DEFAULT_POLICY_SOURCE = "built-in-default";
 async function intakeScope(input) {
   if (!input.worktree) throw new Error("--worktree is required");
   if (!Array.isArray(input.plannedPaths) || input.plannedPaths.length === 0) throw new Error("at least one --path is required");
   const worktree = resolve(input.worktree);
   const planned = [...new Set(input.plannedPaths.map(plannedPath))].sort();
   const loaded = loadPathPolicy(worktree, input.phase, input.inventoryScript ?? DEFAULT_INVENTORY);
-  const classify = await pathClassifierContract();
+  const { classify, defaultPolicy } = await pathClassifierContract();
   const classifications = await Promise.all(planned.map(async (file) => ({ file, classification: classify({
     file: { path: file, status: plannedStatus(worktree, loaded.inventory.baseCommit, file) },
     phase: input.phase,
-    policy: loaded.policy,
+    policy: loaded.policy ?? defaultPolicy,
     prototype: { owned: loaded.inventory.ownedPrototype === true, slug: loaded.inventory.sessionSlug },
     portableSurfaceAllowed: await portableSurfaceEditAllowed(worktree, loaded.inventory, file)
   }) })));
-  return classifyPlannedPaths({ worktree, planned, loaded, classifications });
+  return classifyPlannedPaths({ worktree, planned, loaded: { ...loaded, policy: loaded.policy ?? defaultPolicy }, classifications });
 }
 function classifyPlannedPaths(input) {
   const dispositions = new Map(input.classifications.map((entry) => [entry.file, entry.classification.disposition]));
@@ -65,7 +65,7 @@ function classifyPlannedPaths(input) {
 async function pathClassifierContract() {
   const moduleUrl = new URL("../../../handoff/scripts/path-classifier.mjs", import.meta.url).href;
   const runtime = await import(moduleUrl);
-  return runtime.classifyHandoffPath;
+  return { classify: runtime.classifyHandoffPath, defaultPolicy: runtime.DEFAULT_PATH_POLICY };
 }
 function plannedStatus(worktree, baseCommit, file) {
   const result = spawnSync("git", ["-C", worktree, "cat-file", "-e", `${baseCommit}:${file}`], {
@@ -75,13 +75,16 @@ function plannedStatus(worktree, baseCommit, file) {
   return result.status === 0 ? "M" : "A";
 }
 async function portableSurfaceEditAllowed(worktree, inventory, file) {
-  if (!inventory.ownedPrototype || file !== PROTOTYPE_CHECKER || !inventory.baseCommit) return false;
+  if (!inventory.ownedPrototype || !inventory.baseCommit) return false;
   try {
     const moduleUrl = new URL("../../../handoff/scripts/prototype-allowlist.mjs", import.meta.url).href;
     const runtime = await import(moduleUrl);
+    const areasUrl = new URL("../area-paths.mjs", import.meta.url).href;
+    const recipe = (await import(areasUrl)).prototypeRecipe();
+    if (!recipe || file !== runtime.portableSurfaceChecker()) return false;
     const base = execFileSync("git", ["-C", worktree, "show", `${inventory.baseCommit}:${file}`], { encoding: "utf8" });
     const current = readFileSync(resolve(worktree, file), "utf8");
-    return runtime.isPortableSurfaceAllowlistEdit(base, current, (specifier) => [".ts", ".tsx", ".mjs"].some((extension) => existsSync(resolve(worktree, "packages/app", `${specifier.slice("@repo/app/".length)}${extension}`))));
+    return runtime.isPortableSurfaceAllowlistEdit(base, current, (specifier) => [".ts", ".tsx", ".mjs"].some((extension) => existsSync(resolve(worktree, recipe.portableModuleRoot, `${specifier.slice(recipe.portableModulePrefix.length)}${extension}`))));
   } catch {
     return false;
   }
@@ -101,6 +104,9 @@ function loadPathPolicy(worktree, _phase, inventoryScript) {
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
   const file = inventory.pathPolicyFile;
+  if (source?.kind === DEFAULT_POLICY_SOURCE && source.commit && inventory.baseCommit && file === null) {
+    return { inventory, policy: null };
+  }
   if (!source?.commit || !inventory.baseCommit || file !== PATH_POLICY_BASENAME) {
     throw new Error("handoff inventory did not return one validated root path policy and base commit");
   }

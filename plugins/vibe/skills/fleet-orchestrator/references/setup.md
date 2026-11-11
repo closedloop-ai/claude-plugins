@@ -1,8 +1,13 @@
 # Setup
 
+Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+
 ## Prerequisites
 
-- `codex`, `node`, `jq` and `gh` (authenticated) on every machine that hosts sessions or checks, and this plugin installed for Codex and Claude on every machine that hosts writers, since every writer is a vibe session; the closedloop-graph MCP server (from the closedloop-core plugin) connected on every machine that runs the orchestrator or writers; `jq` also where codex-fleet-monitor runs. `fleet.sh ... session` reads the plugin version with `jq` on the orchestrating machine, and for a remote session runs `codex plugin list --json | jq` in the remote host's `REMOTE_SHELL`, so both must be on that shell's PATH; a missing `codex` there stops the command with exit 127 naming the host.
+<!-- generic: graph-everywhere -->
+- `codex`, `node`, `jq` and `gh` (authenticated) on every machine that hosts sessions or checks, and this plugin installed for Codex and Claude on every machine that hosts writers, since every writer is a vibe session; `jq` also where codex-fleet-monitor runs. `fleet.sh ... session` reads the plugin version with `jq` on the orchestrating machine, and for a remote session runs `codex plugin list --json | jq` in the remote host's `REMOTE_SHELL`, so both must be on that shell's PATH; a missing `codex` there stops the command with exit 127 naming the host.
+<!-- end generic: graph-everywhere -->
+> Provider `graph` (block `graph-everywhere` of `fleet/setup.md`)
 - For more than one machine: ssh key auth from the orchestrating machine to each other machine, so `ssh <host> true` runs with no password prompt. That is the one thing this skill cannot set up for you.
 
 ## config.env
@@ -72,7 +77,10 @@ Then set the slot counts from this machine's core count, write the file, and run
 2. Fill `sessions.txt` and `prs.txt` as codex-fleet-monitor describes; a session started through `fleet.sh` is listed as `local|remote <name>`.
 3. For each other machine: create its fleet home the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex jq gh'"`, which must print four paths. Install this plugin there in a persistent path.
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
-5. On each machine, check closedloop-graph answers (its `sync_status` tool) from Claude Code and from Codex.
+<!-- generic: graph-check -->
+5. On each machine, check each connection the bound provider names answers, from Claude Code and from Codex; with no provider there is nothing to check.
+<!-- end generic: graph-check -->
+> Provider `graph` (block `graph-check` of `fleet/setup.md`)
 6. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.
    For Claude cloud workers, set `CLOUD_CLAUDE_ENV=<env id>` in `config.env` and run `../vibe/scripts/cloud-worker.mjs check`.
    Check that vibe-core is installed beside vibe: the placement check every writer start needs is its `lib/fleet-orchestrator/scripts/cloud-placement.mjs`, run through `board.mjs placement`.

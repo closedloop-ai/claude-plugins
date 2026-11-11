@@ -2,12 +2,15 @@
 // vibe-pr-evidence.json. Repository-owned lane tooling supplies the probe;
 // this module only applies its documented thresholds and operator override.
 import { spawnSync } from "node:child_process";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
 
-// symphony-alpha e2e/CONTAINERIZED.md and run-containerized.sh require these
-// three authenticated E2E inputs. LIVEBLOCKS_SECRET is optional there.
-export const REQUIRED_CONTAINER_IDENTITY = Object.freeze([
-  "CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "DEVOPS_CLOSEDLOOP_APP_PWD",
-]);
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+
+// The repository's containerized E2E recipe (the provider's `recipes.e2e`): the authenticated inputs its runner
+// needs, its machine slot wrapper and that wrapper's old usage line, and its Desktop spec folder. A repository
+// with none needs no identity and has no slot or Desktop tier.
+export const e2eRecipe = () => providerDataOr(sessionBinding(), "recipes", "e2e", null);
+export const requiredContainerIdentity = () => Object.freeze([...(e2eRecipe()?.containerIdentity ?? [])]);
 export const NO_DISPLAYLESS_ELECTRON = "no supported displayless Linux Electron harness";
 const CAPABILITY_KIND = "selected-runner-desktop-capability/v2";
 const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
@@ -19,7 +22,6 @@ const CAPABILITY_SCRIPT = [
 ].join("");
 // The commit reaches a regular expression and the remote shell, so only a full SHA is accepted.
 const SHA = /^[0-9a-f]{40}$/;
-const OLD_SLOT_USAGE = /^Usage: e2e-slot\.sh \[--head <sha>\] <owner-label> <command\.\.\.>$/m;
 
 /** Re-probe the selected remote runner through its supported login-shell route. */
 function runSelectedRemoteProbe({ host, command }) {
@@ -30,6 +32,7 @@ function runSelectedRemoteProbe({ host, command }) {
 
 /** A caller-authored hash is only integrity metadata; the actual selected runner must execute now. */
 function remoteDesktopProbe(capability, commit, runProbe = runSelectedRemoteProbe) {
+  const recipe = e2eRecipe();
   const remote = capability.remote;
   const harness = remote?.desktopHarness;
   const host = remote?.runnerHost;
@@ -40,12 +43,12 @@ function remoteDesktopProbe(capability, commit, runProbe = runSelectedRemoteProb
     || worktree.split("/").includes("..")
     || typeof owner !== "string" || !/^[a-z0-9][a-z0-9-]{2,60}$/.test(owner)
     || typeof remote?.command !== "string"
-    || !remote.command.includes("~/vibe-remote/e2e-slot.sh")
+    || !recipe?.slotCommand || !remote.command.includes(recipe.slotCommand)
     || !new RegExp(`(?:^|\\s)--head\\s+${commit}(?:\\s|$)`).test(remote.command)
     || harness?.probedCommit !== commit) return null;
   const prefix = `cd ${shellQuote(worktree)} && test "$PWD" = ${shellQuote(worktree)}`
     + ` && test "$(git rev-parse HEAD)" = ${commit}`
-    + ` && ~/vibe-remote/e2e-slot.sh --head ${commit}`;
+    + ` && ${recipe.slotCommand} --head ${commit}`;
   const request = nativeDesktop => ({ host, head: commit, worktree, owner,
     selectedTier: "C", runnerCommand: remote.command, nativeDesktop,
     command: `${prefix}${nativeDesktop ? " --native-desktop" : ""} ${owner} node -e ${shellQuote(CAPABILITY_SCRIPT)}` });
@@ -55,7 +58,7 @@ function remoteDesktopProbe(capability, commit, runProbe = runSelectedRemoteProb
     // proof of a supported route, regardless of how its shell source is written.
     if (native?.exitCode === 0) return null;
     if (native?.exitCode !== 2 || typeof native.output !== "string"
-      || !OLD_SLOT_USAGE.test(native.output) || native.output.includes("[--native-desktop]")) return null;
+      || !recipe.slotUsage || !native.output.split("\n").includes(recipe.slotUsage) || native.output.includes("[--native-desktop]")) return null;
     const generic = runProbe(request(false));
     if (generic?.exitCode !== 0 || typeof generic.output !== "string") return null;
     const reports = generic.output.split(/\r?\n/).flatMap(line => {
@@ -99,7 +102,8 @@ export function specExecutionLimitation(capability, spec, commit, runProbe) {
     || !new RegExp(`(?:^|\\s)--head\\s+${commit}(?:\\s|$)`).test(capability.remote.command)
     || typeof capability.remote?.source !== "string" || !capability.remote.source.trim())) return null;
   const desktopHarness = capability.selectedTier === "C" ? capability.remote?.desktopHarness : capability.desktopHarness;
-  if (spec.startsWith("apps/desktop/") && desktopHarness?.available === false
+  const desktopSpecs = e2eRecipe()?.desktopSpecs;
+  if (desktopSpecs && spec.startsWith(desktopSpecs) && desktopHarness?.available === false
     && desktopHarness.reason === NO_DISPLAYLESS_ELECTRON
     && (capability.selectedTier !== "C" || desktopHarness.probedCommit === commit)
     && typeof desktopHarness.probe === "string" && desktopHarness.probe.trim()) {
@@ -109,8 +113,8 @@ export function specExecutionLimitation(capability, spec, commit, runProbe) {
   if (capability.selectedTier !== "A") return null;
   const container = capability.container;
   const secrets = container?.secretsSet;
-  if (container?.runnable !== false || !secrets || !REQUIRED_CONTAINER_IDENTITY.every((key) => typeof secrets[key] === "boolean")) return null;
-  const missingPrerequisites = REQUIRED_CONTAINER_IDENTITY.filter((key) => secrets[key] === false);
+  if (container?.runnable !== false || !secrets || !requiredContainerIdentity().every((key) => typeof secrets[key] === "boolean")) return null;
+  const missingPrerequisites = requiredContainerIdentity().filter((key) => secrets[key] === false);
   if (missingPrerequisites.length === 0 || typeof container.notRunnableReason !== "string"
     || !missingPrerequisites.every((key) => container.notRunnableReason.includes(key))) return null;
   return { tier: "A", kind: "missing-prerequisites", missingPrerequisites };

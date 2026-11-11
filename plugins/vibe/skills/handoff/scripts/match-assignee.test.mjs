@@ -78,7 +78,7 @@ test("users are read from every page once, and a page set missing anyone is refu
   assert.equal(usersFromPages([...pages, page([GRACE], { offset: 2 })]).length, USERS.length);
   assert.throws(() => usersFromPages([page([ADA, ADA_K])]), /2 of 4 users/);
   assert.throws(() => usersFromPages([page([ADA], { total: 4 }), page([GRACE], { offset: 1, total: 5 })]), /disagree/);
-  assert.throws(() => usersFromPages([]), /No list-users pages/);
+  assert.throws(() => usersFromPages([]), /No user listing pages/);
   assert.throws(() => usersFromPages([{ items: [ADA] }]), /no items array or total/);
   assert.throws(() => usersFromPages([page([{ ...ADA, id: "" }], { total: 1 })]), /no id/);
 });

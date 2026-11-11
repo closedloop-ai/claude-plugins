@@ -3,10 +3,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { classify } from "../../vibe/scripts/vibe-triage.mjs";
+import { classify as classifyIn } from "../../vibe/scripts/vibe-triage.mjs";
+import { sessionAreas } from "../../vibe/scripts/area-paths.mjs";
 import { ADVERSARIAL_REVIEWER, applyTriage, decideReview, FINDINGS_SCHEMA, loadTriageManifest, TriageStatus, loadFindings, partialFindings, REVIEW_SCOPE_DEFAULTS, resolveThresholds, ReviewMode, validateFindings } from "./review-scope.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(DIR, "review-scope.mjs");
@@ -157,6 +162,8 @@ const UI_PATHS = ["apps/app/components/header.tsx", "apps/app/components/footer.
 const BACKEND = ["apps/api/app/documents/route.ts"];
 const consolidatedDecision = { mode: ReviewMode.Consolidated, reasons: [] };
 const fleetDecision = { mode: ReviewMode.FullFleet, reasons: ["backend-change"] };
+// Triage reads the bound repository's areas, as the vibe skill's classify run does.
+const classify = (input) => classifyIn({ areas: sessionAreas(), ...input });
 const manifestFor = (paths, apply) => ({ status: TriageStatus.Valid, reason: null, manifest: classify({ paths, apply }) });
 
 test("triage switch off: the manifest's review output is recorded as wouldApply and nothing changes", () => {

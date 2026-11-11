@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, symlinkSync
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, gitEnv, makeCheckout, makeHome } from "./test-fixtures.mjs";
+import { ALL_CAPABILITIES, bindProvider, git, gitEnv, makeCheckout, makeHome } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-preflight.sh");
 const SPACED = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
@@ -51,8 +51,11 @@ function setup(t, { nodeVersion = "v24.11.0", freshNodeVersion } = {}) {
 // Nothing listens here, so the PostHog check never reaches the network.
 const UNREACHABLE_PAGE = "http://127.0.0.1:9/sign-in";
 
-function runPreflight({ home, bin, shell }, args = [], extraEnv = {}) {
+// Runs from `cwd` (by default the fixture root, which is no git checkout, so only --repo or the remembered
+// checkout can name one).
+function runPreflight({ root, home, bin, shell }, args = [], extraEnv = {}, cwd = root) {
   const result = spawnSync("/bin/bash", [SCRIPT, ...args], {
+    cwd,
     env: {
       ...gitEnv(home),
       PATH: `${bin}:${SYSTEM_PATH}`,
@@ -75,6 +78,13 @@ function runPreflight({ home, bin, shell }, args = [], extraEnv = {}) {
       })
   );
   return { status: result.status, checks, stdout: result.stdout };
+}
+
+const BOUND_CHAT = "preflight-chat";
+
+/** Environment for a conversation whose start bound this checkout's provider with `capabilities`. */
+function boundProvider(home, capabilities = ALL_CAPABILITIES) {
+  return bindProvider(home, { capabilities, conversation: BOUND_CHAT });
 }
 
 function remembered(home) {
@@ -152,27 +162,22 @@ test("missing Node reports its prerequisite fix rather than missing core", (t) =
   assert.equal(result.checks["closedloop-core"], undefined);
 });
 
-test("finds a checkout with spaces in its path by its remote and remembers it", (t) => {
+// Operator ruling, 2026-11-10: any git checkout is accepted; nothing is tied to one organization's repositories.
+test("the checkout this command runs in is used, spaces and all, whatever its remote, and remembered", (t) => {
   const env = setup(t);
   const checkout = path.join(env.home, ...SPACED);
-  makeCheckout({ ...env, checkout, files: { "package.json": '{"engines":{"node":"^24 || >=26"}}\n' } });
-  // Same folder name, different project: not symphony-alpha.
-  makeCheckout({
-    ...env,
-    checkout: path.join(env.home, "Source", "symphony-alpha"),
-    remoteUrl: "git@github.com:someone/symphony-alpha.git",
-  });
-
-  const { checks } = runPreflight(env);
+  makeCheckout({ ...env, checkout, remoteUrl: "git@github.com:someone/notes-app.git",
+    files: { "package.json": '{"engines":{"node":">=24"}}\n' } });
+  const { checks } = runPreflight(env, [], {}, path.join(checkout));
   assert.equal(checks.repo.ok, true);
   assert.equal(checks.repo.detail, checkout);
   assert.equal(remembered(env.home), checkout);
   assert.equal(checks.node.ok, true, checks.node.detail);
 });
 
-test("a remembered checkout is used even outside the home folder", (t) => {
+test("a remembered checkout is used when the command runs outside one, even outside the home folder", (t) => {
   const env = setup(t);
-  const checkout = path.join(env.root, "elsewhere", "symphony-alpha");
+  const checkout = path.join(env.root, "elsewhere", "app");
   makeCheckout({ ...env, checkout });
   mkdirSync(path.join(env.home, ".codex", "vibe"), { recursive: true });
   writeFileSync(
@@ -184,62 +189,61 @@ test("a remembered checkout is used even outside the home folder", (t) => {
   assert.equal(checks.repo.detail, checkout);
 });
 
-test("several checkouts ask the person to choose, and --repo remembers the main checkout of a worktree", (t) => {
+test("--repo wins over the working folder and remembers the main checkout of a worktree", (t) => {
   const env = setup(t);
   const first = path.join(env.home, ...SPACED);
-  const second = path.join(env.home, "Source", "symphony-alpha");
+  const second = path.join(env.home, "Source", "other-app");
   makeCheckout({ ...env, checkout: first });
   makeCheckout({ ...env, checkout: second });
-
-  const ambiguous = runPreflight(env);
-  assert.equal(ambiguous.checks.repo.ok, false);
-  assert.equal(ambiguous.checks.repo.fix, "choose-repo");
-  assert.match(ambiguous.checks.repo.detail, /Closedloop\.ai - Active Work/);
-  assert.equal(remembered(env.home), null);
-
   const worktree = path.join(first, ".claude", "worktrees", "vibe-x");
   git(first, ["worktree", "add", "--quiet", "-b", "vibe/x", worktree], env.home);
-  const chosen = runPreflight(env, ["--repo", worktree]);
+  const chosen = runPreflight(env, ["--repo", worktree], {}, second);
   assert.equal(chosen.checks.repo.ok, true);
+  assert.equal(chosen.checks.repo.detail, first);
   assert.equal(remembered(env.home), first);
-
-  // Later runs use the remembered choice without asking again.
-  assert.equal(runPreflight(env).checks.repo.detail, first);
+  assert.equal(runPreflight(env, [], {}, second).checks.repo.detail, second, "the working folder's checkout comes next");
+  assert.equal(runPreflight(env).checks.repo.detail, second, "then the one remembered last");
 });
 
-test("no checkout anywhere means clone", (t) => {
+test("no checkout named, here or remembered, asks for the folder; a folder that is no checkout is refused", (t) => {
   const env = setup(t);
-  const { checks } = runPreflight(env);
-  assert.equal(checks.repo.ok, false);
-  assert.equal(checks.repo.fix, "clone-repo");
+  const none = runPreflight(env);
+  assert.equal(none.checks.repo.ok, false);
+  assert.equal(none.checks.repo.fix, "ask-for-repo-path");
+  const plain = path.join(env.root, "plain");
+  mkdirSync(plain);
+  const refused = runPreflight(env, ["--repo", plain]);
+  assert.equal(refused.checks.repo.fix, "ask-for-repo-path");
+  assert.match(refused.checks.repo.detail, /is not a git checkout/);
 });
 
 test("the Node range comes from the checkout's package.json", (t) => {
   const env = setup(t, { nodeVersion: "v24.11.0" });
+  const checkout = path.join(env.home, ...SPACED);
   makeCheckout({
     ...env,
-    checkout: path.join(env.home, ...SPACED),
+    checkout,
     files: { "package.json": '{"engines":{"node":">=26"}}\n' },
   });
-  const { checks } = runPreflight(env);
+  const { checks } = runPreflight(env, ["--repo", checkout]);
   assert.equal(checks.node.ok, false);
   assert.equal(checks.node.fix, "install-node");
   assert.match(checks.node.detail, /v24\.11\.0 .* outside >=26/);
 });
 
 test("an old Node first on PATH fails even when the range is the default", (t) => {
-  const env = setup(t, { nodeVersion: "v22.11.0" });
+  const env = setup(t, { nodeVersion: "v20.11.0" });
   const { checks } = runPreflight(env);
   assert.equal(checks.node.ok, false);
   assert.equal(checks.node.fix, "install-node");
-  assert.match(checks.node.detail, /v22\.11\.0 .* outside \^24 \|\| >=26/);
+  assert.match(checks.node.detail, /v20\.11\.0 .* outside >=22/);
 });
 
 test("a supported Node here but an old one in a new shell still fails", (t) => {
-  const env = setup(t, { nodeVersion: "v24.11.0", freshNodeVersion: "v22.11.0" });
+  const env = setup(t, { nodeVersion: "v24.11.0", freshNodeVersion: "v20.11.0" });
   const { checks } = runPreflight(env);
   assert.equal(checks.node.ok, false);
-  assert.match(checks.node.detail, /a new shell runs v22\.11\.0/);
+  assert.match(checks.node.detail, /a new shell runs v20\.11\.0/);
 });
 
 test("no Docker check runs: vibe sessions use Vercel, not a local web environment", (t) => {
@@ -252,12 +256,16 @@ test("no Docker check runs: vibe sessions use Vercel, not a local web environmen
   assert.equal(checks.gh.ok, false);
 });
 
-test("the PostHog check passes from the checkout's env file and fails plainly without a key", (t) => {
+test("the PostHog check runs only with the provider's recipes, and fails plainly without a key", (t) => {
   const env = setup(t);
   const checkout = path.join(env.home, ...SPACED);
   makeCheckout({ ...env, checkout });
+  assert.equal(runPreflight(env, ["--repo", checkout]).checks["posthog-key"], undefined, "a generic session has no flag snapshot");
+  assert.equal(runPreflight(env, ["--repo", checkout], boundProvider(env.home, ["tickets"])).checks["posthog-key"], undefined,
+    "a provider without recipes for the repository adds no check");
+  const bound = boundProvider(env.home);
 
-  const missing = runPreflight(env);
+  const missing = runPreflight(env, ["--repo", checkout], bound);
   assert.equal(missing.checks["posthog-key"].ok, false);
   assert.equal(missing.checks["posthog-key"].fix, "posthog-key-missing");
   assert.match(missing.checks["posthog-key"].detail, /could not be read/);
@@ -265,10 +273,26 @@ test("the PostHog check passes from the checkout's env file and fails plainly wi
   const key = "phc_TestKey0123456789abcdefghijklmnopqrstu";
   mkdirSync(path.join(checkout, "apps", "app"), { recursive: true });
   writeFileSync(path.join(checkout, "apps", "app", ".env.local"), `NEXT_PUBLIC_POSTHOG_KEY=${key}\n`);
-  const found = runPreflight(env);
+  const found = runPreflight(env, ["--repo", checkout], bound);
   assert.equal(found.checks["posthog-key"].ok, true, found.checks["posthog-key"].detail);
   assert.match(found.checks["posthog-key"].detail, /^https:\/\/us\.i\.posthog\.com from .*\.env\.local$/);
   assert.doesNotMatch(found.stdout, new RegExp(key));
+});
+
+test("the package manager comes from the lockfile, and missing dependencies name the provider's bootstrap or a plain install", (t) => {
+  const env = setup(t);
+  const checkout = path.join(env.home, ...SPACED);
+  makeCheckout({ ...env, checkout, files: { "package.json": "{}\n", "yarn.lock": "\n" } });
+  const generic = runPreflight(env, ["--repo", checkout]);
+  assert.equal(generic.checks["package-manager"].ok, false);
+  assert.equal(generic.checks["package-manager"].fix, "install-yarn");
+  assert.equal(generic.checks["repo-bootstrap"].fix, "install-dependencies");
+  assert.equal(runPreflight(env, ["--repo", checkout], boundProvider(env.home)).checks["repo-bootstrap"].fix, "run-loops-setup");
+  const plain = path.join(env.home, "Source", "no-node");
+  makeCheckout({ ...env, checkout: plain });
+  const none = runPreflight(env, ["--repo", plain]);
+  assert.equal(none.checks["package-manager"], undefined, "no package.json, no package manager");
+  assert.equal(none.checks["repo-bootstrap"], undefined);
 });
 
 test("just is not a vibe prerequisite", (t) => {
@@ -280,11 +304,12 @@ test("prototype preflight keeps common prerequisites and omits only the app Post
   const env = setup(t);
   const checkout = path.join(env.home, ...SPACED);
   makeCheckout({ ...env, checkout });
-  const prototype = runPreflight(env, ["--prototype", "--repo", checkout]);
+  const bound = boundProvider(env.home);
+  const prototype = runPreflight(env, ["--prototype", "--repo", checkout], bound);
   assert.equal(prototype.checks["posthog-key"], undefined);
   assert.equal(prototype.checks.repo.ok, true);
   assert.equal(prototype.checks.gh.ok, false, "common prerequisite failures remain visible");
-  const app = runPreflight(env, ["--repo", checkout]);
+  const app = runPreflight(env, ["--repo", checkout], bound);
   assert.equal(app.checks["posthog-key"].ok, false, "app sessions still require the real key");
 });
 
@@ -302,42 +327,17 @@ test("Claude preflight reports a signed-out claude command before any worker lau
   assert.equal(runPreflight(env, ["--prototype"]).checks["claude-login"], undefined);
 });
 
-test("a refused write of the remembered checkout asks for an escalated rerun and never fails setup (ISS-13321)", (t) => {
+test("a refused write of the remembered checkout asks for an escalated rerun and never fails setup", (t) => {
   const env = setup(t);
   const checkout = path.join(env.home, ...SPACED);
   makeCheckout({ ...env, checkout, files: { "package.json": '{"engines":{"node":"^24 || >=26"}}\n' } });
   const codex = path.join(env.home, ".codex");
   mkdirSync(codex, { recursive: true });
   chmodSync(codex, 0o500);
-  const { checks, stdout } = runPreflight(env, [], { CODEX_SANDBOX_NETWORK_DISABLED: "1" });
+  const { checks, stdout } = runPreflight(env, ["--repo", checkout], { CODEX_SANDBOX_NETWORK_DISABLED: "1" });
   chmodSync(codex, 0o700);
   assert.equal(checks.repo.ok, true);
   const escalation = stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.escalate);
   assert.equal(escalation?.justification, "Remember where your copy of the code is");
   assert.equal(remembered(env.home), null);
-});
-
-// ISS-13834: a writer on a claude-plugins ticket must start its session in claude-plugins.
-test("--repo accepts a claude-plugins checkout for that session without replacing the remembered symphony-alpha checkout", (t) => {
-  const env = setup(t);
-  const symphony = path.join(env.home, "Source", "symphony-alpha");
-  makeCheckout({ ...env, checkout: symphony });
-  assert.equal(runPreflight(env).checks.repo.detail, symphony);
-  const plugins = path.join(env.home, "Source", "claude-plugins");
-  makeCheckout({ ...env, checkout: plugins, remoteUrl: "https://github.com/closedloop-ai/claude-plugins.git" });
-  const worktree = path.join(plugins, ".claude", "worktrees", "vibe-x");
-  git(plugins, ["worktree", "add", "--quiet", "-b", "vibe/x", worktree], env.home);
-
-  const result = runPreflight(env, ["--repo", worktree]);
-  assert.equal(result.checks.repo.ok, true, result.stdout);
-  assert.equal(result.checks.repo.detail, plugins);
-  assert.equal(result.checks["repo-bootstrap"], undefined, "symphony-alpha's dependency install is not a claude-plugins prerequisite");
-  assert.equal(result.checks["posthog-key"], undefined, "the app flag snapshot key is not a claude-plugins prerequisite");
-  assert.equal(remembered(env.home), symphony);
-
-  const other = path.join(env.home, "Source", "elsewhere");
-  makeCheckout({ ...env, checkout: other, remoteUrl: "git@github.com:someone/claude-plugins.git" });
-  const refused = runPreflight(env, ["--repo", other]);
-  assert.equal(refused.checks.repo.ok, false);
-  assert.match(refused.checks.repo.detail, /is not a symphony-alpha or claude-plugins checkout/);
 });

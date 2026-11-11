@@ -3,13 +3,17 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { launchWriter, loadState, parseCli, requireResumeSession, run, saveState } from './codex-session.mjs';
 import { launchCwd, vibeHookTrustProblem } from './writer-launch.mjs';
 import { VIBE_CORE_INSTALL } from '../../../shared/vibe-core.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 function git(cwd, ...args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();

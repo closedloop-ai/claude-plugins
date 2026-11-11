@@ -25,6 +25,9 @@ import { laneSourceShapeProblems, laneReportShapeProblems } from "./pr-evidence-
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { agentsTestCommand } = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
+export { agentsTestCommand };
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 export { workflowLaneDefinitions };
 
 const JOB_KEY = /^ {2}([A-Za-z0-9_-]+):\s*$/;
@@ -82,14 +85,21 @@ export function repositoryLaneReportProblems(report, worktree, commit) {
   if (worktree) {
     let content;
     try { content = committedFile(worktree, commit, "vibe-handoff-paths.json"); }
-    catch { if (source.kind !== "command" || source.command !== "pnpm test:lanes") return ["workflow lane source needs a verified committed root declaration"]; }
+    catch {
+      // No declaration: the built-in default takes the lanes from a committed CI workflow, or the test
+      // command the repository's AGENTS.md names (or the bound provider's lane report).
+      if (source.kind === "command") return defaultLaneCommands(worktree, commit).includes(source.command) ? []
+        : ["undeclared repository lane command: without vibe-handoff-paths.json it must be the test command AGENTS.md names"];
+      declared = { kind: source.kind, path: source.path };
+    }
     if (content) try { declared = JSON.parse(content).laneSource; }
     catch { return ["invalid committed repository lane declaration JSON"]; }
   }
   if (declared !== undefined && laneSourceShapeProblems(declared).length) return ["invalid repository lane source declaration"];
   if (source.kind === "command") {
     if (declared && !isDeepStrictEqual(declared, source)) return ["lane report differs from the repository-declared lane source"];
-    return source.command === "pnpm test:lanes" || declared ? [] : ["undeclared repository lane command"];
+    return declared || defaultLaneCommands(worktree, commit).includes(source.command) ? []
+      : ["undeclared repository lane command"];
   }
   if (!worktree || source.commit !== commit || !isDeepStrictEqual(declared, { kind: source.kind, path: source.path })) {
     return ["workflow lane source differs from the verified repository declaration/commit"];
@@ -161,4 +171,12 @@ function main(argv) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   process.exitCode = main(process.argv.slice(2));
+}
+
+/** The lane commands a repository with no declaration accepts: its AGENTS.md test command and the provider's lane report. */
+function defaultLaneCommands(worktree, commit) {
+  let agents = null;
+  try { agents = worktree ? committedFile(worktree, commit, "AGENTS.md").toString("utf8") : null; } catch { agents = null; }
+  return [agentsTestCommand(agents), providerDataOr(sessionBinding(worktree ?? null), "recipes", "prEvidence", null)?.laneReport]
+    .filter((command) => typeof command === "string" && command);
 }

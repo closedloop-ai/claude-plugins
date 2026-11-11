@@ -3,10 +3,14 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { dispositionProblems, findingProblems } from './finding-brief.mjs';
 import { writeRemoteCodexStub } from './fleet-test-support.mjs';
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL('./finding-brief.mjs', import.meta.url));
 const FLEET = fileURLToPath(new URL('./fleet.sh', import.meta.url));

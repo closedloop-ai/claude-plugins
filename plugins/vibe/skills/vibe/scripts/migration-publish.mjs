@@ -18,7 +18,7 @@
 //
 // A migration the branch got by merging main is main's, not the session's: one
 // that main already has (`--main`, by default the branch's merge-base with
-// origin/main, which is the main it merged) is left out (ISS-13321: two
+// origin/main, which is the main it merged) is left out (two
 // migrations a main merge brought in blocked a publication twice).
 
 import { existsSync, readFileSync } from "node:fs";

@@ -3,16 +3,20 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { TICKET_SECTIONS } from "../../handoff/scripts/live-ticket-check.mjs";
 import {
   createTicketCtl, gradingSection, mergeChecklist, OWNERSHIP, protectAngles, recordSectionsFrom, renderChecklist, replaceSections,
 } from "./ticket-ctl.mjs";
+import { bindProviderInProcess } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "ticket-ctl.mjs");
-const TEMPLATE = readFileSync(path.join(HERE, "..", "references", "ticket-template.md"), "utf8");
+const TEMPLATE = readFileSync(path.join(HERE, "..", "..", "..", "..", "vibe-closedloop-provider", "skills", "closedloop-provider", "references", "ticket-template.md"), "utf8");
 
 const BODY = TICKET_SECTIONS.map((heading) => `## ${heading}\n\nbody of ${heading}\n`).join("\n");
 

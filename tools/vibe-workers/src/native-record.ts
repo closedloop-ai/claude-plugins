@@ -5,6 +5,7 @@ import { z } from "zod";
 import { identifierSchema, workerIdSchema, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, checkoutLocation, location, readWriterSummary, releaseRecordTurnAt } from "./ledger.js";
+import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 
 const grantSchema = recordContextSchema.extend({ agentRoot: z.string().min(1), workerId: workerIdSchema,
@@ -20,7 +21,7 @@ const ownerFile = "native-owner.json";
 export function acquireNativeRecord(input: unknown) {
   const grant = grantSchema.parse(input);
   if (grant.mode !== "record" || !grant.exclusiveRecordTurn || !grant.recordAction
-    || !recordModes[grant.agentName]?.[grant.recordAction]) throw new Error("Native record grant requires an exclusive canonical role/action");
+    || !recordModes(sessionBinding(grant.worktree))[grant.agentName]?.[grant.recordAction]) throw new Error("Native record grant requires an exclusive canonical role/action");
   const definition = readDefinition(grant.agentRoot, grant.agentName, []);
   grant.agentRoot = definition.root;
   if (grant.primaryOwner && (grant.agentName !== "vibe-change-worker" || grant.primaryOwner.workerId !== grant.workerId)) {

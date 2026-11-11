@@ -1,5 +1,7 @@
 # Class pipeline core
 
+Lines that start `> Provider` follow `references/provider-text.md`.
+
 The rules every class pipeline shares, each written once, here. A class
 pipeline skill (`vibe-pipeline-trivial-ui`, `-ui-feature`, `-backend`,
 `-docs-config`) cites them by id and restates none of them. The manifest and its
@@ -23,8 +25,11 @@ changes who reads the diff, never whether it is read.
 
 ## PC-3 Lanes and end-to-end specs
 
-Lanes and end-to-end specs come from `pnpm test:lanes` and the target
+<!-- generic: lane-source -->
+Lanes and end-to-end specs come from the repository's lane source and the target
 repository's e2e path filter, never from the class.
+<!-- end generic: lane-source -->
+> Provider `recipes` (block `lane-source` of `vibe/pipeline-core.md`)
 
 ## PC-4 Words the person sees
 

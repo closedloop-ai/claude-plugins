@@ -14,7 +14,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -80,7 +80,7 @@ def test_assumptions_are_generated_never_upgraded_and_required_on_the_ticket() -
     text = flat(section(SPEC_CARD.read_text(), "## Assumptions at handoff"))
     assert "generated from the card, never written freehand" in text
     assert "handoff never upgrades it to grounded" in text
-    template = flat((VIBE / "references" / "ticket-template.md").read_text())
+    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
     assert "- Assumptions: <generated from the session's Spec Card by `node scripts/spec-card.mjs assumptions <card> --worktree <wt> --base <sha>`" in template
     check = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
     assert "Handoff: [[/^- Assumptions: \\S/m," in check

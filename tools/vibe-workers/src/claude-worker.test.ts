@@ -818,6 +818,30 @@ describe("production Claude CLI adapter", () => {
     expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", capabilities: [...graph, recordWrite] }).status).toBe(1);
     expect(readProof(value.metadata)).toHaveLength(1);
   });
+  it("requires the parent's graph tools only with a graph bound, and names the bound tracker in the verify footer", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    const launch = (capabilities: typeof graph) => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", capabilities),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities, mode: "request" });
+    expect(() => launch([])).toThrow(/graph capabilities are required/);
+    expect(launch(graph).agent.prompt).toContain("Never write a ClosedLoop or session record.");
+    writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
+    const generic = launch([]);
+    expect(generic.agent.prompt).toContain("Never write a tracker or session record.");
+    expect(generic.agent.prompt).not.toContain("ClosedLoop");
+  });
+  it("with no tracker bound a record action keeps its turn and grants no tracker write", () => {
+    const value = setup();
+    writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
+    const definition = readDefinition(value.agentRoot, "vibe-change-worker", [...graph, recordWrite]);
+    const base = { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-change-worker",
+      requestId: "one", capabilities: [...graph, recordWrite], input: "test", timeoutMs: 1000 };
+    expect(() => boundDefinition(definition, { ...base, mode: "record", recordAction: "progress", exclusiveRecordTurn: true }))
+      .toThrow(/cannot receive record-write capabilities/);
+    expect(boundDefinition(definition, { ...base, capabilities: graph, mode: "record", recordAction: "progress", exclusiveRecordTurn: true }).tools)
+      .not.toContain(recordWrite.name);
+  });
   it("permits only an exclusive declared record turn to activate record writes", () => {
     const value = setup();
     const definition = readDefinition(value.agentRoot, "vibe-change-worker", [...graph, recordWrite]);

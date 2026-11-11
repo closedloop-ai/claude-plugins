@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -25,9 +25,9 @@ test("an operator prompt that changes the program gets the record-it-first remin
   const file = transcript(t, "Base directory for this skill: /cache/vibe/1.0.72/skills/fleet-orchestrator");
   for (const prompt of [
     "I don't want to build anything yet. I want to come up with a design. We may end up taking it over",
-    "I don't want to look at the design of PRD-802. Let's go back and look at PRD-800",
+    "I don't want to look at the design of #802. Let's go back and look at #800",
     "I want to start from scratch. We are going to build a domain model iteratively.",
-    "Drop PRD-802 and switch to PRD-800 instead",
+    "Drop #802 and switch to #800 instead",
     "Stop building, design only for now",
   ]) {
     assert.equal(programChange({ prompt, transcript_path: file })?.context, PROGRAM_CHANGE_REMINDER, prompt);
@@ -55,4 +55,21 @@ test("a recorded fleet skill preserves the program-change reminder without a tra
   recordHookSkill("fleet-session", "vibe:fleet-orchestrator", home);
   assert.equal(programChange({ session_id: "fleet-session", prompt: "start from scratch", transcript_path: null }, home)?.context, PROGRAM_CHANGE_REMINDER);
   assert.equal(programChange({ session_id: "other-session", prompt: "start from scratch", transcript_path: null }, home), null);
+});
+
+test("a move between work items is named the way the session's tracker references one", (t) => {
+  const file = transcript(t, "Base directory for this skill: /cache/vibe/1.0.72/skills/fleet-orchestrator");
+  const home = mkdtempSync(path.join(tmpdir(), "program-change-tracker-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const event = (prompt, session_id = "generic-chat") => ({ prompt, transcript_path: file, session_id, cwd: home });
+  assert.equal(programChange(event("Drop #802 and switch to #800"), home)?.context, PROGRAM_CHANGE_REMINDER);
+  assert.equal(programChange(event("Park https://github.com/acme/widgets/issues/802 for now"), home)?.context, PROGRAM_CHANGE_REMINDER);
+  assert.equal(programChange(event("Drop PRD-802 and switch to PRD-800"), home), null, "with no tracker bound, a tracker-style key names nothing");
+  const records = path.join(home, ".codex", "vibe", "plugin-version");
+  mkdirSync(records, { recursive: true });
+  writeFileSync(path.join(records, "bound-chat.json"), JSON.stringify({ conversation: "bound-chat", status: "current",
+    provider: { state: "bound", name: "vibe-closedloop-provider", capabilities: ["tickets", "plans", "graph", "memory", "recipes"],
+      root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../vibe-closedloop-provider") } }));
+  assert.equal(programChange(event("Drop PRD-802 and switch to PRD-800", "bound-chat"), home)?.context, PROGRAM_CHANGE_REMINDER);
+  assert.equal(programChange(event("Why is PRD-802 so large?", "bound-chat"), home), null);
 });

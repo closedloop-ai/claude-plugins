@@ -64,17 +64,20 @@ import { parseArgs } from "node:util";
 import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
 import { listQueryGaps, listQueryShapeProblems, measuredMissing } from "./list-query-performance.mjs";
 import { readBoard } from "../../fleet-orchestrator/scripts/ticket-units.mjs";
+import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { unitReviewFile } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const Part = Object.freeze({ Code: "code", Visual: "visual", Measured: "measured" });
 export const Origin = Object.freeze({ Ticket: "ticket", Prd: "prd" });
 
-const SLUG = /^[A-Z]+-\d+$/;
-const DOCUMENT_PREFIX = /^(?:ISS|FEA|PRD|PLN|DOC|PRO)-/;
+// The bound tracker's ticket key and document slug prefixes (provider data); none match without a tracker.
+const slugPattern = () => new RegExp(`^${trackerKey()}$`);
+const documentPrefix = () => new RegExp(providerDataOr(sessionBinding(null), "tickets", "documentPrefix", "(?!)"));
 const ID_LINE = /^\s*(?:[-*]\s+(?:\[[ xX]\]\s*)?)?(?:\*\*)?([A-Z]{1,6}-\d+(?:[-.]\d+)*)\.?(?:\*\*)?[.:]?\s+(\S.*)$/;
 const ACROSS_PAGES = /\b(?:every|each|all|across)(?: the| all)?(?: \w+)? pages?\b|\bwhere(?:ver)? (?:it is |they are )?available\b/i;
 const ACROSS_SURFACES = /\bboth (?:surfaces|hosts|shells|platforms|apps)\b|\b(?:every|each|all) (?:surfaces?|hosts?|shells?|platforms?)\b/i;
@@ -88,12 +91,12 @@ export function prdCriteria(slug, body) {
   const found = new Map();
   for (const { id, text } of criteriaStates(body)) {
     const own = ID_LINE.exec(`- ${text}`);
-    const key = own && !DOCUMENT_PREFIX.test(own[1]) ? own[1] : id;
+    const key = own && !documentPrefix().test(own[1]) ? own[1] : id;
     found.set(key, { id: `${slug}:${key}`, text: own && key === own[1] ? own[2] : text, origin: Origin.Prd });
   }
   for (const line of body.split("\n")) {
     const match = ID_LINE.exec(line);
-    if (!match || DOCUMENT_PREFIX.test(match[1]) || found.has(match[1])) continue;
+    if (!match || documentPrefix().test(match[1]) || found.has(match[1])) continue;
     found.set(match[1], { id: `${slug}:${match[1]}`, text: match[2].trim(), origin: Origin.Prd });
   }
   return [...found.values()];
@@ -198,7 +201,7 @@ export function unitCriteria({ slug, ticket, members = [], prds = [], plans = []
   const documentCriteria = (entries, flag, kind, origin) => entries.flatMap((entry) => {
     const at = entry.indexOf("=");
     const document = entry.slice(0, at);
-    if (at <= 0 || !SLUG.test(document)) throw new Error(`${flag} needs <slug>=<${kind} body file>, got ${entry}`);
+    if (at <= 0 || !slugPattern().test(document)) throw new Error(`${flag} needs <slug>=<${kind} body file>, got ${entry}`);
     const criteria = prdCriteria(document, readFileSync(entry.slice(at + 1), "utf8")).map((criterion) => ({ ...criterion, origin }));
     if (criteria.length === 0) problems.push(`${kind} ${document} has no criteria this review can read (an acceptance checklist or lines that lead with an id)`);
     return criteria;
@@ -351,7 +354,7 @@ function anchorSlug(worktree) {
 export function reviewUnit({ worktree, ticket, review, slug, members = [], prds = [], plans = [], at, unitTickets }) {
   const session = anchorSlug(worktree);
   const anchor = slug ?? session.slug;
-  if (!anchor || !SLUG.test(anchor)) throw new Error("name the ticket with --slug <slug>; the worktree has no session ticket");
+  if (!anchor || !slugPattern().test(anchor)) throw new Error("name the ticket with --slug <slug>; the worktree has no session ticket");
   const { criteria, problems: criteriaProblems } = unitCriteria({ slug: anchor, ticket: readFileSync(ticket, "utf8"), members, prds, plans, recorded: session.members });
   const parsed = JSON.parse(readFileSync(review, "utf8"));
   if (Array.isArray(parsed?.rows)) parsed.rows = parsed.rows.map((row) => (/^AC-\d+$/.test(row?.criterion ?? "") ? { ...row, criterion: `${anchor}:${row.criterion}` } : row));

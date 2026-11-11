@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { idlePrepDispatches } from "./parallel-prep.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 test("a running persistent writer dispatches every independent pre-PR prep lane", () => {
   const dispatches = idlePrepDispatches({ writerState: "running", pullRequestRequested: true });

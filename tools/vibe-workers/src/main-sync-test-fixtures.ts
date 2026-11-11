@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join, resolve } from "node:path";
 import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
 import { changeWriter, registerWriter } from "./ledger.js";
-import { bundleDirectory, fixture, graph, keepFixtureMaintenanceForeground, writeAgent } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, keepFixtureMaintenanceForeground, PROVIDER_BINDING, writeAgent } from "./test-fixtures.js";
 import type { RequestContinuation } from "./record-context.js";
 import { z } from "zod";
 
@@ -69,10 +69,14 @@ export function referencedLanes() {return [];}
   const origin = join(value.base, "origin.git");
   git(["init", "--bare", "--initial-branch=main", origin]);
   keepFixtureMaintenanceForeground(origin);
-  git(["remote", "add", "origin", origin]);
+  // The modeled repository's GitHub origin, served by the local bare repository: config names the GitHub URL that
+  // CI evidence reads, and git rewrites it to the bare one for every fetch and push.
+  git(["remote", "add", "origin", "https://github.com/closedloop-ai/symphony-alpha.git"]);
+  git(["config", `url.${origin}.insteadOf`, "https://github.com/closedloop-ai/symphony-alpha.git"]);
   git(["push", "origin", "main"]);
   const baseCommit = git(["rev-parse", "HEAD"]);
-  const record = { worktree: value.worktree, branch: "vibe/test", slug: "test", status: "active", mode: "blank",
+  // The ClosedLoop provider bound, as in the repository these fixtures model (its plans stay in `.closedloop-ai/`).
+  const record = { worktree: value.worktree, branch: "vibe/test", slug: "test", status: "active", mode: "blank", provider: PROVIDER_BINDING,
     baseCommit, createdAt: "2026-10-09T00:00:00Z", operator: { id: "fixture-owner", email: "owner@example.invalid", name: "Fixture" },
     localFixes: [] as { ticket: string; paths: string[] }[], vercel: { lastDeployedCommit: null },
     flagSnapshot: { takenAt: "2026-10-09T00:00:00Z", distinctId: "fixture", flagCount: 0,

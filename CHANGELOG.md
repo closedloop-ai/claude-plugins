@@ -4,6 +4,25 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe-closedloop-provider v1.0.0
+
+#### Added
+- New plugin holding everything vibe and fleet-orchestrator know about ClosedLoop and symphony-alpha (ISS-13446): ClosedLoop tickets, plans, the graph, repository memory and the symphony-alpha recipes. It ships text and data only (`provider.json`, its skill and references), never hooks or scripts. Each capability binds at a vibe or fleet start only when its connection answered in that chat; recipes bind only in a repository that commits `.closedloop-ai/vibe-recipes.json`. `data.guards` and `data.tickets.unitStatusGuard` are the rules vibe-core's guard engine applies while it is bound. `data.recipes.mainSync` carries symphony-alpha's main-sync check matrix, generated inputs, lane discovery, Desktop lane and CI producer.
+
+### vibe-core v1.0.5
+
+#### Changed
+- vibe-core runs in any repository (ISS-13446). `lib/vibe/scripts/provider.mjs` records a session's provider binding and assembles provider text; the guards read their rules from the bound provider and stay silent in a chat that never activated vibe. The PR-create override and the program-change reminder take the session tracker's reference, else a GitHub issue or URL. The cloud worker reads its ticket key, connectors, graph tools and graph label from the provider; without one, graph research is optional and no connector attaches. Owned cleanup reads the repository's generated paths from the provider recipe.
+- New `lib/vibe/scripts/repository-commands.mjs` is the one reader of a repository's AGENTS.md test command and its lockfile install, shared by vibe's handoff lanes, setup and main sync.
+
+### vibe v1.1.81
+
+#### Changed
+- vibe and fleet-orchestrator run in any git repository (ISS-13446). Every ClosedLoop and symphony-alpha specific line moved into the optional vibe-closedloop-provider plugin; with it disabled or absent, a session takes the person's description, keeps its plan and decision table in the private git directory, bootstraps from the lockfile, classifies an unknown layout on the full review path, runs main sync on the AGENTS.md test command, and ends in a requested PR or a named recipient. Provider-enabled prompt text is unchanged.
+- A start with no provider ever installed offers it once: after its ClosedLoop connection answers, `plugin-version.mjs provider-install` installs it in each harness that has vibe and records that, so a later uninstall stays. A disabled provider is never re-enabled.
+- The Codex eval runner has a provider arm and a generic arm (`--arm`); the generic arm installs no provider and runs the cases tagged `generic`, which cover the generic walk's model-driven steps. vibe-bench loads the provider snapshot when the pinned tree has it.
+- `vibe_generic_scan.py check` gates every runtime file against provider-specific text; `generic-walk.test.mjs` runs the walk's deterministic steps in a personal repository and requires an empty blocker ledger.
+
 ### vibe-core v1.0.4
 
 #### Fixed

@@ -22,12 +22,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, paragraph, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 GUARDRAILS = VIBE / "references" / "guardrails.md"
-TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 VIBE_SKILL = VIBE / "SKILL.md"
 SESSIONS_SCRIPT = VIBE / "scripts" / "vibe-sessions.mjs"
 FLAG_KEYS_SCRIPT = VIBE / "scripts" / "flag-keys.mjs"

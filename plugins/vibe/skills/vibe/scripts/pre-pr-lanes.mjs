@@ -19,14 +19,14 @@
 // no local lane merely because another commit exists. Records live in the session's
 // git dir (`vibe-lane-results.json`). Changes nothing else.
 //
-// `check --reuse-cache [--base <sha>] [--config <text>]...` (off by default,
-// ISS-13354) also accepts a lane with no passing record for the scope when an
+// `check --reuse-cache [--base <sha>] [--config <text>]...` (off by default)
+// also accepts a lane with no passing record for the scope when an
 // earlier FRESH pass has the same cache key (lane-cache.mjs: command, tree,
 // base, config and changed-file scope). It records the lane `cached` and prints
 // `CACHED-LANE <command> (reused from <sha>: not a fresh run)`; a cached record
 // is never a `pass`, and without the flag it counts as missing.
 //
-// `check --reuse-unaffected <qa-impact request JSON>` (off by default, PRD-823 WS7 F2) also
+// `check --reuse-unaffected <qa-impact request JSON>` (off by default) also
 // accepts a lane with no passing record for the scope when an earlier FRESH pass recorded at
 // the request's `lastQa.boundary` commit (committed inputs only) is untouched by what changed
 // since: qa-impact.mjs is recomputed in this worktree, and a lane counts as untouched when
@@ -42,28 +42,28 @@
 // (deadline mode), printing `SKIPPED-LANE <command> (<ruling>)` for each.
 //
 // A machine without the staging e2e identities (the e2e sign-in password in
-// neither the environment nor apps/app/.env.local) cannot run the local web
+// neither the environment nor the app's env file) cannot run the local web
 // e2e lane: its teardown reaps as those identities and returns 401. There
 // `check` does not run or require that lane; it records it `not-run` for the selected scope,
 // prints `NOT-RUN-LANE <command> (...)` and relies on the containerized or CI
-// run instead of stopping (operator ruling, 2026-10-28, ISS-13291).
+// run instead of stopping (operator ruling, 2026-10-28).
 //
 // The Desktop Electron e2e lane runs only under the displayless Linux harness
 // (dbus, keyring and Xvfb); vibe never launches Electron natively, and the
 // repo's container tier has no display server. On any other machine `check`
 // records it `not-run` the same way (`NOT-RUN-LANE`), and the post-merge
 // desktop-e2e-validation run, which publishes `desktop-e2e/validated`, covers
-// it (ISS-13321). A passing run recorded from a remote runner still counts.
+// it. A passing run recorded from a remote runner still counts.
 //
 // A selected lane that fails on the branch source and on captured main is
 // not the session's to fix (the handoff's rule for failures already on main).
 // `run --main-worktree <checkout of captured main> --main-sha <sha>` reruns a
 // failing lane there and records it `main-preexisting` when it fails there
 // too; `check` accepts that record, printing `MAIN-PREEXISTING-LANE`, and the
-// pull request body lists it under Known main failures (ISS-13321).
+// pull request body lists it under Known main failures.
 //
 // A diff that changes a Storybook story whose package has no typecheck script
-// also selects the story-typecheck.mjs lane (ISS-13947): the repository's lane
+// also selects the story-typecheck.mjs lane: the repository's lane
 // report names none, and PR #9732 shipped a type error in such a story.
 //
 // `run` runs a lane in the worktree and records its result; `record` takes a
@@ -84,14 +84,19 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;
 // The repo's web Playwright lanes (`pnpm test:e2e`, `pnpm test:web-smoke`); a lane naming desktop is the Electron one.
 const WEB_E2E = /\b(?:test:e2e|test:web-smoke)\b/;
 const DESKTOP = /\bdesktop\b/i;
-// symphony-alpha e2e/helpers/sign-in.ts signs the primary identity in with this password; playwright.config.ts loads apps/app/.env.local.
-export const STAGING_IDENTITY_KEY = "DEVOPS_CLOSEDLOOP_APP_PWD";
+// The staging e2e identity the web e2e lane signs in with: an env key, set in the environment or the app's env file
+// (the provider's `recipes.e2e`); a repository with no such recipe needs none.
+export const stagingIdentity = (binding = sessionBinding()) => {
+  const e2e = providerDataOr(binding, "recipes", "e2e", null);
+  return e2e?.identityKey ? { key: e2e.identityKey, envFile: e2e.identityEnvFile ?? null } : null;
+};
 const ENV_LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/;
 export const NOT_RUN_NO_IDENTITY = "no staging e2e identities on this machine; the containerized or CI run covers it";
 export const NOT_RUN_NO_DESKTOP_HARNESS = "no displayless Linux Electron harness on this machine and vibe never launches Electron natively; the post-merge desktop-e2e-validation run (desktop-e2e/validated) covers it";
@@ -124,17 +129,20 @@ function commandOnPath(tool) {
 }
 
 /** Whether this machine has the staging e2e identities the web e2e lane signs in and tears down as. */
-export function hasStagingE2eIdentity(worktree, env = process.env) {
-  if (env[STAGING_IDENTITY_KEY]?.trim()) {
+export function hasStagingE2eIdentity(worktree, env = process.env, identity = stagingIdentity()) {
+  if (!identity) {
     return true;
   }
-  const file = path.join(worktree, "apps", "app", ".env.local");
-  if (!existsSync(file)) {
+  if (env[identity.key]?.trim()) {
+    return true;
+  }
+  const file = identity.envFile ? path.join(worktree, identity.envFile) : null;
+  if (!file || !existsSync(file)) {
     return false;
   }
   return readFileSync(file, "utf8").split("\n").some((line) => {
     const match = ENV_LINE.exec(line);
-    return match?.[1] === STAGING_IDENTITY_KEY && match[2].replace(/^(['"])(.*)\1$/, "$2").trim() !== "";
+    return match?.[1] === identity.key && match[2].replace(/^(['"])(.*)\1$/, "$2").trim() !== "";
   });
 }
 
@@ -292,7 +300,7 @@ function selectedScope(values, command) {
 /**
  * The selected lanes plus story-typecheck.mjs when the diff changes a story whose package has
  * no typecheck script: the repository's lane report names no such lane, and PR #9732 shipped a
- * type error in a story that nothing typechecked (ISS-13947). The diff is measured from --base,
+ * type error in a story that nothing typechecked. The diff is measured from --base,
  * else from HEAD's merge base with origin/main; with neither, no story lane can be derived.
  */
 function withStoryTypecheck(values, lanes) {

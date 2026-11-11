@@ -120,7 +120,7 @@ test("added, modified and deleted root declarations cannot self-authorize", (t) 
   write(undeclared.worktree, "plugins/vibe/allowed.mjs", "export {};");
   const added = runNode(INVENTORY, ["--worktree", undeclared.worktree], undeclared.home);
   assert.equal(added.json.blocking.forbiddenPaths, false);
-  assert.match(added.json.pathPolicyProblem, /Declare exactly one committed vibe-handoff-paths\.json/);
+  assert.equal(added.json.pathPolicySource.kind, "built-in-default", "the default applies while the declaration is only being added");
   assert.deepEqual(added.json.forbidden, [{ path: PATH_POLICY, status: "A" }]);
 });
 
@@ -146,28 +146,30 @@ test("a root declaration alongside a nested declaration fails closed as a duplic
   assert.match(result.json.pathPolicyProblem, /found 2/);
 });
 
-test("missing target declaration blocks even an otherwise allowed path and names the needed file", (t) => {
+// Operator ruling, 2026-11-11: with no declaration the built-in default applies (no protected path classes).
+test("with no target declaration the built-in default admits every path, and an unverifiable default branch still fails closed", (t) => {
   const { root, home, worktree } = setup(t, "undeclared-paths", {}, { declared: false });
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
-  assert.equal(result.status, 1);
-  assert.equal(result.json.blocking.forbiddenPaths, false);
-  assert.match(result.json.pathPolicyProblem, /vibe-handoff-paths\.json/);
+  assert.equal(result.json.blocking.forbiddenPaths, true);
+  assert.equal(result.json.pathPolicyProblem, undefined);
+  assert.equal(result.json.pathPolicyFile, null);
+  assert.equal(result.json.pathPolicySource.kind, "built-in-default");
+  assert.deepEqual(result.json.outsideAllowed, []);
   git(worktree, ["remote", "set-url", "origin", path.join(root, "missing-origin.git")], home);
   const unavailable = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(unavailable.status, 1);
   assert.match(unavailable.json.error, /Cannot verify.*vibe-handoff-paths\.json/);
 });
 
-test("an undeclared non-main default branch gives the policy diagnostic", (t) => {
+test("an undeclared non-main default branch is checked before the built-in default applies", (t) => {
   const fixture = setup(t, "master-undeclared", {}, { declared: false });
   const { home, worktree } = fixture;
   useMasterDefault(fixture);
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
-  assert.equal(result.json.blocking.forbiddenPaths, false);
-  assert.match(result.json.pathPolicyProblem, /vibe-handoff-paths\.json/);
-  assert.match(result.json.pathPolicyProblem, /origin\/master/);
+  assert.equal(result.json.blocking.forbiddenPaths, true);
+  assert.equal(result.json.pathPolicySource.kind, "built-in-default");
 });
 
 test("a declared non-main default branch allows its repository paths", (t) => {

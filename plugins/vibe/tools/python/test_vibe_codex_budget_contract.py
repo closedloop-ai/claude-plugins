@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +65,7 @@ def test_no_vibe_text_asks_for_a_whole_suite() -> None:
     sources = {
         "guardrails": (REFERENCES / "guardrails.md").read_text(),
         "quality-loop": (REFERENCES / "quality-loop.md").read_text(),
-        "closedloop-graph": (REFERENCES / "closedloop-graph.md").read_text(),
+        "closedloop-graph": (PROVIDER_REFERENCES / "closedloop-graph.md").read_text(),
         "handoff": HANDOFF_SKILL.read_text(),
         "primitive": agent("vibe-primitive-worker"),
         "decomposer": agent("vibe-storybook-decomposer"),

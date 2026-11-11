@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { moduleShape, splitTopLevel } from "./module-symbols.mjs";
 import { routeSpecs } from "./route-specs.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const ROUTE = "apps/api/app/artifact-links/batch-move/route.ts";
 

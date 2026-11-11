@@ -1,4 +1,4 @@
-// Exact PNG comparison for frozen-render.mjs (ISS-13317), with node built-ins
+// Exact PNG comparison for frozen-render.mjs, with node built-ins
 // only. Reads the 8-bit, non-interlaced RGB or RGBA PNGs Chromium screenshots
 // produce and refuses anything else. The comparison has no threshold: two
 // screenshots are the same only when every decoded pixel is. The cropped diff

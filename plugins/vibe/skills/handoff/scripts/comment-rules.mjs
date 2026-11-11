@@ -1,5 +1,5 @@
 // Comment and leftover checks for what the PR #9732 takeover review found
-// after vibe's own review passed (ISS-13947).
+// after vibe's own review passed.
 //
 // Blocking rules, which diff-rules.mjs runs (checkCommentRules):
 // - excuse-comment: an added comment excusing a deviation ("a pre-existing
@@ -10,8 +10,8 @@
 //   unguarded use, the historical edit row, was removed).
 //
 // Candidates for the guardrails reviewer to judge (commentCandidates, and the
-// CLI below), because on 40 recent symphony-alpha main commits these fired on
-// 13 with mostly legitimate comments:
+// CLI below), because on 40 recent main commits of one repository these fired
+// on 13 with mostly legitimate comments:
 // - stale-citation: the diff replaced a citation in one comment and other
 //   comments in the same file still cite it (DI-13 left at :51 and :93).
 // - removed-name-comment: a comment still names an identifier the diff
@@ -27,14 +27,16 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const CODE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*|\{\s*\/\*)/;
 // "bug" and "regression" alone fired on ten legitimate comments in 40 main commits (feature names, story descriptions).
 const EXCUSE = /\b(?:pre-?existing|defects?|on main|work(?:s|ing)?[ -]?around|known (?:issue|bug|failure|problem|defect)s?)\b/i;
-const TICKET = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\/\S+/;
-const CITATION = /\b[A-Z]{2,5}-\d+\b/g;
 const COMPOUND_NAME = /\b(?:[a-z][a-z0-9]*[A-Z]|[A-Z][a-z0-9]+[A-Z])[A-Za-z0-9]*\b/g;
 const DEFINITION = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*/g;
 const NEGATED_CONDITION = /!\s*([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\b(?!\s*\()/g;
@@ -60,14 +62,17 @@ function headComments(text) {
   return text.split("\n").map((line, index) => ({ line: index + 1, text: line })).filter((entry) => COMMENT_LINE.test(entry.text));
 }
 
-/** An added comment that excuses a deviation must name the ticket that retires it. */
-export function checkExcuseComments(files, add) {
+/**
+ * An added comment that excuses a deviation must name the ticket that retires it: `ticketed`, the session's
+ * ticket reference (provider.mjs ticketReference).
+ */
+export function checkExcuseComments(files, add, ticketed = ticketReference(null)) {
   for (const file of codeFiles(files)) {
     for (const block of addedCommentBlocks(file)) {
       const text = block.map((entry) => entry.text).join(" ");
       const excuse = EXCUSE.exec(text);
-      if (excuse && !TICKET.test(text)) {
-        add("excuse-comment", file.path, block[0].line, `adds a comment excusing a deviation ("${excuse[0]}") that cites no ticket; "on main" and "pre-existing" go stale at merge`, "file the ticket for the defect and cite its ISS slug (or the upstream issue URL) in the comment");
+      if (excuse && !ticketed.test(text)) {
+        add("excuse-comment", file.path, block[0].line, `adds a comment excusing a deviation ("${excuse[0]}") that cites no ticket; "on main" and "pre-existing" go stale at merge`, "file the ticket for the defect and cite it (its tracker slug, issue number or the upstream issue URL) in the comment");
       }
     }
   }
@@ -76,12 +81,12 @@ export function checkExcuseComments(files, add) {
 /** A citation the diff replaced in one comment that the file's other comments still cite. */
 export function checkStaleCitations(files, repo, add) {
   for (const file of codeFiles(files)) {
-    const removed = new Set(file.removed.filter((entry) => COMMENT_LINE.test(entry.text)).flatMap((entry) => entry.text.match(CITATION) ?? []));
+    const removed = new Set(file.removed.filter((entry) => COMMENT_LINE.test(entry.text)).flatMap((entry) => entry.text.match(citations(repo)) ?? []));
     if (!removed.size) continue;
-    const kept = new Set(file.added.filter((entry) => COMMENT_LINE.test(entry.text)).flatMap((entry) => entry.text.match(CITATION) ?? []));
+    const kept = new Set(file.added.filter((entry) => COMMENT_LINE.test(entry.text)).flatMap((entry) => entry.text.match(citations(repo)) ?? []));
     const comments = headComments(repo.head(file.path) ?? "");
     for (const token of [...removed].filter((item) => !kept.has(item))) {
-      const still = comments.filter((entry) => (entry.text.match(CITATION) ?? []).includes(token));
+      const still = comments.filter((entry) => (entry.text.match(citations(repo)) ?? []).includes(token));
       if (still.length) {
         add("stale-citation", file.path, still[0].line, `the diff replaced the citation ${token} in one comment, but line${still.length === 1 ? "" : "s"} ${still.map((entry) => entry.line).join(", ")} still cite${still.length === 1 ? "s" : ""} it`, "check each still names the right source; correct the ones the change made wrong");
       }
@@ -139,7 +144,7 @@ export function checkGuardedConstants(files, repo, add) {
 
 /** The blocking comment rules, for diff-rules.mjs. */
 export function checkCommentRules(files, repo, add) {
-  checkExcuseComments(files, add);
+  checkExcuseComments(files, add, repo.rules?.ticketed);
   checkGuardedConstants(files, repo, add);
 }
 
@@ -187,9 +192,25 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.stderr.write("Usage: comment-rules.mjs --worktree <path> --base <sha>\n");
     process.exit(2);
   }
-  const files = parseUnifiedDiff(execFileSync("git", ["-C", values.worktree, "diff", "--no-color", "--unified=0", "-M", values.base], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }));
-  const repo = { head: (file) => { try { return readFileSync(path.join(values.worktree, file), "utf8"); } catch { return null; } } };
+  const files = parseUnifiedDiff(execFileSync("git", ["-C", values.worktree, "diff", "--no-color", "--unified=0", "-M", values.base], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }), localPlanPrefix(sessionBinding(values.worktree)));
+  const binding = sessionBinding(values.worktree);
+  const repo = { head: (file) => { try { return readFileSync(path.join(values.worktree, file), "utf8"); } catch { return null; } },
+    rules: { ticketed: ticketReference(binding), citations: citationPattern(binding) } };
   const blocking = [];
   checkCommentRules(files, repo, (rule, file, line, problem, fix) => blocking.push({ rule, file, line, problem, fix }));
   process.stdout.write(`${JSON.stringify({ blocking, candidates: commentCandidates(files, repo) }, null, 2)}\n`);
+}
+
+/**
+ * What a comment cites, as a global RegExp: the bound tracker's `citationPattern`, else the session's ticket
+ * reference.
+ */
+export function citationPattern(binding) {
+  return new RegExp(providerDataOr(binding, "tickets", "citationPattern", null) ?? ticketReference(binding).source, "g");
+}
+
+function citations(repo) {
+  const pattern = repo.rules?.citations ?? citationPattern(null);
+  pattern.lastIndex = 0;
+  return pattern;
 }

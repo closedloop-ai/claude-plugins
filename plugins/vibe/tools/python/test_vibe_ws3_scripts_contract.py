@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+import json
+
 import re
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -74,7 +76,7 @@ def test_each_worker_points_at_its_script_and_keeps_working_without_it() -> None
 
 
 def test_the_graph_pack_is_wired_into_the_graph_reference_and_never_claims_the_graph() -> None:
-    text = flat((REFERENCES / "closedloop-graph.md").read_text())
+    text = flat((PROVIDER_REFERENCES / "closedloop-graph.md").read_text())
     assert "graph-pack.mjs" in text
     assert "It is not graph evidence" in text
     assert "the Graph block below is not satisfied by the pack" in text
@@ -86,7 +88,7 @@ def test_the_graph_pack_is_wired_into_the_graph_reference_and_never_claims_the_g
 
 def test_scripts_wrap_the_existing_scripts_and_gates_instead_of_copying_them() -> None:
     expectations = {
-        "setup-ctl.mjs": ("vibe-preflight.sh", "run-bounded.mjs", "vibe-sessions.mjs", "loops-setup.sh"),
+        "setup-ctl.mjs": ("vibe-preflight.sh", "run-bounded.mjs", "vibe-sessions.mjs", 'recipe(worktree, "bootstrap")'),
         "env-ctl.mjs": ("vibe-sessions.mjs", "posthog-key.mjs", "local-plans.mjs", "migration-publish.mjs", "pr-preflight.mjs", "DISPATCH_WORKFLOW"),
         "verify-run.mjs": ("run-bounded.mjs", "pre-pr-lanes.mjs", "reportLanes", "check:source-gates", "typecheck:affected", "biome"),
         "guardrails-gate.mjs": ("runDiffRules", "parseUnifiedDiff", "check:source-gates", "biome", "isTestFile"),
@@ -99,6 +101,9 @@ def test_scripts_wrap_the_existing_scripts_and_gates_instead_of_copying_them() -
         text = source(name)
         for needle in needles:
             assert needle in text, (name, needle)
+    # The repository's own bootstrap script is the provider's recipe, which setup-ctl wraps rather than copies.
+    recipes = json.loads((PLUGIN_ROOT.parent / "vibe-closedloop-provider" / "provider.json").read_text())["data"]["recipes"]
+    assert recipes["bootstrap"]["command"].endswith("loops-setup.sh")
 
 
 def test_the_gate_scripts_do_not_reimplement_the_repository_rules() -> None:
@@ -134,14 +139,14 @@ def test_setup_ctl_returns_only_sentences_preflight_md_writes_and_runs_only_the_
     code = source("setup-ctl.mjs")
     claude = re.search(r'export const CLAUDE_SIGN_IN_WORDS = "([^"]+)";', code)
     assert claude is not None and claude.group(1) in preflight
-    folder = re.search(r"folderAccessWords = \(folder\) => `([^`]+)`", code)
-    assert folder is not None
-    assert folder.group(1).replace("${folder}", "<folder>") in preflight
+    # The folder-access sentence went with the home-folder search (operator ruling, 2026-11-10: any checkout).
+    assert "folderAccessWords" not in code
     auto = re.search(r"export const AUTO_FIXES = Object.freeze\(\{(.*?)\n\}\);", code, re.DOTALL)
     assert auto is not None
-    assert set(re.findall(r'^  "([a-z-]+)":', auto.group(1), re.MULTILINE)) == {"install-pnpm", "brew-install-jq", "brew-install-gh"}
+    assert set(re.findall(r'^  "([a-z-]+)":', auto.group(1), re.MULTILINE)) == {"install-pnpm", "install-yarn", "brew-install-jq", "brew-install-gh"}
     # Each automatic fix is the exact command preflight.md's table gives.
     assert "`corepack enable && corepack prepare pnpm@latest --activate`" in preflight
+    assert "`corepack enable && corepack prepare yarn@latest --activate`" in preflight
     assert "`brew install jq`" in preflight and "`brew install gh`" in preflight
     # Nothing that needs the Mac password, a sign-in or plugin installation is ever run.
     for forbidden in ("sudo", "auth login", "curl", "plugin", "install-homebrew", "install-node"):
@@ -220,7 +225,7 @@ def test_req_gather_lists_missing_queries_and_cannot_make_them() -> None:
     code = source("req-gather.mjs")
     for query in ("ticket_detail", "get-document-comments", "query_collisions", "code_symbols", "blast_radius_tickets", "search_nodes", "shipped_lineage"):
         assert f'"{query}"' in code, query
-    graph = (REFERENCES / "closedloop-graph.md").read_text()
+    graph = (PROVIDER_REFERENCES / "closedloop-graph.md").read_text()
     row = next(line for line in graph.split("\n") if line.startswith("| `vibe-requirements-worker`"))
     for query in ("query_collisions", "code_symbols", "blast_radius_tickets", "search_nodes"):
         assert query in row, query
@@ -269,7 +274,7 @@ def test_ticket_ctl_holds_no_credential_source_and_names_the_blocker() -> None:
 
 
 def test_ticket_ctl_formats_match_the_template_rules() -> None:
-    template = flat((REFERENCES / "ticket-template.md").read_text())
+    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
     code = source("ticket-ctl.mjs")
     lines = re.findall(r"`(- \[ \] [^`]+)`", template)
     assert lines

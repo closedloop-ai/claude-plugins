@@ -1,17 +1,20 @@
 // The prebuilt evidence bundle `handoff-inventory.mjs` adds in the handoff and
-// pull-request phases (PRD-823, WS3 D7, ISS-13349), so `vibe-handoff-summarizer`
+// pull-request phases, so `vibe-handoff-summarizer`
 // writes prose over data instead of deriving it: the backend paths grouped by
 // kind, the guard predicates and feature flag reads on the changed lines, the
 // session's flag keys, the Storybook links to each changed story, and a blast
-// bundle (owner, importing hosts, tests, stories, FEATURE_MAP ids) for each
+// bundle (owner, importing hosts, tests, stories, feature map ids) for each
 // changed source file. Every field is read from the diff, the session record
 // or the worktree; none is invented, and a field with nothing to say is an
-// empty list, never a claim. The closedloop-graph tools (`code_callers`,
-// `blast_radius_tickets`) are not called here: `blastBundle.source` says it is
-// worktree evidence and the summarizer's graph calls stay owed.
+// empty list, never a claim. A bound graph's tools are not called here:
+// `blastBundle.source` says it is worktree evidence and the summarizer's graph
+// calls stay owed.
 
 import { createGraphPack } from "../../vibe/scripts/graph-pack.mjs";
 import { execCommand } from "../../vibe/scripts/ws3-exec.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { parseUnifiedDiff, storyId } from "./diff-rules.mjs";
 import { renameLines } from "./guardrails-gate.mjs";
@@ -28,23 +31,28 @@ const FLAG_MODULE_PATHSPECS = ["*-flag.ts", "*-flags.ts", "*/feature-flags.ts", 
 const GUARD = /\b(?:withAnyAuth|requireRole|requireOrg|requireAuth|assertOrg|assertCan|isAdmin|hasRole|hasPermission|canManage|can\()|\b(?:orgId|organizationId)\b.*(?:!==|===)|\bif\s*\(\s*!\s*(?:user|session|org|auth|isAdmin|canEdit|isOwner)\w*/;
 const FLAG_NAME = /\bfeature[- ]?flag\w*|\buseFeatureFlag\w*|\bFeatureFlagged\b|\bisFlagEnabled\b/i;
 
-/** Backend files grouped by what they are: routes, services, schema, migrations, shared types, desktop main, other. */
-export function backendGroups(backendFiles) {
+/**
+ * Backend files grouped by what they are: routes, services, schema, migrations, shared types, desktop main, other.
+ * `groups` are the repository's folders for each (the provider's `recipes.areas.backendGroups`); the file name
+ * shapes apply in any repository.
+ */
+export function backendGroups(backendFiles, groups = providerDataOr(sessionBinding(), "recipes", "areas", null)?.backendGroups ?? {}) {
+  const under = (file, name) => (groups[name] ?? []).some((prefix) => file.startsWith(prefix));
   const kind = (file) => {
     if (/\/migrations\/|\/prisma\/migrations\//.test(`/${file}`)) return "migrations";
-    if (/(?:^|\/)schema\.prisma$/.test(file) || file.startsWith("packages/database/")) return "schema";
-    if (/\/route\.tsx?$/.test(file) || /^apps\/api\/app\//.test(file)) return "routes";
+    if (/(?:^|\/)schema\.prisma$/.test(file) || under(file, "schema")) return "schema";
+    if (/\/route\.tsx?$/.test(file) || under(file, "routes")) return "routes";
     if (/\/(?:lib|services?)\//.test(file) || /service[^/]*\.tsx?$/.test(file)) return "services";
-    if (file.startsWith("packages/api/")) return "sharedTypes";
-    if (file.startsWith("apps/desktop/")) return "desktopMain";
+    if (under(file, "sharedTypes")) return "sharedTypes";
+    if (under(file, "desktopMain")) return "desktopMain";
     return "other";
   };
-  const groups = {};
+  const grouped = {};
   for (const entry of backendFiles) {
     const file = typeof entry === "string" ? entry : entry.path;
-    (groups[kind(file)] ??= []).push(file);
+    (grouped[kind(file)] ??= []).push(file);
   }
-  return Object.fromEntries(Object.entries(groups).map(([name, list]) => [name, list.sort()]));
+  return Object.fromEntries(Object.entries(grouped).map(([name, list]) => [name, list.sort()]));
 }
 
 /** Added lines in changed source files that read a guard (auth, role, org match) or a feature flag; import lines and comments are not predicates. */
@@ -128,7 +136,7 @@ export function storybookLinks(files, record, readHead) {
   return { base, source: record?.vercel?.storybookUrl ? "verified Vercel storybookUrl" : record?.stack?.storybookUrl ? "local storybookUrl on the stack" : null, stories: stories.slice(0, MAX_ITEMS * 2), total: stories.length };
 }
 
-/** Owner, importing hosts, tests, stories and FEATURE_MAP ids for each changed source file, from the worktree. */
+/** Owner, importing hosts, tests, stories and feature map ids for each changed source file, from the worktree. */
 export function blastBundle(worktree, files, pack = createGraphPack()) {
   const paths = files.filter((entry) => entry.status !== "D" && SOURCE.test(entry.path) && !isTestFile(entry.path) && !STORY.test(entry.path)).map((entry) => entry.path);
   const result = pack.pack({ worktree, paths: paths.slice(0, MAX_BLAST_FILES), terms: [] });

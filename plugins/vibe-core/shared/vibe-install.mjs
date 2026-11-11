@@ -1,6 +1,6 @@
 // vibe's install as vibe-core reads it: data only (its version, its skill
 // definitions, which of its scripts exist, whether the harness has it enabled).
-// vibe-core never imports or runs a file under vibe's root (ISS-13869, AC3).
+// vibe-core never imports or runs a file under vibe's root.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -49,7 +49,12 @@ export function vibeScriptPath(relative, cwd = process.cwd()) {
  * CODEX_HOME's config.toml (a `-c` override or a project config layer is not visible here). A checkout is enabled.
  */
 export function vibeEnabled(install, cwd = process.cwd()) {
-  const id = `vibe@${install?.marketplace}`;
+  return pluginEnabled("vibe", install, cwd);
+}
+
+/** `vibeEnabled` for any plugin `name` installed (as `install`) in vibe's marketplace. */
+export function pluginEnabled(name, install, cwd = process.cwd()) {
+  const id = `${name}@${install?.marketplace}`;
   if (install?.layout === Layout.Claude) {
     let enabled = true;
     for (const file of claudeSettingsFiles(install.home, cwd)) {

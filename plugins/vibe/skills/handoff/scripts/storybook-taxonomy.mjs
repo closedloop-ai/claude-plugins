@@ -2,25 +2,27 @@
 // title, tags and exported story names, and which story files a base commit
 // treats as the frozen v1.0 baseline.
 //
-// symphony-alpha has used two schemes, and a session is judged by the one its
+// One repository has used two schemes, and a session is judged by the one its
 // base uses, so a branch still on an older main keeps its rules until it
 // syncs (design ruling, 2026-10-16):
-// - Version scheme, before symphony-alpha #8867 (ISS-12610): the plain level
+// - Version scheme, before its Storybook 3.0.0: the plain level
 //   roots (`Composites/`) and the `v1.0` tag are the v1.0 baseline; new work
 //   goes under `<Level> v2.0/` tagged `v2.0`.
-// - Lifecycle scheme, from #8867 (Storybook 3.0.0): the `<Level> v1.0/` roots
+// - Lifecycle scheme, from Storybook 3.0.0: the `<Level> v1.0/` roots
 //   and the `deprecated` lifecycle tag are the v1.0 baseline; new work goes
 //   under the plain roots with one lifecycle tag (`stable`, `preview`,
 //   `experimental`).
-// The base's own apps/storybook/story-group-order.ts says which: it exports
+// The base's own story group order file (the provider's layout recipe) says which: it exports
 // `StorybookLifecycle` only in the lifecycle scheme, and there the frozen tag
 // is that object's `Deprecated` value and every frozen root ends in
-// `storybookBaselineVersion`, the same test symphony-alpha's
-// validate-story-titles.mjs applies. Reading them from the base keeps the next
+// `storybookBaselineVersion`, the same test the repository's own title
+// validator applies. Reading them from the base keeps the next
 // rename there from breaking these checks. The version scheme is closed
 // history whose file declares neither, so its two patterns stay written here.
 
-export const STORY_GROUP_ORDER_PATH = "apps/storybook/story-group-order.ts";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+/** The repository's story group order file (the provider's layout recipe), or null without one. */
+export const storyGroupOrderPath = () => repositoryLayout().storyGroupOrder ?? null;
 
 export const StorybookScheme = {
   Version: "version",
@@ -29,7 +31,7 @@ export const StorybookScheme = {
 };
 
 // The first title segment that carries no version or lifecycle stage, as
-// symphony-alpha's .storybook/manager.ts treats it (design ruling, 2026-10-06).
+// the repository's Storybook manager config treats it (design ruling, 2026-10-06).
 export const UNVERSIONED_STORY_ROOT = "Start Here";
 
 const VERSION_SCHEME_FROZEN_TITLE = /\btitle:\s*["'`](?:Foundations|Primitives|Composites|Surfaces)\//;
@@ -72,7 +74,7 @@ export function storybookSchemeOf(orderSource) {
     return {
       summary: {
         name: StorybookScheme.Unrecognized,
-        problem: `${STORY_GROUP_ORDER_PATH} exports StorybookLifecycle but no readable ${DEPRECATED_MEMBER} tag or storybookBaselineVersion; update the vibe plugin before handing off story changes.`,
+        problem: `${storyGroupOrderPath()} exports StorybookLifecycle but no readable ${DEPRECATED_MEMBER} tag or storybookBaselineVersion; update the vibe plugin before handing off story changes.`,
       },
       frozenTitle: () => false,
       frozenTag: () => false,
@@ -136,8 +138,8 @@ export function keepsStoryIdentity(base, source) {
 
 /**
  * `source` with the contents of every string, template literal, regular expression and comment replaced by spaces
- * (line breaks kept), so a pattern over it sees only code: a fixture string holding `export const` is not an export
- * (ISS-13317). Template substitutions stay code. A `/` starts a regular expression only where an expression can
+ * (line breaks kept), so a pattern over it sees only code: a fixture string holding `export const` is not an export.
+ * Template substitutions stay code. A `/` starts a regular expression only where an expression can
  * start, judged by the previous code character.
  */
 function codeOnly(source) {

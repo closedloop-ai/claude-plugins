@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from vibe_contract_text import agent, flat
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -71,7 +71,7 @@ def test_criteria_audit_and_rulings_check_gate_the_handoff() -> None:
         assert f"scripts/{script}" in handoff, script
     assert "audit the uncommitted candidate" in handoff
     assert "after independent review" in handoff
-    assert '- Ruling <date> (<who>): "' in (VIBE / "references" / "ticket-template.md").read_text()
+    assert '- Ruling <date> (<who>): "' in (PROVIDER_REFERENCES / "ticket-template.md").read_text()
 
 
 def test_findings_reach_a_writer_with_their_evidence() -> None:

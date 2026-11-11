@@ -121,9 +121,15 @@ export function mainSyncRecipeFiles() {
   };
 }
 
-export function runNode(script, args, home, extraEnv = {}, input) {
+/**
+ * Runs `script` as a session in the repository the ClosedLoop provider serves: the provider is bound for the
+ * fixture chat unless `extraEnv` names another chat (or none, with empty CLAUDE_CODE_SESSION_ID and
+ * CODEX_THREAD_ID, for a session with no provider).
+ */
+export function runNode(script, args, home, extraEnv = {}, input, { cwd } = {}) {
   const result = spawnSync(process.execPath, [script, ...args], {
-    env: { ...gitEnv(home), ...extraEnv },
+    env: { ...gitEnv(home), ...bindProvider(home), ...extraEnv },
+    ...(cwd ? { cwd } : {}),
     encoding: "utf8",
     input: input === undefined ? undefined : JSON.stringify(input),
   });
@@ -212,4 +218,42 @@ export function portableSurfaceChecker(entries = []) {
     "export const accepts = (specifier) => portableSurfaceAllowlist.has(specifier);",
     "",
   ].join("\n");
+}
+
+// The ClosedLoop provider plugin beside vibe in this repository, bound as a start would bind it.
+export const PROVIDER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../vibe-closedloop-provider");
+export const ALL_CAPABILITIES = ["tickets", "plans", "graph", "memory", "recipes"];
+/** That provider's binding, for in-process calls that take one. */
+export const PROVIDER_BINDING = Object.freeze({ state: "bound", name: "vibe-closedloop-provider", root: PROVIDER_ROOT, capabilities: ALL_CAPABILITIES });
+
+/**
+ * Records the provider as bound with `capabilities` for chat `conversation` under `home`, as the startup
+ * check does, and returns the environment that names that chat to the scripts.
+ */
+export function bindProvider(home, { capabilities = ALL_CAPABILITIES, conversation = "fixture-chat" } = {}) {
+  const dir = path.join(home, ".codex", "vibe", "plugin-version");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, `${conversation}.json`), JSON.stringify({ conversation, status: "current",
+    provider: { state: "bound", name: "vibe-closedloop-provider", root: PROVIDER_ROOT, capabilities } }));
+  return { CLAUDE_CODE_SESSION_ID: conversation, CODEX_THREAD_ID: "" };
+}
+
+/**
+ * Binds the provider for in-process calls of this test file that resolve a session's binding through this
+ * conversation (sessionBinding): points HOME and the chat ids at a throwaway home holding the fixture
+ * chat's binding, and restores them, removing any that were unset, when `after` runs.
+ */
+export function bindProviderInProcess(after) {
+  const fixture = makeHome("vibe-bound-chat-");
+  const keys = ["HOME", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"];
+  const saved = Object.fromEntries(keys.map((key) => [key, Object.hasOwn(process.env, key) ? process.env[key] : undefined]));
+  Object.assign(process.env, { HOME: fixture.home, ...bindProvider(fixture.home) });
+  after(() => {
+    for (const key of keys) {
+      if (saved[key] === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = saved[key];
+    }
+    fixture.cleanup();
+  });
+  return fixture;
 }

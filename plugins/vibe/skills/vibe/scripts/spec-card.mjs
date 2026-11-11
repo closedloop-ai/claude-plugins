@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
+import { sessionLocalPlanPrefix } from "./local-plans.mjs";
 
 export const EVIDENCE_TYPES = ["test", "script", "screenshot", "api-read", "source-trace"];
 export const ASSUMPTION_TAGS = ["grounded", "unverified"];
@@ -29,7 +30,6 @@ export const CHECKPOINT_ENV = "VIBE_FORK_CHECKPOINT";
 export const CARD_FILE = "vibe-spec-card.json";
 
 const CRITERION_ID = /^AC-\d+$/;
-const SESSION_ARTIFACTS = /^\.closedloop-ai\//;
 
 const isText = (value) => typeof value === "string" && value.trim() !== "";
 const list = (value) => (Array.isArray(value) ? value : []);
@@ -153,7 +153,7 @@ export function budgetReport(card, changedFiles) {
     .filter((entry) => isText(entry?.path) && justificationCites(entry, criterionIds))
     .map((entry) => [entry.path, entry.cites ?? entry.source]));
   const extra = changedFiles
-    .filter((file) => !isPlanned(file, ownerFiles) && !SESSION_ARTIFACTS.test(file))
+    .filter((file) => !isPlanned(file, ownerFiles) && !isLocalArtifact(file))
     .map((file) => ({ path: file, cites: cited.get(file) ?? null }));
   return {
     blocks: false,
@@ -292,4 +292,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(2);
   }
+}
+
+/** Whether `file` is under the provider's in-worktree artifact root (local plans and decision tables); none without one. */
+function isLocalArtifact(file) {
+  const prefix = sessionLocalPlanPrefix(null);
+  return Boolean(prefix) && file.startsWith(prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/") + 1));
 }

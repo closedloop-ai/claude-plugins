@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Renders a vibe session's local plans as the body of the session's
-// implementation plan document (PLN) on ClosedLoop (operator ruling,
-// 2026-10-19). The plans are the top-level `.md` files in the worktree's
-// `.closedloop-ai/vibe-plans/` folder, one per request, joined in request ID
+// implementation plan document on the bound tracker (operator ruling,
+// 2026-10-19). The plans are the top-level `.md` files in the session's plan
+// folder (`local-plans.mjs paths`), one per request, joined in request ID
 // order; revisions and review evidence in its subfolders stay local. Each plan
 // passes publishable-text.mjs, the live ticket's safety rules: a refused line
 // writes nothing and exits 1 with every problem, so the same writer fixes its
@@ -11,12 +11,12 @@
 // Usage: session-plan.mjs --worktree <path> --out <file> [--published <file>]
 //
 // Prints one JSON object: `{ ok, empty, plans, out, digest }`, plus `current`
-// with `--published` (the latest PLN version's text saved by the ticket
+// with `--published` (the latest plan document version's text saved by the ticket
 // worker): true when it matches the rendered body apart from whitespace, so a
 // whitespace-only edit is not a material change. `empty: true` means the
 // session has no plan yet and nothing is written.
 //
-// The body starts with SELF_APPROVED_MARKER: vibe sets a PLN's status but
+// The body starts with SELF_APPROVED_MARKER: vibe sets a plan document's status but
 // never its approver, so its APPROVED means built and checked, not a human
 // approval, and none of its exclusions is a ruling unless it cites a human
 // source (handoff's rulings-check.mjs --plan). A writer once skipped two
@@ -28,7 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { LOCAL_PLAN_PREFIX } from "./local-plans.mjs";
+import { localPlanPaths, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { checkPublishableText } from "./publishable-text.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -37,9 +37,13 @@ const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const PLAN_SEPARATOR = "\n\n---\n\n";
 export const SELF_APPROVED_MARKER = "> Self-approved: vibe sets this plan's status and no human approved it; an exclusion here counts only where it cites a ticket AC, a PRD or an operator ruling.";
 
-/** The session's plans: top-level regular `.md` files of the local plan folder, in request ID order. */
+/**
+ * The session's plans: top-level regular `.md` files of the local plan folder, in request ID order, each
+ * repo-relative when the folder is in the worktree and absolute when it is in the git directory.
+ */
 export function localPlanFiles(worktree) {
-  const folder = path.join(worktree, LOCAL_PLAN_PREFIX);
+  const prefix = sessionLocalPlanPrefix(worktree);
+  const folder = prefix ? path.join(worktree, prefix) : localPlanPaths(worktree).plans;
   let entries;
   try {
     entries = readdirSync(folder, { withFileTypes: true });
@@ -49,7 +53,7 @@ export function localPlanFiles(worktree) {
   }
   return entries
     .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
-    .map((entry) => `${LOCAL_PLAN_PREFIX}${entry.name}`)
+    .map((entry) => (prefix ? `${prefix}${entry.name}` : path.join(folder, entry.name)))
     .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
 }
 
@@ -61,7 +65,7 @@ export function planDigest(body) {
 }
 
 /**
- * Builds the PLN body from the session's plans. `roots` and `privateWords`
+ * Builds the plan document body from the session's plans. `roots` and `privateWords`
  * are the publishable-text context. Returns `{ plans, body, problems }`; each
  * problem names the plan file and its line.
  */
@@ -69,7 +73,7 @@ export function renderSessionPlan(worktree, { roots, privateWords }) {
   const plans = localPlanFiles(worktree);
   const problems = [];
   const bodies = plans.map((file) => {
-    const absolute = path.join(worktree, file);
+    const absolute = path.isAbsolute(file) ? file : path.join(worktree, file);
     if (lstatSync(absolute).isSymbolicLink()) {
       problems.push({ file, line: 0, kind: "plan is a symlink" });
       return "";

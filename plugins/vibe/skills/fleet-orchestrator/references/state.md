@@ -1,5 +1,7 @@
 # Orchestration state
 
+Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+
 ## Layout
 
 One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orchestrator`); `scripts/fleet-home.mjs` documents it, and every script given the home works in its active program.
@@ -30,7 +32,10 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
 3. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
 4. Relaunch each `RELAUNCH <writer> <prompt>` Claude worker from that saved prompt; resume Codex writers through `fleet.sh`.
 5. Run `fleet-home.mjs check` and fix every line before acting.
-6. Keep the units the board lists (`board.md`, Units; the resume log's `Unit` lines), then rerun the related-ticket check ([ticket-units.md](./ticket-units.md)) for folds and new tickets.
+<!-- generic: units-resume -->
+6. Keep the writers the board lists (`board.md`) and the open work they own.
+<!-- end generic: units-resume -->
+> Provider `tickets` (block `units-resume` of `fleet/state.md`)
 7. Before any writer start, record each ticket's placement with `board.mjs placement` (SKILL.md, Cloud workers); the check lives in vibe-core, `lib/fleet-orchestrator/scripts/cloud-placement.mjs`, not in this plugin.
 
 ## Resume log

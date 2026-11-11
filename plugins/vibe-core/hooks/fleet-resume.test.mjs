@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { fleetResume } from "./fleet-resume.mjs";
+import { fleetResume, REINVOKE_LINE } from "./fleet-resume.mjs";
 import { SESSION_START_GUARDS } from "./session-start.mjs";
 import { recordHookSkill } from "./hook-session-scope.mjs";
 
@@ -36,6 +36,8 @@ test("after a compaction an orchestrator gets the resume reading list and the la
   assert.ok(context.includes(`READ ${path.join(program, "rulings.md")}`), context);
   assert.match(context, /## 2026-10-22 18:55\n- Ruling \(operator\): "I don't want to build anything yet"\n- Program: PRD-800 design from scratch/);
   assert.doesNotMatch(context, /Pending: operator ruling on how to proceed/, "only the last entry is quoted");
+  assert.equal(context.split("\n")[0], REINVOKE_LINE, "the first line says to load the skill again (operator ruling, 2026-11-11)");
+  assert.match(REINVOKE_LINE, /`vibe:fleet-orchestrator`/);
 });
 
 test("a recorded fleet skill still supplies resume context when the transcript is absent", (t) => {

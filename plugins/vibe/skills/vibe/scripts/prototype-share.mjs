@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The mechanical sequence of `vibe-prototype-worker` share mode (PRD-823, WS3
-// D8, ISS-13350), with no model: the committed-plan check, the main-sync share
+// The mechanical sequence of `vibe-prototype-worker` share mode, with no
+// model: the committed-plan check, the main-sync share
 // admission, the exact-SHA push, the wait for that SHA's `prototypes`
 // deployment, and the recording of the immutable preview URL. It wraps
 // `local-plans.mjs` and the `vibe-sessions.mjs` subcommands `main-sync-share`,
@@ -26,9 +26,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { execCommand, parseJson, printedStdout, stdoutOf, tailLines } from "./ws3-exec.mjs";
 
-export const REPO = "closedloop-ai/symphony-alpha";
+const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 export const READY = "success";
 export const STOP_STATES = new Set(["failure", "error", "inactive"]);
 const PENDING_STATES = new Set(["pending", "queued", "in_progress"]);
@@ -67,16 +68,25 @@ export function createPrototypeShare({
   run = execCommand,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now = () => Date.now(),
-  repo = REPO,
+  repo = null,
   write = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); },
 } = {}) {
   const sessions = (args, options) => parseJson(printedStdout(run(process.execPath, [script("vibe-sessions.mjs"), ...args], options), "vibe-sessions"), {});
   const gh = (args) => run("gh", args);
 
+  // The repository the deployments are read from: the injected one, else the worktree's GitHub `origin`.
+  let activeRepo = repo;
+  const useWorktree = (worktree) => {
+    if (repo) return true;
+    const origin = run("git", ["-C", worktree, "config", "--get", "remote.origin.url"]);
+    activeRepo = origin.status === 0 ? githubRepository(origin.stdout.trim()) : null;
+    return Boolean(activeRepo);
+  };
+
   function deploymentsFor(sha) {
     const found = [];
     for (let page = 1; page <= MAX_PAGES; page += 1) {
-      const response = gh(["api", `repos/${repo}/deployments?sha=${sha}&per_page=${PAGE_SIZE}&page=${page}`]);
+      const response = gh(["api", `repos/${activeRepo}/deployments?sha=${sha}&per_page=${PAGE_SIZE}&page=${page}`]);
       if (response.status !== 0) return { error: tailLines(response.stderr, 2) };
       const batch = parseJson(response.stdout, []);
       found.push(...batch);
@@ -93,7 +103,7 @@ export function createPrototypeShare({
       if (listed.error) return { blocked: "reading deployments failed", evidence: { detail: listed.error } };
       const deployment = prototypesDeployment(listed.deployments);
       if (deployment) {
-        const statusResponse = gh(["api", `repos/${repo}/deployments/${deployment.id}/statuses`]);
+        const statusResponse = gh(["api", `repos/${activeRepo}/deployments/${deployment.id}/statuses`]);
         if (statusResponse.status !== 0) return { blocked: "reading deployment statuses failed", evidence: { deploymentId: deployment.id, detail: tailLines(statusResponse.stderr, 2) } };
         const status = newestStatus(parseJson(statusResponse.stdout, []));
         evidence = { deploymentId: deployment.id, state: status?.state ?? "none" };
@@ -107,6 +117,7 @@ export function createPrototypeShare({
   }
 
   async function share({ worktree, pollSeconds = 15, deadlineMinutes = 20, stdin }) {
+    if (!useWorktree(worktree)) return { status: Status.Blocked, error: "the worktree's origin is not a GitHub repository" };
     const plans = parseJson(printedStdout(run(process.execPath, [script("local-plans.mjs"), "--worktree", worktree]), "local-plans"), {});
     if (plans.ok !== true) return { status: Status.Blocked, problems: plans.committedLocalPlans ?? [plans.error ?? "committed local plans"] };
     const admitted = sessions(["main-sync-share", "--worktree", worktree], { input: stdin });

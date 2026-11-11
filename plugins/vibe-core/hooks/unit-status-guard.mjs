@@ -1,5 +1,8 @@
-// PreToolUse guard for the ticket tool's update-document: a ticket of a grouped
-// unit moves to IN_REVIEW or DONE only after the unit's review of the completed
+// PreToolUse guard for the bound tracker's status write, a rule its provider
+// supplies as data (`data.tickets.unitStatusGuard`: the tool, the fields that
+// carry the ticket and status, and the guarded statuses); with no tracker bound
+// it does nothing. A ticket of a grouped unit moves to a guarded status only
+// after the unit's review of the completed
 // work passed (operator ruling, 2026-11-10): every member and PRD criterion
 // with a code review row and a visual QA capture on each page and surface it
 // names. Production acceptance testing of one PRD's list work found 33 misses
@@ -20,22 +23,28 @@ import { gatePath } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { openBoardUnits, unitReviewProblem } from "../lib/handoff/scripts/unit-review-record.mjs";
 import { defaultHome } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";
 import { readSessionRecord } from "../lib/vibe/scripts/session-record.mjs";
+import { providerDataOr, recordedBinding } from "../lib/vibe/scripts/provider.mjs";
 
-export const UPDATE_DOCUMENT_TOOL = "mcp__closedloop__update-document";
+/** The bound tracker's status-write rule for this event's chat (its session worktree, then the chat), or null. */
+export function unitStatusRule(event, home) {
+  const binding = recordedBinding({ worktree: eventCwd(event), conversation: event?.session_id ?? null, home });
+  const rule = providerDataOr(binding, "tickets", "unitStatusGuard", null);
+  if (!rule || typeof rule.tool !== "string") return null;
+  return { ...rule, keyPattern: providerDataOr(binding, "tickets", "keyPattern", null) };
+}
 
-const SLUG = /^[A-Z]+-\d+$/;
-const GUARDED = new Set(["IN_REVIEW", "DONE"]);
-
-/** Why `slug` may not move to `status` yet, or null. */
-export function unitStatusProblem({ slug, status, cwd, home = defaultHome() }) {
-  if (!GUARDED.has(status) || typeof slug !== "string" || !SLUG.test(slug)) return null;
+/** Why `slug` may not move to `status` yet under `rule`, or null. */
+export function unitStatusProblem({ slug, status, cwd, rule, home = defaultHome() }) {
+  if (!rule?.keyPattern || !(rule.guarded ?? []).includes(status) || typeof slug !== "string"
+    || !new RegExp(`^${rule.keyPattern}$`).test(slug)) return null;
   return boardProblem(slug, status, home) ?? sessionProblem(slug, status, cwd);
 }
 
-/** The PreToolUse result for an update-document call: a deny while its ticket's unit is unreviewed, else null. */
-export function unitStatusGuard(event) {
+/** The PreToolUse result for the tracker's status write: a deny while its ticket's unit is unreviewed, else null. */
+export function unitStatusGuard(event, rule = unitStatusRule(event)) {
+  if (!rule || event?.tool_name !== rule.tool) return null;
   const input = event?.tool_input ?? {};
-  const problem = unitStatusProblem({ slug: input.documentId, status: input.status, cwd: eventCwd(event) });
+  const problem = unitStatusProblem({ slug: input[rule.slugField], status: input[rule.statusField], cwd: eventCwd(event), rule });
   return problem ? deny(problem) : null;
 }
 

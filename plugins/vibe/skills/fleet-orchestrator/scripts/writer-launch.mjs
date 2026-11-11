@@ -7,9 +7,11 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { ADD_VIBE_CORE, APPROVE_HOOKS, HookApproval, runningHookApproval, UNKNOWN_METHOD } from '../../vibe/scripts/vibe-core-hooks.mjs';
+import { issueKey, requirementsKey } from "../../vibe/scripts/tracker-key.mjs";
 
 export const VIBE_PROMPT = /^\s*\$vibe\b/;
-export const VIBE_BRIEF_TICKET = /^\s*\$vibe[^\r\n]*?\b((?:ISS|PRD|FEA)-\d+)\b/;
+/** The ticket a `$vibe` brief names: the bound tracker's issue or requirements key (tracker-key.mjs); none without a tracker. */
+export const vibeBriefTicket = () => new RegExp(String.raw`^\s*\$vibe[^\r\n]*?\b(${issueKey()}|${requirementsKey()})\b`);
 
 const WORKTREES = path.join('.claude', 'worktrees');
 
@@ -52,7 +54,7 @@ export function recoveryTurnProblem(saved, prompt) {
   const recovery = `a thread whose first turn created no session takes only a $vibe ${saved.ticket ?? '<ticket>'} recovery turn`;
   if (existsSync(saved.cwd)) return `no vibe session record in ${saved.cwd}; the first $vibe turn must create it before any resume`;
   if (!VIBE_PROMPT.test(String(prompt ?? ''))) return `no vibe session record in ${saved.cwd} yet; ${recovery}`;
-  const ticket = VIBE_BRIEF_TICKET.exec(prompt)?.[1];
+  const ticket = vibeBriefTicket().exec(prompt)?.[1];
   if (!ticket || (saved.ticket && ticket !== saved.ticket)) {
     return `recovery turn names ticket ${ticket ?? 'none'}, but this thread is for ${saved.ticket ?? 'no recorded ticket'}; ${recovery}`;
   }

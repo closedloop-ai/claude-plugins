@@ -4,16 +4,17 @@
 # reads the failures and runs the fixes in references/preflight.md. Exit code
 # is 0 when every check passes, 1 otherwise.
 #
-# The one thing it writes is the remembered symphony-alpha checkout,
-# ~/.codex/vibe/config.json ({"repo": "<path>"}), which vibe-sessions.mjs and
-# every later run read. It remembers a checkout passed with --repo, or the
-# only one found under the home folder. A checkout is recognized by its git
-# remote (closedloop-ai/symphony-alpha), not by its folder name.
+# Any git checkout is accepted (operator ruling, 2026-11-10: nothing is tied
+# to one organization's repositories). The checkout is, in order: the one
+# --repo names, the one this command runs in, else the one remembered in
+# ~/.codex/vibe/config.json ({"repo": "<path>"}); a worktree resolves to the
+# checkout that owns it. The one thing it writes is that remembered checkout.
+# vibe-sessions.mjs records the checkout on each session, so a later session
+# elsewhere never reads another one's.
 #
-# --repo also accepts a closedloop-ai/claude-plugins checkout, for a session
-# whose ticket changes the plugins (ISS-13834). That checkout is used for this
-# run only: it is never remembered, and the symphony-alpha app checks
-# (dependencies installed, PostHog key) do not apply to it.
+# Repository-specific checks (a bootstrap marker, the analytics key a hosted
+# environment's flag snapshot needs) run only when the conversation's bound
+# provider has recipes for the repository (provider.mjs).
 #
 # Usage: vibe-preflight.sh [--runtime codex|claude] [--codex <CLI>] [--repo <checkout>] [--prototype]
 
@@ -39,11 +40,9 @@ esac
 
 CONFIG_DIR="$HOME/.codex/vibe"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-# Used until the checkout is found; the checkout's package.json wins after.
-DEFAULT_NODE_RANGE="^24 || >=26"
-SEARCH_DEPTH=6
-REMOTE_PATTERN='[:/]closedloop-ai/symphony-alpha(\.git)?/?$'
-PLUGINS_REMOTE_PATTERN='[:/]closedloop-ai/claude-plugins(\.git)?/?$'
+# What vibe's own scripts need until the checkout is found; the checkout's
+# package.json `engines.node` wins after.
+DEFAULT_NODE_RANGE=">=22"
 
 failures=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,7 +71,7 @@ have() {
 # Claude resolves closedloop-core and vibe-core through the manifest dependencies.
 # Codex installs no dependency, so it requires both explicitly installed and
 # enabled before session setup: vibe-core carries vibe's hooks, and vibe ships
-# none of its own (ISS-13869). If Node is absent, the ordinary prerequisite
+# none of its own. If Node is absent, the ordinary prerequisite
 # checks below report its existing install fix.
 if [[ "$RUNTIME" == "codex" ]] && have node; then
   codex_executable="$CODEX_ARG"
@@ -139,17 +138,8 @@ engines_node() {
   return 1
 }
 
-has_remote() {
-  [[ -e "$1/.git" ]] || return 1
-  git -C "$1" config --get-regexp '^remote\..*\.url$' 2>/dev/null | grep -qiE "$2"
-}
-
-is_symphony_checkout() {
-  has_remote "$1" "$REMOTE_PATTERN"
-}
-
-is_plugins_checkout() {
-  has_remote "$1" "$PLUGINS_REMOTE_PATTERN"
+is_checkout() {
+  [[ -n "$1" ]] && git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
 
 # A worktree resolves to the checkout that owns it, so sessions always start
@@ -162,8 +152,7 @@ main_checkout_of() {
 
 # Remembering the checkout is optional (the search finds it again), so a refused
 # write never fails the setup check. It is never silent either: Codex's sandbox
-# refuses writes under ~/.codex, and the line asks for an escalated rerun
-# (ISS-13321).
+# refuses writes under ~/.codex, and the line asks for an escalated rerun.
 remember_repo() {
   local error
   if error="$({ mkdir -p "$CONFIG_DIR" &&
@@ -178,73 +167,49 @@ remember_repo() {
   fi
 }
 
-# Every symphony-alpha checkout under the home folder, one per line. Folders
-# macOS refused to let us read go to the file named by $1.
-find_checkouts() {
-  local denied_file="$1" git_entry dir main
-  while IFS= read -r git_entry; do
-    dir="$(dirname "$git_entry")"
-    if is_symphony_checkout "$dir"; then
-      main="$(main_checkout_of "$dir")" || main="$dir"
-      printf '%s\n' "$main"
-    fi
-  done < <(
-    find "$HOME" -maxdepth "$SEARCH_DEPTH" \
-      \( -name .git -print -prune \) -o \
-      \( -type d \( -name '.*' -o -name node_modules -o -name Library \
-        -o -name Applications -o -name Pictures -o -name Music -o -name Movies \) -prune \) \
-      2>"$denied_file"
-  ) | sort -u
-}
-
 repo=""
 repo_detail=""
 repo_fix=""
-plugins_repo=0
 
 if [[ -n "$REPO_ARG" ]]; then
-  if is_symphony_checkout "$REPO_ARG"; then
+  if is_checkout "$REPO_ARG"; then
     repo="$(main_checkout_of "$REPO_ARG")" || repo="$REPO_ARG"
-  elif is_plugins_checkout "$REPO_ARG"; then
-    repo="$(main_checkout_of "$REPO_ARG")" || repo="$REPO_ARG"
-    plugins_repo=1
   else
-    repo_detail="$REPO_ARG is not a symphony-alpha or claude-plugins checkout"
+    repo_detail="$REPO_ARG is not a git checkout"
     repo_fix="ask-for-repo-path"
   fi
+elif is_checkout "$PWD"; then
+  repo="$(main_checkout_of "$PWD")" || repo="$(git -C "$PWD" rev-parse --show-toplevel)"
 else
   remembered="$(json_field "$CONFIG_FILE" repo)" || remembered=""
-  if [[ -n "$remembered" ]] && is_symphony_checkout "$remembered"; then
-    repo="$remembered"
+  if is_checkout "$remembered"; then
+    repo="$(main_checkout_of "$remembered")" || repo="$remembered"
   else
-    denied_file="$(mktemp)"
-    checkouts=()
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && checkouts+=("$line")
-    done < <(find_checkouts "$denied_file")
-    denied="$(grep -i 'operation not permitted' "$denied_file" | sed -E 's/^find: //; s/: Operation not permitted.*$//' | sort -u | paste -sd '|' - | sed 's/|/ | /g')"
-    rm -f "$denied_file"
-    if [[ ${#checkouts[@]} -eq 1 ]]; then
-      repo="${checkouts[0]}"
-    elif [[ ${#checkouts[@]} -gt 1 ]]; then
-      repo_detail="$(printf '%s\n' "${checkouts[@]}" | paste -sd '|' - | sed 's/|/ | /g')"
-      repo_fix="choose-repo"
-    elif [[ -n "$denied" ]]; then
-      repo_detail="macOS blocked searching: $denied"
-      repo_fix="allow-folder-access"
-    else
-      repo_detail="no symphony-alpha checkout found under $HOME"
-      repo_fix="clone-repo"
-    fi
+    repo_detail="no git checkout was named, this command does not run in one, and none is remembered"
+    repo_fix="ask-for-repo-path"
   fi
 fi
 
-if [[ -n "$repo" && "$plugins_repo" == 0 ]]; then
+if [[ -n "$repo" ]]; then
   remembered="$(json_field "$CONFIG_FILE" repo)" || remembered=""
   if [[ "$remembered" != "$repo" ]]; then
     remember_repo "$repo"
   fi
 fi
+
+# A value of the bound provider's recipes for this conversation, as JSON, or nothing when none is bound.
+provider_recipe() {
+  node "$SCRIPT_DIR/provider.mjs" data recipes "$1" --worktree "$repo" 2>/dev/null | grep -v '^provider: ' | grep -v '^null$'
+}
+
+# The package manager the checkout's lockfile names, or nothing.
+package_manager() {
+  if [[ -f "$1/pnpm-lock.yaml" ]]; then echo pnpm
+  elif [[ -f "$1/yarn.lock" ]]; then echo yarn
+  elif [[ -f "$1/bun.lockb" || -f "$1/bun.lock" ]]; then echo bun
+  elif [[ -f "$1/package-lock.json" || -f "$1/package.json" ]]; then echo npm
+  fi
+}
 
 # Compares two x.y.z versions; prints -1, 0, or 1.
 version_compare() {
@@ -339,7 +304,7 @@ comparator_ok() {
   esac
 }
 
-# True when a version satisfies an npm-style range ("^24 || >=26").
+# True when a version satisfies an npm-style range (such as "^1.2 || >=2" from `engines`).
 version_satisfies() {
   local version="${1#v}" range="$2" alternative comparator ok
   version="${version%%[-+]*}"
@@ -403,10 +368,16 @@ else
   emit node true "$current_version at $current_node (needs $node_range)" ""
 fi
 
-if have pnpm; then
-  emit pnpm true "$(pnpm --version 2>/dev/null)" ""
-else
-  emit pnpm false "not installed" "install-pnpm"
+manager=""
+if [[ -n "$repo" ]]; then
+  manager="$(package_manager "$repo")"
+fi
+if [[ -n "$manager" ]]; then
+  if have "$manager"; then
+    emit package-manager true "$manager $("$manager" --version 2>/dev/null)" ""
+  else
+    emit package-manager false "$manager is not installed" "install-$manager"
+  fi
 fi
 
 
@@ -445,18 +416,20 @@ if [[ "$RUNTIME" == "claude" ]] && have claude; then
   fi
 fi
 
-if [[ -n "$repo" && "$plugins_repo" == 1 ]]; then
+if [[ -n "$repo" ]]; then
   emit repo true "$repo" ""
-elif [[ -n "$repo" ]]; then
-  emit repo true "$repo" ""
-  if [[ -d "$repo/node_modules" ]]; then
-    emit repo-bootstrap true "node_modules present" ""
-  else
-    emit repo-bootstrap false "dependencies not installed" "run-loops-setup"
+  bootstrap="$(provider_recipe bootstrap)"
+  if [[ -n "$manager" ]]; then
+    if [[ -d "$repo/node_modules" ]]; then
+      emit repo-bootstrap true "node_modules present" ""
+    else
+      bootstrap_fix="$(printf '%s' "$bootstrap" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).fix??"")}catch{}})' 2>/dev/null)"
+      emit repo-bootstrap false "dependencies not installed" "${bootstrap_fix:-install-dependencies}"
+    fi
   fi
-  # The public PostHog key the flag snapshot needs: the checkout's env file,
-  # else the production app's page. The key itself is never printed here.
-  if [[ "$PROTOTYPE_ONLY" == 0 ]]; then
+  # The public PostHog key a hosted environment's flag snapshot needs, when the
+  # provider's recipes name where it lives. The key itself is never printed here.
+  if [[ "$PROTOTYPE_ONLY" == 0 && -n "$(provider_recipe posthog)" ]]; then
     posthog_output="$(node "$SCRIPT_DIR/posthog-key.mjs" --checkout "$repo" 2>/dev/null)"
     if [[ "$posthog_output" == *'"ok":true'* ]]; then
       posthog_host="$(printf '%s' "$posthog_output" | sed -n 's/.*"host":"\([^"]*\)".*/\1/p')"

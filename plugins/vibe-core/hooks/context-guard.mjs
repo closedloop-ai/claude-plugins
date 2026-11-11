@@ -1,5 +1,5 @@
 // vibe's compaction control for a long-running fleet-orchestrator chat in Claude
-// Code (ISS-13859; the operator ruled on 2026-11-09 to "rescope to compaction").
+// Code (the operator ruled on 2026-11-09 to "rescope to compaction").
 // Every request re-reads the whole conversation from the prompt cache, so the
 // cost of a request follows where compaction happens and what its summary keeps.
 //

@@ -515,3 +515,20 @@ test("baseline allocation, noise, cached-input disclosure and hashes are exact",
     sourceSha: "b".repeat(40), cliVersion: "2.1.311 (Claude Code)",
     createdAt: "2026-10-29T18:00:00.000Z" }), /run-count/);
 });
+
+test("Claude loads vibe-core and the provider snapshots exactly when the snapshot has them", () => {
+  const snapshot = { sha: "a".repeat(40), vibeDir: "/snapshot/vibe", coreDir: "/snapshot/core",
+    hooksDir: "/snapshot/vibe-core", providerDir: "/snapshot/provider", agentModels: {} };
+  const plugins = [
+    { name: "closedloop-core", source: "closedloop-core@inline", path: snapshot.coreDir },
+    { name: "vibe", source: "vibe@inline", path: snapshot.vibeDir },
+    { name: "vibe-core", source: "vibe-core@inline", path: snapshot.hooksDir },
+    { name: "vibe-closedloop-provider", source: "vibe-closedloop-provider@inline", path: snapshot.providerDir },
+    { name: "builtin", source: "builtin@builtin", path: "builtin" },
+  ];
+  assert.equal(exactSnapshotPlugins(plugins, snapshot), true);
+  assert.equal(exactSnapshotPlugins(plugins.filter((plugin) => plugin.name !== "vibe-closedloop-provider"), snapshot), false,
+    "a snapshot with the provider must load it");
+  const { providerDir: _omitted, ...generic } = snapshot;
+  assert.equal(exactSnapshotPlugins(plugins, generic), false, "a snapshot without the provider never loads one");
+});

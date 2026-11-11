@@ -3,10 +3,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { readAssembled } from "../../vibe/scripts/skill-split.mjs";
 
 test("vibe and fleet both record the release loaded by the current conversation", () => {
-  const fleet = readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
-  const vibe = readFileSync(new URL("../../vibe/SKILL.md", import.meta.url), "utf8");
+  const fleet = readAssembled(new URL("../SKILL.md", import.meta.url));
+  const vibe = readAssembled(new URL("../../vibe/SKILL.md", import.meta.url));
   assert.match(fleet, /plugin-version\.mjs loaded --runtime codex\|claude/);
   assert.match(vibe, /plugin-version\.mjs loaded --runtime codex/);
   assert.match(vibe, /plugin script the installed release no longer has/);

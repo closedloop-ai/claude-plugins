@@ -1,13 +1,44 @@
-// Path prefixes of the target repository's UI surfaces, shared by the handoff facts (pr-facts.mjs) and the
-// triage manifest (vibe-triage.mjs) so the two cannot drift.
+// The target repository's areas, shared by the handoff facts (pr-facts.mjs), the handoff inventory and the
+// triage manifest (vibe-triage.mjs) so they cannot drift. A bound provider's recipe names them
+// (`data.recipes.areas`: UI prefixes, the surfaces Desktop hosts, the paths that can change Desktop, the
+// prototype folder and the backend paths). Without one there are no UI or Desktop prefixes (a UI file is
+// known by its extension alone), no prototype folder, and backend means migrations and SQL only, so a file
+// in no known area classifies as unknown and takes the full review path.
 
-export const UI_PREFIXES = ["apps/app/", "apps/web/", "apps/storybook/", "apps/prototypes/", "apps/desktop/src/renderer/", "packages/app/", "packages/design-system/"];
+import { vibeCore } from "../../../shared/vibe-core.mjs";
 
-/** The surfaces Desktop hosts: its renderer and the shared product UI package. */
-export const DESKTOP_HOST = ["apps/desktop/src/renderer/", "packages/app/"];
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
-/** Paths that cannot change what a Vercel environment builds: root docs, root Markdown files and the plugin and agent folders. A change outside this list is deploy-relevant (a shared package, the lockfile and root package.json included). */
+/** Paths that cannot change what an environment builds: root docs, root Markdown files and the plugin and agent folders. A change outside this list is deploy-relevant (a shared package, the lockfile and root package.json included). */
 export const NON_BUILD_PATH = /^(?:docs|\.claude|\.agents|\.context)\/|^[^/]+\.md$/;
 
-/** Backend paths: the one list triage and the handoff inventory both read. */
-export const BACKEND_PATH = /^apps\/(api|mcp|relay|realtime|doc-sync)\/|^packages\/(database|api|github|ai|loops-api|cost)\/|^apps\/desktop\/src\/(main|server)\/|^apps\/desktop\/prisma\/|(?:^|\/)(?:prisma|migrations)\/|\.sql$|schema\.prisma$/;
+const GENERIC_BACKEND = /(?:^|\/)(?:prisma|migrations)\/|\.sql$|schema\.prisma$/;
+export const GENERIC_AREAS = Object.freeze({ ui: [], desktopHost: [], desktopRelevant: [], prototype: null, backend: GENERIC_BACKEND });
+
+/** The repository's areas for `binding`: its provider recipe's, compiled, or GENERIC_AREAS. */
+export function repositoryAreas(binding) {
+  const data = providerDataOr(binding, "recipes", "areas", null);
+  if (!data) return GENERIC_AREAS;
+  return Object.freeze({
+    ui: data.ui ?? [],
+    desktopHost: data.desktopHost ?? [],
+    desktopRelevant: data.desktopRelevant ?? [],
+    prototype: data.prototype ? new RegExp(data.prototype) : null,
+    backend: data.backend ? new RegExp(data.backend) : GENERIC_BACKEND,
+  });
+}
+
+/** The areas of the session at `worktree` (or, before one exists, this conversation's binding). */
+export function sessionAreas(worktree = null) {
+  return repositoryAreas(sessionBinding(worktree));
+}
+
+/** The repository layout the bound provider's recipe names (`data.recipes.layout`), or `fallback`'s keys only. */
+export function repositoryLayout(binding = sessionBinding(null)) {
+  return providerDataOr(binding, "recipes", "layout", {});
+}
+
+/** The bound provider's prototype recipe (`data.recipes.prototypes`), or null without one. */
+export function prototypeRecipe(binding = sessionBinding(null)) {
+  return providerDataOr(binding, "recipes", "prototypes", null);
+}

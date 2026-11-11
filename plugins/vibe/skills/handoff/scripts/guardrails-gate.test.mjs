@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
   Check, createGuardrailsGate, exitCodeFor, findingId, findingsProblems, FINDINGS_SCHEMA, fromDiffRule, fromGateOutput, REVIEWER_CHECKS, scanConventions,
   scanTestRepairs, scanTokens, Severity,
 } from "./guardrails-gate.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);

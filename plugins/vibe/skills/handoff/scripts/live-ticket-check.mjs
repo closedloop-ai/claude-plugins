@@ -1,30 +1,29 @@
 #!/usr/bin/env node
-// Checks a vibe session's live ticket body (ISS-12057) is complete before
+// Checks a vibe session's live ticket body is complete before
 // handoff: every section is present and filled, no template placeholder or
 // `Pending.` marker is left, and the sections rendered from the session
 // record carry their URLs, flag table, keys to see the work, and session ids. With
 // `--base-commit` (the handoff inventory's `baseCommit`), the Environment
 // section must name that commit as the branch's base, so a branch that merged
 // main since the session started is not handed off with its old base.
-// With `--worktree`, a session that has local plans must have its PLN
+// With `--worktree`, a session that has local plans must have its plan document
 // recorded, and handoff must have left it APPROVED (operator ruling,
-// 2026-10-19); the ticket worker checks its links on ClosedLoop before this.
+// 2026-10-19); the ticket worker checks its links in the tracker before this.
 // It also needs the session's flag keys recorded, each proposed key approved
 // by the person for its current proposal and read by a file (operator ruling,
 // 2026-10-20).
 // With `--child-evidence <map>` (needs `--worktree` and `--base-commit`), it
-// also gates a source PRD's claimed children (vibe lessons ledger: symphony-alpha
-// #8947, #8953, #8958, #8959, #8960, #8963 and PRD-729 moved children to
-// IN_REVIEW with design review, device runs, hosted URLs or ledgers unbuilt,
+// also gates a source PRD's claimed children (vibe lessons ledger: earlier
+// sessions moved children to IN_REVIEW with design review, device runs, hosted URLs or ledgers unbuilt,
 // on the writer's own audit): only `children.inReview` may move to IN_REVIEW,
 // and only when the map names the delivering pull request (`pullRequest`); a
 // delivered child with none is `awaitingPullRequest` and keeps its status
 // (operator ruling, 2026-10-21: no IN_REVIEW without a pull request).
-// A fleet unit's member tickets (the session record's `memberTickets`,
-// ISS-13924) are reconciled the same way: each must be in the map, and a
+// A fleet unit's member tickets (the session record's `memberTickets`) are reconciled the same way: each must be in the map, and a
 // session with members needs `--child-evidence`.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
-// nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
+// nothing. The sections are the headings of the tracker provider's live ticket
+// template (`provider:ticket-template.md`).
 //
 // Usage: live-ticket-check.mjs --file <ticket body .md> [--base-commit <sha>] [--worktree <path>]
 //          [--child-evidence <map .json>] [--now <iso>]
@@ -37,7 +36,9 @@ import { parseArgs } from "node:util";
 import { flagKeyProblems } from "../../vibe/scripts/flag-keys.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
+import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
+import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -81,7 +82,8 @@ const REQUIRED_CONTENT = {
   Sessions: [[/^- (?:Codex session \(orchestrator\): `[A-Za-z0-9-]{8,100}`|Claude Code session \(orchestrator\): `[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)$/im, "lists no orchestrator session id"]],
   "Scope and acceptance criteria": [
     [/^- Newest ruling: (?:none found \(searched: [^)\n]+\)|.*\b\d{4}-\d{2}-\d{2}\b)/m, "has no Newest ruling line (a dated ruling, or none found with the searches run)"],
-    [/^- Prior removal: (?:none found \(searched: [^)\n]+\)|.*\b(?:ISS|PRD|PLN|FEA)-\d+)/m, "has no Prior removal line (the removing ticket, or none found with the searches run)"],
+    [{ test: (text) => new RegExp(String.raw`^- Prior removal: (?:none found \(searched: [^)\n]+\)|.*\b${trackerKey()})`, "m").test(text) },
+      "has no Prior removal line (the removing ticket, or none found with the searches run)"],
   ],
 };
 
@@ -105,7 +107,7 @@ export function parseSections(body) {
   return sections;
 }
 
-export function checkLiveTicket(body, { baseCommit, record, headSha, branch, planCount = 0 } = {}) {
+export function checkLiveTicket(body, { baseCommit, record, headSha, branch, planCount = 0, planPrefix = null } = {}) {
   const sections = parseSections(body);
   const problems = [];
   const prototype = isOwnedPrototypeSession(record);
@@ -151,19 +153,19 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
   }
   problems.push(...checkSessionPlan(record, planCount));
   // Operator ruling, 2026-10-20: no path on the operator's machine, and no plan pointed at by path.
-  problems.push(...pointerProblems(body).map(({ line, kind }) => ({ section: "Body", problem: `line ${line}: ${kind}` })));
+  problems.push(...pointerProblems(body, planPrefix).map(({ line, kind }) => ({ section: "Body", problem: `line ${line}: ${kind}` })));
   // Operator ruling, 2026-10-20: every proposed flag key needs the person's recorded yes.
   problems.push(...flagKeyProblems(record).map((problem) => ({ section: "Flag keys", problem })));
   return { ok: problems.length === 0, problems };
 }
 
-/** The session plan is published as a PLN and, once handoff runs, APPROVED (or EXECUTED after the merge). */
+/** The session plan is published as a plan document and, once handoff runs, APPROVED (or EXECUTED after the merge). */
 function checkSessionPlan(record, planCount) {
   if (!record || planCount === 0) {
     return [];
   }
   if (!record.livePlan) {
-    return [{ section: "Session plan", problem: "the session has a local plan but no PLN is recorded" }];
+    return [{ section: "Session plan", problem: "the session has a local plan but no plan document is recorded" }];
   }
   if (record.livePlanStatus !== "APPROVED" && record.livePlanStatus !== "EXECUTED") {
     return [{ section: "Session plan", problem: `${record.livePlan} is ${record.livePlanStatus ?? "unrecorded"}, not APPROVED` }];
@@ -228,6 +230,7 @@ function main() {
       branch: values.worktree ? git(values.worktree, ["rev-parse", "--abbrev-ref", "HEAD"]) : undefined,
       headSha: values.worktree ? git(values.worktree, ["rev-parse", "HEAD"]) : undefined,
       planCount: values.worktree ? localPlanFiles(path.resolve(values.worktree)).length : 0,
+      planPrefix: values.worktree ? sessionLocalPlanPrefix(path.resolve(values.worktree)) : null,
     });
     if (values["child-evidence"]) {
       result.children = checkChildren(values, record);
@@ -262,7 +265,8 @@ function checkChildren(values, record) {
 export const CLASSIFICATIONS = ["delivered", "active-elsewhere", "superseded", "uncovered"];
 export const EVIDENCE_KINDS = ["diff", "tracked", "merged-pr", "report"];
 const WRITER = "vibe-change-worker";
-const SLUG = /^(?:ISS|FEA|PRD|PLN)-\d+$/;
+// The bound tracker's ticket key; child tickets exist only with a tracker bound.
+const slugPattern = () => new RegExp(`^${trackerKey()}$`);
 const PULL_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
 const HTTPS_URL = /^https:\/\/\S+$/;
 const SHA = /^[0-9a-f]{7,40}$/;
@@ -293,8 +297,8 @@ export function checkChildEvidence(map, facts, members = []) {
   }
   for (const child of map.children) {
     const slug = typeof child?.slug === "string" ? child.slug : null;
-    if (!slug || !SLUG.test(slug)) {
-      report(slug, "has no ClosedLoop slug");
+    if (!slug || !slugPattern().test(slug)) {
+      report(slug, "has no tracker slug");
       continue;
     }
     const before = problems.length;

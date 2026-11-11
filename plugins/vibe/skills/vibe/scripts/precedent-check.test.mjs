@@ -3,10 +3,14 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, checkReport, precedentPrompt, precedentRoot, summarize } from "./precedent-check.mjs";
 import { makeHome } from "./test-fixtures.mjs";
+import { bindProviderInProcess } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "precedent-check.mjs");
 const QUESTION = "What should the settings page show when someone cancels the GitHub authorization halfway?";
@@ -200,4 +204,14 @@ test("run saves the disputed behaviors beside the report, and check reads them",
   const checked = spawnSync(process.execPath, [SCRIPT, "check", "--report", path.join(out, "report.md")], { encoding: "utf8" });
   assert.equal(checked.status, 1);
   assert.match(JSON.parse(checked.stdout).error, /does not settle B1/);
+});
+
+test("with no provider rule any established app is checked, and its own documentation settles the answer", () => {
+  const generic = { product: null, liveOnly: false };
+  const prompt = precedentPrompt({ question: "q", codeEvidence: "a.ts:1", rule: generic });
+  assert.match(prompt, /^1\. An established app with the same flow, in Chrome/m);
+  assert.match(prompt, /read that app's own documentation and cite its URL/);
+  const documented = "Answer: children are included\nSource: https://example.invalid/help/bulk-actions\n";
+  assert.equal(checkReport(documented, [], generic).ok, true);
+  assert.equal(checkReport(documented, [], { product: "Acme", liveOnly: true }).ok, false, "a live-only rule refuses documentation");
 });

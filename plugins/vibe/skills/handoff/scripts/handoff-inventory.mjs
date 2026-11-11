@@ -4,7 +4,7 @@
 // mechanical guardrail checks. Prints one JSON object; exits 0 when every
 // blocking check passes and 1 otherwise. Changes nothing.
 //
-// Files in the session record's `localFixes` (workarounds for symphony-alpha
+// Files in the session record's `localFixes` (workarounds for repository
 // bugs that the setup worker filed as tickets) are not the person's work:
 // they are listed under `localFixes` and left out of `changedFiles` and every
 // guardrail check, and no redeploy or handoff commit includes them.
@@ -29,8 +29,8 @@
 // its status so the reviewer can verify it and the ticket can list it.
 //
 // Story files are judged by the Storybook scheme the session's base uses
-// (storybook-taxonomy.mjs), reported as `storybookScheme`. From symphony-alpha
-// #8867 on (the lifecycle scheme) the v1.0 baseline is every story file titled
+// (storybook-taxonomy.mjs), reported as `storybookScheme`. From the
+// lifecycle scheme on the v1.0 baseline is every story file titled
 // under a `<Level> v1.0/` root or tagged `deprecated`, and new work goes under
 // the plain current roots with one lifecycle tag; on an older base (the
 // version scheme) it is the plain roots and the `v1.0` tag, and new work goes
@@ -56,7 +56,7 @@
 // A story file whose meta title is under the `Start Here/` root, at the base
 // or now, is exempt from the freeze, the v1.0 title and tag checks and the
 // retitle check (design ruling, 2026-10-06): Start Here is unversioned, as
-// symphony-alpha's .storybook/manager.ts treats it, and its Version History
+// the repository's Storybook manager config treats it, and its Version History
 // page is edited by every Storybook release, so a tag there is not a version.
 //
 // `diffRules` is diff-rules.mjs's result on the session's own changes (local
@@ -92,23 +92,23 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { BACKEND_PATH } from "../../vibe/scripts/area-paths.mjs";
-import { committedLocalPlans, isLocalPlanPath, LOCAL_PLAN_PREFIX } from "../../vibe/scripts/local-plans.mjs";
+import { prototypeRecipe, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
+import { committedLocalPlans, isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { readRetiredTests } from "../../vibe/scripts/retired-tests.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 import { unexplainedLockfileEntries } from "./lockfile-manifest.mjs";
-import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs";
+import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
 import { buildInventoryBundle } from "./inventory-bundle.mjs";
-import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
+import { isPortableSurfaceAllowlistEdit, portableSurfaceChecker } from "./prototype-allowlist.mjs";
 import { loadOpenPrs, proofCorpusBase, pullRequestFacts } from "./pr-facts.mjs";
 import {
   isUnversionedStory,
   keepsStoryIdentity,
-  STORY_GROUP_ORDER_PATH,
+  storyGroupOrderPath,
   StorybookScheme,
   storybookSchemeOf,
   storyMetaTitle,
@@ -121,7 +121,7 @@ const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mj
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "vibe/";
 
-// The sole implementation writer owns frontend and backend changes (ISS-12135);
+// The sole implementation writer owns frontend and backend changes;
 // an engineer reviews both before merge.
 const PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
 
@@ -132,7 +132,7 @@ const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
 // Tests are admitted here when the person explicitly asks for a pull request;
 // otherwise earlier phases may only repair existing
 // tests and fixtures the session's change broke (operator ruling,
-// 2026-10-13, after the PRD-720 live test) or delete a recorded retired-only
+// 2026-10-13, after a live test) or delete a recorded retired-only
 // test (operator ruling, 2026-10-13).
 const PHASES = ["build", "handoff", "pull-request"];
 
@@ -180,12 +180,13 @@ const result = withStableSource(worktree, () => {
   const { policy: pathPolicy, file: pathPolicyFile, problem: pathPolicyProblem,
     source: pathPolicySource } = readPathPolicy();
   const allChangedFiles = listChangedFiles(baseCommit);
-  const localPlans = allChangedFiles.filter((file) => isLocalPlanPath(file.path));
+  const planPrefix = sessionLocalPlanPrefix(worktree);
+  const localPlans = allChangedFiles.filter((file) => isLocalPlanPath(file.path, planPrefix));
   const trackedLocalPlans = [...new Set([
-    ...git(["ls-files", "--", LOCAL_PLAN_PREFIX]).split("\n"),
-    ...committedLocalPlans(git),
+    ...(planPrefix ? git(["ls-files", "--", planPrefix]).split("\n") : []),
+    ...committedLocalPlans(git, planPrefix),
   ])].filter(Boolean);
-  const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.path) && !isLocalPlanPath(file.path));
+  const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.path) && !isLocalPlanPath(file.path, planPrefix));
   const localFixes = allChangedFiles
     .filter((file) => localFixTickets.has(file.path))
     .map((file) => ({ ...file, ticket: localFixTickets.get(file.path) }));
@@ -216,10 +217,12 @@ const result = withStableSource(worktree, () => {
     (file) => classifications.get(file.path)?.disposition === PathDisposition.Outside &&
       !shrinkOnlyPaths.has(file.path) && !(file === lockfile && explainedLockfile)
   );
+  const areas = sessionAreas(worktree);
   const backendFiles = changedFiles.filter((file) => isBackend(file.path));
   const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
   const movedStories = findMovedStories();
-  const storybookScheme = storybookSchemeOf(readBaseFile(STORY_GROUP_ORDER_PATH));
+  const groupOrder = storyGroupOrderPath();
+  const storybookScheme = storybookSchemeOf(groupOrder ? readBaseFile(groupOrder) : null);
   const storybookSchemeUnreadable = storybookScheme.summary.name === StorybookScheme.Unrecognized &&
     changedFiles.some((file) => STORY_PATTERN.test(file.path));
   const { v1Stories, compileOnlyV1Repairs } = findV1Stories(changedFiles);
@@ -360,8 +363,8 @@ const result = withStableSource(worktree, () => {
     }
     const current = readPathPolicyAt(defaultCommit, "origin-default", required);
     if (!current.missing) return current;
-    return { policy: null, file: null, source: null,
-      problem: `${required}; absent in base ${baseCommit} and fetched origin/${defaultBranch} at ${defaultCommit}.` };
+    // Absent in both: the built-in default (no protected path classes; lanes from CI and AGENTS.md).
+    return { policy: DEFAULT_PATH_POLICY, file: null, source: { kind: DEFAULT_POLICY_SOURCE, commit: baseCommit }, problem: null };
   }
 
   /** Distinguish an absent declaration from a malformed one at one immutable commit. */
@@ -459,13 +462,14 @@ const result = withStableSource(worktree, () => {
 
   function portableSurfaceEditAllowed(file) {
     const filePath = file.path;
-    if (prototype && filePath === PORTABLE_SURFACE_CHECKER) {
+    const recipe = prototypeRecipe();
+    if (prototype && recipe && filePath === portableSurfaceChecker()) {
       try {
         return isPortableSurfaceAllowlistEdit(
           git(["show", `${baseCommit}:${filePath}`]),
           readFileSync(path.join(worktree, filePath), "utf8"),
           (specifier) => [".ts", ".tsx", ".mjs"].some((extension) =>
-            existsSync(path.join(worktree, "packages/app", `${specifier.slice("@repo/app/".length)}${extension}`)))
+            existsSync(path.join(worktree, recipe.portableModuleRoot, `${specifier.slice(recipe.portableModulePrefix.length)}${extension}`)))
         );
       } catch { return false; }
     }
@@ -552,7 +556,7 @@ const result = withStableSource(worktree, () => {
   }
 
   function isBackend(filePath) {
-    return BACKEND_PATH.test(filePath);
+    return areas.backend.test(filePath);
   }
 
   /**
@@ -661,7 +665,8 @@ const result = withStableSource(worktree, () => {
     const excluded = [...localFixTickets.keys()].map((file) => `:(exclude)${file}`);
     return buildInventoryBundle({
       worktree,
-      diffText: git(["diff", "--no-color", "--unified=0", "-M", baseCommit, "--", ".", ":(exclude).closedloop-ai/vibe-plans", ...excluded]),
+      diffText: git(["diff", "--no-color", "--unified=0", "-M", baseCommit, "--", ".",
+        ...(planPrefix ? [`:(exclude)${planPrefix.slice(0, -1)}`] : []), ...excluded]),
       backendFiles: backendFiles.map((file) => file.path),
       record,
       readHead: readWorktreeFile,

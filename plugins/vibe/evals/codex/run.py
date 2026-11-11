@@ -54,9 +54,23 @@ def default_codex_model() -> str:
     return model
 
 
-def payload_plugins(plugins: Path) -> list[str]:
-    """The plugins a payload installs: vibe and closedloop-core, and vibe-core where the payload has it (older ones do not)."""
-    return ["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
+ARMS = ("provider", "generic")
+PROVIDER_PLUGIN = "vibe-closedloop-provider"
+
+
+def payload_plugins(plugins: Path, arm: str = "provider") -> list[str]:
+    """The plugins a payload installs: vibe and closedloop-core, vibe-core and (in the provider arm) the provider
+    where the payload has them (older ones do not). The generic arm installs no provider, as in a repository
+    vibe has no provider for."""
+    if arm not in ARMS:
+        raise ValueError(f"unknown eval arm {arm}")
+    return (["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
+            + ([PROVIDER_PLUGIN] if arm == "provider" and (plugins / PROVIDER_PLUGIN).is_dir() else []))
+
+
+def case_arm(case: dict[str, Any]) -> str:
+    """A case tagged `generic` runs in the generic arm; every other case models the provider's repository."""
+    return "generic" if "generic" in case["meta"].get("tags", []) else "provider"
 
 
 def snapshot_metadata(output: Path) -> dict[str, Any]:
@@ -235,7 +249,7 @@ def command(
 
 def install(
     output: Path, plugin: Path, env: dict[str, str], budget: Budget,
-    codex_binary: str = "codex",
+    codex_binary: str = "codex", arm: str = "provider",
 ) -> dict[str, str]:
     """Install worktree snapshots in a private CODEX_HOME, never the user's live install."""
     home = Path(tempfile.mkdtemp(prefix="vibe-codex-home-"))
@@ -252,7 +266,7 @@ def install(
         catalog = market / ".agents/plugins"
         catalog.mkdir(parents=True)
         entries = []
-        for name in payload_plugins(plugin.parent):
+        for name in payload_plugins(plugin.parent, arm):
             source = plugin if name == "vibe" else plugin.parent / name
             target = market / "plugins" / name
             target.parent.mkdir(exist_ok=True)
@@ -290,7 +304,7 @@ def install(
             60,
             output / "marketplace.json",
         )
-        for name in payload_plugins(market / "plugins"):
+        for name in payload_plugins(market / "plugins", arm):
             command(
                 [codex_binary, "plugin", "add", name + "@vibe-eval", "--json"],
                 output,
@@ -792,13 +806,15 @@ def main() -> int:
         "--deterministic-only", action="store_true",
         help="Skip paid wording grading while retaining every deterministic check",
     )
+    parser.add_argument("--arm", choices=ARMS, default="provider",
+                        help="provider: install the provider and run its cases; generic: no provider, the generic cases")
     parser.add_argument("--concurrency", type=int, choices=[1, 2], default=2)
     parser.add_argument("--max-seconds", type=int, default=1800)
     args = parser.parse_args()
     subject_plugin = args.plugin.resolve()
     selected = [
         c for c in cases(subject_plugin / "evals")
-        if not args.case or c["name"] in args.case
+        if case_arm(c) == args.arm and (not args.case or c["name"] in args.case)
     ]
     if not selected or any(n not in [c["name"] for c in selected] for n in args.case):
         parser.error("unknown or empty case selection")
@@ -835,7 +851,7 @@ def main() -> int:
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
             prior_handlers[signum] = signal.signal(signum, interrupt)
-        env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin)
+        env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin, args.arm)
         private_home = Path(env["CODEX_HOME"])
         identity_script = IDENTITY
         snapshot = json.loads((output / "snapshot.json").read_text())

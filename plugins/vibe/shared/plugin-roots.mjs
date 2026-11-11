@@ -1,5 +1,5 @@
-// Finds a sibling closedloop-ai plugin's root from the plugin a module lives
-// in (ISS-13869). vibe loads vibe-core's code through it, and vibe-core's
+// Finds a sibling plugin's root (one from vibe's marketplace) from the plugin a module lives
+// in. vibe loads vibe-core's code through it, and vibe-core's
 // guards find vibe's install through it to read that install as data.
 //
 // The canonical copy is plugins/vibe-core/shared/plugin-roots.mjs. vibe ships
@@ -141,6 +141,25 @@ export function siblingPluginRoot(name, options) {
   return siblingPluginInstall(name, options).root;
 }
 
+/**
+ * The names of the plugins installed beside the plugin that holds `from`, in its marketplace (itself
+ * included): a checkout's plugins/ folders, Claude Code's registry entries, or Codex's cache folders.
+ * Installed is not enabled; the harness settings say which are on.
+ */
+export function siblingPluginNames({ from }) {
+  const self = pluginInstall(from);
+  if (self.layout === Layout.Checkout) {
+    return listDirectories(self.plugins).filter((name) => pluginManifest(path.join(self.plugins, name))?.name === name).sort();
+  }
+  if (self.layout === Layout.Claude) {
+    const suffix = `@${self.marketplace}`;
+    return Object.keys(readRegistry(self.registry)?.plugins ?? {}).filter((key) => key.endsWith(suffix))
+      .map((key) => key.slice(0, -suffix.length)).sort();
+  }
+  if (self.layout === Layout.Codex) return listDirectories(path.join(self.cacheDir, self.marketplace)).sort();
+  return [];
+}
+
 /** `siblingPluginRoot`, or null when the sibling cannot be found. */
 export function siblingPluginRootOrNull(name, options) {
   try {
@@ -208,6 +227,14 @@ function isFile(file) {
     return statSync(file).isFile();
   } catch {
     return false;
+  }
+}
+
+function listDirectories(dir) {
+  try {
+    return readdirSync(dir).filter((entry) => isDirectory(path.join(dir, entry)));
+  } catch {
+    return [];
   }
 }
 

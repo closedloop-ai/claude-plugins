@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AWAY_CHECKLIST, BACK_CHECKLIST, checklistFor } from "./away-protocol.mjs";
+import { activatedChat } from "./activation-test-support.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "user-prompt-submit.mjs");
 
@@ -19,8 +20,9 @@ test("away and back phrases bring the checklist; ordinary prompts do not (brb wi
   }
 });
 
-test("the hook adds the checklist as context and stays silent otherwise", () => {
-  const run = (prompt) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt }), encoding: "utf8" }).stdout;
+test("the hook adds the checklist as context and stays silent otherwise", (t) => {
+  const chat = activatedChat(t);
+  const run = (prompt) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(chat.payload({ hook_event_name: "UserPromptSubmit", prompt })), encoding: "utf8", env: chat.env }).stdout;
   const away = JSON.parse(run("stepping away. brb.")).hookSpecificOutput;
   assert.equal(away.hookEventName, "UserPromptSubmit");
   assert.match(away.additionalContext, /attention\.md/);

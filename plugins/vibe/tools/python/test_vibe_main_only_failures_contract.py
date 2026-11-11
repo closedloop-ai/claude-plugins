@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -20,7 +20,7 @@ REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
 QUALITY = REFERENCES / "quality-loop.md"
 GUARDRAILS = REFERENCES / "guardrails.md"
 ENVIRONMENT = REFERENCES / "environment.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 WORKERS_SRC = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src"
 MAIN_SYNC_BUNDLE = PLUGIN_ROOT / "skills" / "vibe" / "scripts" / "dist" / "main-sync.mjs"

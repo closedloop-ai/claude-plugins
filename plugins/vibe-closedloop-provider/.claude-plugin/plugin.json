@@ -1,0 +1,6 @@
+{
+  "name": "vibe-closedloop-provider",
+  "description": "ClosedLoop and symphony-alpha knowledge for vibe and fleet-orchestrator: tickets, plans, the code graph, repository memory and the symphony-alpha recipes. Disable it to run vibe and fleet generically",
+  "version": "1.0.0",
+  "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"}
+}

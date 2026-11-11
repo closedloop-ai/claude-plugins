@@ -29,7 +29,7 @@ export function writeSessionRecord(worktree, record) {
   chmodSync(file, 0o600);
 }
 
-/** Reads pre-ISS-12057 ticket records without inventing a ticket when neither field exists. */
+/** Reads older ticket records (`handoffTicket`) without inventing a ticket when neither field exists. */
 export function sessionLiveTicket(record) {
   return record.liveTicket ?? record.handoffTicket ?? null;
 }

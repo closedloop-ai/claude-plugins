@@ -23,6 +23,12 @@
       "category": "Development"
     },
     {
+      "name": "vibe-closedloop-provider",
+      "source": {"source": "local", "path": "./plugins/vibe-closedloop-provider"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Development"
+    },
+    {
       "name": "code-review",
       "source": {
         "source": "local",

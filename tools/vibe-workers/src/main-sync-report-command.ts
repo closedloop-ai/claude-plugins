@@ -6,7 +6,7 @@ import picomatch from "picomatch";
 import type { ReportExecution } from "./main-sync-report-execution.js";
 import { rejectReportReplay } from "./main-sync-report-execution.js";
 import { referenceMatches, type InputReference, type NativeReferenceEnvironment } from "./main-sync-input-references.js";
-import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { isPlanFile } from "./main-sync-plan-folder.js";
 import { committedFiles, committedWorkspace } from "./main-sync-committed-tree.js";
 
 const packageSchema = z.object({ scripts: z.record(z.string()).optional() }).passthrough();
@@ -277,7 +277,7 @@ function possibleFiles(root: string, file: string, context: Extract<ReportCwd, {
     : { kind: "path" as const, value: join(context.suffix, file), base: "runtime" as const,
       possibleOnly: true, unknownPrefix: false, uncertainTerms: [] };
   const files = committedFiles(root)
-    .filter(path => accepts(path) && !isLocalPlanPath(path)
+    .filter(path => accepts(path) && !isPlanFile(root, path)
       && referenceMatches(root, "", reference, [path]));
   if (files.length > 4096) throw unresolved("possible committed entry bound");
   return files;
@@ -464,7 +464,7 @@ export function reportLoaderEntries(execution: ReportExecution, importer: string
   if (typeof target === "string") files = targetFiles(execution.root, target, context);
   else {
     files = committedFiles(execution.root)
-      .filter(file => MODULE.test(file) && !isLocalPlanPath(file)
+      .filter(file => MODULE.test(file) && !isPlanFile(execution.root, file)
         && referenceMatches(execution.root, importer, target, [file]));
     if (files.length > 4096) throw unresolved("possible committed loader bound");
   }

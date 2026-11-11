@@ -2,7 +2,7 @@
 // The keys a person must turn on to see a vibe session's work, per surface,
 // and the person's approval of every key or read the session adds
 // (`../references/guardrails.md`, "Feature flags"; operator ruling,
-// 2026-10-20, after one symphony-alpha session gated a single Branches list
+// 2026-10-20, after one session gated a single Branches list
 // behind three keys). No agent adds a flag on its own: the justification is
 // the input to a question the person answers in the session, one key at a
 // time, and only their recorded yes lets the key be built.
@@ -31,6 +31,8 @@ import { parseArgs } from "node:util";
 import { isOwnedPrototypeSession } from "./prototype-session.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
+const { sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
+
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
 const MAX_SURFACES = 50;
@@ -40,7 +42,6 @@ const MAX_LABEL_LENGTH = 200;
 const MAX_QUOTE_LENGTH = 1000;
 // PostHog feature flag keys are letters, digits, hyphens and underscores.
 const FLAG_KEY = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
-const TICKET_SLUG = /\b[A-Z]+-\d+\b/;
 const FILE_FIELDS = new Set(["surfaces"]);
 const SURFACE_FIELDS = new Set(["surface", "hosts", "keys"]);
 const KEY_FIELDS = new Set(["key", "origin", "readAt", "reason", "repoRule", "source"]);
@@ -449,7 +450,7 @@ function validateKey(entry, where, problems) {
   }
   const repoRule = boundedText(entry.repoRule, MAX_QUOTE_LENGTH, `${where}.repoRule (the target repo's flag rule sentence, quoted)`, problems);
   const source = boundedText(entry.source, MAX_QUOTE_LENGTH, `${where}.source (the ticket or spec sentence, or the person's words)`, problems);
-  if (entry.reason === FlagReason.SpecRequestedRollout && source && !TICKET_SLUG.test(source)) {
+  if (entry.reason === FlagReason.SpecRequestedRollout && source && !ticketReference(sessionBinding()).test(source)) {
     problems.push(`${where} (\`${key}\`) claims a spec-requested rollout, but its source names no ticket or spec slug`);
   }
   return { ...normalized, reason: entry.reason, repoRule, source };

@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "generatedFrom": "git ls-tree -r --name-only cc5070530a5bf35ec6afd58d007064d1d898c68e",
+  "providerRoot": "plugins/vibe-closedloop-provider",
   "paths": [
     {
       "id": "desktop-prisma-migration-lock",

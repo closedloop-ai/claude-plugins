@@ -1,5 +1,7 @@
 # Guardrails
 
+Lines that start `> Provider` follow `references/provider-text.md`.
+
 Vibe work is reviewed by design and engineering, so it follows the team's
 patterns and they extend it rather than rewrite it. The repo's `AGENTS.md`
 files are the contract; read the nearest one before editing a directory. This
@@ -36,7 +38,7 @@ Codex and Claude Code, and this section is its one canonical statement:
   has, or an engineering change outside session authority. Use an engineering
   referral only for that last category. A recoverable tooling defect follows
   the path above, with no handover. The work never stays only on the person's
-  machine (ISS-13321).
+  machine.
   1. Record the exact blocker and what both the worker and root tried in the session ledger and the
      live ticket's Progress. Keep the request `BLOCKED` only for the part
      that cannot proceed. Put the technical cause once on the Engineering
@@ -88,23 +90,24 @@ These rules bind every worker in both harnesses.
 ## What may change
 
 Handoff path permissions come from one committed root-level
-`vibe-handoff-paths.json` owned by the target repository. A nested declaration
-does not count. A session may not add, edit, or delete any file with that name;
-the inventory uses the captured base or verified fetched default policy and
-blocks an undeclared repository. The sole inventory exception adds typed lane-source
-metadata only when base, freshly fetched merge target and candidate share one
-regular workflow with identical bytes/modes and unchanged permission fields.
+`vibe-handoff-paths.json` owned by the target repository, when it has one. A
+nested declaration does not count. A session may not add, edit, or delete any
+file with that name. Without one the built-in default applies: no protected
+path classes, and the test lanes come from the repository's CI workflow and the
+test command its `AGENTS.md` names. The sole inventory exception adds typed
+lane-source metadata only when base, freshly fetched merge target and candidate
+share one regular workflow with identical bytes/modes and unchanged permission
+fields.
 
+<!-- generic: prototype-paths -->
 For an owned `prototype/<slug>` mockup session, the repository's canonical
-`<repo-root>/.claude/skills/prototype/SKILL.md` owns sandbox rules instead of
-the full-app rules in this section. Its allowed host paths are exactly
-`apps/prototypes/app/p/<slug>/`, the generated registry, and the exact portable
-surface allowlist in `apps/prototypes/scripts/check-catalog-imports.mjs`.
-The shared surface and stories still follow their owning package rules. Mock
-state stays in the sandbox adapter; no backend stubs, seeded/blank environment,
-or production flag snapshot is added. Only a branch-matching private session
-record admits this path. All copy, reuse, accessibility, and forbidden-file
-rules still apply.
+prototype skill owns sandbox rules instead of the full-app rules in this
+section, and its allowed paths are the ones that skill names. Mock state stays
+in the sandbox; no backend stubs are added. Only a branch-matching private
+session record admits this path. All copy, reuse, accessibility, and
+forbidden-file rules still apply.
+<!-- end generic: prototype-paths -->
+> Provider `recipes` (block `prototype-paths` of `vibe/guardrails.md`)
 
 Every session builds the real thing, frontend and backend: a screen that needs
 data or an action the API does not provide gets that backend built by the SAME
@@ -123,55 +126,31 @@ integrates. The ticket writer reviews and integrates returned commits or proof,
 and independent reviewers remain read-only. A helper authors proof tests only
 under existing test-authoring authority or an explicit user test request; the
 normal build and handoff test prohibition below remains in force.
+<!-- generic: path-table -->
+The writer edits only the paths the change needs, in the places the
+repository's own layout and `AGENTS.md` files put them: frontend, backend and
+stories alike, each under its owning `AGENTS.md`. Never:
 
-| Frontend (the sole persistent `vibe-change-worker`) | Never |
-|---|---|
-| `apps/app/**` (web pages and route shells) | `apps/mcp/**`, `apps/relay/**`, `apps/realtime/**` |
-| `packages/app/**` (shared web and Desktop UI) | `packages/golden-sessions/**`, `.github/**`, `apps/web/content/docs/**`, `docs/**` |
-| `packages/design-system/**` (primitives, tokens, stories) | `scripts/**` (one exception below) |
-| `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
-| `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | `apps/desktop/scripts/**` (Desktop's build and asset generators) |
+- CI and repository automation (`.github/**`), the repository's own scripts
+  and source gates, any `AGENTS.md` or `CLAUDE.md`, and the repository's
+  public and internal docs;
+- a migration that has landed on the default branch, a generated file, or
+  anything the repository's `AGENTS.md` files mark off limits.
 
-All of `apps/storybook/**` is Storybook wiring the writer may edit: story
-files, the `.storybook/` config (`main.ts`, `preview.tsx`, `manager.ts`,
-decorators, toolbar globals), `TAXONOMY.md`, and `apps/storybook/scripts/`
-(catalog sync and the taxonomy classification sets "Missing primitives"
-below has the writer edit). Its `AGENTS.md` and `CLAUDE.md` stay off limits
-like every other, its story validators are checks ("Checks", below), and its
-test files follow "Tests". The `scripts/**` in the Never column is the
-repo-root `scripts/` folder, never `apps/storybook/scripts/`.
-
-`apps/desktop/scripts/**` is in the Never column explicitly: no column listed
-it, so it already fell outside the allowed paths, and a static Desktop page's
-asset generator lives there. Nothing about it changes: the handoff inventory
-still reports it under `outsideAllowed`, and a request that needs it takes the
-forbidden-path route below (`Engineering needed (forbidden path)`), never an
-edit in the session.
-
-Backend, built by that same writer using canonical backend guidance, each under its owning
-`AGENTS.md`:
-
-- `apps/api/**`: thin route, fat service, `withAnyAuth`, Zod validation, org
-  scoping on every query, the `Result` error model (`apps/api/AGENTS.md`).
-- `packages/api/src/types/**`: shared request and response types, the one
-  canonical place for them.
-- `packages/database/**`: Prisma schema changes with a generated migration
-  (`packages/database/AGENTS.md`); never edit a migration that has landed on
-  main; never apply a migration to a shared database from this Mac; every new
-  model gets a seed coverage file and seed data in the vibe seed. Pushing a
-  migration publishes it to shared preview schemas, so record the test that
-  runs it as `Migration test:` (an existing one that applies every migration
-  counts; for per-row work a measured `Scale test:` too) first;
-  `scripts/migration-publish.mjs` refuses the push without them.
-- `apps/desktop/src/main/**` and `apps/desktop/prisma/**`, when the change is a
-  Desktop feature (`apps/desktop/AGENTS.md`; gateway operations stay in
-  `apps/desktop/src/server/operations/`).
-- One living session decision table stays local in
-  `.closedloop-ai/decision-tables/<session-slug>.md` (gitignored in this repo).
-  It is mandatory before code for every request, with stable row IDs, and
-  verified afterward by the SAME writer under quality-loop.md; it is not
-  backend-only. Handoff attaches it to the live ticket so the reviewing
-  engineer sees whole-session behavior and actual coverage evidence.
+Backend changes follow the owning package's rules; a schema change comes with
+the migration the repository's own tooling generates, and is never applied to
+a shared database from this machine.
+<!-- end generic: path-table -->
+> Provider `recipes` (block `path-table` of `vibe/guardrails.md`)
+<!-- generic: decision-table -->
+- One living session decision table stays local, at the `decisionTable` path
+  `local-plans.mjs paths` prints, inside the repository's private git
+  directory. It is mandatory before code for every request, with stable row
+  IDs, and verified afterward by the SAME writer under quality-loop.md; it is
+  not backend-only. Handoff attaches it to the handoff summary so the
+  reviewing engineer sees whole-session behavior and actual coverage evidence.
+<!-- end generic: decision-table -->
+> Provider `plans` (block `decision-table` of `vibe/guardrails.md`)
 
 The build loop stays lean (`quality-loop.md`, "Lean build loop"):
 
@@ -182,33 +161,30 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"):
   "Acceptance criteria before ready"): one cheap existing test, script,
   control read or source trace per touched criterion, never a suite or QA
   pass.
+<!-- generic: heavy-validation -->
 - Reviews and heavy validation run at handoff: the guardrails and
-  adversarial reviews, browser E2E, visual QA, logical QA, product-contract
-  QA, the targeted existing tests (the ones `code_tests_for` returns for each
-  changed file, never a full suite) and two review passes when backend code
-  changed, the running web app and Desktop driven with the repo's control
-  skill, and the list of tests engineering still has to write (Tests, below).
+  adversarial reviews, browser E2E, visual QA, the targeted existing tests
+  (the ones related to each changed file, never a full suite) and two review
+  passes when backend code changed, the running app driven headless, and the
+  list of tests engineering still has to write (Tests, below).
+<!-- end generic: heavy-validation -->
+> Provider `graph+recipes` (block `heavy-validation` of `vibe/guardrails.md`)
 - Outside the loop, visual QA also runs during the session when the person
   accepts it or asks for polish (`quality-loop.md`, "Visual QA during the
   session").
 
-One exception under `scripts/`: the shrink-only source-gate allowlist
-(`scripts/lint/source-gate-allowlist.json`). When a gate reports a stale entry
-for a file the session changed ("pins count 1, but only 0 remain"), delete
-the entry or lower its count, and rerun the gate. Never add an entry or raise
-a count. The handoff inventory checks the file only shrank.
+> Provider `recipes` (block `scripts-exception` of `vibe/guardrails.md`)
 
-When a request genuinely needs a change in a Never path beyond that one
-exception (a source gate under `scripts/**`, a workflow under `.github/**`, a
-rule in an `AGENTS.md`), that part is engineering's. The writer never edits
+<!-- generic: forbidden-path -->
+When a request genuinely needs a change in a Never path (a source gate, a
+workflow under `.github/**`, a rule in an `AGENTS.md`), that part is engineering's. The writer never edits
 the path and never builds a substitute for it in an allowed path, such as a
 copied gate or a workflow step moved into a package script. It logs the need
 in the session change log as
 `Engineering needed (forbidden path): <path or area>; why: <need>` and keeps
 building every allowed part of the request. The need is not `BLOCKED`, not a
-question for the person, and never stops the session; the ticket worker
-carries each one to the live ticket's Engineering checklist
-(`ticket-template.md`, "Engineering needed"). The same holds for a path
+question for the person, and never stops the session; handoff carries
+each one to the handoff summary's Engineering list. The same holds for a path
 outside the allowed table: the writer does not edit it in the loop either.
 A pre-build intake whose complete planned file list is outside these paths has
 no allowed session work to continue: record every item with the canonical
@@ -220,22 +196,26 @@ criterion `not met yet` with the reason that engineering must make it, and
 the ready message tells the person so in plain words, so they never accept a
 change the branch cannot keep. A vibe tooling defect follows "Plugins and
 tooling" above; it does not stop the allowed work by itself.
+<!-- end generic: forbidden-path -->
+> Provider `tickets` (block `forbidden-path` of `vibe/guardrails.md`)
 
-Vibe work is headed for `main`, so the target repo's flag rule decides which
-keys it may add ("Feature flags"). If the person chose Labs, the Labs pattern
-is that flag. Tell them in one line that the new screen stays hidden on their
-environment until that flag is turned on for them.
+<!-- generic: flag-rule -->
+Vibe work is headed for the default branch, so the target repo's flag rule
+decides which keys it may add ("Feature flags").
+<!-- end generic: flag-rule -->
+> Provider `recipes` (block `flag-rule` of `vibe/guardrails.md`)
 
-Vibe sessions skip the root `AGENTS.md` prototype-first rule and build in
-Storybook and app code directly.
+> Provider `recipes` (block `prototype-first` of `vibe/guardrails.md`)
 
 ## Where code goes
 
-- Generic, domain-free UI (a control, layout, token) belongs in
-  `packages/design-system`. Domain UI (projects, sessions, branches,
-  documents) belongs in its feature slice in `packages/app/<feature>/`
-  (`components/`, `hooks/`, `lib/`). `apps/app` keeps route shells.
-- Domain code never goes in `packages/design-system`; `biome.jsonc` blocks it.
+<!-- generic: where-code-goes -->
+- Generic, domain-free UI (a control, layout, token) belongs in the
+  repository's shared design-system package when it has one; domain UI
+  belongs in its feature's own folder, as the repository's `AGENTS.md` files
+  say. Domain code never goes in the shared design-system package.
+<!-- end generic: where-code-goes -->
+> Provider `recipes` (block `where-code-goes` of `vibe/guardrails.md`)
 - Add a new control to the surface that already owns that entity or flow
   (same tab, drawer, dialog, or card) instead of a parallel page.
 - For any component that composes or inherits from a shared parent,
@@ -248,12 +228,12 @@ Storybook and app code directly.
 
 ## Reuse first
 
-Before building anything, search
-`packages/design-system/storybook/component-catalog.ts` and `packages/app` for
-a component that already renders the concept, and use it. Follow the paved
-paths in `packages/app/AGENTS.md`, such as the shared list surface with its
-pagination and header, and the shared date formatting helpers. Read `.claude/design/discipline-core.md` once per session; it is the
-team's design standard.
+<!-- generic: reuse-first -->
+Before building anything, search the repository's component catalog and its
+shared UI packages for a component that already renders the concept, and use
+it. Follow the paved paths its `AGENTS.md` files name.
+<!-- end generic: reuse-first -->
+> Provider `recipes` (block `reuse-first` of `vibe/guardrails.md`)
 
 > Read `references/guardrails-ui.md` (block `ui-rules`) (Missing primitives, Storybook taxonomy, Tokens and styling, Making something look better) unless the session is known server-only: the inventory's `serverOnly` is true, or the triage class is `backend` or `docs-config` and no UI path is touched. Read it before the first UI path is touched.
 
@@ -266,33 +246,39 @@ apply `quality-loop.md`'s graph-first product research and necessity gate.
 There is no exception: product docs pages are user-visible words too ("Feature
 docs at handoff").
 
+<!-- generic: copy-helpers -->
 Wording the product already renders is reused through its helper, never
 retyped. Before writing any label, count or selection wording (for example
 "3 selected"), `rg` the words and the helpers that build them in
-`packages/app/shared` and the owning feature package; a second spelling of a
+the repository's shared UI helpers and the owning feature package; a second spelling of a
 string a shared helper already produces is a copy (`design-pass.md`, "Red
 flags"), even when the words match.
+<!-- end generic: copy-helpers -->
+> Provider `recipes` (block `copy-helpers` of `vibe/guardrails.md`)
 
 ## Feature docs at handoff
 
+<!-- generic: feature-docs -->
 Nothing agent-written goes into public docs.
 This section is the rule's one canonical statement; the writer, the guardrails
 reviewer, the ticket worker and the handoff skill point at it.
 
-- No worker edits, creates or drafts anything under `apps/web/content/docs/`
-  (product docs pages, `meta.json`, generated pages) or the repo's internal
+- No worker edits, creates or drafts anything under the repository's public product docs
+  (its docs pages, their metadata and generated pages) or the repo's internal
   engineering `docs/` folder, in the build loop, at handoff or in a requested
   pull request. Docs belong to the humans who review and finish the work.
 - At handoff the same writer only records which existing product docs pages
   describe a changed feature, found by searching that folder for the changed
-  screens, routes, components, flags and FEATURE_MAP ids, with the passage
-  that no longer matches what was built. The ticket's Feature docs line lists
+  screens, routes, components, flags and screen map ids, with the passage
+  that no longer matches what was built. The handoff summary's Feature docs line lists
   them for design or engineering to update; it never carries drafted words.
   When no page covers a changed feature, record that.
 - The handoff inventory reports any change under either folder as outside the
   allowed paths in every phase. An edit found there is removed by the same
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
+<!-- end generic: feature-docs -->
+> Provider `recipes+tickets` (block `feature-docs` of `vibe/guardrails.md`)
 
 ## Feature map lines
 
@@ -327,9 +313,7 @@ No agent creates or adds a flag on its own.
   prints (the key, why, what it gates, the whole stack) and record the answer
   with `approve`. Only an explicit yes builds the key; no answer or nobody to
   ask builds nothing. The script's messages give the fields and next steps.
-- The ticket's Production flag snapshot section shows "Keys to see this work"
-  from the record, handoff tells the person, and `live-ticket-check.mjs`
-  fails an unapproved key.
+> Provider `tickets` (block `flag-snapshot` of `vibe/guardrails.md`)
 - An agent never adds or edits a flag registration attestation (a ledger row
   or verification date only a human makes); the
   approval and "Keys to see this work" tell the human which key to ledger.
@@ -341,12 +325,12 @@ Icon-only controls get accessible names, disclosures get `aria-expanded`, one
 
 ## Labs
 
-Default: no flag. When the person asks for Labs, follow the repo's existing
-Labs destination pattern: the route checks the repo's Labs container flag
-plus its own PostHog key, as an existing Labs destination does. One key gates
-web and Desktop.
-Tell them the Labs entry shows on their environment only if those flags are
-on for them; both keys follow "Feature flags".
+<!-- generic: labs -->
+Default: no flag. When the person asks for a flagged or experimental entry,
+follow the repository's existing pattern for one; its keys follow "Feature
+flags".
+<!-- end generic: labs -->
+> Provider `recipes` (block `labs` of `vibe/guardrails.md`)
 
 ## Tests
 
@@ -403,7 +387,8 @@ next to Missing tests so engineering sees them.
 
 ### Running and missing tests
 
-Handoff runs the existing affected tests: the feature-complete `code_tests_for` tests plus
+<!-- generic: running-tests -->
+Handoff runs the existing affected tests: the tests related to each changed file plus
 `diffRules.requiredTests`. Later, `qa-impact.mjs` selects lanes or screens;
 `None` runs nothing locally. Files that map to no tests
 (changelog, README, version text, Storybook Version History) run none; CI
@@ -411,10 +396,12 @@ confirms them. When one fails, the SAME persistent
 `vibe-change-worker` fixes the session's own code, never what the test asserts
 (a broken import or setup is a repair, above). Coverage
 the session still needs is recorded internally as it is found and, at
-handoff, listed on the live ticket under Missing tests as engineering's scope
+handoff, listed in the handoff summary under Missing tests as engineering's scope
 of work: each behavior and stable row ID that needs a test, and the files to
-cover (`ticket-template.md`). Engineering writes those tests in its pull
+cover. Engineering writes those tests in its pull
 request, alongside the tests for every frozen row.
+<!-- end generic: running-tests -->
+> Provider `graph+tickets` (block `running-tests` of `vibe/guardrails.md`)
 
 The exception: when the person explicitly asks for a pull request to be
 raised, full tests for every change in the session are required before it
@@ -506,6 +493,9 @@ progress or handoff summary in plain words. Do not add a new summary template.
 
 ## Repo rules that bite most often
 
-The code style rules in the root `AGENTS.md` bind every edit; the Biome and
-source gates enforce most of them. After each batch of edits run
-`pnpm exec biome check --write <changed files>`.
+<!-- generic: repo-rules -->
+The code style rules in the root `AGENTS.md` bind every edit. After each
+batch of edits run the repository's formatter and linter on the changed
+files, as its `AGENTS.md` says.
+<!-- end generic: repo-rules -->
+> Provider `recipes` (block `repo-rules` of `vibe/guardrails.md`)

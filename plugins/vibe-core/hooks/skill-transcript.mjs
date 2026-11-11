@@ -3,7 +3,17 @@
 // A guard whose rule binds one skill's sessions checks it here, so a worker's
 // or another skill's session never gets that skill's refusals or reminders.
 
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+
+/**
+ * How much of a transcript a hook reads: all of it up to TRANSCRIPT_LIMIT_BYTES, else its first
+ * HEAD_BYTES and last TAIL_BYTES. A long chat's transcript grows past what one string can hold
+ * (Node's limit is about 512 MiB), and a whole read then returned nothing at all; the sticky hook
+ * record (hook-session-scope.mjs) carries a load that falls between the two ends.
+ */
+export const TRANSCRIPT_LIMIT_BYTES = 64 * 1024 * 1024;
+const HEAD_BYTES = 16 * 1024 * 1024;
+const TAIL_BYTES = 48 * 1024 * 1024;
 
 /**
  * Each skill's load markers, never a mention of its files: Claude Code's skill base line
@@ -15,16 +25,36 @@ import { readFileSync } from "node:fs";
 const SKILL_MARKERS = Object.freeze({
   vibe: /Base directory for this skill: [^"\\\n]*\/skills\/vibe(?=\\n|\n|"|$)|"skill":\s*"vibe:vibe"|<name>vibe:vibe<\/name>/gm,
   "fleet-orchestrator": /Base directory for this skill: [^"\\\n]*\/skills\/fleet-orchestrator(?=\\n|\n|"|$)|"skill":\s*"vibe:fleet-orchestrator"|<name>vibe:fleet-orchestrator<\/name>/gm,
+  // Any skill of the vibe plugin: its base line under the plugin's own folder (a checkout's
+  // plugins/vibe, or vibe/<version> in a harness cache), a Skill call, or a Codex skill block.
+  "vibe-plugin": /Base directory for this skill: [^"\\\n]*\/(?:plugins\/vibe|vibe\/[^/"\\\n]+)\/skills\/[a-z0-9-]+(?=\\n|\n|"|$)|"skill":\s*"vibe:[a-z0-9-]+"|<name>vibe:[a-z0-9-]+<\/name>/gm,
 });
 
-/** The transcript text at `file`, or null when there is none to read. */
+/** The transcript text at `file` (both ends of one past TRANSCRIPT_LIMIT_BYTES), or null when there is none to read. */
 export function readTranscript(file) {
   if (typeof file !== "string" || file === "") return null;
+  let fd = null;
   try {
-    return readFileSync(file, "utf8");
+    fd = openSync(file, "r");
+    const size = statSync(file).size;
+    if (size <= TRANSCRIPT_LIMIT_BYTES) return readRange(fd, 0, size);
+    return `${readRange(fd, 0, HEAD_BYTES)}\n${readRange(fd, size - TAIL_BYTES, TAIL_BYTES)}`;
   } catch {
     return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
   }
+}
+
+function readRange(fd, position, length) {
+  const buffer = Buffer.alloc(length);
+  let read = 0;
+  while (read < length) {
+    const count = readSync(fd, buffer, read, length - read, position + read);
+    if (count === 0) break;
+    read += count;
+  }
+  return buffer.subarray(0, read).toString("utf8");
 }
 
 /** Whether transcript `text` shows the session loaded `skill` (a key of SKILL_MARKERS). */

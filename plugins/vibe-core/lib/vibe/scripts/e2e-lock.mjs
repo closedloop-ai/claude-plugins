@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// One containerized e2e stack per machine. symphony-alpha's e2e stack
-// (`e2e/compose.yml`, run directly or through `dagger call e-2-e`) uses one
+// One containerized e2e stack per machine. A repository's containerized e2e stack (one
+// repository's compose file, run directly or through Dagger) uses one
 // fixed compose project name, fixed host ports and shared Dagger cache
 // volumes, so two vibe sessions that start it at the same time break each
 // other's run. Every vibe e2e command runs through this lock: it waits for the

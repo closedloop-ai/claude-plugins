@@ -11,12 +11,12 @@ import { verifyReportExecution } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 import { digest } from "./main-sync-state.js";
 import { MAIN_BOOTSTRAP_MS } from "./main-sync-validation-recipe.js";
+import { bootstrapFor } from "./main-sync-recipe.js";
 
 type Selection = { tasks: { taskId: string; package?: string }[] };
 type RunEvidence = MainComparison["sessionRuns"][number];
 type Rerun = (log: string) => RunEvidence;
 
-const BOOTSTRAP = ["bash", ".closedloop-ai/loops-setup.sh"];
 const PINNED_FILTER = /^--filter=\.\.\.\[[a-f0-9]{40}\]$/;
 const CLEANUP_MS = 15 * 60 * 1000;
 export const MAIN_TIMED_OUT = "it ran out of its time limit on captured main";
@@ -29,7 +29,7 @@ const WRAPPER_GRACE_MS = 30 * 1000;
  * commit gets one rerun before the failure is `session-caused` (a pass is `flaky`). A check that cannot run on main
  * is `session-caused`, the conservative reading, except a check that ran out of its time limit on the session commit
  * and on main alike: that is this machine's limit, `machine-limited`, which goes to engineering like a main failure and
- * never blocks (ISS-13321). One disposable checkout of the captured main is bootstrapped once,
+ * never blocks. One disposable checkout of the captured main is bootstrapped once,
  * shared by every failing check of this validation, and removed by `dispose`.
  */
 export class CapturedMainComparison {
@@ -89,17 +89,24 @@ export class CapturedMainComparison {
       this.bootstrap = { ok: false, reason: `a checkout of captured main could not be created: ${failureCause(error)}`.slice(0, 512) };
       return this.bootstrap;
     }
-    if (!existsSync(join(this.checkout, BOOTSTRAP[1]!))) {
-      this.bootstrap = { ok: false, reason: "captured main has no canonical bootstrap (.closedloop-ai/loops-setup.sh)" };
+    // The repository's bootstrap: its recipe's, else the install its lockfile asks for.
+    const bootstrap = bootstrapFor(this.root, this.checkout);
+    if (!bootstrap) {
+      this.bootstrap = { ok: false, reason: "captured main has no bootstrap: no recipe names one and no lockfile asks for an install" };
       return this.bootstrap;
     }
-    try { verifyReportExecution(this.root, this.checkout, ReportExecutionOwner.Bootstrap, BOOTSTRAP, this.checkout); }
+    const script = ["bash", "sh"].includes(bootstrap[0]!) ? bootstrap[1] : undefined;
+    if (script && !existsSync(join(this.checkout, script))) {
+      this.bootstrap = { ok: false, reason: `captured main has no canonical bootstrap (${script})` };
+      return this.bootstrap;
+    }
+    try { verifyReportExecution(this.root, this.checkout, ReportExecutionOwner.Bootstrap, bootstrap, this.checkout); }
     catch (error) {
       this.bootstrap = { ok: false, reason: `bootstrap admission refused: ${failureCause(error)}`.slice(0, 512) };
       return this.bootstrap;
     }
     const log = join(this.dir, `vibe-main-sync-${this.receipt.transactionId}-main-bootstrap.log`);
-    const run = runBounded(BOOTSTRAP, this.checkout, process.env, MAIN_BOOTSTRAP_MS, log);
+    const run = runBounded(bootstrap, this.checkout, process.env, MAIN_BOOTSTRAP_MS, log);
     this.bootstrap = run.exitCode === 0 ? { ok: true }
       : { ok: false, reason: run.timedOut ? "the captured main bootstrap ran out of its time limit" : `the captured main bootstrap exited ${run.exitCode}`,
         log: run.log, sha256: run.sha256 };

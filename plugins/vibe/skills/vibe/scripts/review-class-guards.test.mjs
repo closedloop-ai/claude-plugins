@@ -16,7 +16,7 @@ import {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../../../../");
 const BASELINE = JSON.parse(readFileSync(path.join(HERE, "review-class-guard-baseline.json"), "utf8"));
-const PATHS = JSON.parse(readFileSync(path.join(HERE, "review-class-path-fixture.json"), "utf8"));
+const PATHS = JSON.parse(readFileSync(path.join(HERE, "fixtures", "review-class-path-fixture.json"), "utf8"));
 
 function temporaryRoot(t) {
   const root = mkdtempSync(path.join(tmpdir(), "vibe-review-class-"));

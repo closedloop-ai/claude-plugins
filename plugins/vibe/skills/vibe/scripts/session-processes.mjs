@@ -2,7 +2,7 @@
 // Storybook (`storybookPid`) and its Desktop launch (`desktopPid`). Only a
 // process that is still the one the session started is signalled: it must be
 // alive, its command line must be that kind of process, and it must run in the
-// session's worktree. A stale or reused process id is left alone (ISS-13321: a
+// session's worktree. A stale or reused process id is left alone (a
 // session's Storybook had to be stopped by hand when the hook refused a worker
 // signalling a recorded pid on another machine).
 

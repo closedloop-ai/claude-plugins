@@ -13,6 +13,8 @@ import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWri
   readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
+import { boundWith, connectionLabel, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { recordWorkerScope } from "../../../plugins/vibe-core/lib/vibe/scripts/worker-scope.mjs";
 import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
@@ -147,12 +149,14 @@ function reviewSourceIdentity(pluginRoot: string, worktree: string): ReviewSourc
 
 /** Exact capabilities are discovered by the parent, then bounded again by role and declared operation. */
 export function boundDefinition(definition: Definition, input: LaunchInput) {
-  if (!readerRoles.has(input.agentName) && !Object.hasOwn(recordModes, input.agentName)) {
+  const binding = sessionBinding(input.worktree);
+  const modes = recordModes(binding);
+  if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
   }
   const prototypeAdvice = input.agentName === "vibe-prototype-worker" && input.mode !== "record";
   const reader = readerRoles.has(input.agentName) || prototypeAdvice;
-  const declaredModes = recordModes[input.agentName];
+  const declaredModes = modes[input.agentName];
   const possibleWrites = new Set(Object.values(declaredModes ?? {}).flat());
   if (reader && !prototypeAdvice && definition.tools.some((tool) => tool === "Write" || tool === "Edit")) {
     throw new Error("Read-only advisor declares writable filesystem tools");
@@ -171,7 +175,8 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       throw new Error("Record capability is outside this canonical action");
     }
   } else if (input.recordAction || input.exclusiveRecordTurn) throw new Error("Record grants belong only to a separate record continuation");
-  if (!input.capabilities.some((capability) => capability.service === "graph")) {
+  // A bound graph provider's tools are discovered by the parent and required; with no graph bound there are none.
+  if (boundWith(binding, "graph") && !input.capabilities.some((capability) => capability.service === "graph")) {
     throw new Error("Parent-discovered read-only graph capabilities are required");
   }
   const roleTools = prototypeAdvice ? definition.tools.filter((tool) => tool !== "Write" && tool !== "Edit") : definition.tools;
@@ -195,7 +200,8 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       + "through pre-pr-lanes.mjs, typed lane run receipts, verifier-owned Storybook birth records and logs in its private git directory, "
       + "and .control/ runtime files from "
       + "the repository control command in control mode. Move only this turn's control captures to "
-      + "the private git directory before publication. Never write a ClosedLoop or session record. "
+      + "the private git directory before publication. "
+      + `Never write a ${connectionLabel(binding, "tickets", "tracker") ?? "tracker"} or session record. `
     : "";
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer"
     ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory "
@@ -293,6 +299,8 @@ export async function runWorker(rawInput: unknown) {
     if (!lease) throw new Error("Writer claim returned no owned turn");
     turnInput = claim.turn?.continuation ?? claim.turn?.input ?? "";
   } else if (!input.input || input.continuation) throw new Error("Advisors require a fresh read-only input");
+  // The worker loads no skill (it runs with --agent), so its hooks learn from this record that vibe started it.
+  recordWorkerScope(workerId, place.root);
   const turnId = randomUUID();
   const definitionFile = join(place.dir, `vibe-agent-${turnId}.json`);
   const tracePath = join(place.dir, `vibe-worker-${turnId}.jsonl`);
@@ -666,7 +674,7 @@ const DATA_DROPPED = " [data dropped by the launcher: over 16 KB; see the trace]
 /**
  * The launcher caps a result instead of rejecting it after the turn. A result
  * rejected for length left its request open, and the writer refused the next
- * request until a continuation nobody sent (ISS-13043).
+ * request until a continuation nobody sent.
  */
 export function capWorkerResult(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -707,7 +715,7 @@ runFromCanonicalEntry(import.meta.url, main);
 /**
  * The saved session's title, e.g. "vibe guardrails reviewer · prd818 · prd818-guardrails-05". The Codex app's
  * Import Claude turns each saved Claude session into a sidebar chat titled by this name, else by the first
- * message, which here is the JSON request envelope (ISS-13279).
+ * message, which here is the JSON request envelope.
  */
 export function workerSessionName(agentName: string, branch: string, requestId: string) {
   const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");

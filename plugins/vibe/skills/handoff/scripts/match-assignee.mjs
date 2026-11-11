@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Resolves the name or email the person gave at handoff to the ClosedLoop
-// user who picks the work up next. Reads every page of ClosedLoop
-// `list-users` the caller saved, verbatim, and refuses a set of pages that
+// Resolves the name or email the person gave at handoff to the tracker user
+// who picks the work up next. Reads every page of the tracker's user listing
+// the caller saved, verbatim, and refuses a set of pages that
 // does not cover the whole organization, so a match is never made against a
 // partial list. A user matches when the text equals their first name, last
 // name, full name, or email, ignoring case and extra spaces. Prints one JSON
@@ -20,30 +20,30 @@ export const MatchStatus = { One: "one", Several: "several", None: "none" };
 
 const WHITESPACE = /\s+/g;
 
-/** Every user across the saved `list-users` pages, once each; throws when the pages miss anyone. */
+/** Every user across the saved user listing pages, once each; throws when the pages miss anyone. */
 export function usersFromPages(pages) {
   if (pages.length === 0) {
-    throw new Error("No list-users pages were given.");
+    throw new Error("No user listing pages were given.");
   }
   const users = new Map();
   let total = null;
   for (const page of pages) {
     if (!page || !Array.isArray(page.items) || !Number.isInteger(page.total)) {
-      throw new Error("A list-users page has no items array or total.");
+      throw new Error("A user listing page has no items array or total.");
     }
     if (total !== null && page.total !== total) {
-      throw new Error(`The list-users pages disagree on the total (${total} and ${page.total}); page them again.`);
+      throw new Error(`The user listing pages disagree on the total (${total} and ${page.total}); page them again.`);
     }
     total = page.total;
     for (const user of page.items) {
       if (typeof user?.id !== "string" || user.id === "") {
-        throw new Error("A list-users item has no id.");
+        throw new Error("A user listing item has no id.");
       }
       users.set(user.id, user);
     }
   }
   if (users.size < total) {
-    throw new Error(`The pages hold ${users.size} of ${total} users; page list-users until hasMore is false.`);
+    throw new Error(`The pages hold ${users.size} of ${total} users; page the user listing until hasMore is false.`);
   }
   return [...users.values()];
 }

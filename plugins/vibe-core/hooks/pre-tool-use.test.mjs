@@ -75,11 +75,21 @@ const line = (hookSpecificOutput) => `${JSON.stringify({ hookSpecificOutput })}\
 const denyLine = (reason) => line({ hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason });
 const killReason = (command) => `Signal only processes this session started and recorded: ${killProblems(command, () => false).join("; ")}`;
 
+// The guards below run only in a chat that activated vibe (operator ruling, 2026-11-11; activation.mjs), so
+// each payload without its own session comes from one that loaded vibe:vibe. activation.test.mjs covers the
+// chat that never did.
+const ACTIVATED_SESSION = "vibe-chat";
+
 function sandbox(t) {
   const dir = mkdtempSync(path.join(tmpdir(), "vibe-pre-tool-use-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  recordHookSkill(ACTIVATED_SESSION, "vibe:vibe", dir);
   const env = { ...process.env, HOME: dir, MERGE_GUARD_GH: path.join(dir, "missing-gh") };
-  const run = (script, payload) => spawnSync(process.execPath, [script], { input: typeof payload === "string" ? payload : JSON.stringify(payload), encoding: "utf8", env });
+  const withSession = (payload) => (typeof payload === "string" || payload.session_id ? payload : { session_id: ACTIVATED_SESSION, ...payload });
+  const run = (script, payload) => {
+    const input = withSession(payload);
+    return spawnSync(process.execPath, [script], { input: typeof input === "string" ? input : JSON.stringify(input), encoding: "utf8", env });
+  };
   return { dir, run };
 }
 
@@ -165,13 +175,14 @@ test("hooks.json registers one command per event, and the PreToolUse matcher nam
   assert.deepEqual(commands("UserPromptSubmit"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs"']);
   assert.deepEqual(commands("SessionStart"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs"']);
   assert.equal(hooks.SessionStart[0].matcher, "compact");
-  assert.deepEqual(hooks.PreToolUse[0].matcher.split("|").sort(), Object.keys(PRE_TOOL_USE_ROUTES).sort());
+  assert.deepEqual(hooks.PreToolUse[0].matcher.split("|").sort(), [...Object.keys(PRE_TOOL_USE_ROUTES), "mcp__.*"].sort(),
+    "every routed tool, and every MCP tool for the rules a bound provider supplies");
 });
 
 // Codex (0.164) loads a plugin's hooks/hooks.json by default, sets CLAUDE_PLUGIN_ROOT, and reports its shell
 // and exec_command tools as Bash with tool_input.command (Codex hooks docs). An audit took the manifest's missing
 // `hooks` field to mean the guards never load in Codex (2026-10-27); this pins what they rely on there.
-test("the Codex hook path: default hooks.json location, CLAUDE_PLUGIN_ROOT commands, and Codex's Bash payload is refused", () => {
+test("the Codex hook path: default hooks.json location, CLAUDE_PLUGIN_ROOT commands, and Codex's Bash payload is refused", (t) => {
   const pluginRoot = path.join(HERE, "..");
   const codexManifest = JSON.parse(readFileSync(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"));
   assert.equal(codexManifest.hooks, undefined, "a hooks override would move Codex off hooks/hooks.json and re-key its trust");
@@ -184,7 +195,9 @@ test("the Codex hook path: default hooks.json location, CLAUDE_PLUGIN_ROOT comma
     hook_event_name: "PreToolUse", model: "gpt-6-sol", permission_mode: "default",
     tool_name: "Bash", tool_use_id: "call_1", tool_input: { command: FORCE_PUSH },
   };
-  const result = spawnSync(process.execPath, [PRE_TOOL_USE], { input: JSON.stringify(codexEvent), encoding: "utf8" });
+  const { dir } = sandbox(t);
+  recordHookSkill(codexEvent.session_id, "vibe:vibe", dir);
+  const result = spawnSync(process.execPath, [PRE_TOOL_USE], { input: JSON.stringify(codexEvent), encoding: "utf8", env: { ...process.env, HOME: dir } });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny");
 });

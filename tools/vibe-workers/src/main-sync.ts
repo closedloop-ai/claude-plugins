@@ -8,7 +8,8 @@ import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.
 import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
-import { DESKTOP_E2E_POST_MERGE_COVERAGE, isDesktopE2eLimitation } from "./main-sync-lanes.js";
+import { desktopE2ePostMergeCoverage, isDesktopE2eLimitation } from "./main-sync-lanes.js";
+import { mainSyncRecipe } from "./main-sync-recipe.js";
 import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
@@ -19,7 +20,7 @@ import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation,
 
 const GIT_NETWORK_MS = 15 * 60 * 1000;
 const desktopSchema = z.object({ ok: z.boolean(), running: z.boolean() }).passthrough();
-const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
+const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/)/;
 export { MainSyncError };
 export { workflowLaneDefinitions } from "./main-sync-ci.js";
 export { mainSyncFailure } from "./main-sync-failure.js";
@@ -156,7 +157,7 @@ export function validateMainSync(raw: unknown) {
       || (receipt.pushedHead !== identity.headSha && !alreadyPublished(value.place.session, identity.headSha))) {
       throw new MainSyncError("Exact handoff snapshot must be safely published before external coverage completion");
     }
-    if (!validation.e2eLimitations.every(isDesktopE2eLimitation)) {
+    if (!validation.e2eLimitations.every((item) => isDesktopE2eLimitation(value.place.root, item))) {
       throw new MainSyncError("Selected required E2E has no verified external checked-source interface; handoff remains incomplete");
     }
     ciEvidence = verifyExternalCi(value, identity);
@@ -173,9 +174,9 @@ export function validateMainSync(raw: unknown) {
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
   // The Desktop Electron lane never runs on a vibe machine; the post-merge run covers it, so it does not hold the
-  // handoff or a requested pull request (ISS-13321). Any other limitation still needs CI evidence.
-  const e2eLeftForCi = validation.e2eLimitations.filter(isDesktopE2eLimitation)
-    .map((item) => ({ argv: item.argv, coveredBy: DESKTOP_E2E_POST_MERGE_COVERAGE }));
+  // handoff or a requested pull request. Any other limitation still needs CI evidence.
+  const e2eLeftForCi = validation.e2eLimitations.filter((item) => isDesktopE2eLimitation(value.place.root, item))
+    .map((item) => ({ argv: item.argv, coveredBy: desktopE2ePostMergeCoverage(value.place.root)! }));
   const requiredE2eComplete = validation.e2eLimitations.length === e2eLeftForCi.length || Boolean(ciEvidence);
   const { mainPreexistingFailures, flakyChecks, machineLimitedChecks } = comparedChecks(validation.commands);
   return { status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
@@ -350,12 +351,15 @@ function featureTestHistory(root: string, originalBase: string, startingHead: st
   const entries = new Map((previous?.featureTestHistory ?? []).map((entry) => [`${entry.commit}:${entry.path}`, entry]));
   const knownImports = new Set(previous?.importedCommits ?? []);
   const commits = git(root, ["rev-list", "--first-parent", `${originalBase}..${startingHead}`]).split("\n").filter(Boolean);
+  // A test path by name, or one under the repository's own test roots (its recipe's `testHistory`).
+  const repositoryTests = mainSyncRecipe(root).testHistory;
+  const isTestPath = (path: string) => TEST_HISTORY_PATH.test(path) || (repositoryTests !== undefined && new RegExp(repositoryTests).test(path));
   for (const commit of commits) {
     if (knownImports.has(commit)) continue;
     const parents = git(root, ["rev-list", "--parents", "-n", "1", commit]).split(" ").slice(1);
     const paths = git(root, ["diff", "--name-only", parents[0]!, commit]).split("\n").filter(Boolean);
     for (const path of paths) {
-      if (!TEST_HISTORY_PATH.test(path)) continue;
+      if (!isTestPath(path)) continue;
       // Exact non-first-parent adoption is import; a newly combined assertion remains feature evidence.
       const result = git(root, ["ls-tree", commit, "--", path]);
       if (parents.slice(1).some((parent) => git(root, ["ls-tree", parent, "--", path]) === result)) continue;

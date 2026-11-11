@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { blockingProblem, conversationRuntime, loadedSkillForCheck, loadedSkillProblem, updateCommands, versionsText } from "./plugin-version.mjs";
+import { blockingProblem, conversationRuntime, installOfferedProvider, loadedSkillForCheck, loadedSkillProblem, providerInstallCommands, providerOffer,
+  readProviderInstall, updateCommands, versionsText } from "./plugin-version.mjs";
 import { makeHome } from "./test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -341,7 +343,7 @@ async function firstBlock(t, codexState, claudeState = { installed: installedAt(
   const main = await marketplace(t, { files: mainFiles(SPLIT) });
   const claude = fakeCli(bin, "claude", claudeState);
   const codex = fakeCli(bin, "codex", codexState);
-  const { result } = await run(home, ["check", ...both(claude, codex, main.url), "--closedloop", "connected", "--graph", "connected"]);
+  const { result } = await run(home, ["check", ...both(claude, codex, main.url), "--connection", "tracker=connected", "--connection", "graph=connected"]);
   assert.equal(result.print, true, JSON.stringify(result));
   return result.block.split("\n");
 }
@@ -552,6 +554,10 @@ test("adopt moves the conversation's record onto a new session and refuses one n
   const adopted = await run(home, ["adopt", "--worktree", worktree]);
   assert.equal(adopted.code, 0);
   assert.equal(readSessionRecord(worktree).pluginVersion.choice.choice, "proceed");
+  // The check bound this checkout's provider without its connections, so it is disconnected, and the binding
+  // travels to the session, where workers and hooks read it instead of probing again.
+  assert.deepEqual(readSessionRecord(worktree).provider, readSessionRecord(worktree).pluginVersion.provider);
+  assert.equal(readSessionRecord(worktree).provider.state, "bound-disconnected");
 });
 
 test("the pending command marks a conversation pending", async (t) => {
@@ -580,7 +586,7 @@ test("the setup check block lists closedloop-core and vibe per installed harness
   const claude = fakeCli(bin, "claude", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.2" }] });
   const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.1" }, { name: "code", version: "2.0.2" }] });
   await run(home, ["check", ...both(claude, codex, main.url)]);
-  const first = await run(home, ["status", "--closedloop", "connected", "--graph", "not-connected"]);
+  const first = await run(home, ["status", "--connection", "tracker=connected", "--connection", "graph=not-connected"]);
   assert.equal(first.code, 0);
   assert.equal(first.result.print, true);
   assert.equal(first.result.block, [
@@ -594,14 +600,14 @@ test("the setup check block lists closedloop-core and vibe per installed harness
 
   // A compaction reruns the check and the status in the same conversation: nothing is shown again.
   await run(home, ["check", ...both(claude, codex, main.url)]);
-  const again = await run(home, ["status", "--closedloop", "connected", "--graph", "connected"]);
+  const again = await run(home, ["status", "--connection", "tracker=connected", "--connection", "graph=connected"]);
   assert.equal(again.result.print, false);
   assert.equal(again.result.block, undefined);
 
   // A new conversation shows it again.
   const other = { CLAUDE_CODE_SESSION_ID: "conversation-2" };
   await run(home, ["check", ...both(claude, codex, main.url)], other);
-  const fresh = await run(home, ["status", "--closedloop", "connected", "--graph", "connected"], other);
+  const fresh = await run(home, ["status", "--connection", "tracker=connected", "--connection", "graph=connected"], other);
   assert.equal(fresh.result.print, true);
   assert.match(fresh.result.block, /- closedloop-graph connection: connected$/);
 });
@@ -610,7 +616,7 @@ test("the setup check block never claims versions it did not read, and refuses c
   const { home, bin } = sandbox(t);
   const fleet = path.join(home, "plugin-version.json");
   // No check has run in this conversation, and nothing is installed here.
-  const unchecked = await run(home, ["status", "--state", fleet, "--closedloop", "not-connected", "--graph", "connected"]);
+  const unchecked = await run(home, ["status", "--state", fleet, "--connection", "tracker=not-connected", "--connection", "graph=connected"]);
   assert.equal(unchecked.result.print, true);
   assert.match(unchecked.result.block, /- Plugins: none installed in Claude Code or Codex\n/);
   assert.doesNotMatch(unchecked.result.block, /has not run/);
@@ -622,15 +628,16 @@ test("the setup check block never claims versions it did not read, and refuses c
   const later = { CLAUDE_CODE_SESSION_ID: "conversation-3" };
   const failing = await run(home, ["check", "--state", fleet, "--claude", claude.file, "--latest-base", main.url], later);
   assert.equal(failing.result.status, "unknown");
-  const listingFailed = await run(home, ["status", "--state", fleet, "--closedloop", "connected", "--graph", "connected"], later);
+  const listingFailed = await run(home, ["status", "--state", fleet, "--connection", "tracker=connected", "--connection", "graph=connected"], later);
   assert.match(listingFailed.result.block, /- Claude Code: couldn't read its plugins\n/);
   assert.doesNotMatch(listingFailed.result.block, /Codex/);
 
-  for (const args of [[], ["--closedloop", "connected"], ["--closedloop", "yes", "--graph", "connected"]]) {
+  // A generic session has no provider and so no connections to report; only a state nobody observed is refused.
+  for (const args of [["--connection", "tracker=yes", "--connection", "graph=connected"], ["--connection", "tracker"]]) {
     const refused = await run(home, ["status", "--state", fleet, ...args], { CLAUDE_CODE_SESSION_ID: "conversation-4" });
     assert.equal(refused.code, 1);
     assert.equal(refused.result.ok, false);
-    assert.match(refused.result.error, /must each be connected or not-connected/);
+    assert.match(refused.result.error, /give <name>=connected or <name>=not-connected/);
   }
 });
 
@@ -723,7 +730,7 @@ test("an update with no vibe session writer on an older release names none", asy
 test("with no check of this conversation, the setup check still lists the versions installed here, read locally (ISS-13315)", async (t) => {
   const { home, bin } = sandbox(t);
   fakeCli(bin, "codex", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.12" }] });
-  const { code, result } = await run(home, ["status", "--closedloop", "connected", "--graph", "connected"], { PATH: [bin, SYSTEM_PATH].join(path.delimiter) });
+  const { code, result } = await run(home, ["status", "--connection", "tracker=connected", "--connection", "graph=connected"], { PATH: [bin, SYSTEM_PATH].join(path.delimiter) });
   assert.equal(code, 0);
   assert.equal(result.block, [
     "Setup check",
@@ -739,7 +746,7 @@ test("a check the Codex sandbox stopped asks to run again escalated; the escalat
   const codex = fakeCli(bin, "codex", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.12" }] });
   // Codex sets these for every command of an "Ask for approval" turn, escalated ones included.
   const turn = { CODEX_SANDBOX: "seatbelt", CODEX_SANDBOX_NETWORK_DISABLED: "1" };
-  const args = ["check", "--codex", codex.file, "--closedloop", "connected", "--graph", "not-connected"];
+  const args = ["check", "--codex", codex.file, "--connection", "tracker=connected", "--connection", "graph=not-connected"];
   const sandboxed = await run(home, [...args, "--latest-base", UNREACHABLE], turn);
   assert.equal(sandboxed.code, 0);
   assert.equal(sandboxed.result.status, "unknown");
@@ -772,12 +779,12 @@ test("a check whose record cannot be saved still answers, shows the block and sa
   // What the sandbox does to ~/.codex/vibe: the folder cannot be created.
   mkdirSync(path.join(home, ".codex"), { recursive: true });
   writeFileSync(path.join(home, ".codex", "vibe"), "not a folder");
-  const checked = await run(home, ["check", "--codex", codex.file, "--latest-base", main.url, "--closedloop", "connected", "--graph", "connected"]);
+  const checked = await run(home, ["check", "--codex", codex.file, "--latest-base", main.url, "--connection", "tracker=connected", "--connection", "graph=connected"]);
   assert.equal(checked.code, 0);
   assert.equal(checked.result.status, "current");
   assert.match(checked.result.recordError, /ENOTDIR|EEXIST/);
   assert.match(checked.result.block, /- Codex: closedloop-core 1\.5\.3 \(latest\), vibe 1\.1\.12 \(latest\)/);
-  const status = await run(home, ["status", "--codex", codex.file, "--closedloop", "connected", "--graph", "connected"]);
+  const status = await run(home, ["status", "--codex", codex.file, "--connection", "tracker=connected", "--connection", "graph=connected"]);
   assert.equal(status.code, 0);
   assert.equal(status.result.print, true);
   assert.match(status.result.recordError, /ENOTDIR|EEXIST/);
@@ -786,12 +793,12 @@ test("a check whose record cannot be saved still answers, shows the block and sa
 
 test("check refuses connection states it was not told, like status", async (t) => {
   const { home } = sandbox(t);
-  const refused = await run(home, ["choose", "--choice", "proceed", "--closedloop", "connected"]);
+  const refused = await run(home, ["choose", "--choice", "proceed", "--connection", "tracker=maybe"]);
   assert.equal(refused.code, 1);
-  assert.match(refused.result.error, /must each be connected or not-connected/);
-  const check = await run(home, ["check", "--latest-base", UNREACHABLE, "--graph", "yes", "--closedloop", "connected"]);
+  assert.match(refused.result.error, /give <name>=connected or <name>=not-connected/);
+  const check = await run(home, ["check", "--latest-base", UNREACHABLE, "--connection", "graph=yes", "--connection", "tracker=connected"]);
   assert.equal(check.result.status, "unknown");
-  assert.match(check.result.reason, /must each be connected or not-connected/);
+  assert.match(check.result.reason, /give <name>=connected or <name>=not-connected/);
 });
 
 // PR #371 review: Codex installs plugin hooks untrusted, so no hook record exists and every new
@@ -866,4 +873,40 @@ test("a Codex writer that inherited a Claude session id is checked as its own th
     JSON.stringify({ sessionId: codexThread, skill: "vibe", loadedSkill: loaded(codexThread, "codex") }));
   const observed = await runInCodex(root, home, ["loaded", "--runtime", "codex"], inherited);
   assert.deepEqual([observed.code, observed.result.enforced, observed.result.loadedSkill.actorId], [0, true, codexThread]);
+});
+
+test("the provider install is offered only when nothing was ever installed and vibe never installed it", (t) => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "vibe-provider-offer-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const none = { state: "none", reason: "no provider is installed" };
+  assert.equal(providerOffer(none, null)?.name, "vibe-closedloop-provider");
+  assert.equal(providerOffer({ state: "none", reason: "the provider is disabled" }, null), null, "a disabled provider is never re-enabled");
+  assert.equal(providerOffer({ state: "candidate", name: "vibe-closedloop-provider" }, null), null, "an enabled provider needs no install");
+  assert.equal(providerOffer(none, { name: "vibe-closedloop-provider" }), null, "an uninstall after vibe's own install stays");
+  const harnesses = [
+    { harness: "claude", cli: "/bin/claude", installed: true, plugins: [{ name: "vibe", scope: "user" }] },
+    { harness: "codex", cli: "/bin/codex", installed: true, plugins: [{ name: "vibe" }] },
+    { harness: "codex", cli: "/bin/other", installed: true, plugins: [{ name: "closedloop-core" }] },
+    { harness: "claude", installed: false },
+  ];
+  assert.deepEqual(providerInstallCommands(harnesses), [
+    ["/bin/claude", "plugin", "install", "vibe-closedloop-provider@closedloop-ai", "--scope", "user"],
+    ["/bin/codex", "plugin", "add", "vibe-closedloop-provider@closedloop-ai"]]);
+
+  const ran = [];
+  const run = (argv) => { ran.push(argv); };
+  const disabled = installOfferedProvider({ candidate: { state: "none", reason: "the provider is disabled" }, connections: { tracker: "connected" }, home, harnesses, run });
+  assert.equal(disabled.output.installed, false);
+  assert.deepEqual(ran, [], "a disabled row produces no install command");
+  const unanswered = installOfferedProvider({ candidate: none, connections: { tracker: "not-connected" }, home, harnesses, run });
+  assert.match(unanswered.output.reason, /ClosedLoop connection did not answer/);
+  assert.deepEqual(ran, []);
+  const installed = installOfferedProvider({ candidate: none, connections: { tracker: "connected" }, home, harnesses, run });
+  assert.equal(installed.code, 0);
+  assert.equal(ran.length, 2);
+  assert.equal(readProviderInstall(home)?.name, "vibe-closedloop-provider");
+  ran.length = 0;
+  const again = installOfferedProvider({ candidate: none, connections: { tracker: "connected" }, home, harnesses, run });
+  assert.equal(again.output.installed, false);
+  assert.deepEqual(ran, [], "vibe never reinstalls a provider it installed once");
 });

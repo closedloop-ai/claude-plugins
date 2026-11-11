@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { mergeCalls, mergeGuard, mergeProblem } from "./merge-guard.mjs";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
+import { activatedChat } from "./activation-test-support.mjs";
 
 const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
@@ -150,7 +151,8 @@ test("the hook denies through the PreToolUse contract and stays silent when gh c
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const gh = path.join(dir, "gh");
   writeFileSync(gh, '#!/usr/bin/env bash\nif [ "$1" = api ]; then echo operator; else echo \'{"author":{"login":"teammate"},"headRefName":"fix/x"}\'; fi\n', { mode: 0o755 });
-  const run = (command, bin = gh) => spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ tool_name: "Bash", cwd: dir, tool_input: { command } }), encoding: "utf8", env: { ...process.env, MERGE_GUARD_GH: bin } });
+  const chat = activatedChat(t);
+  const run = (command, bin = gh) => spawnSync(process.execPath, [GUARD], { input: JSON.stringify(chat.payload({ tool_name: "Bash", cwd: dir, tool_input: { command } })), encoding: "utf8", env: { ...chat.env, MERGE_GUARD_GH: bin } });
   assert.equal(JSON.parse(run("gh pr merge 9169 --auto").stdout).hookSpecificOutput.permissionDecision, "deny");
   assert.equal(run("git status").stdout, "");
   const broken = run("gh pr merge 9169 --auto", path.join(dir, "missing-gh"));
@@ -173,10 +175,11 @@ if [ -n "$GH_REPO" ]; then echo "GH_REPO leaked" >&2; exit 1; fi
 case " $* " in *" -R acme/other "*) echo '{"author":{"login":"teammate"},"headRefName":"fix/other"}'; exit 0;; esac
 if [ "$(pwd -P)" = "${other}" ]; then echo '{"author":{"login":"teammate"},"headRefName":"fix/other"}'; else echo '{"author":{"login":"operator"},"headRefName":"vibe/mine"}'; fi
 `, { mode: 0o755 });
+  const chat = activatedChat(t);
   const run = (command, extra = {}) => {
-    const env = { ...process.env, MERGE_GUARD_GH: gh, ...extra };
+    const env = { ...chat.env, MERGE_GUARD_GH: gh, ...extra };
     if (!("GH_REPO" in extra)) delete env.GH_REPO;
-    const result = spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ tool_name: "Bash", cwd: session, tool_input: { command } }), encoding: "utf8", env });
+    const result = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(chat.payload({ tool_name: "Bash", cwd: session, tool_input: { command } })), encoding: "utf8", env });
     return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput : result.stderr;
   };
   assert.equal(run("gh pr merge 7 --squash"), "", "the session checkout's own pull request");

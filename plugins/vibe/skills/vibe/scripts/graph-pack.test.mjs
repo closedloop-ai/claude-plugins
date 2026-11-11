@@ -3,8 +3,10 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { codeowners, createGraphPack, featureMapIds, GRAPH_CALLS_STILL_OWED, ownersPattern, PACK_SCHEMA } from "./graph-pack.mjs";
-import { makeCheckout, makeHome } from "./test-fixtures.mjs";
+import { codeowners, createGraphPack, featureMapIds, graphCallsStillOwed, ownersPattern, PACK_SCHEMA } from "./graph-pack.mjs";
+import { makeCheckout, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+
+const GRAPH_CALLS_STILL_OWED = graphCallsStillOwed(PROVIDER_BINDING);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "graph-pack.mjs");
 
@@ -66,7 +68,7 @@ test("FEATURE_MAP: an entry names a file through a folder it lists, and a file w
 
 test("the pack names the owner, the hosts that import a file, its tests and stories, and its FEATURE_MAP entry", (t) => {
   const checkout = fixture(t);
-  const result = createGraphPack().pack({ worktree: checkout, paths: ["packages/app/branches/branch-card.tsx"], terms: ["BranchCard"] });
+  const result = createGraphPack({ binding: PROVIDER_BINDING }).pack({ worktree: checkout, paths: ["packages/app/branches/branch-card.tsx"], terms: ["BranchCard"] });
   assert.equal(result.schema, PACK_SCHEMA);
   assert.match(result.head, /^[0-9a-f]{40}$/);
   const entry = result.paths[0];
@@ -84,19 +86,19 @@ test("the pack names the owner, the hosts that import a file, its tests and stor
 
 test("an importer found only by a comment mentioning the name is not an importer", (t) => {
   const checkout = fixture(t);
-  const entry = createGraphPack().pack({ worktree: checkout, paths: ["packages/app/branches/branch-card.tsx"] }).paths[0];
+  const entry = createGraphPack({ binding: PROVIDER_BINDING }).pack({ worktree: checkout, paths: ["packages/app/branches/branch-card.tsx"] }).paths[0];
   assert.ok(!entry.importers.other.includes("apps/api/lib/unrelated.ts"));
 });
 
 test("a test beside a host in __tests__ counts as that host's test", (t) => {
   const checkout = fixture(t);
-  const entry = createGraphPack().pack({ worktree: checkout, paths: ["packages/app/branches/branch-list.tsx"] }).paths[0];
+  const entry = createGraphPack({ binding: PROVIDER_BINDING }).pack({ worktree: checkout, paths: ["packages/app/branches/branch-list.tsx"] }).paths[0];
   assert.deepEqual(entry.tests, ["packages/app/branches/__tests__/branch-list.test.tsx"]);
 });
 
 test("a directory gets its owner and FEATURE_MAP entry with importers, tests and stories null, not empty", (t) => {
   const checkout = fixture(t);
-  const entry = createGraphPack().pack({ worktree: checkout, paths: ["packages/app/sessions/"] }).paths[0];
+  const entry = createGraphPack({ binding: PROVIDER_BINDING }).pack({ worktree: checkout, paths: ["packages/app/sessions/"] }).paths[0];
   assert.equal(entry.kind, "directory");
   assert.equal(entry.tracked, true);
   assert.deepEqual(entry.featureMap, ["shell-route:sessions"]);
@@ -107,14 +109,14 @@ test("a directory gets its owner and FEATURE_MAP entry with importers, tests and
 
 test("an untracked path is reported untracked and a term shorter than three characters is not searched", (t) => {
   const checkout = fixture(t);
-  const result = createGraphPack().pack({ worktree: checkout, paths: ["packages/app/new-thing.tsx"], terms: ["ab", "BranchList"] });
+  const result = createGraphPack({ binding: PROVIDER_BINDING }).pack({ worktree: checkout, paths: ["packages/app/new-thing.tsx"], terms: ["ab", "BranchList"] });
   assert.equal(result.paths[0].tracked, false);
   assert.deepEqual(result.precedents.map((item) => item.term), ["BranchList"]);
 });
 
 test("the pack never claims the graph: its source says worktree and every required graph call stays owed", (t) => {
   const checkout = fixture(t);
-  const result = createGraphPack().pack({ worktree: checkout, paths: ["packages/app/branches/branch-card.tsx"] });
+  const result = createGraphPack({ binding: PROVIDER_BINDING }).pack({ worktree: checkout, paths: ["packages/app/branches/branch-card.tsx"] });
   assert.match(result.source, /not the closedloop-graph/);
   assert.deepEqual(result.graphCallsStillOwed, [...GRAPH_CALLS_STILL_OWED]);
   assert.ok(GRAPH_CALLS_STILL_OWED.includes("code_tests_for") && GRAPH_CALLS_STILL_OWED.includes("blast_radius_tickets"));
@@ -127,4 +129,12 @@ test("the command line prints the pack and needs --worktree and --paths", (t) =>
   assert.equal(JSON.parse(good.stdout).schema, PACK_SCHEMA);
   const bad = spawnSync(process.execPath, [SCRIPT, "--worktree", checkout], { encoding: "utf8" });
   assert.equal(bad.status, 2);
+});
+
+test("with no provider bound the pack owes no graph call and reads no feature map", (t) => {
+  const checkout = fixture(t);
+  const result = createGraphPack({ binding: null }).pack({ worktree: checkout, paths: ["packages/app/branches/branch-card.tsx"] });
+  assert.deepEqual(result.graphCallsStillOwed, []);
+  assert.deepEqual(result.paths[0].featureMap, []);
+  assert.equal(result.source, "worktree: git ls-files, git grep and CODEOWNERS");
 });

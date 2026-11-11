@@ -5,6 +5,7 @@ import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { fixture, loadEvidence, PLUGIN_ROOT, remoteConfig, successfulRemoteWriter, writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs';
+import { readAssembled } from '../../vibe/scripts/skill-split.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
@@ -628,7 +629,7 @@ test('a heavy slot refuses a machine whose load per core is over the limit and n
   assert.equal(emptyReason.status, 0, emptyReason.stderr);
   assert.doesNotMatch(emptyReason.stdout, /force reason:/, 'an empty reason is never recorded');
   assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran']).stdout, 'ran\n', 'only heavy slots are load-checked');
-  const skill = readFileSync(join(SCRIPTS, '..', 'SKILL.md'), 'utf8');
+  const skill = readAssembled(join(SCRIPTS, '..', 'SKILL.md'));
   assert.match(skill, /Writers never set `FLEET_FORCE_HERE`[\s\S]*or `FLEET_LOAD`/);
   assert.doesNotMatch(readFileSync(LOAD_CHECK, 'utf8'), /FLEET_LOAD/, 'production admission has no caller-supplied load override');
 });

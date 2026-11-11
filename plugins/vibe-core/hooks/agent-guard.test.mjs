@@ -8,15 +8,17 @@ import { fileURLToPath } from "node:url";
 import { agentGuard, agentLaunchProblem } from "./agent-guard.mjs";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 import { vibeRoot } from "../shared/vibe-install.mjs";
+import { activatedChat } from "./activation-test-support.mjs";
 
 const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
 test("an orchestrator cannot launch a vibe worker directly outside a vibe session", (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "vibe-agent-guard-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const chat = activatedChat(t);
   const run = (subagentType, cwd = dir) => spawnSync(process.execPath, [GUARD], {
-    input: JSON.stringify({ tool_name: "Agent", cwd, tool_input: { subagent_type: subagentType, prompt: "Implement the ticket" } }),
-    encoding: "utf8",
+    input: JSON.stringify(chat.payload({ tool_name: "Agent", cwd, tool_input: { subagent_type: subagentType, prompt: "Implement the ticket" } })),
+    encoding: "utf8", env: chat.env,
   });
 
   assert.match(agentLaunchProblem({ subagent_type: "vibe:vibe-change-worker" }), /invoke `vibe:vibe`/);
@@ -74,13 +76,14 @@ test("a takeover reviewer's refusal names the takeover launch and its head-bound
   assert.doesNotMatch(agentLaunchProblem({ subagent_type: "vibe:vibe-storybook-decomposer" }), /takeover/);
 });
 
-test("a seed-refresh worker's refusal says seed refresh runs in Codex", () => {
+test("a seed-refresh worker's refusal says seed refresh runs in Codex", (t) => {
+  const chat = activatedChat(t);
   for (const role of ["seed-check-worker", "seed-fix-worker", "seed-pr-worker"]) {
     assert.ok(existsSync(path.join(PLUGIN_ROOT, "agents", `vibe-${role}.md`)), role);
     assert.equal(agentLaunchProblem({ subagent_type: `vibe:vibe-${role}` }),
       `do not launch vibe:vibe-${role} in Claude Code: vibe seed refresh runs in Codex (\`$vibe-seed-refresh\`), which dispatches its own seed workers; it has no Claude Code worker path`);
-    const denied = JSON.parse(spawnSync(process.execPath, [GUARD], { encoding: "utf8",
-      input: JSON.stringify({ tool_name: "Agent", tool_input: { subagent_type: `vibe:vibe-${role}`, prompt: "Check the seed" } }) }).stdout).hookSpecificOutput;
+    const denied = JSON.parse(spawnSync(process.execPath, [GUARD], { encoding: "utf8", env: chat.env,
+      input: JSON.stringify(chat.payload({ tool_name: "Agent", tool_input: { subagent_type: `vibe:vibe-${role}`, prompt: "Check the seed" } })) }).stdout).hookSpecificOutput;
     assert.equal(denied.permissionDecision, "deny");
     assert.match(denied.permissionDecisionReason, /runs in Codex/);
   }

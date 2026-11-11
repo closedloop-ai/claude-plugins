@@ -13,10 +13,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
-from vibe_contract_text import flat, section
+from vibe_contract_text import bound_provider_env, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILLS = PLUGIN_ROOT / "skills"
@@ -112,8 +113,8 @@ def test_script_records_every_policy_step_and_the_reference_names_them() -> None
     assert "`required (policy)`" in reference
     for step in POLICY_STEPS:
         assert f'"{step}"' in script, step
-    assert 'export const E2E_SOURCE = "pnpm test:lanes and the e2e path filter"' in script
-    assert "`pnpm test:lanes and the e2e path filter`" in reference
+    assert 'export const E2E_SOURCE = "the repository\'s lane report and its e2e path filter"' in script
+    assert "`the repository's lane report and its e2e path filter`" in reference
 
 
 def test_switch_is_documented_off_by_default_and_awaits_the_owner() -> None:
@@ -144,7 +145,10 @@ def test_vibe_skill_reads_effective_never_the_switch_and_keeps_todays_rules() ->
 
 
 def classify(*args: str) -> dict:
-    result = subprocess.run(["node", str(SCRIPT), "classify", *args], capture_output=True, text=True, check=False)
+    # The cases name the ClosedLoop provider's repository areas, so the script runs bound to it.
+    with tempfile.TemporaryDirectory() as home:
+        result = subprocess.run(["node", str(SCRIPT), "classify", *args], capture_output=True, text=True, check=False,
+                                env=bound_provider_env(Path(home)))
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 

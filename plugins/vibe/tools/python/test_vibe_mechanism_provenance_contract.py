@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, paragraph, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -26,8 +26,8 @@ VIBE = PLUGIN_ROOT / "skills" / "vibe"
 REFERENCES = VIBE / "references"
 VIBE_SKILL = VIBE / "SKILL.md"
 QUALITY = REFERENCES / "quality-loop.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
-GRAPH = REFERENCES / "closedloop-graph.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
+GRAPH = PROVIDER_REFERENCES / "closedloop-graph.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 CL_EXECUTE_GATES = PLUGIN_ROOT / "skills" / "cl-execute" / "references" / "planning-and-gates.md"
 LOG_SHAPE = "`Engineering decision: <question>; built: <what the session built>; evidence: <files, records or finding>`"

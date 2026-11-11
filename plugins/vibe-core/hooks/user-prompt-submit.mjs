@@ -12,7 +12,7 @@ import { programChange } from "./program-change.mjs";
 
 /** The guards every prompt runs, in order. */
 export const USER_PROMPT_SUBMIT_GUARDS = Object.freeze([
-  { name: "away-protocol", run: awayProtocol },
+  { name: "away-protocol", run: awayProtocol, activated: true },
   { name: "plugin-version-start", run: pluginVersionPromptStart },
   { name: "program-change", run: programChange },
 ]);

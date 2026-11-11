@@ -322,7 +322,7 @@ def test_claude_eval_uses_an_identified_uncommitted_snapshot(tmp_path: Path) -> 
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 121
+    assert len(found) == 125
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -971,3 +971,25 @@ def test_tool_use_counts_each_batched_command(tmp_path: Path) -> None:
     graded = {c["grader"]: c["passed"] for c in checks}
     assert not graded["renders-both-themes"]
     assert not graded["renders-dark"]
+
+
+def test_arms_install_the_provider_only_in_the_provider_arm(tmp_path: Path) -> None:
+    for name in ("vibe", "closedloop-core", "vibe-core", "vibe-closedloop-provider"):
+        (tmp_path / name).mkdir()
+    assert runner.payload_plugins(tmp_path) == ["vibe", "closedloop-core", "vibe-core", "vibe-closedloop-provider"]
+    assert runner.payload_plugins(tmp_path, "generic") == ["vibe", "closedloop-core", "vibe-core"]
+    (tmp_path / "vibe-closedloop-provider").rmdir()
+    assert runner.payload_plugins(tmp_path, "provider") == ["vibe", "closedloop-core", "vibe-core"], "an older payload has no provider"
+    with pytest.raises(ValueError):
+        runner.payload_plugins(tmp_path, "other")
+
+
+def test_generic_cases_cover_the_walk_and_load_no_provider() -> None:
+    generic = [case for case in runner.cases() if runner.case_arm(case) == "generic"]
+    assert {case["source"].name for case in generic} >= {
+        "exec-generic-repo-start-describes-change", "pm-generic-repo-checks-from-agents-md",
+        "pm-generic-repo-gates-not-shipped", "orch-generic-repo-fleet-without-graph"}
+    for case in generic:
+        assert not any("provider" in plugin for plugin in case["meta"]["plugins"]), case["name"]
+        assert (case["source"] / "graders" / "no-provider-names.md").is_file(), case["name"]
+    assert any(runner.case_arm(case) == "provider" for case in runner.cases())

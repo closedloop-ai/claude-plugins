@@ -1,20 +1,19 @@
 #!/usr/bin/env node
-// One evidence file for `vibe-requirements-worker` (PRD-823, WS3 D6, ISS-13348):
+// One evidence file for `vibe-requirements-worker`:
 // the request's own references resolved against the worktree, and a ledger of
-// which of the worker's required ClosedLoop and closedloop-graph queries have a
-// saved result and which are missing.
+// which of the worker's required tracker and graph queries (the bound
+// provider's `data.graph.requirementsQueries`; none without one) have a saved
+// result and which are missing.
 //
-// The queries themselves (`ticket_detail`, `query_collisions`, `search_nodes`,
-// the ClosedLoop `get-document` and `get-document-comments`) are MCP calls this
-// script cannot make, and there is no REST client to make them instead (D9 is
-// blocked on a credential ruling). So the worker still makes them; each result
+// The queries themselves are MCP calls this script cannot make, and there is
+// no REST client to make them instead. So the worker still makes them; each result
 // it saves as `<tool>.json` in `--results-dir` is bundled whole into the file,
 // and every required query with no saved result is listed under `missing`, so a
 // requirements brief never silently lacks an overlap or in-flight check. What it
-// removes is the worker's mechanical reading of the worktree: ticket and plan
-// slugs in the text, the paths it names that exist, their CODEOWNERS and
-// FEATURE_MAP entries (the worker's "locate the route and FEATURE_MAP id"), and
-// the files that already use its terms.
+// removes is the worker's mechanical reading of the worktree: the references
+// in the text (the bound tracker's slugs, else GitHub `#123` numbers), the
+// paths it names that exist, their CODEOWNERS and feature map entries, and the
+// files that already use its terms.
 //
 // Usage: req-gather.mjs --worktree <path> (--request <text> | --request-file <file>)
 //                       [--results-dir <dir>] [--terms <t1,t2,...>] [--out <file>]
@@ -28,21 +27,33 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { createGraphPack } from "./graph-pack.mjs";
 import { execCommand, parseJson, stdoutOf } from "./ws3-exec.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { boundWith, providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const EVIDENCE_SCHEMA = "vibe.req-evidence/1";
-// closedloop-graph.md "Required calls", the `vibe-requirements-worker` row, plus the ticket read and comments its description names.
-export const REQUIRED_QUERIES = Object.freeze([
-  "ticket_detail", "get-document-comments", "query_collisions", "code_symbols", "blast_radius_tickets", "search_nodes", "shipped_lineage",
-]);
 const MAX_RESULT_BYTES = 200_000;
-const SLUG = /\b(?:ISS|PRD|PLN|FEA|FEAT|PRO)-\d+\b/g;
+const GITHUB_NUMBER = /(?<![\w/&])#\d+\b/g;
 const PATH_TOKEN = /(?:[\w@.-]+\/)+[\w@.-]*/g;
 const MAX_PATHS = 25;
 const NOT_JSON = Symbol("not json");
 
-/** Every ticket, plan, document or project slug in `text`, once each, in order of first mention. */
-export function slugsIn(text) {
-  return [...new Set(text.match(SLUG) ?? [])];
+/**
+ * The queries the requirements worker owes for `binding`: the bound graph provider's list, without the tracker's
+ * own queries when no tracker is bound; none without a graph provider.
+ */
+export function requiredQueries(binding) {
+  const tracker = new Set(boundWith(binding, "tickets") ? [] : providerDataOr(binding, "graph", "trackerQueries", []));
+  return Object.freeze(providerDataOr(binding, "graph", "requirementsQueries", []).filter((name) => !tracker.has(name)));
+}
+
+/**
+ * Every reference in `text`, once each, in order of first mention: the bound tracker's slugs
+ * (`data.tickets.mentionPattern`), else GitHub `#123` numbers.
+ */
+export function slugsIn(text, binding = null) {
+  const pattern = providerDataOr(binding, "tickets", "mentionPattern", null);
+  return [...new Set(text.match(pattern ? new RegExp(pattern, "g") : GITHUB_NUMBER) ?? [])];
 }
 
 /** Path-like tokens in `text` that name a tracked file or a folder holding tracked files. */
@@ -60,12 +71,13 @@ export function pathsIn(text, tracked) {
 }
 
 /** The saved results for each required query: present (parsed, truncated flag) or missing. */
-export function readResults(dir, { exists = existsSync, read = (file) => readFileSync(file, "utf8"), size = (file) => statSync(file).size } = {}) {
+export function readResults(dir, { exists = existsSync, read = (file) => readFileSync(file, "utf8"), size = (file) => statSync(file).size } = {},
+  required = []) {
   const results = {};
   const present = [];
   const missing = [];
   const unreadable = [];
-  for (const name of REQUIRED_QUERIES) {
+  for (const name of required) {
     const file = dir ? path.join(dir, `${name}.json`) : null;
     if (!file || !exists(file)) { missing.push(name); continue; }
     if (size(file) > MAX_RESULT_BYTES) { unreadable.push({ name, reason: `the saved result is over ${MAX_RESULT_BYTES} bytes; save the part the brief needs` }); missing.push(name); continue; }
@@ -79,17 +91,19 @@ export function readResults(dir, { exists = existsSync, read = (file) => readFil
 
 export function gatherEvidence({ worktree, request, resultsDir, terms = [] }, deps = {}) {
   const run = deps.run ?? execCommand;
+  const binding = deps.binding === undefined ? sessionBinding(worktree) : deps.binding;
+  const required = requiredQueries(binding);
   const tracked = new Set(stdoutOf(run("git", ["-C", worktree, "ls-files"]), "git ls-files").split("\n").filter(Boolean));
   const paths = pathsIn(request, tracked);
-  const pack = (deps.graphPack ?? createGraphPack({ run })).pack({ worktree, paths, terms });
-  const queries = readResults(resultsDir, deps.fs);
+  const pack = (deps.graphPack ?? createGraphPack({ run, binding })).pack({ worktree, paths, terms });
+  const queries = readResults(resultsDir, deps.fs, required);
   return {
     schema: EVIDENCE_SCHEMA,
     head: pack.head,
-    slugs: slugsIn(request),
+    slugs: slugsIn(request, binding),
     paths: pack.paths.map(({ path: file, kind, tracked: isTracked, owner, featureMap }) => ({ path: file, kind, tracked: isTracked, owner, featureMap })),
     precedents: pack.precedents,
-    queries: { required: [...REQUIRED_QUERIES], present: queries.present, missing: queries.missing, unreadable: queries.unreadable },
+    queries: { required: [...required], present: queries.present, missing: queries.missing, unreadable: queries.unreadable },
     results: queries.results,
   };
 }

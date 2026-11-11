@@ -28,13 +28,14 @@ import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
-import { launchCwd, recoveryTurnProblem, threadCwd, VIBE_BRIEF_TICKET, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
+import { launchCwd, recoveryTurnProblem, threadCwd, vibeBriefTicket, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, readThreadState, summarize } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 const { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
+const { recordWorkerScope } = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
 const { canonicalWorktree, ensureReloadFence, e2eLockDir: machineE2eLockDir, machineSlotLockDir, readE2eWaiters, regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
@@ -175,7 +176,7 @@ function requireNewSessionWorktree(saved, worktree, ticket, prompt) {
     throw new Error(`cannot inspect --cwd ${worktree}: ${error.message}`);
   }
   const fix = `pass a not-yet-existing path and let the writer's vibe new create it, or use cloud-worker.mjs / pr-takeover for imported work`;
-  const briefTicket = VIBE_BRIEF_TICKET.exec(prompt)?.[1];
+  const briefTicket = vibeBriefTicket().exec(prompt)?.[1];
   if (!briefTicket) throw new Error(`existing --cwd ${worktree} needs a $vibe brief naming its ticket; ${fix}`);
   if (ticket && ticket !== briefTicket) throw new Error(`--ticket ${ticket} does not match the $vibe brief ticket ${briefTicket}; ${fix}`);
   let record;
@@ -588,6 +589,8 @@ export async function startTurn(client, state, prompt, promptFile, {
     threadId = started?.thread?.id;
     if (!threadId) throw new Error('App Server returned no thread id');
     afterNewThread(threadId);
+    // vibe-core's hooks treat a thread the launcher started as an activated chat before its first skill load.
+    recordWorkerScope(threadId, cwd);
     for (const warning of await labelWorkerThread(client, threadId, workerThreadName(name, state.ticket))) warn(warning);
   }
   const result = await client.request('turn/start', defined({

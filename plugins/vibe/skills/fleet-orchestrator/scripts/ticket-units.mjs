@@ -9,13 +9,13 @@
 // Usage: ticket-units.mjs group --candidates <candidates.json> [--board <orchDir>]
 //        ticket-units.mjs pr-check --board <orchDir> --unit <name> --title <title> --body-file <file>
 //
-// candidates.json, gathered with cl-find-related-tickets and the closedloop-graph
+// candidates.json, gathered with cl-find-related-tickets and the bound graph
 // tools (references/ticket-units.md says which tool fills which field):
 //   {"tickets": [{"slug", "repo": "<owner/repo>",
 //      "prd": "<the PRD it belongs to, from its artifact links>",
 //      "operatorAssigned": <true when the operator is its assignee>,
 //      "files": [<repo-relative paths the ticket is expected to change>],
-//      "historyFiles": [<paths only past changes touched (blast_radius_tickets)>],
+//      "historyFiles": [<paths only past changes touched (the graph's ticket history)>],
 //      "surfaces": [<screen map ids>],
 //      "blockers": [{"slug", "met": <true once merged or DONE>}]}],
 //    "collisions": [{"a", "b", "reason"}],
@@ -70,13 +70,15 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { requirementsKey, trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { missingTicketNames } = await vibeCore("lib/handoff/scripts/ticket-names.mjs");
 
-const SLUG = /^[A-Z]+-\d+$/;
-const PRD = /^PRD-\d+$/;
+// The bound tracker's ticket key; ticket units exist only with a tracker bound.
+const slugPattern = () => new RegExp(`^${trackerKey()}$`);
+const requirementsPattern = () => new RegExp(`^${requirementsKey()}$`);
 
 /** The board's open units (closed ones are finished), its writer rows, and every unit name already used. */
 export function readBoard(orchDir) {
@@ -232,13 +234,13 @@ function validTickets(candidates) {
   if (!Array.isArray(candidates?.tickets)) throw new Error("candidates need a tickets array");
   for (const key of ["collisions", "apart"]) {
     const list = candidates[key];
-    if (list !== undefined && (!Array.isArray(list) || list.some((pair) => !SLUG.test(pair?.a ?? "") || !SLUG.test(pair?.b ?? "")))) {
+    if (list !== undefined && (!Array.isArray(list) || list.some((pair) => !slugPattern().test(pair?.a ?? "") || !slugPattern().test(pair?.b ?? "")))) {
       throw new Error(`${key} must be an array of {"a", "b"} ticket pairs`);
     }
   }
   const seen = new Set();
   return candidates.tickets.map((ticket) => {
-    if (!SLUG.test(ticket?.slug ?? "")) throw new Error(`candidate ${JSON.stringify(ticket?.slug)} is not a ticket slug`);
+    if (!slugPattern().test(ticket?.slug ?? "")) throw new Error(`candidate ${JSON.stringify(ticket?.slug)} is not a ticket slug`);
     const slug = ticket.slug;
     if (typeof ticket.repo !== "string" || !ticket.repo.includes("/")) throw new Error(`${slug} needs its repo as <owner>/<repo>`);
     if (seen.has(slug)) throw new Error(`${slug} is listed twice`);
@@ -247,10 +249,10 @@ function validTickets(candidates) {
         throw new Error(`${slug} needs ${key} as an array of strings`);
       }
     }
-    if (ticket.blockers !== undefined && (!Array.isArray(ticket.blockers) || ticket.blockers.some((blocker) => !SLUG.test(blocker?.slug ?? "") || typeof blocker.met !== "boolean"))) {
+    if (ticket.blockers !== undefined && (!Array.isArray(ticket.blockers) || ticket.blockers.some((blocker) => !slugPattern().test(blocker?.slug ?? "") || typeof blocker.met !== "boolean"))) {
       throw new Error(`${slug} needs blockers as an array of {"slug", "met": true|false}`);
     }
-    if (ticket.prd !== undefined && !PRD.test(ticket.prd ?? "")) throw new Error(`${slug} names prd ${JSON.stringify(ticket.prd)}, not a PRD slug`);
+    if (ticket.prd !== undefined && !requirementsPattern().test(ticket.prd ?? "")) throw new Error(`${slug} names prd ${JSON.stringify(ticket.prd)}, not a requirements document key`);
     if (ticket.operatorAssigned !== undefined && typeof ticket.operatorAssigned !== "boolean") throw new Error(`${slug} needs operatorAssigned as true or false`);
     if (ticket.prd !== undefined && ticket.operatorAssigned === undefined) throw new Error(`${slug} names a prd, so it needs operatorAssigned: the PRD join counts only the operator's tickets`);
     seen.add(slug);

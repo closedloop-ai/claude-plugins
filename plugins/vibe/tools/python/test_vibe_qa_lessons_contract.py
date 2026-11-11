@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 HANDOFF = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
-GRAPH = PLUGIN_ROOT / "skills" / "vibe" / "references" / "closedloop-graph.md"
+GRAPH = PROVIDER_REFERENCES / "closedloop-graph.md"
 
 
 def assert_all(text: str, required: tuple[str, ...]) -> None:

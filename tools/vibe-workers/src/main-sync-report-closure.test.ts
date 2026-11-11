@@ -112,6 +112,16 @@ describe("selected closure scale and evidence boundaries", () => {
     expect(() => verifyReportClosure(value.execution(), entries)).toThrow(/selected closure context bound/);
   }, 120000);
 
+  it("treats the provider's plan folder as ordinary source in a session with no provider bound", () => {
+    const value = setup();
+    const record = join(value.worktree, ".git", "vibe-session.json");
+    writeFileSync(record, JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
+    value.write("selected.ts", "import './.closedloop-ai/vibe-plans/plan.mjs'; export const value = 1;\n");
+    value.write(".closedloop-ai/vibe-plans/plan.mjs", "export {};\n");
+    value.commit();
+    expect(() => verifyReportProducerInputs(value.worktree, value.worktree, "origin-producer", ["selected.ts"])).not.toThrow();
+  });
+
   it("keeps global private-input protection for an unselected consumer", () => {
     const value = setup();
     value.write("selected.mjs", "export {};\n");
