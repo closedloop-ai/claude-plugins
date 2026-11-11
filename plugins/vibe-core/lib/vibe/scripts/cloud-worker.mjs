@@ -8,15 +8,17 @@
  * Request fields: worktree, ticket, provider, model, reservedVersion, branch,
  * placement {codeOnly, needsRunningApp, localEvidence[]}, criteria
  * [{id, source, text}], graph {ownership, collisions, blastRadius},
- * validationCommands[], connectorAllowlist[], optional repository and polling bounds.
+ * validationCommands[], connectorAllowlist[], optional repository (else the
+ * worktree's GitHub origin), codexEnvironment for Codex, and polling bounds.
  * `record-evidence --evidence-file` takes graph fields with exact tool, query,
  * text and observedAt plus validationCommands[] and repo-relative
  * validationSources[]; it reads criteria from the locked Spec Card itself.
  * The fleet coordinator fills it from live ticket criteria and local graph
  * research; the script checks it against the Vibe session before dispatch.
- * `validate` needs no Vibe session: its request names repository, branch, full
- * commit, model, lanes [{name, command}] and worktree (a local checkout of that
- * repository, for its origin check and receipt). It runs the lanes on that
+ * `validate` needs no Vibe session or ticket: its request names branch, full
+ * commit, model, lanes [{name, command}] and worktree (a local checkout, for its
+ * origin and receipt), and optionally repository and install
+ * (cloud-repository.mjs resolves them; no repository is named in the plugin). It runs the lanes on that
  * exact commit, changes nothing, and refuses a result bound to another commit
  * or showing a changed file.
  * A Claude dispatch runs in the environment cloud-environment.mjs resolves
@@ -35,18 +37,16 @@ import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from 
 import { gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
 import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
 import { checkCloudSetup, createRefusal, resolveClaudeEnvironment, runNotCreated } from "./cloud-environment.mjs";
+import { codexEnvironment, installInstruction, resolveRepository } from "./cloud-repository.mjs";
 
-const CODEX_ENVIRONMENT = "claude-plugins";
 const MAX_WALL_MS = 35 * 60 * 1000;
 const DEFAULT_WALL_MS = 35 * 60 * 1000;
 const DEFAULT_POLL_MS = 30 * 1000;
 const COMMAND_MS = 90 * 1000;
 const ALLOWED_CONNECTORS = new Set(["closedloop"]);
 const TERMINAL = new Set(["completed", "failed", "canceled", "cancelled"]);
-const APPROVED_REPOSITORIES = ["closedloop-ai/claude-plugins", "closedloop-ai/symphony-alpha"];
 const CHECK_ENTRY_POINT = /^(?:uv run |node |pnpm |ruff |pyright|pytest )/;
 const SHELL_CONTROL = /[;&|`$<>\n]/;
-const INSTALL = { "closedloop-ai/claude-plugins": "uv sync --frozen --group dev", "closedloop-ai/symphony-alpha": "pnpm install --frozen-lockfile" };
 const RESULT_MARKER = "VIBE_VALIDATION_RESULT";
 // The condensed run log folds a message onto one line, so the marker need not start one.
 const RESULT_LINE = /VIBE_VALIDATION_RESULT (\{.*\})\s*$/gm;
@@ -105,8 +105,8 @@ export function validateRequest(request) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(request.model ?? "")) throw new Error("a pinned model is required");
   if (!/^\d+\.\d+\.\d+$/.test(request.reservedVersion ?? "")) throw new Error("a reserved semantic version is required");
   if (!/^(?:cloud|codex-cloud)\/[a-z0-9][a-z0-9-]*$/.test(request.branch ?? "")) throw new Error("a named cloud branch is required");
-  if (request.repository && !APPROVED_REPOSITORIES.includes(request.repository)) throw new Error("cloud repository is not approved for this personal environment");
-  if (request.provider === "codex" && request.repository && request.repository !== "closedloop-ai/claude-plugins") throw new Error("Codex legacy environment is only configured for claude-plugins");
+  if (request.repository !== undefined) resolveRepository(request.repository, null);
+  if (request.provider === "codex") codexEnvironment(request);
   if (!Array.isArray(request.criteria) || request.criteria.length === 0 || request.criteria.some((item) => !item?.id || !item?.text || !item?.source)) throw new Error("sourced ticket acceptance criteria are required");
   for (const field of ["ownership", "collisions", "blastRadius"]) {
     if (typeof request.graph?.[field] !== "string" || !request.graph[field].trim()) throw new Error(`embedded local graph ${field} research is required`);
@@ -132,7 +132,7 @@ export function generateBrief(request, record) {
   validateRequest(request);
   const criteria = request.criteria.map((item) => `- ${item.id} (${item.source}): ${item.text}`).join("\n");
   return [
-    `Work item: ${request.ticket}. Repository: ${request.repository ?? "closedloop-ai/claude-plugins"}.`,
+    `Work item: ${request.ticket}. Repository: ${requireRepository(request)}.`,
     `Local Vibe session: ${record.summary ?? request.ticket}; branch ${record.branch}. This local session owns the eventual handoff and PR gate.`,
     `Cloud result branch: ${request.branch}. Base: main. Reserved plugin version: ${request.reservedVersion}.`,
     `Operator commit author: ${record.operator.name} <${record.operator.email}>. Make exactly one commit for this turn on the named branch; a later follow-up may add one commit without rewriting history. Never force-push. Do not open a pull request or trigger a review.`,
@@ -197,7 +197,7 @@ export function startClaude(request, brief, { remote = remoteTrigger, name = `${
       name, enabled: false, run_once_at: new Date(Date.now() + MAX_WALL_MS).toISOString(),
       job_config: { ccr: {
         environment_id: environment.id,
-        session_context: { model: request.model, sources: [{ git_repository: { url: `https://github.com/${request.repository ?? "closedloop-ai/claude-plugins"}` } }], allowed_tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"] },
+        session_context: { model: request.model, sources: [{ git_repository: { url: `https://github.com/${requireRepository(request)}` } }], allowed_tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"] },
         events: [{ data: { uuid: randomUUID(), session_id: sessionId, type: "user", parent_tool_use_id: null, message: { role: "user", content: brief } } }],
       } }, mcp_connections: [],
     } });
@@ -225,7 +225,7 @@ export function startClaude(request, brief, { remote = remoteTrigger, name = `${
 
 /** Submit to the legacy Codex Cloud environment; the selected output branch lives in the brief. */
 export function startCodex(request, brief, { run = runCommand, cwd } = {}) {
-  const result = runCodex(["cloud", "exec", "--env", CODEX_ENVIRONMENT, "--branch", "main", "-c", `model=${request.model}`, brief], { run, cwd });
+  const result = runCodex(["cloud", "exec", "--env", codexEnvironment(request), "--branch", "main", "-c", `model=${request.model}`, brief], { run, cwd });
   if (result.status !== 0) throw new Error(`Codex cloud exec failed: ${firstLine(result.stderr || result.error?.message || result.stdout)}`);
   const taskId = result.stdout.match(/\b(?:task[_ -]?id[: ]+)?(task_[A-Za-z0-9_-]+)\b/i)?.[1];
   if (!taskId) throw new Error("Codex cloud exec returned no task id");
@@ -256,7 +256,7 @@ export async function pollTask(receipt, request, { codex = codexStatus, remote =
     else {
       const listed = remote("list_runs", { trigger_id: receipt.routineId });
       const run = listed?.data?.find((item) => item.id === (receipt.runId ?? receipt.taskId));
-      if (!run) throw runNotCreated(receipt.routineId, receipt.environment ?? { id: "(not recorded)", source: "an older receipt" }, request.repository ?? "closedloop-ai/claude-plugins", remote);
+      if (!run) throw runNotCreated(receipt.routineId, receipt.environment ?? { id: "(not recorded)", source: "an older receipt" }, requireRepository(request), remote);
       const remoteStatus = String(run.status ?? "").toLowerCase();
       const workerStatus = String(run.worker_status ?? "").toLowerCase();
       state = { status: remoteStatus === "active" && workerStatus === "idle" ? "completed" : remoteStatus === "active" ? "running" : remoteStatus, sessionId: run.session_id ?? receipt.sessionId ?? (receipt.runId ? null : run.id) };
@@ -354,11 +354,17 @@ export function hydrateCloudRequest(request, { requireCurrentSource = true } = {
   if (requireCurrentSource && !sameSource(evidence.source, sourceIdentity(request.worktree))) throw new Error("local source changed after cloud evidence was recorded");
   return validateRequest({ ...request, criteria: evidence.criteria, graph: evidence.graph, validationCommands: evidence.validationCommands });
 }
+/** The GitHub repository to clone: the requested one, checked against the worktree's origin, or the origin's. */
 function verifyRepository(worktree, repository) {
-  const origin = git(worktree, ["remote", "get-url", "origin"]);
-  const match = /github\.com[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\.git)?$/.exec(origin);
-  const actual = match?.[1].replace(/\.git$/, "");
-  if (actual && actual !== (repository ?? "closedloop-ai/claude-plugins")) throw new Error(`Vibe origin ${actual} does not match the cloud repository`);
+  let origin = null;
+  try { origin = git(worktree, ["remote", "get-url", "origin"]); } catch { /* no origin: only a requested repository can name it */ }
+  return resolveRepository(repository, origin);
+}
+
+/** A request's resolved repository; every cloud call runs after verifyRepository named it. */
+function requireRepository(request) {
+  if (!request.repository) throw new Error("the cloud repository was not resolved from the request or the worktree's origin");
+  return request.repository;
 }
 
 /** Exact operator author match, for a cloud branch or the eventual local commit. */
@@ -511,8 +517,8 @@ async function main(argv) {
   }
   const request = hydrateCloudRequest(raw, { requireCurrentSource: action === "brief" });
   const record = requireVibeSession(request.worktree, request.ticket);
-  verifyRepository(request.worktree, request.repository);
-  const brief = generateBrief(request, record);
+  const routed = { ...request, repository: verifyRepository(request.worktree, request.repository) };
+  const brief = generateBrief(routed, record);
   if (action === "brief") return { brief, placement: decideCloudPlacement(request.placement) };
   if (action === "dispatch" || action === "poll") {
     const file = receiptPath(request.worktree, request.ticket);
@@ -526,11 +532,11 @@ async function main(argv) {
     } else {
       if (action === "poll") throw new Error("no cloud task exists to poll");
       hydrateCloudRequest(raw, { requireCurrentSource: true });
-      started = request.provider === "claude" ? startClaude(request, brief, { remote: (name, input) => remoteTrigger(name, input, { cwd: request.worktree }) }) : startCodex(request, brief, { cwd: request.worktree });
+      started = request.provider === "claude" ? startClaude(routed, brief, { remote: (name, input) => remoteTrigger(name, input, { cwd: request.worktree }) }) : startCodex(routed, brief, { cwd: request.worktree });
       started = { ...started, requestDigest: requestDigest(request), reservedVersion: request.reservedVersion, followups: 0 };
       saveReceipt(request.worktree, request.ticket, started);
     }
-    const finished = await pollTask(started, request, { remote: (name, input) => remoteTrigger(name, input, { cwd: request.worktree }), codex: (id) => codexStatus(id, { cwd: request.worktree }) });
+    const finished = await pollTask(started, routed, { remote: (name, input) => remoteTrigger(name, input, { cwd: request.worktree }), codex: (id) => codexStatus(id, { cwd: request.worktree }) });
     saveReceipt(request.worktree, request.ticket, finished);
     return finished;
   }
@@ -557,7 +563,7 @@ export function validateValidationRequest(request) {
   if (!request || typeof request !== "object") throw new Error("structured validation request is required");
   if (request.provider === "codex") throw new Error("cloud validation refused: Codex Cloud returns no task report, so lane results cannot be bound to the commit; use provider claude");
   if (request.provider !== "claude") throw new Error("provider must be claude or codex");
-  if (!APPROVED_REPOSITORIES.includes(request.repository)) throw new Error("cloud repository is not approved for this personal environment");
+  if (request.repository !== undefined) resolveRepository(request.repository, null);
   if (typeof request.branch !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(request.branch) || request.branch.includes("..") || request.branch.endsWith("/")) throw new Error("a pushed branch name is required");
   if (!/^[0-9a-f]{40}$/.test(request.commit ?? "")) throw new Error("a full 40-character commit SHA is required");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(request.model ?? "")) throw new Error("a pinned model is required");
@@ -573,9 +579,9 @@ export function validateValidationRequest(request) {
 export function validationBrief(request) {
   validateValidationRequest(request);
   return [
-    `Validation only. Repository: ${request.repository}. Branch: ${request.branch}. Commit: ${request.commit}.`,
+    `Validation only. Repository: ${requireRepository(request)}. Branch: ${request.branch}. Commit: ${request.commit}.`,
     `Check out the exact commit: run \`git fetch origin refs/heads/${request.branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
-    `Install dependencies with \`${INSTALL[request.repository]}\`.`,
+    installInstruction(request),
     "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + request.lanes.map((lane) => `- ${lane.name}: ${lane.command}`).join("\n"),
     "Change no files. Do not edit, create or delete a tracked file, commit, push, open a pull request or trigger a review. After the lanes, run `git status --porcelain` and keep its lines.",
     `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the output of git rev-parse HEAD), "lanes" (one {"name", "exitCode"} per lane above, in order) and "status" (the git status --porcelain lines, an empty list when there are none).`,
@@ -597,7 +603,7 @@ export function parseValidationResult(text, request) {
     if (reported?.name !== lane.name || !Number.isInteger(reported.exitCode)) throw new Error(`cloud validation lane ${lane.name} has no exit code; result refused`);
     return { name: lane.name, command: lane.command, exitCode: reported.exitCode, passed: reported.exitCode === 0 };
   });
-  return { commit: request.commit, branch: request.branch, lanes, passed: lanes.every((lane) => lane.passed) };
+  return { commit: request.commit, branch: request.branch, ...(request.repository ? { repository: request.repository } : {}), lanes, passed: lanes.every((lane) => lane.passed) };
 }
 
 /** Every string in a run log, whatever its shape, so the worker's final message can be found. */
@@ -613,7 +619,7 @@ function validationReceiptPath(request, digest) { return path.join(gitDir(reques
 /** Start (or resume) a Claude cloud session on the commit, poll it, and return results bound to that commit. */
 export async function validateCommit(request, { remote = (name, input) => remoteTrigger(name, input, { cwd: request.worktree }), sleep, now } = {}) {
   validateValidationRequest(request);
-  verifyRepository(request.worktree, request.repository);
+  const routed = { ...request, repository: verifyRepository(request.worktree, request.repository) };
   const digest = sha256(JSON.stringify(request));
   const file = validationReceiptPath(request, digest);
   let started;
@@ -622,14 +628,14 @@ export async function validateCommit(request, { remote = (name, input) => remote
     if (started.requestDigest !== digest) throw new Error("validation receipt belongs to another request; refusing replay");
     if (TERMINAL.has(started.status) && started.status !== "completed") throw new Error(`cloud validation already ended: ${started.status}`);
   } else {
-    started = startClaude({ ...request, connectorAllowlist: [] }, validationBrief(request), { remote, name: `validate ${request.commit.slice(0, 12)}` });
+    started = startClaude({ ...routed, connectorAllowlist: [] }, validationBrief(routed), { remote, name: `validate ${request.commit.slice(0, 12)}` });
     started = { ...started, requestDigest: digest, commit: request.commit };
     writeFileSync(file, `${JSON.stringify(started, null, 2)}\n`, { mode: 0o600 });
   }
-  const finished = started.status === "completed" ? started : await pollTask(started, request, { remote, ...(sleep ? { sleep } : {}), ...(now ? { now } : {}) });
+  const finished = started.status === "completed" ? started : await pollTask(started, routed, { remote, ...(sleep ? { sleep } : {}), ...(now ? { now } : {}) });
   writeFileSync(file, `${JSON.stringify(finished, null, 2)}\n`, { mode: 0o600 });
   if (finished.status !== "completed") throw new Error(`cloud validation ended ${finished.status}`);
-  const result = parseValidationResult(logText(remote("get_run_log", { session_id: finished.sessionId })), request);
+  const result = parseValidationResult(logText(remote("get_run_log", { session_id: finished.sessionId })), routed);
   return { ...result, provider: "claude", taskId: finished.taskId, sessionId: finished.sessionId, wallMs: finished.wallMs, receipt: file };
 }
 

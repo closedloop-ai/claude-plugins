@@ -87,7 +87,7 @@ export function runNotCreated(routineId, environment, repository, remote) {
     const last = routine?.trigger?.last_run ?? routine?.last_run;
     if (last) reported = ` The routine reports last run ${last.status ?? "?"}, ${last.failure_reason ?? "no failure reason"}.`;
   } catch { /* the error below still names the fix */ }
-  return cloudSetupError(CloudSetupError.RunNotCreated, `routine ${routineId} was fired but no run appeared; a fire that fails repository access, its token preflight or environment lookup leaves none.${reported} Fix: connect GitHub to the Claude account with access to ${repository} (the Claude GitHub App), confirm ${environment.id} (${environment.source}) is this account's environment, then run cloud-worker.mjs check and dispatch again.`);
+  return cloudSetupError(CloudSetupError.RunNotCreated, `routine ${routineId} was fired but no run appeared; a fire that fails repository access, its token preflight or environment lookup leaves none.${reported} Fix: give the Claude account access to ${repository} by installing the Claude GitHub App on it, or by running /web-setup in Claude Code; confirm ${environment.id} (${environment.source}) is this account's environment, then run cloud-worker.mjs check and dispatch again.`);
 }
 
 /** The setup check: environment configured, API reachable, and whether any routine uses the environment. */

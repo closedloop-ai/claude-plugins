@@ -238,6 +238,7 @@ test("the review steps carry effective: apply with the switch on and as-today wi
 
 const cloudRequest = (worktree = '/tmp/vibe-example') => ({
   worktree, ticket: 'ISS-13804', provider: 'codex', model: 'gpt-6-sol', reservedVersion: '1.1.61', branch: 'codex-cloud/iss-13804-cloud',
+  repository: 'acme/widgets', codexEnvironment: 'widgets-env',
   placement: { codeOnly: true, needsRunningApp: false, localEvidence: [] },
   criteria: [{ id: 'AC-1', source: 'ISS-13804 v2', text: 'Dispatch autonomously.' }],
   graph: { ownership: 'dispatch-route.mjs owns routing', collisions: 'No active duplicate', blastRadius: 'fleet skill and tests' },
@@ -329,7 +330,7 @@ test('AC-1 and AC-3: Codex uses legacy environment and treats exit 1 as pending 
   const run = (command, args) => { calls.push([command, ...args]); writeFileSync(path.join(cwd, 'error.log'), 'CLI diagnostic'); return { status: 0, stdout: 'Task ID: task_abc', stderr: '' }; };
   assert.equal(startCodex(cloudRequest(), 'brief', { run, cwd }).taskId, 'task_abc');
   assert.equal(existsSync(path.join(cwd, 'error.log')), false);
-  assert.deepEqual(calls[0].slice(0, 7), ['codex', 'cloud', 'exec', '--env', 'claude-plugins', '--branch', 'main']);
+  assert.deepEqual(calls[0].slice(0, 7), ['codex', 'cloud', 'exec', '--env', 'widgets-env', '--branch', 'main']);
   assert.ok(calls[0].includes('model=gpt-6-sol'));
   assert.deepEqual(codexStatus('task_abc', { cwd, run: () => ({ status: 1, stdout: 'Pending', stderr: '' }) }), { status: 'pending' });
   assert.deepEqual(codexStatus('task_abc', { cwd, run: () => ({ status: 1, stdout: '[PENDING] Task name\nrepo • now', stderr: '' }) }), { status: 'pending' });

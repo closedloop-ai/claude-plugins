@@ -100,6 +100,7 @@ test('the implementation dispatch is unchanged: main-based brief, ticket routine
     criteria: [{ id: 'AC-1', source: 'ISS-13804 v2', text: 'Dispatch autonomously.' }],
     graph: { ownership: 'owner', collisions: 'none', blastRadius: 'tests' },
     validationCommands: ['node --test plugins/x.test.mjs'], connectorAllowlist: [], claudeEnvironment: 'env_01TestRequest',
+    repository: 'closedloop-ai/claude-plugins', codexEnvironment: 'claude-plugins',
   };
   assert.match(generateBrief(request, { summary: 'x', branch: 'vibe/x', operator: { name: 'Test Operator', email: 'operator@example.test' } }), /Base: main\./);
   const calls = [];

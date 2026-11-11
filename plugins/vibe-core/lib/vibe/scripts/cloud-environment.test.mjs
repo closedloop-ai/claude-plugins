@@ -35,7 +35,7 @@ function fakeRemote(overrides = {}) {
   return { calls, remote };
 }
 
-const dispatchRequest = (fields = {}) => ({ ticket: 'ISS-1', provider: 'claude', model: 'claude-sonnet-5-5', connectorAllowlist: [], ...fields });
+const dispatchRequest = (fields = {}) => ({ ticket: 'ISS-1', provider: 'claude', model: 'claude-sonnet-5-5', repository: 'acme/local-fork', connectorAllowlist: [], ...fields });
 
 test('the environment comes from the request, then the variable, then the fleet config, and that id is the one sent', (t) => {
   const home = fleetHome(t, CONFIG_ENV);
@@ -99,10 +99,10 @@ test('a fired run that never appears is CLOUD_RUN_NOT_CREATED, naming GitHub, th
     get: () => ({ trigger: { last_run: { status: 'ROUTINE_RUN_STATUS_FAILED', failure_reason: 'ROUTINE_RUN_FAILURE_REASON_EXAMPLE' } } }),
   });
   const receipt = { provider: 'claude', routineId: 'routine_e', runId: 'run_e', environment, startedAt: new Date().toISOString() };
-  await assert.rejects(pollTask(receipt, { repository: 'closedloop-ai/claude-plugins', maxWallMs: 60_000, pollMs: 1000 }, { remote, sleep: async () => {} }), (error) => {
+  await assert.rejects(pollTask(receipt, { repository: 'acme/local-fork', maxWallMs: 60_000, pollMs: 1000 }, { remote, sleep: async () => {} }), (error) => {
     assert.equal(error.code, CloudSetupError.RunNotCreated);
     assert.match(error.message, /The routine reports last run ROUTINE_RUN_STATUS_FAILED, ROUTINE_RUN_FAILURE_REASON_EXAMPLE\./);
-    assert.match(error.message, /Fix: connect GitHub to the Claude account with access to closedloop-ai\/claude-plugins \(the Claude GitHub App\), confirm env_01FromRequest \(request claudeEnvironment\)/);
+    assert.match(error.message, /Fix: give the Claude account access to acme\/local-fork by installing the Claude GitHub App on it, or by running \/web-setup in Claude Code; confirm env_01FromRequest \(request claudeEnvironment\)/);
     return true;
   });
 });

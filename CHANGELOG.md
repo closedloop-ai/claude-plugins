@@ -11,11 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A refused create is named. HTTP 401 or 403 while the account's routine list still answers, or HTTP 404, is `CLOUD_ENV_UNKNOWN`; a refused list too is `CLOUD_AUTH_REFUSED` (sign in again with /login). A fired run that never appears in `list_runs`, which the API leaves when repository access, the token preflight or environment lookup fails, is `CLOUD_RUN_NOT_CREATED`. It quotes the routine's reported last run and names the fix: connect GitHub to the Claude account with access to the repository, and confirm the environment. Each message carries its fix, and nothing falls back to local.
 - `cloud-worker.mjs validate` now reads the worker's result. Its first real run checked out the commit and passed its lane, then failed with "returned no result line": `remoteTrigger` kept only the JSON header line of `get_run_log`, dropping the condensed log after it, and the result pattern required the marker to start a line, while the condensed log folds the final message onto one line. `remoteTrigger` now returns that log as `log`, and the marker is matched anywhere on its line; the commit, lane and clean-tree checks are unchanged.
 
+- The cloud worker names no repository. A fixed two-repository list refused a developer's own fork; access is whatever the developer's claude.ai GitHub connection reaches. New `lib/vibe/scripts/cloud-repository.mjs` takes the request's `repository`, else the worktree's origin (an HTTPS or SSH github.com URL); a non-GitHub origin or none is `CLOUD_REPO_NOT_GITHUB` (cloud sessions clone from GitHub only), a malformed one `CLOUD_REPO_INVALID`, and an origin that differs from the requested repository `CLOUD_REPO_MISMATCH`. The `closedloop-ai/claude-plugins` fallbacks in the brief, the routine source and the run-not-created message are gone, and `CLOUD_RUN_NOT_CREATED` now names installing the Claude GitHub App on the repository, or `/web-setup`.
+- `validate` no longer bakes in an install per repository. Its brief has the cloud worker run, as written, one command that picks the install from the checked-out lockfile: `pnpm install --frozen-lockfile` (pnpm-lock.yaml), `uv sync --frozen` with `--group dev` only when pyproject.toml declares that group (uv.lock), `npm ci` (package-lock.json), `yarn install --frozen-lockfile` (yarn.lock), or no install. A request `install` replaces it. The worker is not asked to report the install: a real run rewrote the command and reported the wrong one.
+- Codex cloud runs only in the `codexEnvironment` the request names (`CLOUD_CODEX_ENV_MISSING` otherwise), replacing the claude-plugins-only environment. Implementation dispatch still needs an ISS ticket; `validate` needs none.
+
 #### Added
 - `cloud-worker.mjs check [--request <json>]` reports the environment and its source, whether the routine API answers, whether a routine on the account already runs in that environment (otherwise it is unverified, and the environments the account's routines use are listed), and that GitHub connection cannot be checked before a run. It exits 1 on a failure. `remoteTrigger` now carries the HTTP status of a refused call.
 
 #### Changed
-- `lib/fleet-orchestrator/scripts/fleet-home.test.mjs` records the ticket placement that vibe 1.1.80's `board.mjs writer` now needs before its shape case starts a writer, and the cloud-worker tests send a request environment.
+- `lib/fleet-orchestrator/scripts/fleet-home.test.mjs` records the ticket placement that vibe 1.1.80's `board.mjs writer` now needs before its shape case starts a writer, and the cloud-worker tests send a request environment and name the repository and Codex environment they use.
 
 ### vibe v1.1.80
 
@@ -27,11 +31,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - fleet-orchestrator's Cloud workers section states one rule: the placement is recorded before every writer start or fold, whatever the off-by-default runtime routing says, an imported cloud task given a local writer row records `--keep-local "cloud import <task id>"`, and names the check's location in vibe-core (`lib/fleet-orchestrator/scripts/cloud-placement.mjs`) and the cloud worker's (`lib/vibe/scripts/`). The routing line says it never decides placement. The new-chat steps (references/state.md) and the setup checklist (references/setup.md) name the same location, and the writer row usage names `--tickets`.
-- Existing board, fleet-home and snapshot tests record a local placement for the ticket their writers start on, and the vibe-triage cloud tests send a request environment and assert that it is the one sent.
+- Existing board, fleet-home and snapshot tests record a local placement for the ticket their writers start on, and the vibe-triage cloud tests send a request environment and assert that it is the one sent; their requests name a repository outside ClosedLoop and a Codex environment.
+- The Cloud workers `validate` line says the repository and install come from the checkout unless given.
 - `VIBE_CLOUD_CLAUDE_ENV` is listed as configuration environment in `review-class-guard-baseline.json`: it names an environment id and switches nothing on.
 - fleet-orchestrator's Cloud workers section and setup checklist say to configure the Claude cloud environment (`VIBE_CLOUD_CLAUDE_ENV` or `CLOUD_CLAUDE_ENV`) and run `cloud-worker.mjs check` before the first dispatch.
 - The README version line and the Python and vibe-bench release-pin tests move to 1.1.80.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 153 words longer than in 1.1.79 (origin/main at this update, 397210d7).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 172 words longer than in 1.1.79 (origin/main at this update, 397210d7).
 ### vibe-core v1.0.3
 
 #### Added
