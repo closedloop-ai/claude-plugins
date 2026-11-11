@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 import { UPDATE_DOCUMENT_TOOL, unitStatusProblem } from "./unit-status-guard.mjs";
+import { bindChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
@@ -68,4 +69,20 @@ test("the PreToolUse hook routes update-document to the guard and denies an unre
   assert.equal(denied.permissionDecision, "deny");
   assert.match(denied.permissionDecisionReason, /ISS-2 stays IN_PROGRESS, not DONE/);
   assert.equal(run("IN_PROGRESS").stdout.trim(), "");
+});
+
+test("a chat with no program of its own is still gated by the home's current board while another chat holds it", (t) => {
+  const { home } = fleetHome(t);
+  const userHome = mkdtempSync(path.join(tmpdir(), "unit-status-user-"));
+  const before = Object.getOwnPropertyDescriptor(process.env, "HOME");
+  process.env.HOME = userHome;
+  t.after(() => {
+    if (before) process.env.HOME = before.value;
+    else Reflect.deleteProperty(process.env, "HOME");
+    rmSync(userHome, { recursive: true, force: true });
+  });
+  bindChat("chat-orchestrator", home, "p1", { HOME: userHome });
+  for (const chat of ["chat-orchestrator", "chat-other"]) {
+    assert.match(unitStatusProblem({ slug: "ISS-2", status: "DONE", cwd: home, home, chat }) ?? "", /^ISS-2 stays IN_PROGRESS, not DONE/, chat);
+  }
 });
