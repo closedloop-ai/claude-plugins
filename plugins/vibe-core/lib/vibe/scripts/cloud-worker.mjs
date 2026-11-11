@@ -35,6 +35,8 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import { decideCloudPlacement } from "../../fleet-orchestrator/scripts/cloud-placement.mjs";
 import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from "./session-record.mjs";
 import { gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
+import { verifiedReviewModel } from "../../handoff/scripts/review-receipts.mjs";
+import { FABLE_REVIEW_MODELS } from "./review-models.mjs";
 import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
 import { checkCloudSetup, createRefusal, resolveClaudeEnvironment, runNotCreated } from "./cloud-environment.mjs";
 import { codexEnvironment, installInstruction, PROVENANCE_COMMAND, provenanceProblem, resolveRepository } from "./cloud-repository.mjs";
@@ -417,12 +419,37 @@ export function importResult(request, receipt, { run = runCommand, gitRead = git
     importedSource: sourceIdentity(request.worktree), importedAt: new Date().toISOString(),
   };
   writeFileSync(importWitnessPath(request.worktree), `${JSON.stringify(witness, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  return { provider: request.provider, worktree: request.worktree, changed: gitRead(request.worktree, ["status", "--short"]), witness: importWitnessPath(request.worktree), next: "Run the unchanged Vibe handoff, independent cross-harness review and full local lanes before ready or PR." };
+  return { provider: request.provider, worktree: request.worktree, changed: gitRead(request.worktree, ["status", "--short"]), witness: importWitnessPath(request.worktree), next: "Run the unchanged Vibe handoff, the independent review (Codex or Fable 5.2 for a Claude import, Claude for a Codex import) and full local lanes before ready or PR." };
 }
 
+/** Each handoff review receipt's harness, the model its trace proves (null when unproven) and its session identities. */
 function reviewRuntimes(worktree) {
   const handoff = JSON.parse(readFileSync(gatePath(worktree), "utf8"));
-  return (handoff.receipts ?? []).map((item) => JSON.parse(readFileSync(item.path, "utf8")).runtime);
+  return (handoff.receipts ?? []).map((item) => {
+    const receipt = JSON.parse(readFileSync(item.path, "utf8"));
+    return { runtime: receipt.runtime, model: verifiedReviewModel(receipt), identities: [receipt.sessionId, receipt.workerId].filter(Boolean) };
+  });
+}
+
+/** Every identity the session's persistent writer has had, so its own review never counts as independent. */
+function writerIdentities(worktree) {
+  const file = path.join(gitDir(worktree), "vibe-writer.json");
+  if (!existsSync(file)) return [];
+  const ledger = JSON.parse(readFileSync(file, "utf8"));
+  return [ledger.workerId, ...(ledger.migrations ?? []).map((item) => item?.previous?.workerId)].filter(Boolean);
+}
+
+/**
+ * A Claude import needs a Codex review or a review whose trace proves the Fable 5.2 model (Daniel, 2026-11-11,
+ * ISS-14039: "Accept a Fable review instead"), neither from the session's writer; a Codex import still needs Claude.
+ */
+function independentReviewProblem(worktree, provider, reviews) {
+  const found = reviews(worktree);
+  if (provider !== "claude") return found.some((review) => review.runtime === "claude") ? null : "independent claude review is missing";
+  const writer = new Set(writerIdentities(worktree));
+  const accepted = found.some((review) => (review.runtime === "codex" || (review.runtime === "claude" && FABLE_REVIEW_MODELS.includes(review.model)))
+    && !(review.identities ?? []).some((identity) => writer.has(identity)));
+  return accepted ? null : `independent codex or Fable 5.2 (${FABLE_REVIEW_MODELS.join(" or ")}) review is missing`;
 }
 function importMatchesReceipt(witness, receipt, ticket, receiptBytes) {
   return receipt.status === "completed" && witness.schema === "vibe.cloud-import/1" && witness.ticket === ticket
@@ -446,8 +473,8 @@ export function refreshImportWitness(worktree, { bodyFile, base = "main", gate =
   verifyAuthor(worktree, "HEAD", record.operator);
   const problem = gate(worktree, { base, bodyFile });
   if (problem) throw new Error(`cloud import cannot refresh: ${problem}`);
-  const opposite = witness.provider === "claude" ? "codex" : "claude";
-  if (!reviews(worktree).includes(opposite)) throw new Error(`cloud import cannot refresh: independent ${opposite} review is missing`);
+  const missing = independentReviewProblem(worktree, witness.provider, reviews);
+  if (missing) throw new Error(`cloud import cannot refresh: ${missing}`);
   const updated = { ...witness, reviewedSource: sourceIdentity(worktree), handoffGateSha256: sha256(readFileSync(gatePath(worktree))), reviewedAt: new Date().toISOString() };
   writeFileSync(importWitnessPath(worktree), `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
   return updated;
@@ -473,13 +500,11 @@ export function cloudPrProblem(worktree, { base = "main", bodyFile, gate = hando
     verifyAuthor(worktree, "HEAD", record.operator);
     const problem = gate(worktree, { base, bodyFile });
     if (problem) return problem;
-    const opposite = receipt.provider === "claude" ? "codex" : "claude";
-    if (!reviews(worktree).includes(opposite)) return `independent ${opposite} review is missing`;
-    return null;
+    return independentReviewProblem(worktree, receipt.provider, reviews);
   } catch (error) { return `cloud PR readiness could not be verified: ${firstLine(error?.message ?? error)}`; }
 }
 
-/** Refuse PR progression until author, opposite-harness review and final handoff evidence match. */
+/** Refuse PR progression until author, independent review and final handoff evidence match. */
 export function readyForPr(request, { bodyFile, gate = handoffGateProblem, reviews = reviewRuntimes, receiptReader = readReceipt } = {}) {
   const record = requireVibeSession(request.worktree, request.ticket);
   request = hydrateCloudRequest(request, { requireCurrentSource: false });

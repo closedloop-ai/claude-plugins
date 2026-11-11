@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe-core v1.0.5
+
+#### Changed
+- A Claude-provider cloud import's independent-review gate (`refresh-import`, `ready` and the PR guard's `cloudPrProblem` in `lib/vibe/scripts/cloud-worker.mjs`) now accepts a Fable 5.2 review as well as a Codex one (ISS-14039; Daniel's 2026-11-11 ruling, "Accept a Fable review instead", after Codex was limit-stopped on both machines and three PRs could not reach ready). A Claude review counts only when its receipt's trace proves the model `claude-fable-5-2`, and no review counts when its session is the session writer's (the `vibe-writer.json` writer id or a migrated one). A Codex-provider import still needs a Claude review, unchanged. The refusal reads "independent codex or Fable 5.2 (claude-fable-5-2) review is missing", and the PR guard's retry text names both reviewers. The accepted Fable model ids are one list, `FABLE_REVIEW_MODELS` in new `lib/vibe/scripts/review-models.mjs`, which the gate and the launcher both read.
+- A Claude launcher review receipt (`lib/handoff/scripts/review-receipts.mjs`) records `model`, read from its trace: the CLI's init record and every assistant message must name the same model, else it is null. The handoff receipt check refuses a receipt whose recorded model its trace does not show, and new `verifiedReviewModel` re-reads the fingerprinted trace for the cloud gate. A receipt from before this release has no `model` and still passes handoff; it proves no model.
+
+### vibe v1.1.82
+
+#### Added
+- The Claude launcher (`claude-worker.mjs`) takes an optional `reviewModel` (one of vibe-core's `FABLE_REVIEW_MODELS`, today `claude-fable-5-2`) for the four receipt review roles and runs that role on Fable 5.2, so a Claude cloud import can clear its independent-review gate without Codex (ISS-14039). Any other role, or any other model, is refused before launch. The handoff PR reference and fleet-orchestrator's Cloud workers line say which review each import needs.
+- vibe now needs vibe-core 1.0.5 (`VIBE_CORE_MIN`), whose receipts record the model; the committed vibe-workers bundles are rebuilt with it, and the README version line and the Python and vibe-bench release-pin tests move to 1.1.82.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 46 words longer than in 1.1.81 (origin/main at this update, 39b92623).
+
 ### vibe v1.1.81
 
 #### Fixed

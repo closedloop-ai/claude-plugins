@@ -174,6 +174,23 @@ describe("production Claude CLI adapter", () => {
     expect(proof?.args).not.toContain("--permission-prompts");
   });
 
+  it("runs a receipt review role on the Fable review model and refuses that model for any other role (ISS-14039)", () => {
+    const value = setup();
+    const result = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", reviewModel: "claude-fable-5-2" });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const proof = readProof(value.metadata)[0];
+    expect(proof?.args[proof.args.indexOf("--model") + 1]).toBe("claude-fable-5-2");
+    expect(proof?.definition["vibe:vibe-guardrails-reviewer"]?.model).toBe("claude-fable-5-2");
+    const plain = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", requestId: "plain" });
+    expect(plain.status, plain.stdout + plain.stderr).toBe(0);
+    expect(readProof(value.metadata)[1]?.definition["vibe:vibe-guardrails-reviewer"]?.model).toBe("sonnet");
+    const refused = run(value, { agentName: "vibe-requirements-worker", input: "inspect", requestId: "advisor", reviewModel: "claude-fable-5-2" });
+    expect(refused.status).not.toBe(0);
+    expect(refused.stdout + refused.stderr).toMatch(/review model applies only to a receipt review role/);
+    expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", requestId: "other", reviewModel: "opus" }).status).not.toBe(0);
+    expect(readProof(value.metadata)).toHaveLength(2);
+  });
+
   it("constructs exact inline hook matchers without a settings file", () => {
     const args = protectedWriteLaunchArgs("/plugin/hooks/protected-write-guard.mjs", "/repo");
     expect(args[args.indexOf("--permission-prompts") + 1]).toBe("none");
