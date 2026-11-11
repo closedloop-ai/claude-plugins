@@ -5,7 +5,7 @@ import ts from "typescript";
 import { z } from "zod";
 import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
-import { readInputModule, isInputModulePath, inputModuleReferences, referenceMatches, inputCallName, inputBuiltin,
+import { readInputModule, isInputModulePath, inputModuleReferences, referenceMatches, inputCallName, inputBuiltin, inputUnlocatedFileName,
   inputExpressionReference, inputKnownString, type NativeReferenceEnvironment } from "./main-sync-input-references.js";
 import { reportOutputs } from "./main-sync-input-catalog.js";
 import { reportChildEntries, reportLoaderEntries, reportRelativeCwd, reportShellEntries, reportLiteralWords,
@@ -50,6 +50,8 @@ function walkReportClosure(execution: ReportExecution, entries: readonly ReportC
     const source = readInputModule(execution.root, entry.file, nativeEnvironment(entry.context, entry.argv));
     const collected = new Set<string>();
     if (inputModuleReferences(execution.root, entry.file, (file, reference) => {
+      // A file name under an unbound directory, such as a module's own `join(outDir, "results.json")`, locates no retained report (ISS-14015).
+      if (inputUnlocatedFileName(reference)) return false;
       if (reference.kind !== "path") {
         for (const candidate of tracked) {
           if (PUBLIC_MODULE.test(candidate) && !isLocalPlanPath(candidate)
