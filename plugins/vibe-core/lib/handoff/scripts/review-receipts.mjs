@@ -24,14 +24,17 @@ function findingShapeProblems(findings, worktree) {
     ? premiseProblems(finding, worktree) : [`finding ${index + 1} needs id, blocking and evidence`]);
 }
 
-/** Tool calls and final session identity from a launcher-owned stream trace. */
+/**
+ * Tool calls, final session identity and the model the CLI ran, from a launcher-owned stream trace. The model is
+ * what every CLI init record and every assistant message name; it is null unless they all name one model.
+ */
 export function reviewTraceFacts(traceText) {
   const events = traceText.split("\n").filter(Boolean).map(line => JSON.parse(line));
   const toolCalls = events.flatMap(event => event?.message?.content ?? [])
     .filter(block => block?.type === "tool_use" && typeof block.name === "string")
     .map(block => block.name);
   const final = events.findLast(event => event?.type === "result");
-  return { toolCalls, sessionId: final?.session_id ?? null };
+  return { toolCalls, sessionId: final?.session_id ?? null, model: traceModel(events) };
 }
 
 function graphCalls(result, trace) {
@@ -64,7 +67,7 @@ export function captureReviewReceipt({ worktree, resultFile, outFile, role, take
   const source = result.source;
   const receipt = { role, runtime: result.runtime, worktree: realpathSync(worktree), source, result: resultEvidence, trace, sessionId: result.sessionId,
     requestId: result.requestId, graphStatus: result.graphToolAliases.length === 0 ? "unavailable" : "used",
-    graphCalls: usedGraphCalls, findings: result.data.findings, ...(takeover ? { takeover } : {}) };
+    graphCalls: usedGraphCalls, findings: result.data.findings, model: facts.model, ...(takeover ? { takeover } : {}) };
   writeFileSync(outFile, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
   return receipt;
 }
@@ -161,6 +164,7 @@ export function reviewReceiptProblems(receipts, source) {
       const trace = reviewTraceFacts(readFileSync(receipt.trace.path, "utf8"));
       if (result.runtime !== receipt.runtime || result.agentName !== role || result.status !== "DONE" || result.source?.treeSha256 !== receipt.source?.treeSha256 || result.sessionId !== receipt.sessionId
         || result.requestId !== receipt.requestId || trace.sessionId !== receipt.sessionId) problems.push(`${role}: completion identity differs`);
+      if (receipt.model !== undefined && receipt.model !== trace.model) problems.push(`${role}: recorded model differs from its trace`);
       const usedGraphCalls = graphCalls(result, trace);
       if (result.graphToolAliases.length > 0 && usedGraphCalls.length === 0) problems.push(`${role}: graph calls missing`);
       if (findingShapeProblems(result.data?.findings, receipt.worktree).length || JSON.stringify(result.data.findings) !== JSON.stringify(receipt.findings)) problems.push(`${role}: findings differ from launcher output or are malformed`);
@@ -168,6 +172,28 @@ export function reviewReceiptProblems(receipts, source) {
     for (const finding of Array.isArray(receipt.findings) ? receipt.findings : []) findings.push({ ...finding, role });
   }
   return { problems, findings };
+}
+
+/**
+ * The model a Claude launcher receipt proves, re-read from its fingerprinted trace; null for a Codex receipt, a
+ * receipt with no recorded model, a changed trace, or a recorded model the trace does not show.
+ */
+export function verifiedReviewModel(receipt) {
+  if (receipt?.runtime !== "claude" || receipt.kind === "native-final" || typeof receipt.model !== "string") return null;
+  try {
+    if (JSON.stringify(evidenceFingerprint(receipt.trace.path)) !== JSON.stringify(receipt.trace)) return null;
+    const { model } = reviewTraceFacts(readFileSync(receipt.trace.path, "utf8"));
+    return model === receipt.model ? model : null;
+  } catch { return null; }
+}
+
+function traceModel(events) {
+  const inits = events.filter(event => event?.type === "system" && event.subtype === "init").map(event => event.model);
+  const assistants = events.filter(event => event?.type === "assistant").map(event => event.message?.model);
+  const models = new Set([...inits, ...assistants]);
+  if (inits.length === 0 || assistants.length === 0 || models.size !== 1) return null;
+  const [model] = models;
+  return typeof model === "string" && model ? model : null;
 }
 
 /**

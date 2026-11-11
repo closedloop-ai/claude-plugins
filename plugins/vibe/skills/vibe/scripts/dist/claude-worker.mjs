@@ -12460,7 +12460,7 @@ function bindTakeoverWriter(worktree, binding) {
 // ../../plugins/vibe/shared/vibe-core.mjs
 import path2 from "node:path";
 import { pathToFileURL as pathToFileURL3 } from "node:url";
-var VIBE_CORE_MIN = "1.0.4";
+var VIBE_CORE_MIN = "1.0.5";
 var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
 var cachedRoot = null;
 function vibeCoreRoot() {
@@ -12488,13 +12488,17 @@ function vibeCore(relative) {
 var module = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
 var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScriptReferences } = module;
 
+// vibe-core:lib/vibe/scripts/review-models.mjs
+var module2 = await vibeCore("lib/vibe/scripts/review-models.mjs");
+var { FABLE_REVIEW_MODELS } = module2;
+
 // src/record-context.ts
 import { existsSync as existsSync4, readFileSync as readFileSync6, realpathSync as realpathSync7 } from "node:fs";
 import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
-var module2 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module2;
+var module3 = await vibeCore("lib/vibe/scripts/session-record.mjs");
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module3;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -13073,7 +13077,9 @@ var launchSchema = recordContextSchema.extend({
   /** Explicit top-level orchestrator requirement; raw brief text never grants test authoring. */
   testsRequired: external_exports.boolean().optional(),
   previewRequirements: external_exports.array(external_exports.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
-  previewProducer: external_exports.literal("runtime-provider").optional()
+  previewProducer: external_exports.literal("runtime-provider").optional(),
+  /** A review role run on Fable 5.2 instead of its definition's model; the receipt proves the model from the trace (ISS-14039). */
+  reviewModel: external_exports.string().refine((model) => FABLE_REVIEW_MODELS.includes(model), "reviewModel must be an accepted Fable review model").optional()
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 var resultSchema = external_exports.object({
   type: external_exports.literal("result"),
@@ -13205,6 +13211,10 @@ function boundDefinition(definition, input) {
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(recordModes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
   }
+  if (input.reviewModel && !receiptRoles.has(input.agentName)) {
+    throw new ReviewModelError(`reviewModel applies only to a receipt review role (${[...receiptRoles].join(", ")}), not ${input.agentName}`);
+  }
+  const model = input.reviewModel ?? definition.metadata.model;
   const prototypeAdvice = input.agentName === "vibe-prototype-worker" && input.mode !== "record";
   const reader = readerRoles.has(input.agentName) || prototypeAdvice;
   const declaredModes = recordModes[input.agentName];
@@ -13240,11 +13250,11 @@ Runtime binding: work only in ${input.worktree}. Resolve this canonical definiti
   const agent = {
     description: definition.metadata.description,
     prompt,
-    model: definition.metadata.model,
+    model,
     tools,
     ...definition.skills.length ? { skills: definition.skills } : {}
   };
-  return { agent, reader, tools };
+  return { agent, reader, tools, model };
 }
 function pushPolicy(input) {
   if (isPublisherContext(input)) {
@@ -13388,7 +13398,7 @@ async function runWorker(rawInput) {
       "--agents",
       definitionFile,
       "--model",
-      definition.metadata.model,
+      bound.model,
       "--tools",
       bound.tools.join(","),
       "--disallowedTools",
@@ -13713,7 +13723,10 @@ function safeFailure(error) {
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
-  if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
+  if (error instanceof AgentRootError || error instanceof MissingSessionError || error instanceof ReviewModelError) return { code: error.code, summary: error.message };
+  if (error instanceof external_exports.ZodError && error.issues.some((issue) => issue.path[0] === "reviewModel")) {
+    return { code: REVIEW_MODEL_REFUSED, summary: `reviewModel must be one of ${FABLE_REVIEW_MODELS.join(", ")}` };
+  }
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
@@ -13842,6 +13855,10 @@ function workerSessionName(agentName, branch, requestId) {
 function checkoutHead(root) {
   return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }
+var REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
+var ReviewModelError = class extends Error {
+  code = REVIEW_MODEL_REFUSED;
+};
 export {
   armMcpInitWatchdog,
   boundDefinition,
