@@ -925,6 +925,11 @@ test("adopting keeps a session's binding: generic stays generic, bound stays bou
   assert.deepEqual(adoptedProvider({}, none), none);
   assert.equal(adoptedProvider({ liveTicket: "ISS-1" }, none), null, "a legacy tracker session waits for a chat that binds");
   assert.deepEqual(adoptedProvider({ liveTicket: "ISS-1" }, bound), bound);
+  for (const legacy of [{ mode: "seeded" }, { livePlan: "PLN-1" }, { vercel: { previewUrl: "x" } }, { clerkOrgId: "org_1" }, { flagSnapshot: {} }]) {
+    assert.equal(adoptedProvider(legacy, none), null, `a legacy record with ${Object.keys(legacy)[0]} is never written generic`);
+    assert.deepEqual(adoptedProvider(legacy, bound), bound);
+  }
+  assert.deepEqual(adoptedProvider({ mode: null, vercel: null, livePlan: null }, none), none, "a generic record's empty fields are no marker");
 });
 
 test("a provider seen installed is recorded once, so removing it by hand is never undone by an offer", async (t) => {

@@ -97,6 +97,15 @@ test("the generic walk's deterministic steps leave an empty blocker ledger", asy
     if (candidate.state !== "none") return `a disabled provider is a candidate: ${JSON.stringify(candidate)}`;
     return providerOffer(candidate, null) ? "a disabled provider is offered for install" : null;
   });
+  await step("D4 an installed provider vibe cannot read is never offered for install over it", () => {
+    const candidate = providerCandidate({ cwd: root, providers: [], unreadable: ["vibe-closedloop-provider"] });
+    if (candidate.state !== "none" || candidate.reason === "no provider is installed") return `reason ${candidate.reason}`;
+    return providerOffer(candidate, null) ? "an unreadable installed provider is offered for install" : null;
+  });
+  await step("D4 with no provider at all the reason is that none is installed", () => {
+    const candidate = providerCandidate({ cwd: root, providers: [], unreadable: [] });
+    return candidate.reason === "no provider is installed" ? null : `reason ${candidate.reason}`;
+  });
   await step("D4 install offer stays an offer", () => {
     const offer = providerOffer({ state: "none", reason: "no provider is installed" }, null);
     return offer?.connection ? null : "no install offer for a machine with no provider";

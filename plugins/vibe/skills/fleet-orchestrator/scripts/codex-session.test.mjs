@@ -208,6 +208,26 @@ test("a new writer whose brief lacks the lead's binding, or names another, is re
   assert.deepEqual(client.calls, []);
 });
 
+test("a writer started on another host takes the lead's binding from --lead-provider, having no chat of the lead's", async () => {
+  const { useLeadBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+  const { dir } = workDir();
+  const brief = join(dir, 'brief.md');
+  writeFileSync(brief, '$vibe #1 build it\nProvider: example-provider\n');
+  const lead = JSON.stringify({ state: 'bound', name: 'example-provider', capabilities: ['tickets'] });
+  const turn = (...extra) => parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', '#1', '--model', 'm', '--effort', 'high', ...extra]);
+  const noChat = { binding: () => null };
+  try {
+    await assert.rejects(run(stubClient({}), turn(), noChat), /this lead is bound as "Provider: none"/);
+    const client = stubClient({ ...SIDEBAR, 'thread/start': { thread: { id: 'T1' } }, 'turn/start': {} });
+    await assert.rejects(run(client, turn('--lead-provider', lead)), /no turn id/, 'the brief passes the binding check and the turn is requested');
+  } finally {
+    useLeadBinding(null);
+  }
+  assert.throws(() => turn('--lead-provider', '{"state":"bound","name":"Bad Name","capabilities":[]}'), /neither a bound provider nor none/);
+  assert.throws(() => turn('--lead-provider', 'not json'), /JSON provider\.mjs show prints/);
+  assert.throws(() => parseCli(['last', dir, 'w1', '--lead-provider', '{"state":"none"}']), /applies to turn only/);
+});
+
 test('an empty prompt file is refused before any request', async () => {
   const { dir } = workDir();
   const empty = join(dir, 'empty.md');

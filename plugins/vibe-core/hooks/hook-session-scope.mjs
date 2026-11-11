@@ -62,10 +62,14 @@ export function isVibePluginSkill(skill) {
   return typeof skill === "string" && VIBE_PLUGIN_SKILL.test(skill);
 }
 
-/** Whether this exact session's hook record says it activated vibe within the last 7 days. */
+/**
+ * Whether this exact session's hook record says it activated vibe within the last 7 days. A record an earlier
+ * vibe-core wrote has no `activated` field; it scoped only vibe or fleet-orchestrator, so either scope counts.
+ */
 export function hookActivated(sessionId, home = os.homedir(), now = new Date()) {
   const file = scopePath(sessionId, home);
-  return file !== null && readOwnRecord(file, sessionId, home, now)?.activated === true;
+  const record = file === null ? null : readOwnRecord(file, sessionId, home, now);
+  return record?.activated === true || ["vibe", "fleet-orchestrator"].includes(record?.skill);
 }
 
 function readOwnRecord(file, sessionId, home, now) {

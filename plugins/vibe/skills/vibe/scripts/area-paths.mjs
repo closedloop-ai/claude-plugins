@@ -15,6 +15,13 @@ export const NON_BUILD_PATH = /^(?:docs|\.claude|\.agents|\.context)\/|^[^/]+\.m
 const GENERIC_BACKEND = /(?:^|\/)(?:prisma|migrations)\/|\.sql$|schema\.prisma$/;
 export const GENERIC_AREAS = Object.freeze({ ui: [], desktopHost: [], desktopRelevant: [], prototype: null, backend: GENERIC_BACKEND });
 
+const UI_FILE = /\.(?:tsx|jsx|vue|svelte|css|scss|less|html)$/;
+
+/** Whether `file` is UI in `areas`: under a recipe's UI prefix, or, with no prefixes to go by, a UI file by its extension. */
+export function isUiFile(file, areas) {
+  return areas.ui.length ? areas.ui.some((prefix) => file.startsWith(prefix)) : UI_FILE.test(file);
+}
+
 /** The repository's areas for `binding`: its provider recipe's, compiled, or GENERIC_AREAS. */
 export function repositoryAreas(binding) {
   const data = providerDataOr(binding, "recipes", "areas", null);

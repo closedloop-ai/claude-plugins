@@ -38,7 +38,7 @@ import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
-import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
+import { documentKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -82,7 +82,7 @@ const REQUIRED_CONTENT = {
   Sessions: [[/^- (?:Codex session \(orchestrator\): `[A-Za-z0-9-]{8,100}`|Claude Code session \(orchestrator\): `[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)$/im, "lists no orchestrator session id"]],
   "Scope and acceptance criteria": [
     [/^- Newest ruling: (?:none found \(searched: [^)\n]+\)|.*\b\d{4}-\d{2}-\d{2}\b)/m, "has no Newest ruling line (a dated ruling, or none found with the searches run)"],
-    [{ test: (text) => new RegExp(String.raw`^- Prior removal: (?:none found \(searched: [^)\n]+\)|.*\b${trackerKey()})`, "m").test(text) },
+    [{ test: (text) => new RegExp(String.raw`^- Prior removal: (?:none found \(searched: [^)\n]+\)|.*\b${documentKey()})`, "m").test(text) },
       "has no Prior removal line (the removing ticket, or none found with the searches run)"],
   ],
 };
@@ -265,8 +265,8 @@ function checkChildren(values, record) {
 export const CLASSIFICATIONS = ["delivered", "active-elsewhere", "superseded", "uncovered"];
 export const EVIDENCE_KINDS = ["diff", "tracked", "merged-pr", "report"];
 const WRITER = "vibe-change-worker";
-// The bound tracker's ticket key; child tickets exist only with a tracker bound.
-const slugPattern = () => new RegExp(`^${trackerKey()}$`);
+// The bound tracker's document key; child tickets exist only with a tracker bound.
+const slugPattern = () => new RegExp(`^${documentKey()}$`);
 const PULL_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
 const HTTPS_URL = /^https:\/\/\S+$/;
 const SHA = /^[0-9a-f]{7,40}$/;

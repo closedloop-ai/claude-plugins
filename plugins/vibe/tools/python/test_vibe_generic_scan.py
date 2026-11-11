@@ -144,7 +144,7 @@ def test_the_checked_in_runtime_tree_is_generic() -> None:
     assert scan.findings() == []
 
 
-SIBLING_ROOT_CALL = re.compile(r"siblingPluginRoot\(\s*([^,)]+)")
+SIBLING_ROOT_CALL = re.compile(r"siblingPlugin(?:Root(?:OrNull)?|Install)\(\s*([^,)]+)")
 
 
 def test_the_provider_root_comes_only_from_its_binding() -> None:
@@ -159,8 +159,9 @@ def test_the_provider_root_comes_only_from_its_binding() -> None:
                 calls.append((path.relative_to(scan.REPO).as_posix(), match.group(1).strip()))
     assert calls, "the sibling resolver is still used for vibe-core"
     named = {argument for _, argument in calls}
-    assert named <= {'"vibe-core"', "name"}, calls
-    assert all(path.endswith("plugin-roots.mjs") for path, argument in calls if argument == "name"), calls
+    assert named <= {'"vibe-core"', '"vibe"', "name"}, calls
+    # A variable name reaches only the resolver itself and the startup probe that enumerates installed providers.
+    assert all(path.endswith(("plugin-roots.mjs", "lib/vibe/scripts/provider.mjs")) for path, argument in calls if argument == "name"), calls
 
 
 CODE_MARKERS = re.compile(r"=>|\bawait\s|\bimport\s*[{(*]|\bimport\s+\w+\s+from\b|\bfunction\s*\(|\brequire\(|\bprocess\.\w|\bconsole\.\w|\beval\(")

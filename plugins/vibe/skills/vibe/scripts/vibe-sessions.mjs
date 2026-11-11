@@ -137,7 +137,12 @@ import {
 } from "./vibe-session-data.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
-const { git, readSessionRecord, sessionLiveTicket, writeSessionRecord: writeRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { git, readSessionRecord, sessionLiveTicket, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+
+// An older vibe (another harness on this machine, or a rollback) reads the environment org as `clerkOrgId`, so a
+// write keeps that name beside `environmentOrgId` while one is set.
+const writeRecord = (worktree, record) => writeSessionRecord(worktree,
+  record.environmentOrgId ? { ...record, clerkOrgId: record.environmentOrgId } : record);
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 const { registerWorktreeRetirement, sweepOwnedCleanups } = await vibeCore("lib/vibe/scripts/owned-cleanup.mjs");

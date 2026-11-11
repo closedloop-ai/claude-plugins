@@ -133,6 +133,21 @@ test("an activating skill keeps the chat activated through later unrelated skill
   assert.equal(hookActivated("s", home, new Date(Date.now() + 8 * 24 * 60 * 60 * 1000)), false, "the record expires after 7 days");
 });
 
+test("a scope record an earlier vibe-core wrote, with no activated field, still activates the chat it scoped", (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), "vibe-activation-legacy-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const write = (record) => {
+    mkdirSync(path.join(home, ".vibe-hook-scope"), { recursive: true });
+    writeFileSync(path.join(home, ".vibe-hook-scope", "s.json"), JSON.stringify({ sessionId: "s", recordedAt: new Date().toISOString(), ...record }));
+  };
+  write({ skill: "fleet-orchestrator" });
+  assert.equal(hookActivated("s", home), true);
+  write({ skill: "vibe" });
+  assert.equal(hookActivated("s", home), true);
+  write({ skill: null });
+  assert.equal(hookActivated("s", home), false, "a record an unrelated skill cleared activates nothing");
+});
+
 test("the dispatcher decides activation once per event, and only when a gated guard comes up", () => {
   let asked = 0;
   const isActivated = () => { asked += 1; return false; };

@@ -136,6 +136,28 @@ decided them, so it never removes a review. With `applied` `false`, run
 nothing extra.
 <!-- end: extra-gates -->
 
+<!-- block: e2e-mutation-proof -->
+An authenticated web E2E mutation proof without the staging test password can
+run in a repository-owned credential-free Playwright project that collects the
+spec with no live sign-in setup on the production host. Mutate only an isolated
+exact-head checkout on the remote E2E slot, headless with retries off, then
+restore its bytes and record the passing run. Never handle or bypass a credential.
+<!-- end: e2e-mutation-proof -->
+
+<!-- block: e2e-path -->
+- Run them through the repo's containerized path (the `local-ci` skill's
+  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  "Existing checks"), never natively on the person's Mac. The lock gives
+  each run its own compose project, so a teardown removes only its own
+  stack; `--foreign-compose <project>` names a stack started outside the
+  lock, which keeps the machine busy while it runs.
+- A missing Docker or Dagger is recorded as that exact limitation, never a
+  pass.
+
+No worker claims what CI runs or ran without first reading
+`.github/pr-test-event-tiers.md` and citing the job's tier.
+<!-- end: e2e-path -->
+
 <!-- block: join-lanes -->
 Before `Final Alignment Status: Aligned`, before the PLN is left Approved and
 before anything is called ready, join the run from step 1:

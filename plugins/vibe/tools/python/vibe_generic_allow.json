@@ -183,5 +183,20 @@
   "path": "plugins/vibe/skills/vibe/references/closedloop-graph.md",
   "text": "`node <plugin-root>/skills/vibe/scripts/provider.mjs path graph provider:closedloop-graph.md`",
   "reason": "Pointer kept at the path the byte-unchanged seed-refresh files (ruling Q5) read; it sends them to the provider's reference."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "const LEGACY_PROVIDER_FIELDS = [\"liveTicket\", \"handoffTicket\", \"livePlan\", \"mode\", \"vercel\", \"clerkOrgId\", \"environmentOrgId\", \"flagSnapshot\"];",
+  "reason": "Compatibility read of record fields written by older vibe versions, so a legacy provider session is never written generic."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "// An older vibe (another harness on this machine, or a rollback) reads the environment org as `clerkOrgId`, so a",
+  "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "record.environmentOrgId ? { ...record, clerkOrgId: record.environmentOrgId } : record);",
+  "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
  }
 ]

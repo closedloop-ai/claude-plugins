@@ -9,7 +9,7 @@ import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/s
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
 import { desktopE2ePostMergeCoverage, isDesktopE2eLimitation } from "./main-sync-lanes.js";
-import { mainSyncRecipe } from "./main-sync-recipe.js";
+import { mainSyncRecipe, uncheckedReason } from "./main-sync-recipe.js";
 import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
@@ -179,7 +179,9 @@ export function validateMainSync(raw: unknown) {
     .map((item) => ({ argv: item.argv, coveredBy: desktopE2ePostMergeCoverage(value.place.root)! }));
   const requiredE2eComplete = validation.e2eLimitations.length === e2eLeftForCi.length || Boolean(ciEvidence);
   const { mainPreexistingFailures, flakyChecks, machineLimitedChecks } = comparedChecks(validation.commands);
-  return { status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
+  const unchecked = uncheckedReason(value.purpose, validation.commands.length);
+  return { status: (value.purpose === "handoff" && !requiredE2eComplete) || unchecked ? "NEEDS_REVIEW" : "DONE",
+    ...(unchecked ? { unchecked } : {}),
     publicationReady: true, requiredE2eComplete, transactionId: receipt.transactionId, mainSha: receipt.mainSha,
     headSha: validation.headSha, treeSha: validation.treeSha, commandCount: validation.commands.length,
     purpose: value.purpose, validationScope: "publication-preparation", e2eLimitations: validation.e2eLimitations,

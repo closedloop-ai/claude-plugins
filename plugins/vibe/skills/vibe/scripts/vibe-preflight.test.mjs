@@ -261,8 +261,13 @@ test("the PostHog check runs only with the provider's recipes, and fails plainly
   const checkout = path.join(env.home, ...SPACED);
   makeCheckout({ ...env, checkout });
   assert.equal(runPreflight(env, ["--repo", checkout]).checks["posthog-key"], undefined, "a generic session has no flag snapshot");
-  assert.equal(runPreflight(env, ["--repo", checkout], boundProvider(env.home, ["tickets"])).checks["posthog-key"], undefined,
+  const unopted = path.join(env.home, "Source", "personal-app");
+  makeCheckout({ ...env, checkout: unopted, remoteUrl: "https://github.com/someone/personal-app.git" });
+  assert.equal(runPreflight(env, ["--repo", unopted], boundProvider(env.home, ["tickets"])).checks["posthog-key"], undefined,
     "a provider without recipes for the repository adds no check");
+  // The chat's own check ran where nothing opted in; the repository named here commits the opt-in, so its recipes apply.
+  assert.equal(runPreflight(env, ["--repo", checkout], boundProvider(env.home, ["tickets"])).checks["posthog-key"].ok, false,
+    "the named repository's own opt-in decides, not the folder the chat's check ran in");
   const bound = boundProvider(env.home);
 
   const missing = runPreflight(env, ["--repo", checkout], bound);

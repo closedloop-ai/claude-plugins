@@ -1,8 +1,8 @@
 // Where a vibe session keeps its local technical plans and its decision table,
 // and the check that none was ever committed. Without a provider recipe they
-// live in the worktree's private git directory (`<git dir>/vibe/plans/` and
-// `<git dir>/vibe/decision-tables/`), outside the working tree, so no commit,
-// diff or push can carry them. A provider recipe for the repository
+// live in the repository's git common dir (`<git common dir>/vibe/<slug>/plans/`
+// and `.../decision-tables/`), outside the working tree, so no commit, diff or
+// push can carry them and removing the session worktree keeps them. A provider recipe for the repository
 // (`recipes.artifactRoot`, a dot folder the repository ignores) keeps them in
 // that folder of the worktree instead, under `vibe-plans/` and
 // `decision-tables/`; every publisher then refuses a commit that holds one.
@@ -80,7 +80,9 @@ export function localPlanPaths(worktree, { requestId = null, binding = sessionBi
   const slug = readSessionRecord(worktree)?.slug ?? path.basename(path.resolve(worktree));
   const prefix = localPlanPrefix(binding);
   const top = git(worktree, ["rev-parse", "--show-toplevel"]);
-  const root = prefix ? path.join(top, path.dirname(prefix)) : path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe");
+  // Without a provider folder they live in the repository's git common dir, which removing the session worktree keeps.
+  const root = prefix ? path.join(top, path.dirname(prefix))
+    : path.join(git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]), "vibe", slug);
   const plans = prefix ? path.join(top, prefix) : path.join(root, "plans");
   const decisionTables = path.join(root, "decision-tables");
   return {

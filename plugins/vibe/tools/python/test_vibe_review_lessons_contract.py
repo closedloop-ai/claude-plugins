@@ -222,7 +222,8 @@ def test_verify_runs_sort_order_tests_by_capability_and_reads_ci_tiers() -> None
         "Tier C: otherwise use the operator's configured remote runner",
         "read `.github/pr-test-event-tiers.md` and cite the tier",
     ))
-    handoff = flat(HANDOFF_SKILL.read_text())
+    # The repository's containerized E2E path and CI tiers file are the provider's handoff text for its repository.
+    handoff = flat((PROVIDER_REFERENCES / "handoff-skill.md").read_text())
     assert "`dagger call e-2-e`" in handoff
     assert "`.github/pr-test-event-tiers.md`" in handoff
 

@@ -11634,7 +11634,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, useSessionWorktree } = module;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module;
 
 // src/contracts.ts
 function capabilityOperations(binding = sessionBinding()) {

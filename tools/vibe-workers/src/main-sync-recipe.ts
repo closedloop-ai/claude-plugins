@@ -81,3 +81,12 @@ export function checkSteps(root: string, purpose: "build" | "prototype" | "hando
   if (!command) return { steps: [], final: [] };
   return { steps: [{ argv: PLAIN_COMMAND.test(command) ? command.split(" ") : ["sh", "-c", command] }], final: [] };
 }
+
+/**
+ * Why a publication sync ran no check at all, or null: with no recipe and no test command in AGENTS.md a handoff
+ * or prototype sync has nothing to run, which is unsupported, never a pass. The build loop leaves checks to the hooks.
+ */
+export function uncheckedReason(purpose: string, commandCount: number): string | null {
+  if (purpose === "build" || commandCount > 0) return null;
+  return "the repository names no check for main sync to run (no recipe, and no test command in AGENTS.md)";
+}

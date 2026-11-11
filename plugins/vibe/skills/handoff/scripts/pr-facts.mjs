@@ -16,7 +16,7 @@ import { repositoryLaneReportProblems, laneReportLabel } from "./ci-job-shape.mj
 import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
-import { GENERIC_AREAS, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
+import { GENERIC_AREAS, isUiFile, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
 import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { requiredContainerIdentity, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
@@ -189,7 +189,7 @@ function signature(text) {
 /** The evidence lanes a diff needs in the repository's `areas` (area-paths.mjs); none for a server-only diff. */
 export function requiredLanes(changed, touchFlows = [], areas = GENERIC_AREAS) {
   const lanes = [];
-  if (changed.some((file) => areas.ui.some((prefix) => file.startsWith(prefix)))) {
+  if (changed.some((file) => isUiFile(file, areas))) {
     lanes.push("web-host");
     if (changed.some((file) => areas.desktopHost.some((prefix) => file.startsWith(prefix)))) lanes.push("desktop-host");
     if (touchFlows.length > 0) lanes.push("webkit-iphone", "chromium-pixel");
@@ -415,7 +415,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     const { contracts, refusals } = contractChanges(files, prRules(worktree).refusalPaths);
     const areas = sessionAreas(worktree);
     const facts = {
-      serverOnly: !changed.some((file) => areas.ui.some((prefix) => file.startsWith(prefix))),
+      serverOnly: !changed.some((file) => isUiFile(file, areas)),
       requiredLanes: requiredLanes(changed, [], areas),
       assertionChanges: assertionChanges(files),
       contractChanges: contracts,

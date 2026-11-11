@@ -169,6 +169,25 @@ test("the command prints nothing from a provider in a session with none bound, a
   assert.equal(run("show").stdout, '{"state":"none"}\n');
 });
 
+test("the command judges a named checkout that holds no session by that checkout's own opt-in", (t) => {
+  const home = tree(t);
+  const real = path.resolve(HERE, "../../../../vibe-closedloop-provider");
+  const contract = readContract(real);
+  const providers = [{ name: contract.name, root: real, version: "1.0.0", enabled: true, contract }];
+  const probed = probeProvider({ runtime: "codex", cwd: home, providers, connections: { tracker: "connected", graph: "connected" } });
+  assert.ok(!probed.capabilities.includes("recipes"), "the chat's check ran outside any opted-in repository");
+  write(path.join(home, ".codex", "vibe", "plugin-version", "chat-1.json"), { conversation: "chat-1", provider: probed });
+  const checkout = path.join(home, "checkout");
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8",
+    env: { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "chat-1", CODEX_THREAD_ID: "" } });
+  mkdirSync(checkout, { recursive: true });
+  assert.equal(run("data", "recipes", "bootstrap", "--worktree", checkout).status, 3, "a checkout with no opt-in has no recipes");
+  write(path.join(checkout, ".closedloop-ai", "vibe-recipes.json"), { schema: 1, provider: contract.name });
+  const opted = run("data", "recipes", "bootstrap", "--worktree", checkout);
+  assert.equal(opted.status, 0, opted.stdout + opted.stderr);
+  assert.notEqual(JSON.parse(opted.stdout), null);
+});
+
 test("assembled text follows the binding stub by stub, and ticket references follow the tracker", (t) => {
   const root = tree(t);
   const acme = plugin(path.join(root, "acme"), "acme-provider", "1.0.0", CONTRACT);
@@ -239,6 +258,29 @@ test("a session judges the recipes opt-in in its own repository, not the directo
   writeFileSync(path.join(repo, ".closedloop-ai", "vibe-recipes.json"), "{}");
   assert.match(bindForRepository(opted, repo).withheld[0].reason, /must hold exactly/, "a malformed file withholds them again with one reason");
   assert.deepEqual(bindForRepository({ state: "none" }, repo), { state: "none" });
+});
+
+test("a session branched before its repository committed the opt-in reads it from the repository's main checkout", (t) => {
+  const root = tree(t);
+  const real = path.resolve(HERE, "../../../../vibe-closedloop-provider");
+  const contract = readContract(real);
+  const providers = [{ name: contract.name, root: real, version: "1.0.0", enabled: true, contract }];
+  const bound = probeProvider({ runtime: "codex", cwd: root, providers, connections: { tracker: "connected", graph: "connected" } });
+  const main = path.join(root, "repo");
+  const git = (...args) => {
+    const run = spawnSync("git", ["-C", main, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+  };
+  mkdirSync(main, { recursive: true });
+  git("init", "--quiet", "--initial-branch=main");
+  git("commit", "--quiet", "--allow-empty", "-m", "base");
+  const session = path.join(main, ".claude", "worktrees", "vibe-old");
+  git("worktree", "add", "--quiet", "-b", "vibe/old", session);
+  assert.ok(!bindForRepository(bound, session).capabilities.includes("recipes"), "neither checkout has opted in");
+  write(path.join(main, ".closedloop-ai", "vibe-recipes.json"), JSON.stringify({ schema: 1, provider: contract.name }));
+  assert.ok(bindForRepository(bound, session).capabilities.includes("recipes"), "the main checkout's opt-in binds the older session");
+  write(path.join(session, ".closedloop-ai", "vibe-recipes.json"), JSON.stringify({ schema: 1, provider: "another-provider" }));
+  assert.match(bindForRepository(bound, session).withheld[0].reason, /opts in to "another-provider"/, "the session's own file decides when it has one");
 });
 
 test("a binding whose release an update replaced finds the same provider where it is installed now", () => {

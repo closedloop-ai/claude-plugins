@@ -183,4 +183,15 @@ test("with no declaration a lane command is the AGENTS.md test command, and a co
   const workflow = { kind: "github-workflow", path: ".github/workflows/ci.yml", commit, sha256 };
   const lanes = workflowLaneDefinitions(content.toString("utf8"));
   assert.deepEqual(repositoryLaneReportProblems({ source: workflow, matches: lanes.map(({ name, command }) => ({ name, command })) }, checkout, commit), []);
+  const labeler = "name: Labeler\non: [pull_request]\njobs:\n  label:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo label\n";
+  writeFileSync(path.join(checkout, ".github/workflows/labeler.yml"), labeler);
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "second workflow"], home);
+  const second = git(checkout, ["rev-parse", "HEAD"], home);
+  const labelerSource = { kind: "github-workflow", path: ".github/workflows/labeler.yml", commit: second, sha256: createHash("sha256").update(labeler).digest("hex") };
+  const labelerLanes = workflowLaneDefinitions(labeler).map(({ name, command }) => ({ name, command }));
+  assert.match(repositoryLaneReportProblems({ source: labelerSource, matches: labelerLanes }, checkout, second)[0], /must be the repository's only workflow/,
+    "with two workflows and no declaration, the report cannot choose the one it ran");
+  assert.match(repositoryLaneReportProblems({ source: { ...workflow, commit: second }, matches: lanes.map(({ name, command }) => ({ name, command })) }, checkout, second)[0],
+    /must be the repository's only workflow/);
 });

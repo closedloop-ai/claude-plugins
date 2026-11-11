@@ -222,7 +222,7 @@ test("the scope must carry the newest ruling on the capability, dated, or the se
   }
   const ruled = "- Newest ruling: none found (searched: fts_search tag editing, search_memory_facts, ticket comments)\n";
   assert.equal(scope(ruled).ok, true);
-  for (const prior of ["", "- Prior removal: none\n", "- Prior removal: the pill was removed once\n"]) {
+  for (const prior of ["", "- Prior removal: none\n", "- Prior removal: the pill was removed once\n", "- Prior removal: checked the UTF-8 encoder only\n"]) {
     assert.deepEqual(scope(ruled, prior).problems.map(({ problem }) => problem), ["has no Prior removal line (the removing ticket, or none found with the searches run)"]);
   }
 });

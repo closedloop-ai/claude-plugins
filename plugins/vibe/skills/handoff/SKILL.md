@@ -508,11 +508,12 @@ more than its assertions pin; the handoff inventory gates their
 in its `pull-request` turn, and the pull request does not open, or take a new
 push, until its rerun on the corrected tests is clean.
 
-An authenticated web E2E mutation proof without the staging test password can
-run in a repository-owned credential-free Playwright project that collects the
-spec with no live sign-in setup on the production host. Mutate only an isolated
-exact-head checkout on the remote E2E slot, headless with retries off, then
-restore its bytes and record the passing run. Never handle or bypass a credential.
+<!-- generic: e2e-mutation-proof -->
+A browser E2E mutation proof mutates only an isolated exact-head checkout,
+runs headless with retries off, then restores its bytes and records the passing
+run. Never handle or bypass a credential.
+<!-- end generic: e2e-mutation-proof -->
+> Provider `recipes` (block `e2e-mutation-proof` of `handoff-skill.md`)
 
 ### Join the background lane run
 
@@ -535,17 +536,21 @@ step 5's checks and step 7's validation:
 
 - Run every e2e spec the session touched, and every spec covering a touched
   screen, and no other spec.
-- Run them through the repo's containerized path (the `local-ci` skill's
-  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
-  "Existing checks"), never natively on the person's Mac. The lock gives
+<!-- generic: e2e-path -->
+- Run them headless through the browser E2E command the repository's
+  AGENTS.md documents, in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  "Existing checks"). The lock gives
   each run its own compose project, so a teardown removes only its own
   stack; `--foreign-compose <project>` names a stack started outside the
   lock, which keeps the machine busy while it runs.
-- A missing Docker or Dagger is recorded as that exact limitation, never a
+- A repository that documents no browser E2E command, or a tool that command
+  needs and this machine lacks, is recorded as that exact limitation, never a
   pass.
 
-No worker claims what CI runs or ran without first reading
-`.github/pr-test-event-tiers.md` and citing the job's tier.
+No worker claims what CI runs or ran without first citing the workflow job
+that runs it.
+<!-- end generic: e2e-path -->
+> Provider `recipes` (block `e2e-path` of `handoff-skill.md`)
 
 <!-- generic: qa-passes -->
 For the screens the session touched, run the repository's own read-only QA

@@ -224208,7 +224208,7 @@ function deploymentHost(host) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module2 = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding: sessionBinding2, ticketReference, useSessionWorktree } = module2;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding: sessionBinding2, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module2;
 
 // src/contracts.ts
 var TRACKER_SERVICE = "tracker";
@@ -225210,6 +225210,10 @@ function checkSteps(root, purpose) {
   if (!command) return { steps: [], final: [] };
   return { steps: [{ argv: PLAIN_COMMAND.test(command) ? command.split(" ") : ["sh", "-c", command] }], final: [] };
 }
+function uncheckedReason(purpose, commandCount) {
+  if (purpose === "build" || commandCount > 0) return null;
+  return "the repository names no check for main sync to run (no recipe, and no test command in AGENTS.md)";
+}
 
 // vibe-core:lib/vibe/scripts/github-remote.mjs
 var module4 = await vibeCore("lib/vibe/scripts/github-remote.mjs");
@@ -225527,7 +225531,7 @@ function localPlanPaths(worktree, { requestId = null, binding = sessionBinding3(
   const slug = readSessionRecord3(worktree)?.slug ?? path3.basename(path3.resolve(worktree));
   const prefix = localPlanPrefix(binding);
   const top = git4(worktree, ["rev-parse", "--show-toplevel"]);
-  const root = prefix ? path3.join(top, path3.dirname(prefix)) : path3.join(git4(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe");
+  const root = prefix ? path3.join(top, path3.dirname(prefix)) : path3.join(git4(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]), "vibe", slug);
   const plans = prefix ? path3.join(top, prefix) : path3.join(root, "plans");
   const decisionTables = path3.join(root, "decision-tables");
   return {
@@ -228777,8 +228781,10 @@ function validateMainSync(raw) {
   const e2eLeftForCi = validation.e2eLimitations.filter((item) => isDesktopE2eLimitation(value.place.root, item)).map((item) => ({ argv: item.argv, coveredBy: desktopE2ePostMergeCoverage(value.place.root) }));
   const requiredE2eComplete = validation.e2eLimitations.length === e2eLeftForCi.length || Boolean(ciEvidence);
   const { mainPreexistingFailures, flakyChecks, machineLimitedChecks } = comparedChecks(validation.commands);
+  const unchecked = uncheckedReason(value.purpose, validation.commands.length);
   return {
-    status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
+    status: value.purpose === "handoff" && !requiredE2eComplete || unchecked ? "NEEDS_REVIEW" : "DONE",
+    ...unchecked ? { unchecked } : {},
     publicationReady: true,
     requiredE2eComplete,
     transactionId: receipt.transactionId,

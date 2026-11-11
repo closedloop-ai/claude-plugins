@@ -26,6 +26,7 @@
 // prints one contract data value as JSON. Each exits 3 with one line when no provider with that capability
 // is bound, so a generic session reads nothing.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -67,6 +68,7 @@ export class ProviderUnavailable extends Error {}
 
 // A script run with `--worktree <path>` works on that session, so its sessionBinding() reads that worktree first.
 let activeWorktree = worktreeArgument(process.argv);
+let leadBinding = null;
 
 /** The contract at a plugin `root`, or null when it is not a provider vibe can speak to. */
 export function readContract(root) {
@@ -107,6 +109,17 @@ function parseContract(root, text) {
   } catch {
     return null;
   }
+}
+
+/** The plugins beside vibe that ship a provider contract file this vibe cannot read (another protocol, or malformed). */
+export function unreadableProviders({ from = import.meta.url } = {}) {
+  const found = [];
+  for (const name of siblingPluginNames({ from })) {
+    let root;
+    try { root = siblingPluginInstall(name, { from }).root; } catch { continue; }
+    if (existsSync(path.join(root, CONTRACT_FILE)) && !readContract(root)) found.push(name);
+  }
+  return found;
 }
 
 /** Every plugin beside vibe that ships a provider contract, with its install and whether the harness has it on. */
@@ -199,7 +212,8 @@ export function optInProblem(need, repo, providerName) {
 
 /**
  * `binding` with its repository-file needs judged in the session repository `repo` instead of the chat's working
- * directory: each capability that needs a committed opt-in file binds only when `repo` holds a valid one, and is
+ * directory: each capability that needs a committed opt-in file binds only when `repo` (or, lacking the file, its main
+ * checkout) holds a valid one, and is
  * listed in `withheld` with its one reason otherwise. A binding that is not bound comes back unchanged.
  */
 export function bindForRepository(binding, repo) {
@@ -212,9 +226,10 @@ export function bindForRepository(binding, repo) {
     // A bound provider met every connection need when it was probed, so only the repository's files decide here.
     const files = spec.needs.filter((need) => need.startsWith("repo-file:"));
     if (!files.length) continue;
-    const missing = files.find((need) => !existsSync(path.join(repo, need.slice("repo-file:".length))));
+    const home = optInHome(repo, files);
+    const missing = files.find((need) => !existsSync(path.join(home, need.slice("repo-file:".length))));
     const problem = missing ? `${missing.slice("repo-file:".length)} is not in this repository`
-      : files.map((need) => optInProblem(need, repo, binding.name)).find(Boolean);
+      : files.map((need) => optInProblem(need, home, binding.name)).find(Boolean);
     if (problem) { capabilities.delete(capability); withheld.push({ capability, reason: problem }); }
     else capabilities.add(capability);
   }
@@ -224,14 +239,33 @@ export function bindForRepository(binding, repo) {
 }
 
 /**
+ * Where a session at `repo` finds its committed opt-in `files`: `repo` itself, else the repository's main checkout,
+ * so a session branched before the repository committed its opt-in still reads the repository's answer.
+ */
+function optInHome(repo, files) {
+  const present = (dir) => files.every((need) => existsSync(path.join(dir, need.slice("repo-file:".length))));
+  if (present(repo)) return repo;
+  let main = null;
+  try {
+    main = path.dirname(execFileSync("git", ["-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 }).trim());
+  } catch {
+    main = null;
+  }
+  return main && present(main) ? main : repo;
+}
+
+/**
  * The one enabled provider a start would bind, with the connection checks the model makes first, or why
  * there is none: `{ state: "candidate", name, skill, connections }` or `{ state: "none", reason }`.
  */
-export function providerCandidate({ cwd = process.cwd(), providers = installedProviders({ cwd }) } = {}) {
+export function providerCandidate({ cwd = process.cwd(), providers = installedProviders({ cwd }), unreadable = unreadableProviders() } = {}) {
   const enabled = providers.filter((provider) => provider.enabled);
   if (enabled.length !== 1) {
+    // A provider vibe cannot read is still installed: it is reported as that, never offered for install over it.
+    const none = unreadable.length ? `the installed provider ${unreadable.join(", ")} has a contract this vibe cannot read` : "no provider is installed";
     return { state: ProviderState.None,
-      reason: enabled.length > 1 ? "more than one provider is enabled" : providers.length ? "the provider is disabled" : "no provider is installed" };
+      reason: enabled.length > 1 ? "more than one provider is enabled" : providers.length ? "the provider is disabled" : none };
   }
   const [{ name, contract }] = enabled;
   return { state: "candidate", name, skill: `${name}:${contract.skill}`, connections: contract.connections ?? {} };
@@ -263,7 +297,27 @@ export function recordedBinding({ worktree = null, conversation = null, home } =
  * worker launched as its own harness session has no conversation record, so the worktree is what binds it.
  */
 export function sessionBinding(worktree = null, env = process.env) {
-  return recordedBinding({ worktree: worktree ?? activeWorktree, conversation: harnessActor(env)?.id ?? null });
+  return recordedBinding({ worktree: worktree ?? activeWorktree, conversation: harnessActor(env)?.id ?? null }) ?? leadBinding;
+}
+
+/**
+ * The lead's binding a writer launch on another host was handed (codex-session.mjs `--lead-provider`): that host has
+ * no chat of the lead's, so sessionBinding() reads this last.
+ */
+export function useLeadBinding(binding) {
+  leadBinding = binding ?? null;
+}
+
+/** The binding `provider.mjs show` printed on the lead's host, checked; throws on anything else. */
+export function parseLeadBinding(text) {
+  let value;
+  try { value = JSON.parse(text); } catch { throw new Error("--lead-provider takes the JSON provider.mjs show prints"); }
+  if (value?.state === ProviderState.None) return { state: ProviderState.None };
+  const valid = value?.state === ProviderState.Bound && typeof value.name === "string" && /^[a-z0-9-]+$/.test(value.name)
+    && Array.isArray(value.capabilities) && value.capabilities.every((capability) => typeof capability === "string")
+    && (value.root === undefined || typeof value.root === "string");
+  if (!valid) throw new Error("--lead-provider names neither a bound provider nor none");
+  return { state: value.state, name: value.name, capabilities: value.capabilities, ...(value.root ? { root: value.root } : {}) };
 }
 
 /** Names the session worktree (a script's `--worktree`) that a later sessionBinding() without one reads first. */
@@ -273,8 +327,9 @@ export function useSessionWorktree(worktree) {
 
 /**
  * `binding` when it is bound with `capability` and its provider is still installed (where it was bound, or where an
- * update put it); else null. A provider removed or disabled since no longer answers, so a bound session keeps its local work
- * and stops its provider steps with one named failure (`requireProvider`).
+ * update put it); else null. A provider removed since no longer answers, so a bound session keeps its local work and
+ * stops its provider steps with one named failure (`requireProvider`). Disabling one takes effect at the next start's
+ * probe; its files stay where the binding recorded them, so a session already bound keeps reading them.
  */
 export function boundWith(binding, capability) {
   if (binding?.state !== ProviderState.Bound || !binding.capabilities?.includes(capability)) return null;
@@ -285,8 +340,8 @@ export function boundWith(binding, capability) {
 }
 
 /**
- * Where the bound provider is now: the recorded root, or, when an update replaced that release, the root of the same
- * provider still installed and enabled. A provider removed or disabled since has none.
+ * Where the bound provider is now: the recorded root while it exists, or, when an update replaced that release, the
+ * root of the same provider still installed and enabled. A provider removed since has none.
  */
 function currentRoot(binding) {
   if (typeof binding.root === "string" && existsSync(binding.root)) return binding.root;
@@ -415,9 +470,12 @@ function main(argv) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true,
     options: { worktree: { type: "string" }, conversation: { type: "string" } } });
-  const binding = values.conversation
+  let binding = values.conversation
     ? recordedBinding({ worktree: values.worktree ?? null, conversation: values.conversation })
     : sessionBinding(values.worktree ?? null);
+  // A checkout that holds no session (preflight names the repository's main checkout) is judged as that repository:
+  // its own opt-in decides, not the folder the chat's check ran in.
+  if (values.worktree && !recordedBinding({ worktree: values.worktree })) binding = bindForRepository(binding, values.worktree);
   if (command === "show") {
     process.stdout.write(`${JSON.stringify(binding ?? { state: ProviderState.None })}\n`);
     return 0;

@@ -23,7 +23,7 @@ export function fixture(config) {
   if (config !== undefined) writeFileSync(join(orch, 'config.env'), config);
   writeFileSync(join(orch, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: loadEvidence(), harnesses: [] }));
   // Resolution, freshness and owned admission use real Node; other operational calls remain recorded.
-  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*/vibe/scripts/provider.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   writeLoopbackSsh(bin, join(root, 'ssh-args'));
   writeFileSync(join(bin, 'cut'), '#!/bin/sh\nprintf "%s\\n" "${FLEET_TEST_LOAD:-0}"\n');
   writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "{ %s 0 0 }\\n" "${FLEET_TEST_LOAD:-0}"\n');
@@ -35,7 +35,8 @@ export function fixture(config) {
   writeFileSync(prompt, '$vibe ISS-1\n');
   const run = (args, env = {}) => spawnSync('bash', [FLEET, orch, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), ...env },
+    // No chat of the test runner's binds the lead: a case that needs one names it in `env`.
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), CLAUDE_CODE_SESSION_ID: '', CODEX_THREAD_ID: '', ...env },
   });
   const argv = (result) => result.stdout.split('\n').filter((l) => l.startsWith('arg:')).map((l) => l.slice(4));
   return { root, orch, prompt, run, argv };
@@ -46,7 +47,7 @@ export const remoteConfig = (root, extra = '') => `REMOTE_HOST=box\nREMOTE_STATE
 /** Let the real fleet shell complete a remote turn while the test launcher writes only remote state. */
 export function successfulRemoteWriter(f, exitStatus = 0) {
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit ${exitStatus};; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*/vibe/scripts/provider.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *codex-session.mjs) mkdir -p "$3"; printf '%s\\n' '{"threadId":"remote-thread","cwd":"/fixture"}' > "$3/$4.json"; exit ${exitStatus};; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   return join(f.root, 'future-worktree');
 }

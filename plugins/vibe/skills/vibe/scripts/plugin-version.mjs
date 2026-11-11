@@ -768,6 +768,10 @@ async function main(argv, env, home) {
   throw new Error(`unknown command ${command}`);
 }
 
+// Fields only a provider session wrote before bindings were recorded: its tickets and plan, its hosted environment
+// (mode, Vercel, the environment's org under its old and new names) and its flag snapshot. A generic session has none.
+const LEGACY_PROVIDER_FIELDS = ["liveTicket", "handoffTicket", "livePlan", "mode", "vercel", "clerkOrgId", "environmentOrgId", "flagSnapshot"];
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const { code, output } = await main(process.argv.slice(2), process.env, os.homedir());
@@ -1001,8 +1005,9 @@ export function installOfferedProvider({ candidate, connections, clis = {}, env 
 /**
  * The binding a session keeps when a chat adopts it. A session keeps the binding it has (a generic session stays
  * generic, a bound one stays bound), except that a provider that was bound but disconnected rebinds when this chat
- * bound the same provider. A session with none takes this chat's, unless it is a tracker session from before
- * bindings were recorded (it has a live ticket) and this chat bound nothing: it then waits for a chat that binds.
+ * bound the same provider. A session with none takes this chat's, unless it is a provider session from before
+ * bindings were recorded and this chat bound nothing: it then waits for a chat that binds, and is never written as
+ * generic.
  */
 export function adoptedProvider(session, chat) {
   const current = session?.provider;
@@ -1011,7 +1016,7 @@ export function adoptedProvider(session, chat) {
     return rebinds ? chat : current;
   }
   if (!chat) return null;
-  if (chat.state !== "bound" && (session?.liveTicket || session?.handoffTicket)) return null;
+  if (chat.state !== "bound" && LEGACY_PROVIDER_FIELDS.some((field) => session?.[field])) return null;
   return chat;
 }
 

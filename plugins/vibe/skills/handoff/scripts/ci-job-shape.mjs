@@ -90,6 +90,11 @@ export function repositoryLaneReportProblems(report, worktree, commit) {
       // command the repository's AGENTS.md names (or the bound provider's lane report).
       if (source.kind === "command") return defaultLaneCommands(worktree, commit).includes(source.command) ? []
         : ["undeclared repository lane command: without vibe-handoff-paths.json it must be the test command AGENTS.md names"];
+      // Without a declaration only the repository's sole workflow is its CI; with several, the report cannot pick one.
+      const workflows = committedWorkflows(worktree, commit);
+      if (workflows.length !== 1 || workflows[0] !== source.path) {
+        return ["undeclared workflow lane source: without vibe-handoff-paths.json it must be the repository's only workflow; declare laneSource there"];
+      }
       declared = { kind: source.kind, path: source.path };
     }
     if (content) try { declared = JSON.parse(content).laneSource; }
@@ -179,4 +184,17 @@ function defaultLaneCommands(worktree, commit) {
   try { agents = worktree ? committedFile(worktree, commit, "AGENTS.md").toString("utf8") : null; } catch { agents = null; }
   return [agentsTestCommand(agents), providerDataOr(sessionBinding(worktree ?? null), "recipes", "prEvidence", null)?.laneReport]
     .filter((command) => typeof command === "string" && command);
+}
+
+/** The regular workflow files `.github/workflows` holds at `commit`. */
+function committedWorkflows(worktree, commit) {
+  try {
+    return execFileSync("git", ["-C", worktree, "ls-tree", "-z", "--full-tree", commit, "--", ".github/workflows/"], { encoding: "utf8",
+      timeout: 30_000, stdio: ["ignore", "pipe", "ignore"] }).split("\0").filter(Boolean)
+      .map((line) => ({ mode: line.split(" ")[0], path: line.slice(line.indexOf("\t") + 1) }))
+      .filter((entry) => ["100644", "100755"].includes(entry.mode) && /^\.github\/workflows\/[^/]+\.ya?ml$/.test(entry.path))
+      .map((entry) => entry.path);
+  } catch {
+    return [];
+  }
 }

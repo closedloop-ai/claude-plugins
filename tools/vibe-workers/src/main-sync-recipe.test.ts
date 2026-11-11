@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bootstrapFor, checkSteps, mainSyncRecipe, reportOutputsFor } from "./main-sync-recipe.js";
+import { bootstrapFor, checkSteps, mainSyncRecipe, reportOutputsFor, uncheckedReason } from "./main-sync-recipe.js";
 import { isDesktopE2eLimitation, desktopE2ePostMergeCoverage } from "./main-sync-lanes.js";
 import { inputProducers } from "./main-sync-input-catalog.js";
 import { fixture } from "./test-fixtures.js";
@@ -57,6 +57,13 @@ describe("main-sync recipe", () => {
     expect(checkSteps(worktree, "handoff")).toEqual({ steps: [{ argv: ["npm", "run", "test:unit"] }], final: [] });
     expect(checkSteps(worktree, "prototype").steps).toEqual([{ argv: ["npm", "run", "test:unit"] }]);
     expect(checkSteps(worktree, "build").steps, "the commit hooks own the build loop's checks").toEqual([]);
+  });
+
+  it("a handoff or prototype sync that has no check to run is unsupported, never DONE; the build loop leaves checks to the hooks", () => {
+    expect(uncheckedReason("handoff", 0)).toMatch(/no check for main sync to run/);
+    expect(uncheckedReason("prototype", 0)).toMatch(/no check/);
+    expect(uncheckedReason("handoff", 1)).toBeNull();
+    expect(uncheckedReason("build", 0)).toBeNull();
   });
 
   it("runs a documented test command with shell syntax through sh, and bootstraps from the lockfile", () => {

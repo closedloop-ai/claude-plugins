@@ -12,6 +12,11 @@ export function trackerKey(worktree = null) {
   return providerDataOr(sessionBinding(worktree), "tickets", "keyPattern", NO_KEY);
 }
 
+/** The bound tracker's document key (`data.tickets.slugSource`, unanchored: its issues, requirements and plans). */
+export function documentKey(worktree = null) {
+  return providerDataOr(sessionBinding(worktree), "tickets", "slugSource", NO_KEY);
+}
+
 /** The bound tracker's issue key (`data.tickets.issueKey`, unanchored; issues only, not plans or requirements). */
 export function issueKey(worktree = null) {
   return providerDataOr(sessionBinding(worktree), "tickets", "issueKey", NO_KEY);

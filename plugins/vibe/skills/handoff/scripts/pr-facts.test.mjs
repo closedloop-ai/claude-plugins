@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, prRulesFor, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, PROVIDER_BINDING, runNode, SYMPHONY_PATH_POLICY, bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
-import { repositoryAreas } from "../../vibe/scripts/area-paths.mjs";
+import { GENERIC_AREAS, repositoryAreas } from "../../vibe/scripts/area-paths.mjs";
 import { workflowLaneDefinitions } from "./ci-job-shape.mjs";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { qaImpact, qaImpactRequest } from "./qa-impact.mjs";
@@ -272,6 +272,14 @@ test("S3 DT-08: lint CI claim is unrelated to the pending E2E lane", (t) => {
   assert.deepEqual(facts(s, { body: lintClaim, runs }).prBodyProblems, []);
   const pronoun = `${COMPLETE_BODY}\n${truthful}\nWeb E2E has not run; CI covers it.`;
   assert.match(facts(s, { body: pronoun, runs }).prBodyProblems.join("\n"), /CI coverage claim for not-run web E2E lane/);
+});
+
+test("with no areas recipe a UI file is known by its extension, so a UI diff is never server-only", () => {
+  assert.deepEqual(requiredLanes(["src/Button.tsx"], [], GENERIC_AREAS), ["web-host"]);
+  assert.deepEqual(requiredLanes(["web/page.vue", "src/Card.stories.tsx"], [], GENERIC_AREAS), ["web-host", "storybook-plays"]);
+  assert.deepEqual(requiredLanes(["src/server.ts", "README.md"], [], GENERIC_AREAS), []);
+  assert.deepEqual(requiredLanes(["apps/app/page.tsx"], [], AREAS), ["web-host"], "a recipe's prefixes still decide when bound");
+  assert.deepEqual(requiredLanes(["scripts/build.tsx"], [], AREAS), [], "and only they do");
 });
 
 test("evidence: lanes follow the diff, and unfinished, missing or stale runs block", () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -26,7 +26,12 @@ test("plans live in the private git directory without a provider recipe, and in 
   assert.equal(localPlanPrefix(null), null);
   const generic = localPlanPaths(root, { requestId: "first", binding: null });
   assert.equal(generic.inWorktree, false);
-  assert.ok(generic.plan.includes(`${path.sep}.git${path.sep}vibe${path.sep}plans${path.sep}`));
+  assert.equal(generic.plan, path.join(realpathSync(root), ".git", "vibe", path.basename(root), "plans", "first.md"));
+  const session = path.join(root, ".claude", "worktrees", "vibe-one");
+  execFileSync("git", ["-C", root, "worktree", "add", "-q", "-b", "vibe/one", session]);
+  const fromWorktree = localPlanPaths(session, { requestId: "first", binding: null });
+  assert.equal(fromWorktree.root, path.join(realpathSync(root), ".git", "vibe", "vibe-one"),
+    "a session worktree's plans are in the common git dir, so removing the worktree keeps them");
   assert.equal(localPlanPrefix(PROVIDER_BINDING), ".closedloop-ai/vibe-plans/");
   assert.equal(localPlanPaths(root, { binding: PROVIDER_BINDING }).inWorktree, true);
 });

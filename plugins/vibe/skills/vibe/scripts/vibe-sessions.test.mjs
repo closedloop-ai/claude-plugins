@@ -842,6 +842,8 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
 
   // The option's earlier name still records the org.
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
+  const stored = JSON.parse(readFileSync(path.join(git(worktree, ["rev-parse", "--absolute-git-dir"], home), "vibe-session.json"), "utf8"));
+  assert.deepEqual([stored.environmentOrgId, stored.clerkOrgId], ["org_2abc", "org_2abc"], "an older vibe still reads the org under its earlier field");
   const blankOrg = request(["--person-email", "operator@example.com"]);
   assert.equal(blankOrg.status, 1);
   assert.match(blankOrg.json.error, /environment org is only sent for a seeded session/);

@@ -36,7 +36,7 @@ const { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } = awai
 const { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
 const { recordWorkerScope } = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
-const { sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { parseLeadBinding, sessionBinding, useLeadBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { canonicalWorktree, ensureReloadFence, e2eLockDir: machineE2eLockDir, machineSlotLockDir, readE2eWaiters, regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
@@ -79,6 +79,7 @@ export function parseCli(argv) {
       count: { type: 'string' },
       'plugin-root': { type: 'string' },
       'fleet-claim': { type: 'string' },
+      'lead-provider': { type: 'string' },
       retry: { type: 'boolean' },
     },
   });
@@ -99,6 +100,7 @@ export function parseCli(argv) {
   }
   if (!['turn', 'steer', 'reload'].includes(command) && values['plugin-root'] !== undefined) throw new Error('--plugin-root applies to turn, steer and reload only');
   if (command !== 'turn' && values['fleet-claim'] !== undefined) throw new Error('--fleet-claim applies to turn only');
+  if (command !== 'turn' && values['lead-provider'] !== undefined) throw new Error('--lead-provider applies to turn only');
   if (values.retry && command !== 'reload') throw new Error('--retry applies to reload only');
   if (command !== 'last' && values.count !== undefined) throw new Error('--count applies to last only');
   if (values.effort !== undefined && !EFFORT_PATTERN.test(values.effort)) throw new Error('effort must be an identifier such as high');
@@ -119,6 +121,7 @@ export function parseCli(argv) {
     count,
     ...(values['plugin-root'] === undefined ? {} : { pluginRoot: resolve(values['plugin-root']) }),
     ...(values['fleet-claim'] === undefined ? {} : { fleetClaim: resolve(values['fleet-claim']) }),
+    ...(values['lead-provider'] === undefined ? {} : { leadBinding: parseLeadBinding(values['lead-provider']) }),
     ...(values.retry ? { retry: true } : {}),
   };
 }
@@ -712,8 +715,10 @@ async function runControlled(client, options, { warn = (text) => console.error(`
   if (options.command === 'turn' && !saved && !VIBE_PROMPT.test(prompt)) {
     throw new Error(`a new session's prompt must start with $vibe; ${options.promptFile} does not`);
   }
+  // A remote host has no chat of the lead's: the lead's binding comes with the launch, and binds this process.
+  if (options.leadBinding) useLeadBinding(options.leadBinding);
   if (options.command === 'turn' && !saved) {
-    const inherited = briefProviderProblem(prompt, (dependencies.binding ?? sessionBinding)());
+    const inherited = briefProviderProblem(prompt, (dependencies.binding ?? (() => options.leadBinding ?? sessionBinding()))());
     if (inherited) throw new Error(inherited);
   }
   if (DONE_CLAIMS.test(prompt) && !REVERIFY.test(prompt)) {

@@ -150,7 +150,8 @@ test("without --out the report folder is under the vibe home a reboot keeps, nev
   const root = path.join(fixture.home, ".codex", "vibe", "precedent");
   assert.equal(path.dirname(path.dirname(json.report)), root);
   assert.equal(precedentRoot("/Users/someone"), path.join("/Users/someone", ".codex", "vibe", "precedent"));
-  assert.ok(!precedentRoot().startsWith(os.tmpdir()));
+  // This file binds the provider under a throwaway HOME in the temp folder, so the default is checked against the home.
+  assert.equal(precedentRoot(), path.join(os.homedir(), ".codex", "vibe", "precedent"), "the default follows the person's home, never the temp folder");
 });
 
 test("check always refuses an undocumented or help-center-only answer until a live look ran", (t) => {
