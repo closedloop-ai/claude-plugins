@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { writeRemoteCodexStub } from '../../../../vibe/skills/fleet-orchestrator/scripts/fleet-test-support.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
@@ -15,7 +15,18 @@ const PLUGIN_ROOT = vibeRoot();
 const VIBE_FLEET_SCRIPTS = path.join(PLUGIN_ROOT, 'skills', 'fleet-orchestrator', 'scripts');
 const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'codex', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const MONITOR = path.join(HERE, '..', '..', 'codex-fleet-monitor', 'scripts');
-const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'fleet-home.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+// Cases run outside any chat (no harness ids) with a private HOME, so the chat bindings fleet-home.mjs writes
+// never reach the real ~/.vibe-hook-scope; a case that tests a chat passes its id in `env`.
+const TEST_HOME = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'fleet-home-user-')));
+process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }));
+const outsideChat = (env) => {
+  const base = { ...process.env, HOME: TEST_HOME };
+  Reflect.deleteProperty(base, 'CLAUDE_CODE_SESSION_ID');
+  Reflect.deleteProperty(base, 'CODEX_THREAD_ID');
+  Reflect.deleteProperty(base, 'FLEET_HOME');
+  return { ...base, ...env };
+};
+const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'fleet-home.mjs'), ...args], { encoding: 'utf8', env: outsideChat(env) });
 const tempRoot = (t) => {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'fleet-home-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -268,4 +279,383 @@ test('a resume that cannot seed context-guard.json still prints the whole readin
   assert.match(result.stdout, /^CONTEXT-GUARD-UNSEEDED .*context-guard\.json: /m);
   assert.match(result.stdout, /^ACTIVE prog-a /m);
   assert.equal(existsSync(path.join(home, 'context-guard.json')), false);
+});
+
+// ISS-14028: two orchestrator chats on one machine each run their own program with no launch environment variable.
+const chatEnv = (chat) => ({ CLAUDE_CODE_SESSION_ID: chat });
+const ORCHESTRATOR_TRANSCRIPT = `${JSON.stringify({ type: 'user', isMeta: true, message: { content: [{ type: 'text', text: 'Base directory for this skill: /plugins/vibe/skills/fleet-orchestrator\n\n# fleet-orchestrator' }] } })}\n`;
+const hookEvent = (root, chat, extra = {}) => {
+  const transcript = path.join(root, `${chat}.jsonl`);
+  if (!existsSync(transcript)) writeFileSync(transcript, ORCHESTRATOR_TRANSCRIPT);
+  return { session_id: chat, transcript_path: transcript, ...extra };
+};
+const usage = (root, chat, tokens) => writeFileSync(path.join(root, `${chat}.jsonl`), `${ORCHESTRATOR_TRANSCRIPT}${JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: tokens } } })}\n`);
+const { contextGuard, compactionInstructions } = await import('../../../hooks/context-guard.mjs');
+const { fleetResume } = await import('../../../hooks/fleet-resume.mjs');
+
+test('two chats bound to two programs in one home each resolve their own program in commands and hooks', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  const startA = run(['start', 'prog-a', '--shape', 'fleet', '--home', home], chatEnv('chat-a'));
+  assert.equal(startA.status, 0, startA.stderr);
+  assert.match(startA.stdout, /^BOUND prog-a chat-a$/m);
+  const startB = run(['start', 'prog-b', '--shape', 'one-writer', '--home', home], chatEnv('chat-b'));
+  assert.equal(startB.status, 0, 'a second chat starts its own program while the first one runs');
+  assert.match(startB.stdout, /^BOUND prog-b chat-b$/m);
+  assert.equal(readFileSync(path.join(home, 'current'), 'utf8'), 'prog-a\n', "the first chat's current program is left alone");
+  writeFileSync(path.join(home, 'lessons.md'), 'shared ledger\n');
+  const programA = path.join(home, 'programs', 'prog-a');
+  const programB = path.join(home, 'programs', 'prog-b');
+
+  for (const [chat, own, other] of [['chat-a', programA, programB], ['chat-b', programB, programA]]) {
+    const resumed = run(['resume'], { ...chatEnv(chat) }).stdout;
+    assert.match(resumed, new RegExp(`^READ ${path.join(home, 'lessons.md')}$`, 'm'), 'both chats share the home files');
+    assert.match(resumed, new RegExp(`^ACTIVE ${path.basename(own)} ${own}$`, 'm'), `${chat} resumes its own program without FLEET_HOME`);
+    assert.ok(!resumed.includes(other), `${chat} is shown nothing of the other program`);
+    const shell = spawnSync('bash', ['-c', `lines=$(node ${JSON.stringify(path.join(MONITOR, 'work-dir.mjs'))} sh "$1") || exit 2; eval "$lines"; echo "$W"`, 'x', home], { encoding: 'utf8', env: outsideChat(chatEnv(chat)) });
+    assert.equal(shell.stdout, `${own}\n`, `scripts given the home path resolve ${chat}'s program`);
+
+    const env = { HOME: TEST_HOME };
+    usage(root, chat, 290_000);
+    const flush = contextGuard(hookEvent(root, chat), env)?.context ?? '';
+    assert.ok(flush.includes(`state files in ${own} current`), `${chat}'s flush prompt names its own program: ${flush}`);
+    assert.ok(!flush.includes(other));
+    const instructions = compactionInstructions(hookEvent(root, chat), env) ?? '';
+    assert.ok(instructions.includes(path.join(own, 'resume-log.md')) && !instructions.includes(other), instructions);
+    const reading = fleetResume(hookEvent(root, chat, { source: 'compact' }), env)?.context ?? '';
+    assert.ok(reading.includes(`ACTIVE ${path.basename(own)} ${own}`) && !reading.includes(other), reading);
+  }
+  for (const env of [{}, chatEnv('chat-worker')]) {
+    const unbound = spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', home], { encoding: 'utf8', env: outsideChat(env) });
+    assert.equal(unbound.status, 2, 'with two chats bound in one home, a caller bound to nothing cannot tell whose current it would get');
+    assert.match(unbound.stderr, /^AMBIGUOUS-HOME .* runs several chats' programs \(prog-a current, prog-b\): pass the program dir/m);
+    const direct = spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', programB], { encoding: 'utf8', env: outsideChat(env) });
+    assert.match(direct.stdout, new RegExp(`^W='${programB}'$`, 'm'), 'the program dir always works');
+  }
+
+  const refused = run(['start', 'prog-c', '--shape', 'fleet', '--home', home], chatEnv('chat-b'));
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /^ACTIVE prog-b: close it/m, "a chat's own open program still blocks it from starting another");
+  assert.match(run(['close', '--home', home], chatEnv('chat-b')).stdout, /^closed prog-b for this chat; prog-a stays current/m);
+  assert.equal(readFileSync(path.join(home, 'current'), 'utf8'), 'prog-a\n');
+  assert.match(run(['resume', '--home', home], chatEnv('chat-a')).stdout, /^ACTIVE prog-a /m, 'closing one chat leaves the other bound');
+});
+
+test('a chat with no binding is told how to bind, never handed the program another chat runs', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'fleet', '--home', home], chatEnv('chat-a')).status, 0);
+  const programA = path.join(home, 'programs', 'prog-a');
+  const env = { HOME: TEST_HOME, FLEET_HOME: home };
+
+  const resumed = run(['resume'], { ...chatEnv('chat-c'), FLEET_HOME: home });
+  assert.equal(resumed.status, 0);
+  assert.match(resumed.stdout, /^UNBOUND: this chat has no fleet program in .*; its current program prog-a is bound to chat chat-a \(bound \d{4}-[^)]*\)\. If that chat has finished, take the program over with fleet-home\.mjs resume prog-a --takeover; otherwise start your own/m);
+  assert.match(resumed.stdout, /^PROGRAM prog-a chat chat-a$/m);
+  assert.doesNotMatch(resumed.stdout, /^(ACTIVE|BOUND) /m);
+  assert.ok(!resumed.stdout.includes(programA));
+
+  usage(root, 'chat-c', 290_000);
+  const flush = contextGuard(hookEvent(root, 'chat-c'), env)?.context ?? '';
+  assert.match(flush, /no fleet program of its own to bring current\. UNBOUND: /);
+  assert.ok(!flush.includes(programA), flush);
+  assert.equal(compactionInstructions(hookEvent(root, 'chat-c'), env), null, 'the summary is pointed at no program files');
+  const reading = fleetResume(hookEvent(root, 'chat-c', { source: 'compact' }), env)?.context ?? '';
+  assert.match(reading, /^Your context was just compacted\. UNBOUND: /);
+  assert.ok(!reading.includes(programA), reading);
+
+  const taken = run(['resume', 'prog-a', '--takeover'], { ...chatEnv('chat-c'), FLEET_HOME: home });
+  assert.equal(taken.status, 0, taken.stderr);
+  assert.match(taken.stdout, /^TAKEOVER chat-a: that chat ran prog-a/m, 'an explicit takeover moves the program and says from whom');
+  assert.match(taken.stdout, /^BOUND prog-a chat-c$/m);
+  assert.match(taken.stdout, new RegExp(`^ACTIVE prog-a ${programA}$`, 'm'));
+  assert.match(run(['resume'], { ...chatEnv('chat-a'), FLEET_HOME: home }).stdout, /^UNBOUND: .*is bound to chat chat-c /m, 'the chat it was taken from is told, not left writing it');
+});
+
+test('a chat bound in a second home finds it with no FLEET_HOME, and FLEET_HOME still overrides the home', (t) => {
+  const root = tempRoot(t);
+  const first = path.join(root, 'fleet');
+  const second = path.join(root, 'fleet-two');
+  assert.equal(run(['start', 'prog-a', '--shape', 'fleet', '--home', first], chatEnv('chat-a')).status, 0);
+  assert.equal(run(['start', 'prog-x', '--shape', 'fleet', '--home', second], chatEnv('chat-x')).status, 0);
+  const resumed = run(['resume'], chatEnv('chat-x')).stdout;
+  assert.match(resumed, new RegExp(`^ACTIVE prog-x ${path.join(second, 'programs', 'prog-x')}$`, 'm'), 'the bound home is used with no environment variable');
+  const flush = (usage(root, 'chat-x', 290_000), contextGuard(hookEvent(root, 'chat-x'), { HOME: TEST_HOME })?.context ?? '');
+  assert.ok(flush.includes(path.join(second, 'programs', 'prog-x')), flush);
+  const overridden = run(['resume'], { ...chatEnv('chat-x'), FLEET_HOME: first }).stdout;
+  assert.match(overridden, /^UNBOUND: .*prog-a is bound to chat chat-a /m, 'FLEET_HOME picks the home; the chat has no program of its own there');
+  assert.match(run(['resume'], { ...chatEnv('chat-new'), FLEET_HOME: second }).stdout, /^UNBOUND: /m);
+});
+
+test('with one orchestrator a chat binds to the home current program on its first resume and nothing else changes', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'prog-a', '--shape', 'fleet', '--home', home]).status, 0, 'a program started before bindings, outside any chat');
+  const resumed = run(['resume', '--home', home], chatEnv('chat-a')).stdout;
+  assert.match(resumed, /^BOUND prog-a chat-a$/m);
+  assert.match(resumed, /^ACTIVE prog-a /m);
+  assert.match(run(['resume', '--home', home], chatEnv('chat-a')).stdout, /^ACTIVE prog-a /m);
+  assert.equal(run(['close', '--home', home], chatEnv('chat-a')).status, 0);
+  assert.equal(existsSync(path.join(home, 'current')), false, "close clears the chat's own current program");
+  assert.match(run(['resume', '--home', home], chatEnv('chat-a')).stdout, /^NO-ACTIVE-PROGRAM/m);
+});
+
+test('launcher prints and installs fleet-claude, which starts Claude Code with the home compaction window', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  run(['start', 'prog-a', '--shape', 'fleet', '--home', home]);
+  writeFileSync(path.join(home, 'context-guard.json'), JSON.stringify({ compactWindowTokens: 450000 }));
+  assert.match(run(['launcher', '--home', home]).stdout, /^LAUNCH CLAUDE_CODE_AUTO_COMPACT_WINDOW=450000 claude$/m);
+  const bin = path.join(root, 'bin');
+  const installed = run(['launcher', '--install', '--bin', bin, '--home', home]);
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.match(installed.stdout, new RegExp(`^INSTALLED ${path.join(bin, 'fleet-claude')}: `, 'm'));
+  assert.match(installed.stdout, /^NOT-ON-PATH /m);
+  const stubs = path.join(root, 'stubs');
+  mkdirSync(stubs);
+  writeFileSync(path.join(stubs, 'claude'), '#!/bin/sh\necho "window=$CLAUDE_CODE_AUTO_COMPACT_WINDOW args=$*"\n', { mode: 0o755 });
+  const launch = (env) => spawnSync(path.join(bin, 'fleet-claude'), ['--resume', 's-1'], { encoding: 'utf8', env: { PATH: `${stubs}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: root, ...env } });
+  assert.equal(launch({}).stdout, 'window=450000 args=--resume s-1\n', 'the home it was installed for, with no FLEET_HOME');
+  const otherHome = path.join(root, 'other');
+  mkdirSync(otherHome);
+  writeFileSync(path.join(otherHome, 'context-guard.json'), JSON.stringify({ compactWindowTokens: 600000 }));
+  assert.equal(launch({ FLEET_HOME: otherHome }).stdout, 'window=600000 args=--resume s-1\n', 'FLEET_HOME still overrides the home');
+  assert.equal(launch({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000' }).stdout, 'window=200000 args=--resume s-1\n', 'a window set by hand wins');
+  writeFileSync(path.join(home, 'context-guard.json'), '{broken');
+  assert.equal(launch({}).stdout, 'window=300000 args=--resume s-1\n', 'an unreadable file falls back to the default window');
+  writeFileSync(path.join(bin, 'fleet-claude'), '#!/bin/sh\necho mine\n');
+  const foreign = run(['launcher', '--install', '--bin', bin, '--home', home]);
+  assert.equal(foreign.status, 2);
+  assert.match(foreign.stderr, /was not written by fleet-home\.mjs launcher/);
+  assert.equal(readFileSync(path.join(bin, 'fleet-claude'), 'utf8'), '#!/bin/sh\necho mine\n');
+});
+
+// ISS-14024: migrate half-moved a tree on a target collision and overwrote an existing home's files.
+const treeSnapshot = (dir) => {
+  const entries = [];
+  const walk = (at) => {
+    for (const name of readdirSync(at).sort()) {
+      const file = path.join(at, name);
+      const stat = lstatSync(file);
+      const rel = path.relative(dir, file);
+      if (stat.isSymbolicLink()) entries.push(`${rel} -> ${readlinkSync(file)}`);
+      else if (stat.isDirectory()) {
+        entries.push(`${rel}/`);
+        walk(file);
+      } else entries.push(`${rel}: ${readFileSync(file, 'utf8')}`);
+    }
+  };
+  walk(dir);
+  return entries;
+};
+
+test('migrate refuses a LOCAL_STATE_DIR that collides with a flat sessions/ in the dry run and the real run, moving nothing', (t) => {
+  const root = tempRoot(t);
+  const flat = path.join(root, 'orch');
+  mkdirSync(path.join(flat, 'local-codex-state'), { recursive: true });
+  mkdirSync(path.join(flat, 'sessions'));
+  writeFileSync(path.join(flat, 'config.env'), `LOCAL_STATE_DIR=${flat}/local-codex-state\n`);
+  writeFileSync(path.join(flat, 'local-codex-state', 'w1.json'), '{"threadId":"t1"}\n');
+  writeFileSync(path.join(flat, 'sessions', 'w2.remote.json'), '{}\n');
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  const before = treeSnapshot(root);
+  const target = path.join(flat, 'programs', 'iss-1', 'sessions');
+  for (const args of [['--dry-run'], []]) {
+    const result = run(['migrate', '--from', flat, '--program', 'iss-1', ...args]);
+    assert.equal(result.status, 1, `${args.join(' ') || 'real run'} refuses`);
+    assert.match(result.stdout, new RegExp(`^COLLISION ${target} is the target of ${flat}/local-codex-state and ${flat}/sessions: `, 'm'));
+    assert.match(result.stdout, /^REFUSED: nothing was moved/m);
+    assert.deepEqual(treeSnapshot(root), before, 'the tree is untouched');
+  }
+});
+
+test('migrate --home into an existing home merges lessons.md, refuses a differing config.env and never overwrites either', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  assert.equal(run(['start', 'other', '--shape', 'fleet', '--home', home]).status, 0);
+  writeFileSync(path.join(home, 'config.env'), 'CODEX_MODEL=home\n');
+  const row = (n) => `2026-11-0${n} | new | #${n} | finding ${n} | w${n} | fix ${n}`;
+  writeFileSync(path.join(home, 'lessons.md'), `${row(1)}\n${row(2)}\n`);
+  const flat = path.join(root, 'orch');
+  mkdirSync(flat);
+  writeFileSync(path.join(flat, 'config.env'), 'CODEX_MODEL=flat\n');
+  writeFileSync(path.join(flat, 'lessons.md'), `${row(2)}\n${row(3)}\n`);
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  const before = treeSnapshot(root);
+
+  const dry = run(['migrate', '--from', flat, '--program', 'iss-1', '--home', home, '--dry-run']);
+  assert.equal(dry.status, 1);
+  assert.match(dry.stdout, new RegExp(`^COLLISION ${path.join(home, 'config.env')} already exists and differs from ${path.join(flat, 'config.env')}: `, 'm'));
+  assert.match(dry.stdout, new RegExp(`^MERGE ${path.join(flat, 'lessons.md')} -> ${path.join(home, 'lessons.md')} \\(1 lines the home lacks are appended\\)$`, 'm'));
+  assert.equal(run(['migrate', '--from', flat, '--program', 'iss-1', '--home', home]).status, 1);
+  assert.deepEqual(treeSnapshot(root), before, 'a refused run changes nothing');
+
+  writeFileSync(path.join(flat, 'config.env'), 'CODEX_MODEL=home\n');
+  const merged = run(['migrate', '--from', flat, '--program', 'iss-1', '--home', home]);
+  assert.equal(merged.status, 0, merged.stdout + merged.stderr);
+  assert.match(merged.stdout, new RegExp(`^SAME ${path.join(flat, 'config.env')} = ${path.join(home, 'config.env')}`, 'm'));
+  assert.match(merged.stdout, /^CURRENT kept other: /m);
+  assert.equal(readFileSync(path.join(home, 'lessons.md'), 'utf8'), `${row(1)}\n${row(2)}\n${row(3)}\n`, 'the home ledger keeps its lines and gains the new one');
+  assert.equal(readFileSync(path.join(home, 'config.env'), 'utf8'), 'CODEX_MODEL=home\n');
+  assert.equal(readFileSync(path.join(home, 'current'), 'utf8'), 'other\n', "the home's current program is not replaced");
+  assert.equal(readFileSync(path.join(home, 'programs', 'iss-1', 'resume-log.md'), 'utf8'), 'log\n');
+  assert.deepEqual(readdirSync(flat), []);
+});
+
+test('a migrate that fails partway undoes every step it made', async (t) => {
+  const { migrate } = await import('./fleet-migrate.mjs');
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  const flat = path.join(root, 'orch');
+  mkdirSync(path.join(flat, 'prompts'), { recursive: true });
+  writeFileSync(path.join(flat, 'handover.md'), 'handover\n');
+  writeFileSync(path.join(flat, 'prs.txt'), 'prs\n');
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  symlinkSync(path.join(flat, 'resume-log.md'), path.join(root, 'log-link.md'));
+  const before = treeSnapshot(root);
+  let calls = 0;
+  const rename = (source, target) => {
+    calls += 1;
+    if (calls === 3) throw new Error('disk full');
+    renameSync(source, target);
+  };
+  assert.throws(() => migrate(flat, home, 'iss-1', { reusable: ['handover.md', 'lessons.md', 'config.env'], skip: ['programs', 'current'], programDirs: ['sessions'], env: { HOME: TEST_HOME }, ops: { rename } }),
+    /^Error: ROLLED-BACK migrate stopped \(disk full\); every completed step was undone/);
+  assert.equal(calls, 3, 'two moves ran before the failure');
+  assert.deepEqual(treeSnapshot(root), before, 'the source is as it was and nothing was left in the home');
+});
+
+test("binding a program another chat holds is refused by default and needs --takeover", (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  assert.equal(run(['start', 'prog-h', '--shape', 'fleet', '--home', home], chatEnv('chat-holder')).status, 0);
+  const holder = JSON.parse(readFileSync(path.join(TEST_HOME, '.vibe-hook-scope', 'fleet-binding', 'chat-holder.json'), 'utf8'));
+  for (const args of [['resume', 'prog-h'], ['start', 'prog-h', '--shape', 'fleet']]) {
+    const refused = run([...args, '--home', home], chatEnv('chat-intruder'));
+    assert.equal(refused.status, 2, `${args[0]} is refused`);
+    assert.equal(refused.stderr, `HELD prog-h is bound to chat chat-holder (bound ${holder.boundAt}). Pass --takeover only if that chat has finished; it then resolves no program\n`);
+    assert.match(run(['resume', '--home', home], chatEnv('chat-holder')).stdout, /^ACTIVE prog-h /m, 'the holder keeps its program');
+  }
+  assert.equal(existsSync(path.join(TEST_HOME, '.vibe-hook-scope', 'fleet-binding', 'chat-intruder.json')), false, 'a refused chat is bound to nothing');
+
+  const transcripts = path.join(TEST_HOME, '.claude', 'projects', 'fleet-home-test');
+  mkdirSync(transcripts, { recursive: true });
+  const transcript = path.join(transcripts, 'chat-holder.jsonl');
+  writeFileSync(transcript, '{}\n');
+  t.after(() => rmSync(transcript, { force: true }));
+  assert.doesNotMatch(run(['resume', 'prog-h', '--home', home], chatEnv('chat-intruder')).stderr, /looks stale/, 'a holder writing now is not called stale');
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  utimesSync(transcript, old, old);
+  const stale = run(['resume', 'prog-h', '--home', home], chatEnv('chat-intruder'));
+  assert.equal(stale.status, 2, 'a stale-looking holder still needs the flag');
+  assert.match(stale.stderr, new RegExp(`its transcript was last written ${old.toISOString().slice(0, 16)}.*; it looks stale\\)`));
+
+  const taken = run(['resume', 'prog-h', '--takeover', '--home', home], chatEnv('chat-intruder'));
+  assert.equal(taken.status, 0, taken.stderr);
+  assert.match(taken.stdout, /^TAKEOVER chat-holder: /m);
+  assert.match(taken.stdout, /^BOUND prog-h chat-intruder$/m);
+  assert.match(run(['resume', '--home', home], chatEnv('chat-holder')).stdout, /^UNBOUND: .*is bound to chat chat-intruder /m, 'the old holder resolves no program after the takeover');
+});
+
+test("a chat from before bindings still cannot start a second program while its current one is open", (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'old', '--shape', 'fleet', '--home', home]).status, 0, 'started outside any chat, as before bindings');
+  const refused = run(['start', 'new', '--shape', 'fleet', '--home', home], chatEnv('chat-legacy'));
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /^ACTIVE old: close it with fleet-home\.mjs close before starting new; if another chat runs old, have it run fleet-home\.mjs resume there/m);
+  assert.equal(existsSync(path.join(home, 'programs', 'new')), false);
+});
+
+test('migrate refuses a program another chat holds before moving anything', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  assert.equal(run(['start', 'iss-1', '--shape', 'fleet', '--home', home], chatEnv('chat-holder-m')).status, 0);
+  rmSync(path.join(home, 'programs', 'iss-1'), { recursive: true });
+  const flat = path.join(root, 'orch');
+  mkdirSync(flat);
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  const before = treeSnapshot(root);
+  for (const args of [['--dry-run'], []]) {
+    const result = run(['migrate', '--from', flat, '--program', 'iss-1', '--home', home, ...args], chatEnv('chat-migrator'));
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /^HELD iss-1 is bound to chat chat-holder-m /m);
+    assert.deepEqual(treeSnapshot(root), before);
+  }
+});
+
+test('an orchestrator chat from before bindings holds its program on its next tool call, so a newer chat cannot take it with a plain resume', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  assert.equal(run(['start', 'old', '--shape', 'fleet', '--home', home]).status, 0, 'started before bindings, outside any chat');
+  const program = path.join(home, 'programs', 'old');
+  usage(root, 'chat-legacy', 10_000);
+  contextGuard(hookEvent(root, 'chat-legacy'), { HOME: TEST_HOME, FLEET_HOME: home });
+  assert.equal(JSON.parse(readFileSync(path.join(TEST_HOME, '.vibe-hook-scope', 'fleet-binding', 'chat-legacy.json'), 'utf8')).program, 'old');
+  const newcomer = run(['resume'], { ...chatEnv('chat-newcomer'), FLEET_HOME: home });
+  assert.match(newcomer.stdout, /^UNBOUND: .*its current program old is bound to chat chat-legacy /m);
+  assert.doesNotMatch(newcomer.stdout, /^BOUND /m);
+  assert.match(run(['resume'], { ...chatEnv('chat-legacy'), FLEET_HOME: home }).stdout, new RegExp(`^ACTIVE old ${program}$`, 'm'));
+});
+
+test('migrate refuses merging append-only files whose entries span several lines, and an existing program dir', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  assert.equal(run(['start', 'iss-1', '--shape', 'fleet', '--home', home]).status, 0);
+  writeFileSync(path.join(home, 'standing-rulings.md'), '- Ruling 2026-11-01 (operator message): one line\n');
+  const flat = path.join(root, 'orch');
+  mkdirSync(flat);
+  writeFileSync(path.join(flat, 'standing-rulings.md'), '## alpha\n- Why: a reason\nthat wraps onto a second line\n');
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  const before = treeSnapshot(root);
+  const result = run(['migrate', '--from', flat, '--program', 'iss-1', '--home', home, '--dry-run']);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, new RegExp(`^COLLISION ${path.join(home, 'standing-rulings.md')} already exists and differs from ${path.join(flat, 'standing-rulings.md')}, and an entry spans several lines`, 'm'));
+  assert.match(result.stdout, new RegExp(`^COLLISION ${path.join(home, 'programs', 'iss-1')} already exists: migrate into a new program slug`, 'm'));
+  assert.equal(run(['migrate', '--from', flat, '--program', 'iss-1', '--home', home]).status, 1);
+  assert.deepEqual(treeSnapshot(root), before);
+});
+
+test('a binding made with both harness ids set is found by either', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  assert.equal(run(['start', 'other', '--shape', 'fleet', '--home', home], chatEnv('chat-other-holder')).status, 0, 'current stays another chat program');
+  const both = { CLAUDE_CODE_SESSION_ID: 'claude-both', CODEX_THREAD_ID: 'codex-both', PATH: path.dirname(process.execPath) };
+  const started = run(['start', 'pz', '--shape', 'fleet', '--home', home], both);
+  assert.equal(started.status, 0, started.stderr);
+  const boundAs = /^BOUND pz (\S+)$/m.exec(started.stdout)?.[1];
+  assert.ok(['claude-both', 'codex-both'].includes(boundAs), started.stdout);
+  for (const chat of ['claude-both', 'codex-both']) {
+    const resolved = spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', home], { encoding: 'utf8', env: outsideChat(chatEnv(chat)) });
+    assert.match(resolved.stdout, new RegExp(`^W='${path.join(home, 'programs', 'pz')}'$`, 'm'), `${chat} resolves the program it bound: ${resolved.stderr}`);
+  }
+  assert.equal(run(['resume', 'pz', '--home', home], chatEnv('someone-else')).status, 2, 'a third chat is still refused');
+});
+
+test('two chats claiming one program at the same moment: exactly one wins and the other gets HELD', async (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs'), { recursive: true });
+  const userHome = path.join(root, 'user');
+  mkdirSync(userHome);
+  const claimer = `import { bindChat } from ${JSON.stringify(pathToFileURL(path.join(HERE, 'chat-binding.mjs')).href)};
+const [chat, home, program, at] = process.argv.slice(1);
+while (Date.now() < Number(at)) {}
+try { bindChat(chat, home, program, { HOME: process.env.HOME }); console.log('WON'); }
+catch (error) { console.log(String(error.message).startsWith('HELD ') ? 'HELD' : 'ERROR ' + error.message); }`;
+  const claim = (chat, program, at) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', claimer, chat, home, program, String(at)], { env: { PATH: process.env.PATH, HOME: userHome } });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', reject);
+    child.on('close', () => resolve(out.trim()));
+  });
+  for (let round = 0; round < 12; round += 1) {
+    const program = `race-${round}`;
+    const at = Date.now() + 400;
+    const results = await Promise.all([claim(`racer-a-${round}`, program, at), claim(`racer-b-${round}`, program, at)]);
+    assert.deepEqual([...results].sort(), ['HELD', 'WON'], `round ${round}: ${results.join(', ')}`);
+    const winner = results[0] === 'WON' ? `racer-a-${round}` : `racer-b-${round}`;
+    const loser = winner.includes('-a-') ? `racer-b-${round}` : `racer-a-${round}`;
+    const bindings = path.join(userHome, '.vibe-hook-scope', 'fleet-binding');
+    assert.equal(JSON.parse(readFileSync(path.join(bindings, `${winner}.json`), 'utf8')).program, program);
+    assert.equal(existsSync(path.join(bindings, `${loser}.json`)), false, 'the loser is bound to nothing');
+  }
 });

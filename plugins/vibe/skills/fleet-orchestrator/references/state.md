@@ -2,13 +2,13 @@
 
 ## Layout
 
-One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orchestrator`); `scripts/fleet-home.mjs` documents it, and every script given the home works in its active program.
+One fleet home per machine holds everything (default `~/fleet-orchestrator`; `FLEET_HOME` overrides it); `scripts/fleet-home.mjs` documents it. Each orchestrator chat is bound to its own program: `fleet-home.mjs start` and `resume` record the binding for the chat that runs them (one file per chat under `~/.vibe-hook-scope/fleet-binding/`), and every vibe hook and script in that chat resolves that program, in its home, with no environment variable. Two orchestrator chats can run two programs in one home at once and share its reusable files. A script given the home path works in the calling chat's program, or in `current` when the chat has none; once a program other than `current` is bound to a chat, it refuses a caller with no program of its own (`AMBIGUOUS-HOME`). Give workers the program dir.
 
 ```
 <fleetHome>/
   config.env  standing-rulings.md  lessons.md  handover.md   reused by every program
   context-guard.json                                         compaction limits
-  current                                                    the active program's slug
+  current                                                    the program of a chat or command with none bound
   programs/<slug>/
     sessions.txt  prs.txt  board.md  watcher and monitor files (codex-fleet-monitor)
     usage-readings.json         bounded latest, last-good and recent Codex and Claude reads
@@ -20,11 +20,11 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
     plugin-version.json   the plugin version check, the operator's answer and any update
 ```
 
-`fleet-home.mjs start <slug> --shape <shape>` makes a program current; it reads nothing of an earlier one. A remote machine keeps its sessions under `REMOTE_FLEET_HOME` the same way, and `fleet.sh` copies each prompt there when it sends it. `fleet-home.mjs migrate` moves a flat work dir in.
+`fleet-home.mjs start <slug> --shape <shape>` creates a program and binds this chat to it; it reads nothing of an earlier one, and it is refused while this chat's own program is open (`close` it first). It becomes `current` only when the home has none, so another chat's program stays put. `close` unbinds the chat. A remote machine keeps its sessions under `REMOTE_FLEET_HOME` the same way, and `fleet.sh` copies each prompt there when it sends it. `fleet-home.mjs migrate` moves a flat work dir in; it refuses, in the dry run and the real run, any path collision (two sources for one target, a target that already exists), merges `lessons.md` and `standing-rulings.md` into an existing home, and undoes every step if it fails partway.
 
 ## A new chat
 
-1. `fleet-home.mjs resume`: read each `READ` file in order and note its `SHAPE`. On `NO-ACTIVE-PROGRAM`, `start` a fresh one.
+1. `fleet-home.mjs resume` (or `resume <slug>` for a named program): read each `READ` file in order and note its `SHAPE`. It binds this chat to the program it prints after `ACTIVE`. On `NO-ACTIVE-PROGRAM`, `start` a fresh one. On `UNBOUND`, the home's current program is bound to another chat, named with when it bound: if that chat has finished (this chat replaces it), `resume <slug> --takeover`; otherwise `start` your own. `HELD` refuses a program another chat holds and names that chat and when it bound; add `--takeover` only when that chat has finished (`TAKEOVER` names it, and it then resolves no program).
 2. Run the plugin version check its `PLUGIN-VERSION` line names (SKILL.md, Setup) before anything else.
    Then show the setup check block (SKILL.md, Setup) once.
 3. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.

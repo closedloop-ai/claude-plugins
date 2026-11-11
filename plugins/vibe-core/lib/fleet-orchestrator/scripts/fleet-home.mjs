@@ -9,20 +9,33 @@
 // Layout (codex-fleet-monitor/scripts/work-dir.mjs resolves it for every script):
 //   <fleetHome>/config.env, standing-rulings.md, lessons.md, handover.md   reused by every program
 //   <fleetHome>/context-guard.json                                        compaction limits for vibe's context hooks
-//   <fleetHome>/current                                                   the active program's slug
+//   <fleetHome>/current                                                   the program of a chat with none bound
 //   <fleetHome>/programs/<slug>/                                          that program's state
 //
 // Usage: fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet [--home <fleetHome>]
 //        fleet-home.mjs shape no-writer|one-writer|fleet [--home <fleetHome>]
 //        fleet-home.mjs close [--home <fleetHome>]
-//        fleet-home.mjs resume [--home <fleetHome>]
+//        fleet-home.mjs resume [<slug> [--takeover]] [--home <fleetHome>]
 //        fleet-home.mjs check [--home <fleetHome or program dir>]
 //        fleet-home.mjs migrate --from <flat work dir> --program <slug> [--home <fleetHome, default --from>] [--dry-run]
+//        fleet-home.mjs launcher [--install] [--bin <dir, default ~/.local/bin>] [--home <fleetHome>]
 //
-// --home defaults to FLEET_HOME, else ~/fleet-orchestrator.
-// `start` creates programs/<slug>/ and makes it current; it refuses while
-// another program is current, so a new program never reads an older one's
-// state. `close` clears `current`. Every program records its shape in
+// Each orchestrator chat is bound to its own program (chat-binding.mjs,
+// ISS-14028): `start`, `resume` and `migrate` bind the chat that runs them, and
+// every vibe hook and script in that chat resolves that program with no
+// environment variable. --home defaults to FLEET_HOME (an explicit override),
+// else the chat's bound home, else ~/fleet-orchestrator. `current` is the
+// program of anything with no binding (a chat from before bindings, a
+// terminal, a worker given the home path); a chat with no binding gets it only
+// while no other chat holds it, so with one orchestrator nothing changes.
+// `start` creates programs/<slug>/ and binds this chat to it; it refuses while
+// this chat's own program is open (with no chat id, while another program is
+// current), so a new program never reads an older one's state, and it makes
+// the program current only when the home has none. `close` unbinds the chat
+// and clears `current` when it named that program. `resume <slug>` binds this
+// chat to that program; one another chat holds is refused (`HELD`, naming
+// that chat and when it bound) unless --takeover, which prints `TAKEOVER <chat>`.
+// Every program records its shape in
 // program.json (SKILL.md, "Programs with one writer or none"): `no-writer`
 // (the orchestrator researches or designs with nobody writing code),
 // `one-writer` (one writer and one PR) or `fleet` (several writers). Two
@@ -30,7 +43,8 @@
 // writer on one PR, with no guidance for either. `shape` changes it when the
 // program grows; board.mjs refuses a writer the shape does not allow.
 // `resume` prints what a new chat reads, in order: the reusable files, then
-// `ACTIVE <slug>` and the program's files, `RELAUNCH <writer> <prompt>` for
+// `ACTIVE <slug>` and the program's files (or `UNBOUND` with how to bind when
+// the home's current program belongs to another chat), `RELAUNCH <writer> <prompt>` for
 // each Claude writer on the board (its newest prompts/<writer>-*.md) and
 // `WATCHER-LIVE <pid>` while another chat's watcher holds the lock; or
 // `NO-ACTIVE-PROGRAM`. After `ACTIVE` it prints `SHAPE <shape>: <what
@@ -50,20 +64,22 @@
 // `PENDING-REMOTE remote <name>` (prepared ownership needing recover-marker).
 // Given a
 // flat work dir it prints `FLAT-LAYOUT`. board.mjs status prints the same lines.
-// `migrate` turns a flat work dir into a home in place (or moves it to
-// --home): the reusable files stay at the top, everything else moves to
-// programs/<slug>/, a LOCAL_STATE_DIR or REQUESTS_DIR inside it becomes the
-// program's sessions/ or requests/, those keys are commented out of
-// config.env, and symlinks beside the old dir that pointed at a moved file
-// are repointed. It refuses while a watcher holds the lock. rulings.md moves
-// with the program: copy its standing rulings into standing-rulings.md.
+// `migrate` turns a flat work dir into a home (fleet-migrate.mjs); it refuses
+// while a watcher holds the lock and, in the dry run and the real run, on any
+// collision. rulings.md moves with the program: copy its standing rulings into
+// standing-rulings.md.
+// `launcher` prints, or installs as `fleet-claude`, the command that starts
+// Claude Code with the compaction window context-guard.json sets, so nobody
+// has to know CLAUDE_CODE_AUTO_COMPACT_WINDOW.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { bindChat, chatBinding, chatHome, commandChat, currentProgram, programChats, programFor, refuseHeld, unbindChat, unboundLine } from "./chat-binding.mjs";
+import { migrate } from "./fleet-migrate.mjs";
 import { skillFreshnessProblem } from "./skill-freshness.mjs";
 import { vibeScriptPath } from "../../../shared/vibe-install.mjs";
 
@@ -79,10 +95,19 @@ const SHAPE_NOTES = Object.freeze({
   [Shape.Fleet]: "several writers; every section applies",
 });
 const PLUGIN_VERSION_SCRIPT = "skills/vibe/scripts/plugin-version.mjs";
+export const FLEET_HOME_SCRIPT = "skills/fleet-orchestrator/scripts/fleet-home.mjs";
 
-/** The fleet home: --home, FLEET_HOME, else ~/fleet-orchestrator. */
-export function defaultHome(env = process.env) {
-  return path.resolve(env.FLEET_HOME || path.join(os.homedir(), "fleet-orchestrator"));
+/** The fleet home of `chat` (default: the harness conversation running this command): FLEET_HOME, its bound home, else ~/fleet-orchestrator. */
+export function defaultHome(env = process.env, chat = commandChat(env)) {
+  return chatHome(chat, env);
+}
+
+/** `{ home, program, dir }` for the program `chat` resolves in `home`; throws the bind instruction when it has none. */
+export function chatProgramDir(home, chat, env = process.env) {
+  const resolved = programFor(home, chat, env);
+  if (resolved.program) return { home: path.resolve(home), program: resolved.program, dir: path.join(path.resolve(home), "programs", resolved.program) };
+  if (resolved.current) throw new Error(unboundLine(path.resolve(home), resolved, env));
+  return resolveWorkDir(home, { env, chat });
 }
 
 /** Problems that put state outside the home or the program, as printable lines. */
@@ -163,15 +188,17 @@ function unmanagedState(dir) {
   }).map((name) => `UNMANAGED-STATE ${path.join(dir, name)}: Codex thread state outside sessions/; start sessions with fleet.sh`);
 }
 
-/** The reading list a new chat follows. */
-export function resumeLines(home) {
+/** The reading list a new chat follows; `chat` (default: this command's) picks its program in a home that runs several. */
+export function resumeLines(home, { env = process.env, chat = commandChat(env) } = {}) {
   const lines = ["config.env", "standing-rulings.md", "lessons.md", "handover.md"].filter((name) => existsSync(path.join(home, name)))
     .map((name) => `READ ${path.join(home, name)}`);
   lines.push(...contextGuardLines(home));
   let resolved = { program: null };
   try {
-    resolved = resolveWorkDir(home);
-  } catch {}
+    resolved = chatProgramDir(home, chat, env);
+  } catch (error) {
+    if (String(error?.message).startsWith("UNBOUND")) return [...lines, error.message, ...programLines(home, env)];
+  }
   if (!resolved.program) return [...lines, `NO-ACTIVE-PROGRAM: start one with fleet-home.mjs start <slug>; it reads no earlier program's state`];
   lines.push(`ACTIVE ${resolved.program} ${resolved.dir}`, shapeLine(resolved.dir), pluginVersionLine(resolved.dir));
   for (const name of PROGRAM_READING) {
@@ -181,6 +208,16 @@ export function resumeLines(home) {
   const pid = Number(readOr(path.join(resolved.dir, "watch.lock", "pid"), "").trim());
   if (pid > 1 && alive(pid)) lines.push(`WATCHER-LIVE ${pid}: the previous chat still watches; stop its watcher there, then arm yours`);
   return lines;
+}
+
+/** `PROGRAM <slug> chat <id>|unbound` for each program in `home`, for a chat choosing one to bind. */
+function programLines(home, env) {
+  const programs = path.join(home, "programs");
+  if (!existsSync(programs)) return [];
+  return readdirSync(programs, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().map((slug) => {
+    const chats = programChats(home, slug, env);
+    return `PROGRAM ${slug} ${chats.length > 0 ? `chat ${chats.join(",")}` : "unbound"}`;
+  });
 }
 
 function relaunchLines(programDir) {
@@ -256,92 +293,54 @@ function pluginVersionLine(programDir) {
   return `PLUGIN-VERSION ${record.status}${record.choice ? ` ${record.choice.choice}` : ""} at ${record.checkedAt}: run \`${check}\` in every chat; in the same chat it keeps the recorded answer`;
 }
 
-/** Creates programs/<slug>/ with its shape and makes it current; refuses while another program is current. */
-export function startProgram(home, slug, shape) {
+/**
+ * Creates programs/<slug>/ with its shape and binds `chat` to it: `{ dir, takenFrom }`. Refuses while the
+ * program the chat resolves is open (its own, or `current` while no other chat holds it; with no chat,
+ * `current`), as before bindings. The program becomes current only when the home has none.
+ */
+export function startProgram(home, slug, shape, { env = process.env, chat = commandChat(env), takeover = false } = {}) {
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(slug)) throw new Error(`invalid program slug ${slug}`);
   requireShape(shape);
-  const current = readOr(path.join(home, "current"), "").trim();
-  if (current && current !== slug && existsSync(path.join(home, "programs", current))) {
-    throw new Error(`ACTIVE ${current}: close it with fleet-home.mjs close before starting ${slug}`);
+  const current = currentProgram(home);
+  const open = chat ? programFor(home, chat, env).program : current;
+  if (open && open !== slug) {
+    const unbound = chat && !boundProgram(home, chat, env) ? `; if another chat runs ${open}, have it run fleet-home.mjs resume there so it is bound, then start ${slug} here` : "";
+    throw new Error(`ACTIVE ${open}: close it with fleet-home.mjs close before starting ${slug}${unbound}`);
   }
+  if (chat) refuseHeld(chat, home, slug, env, { takeover });
   const dir = path.join(home, "programs", slug);
   for (const sub of PROGRAM_DIRS) mkdirSync(path.join(dir, sub), { recursive: true });
   for (const name of PROGRAM_FILES) if (!existsSync(path.join(dir, name))) writeFileSync(path.join(dir, name), "");
   setShape(dir, shape);
-  writeFileSync(path.join(home, "current"), `${slug}\n`);
-  return dir;
+  if (!current || current === slug) writeFileSync(path.join(home, "current"), `${slug}\n`);
+  return { dir, takenFrom: bindChat(chat, home, slug, env, { takeover }) };
 }
 
-/** The moves that turn a flat work dir into a fleet home: `{ moves, configLines, notes }`. */
-export function migrationPlan(from, home, slug) {
-  const program = path.join(home, "programs", slug);
-  const config = readConfigFile(path.join(from, "config.env"));
-  const renamed = {};
-  for (const [key, sub] of [["LOCAL_STATE_DIR", "sessions"], ["REQUESTS_DIR", "requests"]]) {
-    const value = config[key] && path.resolve(config[key]);
-    if (value && value.startsWith(`${path.resolve(from)}${path.sep}`) && path.dirname(value) === path.resolve(from)) renamed[path.basename(value)] = sub;
-  }
-  const moves = [];
-  for (const name of readdirSync(from)) {
-    if (name === "programs" || name === "current" || name.startsWith(".")) continue;
-    if (REUSABLE.includes(name)) {
-      if (path.resolve(from) !== path.resolve(home)) moves.push([path.join(from, name), path.join(home, name)]);
-      continue;
-    }
-    moves.push([path.join(from, name), path.join(program, renamed[name] ?? name)]);
-  }
-  const notes = [];
-  if (existsSync(path.join(from, "rulings.md"))) notes.push(`SPLIT-RULINGS copy the rulings that bind every program from ${path.join(program, "rulings.md")} into ${path.join(home, "standing-rulings.md")}`);
-  if (config.REMOTE_STATE_DIR && !config.REMOTE_FLEET_HOME) notes.push("SHARED-REMOTE keep REMOTE_STATE_DIR until this program's remote sessions finish, then set REMOTE_FLEET_HOME");
-  const configLines = ["LOCAL_STATE_DIR", "REQUESTS_DIR"].filter((key) => config[key] !== undefined);
-  return { program, moves, configLines, notes };
+/** The program `chat` is bound to in `home` when its dir still exists, else null. */
+function boundProgram(home, chat, env) {
+  const binding = chatBinding(chat, env);
+  return binding && path.resolve(binding.home) === path.resolve(home) && existsSync(path.join(home, "programs", binding.program)) ? binding.program : null;
 }
 
-function migrate(from, home, slug, dryRun) {
-  const fromDir = path.resolve(from);
-  const pid = Number(readOr(path.join(fromDir, "watch.lock", "pid"), "").trim());
-  if (pid > 1 && alive(pid)) throw new Error(`WATCHER-LIVE ${pid}: stop the watcher for ${fromDir} first`);
-  const plan = migrationPlan(fromDir, home, slug);
-  const lines = plan.moves.map(([source, target]) => `MOVE ${source} -> ${target}`);
-  lines.push(...plan.configLines.map((key) => `CONFIG comment out ${key} (derived per program)`), ...plan.notes);
-  const relinks = siblingLinks(fromDir, plan.moves);
-  lines.push(...relinks.map(([link, target]) => `RELINK ${link} -> ${target}`));
-  if (dryRun) return lines;
-  mkdirSync(plan.program, { recursive: true });
-  for (const [source, target] of plan.moves) renameSync(source, target);
-  for (const sub of PROGRAM_DIRS) mkdirSync(path.join(plan.program, sub), { recursive: true });
-  const configFile = path.join(home, "config.env");
-  if (existsSync(configFile) && plan.configLines.length > 0) {
-    const pattern = new RegExp(`^(\\s*(?:export\\s+)?(?:${plan.configLines.join("|")})=)`, "gm");
-    writeFileSync(configFile, readFileSync(configFile, "utf8").replace(pattern, "# derived per program since vibe 1.0.78: $1"));
-  }
-  const inside = movedLinks(home, plan.moves, 4);
-  for (const [link, target] of [...relinks, ...inside]) {
-    unlinkSync(link);
-    symlinkSync(target, link);
-  }
-  lines.push(...inside.map(([link, target]) => `RELINK ${link} -> ${target}`));
-  writeFileSync(path.join(home, "current"), `${slug}\n`);
-  return lines;
+/** Unbinds `chat` from its program in `home` and clears `current` when it named that program; returns a line. */
+export function closeProgram(home, { env = process.env, chat = commandChat(env) } = {}) {
+  const own = boundProgram(home, chat, env);
+  const current = currentProgram(home);
+  if (own) unbindChat(chat, env);
+  const others = current ? programChats(home, current, env).filter((other) => other !== chat) : [];
+  const clear = own ? current === own : current !== null && others.length === 0;
+  if (clear) unlinkSync(path.join(home, "current"));
+  if (!own && others.length > 0) return `this chat has no program in ${home}; ${current} belongs to another chat (${others.join(", ")}) and stays current`;
+  return own && current && !clear ? `closed ${own} for this chat; ${current} stays current in ${home}` : `no active program in ${home}`;
 }
 
-/** Symlinks beside `fromDir` whose target was moved, with the target's new path. */
-function siblingLinks(fromDir, moves) {
-  return movedLinks(path.dirname(fromDir), moves, 0);
-}
-
-/** Symlinks under `dir` (to `depth` levels) whose absolute target was moved, with the target's new path. */
-function movedLinks(dir, moves, depth) {
-  const links = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const link = path.join(dir, entry.name);
-    if (entry.isDirectory() && depth > 0) links.push(...movedLinks(link, moves, depth - 1));
-    if (!entry.isSymbolicLink()) continue;
-    const target = path.resolve(dir, readlinkSync(link));
-    const move = moves.find(([source]) => target === source || target.startsWith(`${source}${path.sep}`));
-    if (move) links.push([link, move[1] + target.slice(move[0].length)]);
-  }
-  return links;
+/** Binds `chat` to `slug` in `home` for `resume <slug>`; returns the TAKEOVER and BOUND lines. Another chat's program needs `takeover`. */
+function resumeProgram(home, slug, chat, env, takeover) {
+  if (!existsSync(path.join(home, "programs", slug))) throw new Error(`no program ${slug} in ${home}: start it with fleet-home.mjs start ${slug} --shape no-writer|one-writer|fleet`);
+  const taken = chat ? bindChat(chat, home, slug, env, { takeover }) : [];
+  if (!currentProgram(home)) writeFileSync(path.join(home, "current"), `${slug}\n`);
+  if (!chat) return [`NO-CHAT: this command runs outside Claude Code and Codex, so no chat is bound; ${slug} resolves only as current or through its program dir`];
+  return [...taken.map((other) => `TAKEOVER ${other}: that chat ran ${slug}; if it is still open, stop it there so only this chat writes the program`), `BOUND ${slug} ${chat}`];
 }
 
 /** The compaction limits file, read by vibe's PostToolUse and PreCompact hooks on every call. */
@@ -401,46 +400,126 @@ function contextGuardLines(home) {
   }
 }
 
-function main(argv) {
+const LAUNCHER_NAME = "fleet-claude";
+const LAUNCHER_MARK = "# Written by vibe fleet-home.mjs launcher (ISS-14028).";
+
+/** The `fleet-claude` script: Claude Code with `home`'s compaction window (FLEET_HOME overrides it), every argument passed through. */
+export function launcherScript(home) {
+  const [min, max] = COMPACT_WINDOW_RANGE;
+  const fallback = CONTEXT_GUARD_DEFAULTS.compactWindowTokens;
+  const read = `try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).compactWindowTokens;process.stdout.write(String(Number.isInteger(v)&&v>=${min}&&v<=${max}?v:${fallback}))}catch{process.stdout.write("${fallback}")}`;
+  return [
+    "#!/bin/sh",
+    LAUNCHER_MARK,
+    "# Starts Claude Code for a fleet-orchestrator chat with CLAUDE_CODE_AUTO_COMPACT_WINDOW, which Claude Code",
+    "# reads only at launch, set to compactWindowTokens in the fleet home's context-guard.json",
+    "# (FLEET_HOME, else the home it was installed for). A window already set in the environment wins.",
+    "# Every argument goes to claude: fleet-claude, fleet-claude --resume <id>.",
+    `installed_home='${String(path.resolve(home)).replaceAll("'", "'\\''")}'`,
+    'home="${FLEET_HOME:-$installed_home}"',
+    `window=$(node -e '${read}' "$home/context-guard.json" 2>/dev/null) || window=${fallback}`,
+    'CLAUDE_CODE_AUTO_COMPACT_WINDOW="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-${window:-' + fallback + '}}" exec claude "$@"',
+    "",
+  ].join("\n");
+}
+
+/** `launcher`: the launch command, or (--install) writes `fleet-claude` into `bin`; refuses a file it did not write. */
+export function launcherLines(home, { install = false, bin, env = process.env } = {}) {
+  const window = (() => {
+    try {
+      return contextGuardConfig(home).compactWindowTokens;
+    } catch {
+      return CONTEXT_GUARD_DEFAULTS.compactWindowTokens;
+    }
+  })();
+  const dir = path.resolve(bin ?? path.join(env.HOME || os.homedir(), ".local", "bin"));
+  const file = path.join(dir, LAUNCHER_NAME);
+  if (!install) {
+    return [
+      `LAUNCH CLAUDE_CODE_AUTO_COMPACT_WINDOW=${window} claude`,
+      `INSTALL node ${vibeScriptPath(FLEET_HOME_SCRIPT)} launcher --install puts it in ${file}; start every orchestrator chat with ${LAUNCHER_NAME} (any claude arguments pass through)`,
+    ];
+  }
+  if (existsSync(file) && !readOr(file, "").includes(LAUNCHER_MARK)) throw new Error(`${file} exists and was not written by fleet-home.mjs launcher: move it aside or pass --bin <dir>`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, launcherScript(home), { mode: 0o755 });
+  chmodSync(file, 0o755);
+  const onPath = String(env.PATH ?? "").split(path.delimiter).some((entry) => entry && path.resolve(entry) === dir);
+  return [`INSTALLED ${file}: start every orchestrator chat with ${LAUNCHER_NAME} (any claude arguments pass through)`,
+    ...(onPath ? [] : [`NOT-ON-PATH ${dir}: add it to PATH, or run ${file} by its full path`])];
+}
+
+function main(argv, env = process.env) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" },
+    install: { type: "boolean" }, bin: { type: "string" }, takeover: { type: "boolean" },
   } });
-  const home = values.home ? path.resolve(values.home) : defaultHome();
+  const chat = commandChat(env);
+  const home = values.home ? path.resolve(values.home) : defaultHome(env, chat);
   const print = (lines) => process.stdout.write(lines.map((line) => `${line}\n`).join(""));
   if (command === "start") {
     if (!positionals[0]) throw new Error("Usage: fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet [--home <fleetHome>]");
-    const dir = startProgram(home, positionals[0], values.shape);
-    print([`started ${dir}`, shapeLine(dir)]);
+    const { dir, takenFrom } = startProgram(home, positionals[0], values.shape, { env, chat, takeover: values.takeover });
+    print([`started ${dir}`, shapeLine(dir), ...takenFrom.map((other) => `TAKEOVER ${other}: that chat ran ${positionals[0]}; if it is still open, stop it there`),
+      ...(chat ? [`BOUND ${positionals[0]} ${chat}`] : [])]);
     return 0;
   }
   if (command === "shape") {
-    const dir = resolveWorkDir(home).dir;
+    const dir = chatProgramDir(home, chat, env).dir;
     setShape(dir, positionals[0]);
     print([shapeLine(dir)]);
     return 0;
   }
   if (command === "close") {
-    if (existsSync(path.join(home, "current"))) unlinkSync(path.join(home, "current"));
-    print([`no active program in ${home}`]);
+    print([closeProgram(home, { env, chat })]);
     return 0;
   }
   if (command === "resume") {
-    print([...seedLines(home), ...resumeLines(home)]);
+    const seeded = seedLines(home);
+    const bound = positionals[0] ? resumeProgram(home, positionals[0], chat, env, values.takeover) : bindCurrent(home, chat, env);
+    print([...seeded, ...bound, ...resumeLines(home, { env, chat })]);
     return 0;
   }
   if (command === "check") {
-    const problems = homeProblems(home);
-    print(problems.length > 0 ? problems : [`fleet-home: ok ${resolveWorkDir(home).dir}`]);
+    let dir = home;
+    try {
+      if (existsSync(path.join(home, "programs"))) dir = chatProgramDir(home, chat, env).dir;
+    } catch (error) {
+      if (String(error?.message).startsWith("UNBOUND")) {
+        print([error.message]);
+        return 1;
+      }
+    }
+    const problems = homeProblems(dir);
+    print(problems.length > 0 ? problems : [`fleet-home: ok ${resolveWorkDir(dir, { env, chat }).dir}`]);
     return problems.length > 0 ? 1 : 0;
   }
   if (command === "migrate") {
     if (!values.from || !values.program) throw new Error("Usage: fleet-home.mjs migrate --from <flat work dir> --program <slug> [--home <fleetHome>] [--dry-run]");
-    const target = values.home ? home : path.resolve(values.from);
-    print(migrate(values.from, target, values.program, values["dry-run"]));
+    const fromDir = path.resolve(values.from);
+    const pid = Number(readOr(path.join(fromDir, "watch.lock", "pid"), "").trim());
+    if (pid > 1 && alive(pid)) throw new Error(`WATCHER-LIVE ${pid}: stop the watcher for ${fromDir} first`);
+    const { lines, refused } = migrate(fromDir, values.home ? home : fromDir, values.program, {
+      dryRun: values["dry-run"], reusable: REUSABLE, skip: ["programs", "current"], programDirs: PROGRAM_DIRS, chat, takeover: values.takeover, env,
+    });
+    print(lines);
+    return refused ? 1 : 0;
+  }
+  if (command === "launcher") {
+    print(launcherLines(home, { install: values.install, bin: values.bin, env }));
     return 0;
   }
-  throw new Error("Usage: fleet-home.mjs start|shape|close|resume|check|migrate ...");
+  throw new Error("Usage: fleet-home.mjs start|shape|close|resume|check|migrate|launcher ...");
+}
+
+/** For a plain `resume`: binds `chat` to the home's current program when no other chat holds it. */
+function bindCurrent(home, chat, env) {
+  if (!chat || !existsSync(path.join(home, "programs"))) return [];
+  const resolved = programFor(home, chat, env);
+  if (resolved.source !== "current") return [];
+  bindChat(chat, home, resolved.program, env);
+  return [`BOUND ${resolved.program} ${chat}`];
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
