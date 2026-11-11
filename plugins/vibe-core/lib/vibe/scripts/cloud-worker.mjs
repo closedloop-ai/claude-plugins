@@ -604,6 +604,15 @@ export function validateValidationRequest(request) {
   return request;
 }
 
+/**
+ * How every lane runs: in the foreground, waited for, before the result. A worker that backgrounded its suites and
+ * ended its turn left a run with no result line.
+ */
+export const LANE_DISCIPLINE = "Run every lane in the foreground and wait for it to exit, however long it takes: never "
+  + "background a command, never hand a lane to a monitor, a notification or a later turn, and never end your turn before "
+  + "every lane has an exit code. Print the result line only after every lane has finished. In your final message, "
+  + "before the result line, list every failing test of each failed lane by name, as its runner printed it.";
+
 /** The validation-only brief: exact checkout, install, lanes, no changes, one bound result line. */
 export function validationBrief(request) {
   validateValidationRequest(request);
@@ -613,6 +622,7 @@ export function validationBrief(request) {
     `After checkout, run \`${PROVENANCE_COMMAND}\` as one call, exactly as written, and keep its four lines.`,
     installInstruction(request),
     "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + request.lanes.map((lane) => `- ${lane.name}: ${lane.command}`).join("\n"),
+    LANE_DISCIPLINE,
     "Change no files. Do not edit, create or delete a tracked file, commit, push, open a pull request or trigger a review. After the lanes, run `git status --porcelain` and keep its lines.",
     `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the output of git rev-parse HEAD), "provenance" ({"host", "remote", "origin", "commit"}, each the value from its line of that command, an empty string when the line is empty), "lanes" (one {"name", "exitCode"} per lane above, in order) and "status" (the git status --porcelain lines, an empty list when there are none).`,
   ].join("\n\n") + "\n";

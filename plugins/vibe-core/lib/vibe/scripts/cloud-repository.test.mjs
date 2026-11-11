@@ -6,7 +6,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { CloudRepoError, installInstruction, installScript, PROVENANCE_COMMAND, resolveRepository } from './cloud-repository.mjs';
 import { githubRepository } from './github-remote.mjs';
-import { parseValidationResult, startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
+import { LANE_DISCIPLINE, parseValidationResult, startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
 import { git, makeHome } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
 import { bindProviderInProcess } from "../../../../vibe/skills/vibe/scripts/test-fixtures.mjs";
 
@@ -163,4 +163,12 @@ test('a validation result must prove where it ran: a cloud session, the requeste
   ]) {
     assert.throws(() => parseValidationResult(line(provenance), request), refusal);
   }
+});
+
+test('the validation brief has every lane run in the foreground and the result printed only after all of them', () => {
+  const brief = validationBrief(validation('/tmp/checkout', { repository: 'acme/LocalFork' }));
+  assert.ok(brief.includes(LANE_DISCIPLINE));
+  for (const rule of ['in the foreground', 'never background a command', 'never end your turn before every lane has an exit code',
+    'Print the result line only after every lane has finished', 'list every failing test of each failed lane by name']) assert.ok(LANE_DISCIPLINE.includes(rule), rule);
+  assert.ok(brief.indexOf(LANE_DISCIPLINE) < brief.indexOf('VIBE_VALIDATION_RESULT'), 'the rule comes before the result instruction');
 });
