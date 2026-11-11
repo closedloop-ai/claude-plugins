@@ -256,7 +256,7 @@ stops an unrelated Desktop or changes a running renderer's tree.
 <!-- end: desktop -->
 
 <!-- block: desktop-lane -->
-The Desktop Electron lane is the exception (ISS-13321): no vibe machine runs
+The Desktop Electron lane is the exception: no vibe machine runs
 it, and since symphony-alpha's desktop-e2e job skips pull requests no run
 exists for a branch before merge. The executor returns it under
 `e2eLeftForCi`, covered by the post-merge desktop-e2e-validation run that

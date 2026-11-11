@@ -9,7 +9,7 @@ product question.
 <!-- end: inputs -->
 
 <!-- block: read-graph -->
-`../skills/vibe/references/closedloop-graph.md`.
+`provider:closedloop-graph.md`.
 <!-- end: read-graph -->
 
 <!-- block: evidence-file -->
@@ -165,5 +165,5 @@ net-new screen. Or
 `NEEDS_PERSON` with questions only the person can answer (scope, which of two
 existing tickets they mean), with decision-research evidence and why the answer
 is absolutely necessary. End with the Graph block
-(`../skills/vibe/references/closedloop-graph.md`); the graph is required.
+(`provider:closedloop-graph.md`); the graph is required.
 <!-- end: return -->

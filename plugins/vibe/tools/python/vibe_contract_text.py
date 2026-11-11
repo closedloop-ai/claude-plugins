@@ -13,6 +13,8 @@ AGENTS = Path(__file__).resolve().parents[2] / "agents"
 PROVIDER_REFERENCES = (Path(__file__).resolve().parents[3] / "vibe-closedloop-provider" / "skills" / "closedloop-provider"
                        / "references")
 
+# The ClosedLoop provider's data (`provider.json` `data`): the recipes and rules its repository's contracts pin.
+PROVIDER_DATA = json.loads((PROVIDER_REFERENCES.parents[2] / "provider.json").read_text(encoding="utf-8"))["data"]
 
 def flat(text: str) -> str:
     """`text` with every run of whitespace collapsed to one space."""

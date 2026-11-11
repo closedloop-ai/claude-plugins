@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "no
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assembleProviderText, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
-import { capabilitiesSchema, type Capability } from "./contracts.js";
+import { capabilitiesSchema, unsupportedCapabilities, type Capability } from "./contracts.js";
 import { missingMcpTools } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { recordModes } from "./record-context.js";
@@ -83,6 +83,15 @@ describe("vibe worker cross-runtime tool contract", () => {
       for (const operations of Object.values(actions)) expect(operations).toEqual([]);
     }
     expect(bound["vibe-ticket-worker"]?.handoff).toContain("upload_attachment");
+  });
+
+  it("parses a ledger's capabilities by shape in any chat and checks a grant against the session's provider", () => {
+    const write = { name: "mcp__closedloop__create_document", service: "tracker", operation: "create_document", access: "write" } as const;
+    const graphRead = { name: "mcp__closedloop-graph__code_symbols", service: "graph", operation: "code_symbols", access: "read" } as const;
+    expect(capabilitiesSchema.safeParse([write, graphRead]).success, "a stored ledger stays readable with no provider bound").toBe(true);
+    expect(unsupportedCapabilities([write, graphRead], null).map((item) => item.name)).toEqual([write.name, graphRead.name]);
+    expect(unsupportedCapabilities([write, graphRead], sessionBinding())).toEqual([]);
+    expect(capabilitiesSchema.safeParse([{ ...graphRead, access: "write" }]).success, "a graph write is never a shape").toBe(false);
   });
 
   it("treats hyphenated and underscored operation aliases as the same granted MCP tool", () => {

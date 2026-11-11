@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { actionSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { installedPluginRoot, readPluginManifest } from "./plugin-root.js";
 import { readReferenceImages } from "./reference-images.js";
@@ -118,6 +119,7 @@ export function takeWriterInput(input: unknown) {
 /** Atomically binds the one persistent writer to its runtime, canonical definition and exact session. */
 export function registerWriter(input: unknown) {
   const data = registerSchema.parse(input);
+  requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const definition = readDefinition(data.agentRoot, data.agentName, data.capabilities);
   if (data.agentName !== "vibe-change-worker") throw new Error("Session writer must be vibe-change-worker");
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
@@ -151,6 +153,7 @@ export type StrandedRecordVerifier = (lock: string, ledger: Ledger, retained: Re
  */
 export function migrateWriter(input: unknown, currentPluginRoot: string, verifyRetained?: StrandedRecordVerifier) {
   const data = migrateSchema.parse(input);
+  if (data.capabilities) requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const currentDefinition = (capabilities: Capability[]) => {
     const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
     if (realpathSync(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {

@@ -44,6 +44,7 @@ await buildBundles({
 await build({
   entryPoints: [resolve(toolDir, "src/qa-impact-parser.ts")],
   outfile: resolve(outdir, "qa-impact-parser.mjs"),
+  absWorkingDir: toolDir,
   bundle: true,
   minify: true,
   platform: "node",

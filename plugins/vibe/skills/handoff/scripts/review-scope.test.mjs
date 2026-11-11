@@ -10,7 +10,7 @@ import { sessionAreas } from "../../vibe/scripts/area-paths.mjs";
 import { ADVERSARIAL_REVIEWER, applyTriage, decideReview, FINDINGS_SCHEMA, loadTriageManifest, TriageStatus, loadFindings, partialFindings, REVIEW_SCOPE_DEFAULTS, resolveThresholds, ReviewMode, validateFindings } from "./review-scope.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));

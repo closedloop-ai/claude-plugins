@@ -4,7 +4,7 @@ import { moduleShape, splitTopLevel } from "./module-symbols.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const ROUTE = "apps/api/app/artifact-links/batch-move/route.ts";

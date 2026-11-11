@@ -10,3 +10,5 @@ export function committedLocalPlans(runGit: (args: string[]) => string, prefix: 
 export function localPlanPaths(worktree: string, options?: { requestId?: string | null; binding?: unknown }): {
   root: string; plans: string; plan?: string; decisionTable: string; inWorktree: boolean;
 };
+/** Every in-worktree plan folder of the bound provider or of any provider installed here. */
+export function knownLocalPlanPrefixes(binding: unknown): string[];

@@ -16,8 +16,8 @@ Each block replaces the stub of the same id there, in a session bound to this pr
     for the sign-in.
 - These must be merged to `main`:
   - claude-plugins, for the skills.
-  - symphony-alpha ISS-12056 (the per-session Vercel environment and its
-    request workflow) and ISS-12048 (the production flag snapshot). Every
+  - symphony-alpha's per-session Vercel environment and its request
+    workflow, and its production flag snapshot. Every
     vibe session starts from fresh `main`.
 <!-- end: before -->
 
@@ -61,7 +61,7 @@ worker restore it (`references/preflight.md`, "Restoring a connection").
 - finds an existing symphony-alpha checkout anywhere in the home folder (by
   its GitHub remote, so the folder can have any name, including spaces) and
   remembers it in `~/.codex/vibe/config.json`; only when there is none does it
-  clone one to `~/Source/symphony-alpha`. It then bootstraps it
+  clone one into the person's usual source folder. It then bootstraps it
 - installs whatever is missing (Homebrew, Node, pnpm, `gh`, and `jq`), and puts a Node that satisfies the repo's `engines` range first on
   PATH for every new shell. Docker is not needed: the app runs on Vercel.
 - signs `gh` in to GitHub through the browser

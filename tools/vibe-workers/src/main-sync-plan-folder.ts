@@ -1,6 +1,8 @@
-import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { isLocalPlanPath, knownLocalPlanPrefixes, sessionLocalPlanPrefix } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 
 const prefixes = new Map<string, string | null>();
+const knownPrefixes = new Map<string, string[]>();
 
 /**
  * The session at `root`'s in-worktree local plan folder (`local-plans.mjs`: the provider's artifact root, or null
@@ -11,9 +13,18 @@ export function planPrefixOf(root: string): string | null {
   return prefixes.get(root) ?? null;
 }
 
-/** Whether `file`, relative to `root`, is in that session's in-worktree local plan folder. */
+/**
+ * Every in-worktree plan folder known in this repository (`knownLocalPlanPrefixes`: the bound provider's and any
+ * installed provider's), read once per root, so a plan written while bound stays private when the session is not.
+ */
+export function planPrefixesOf(root: string): string[] {
+  if (!knownPrefixes.has(root)) knownPrefixes.set(root, knownLocalPlanPrefixes(sessionBinding(root)));
+  return knownPrefixes.get(root) ?? [];
+}
+
+/** Whether `file`, relative to `root`, is in any in-worktree local plan folder known in this repository. */
 export function isPlanFile(root: string, file: string): boolean {
-  return isLocalPlanPath(file, planPrefixOf(root));
+  return planPrefixesOf(root).some((prefix) => isLocalPlanPath(file, prefix));
 }
 
 /** The in-worktree private artifact root (the plan folder's parent), or null. */

@@ -20,7 +20,7 @@ tests list for engineering at handoff.
 <!-- end: storybook-docs -->
 
 <!-- block: graph-required -->
-closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): `code_symbols` to find existing stories and similar components to match, `code_importers` on each precedent's providing component to list its hosts, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
+closedloop-graph is required, per `provider:closedloop-graph.md`: `code_symbols` to find existing stories and similar components to match, `code_importers` on each precedent's providing component to list its hosts, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
 <!-- end: graph-required -->
 
 <!-- block: precedent-search -->
@@ -149,7 +149,7 @@ precedent path, it follows.
   or for engineering on the ticket when the session may not make it; never
   phrase it as something the person running the session does
   (`../skills/vibe/references/plain-words.md`, "What the person is asked to
-  do"; ISS-13321).
+  do").
 <!-- end: frozen-base -->
 
 <!-- block: version-history -->

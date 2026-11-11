@@ -102,7 +102,7 @@ from `design-pass.md`. Never revert another person's changes.
   not safe preview publication with its explicit preparation evidence. The
   Desktop Electron lane never runs on a vibe machine: the executor returns it
   under `e2eLeftForCi`, covered by the post-merge `desktop-e2e/validated`
-  run, and it does not hold `requiredE2eComplete` (ISS-13321).
+  run, and it does not hold `requiredE2eComplete`.
 <!-- end: desktop-lane -->
 
 <!-- block: criteria -->

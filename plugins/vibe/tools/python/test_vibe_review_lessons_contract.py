@@ -10,9 +10,10 @@ retired: nothing agent-written goes into public docs.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+from vibe_contract_text import PROVIDER_DATA, PROVIDER_REFERENCES, agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
@@ -91,9 +92,11 @@ def test_lost_and_stale_story_ids_are_searched_and_block() -> None:
     assert "`lost-story-id` finding, a lost story ID or a reference still naming one, blocks too" in flat(HANDOFF_SKILL.read_text())
     rules = DIFF_RULES.read_text()
     assert '"lost-story-id"' in rules
-    assert "STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS," in rules
-    for spec in ('"docs/"', '"apps/web/content/docs/"', '".claude/"', '"*.test.*"', '"*.stories.*"'):
-        assert spec in rules, spec
+    # The places a story ID can be named: the repository's e2e roots, its docs (the provider's diff rules) and tests.
+    assert '"--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"' in rules
+    docs = PROVIDER_DATA["recipes"]["diffRules"]["docs"]
+    for spec in ("docs/", "apps/web/content/docs/", ".claude/"):
+        assert spec in docs, spec
 
 
 def test_a_slot_alone_is_not_a_shared_owner() -> None:
@@ -211,7 +214,7 @@ def test_pull_request_tests_follow_the_review_rules() -> None:
 
 def test_verify_runs_sort_order_tests_by_capability_and_reads_ci_tiers() -> None:
     verify = flat(agent("vibe-verify-worker"))
-    assert "apps/storybook/__tests__/preview-story-sort-order.test.ts" in DIFF_RULES.read_text()
+    assert "apps/storybook/__tests__/preview-story-sort-order.test.ts" in PROVIDER_DATA["recipes"]["diffRules"]["storybook"]["sidebarOrderTests"]
     assert_all(verify, (
         "`diffRules.requiredTests`",
         "Tier A: its container path (`run-containerized.sh` or Dagger)",
@@ -334,7 +337,7 @@ def test_review_lessons_have_one_line_owners() -> None:
     assert "axe `color-contrast` on every new or changed story state; a failing node blocks" in verify
     assert "an in-row message a fixed-height row clips" in adversary
     assert "rerun the inventory's `requiredChecks` on the merged tree" in flat(HANDOFF_SKILL.read_text())
-    assert "renaming its folder, SQL unchanged" in DIFF_RULES.read_text()
+    assert "renaming its folder, SQL unchanged" in json.dumps(PROVIDER_DATA["recipes"]["diffRules"]["migrations"])
     decomposer = flat(agent("vibe-storybook-decomposer"))
     assert "never place an entry on a fallback a sibling retires" in decomposer
     assert "its flag-on state on that surface's existing story entry" in decomposer

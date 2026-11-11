@@ -44,7 +44,7 @@ were tried. Check for a safe retry or accepted alternative first. When it
 remains a verified engineering-only block, offer to pass the pushed work
 to someone now; never give them the branch to merge instead. When they name
 someone, run step 8's
-lookup and assign mode as for passing it on (ISS-13321). Then mark the
+lookup and assign mode as for passing it on. Then mark the
 session handed off as below.
 <!-- end: pr-dispatch -->
 

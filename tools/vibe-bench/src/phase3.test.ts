@@ -198,10 +198,10 @@ function withCodexModel(artifact: EvalBaselineArtifact, model: string): EvalBase
 test("case skills come from actual invocations", () => {
   const vibeDir = join(import.meta.dirname, "../../../plugins/vibe");
   const catalog = evalCaseCatalog(vibeDir);
-  assert.equal(catalog.length, 123);
+  assert.equal(catalog.length, 127);
   assert.deepEqual(Object.fromEntries(["vibe", "handoff", "fleet-orchestrator", "pr-takeover"].map((skill) =>
     [skill, catalog.filter((item) => item.skill === skill).length])),
-  { vibe: 76, handoff: 30, "fleet-orchestrator": 11, "pr-takeover": 6 });
+  { vibe: 78, handoff: 31, "fleet-orchestrator": 12, "pr-takeover": 6 });
   assert.throws(() => skillFromPrompt("no invocation"), /skill-invocation-invalid/);
 });
 

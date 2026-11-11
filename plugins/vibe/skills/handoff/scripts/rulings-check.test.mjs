@@ -9,7 +9,7 @@ import { planProblems, programRulingProblems, recordRulings, rulingProblems, seq
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 import { readAssembled } from "../../vibe/scripts/skill-split.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL("./rulings-check.mjs", import.meta.url));

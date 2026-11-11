@@ -10,7 +10,7 @@
 //        ticket-units.mjs pr-check --board <orchDir> --unit <name> --title <title> --body-file <file>
 //
 // candidates.json, gathered with cl-find-related-tickets and the bound graph
-// tools (references/ticket-units.md says which tool fills which field):
+// tools (the provider's ticket-units reference says which tool fills which field):
 //   {"tickets": [{"slug", "repo": "<owner/repo>",
 //      "prd": "<the PRD it belongs to, from its artifact links>",
 //      "operatorAssigned": <true when the operator is its assignee>,

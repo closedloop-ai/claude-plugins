@@ -174,9 +174,9 @@ Do this first, in both modes.
    the same providing component, then already in the current roots, then most
    recently changed (the latest commit on main to its story file); name the
    others.
-   Report each side with its paths and titles, and its audience, `design` or
-   `engineering`, by `../skills/vibe/references/ticket-template.md`
-   ("Conflicts"); when unsure it is `engineering`. The writer logs it for the
+   Report each side with its paths and titles, and its audience: `design` for
+   Storybook placement, taxonomy, story granularity or a visual or UX choice,
+   `engineering` for everything else; when unsure it is `engineering`. The writer logs it for the
    live ticket; it is never a question for the person running the session.
 
 <!-- generic: placement-citation -->

@@ -117,7 +117,7 @@ def test_the_template_and_ticket_worker_place_each_decision_once() -> None:
     ticket = flat(agent("vibe-ticket-worker"))
     assert (
         "Place each `Engineering decision` entry in the change log once, as an unchecked item at the end of the "
-        "Engineering checklist in its logged shape (`../skills/vibe/references/ticket-template.md`, \"Engineering decisions\")."
+        "Engineering checklist in its logged shape (`provider:ticket-template.md`, \"Engineering decisions\")."
     ) in ticket
 
 

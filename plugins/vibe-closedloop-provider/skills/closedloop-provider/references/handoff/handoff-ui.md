@@ -9,7 +9,7 @@ component the session added, retitled or moved, checked against the Placement
 blocks in the writer's local plan. Each placement goes on the live ticket's
 Storybook placement line; the SAME writer logs each Conflict with its
 audience, and the ticket worker places it by that audience
-(`../vibe/references/ticket-template.md`, "Conflicts"), never to the person.
+(`provider:ticket-template.md`, "Conflicts"), never to the person.
 Every new story follows the repo's `apps/storybook/TAXONOMY.md`, a v1.0
 story file is never edited beyond a compile-only repair and any other existing
 <!-- end: placement-record -->

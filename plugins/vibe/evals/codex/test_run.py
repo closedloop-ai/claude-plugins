@@ -993,3 +993,22 @@ def test_generic_cases_cover_the_walk_and_load_no_provider() -> None:
         assert not any("provider" in plugin for plugin in case["meta"]["plugins"]), case["name"]
         assert (case["source"] / "graders" / "no-provider-names.md").is_file(), case["name"]
     assert any(runner.case_arm(case) == "provider" for case in runner.cases())
+
+
+def test_the_provider_arm_installs_vibe_text_with_its_provider_stubs_resolved(tmp_path: Path) -> None:
+    import shutil
+    plugins = runner.PLUGIN.parent
+    for name in ("vibe-core", "vibe-closedloop-provider"):
+        shutil.copytree(plugins / name, tmp_path / name, ignore=shutil.ignore_patterns("node_modules", "*.test.mjs"))
+    agent = tmp_path / "vibe" / "agents" / "vibe-verify-worker.md"
+    agent.parent.mkdir(parents=True)
+    agent.write_text("Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.\n\n"
+                     "<!-- generic: lane-default -->\nRun the lanes the repository documents.\n<!-- end generic: lane-default -->\n"
+                     "> Provider `recipes` (block `lane-default` of `agents/vibe-verify-worker.md`)\n")
+    import skill_split  # pyright: ignore[reportMissingImports]
+    assert "> Provider" in skill_split.raw(agent), "the raw file holds the stub before the arm resolves it"
+    runner.assemble_provider_text(tmp_path, runner.Budget(120))
+    # Read raw: the repository's conftest would otherwise resolve the stub on read and hide what the arm wrote.
+    text = skill_split.raw(agent)
+    assert "Command-based repositories default to `pnpm test:lanes`" in text
+    assert "Run the lanes the repository documents." not in text and "> Provider" not in text

@@ -678,3 +678,21 @@ test("the override names its ticket the way the session's tracker does: a bound 
   declare("WIDGET");
   assert.equal(prCreateGuard(event)?.decision, "deny", "a word that is no reference still cannot override");
 });
+
+test("with a tracker bound the override names one of its issues, never a URL or a plan", (t) => {
+  const worktree = mkdtempSync(path.join(tmpdir(), "vibe-pr-override-issue-"));
+  t.after(() => rmSync(worktree, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q", "-b", "vibe/example", worktree]);
+  writeFileSync(path.join(worktree, "file.txt"), "base\n");
+  execFileSync("git", ["-C", worktree, "add", "."]);
+  execFileSync("git", ["-C", worktree, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "base"]);
+  const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ branch: "vibe/example", provider: { state: "bound", name: "vibe-closedloop-provider",
+    capabilities: ["tickets", "plans", "graph", "memory", "recipes"], root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../vibe-closedloop-provider") } }));
+  const body = path.join(worktree, "body.md");
+  const event = { cwd: worktree, tool_input: { command: `gh pr create --base main --body-file ${body}` } };
+  for (const [reference, allowed] of [["ISS-13855", true], ["FEA-12", true], ["PLN-7", false], ["https://example.com/x", false], ["#42", false]]) {
+    writeFileSync(body, `Vibe gate override: ${reference}: handoff gate bug refuses the verified PR source.\n`);
+    assert.equal(prCreateGuard(event) === null, allowed, reference);
+  }
+});

@@ -11634,7 +11634,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, useSessionWorktree } = module;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, useSessionWorktree } = module;
 
 // src/contracts.ts
 function capabilityOperations(binding = sessionBinding()) {
@@ -11666,12 +11666,20 @@ var capabilitySchema = external_exports.object({
   operation: external_exports.string(),
   access: external_exports.enum(["read", "write"])
 }).strict().superRefine((value, ctx) => {
-  const operations = capabilityOperations();
-  const validOperation = value.service === "graph" ? value.access === "read" && operations.graph.has(value.operation) : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation);
-  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
+  if (mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation || value.service === "graph" && value.access !== "read") {
     ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
+function unsupportedCapabilities(capabilities, binding) {
+  const operations = capabilityOperations(binding);
+  return capabilities.filter((value) => !(value.service === "graph" ? operations.graph.has(value.operation) : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation)));
+}
+function requireSupportedCapabilities(capabilities, binding) {
+  const unsupported = unsupportedCapabilities(capabilities, binding);
+  if (unsupported.length) {
+    throw new external_exports.ZodError([{ code: external_exports.ZodIssueCode.custom, path: ["capabilities"], message: "Unsupported capability binding" }]);
+  }
+}
 var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine(
   (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,
   "Duplicate capability binding"
@@ -12183,6 +12191,7 @@ function readWriterUpgradeEvidence(worktree, installedRoot) {
 }
 function registerWriter(input) {
   const data = registerSchema.parse(input);
+  requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const definition = readDefinition(data.agentRoot, data.agentName, data.capabilities);
   if (data.agentName !== "vibe-change-worker") throw new Error("Session writer must be vibe-change-worker");
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
@@ -12454,17 +12463,21 @@ function bindTakeoverWriter(worktree, binding) {
 var module2 = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
 var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScriptReferences } = module2;
 
+// vibe-core:lib/vibe/scripts/provider-brief.mjs
+var module3 = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
+var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, providerLine } = module3;
+
 // vibe-core:lib/vibe/scripts/worker-scope.mjs
-var module3 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
-var { launcherWorker, recordWorkerScope } = module3;
+var module4 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
+var { launcherWorker, recordWorkerScope } = module4;
 
 // src/record-context.ts
 import { existsSync as existsSync4, readFileSync as readFileSync6, realpathSync as realpathSync7 } from "node:fs";
 import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
-var module4 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module4;
+var module5 = await vibeCore("lib/vibe/scripts/session-record.mjs");
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module5;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -13171,6 +13184,9 @@ function reviewSourceIdentity(pluginRoot, worktree) {
 }
 function boundDefinition(definition, input) {
   const binding = sessionBinding(input.worktree);
+  requireSupportedCapabilities(input.capabilities, binding);
+  const inherited = briefProviderProblem(input.input ?? "", binding, { required: false });
+  if (inherited) throw new Error(inherited);
   const modes = recordModes(binding);
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
@@ -13204,7 +13220,7 @@ function boundDefinition(definition, input) {
   const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn or an explicit top-level testsRequired grant may author tests. Never author tests in plan or record turns, or in request, fix or handoff turns without that grant; never infer authority from the person's words. A request, fix or handoff turn with test-repair authority but without a test-authoring grant may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
   const verifyEvidencePolicy = input.agentName === "vibe-verify-worker" ? `This is a source read-only verification role. Never edit product source, tests, fixtures, snapshots, catalog or allowlists. Bash may write only owned private verification artifacts: <gitdir>/vibe-pr-evidence.json, <gitdir>/vibe-lane-report.txt from the repository-declared lane source, <gitdir>/vibe-lane-results.json through pre-pr-lanes.mjs, typed lane run receipts, verifier-owned Storybook birth records and logs in its private git directory, and .control/ runtime files from the repository control command in control mode. Move only this turn's control captures to the private git directory before publication. Never write a ${connectionLabel(binding, "tickets", "tracker") ?? "tracker"} or session record. ` : "";
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
-  const prompt = `${definition.prompt}
+  const prompt = `${assembleProviderText(definition.prompt, binding)}
 
 Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {

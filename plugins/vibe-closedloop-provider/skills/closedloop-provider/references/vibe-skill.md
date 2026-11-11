@@ -37,7 +37,7 @@ decision; a decision is settled only when it traces to a human statement
 <!-- end: product-research -->
 
 <!-- block: graph-required -->
-- Every worker reads `references/closedloop-graph.md`. closedloop-graph is
+- Every worker reads `provider:closedloop-graph.md`. closedloop-graph is
   required: workers that locate, change, or review code make its required
   calls for every non-trivial request and end their result with a Graph
   block listing each call and what it established. When you dispatch one,
@@ -50,7 +50,7 @@ decision; a decision is settled only when it traces to a human statement
 
 <!-- block: live-ticket-template -->
 - Every worker that edits the live ticket follows
-  `references/ticket-template.md`. Say so in the brief and give the slug.
+  `provider:ticket-template.md`. Say so in the brief and give the slug.
 <!-- end: live-ticket-template -->
 
 <!-- block: requirements-row -->
@@ -319,7 +319,7 @@ the app?" Default to straight into the app when no unresolved decision is needed
    the SAME writer with its Placement block, which the writer records in its
    local plan before writing. That block is a read-only lookup in quick prep,
    not a review. The writer logs a Conflict in it with its audience, `design`
-   or `engineering`, for the live ticket (`references/ticket-template.md`,
+   or `engineering`, for the live ticket (`provider:ticket-template.md`,
    "Conflicts"), never a question for the person.
    A part that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` for the live ticket's Engineering
@@ -441,7 +441,7 @@ otherwise.
 <!-- block: keep-it -->
 On "keep it", stop local Storybook and Desktop with
 `node scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals only a
-recorded process it proves is still the session's own (ISS-13321). Their work stays in the worktree and on the branch until they
+recorded process it proves is still the session's own. Their work stays in the worktree and on the branch until they
 come back and say they are done; remind them that is how it gets a pull
 request or reaches design and engineering. On "throw it away", follow section 9.
 <!-- end: keep-it -->
@@ -481,7 +481,7 @@ request or reaches design and engineering. On "throw it away", follow section 9.
 <!-- end: discard-cancel -->
 
 <!-- block: ref-graph -->
-- `references/closedloop-graph.md`: how every worker uses closedloop-graph.
+- `provider:closedloop-graph.md`: how every worker uses closedloop-graph.
 <!-- end: ref-graph -->
 
 <!-- block: ref-environment -->
@@ -490,6 +490,6 @@ request or reaches design and engineering. On "throw it away", follow section 9.
 <!-- end: ref-environment -->
 
 <!-- block: ref-ticket-template -->
-- `references/ticket-template.md`: the live ticket's sections and who keeps
+- `provider:ticket-template.md`: the live ticket's sections and who keeps
   each one current.
 <!-- end: ref-ticket-template -->

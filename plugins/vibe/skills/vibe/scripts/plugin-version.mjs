@@ -98,7 +98,7 @@ if (missingCore && process.argv[1] && import.meta.url === pathToFileURL(path.res
 const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const startupRecord = await vibeCore("lib/vibe/scripts/startup-record.mjs");
-const { probeProvider, providerCandidate } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { bindForRepository, probeProvider, providerCandidate } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { RELEASE_VERSION: VERSION, readJson, startupDir, writeJson } = startupRecord;
 export const { VersionStatus, blockingProblem, compareVersions, installedVibeVersion, loadedSkillProblem, markPending,
   readStartupRecord, startupFile } = startupRecord;
@@ -112,7 +112,7 @@ const VIBE_BRANCH = "vibe/";
 const MANIFEST = Object.freeze({ claude: ".claude-plugin/plugin.json", codex: ".codex-plugin/plugin.json" });
 const CATALOG = Object.freeze({ claude: ".claude-plugin/marketplace.json", codex: ".agents/plugins/marketplace.json" });
 const CHOOSERS = Object.freeze(["person", "opening-message"]);
-const COMMANDS = Object.freeze(["check", "choose", "update", "loaded", "pending", "adopt", "status", "show", "provider", "provider-install"]);
+const COMMANDS = Object.freeze(["check", "choose", "update", "loaded", "pending", "adopt", "status", "show", "provider", "provider-install", "provider-match"]);
 const CONNECTION_ARG = /^([a-z][a-z0-9-]{0,40})=(.+)$/;
 const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
 const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe", "vibe-core"]);
@@ -332,7 +332,9 @@ export function adoptStartupRecord(worktree, { env = process.env, home = os.home
     throw new Error(`No vibe session record in ${worktree}.`);
   }
   // The provider binding travels with the session, so its workers, scripts and hooks read it and never probe.
-  writeSessionRecord(worktree, { ...session, pluginVersion: record, ...(record.provider ? { provider: record.provider } : {}) });
+  // The opt-in a recipe needs is the session repository's own, never the directory the check happened to run in.
+  const provider = bindForRepository(adoptedProvider(session, record.provider), worktree);
+  writeSessionRecord(worktree, { ...session, pluginVersion: record, ...(provider ? { provider } : {}) });
   return record;
 }
 
@@ -594,6 +596,7 @@ async function main(argv, env, home) {
       "skill-listed": { type: "string" },
       "latest-base": { type: "string" },
       "timeout-ms": { type: "string" },
+      expect: { type: "string" },
     },
   });
   const command = positionals[0] ?? "check";
@@ -616,8 +619,14 @@ async function main(argv, env, home) {
   const candidate = providerCandidate({ cwd: process.cwd() });
   const labels = candidate.connections ?? {};
   if (command === "provider") {
+    // A provider seen installed here once (enabled or not) is never offered again, so removing it by hand stays.
+    if (candidate.state === "candidate" || candidate.reason !== "no provider is installed") markProviderSeen(home, now);
     const offer = providerOffer(candidate, readProviderInstall(home));
     return { code: 0, output: { ...candidate, ...(offer ? { offer } : {}) } };
+  }
+  if (command === "provider-match") {
+    const conversation = values.conversation ?? conversationId(env);
+    return providerMatch(values.expect, readStartupRecord(conversation, home)?.provider ?? null);
   }
   if (command === "provider-install") {
     return installOfferedProvider({ candidate, connections, clis, env, home, now });
@@ -941,6 +950,12 @@ export function readProviderInstall(home = os.homedir()) {
   try { return readJson(providerInstallFile(home)); } catch { return null; }
 }
 
+/** Records that a provider was installed here, once; vibe's own install record already counts. */
+export function markProviderSeen(home = os.homedir(), now = new Date()) {
+  if (readProviderInstall(home)) return false;
+  try { writeJson(providerInstallFile(home), { seenAt: now.toISOString() }); return true; } catch { return false; }
+}
+
 /** The install offer for a start: present only when nothing was ever installed and vibe has no install on record. */
 export function providerOffer(candidate, installed) {
   if (candidate?.state !== "none" || candidate.reason !== "no provider is installed" || installed) return null;
@@ -981,4 +996,33 @@ export function installOfferedProvider({ candidate, connections, clis = {}, env 
   if (failures.length < commands.length) writeJson(providerInstallFile(home), { name: offer.name, installedAt: now.toISOString(), commands: ran });
   return { code: failures.length ? 1 : 0, output: { ok: failures.length === 0, installed: failures.length < commands.length, commands: ran, failures,
     next: "the provider binds at the next vibe or fleet start, in a new chat" } };
+}
+
+/**
+ * The binding a session keeps when a chat adopts it. A session keeps the binding it has (a generic session stays
+ * generic, a bound one stays bound), except that a provider that was bound but disconnected rebinds when this chat
+ * bound the same provider. A session with none takes this chat's, unless it is a tracker session from before
+ * bindings were recorded (it has a live ticket) and this chat bound nothing: it then waits for a chat that binds.
+ */
+export function adoptedProvider(session, chat) {
+  const current = session?.provider;
+  if (current) {
+    const rebinds = current.state === "bound-disconnected" && chat?.state === "bound" && chat.name === current.name;
+    return rebinds ? chat : current;
+  }
+  if (!chat) return null;
+  if (chat.state !== "bound" && (session?.liveTicket || session?.handoffTicket)) return null;
+  return chat;
+}
+
+/**
+ * `provider-match --expect <name|none>`: whether this chat is bound as the lead that briefed it was (its brief's
+ * `Provider:` line). A writer works only under the lead's binding; a mismatch exits 1 with the reason to report.
+ */
+export function providerMatch(expected, binding) {
+  if (typeof expected !== "string" || !expected.trim()) return { code: 1, output: { ok: false, reason: "provider-match needs --expect <provider name or none>" } };
+  const actual = binding?.state === "bound" && binding.name ? binding.name : "none";
+  const ok = actual === expected.trim();
+  return { code: ok ? 0 : 1, output: { ok, expected: expected.trim(), actual,
+    ...(ok ? {} : { reason: `the lead was bound as ${expected.trim()} and this chat is bound as ${actual}; a writer works only under the lead's binding` }) } };
 }

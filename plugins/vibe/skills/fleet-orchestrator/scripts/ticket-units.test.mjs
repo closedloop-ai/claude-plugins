@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { freeUnitName, groupLines, groupTickets, joinReasons, prNameProblems } from './ticket-units.mjs';
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tickets exist only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tickets exist only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL('./ticket-units.mjs', import.meta.url));

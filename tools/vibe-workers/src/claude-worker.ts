@@ -7,13 +7,14 @@ import { z } from "zod";
 import { checkClaudeSignIn, checkClaudeSignInAsync, checkProtectedWriteSupportAsync, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
   SIGN_IN_PERSON_ACTION } from "./claude-preflight.js";
 import { runFromCanonicalEntry } from "./cli.js";
-import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
+import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, requireSupportedCapabilities, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
-import { boundWith, connectionLabel, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { assembleProviderText, boundWith, connectionLabel, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { briefProviderProblem } from "../../../plugins/vibe-core/lib/vibe/scripts/provider-brief.mjs";
 import { recordWorkerScope } from "../../../plugins/vibe-core/lib/vibe/scripts/worker-scope.mjs";
 import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
@@ -150,6 +151,10 @@ function reviewSourceIdentity(pluginRoot: string, worktree: string): ReviewSourc
 /** Exact capabilities are discovered by the parent, then bounded again by role and declared operation. */
 export function boundDefinition(definition: Definition, input: LaunchInput) {
   const binding = sessionBinding(input.worktree);
+  requireSupportedCapabilities(input.capabilities, binding);
+  // A brief that names the lead's binding launches only in a session bound the same way (fleet writer inheritance).
+  const inherited = briefProviderProblem(input.input ?? "", binding, { required: false });
+  if (inherited) throw new Error(inherited);
   const modes = recordModes(binding);
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
@@ -207,7 +212,9 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory "
       + "through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, "
       + "tests or live records, and never adopt an unrecorded process. " : "";
-  const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
+  // The role's provider stubs are resolved here against the session's binding, as provider-text.md promises a
+  // Claude-launched worker; with no provider bound each stub's generic text stays.
+  const prompt = `${assembleProviderText(definition.prompt, binding)}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
     + pushPolicy(input) + phasePolicy
     + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "")

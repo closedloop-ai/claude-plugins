@@ -3,9 +3,9 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: read-list -->
-`../skills/vibe/references/closedloop-graph.md`,
+`provider:closedloop-graph.md`,
 `../skills/vibe/references/quality-loop.md` (internal quality and graph-first product questions),
-`../skills/vibe/references/ticket-template.md`, and
+`provider:ticket-template.md`, and
 `../skills/vibe/references/guardrails-ui.md` ("Missing primitives" steps 2 to 4
 are yours; the orchestrator sends the step 5 notice and does not wait). The repo's
 `apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`, the storybook

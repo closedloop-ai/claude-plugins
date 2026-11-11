@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { artifactRootOf, isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
+import { isPlanFile, planPrefixesOf } from "./main-sync-plan-folder.js";
 import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
 import { MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
@@ -23,9 +23,10 @@ export function verifyPrivateInput(root: string, file: string, head: string) {
 
 /** Git can omit a symlinked private directory's descendants, so inspect the namespace itself first. */
 export function verifyPrivateRoot(root: string) {
-  const prefix = planPrefixOf(root);
-  const artifactRoot = artifactRootOf(root);
-  for (const path of prefix && artifactRoot ? [artifactRoot.slice(0, -1), prefix.slice(0, -1)] : []) {
+  // Every known plan folder and its artifact root, bound or not.
+  const paths = planPrefixesOf(root).flatMap((prefix) => [prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/")), prefix.slice(0, -1)])
+    .filter(Boolean);
+  for (const path of [...new Set(paths)]) {
     const stat = lstatSync(join(root, path), { throwIfNoEntry: false });
     if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(join(root, path)) !== join(root, path))) {
       throw new MainSyncError("Private planning evidence requires its canonical owned directory; no symlink or alias is accepted", "NEEDS_CHANGE");

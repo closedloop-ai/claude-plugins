@@ -8,7 +8,7 @@ import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isFrozenStory, put, run } from "./diff-rules-test-fixture.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {

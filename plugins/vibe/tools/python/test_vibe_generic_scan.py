@@ -190,3 +190,43 @@ def test_the_code_check_catches_a_script_in_data() -> None:
     assert not CODE_MARKERS.search("apps/prototypes/scripts/check-catalog-imports.mjs")
     assert not CODE_MARKERS.search("--eval")
     assert not CODE_MARKERS.search(r"\b(?:ISS|PRD|PLN|FEA)-\d+\b")
+
+
+RELATIVE_REFERENCE = re.compile(r"(?<![\w/.])((?:\.\./)+[\w./-]*references/[\w.-]+\.md)")
+
+
+def test_every_relative_reference_in_vibe_resolves() -> None:
+    """A reference that moved into the provider is named `provider:<file>`; a `../` path left behind is dangling."""
+    dangling = []
+    for path in (scan.REPO / "plugins/vibe").rglob("*"):
+        if path.suffix not in {".md", ".mjs"} or "/dist/" in path.as_posix() or ".test." in path.name or "/evals/" in path.as_posix():
+            continue
+        for match in RELATIVE_REFERENCE.finditer(path.read_text(encoding="utf-8", errors="ignore")):
+            # A reference file names paths from its skill's root, as SKILL.md does; any other file from its own folder.
+            bases = (path.parent, path.parent.parent) if path.parent.name == "references" else (path.parent,)
+            if not any((base / match.group(1)).resolve().is_file() for base in bases):
+                dangling.append(f"{path.relative_to(scan.REPO)}: {match.group(1)}")
+    assert dangling == []
+
+
+def test_the_provider_text_names_no_ticket_and_no_machine() -> None:
+    """The provider may name ClosedLoop and symphony-alpha, but like any plugin text no ticket id and no home path."""
+    found = []
+    for path in (scan.REPO / "plugins/vibe-closedloop-provider").rglob("*"):
+        if not path.is_file():
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+            if re.search(r"\b(?:ISS|PRD|PLN|FEA|PRO)-\d+\b", line) or {"machine"} & set(scan.families(line, semantic=False)):
+                found.append(f"{path.relative_to(scan.REPO)}:{number}")
+    assert found == []
+
+
+def test_no_provider_specific_line_of_the_base_was_dropped() -> None:
+    """Every gating line of the tree before vibe went generic is kept: in runtime text, in the provider, or in the
+    mapping that names what replaced it. The snapshot holds digests only."""
+    here = Path(scan.__file__).parent
+    before = json.loads((here / "vibe_generic_base.json").read_text(encoding="utf-8"))
+    mapping = json.loads((here / "vibe_generic_mapping.json").read_text(encoding="utf-8"))
+    assert len(before) > 6000
+    assert all(isinstance(reason, str) and reason.strip() for reason in mapping.values())
+    assert scan.diff(before, scan.REPO, mapping, scan.DIFF_TOPS) == []

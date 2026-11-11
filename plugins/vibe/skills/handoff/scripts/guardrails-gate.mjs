@@ -59,7 +59,6 @@ const REVIEWER_CHECK_NAMES = new Set(REVIEWER_CHECKS.map((entry) => entry.name))
 const UI_FILE = /\.(?:tsx|jsx|css|scss)$/;
 const SOURCE = /\.(?:tsx?|jsx?|mjs|cjs)$/;
 const TS_FILE = /\.tsx?$/;
-const BIOME_FILE = /\.(?:tsx?|jsx?|mjs|cjs|json|jsonc|css)$/;
 const COMMENT = /^\s*(?:\/\/|\/\*|\*|\{\/\*)/;
 const HEX_COLOR = /(?<=["'`\s(:,=])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b(?![\w-])/;
 const CUSTOM_PROPERTY = /^\s*--[\w-]+\s*:/;
@@ -274,10 +273,10 @@ export function createGuardrailsGate({
 } = {}) {
   const git = (worktree, args) => run("git", ["-C", worktree, ...args]);
 
-  function wrappedGate({ name, script, args, worktree, changed, scripts, report }) {
+  function wrappedGate({ name, script, program = "pnpm", args, worktree, changed, scripts, report }) {
     if (script && !(script in scripts)) return report.skip(name, `the repository defines no "${script}" script`);
     if (!exists(path.join(worktree, "node_modules"))) return report.skip(name, "dependencies are not installed in the worktree (no node_modules), so the repository's gate cannot run");
-    const result = run("pnpm", args, { cwd: worktree, timeoutMs: 600_000 });
+    const result = run(program, args, { cwd: worktree, timeoutMs: 600_000 });
     if (result.status === 124) return report.skip(name, "stopped after 600s on this machine");
     const missing = toolDidNotRun(result);
     if (missing) return report.skip(name, missing);
@@ -337,10 +336,14 @@ export function createGuardrailsGate({
     const changedPaths = new Set(files.filter((file) => file.status !== "D").map((file) => file.path));
     const scripts = exists(path.join(worktree, "package.json")) ? (JSON.parse(read(path.join(worktree, "package.json")))?.scripts ?? {}) : {};
 
-    const biomeTargets = [...changedPaths].filter((file) => BIOME_FILE.test(file));
-    if (biomeTargets.length === 0) handle.skip(Check.Biome, "no changed file is one Biome checks");
-    else wrappedGate({ name: Check.Biome, args: ["exec", "biome", "check", ...biomeTargets], worktree, changed: changedPaths, scripts, report: handle });
-    const sourceGates = (providerDataOr(sessionBinding(worktree), "recipes", "verify", null)?.checks ?? []).find((check) => check.name === Check.SourceGates);
+    // The repository's formatter and source gates are its verify recipe's; without one neither runs here.
+    const verify = providerDataOr(sessionBinding(worktree), "recipes", "verify", null);
+    const formatter = verify?.formatter;
+    const formatterTargets = formatter ? [...changedPaths].filter((file) => new RegExp(formatter.files).test(file)) : [];
+    if (!formatter) handle.skip(Check.Biome, "the repository's recipe names no formatter");
+    else if (formatterTargets.length === 0) handle.skip(Check.Biome, formatter.noFiles);
+    else wrappedGate({ name: Check.Biome, program: formatter.command[0], args: [...formatter.command.slice(1), ...formatterTargets], worktree, changed: changedPaths, scripts, report: handle });
+    const sourceGates = (verify?.checks ?? []).find((check) => check.name === Check.SourceGates);
     if (sourceGates) wrappedGate({ name: Check.SourceGates, script: sourceGates.script, args: [sourceGates.script], worktree, changed: new Set(), scripts, report: handle });
     else handle.skip(Check.SourceGates, "the repository's recipe names no source gates");
 

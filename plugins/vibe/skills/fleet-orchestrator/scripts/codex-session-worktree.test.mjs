@@ -12,7 +12,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 function git(cwd, ...args) {
@@ -34,7 +34,7 @@ function fixture(t) {
   mkdirSync(join(repo, '.claude', 'worktrees'), { recursive: true });
   git(repo, 'worktree', 'add', '-q', '-b', 'vibe/example', worktree, 'HEAD');
   const promptFile = join(dir, 'prompt.md');
-  writeFileSync(promptFile, '$vibe ISS-1\n');
+  writeFileSync(promptFile, '$vibe ISS-1\nProvider: vibe-closedloop-provider\n');
   const stateDir = join(dir, 'state');
   const recordPath = join(git(worktree, 'rev-parse', '--absolute-git-dir'), 'vibe-session.json');
   const record = { slug: 'example', branch: 'vibe/example', summary: 'Example', status: 'active',
@@ -213,9 +213,9 @@ test('new writer binds the brief ticket and refuses a mismatched --ticket even w
   const f = fixture(t);
   writeFileSync(f.recordPath, JSON.stringify(f.record));
   const app = client();
-  writeFileSync(f.promptFile, '$vibe ISS-2\n');
+  writeFileSync(f.promptFile, '$vibe ISS-2\nProvider: vibe-closedloop-provider\n');
   await assert.rejects(run(app, f.options()), /brief.*ticket|ticket.*brief/i);
-  writeFileSync(f.promptFile, '$vibe ISS-1\n');
+  writeFileSync(f.promptFile, '$vibe ISS-1\nProvider: vibe-closedloop-provider\n');
   await assert.rejects(run(app, f.options('ISS-2')), /brief.*ticket|ticket.*brief/i);
   assert.deepEqual(app.calls, []);
 });
@@ -226,11 +226,11 @@ test('new writer uses the brief ticket when --ticket is omitted and rejects an u
   const app = client();
   const withoutFlag = parseCli(['turn', f.stateDir, 'writer', '--prompt-file', f.promptFile,
     '--cwd', f.worktree, '--model', 'm', '--effort', 'high']);
-  writeFileSync(f.promptFile, '$vibe resume this session\n');
+  writeFileSync(f.promptFile, '$vibe resume this session\nProvider: vibe-closedloop-provider\n');
   await assert.rejects(run(app, withoutFlag), /brief naming its ticket/);
   assert.equal(existsSync(join(f.stateDir, 'writer.launch.json')), false);
   assert.deepEqual(app.calls, []);
-  writeFileSync(f.promptFile, '$vibe ISS-1\n');
+  writeFileSync(f.promptFile, '$vibe ISS-1\nProvider: vibe-closedloop-provider\n');
   assert.equal(await run(app, withoutFlag), 'writer turn T1 U1');
 });
 
@@ -238,10 +238,10 @@ test('new writer accepts a PRD-origin Vibe session after its live ISS becomes ca
   const f = fixture(t);
   writeFileSync(f.recordPath, JSON.stringify({ ...f.record, ticket: 'PRD-9', liveTicket: 'ISS-1' }));
   const app = client();
-  writeFileSync(f.promptFile, '$vibe PRD-9\n');
+  writeFileSync(f.promptFile, '$vibe PRD-9\nProvider: vibe-closedloop-provider\n');
   await assert.rejects(run(app, f.options('PRD-9')), /different vibe session ticket/);
   assert.deepEqual(app.calls, []);
-  writeFileSync(f.promptFile, '$vibe ISS-1\n');
+  writeFileSync(f.promptFile, '$vibe ISS-1\nProvider: vibe-closedloop-provider\n');
   assert.equal(await run(app, f.options()), 'writer turn T1 U1');
   assert.equal(app.calls[0].method, 'thread/start');
 });

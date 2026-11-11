@@ -3,7 +3,7 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: read-graph -->
-`../skills/vibe/references/closedloop-graph.md`; the inventory; the session
+`provider:closedloop-graph.md`; the inventory; the session
 change log `$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`;
 `git -C <wt> diff --stat <inventory baseCommit>` (the session's redeploy
 commits and anything not committed yet) and the diff of each changed file.

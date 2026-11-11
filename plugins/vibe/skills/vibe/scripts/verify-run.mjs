@@ -344,6 +344,7 @@ export function createVerifyRun({
     const recipe = recipeFor(worktree);
     if (!recipe?.laneReport) {
       evidence.checks = [required("verify", null, Status.Blocked, { reason: NO_RECIPE })];
+      onProgress({ stage: "checks", names: evidence.checks.map((check) => `${check.name}: ${check.status}`) });
       return { done: finish(evidence) };
     }
     const checkNames = [...(recipe.formatter ? [recipe.formatter.name] : []), ...(recipe.checks ?? []).map((check) => check.name), "lanes"];

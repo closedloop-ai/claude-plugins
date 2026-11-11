@@ -21,7 +21,7 @@ import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
-const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { installedProviders, providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const ARTIFACT_ROOT = /^\.[a-z0-9][a-z0-9._-]*\/$/;
 const RESERVED_ROOTS = new Set([".git/", ".claude/", ".codex/", ".agents/"]);
@@ -38,6 +38,23 @@ export function localPlanPrefix(binding) {
     throw new Error(`The provider's artifact root ${JSON.stringify(root)} is not one dot folder at the repository root.`);
   }
   return `${root}vibe-plans/`;
+}
+
+/**
+ * Every in-worktree plan folder a session could have used in this repository: the bound provider's, and that of any
+ * provider installed here whether or not it is bound, so a plan written while bound stays private after it is not.
+ */
+export function knownLocalPlanPrefixes(binding) {
+  const prefixes = new Set();
+  const bound = localPlanPrefix(binding);
+  if (bound) prefixes.add(bound);
+  let installed = [];
+  try { installed = installedProviders(); } catch { installed = []; }
+  for (const provider of installed) {
+    const root = provider.contract?.data?.recipes?.artifactRoot;
+    if (typeof root === "string" && ARTIFACT_ROOT.test(root) && !RESERVED_ROOTS.has(root)) prefixes.add(`${root}vibe-plans/`);
+  }
+  return [...prefixes];
 }
 
 /** The session at `worktree`'s in-worktree plan folder (localPlanPrefix of its binding), or null. */
@@ -83,7 +100,8 @@ if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpath
     if (positionals[0] === "paths") {
       process.stdout.write(`${JSON.stringify({ ok: true, ...localPlanPaths(values.worktree, { requestId: values["request-id"] ?? null }) })}\n`);
     } else {
-      const plans = committedLocalPlans((args) => git(values.worktree, args), sessionLocalPlanPrefix(values.worktree));
+      const plans = knownLocalPlanPrefixes(sessionBinding(values.worktree))
+        .flatMap((prefix) => committedLocalPlans((args) => git(values.worktree, args), prefix));
       process.stdout.write(`${JSON.stringify({ ok: plans.length === 0, committedLocalPlans: plans })}\n`);
       process.exitCode = plans.length ? 1 : 0;
     }

@@ -7,11 +7,17 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { ADD_VIBE_CORE, APPROVE_HOOKS, HookApproval, runningHookApproval, UNKNOWN_METHOD } from '../../vibe/scripts/vibe-core-hooks.mjs';
-import { issueKey, requirementsKey } from "../../vibe/scripts/tracker-key.mjs";
+import { issueKey, requirementsKey, trackerBound } from "../../vibe/scripts/tracker-key.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+export const { briefProviderProblem, providerLine } = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
 
 export const VIBE_PROMPT = /^\s*\$vibe\b/;
-/** The ticket a `$vibe` brief names: the bound tracker's issue or requirements key (tracker-key.mjs); none without a tracker. */
-export const vibeBriefTicket = () => new RegExp(String.raw`^\s*\$vibe[^\r\n]*?\b(${issueKey()}|${requirementsKey()})\b`);
+/**
+ * The work item a `$vibe` brief names: the bound tracker's issue or requirements key (tracker-key.mjs), or with no
+ * tracker a local work id (`#123`), as fleet units are named then.
+ */
+export const vibeBriefTicket = () => new RegExp(String.raw`^\s*\$vibe[^\r\n]*?(?<![\w#])(${trackerBound() ? `${issueKey()}|${requirementsKey()}` : String.raw`#\d+`})\b`);
 
 const WORKTREES = path.join('.claude', 'worktrees');
 

@@ -118,6 +118,6 @@ def test_the_ticket_worker_places_each_repair_once_on_the_engineering_checklist(
     handoff_mode = section(agent("vibe-ticket-worker"), "## Handoff mode")
     assert (
         "Place each file in the inventory's `compileOnlyV1Repairs` once, as an unchecked item at the end of the "
-        "Engineering checklist in the template's shape (`../skills/vibe/references/ticket-template.md`, "
+        "Engineering checklist in the template's shape (`provider:ticket-template.md`, "
         "\"Compile-only v1.0 repairs\")."
     ) in handoff_mode

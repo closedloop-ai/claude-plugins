@@ -68,6 +68,36 @@ def payload_plugins(plugins: Path, arm: str = "provider") -> list[str]:
             + ([PROVIDER_PLUGIN] if arm == "provider" and (plugins / PROVIDER_PLUGIN).is_dir() else []))
 
 
+ASSEMBLE_PROVIDER_TEXT = r"""
+import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const [plugins] = process.argv.slice(1);
+const { assembleProviderText, readContract } = await import(join(plugins, "vibe-core/lib/vibe/scripts/provider.mjs"));
+const root = join(plugins, "vibe-closedloop-provider");
+const contract = readContract(root);
+if (!contract) throw new Error("the provider snapshot has no contract vibe speaks");
+const binding = { state: "bound", name: contract.name, root, capabilities: Object.keys(contract.capabilities) };
+const walk = (dir) => readdirSync(dir).flatMap((name) => {
+  const path = join(dir, name);
+  return statSync(path).isDirectory() ? walk(path) : path.endsWith(".md") ? [path] : [];
+});
+for (const file of walk(join(plugins, "vibe"))) {
+  const text = readFileSync(file, "utf8");
+  const assembled = assembleProviderText(text, binding);
+  if (assembled !== text) writeFileSync(file, assembled);
+}
+"""
+
+
+def assemble_provider_text(plugins: Path, budget: Budget) -> None:
+    """The provider arm models a session bound to the provider: the installed vibe text has its provider stubs resolved,
+    as the bound session reads them, since a rehearsal cannot run the provider script itself."""
+    subprocess.check_output(
+        ["node", "--input-type=module", "-e", ASSEMBLE_PROVIDER_TEXT, str(plugins)],
+        text=True, timeout=min(60, budget.remaining()),
+    )
+
+
 def case_arm(case: dict[str, Any]) -> str:
     """A case tagged `generic` runs in the generic arm; every other case models the provider's repository."""
     return "generic" if "generic" in case["meta"].get("tags", []) else "provider"
@@ -286,6 +316,8 @@ def install(
         (catalog / "marketplace.json").write_text(
             json.dumps({"name": "vibe-eval", "plugins": entries})
         )
+        if arm == "provider" and (market / "plugins" / PROVIDER_PLUGIN).is_dir():
+            assemble_provider_text(market / "plugins", budget)
         subprocess.check_output(
             ["node", str(IDENTITY), "copy", str(plugin / "evals"), str(output / "suite")],
             text=True, timeout=min(60, budget.remaining()),

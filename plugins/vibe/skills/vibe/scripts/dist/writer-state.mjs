@@ -11654,7 +11654,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, useSessionWorktree } = module;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding, ticketReference, useSessionWorktree } = module;
 
 // src/contracts.ts
 function capabilityOperations(binding = sessionBinding()) {
@@ -11679,12 +11679,20 @@ var capabilitySchema = external_exports.object({
   operation: external_exports.string(),
   access: external_exports.enum(["read", "write"])
 }).strict().superRefine((value, ctx) => {
-  const operations = capabilityOperations();
-  const validOperation = value.service === "graph" ? value.access === "read" && operations.graph.has(value.operation) : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation);
-  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
+  if (mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation || value.service === "graph" && value.access !== "read") {
     ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
+function unsupportedCapabilities(capabilities, binding) {
+  const operations = capabilityOperations(binding);
+  return capabilities.filter((value) => !(value.service === "graph" ? operations.graph.has(value.operation) : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation)));
+}
+function requireSupportedCapabilities(capabilities, binding) {
+  const unsupported = unsupportedCapabilities(capabilities, binding);
+  if (unsupported.length) {
+    throw new external_exports.ZodError([{ code: external_exports.ZodIssueCode.custom, path: ["capabilities"], message: "Unsupported capability binding" }]);
+  }
+}
 var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine(
   (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,
   "Duplicate capability binding"
@@ -12067,6 +12075,7 @@ function takeWriterInput(input) {
 }
 function registerWriter(input) {
   const data = registerSchema.parse(input);
+  requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const definition = readDefinition(data.agentRoot, data.agentName, data.capabilities);
   if (data.agentName !== "vibe-change-worker") throw new Error("Session writer must be vibe-change-worker");
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
@@ -12097,6 +12106,7 @@ function registerWriter(input) {
 }
 function migrateWriter(input, currentPluginRoot, verifyRetained) {
   const data = migrateSchema.parse(input);
+  if (data.capabilities) requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const currentDefinition = (capabilities) => {
     const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
     if (realpathSync5(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {

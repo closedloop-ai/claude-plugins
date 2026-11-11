@@ -3,11 +3,11 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: read-list -->
-- `../skills/vibe/references/closedloop-graph.md`,
+- `provider:closedloop-graph.md`,
   `../skills/vibe/references/quality-loop.md` (internal plan, lean build loop, graph-first product questions),
   `../skills/vibe/references/design-pass.md` (Owner rules),
   `../skills/vibe/references/guardrails.md` (What may change, Tests, and
-  Checks), and `../skills/vibe/references/ticket-template.md`.
+  Checks), and `provider:ticket-template.md`.
 <!-- end: read-list -->
 
 <!-- block: ground -->

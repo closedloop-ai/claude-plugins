@@ -495,7 +495,7 @@ needs a human decision is never the writer's to resolve, downgrade or
 absorb, including after verification. The SAME writer logs it in the change
 log as `Engineering decision: <question>; built: <what the session built>;
 evidence: <files, records or finding>`, and the ticket worker puts it on the
-live ticket's Engineering checklist (`../vibe/references/ticket-template.md`,
+live ticket's Engineering checklist (the provider's `provider:ticket-template.md`,
 "Engineering decisions"), never to the person.
 
 On a requested pull request, lighter and backend alike, the repo's

@@ -145,7 +145,7 @@ test("the dispatcher decides activation once per event, and only when a gated gu
   assert.equal(asked, 0);
 });
 
-test("a transcript past the read limit still shows a load at either end, where a whole read once returned nothing", (t) => {
+test("a transcript past the read limit still shows a load at its tail, where a whole read once returned nothing", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "vibe-activation-big-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, "big.jsonl");

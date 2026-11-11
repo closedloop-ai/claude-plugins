@@ -297,7 +297,11 @@ candidate, run the check with neither. When `provider` instead prints an
 `node scripts/plugin-version.mjs provider-install --connection <offer connection>=connected`,
 which installs that provider for the person once and never again, and tell
 the person in one line that it takes effect in a new chat. This session stays
-generic either way. In Codex, run it with escalated
+generic either way. When your opening message is a fleet brief with a
+`Provider:` line, run
+`node scripts/plugin-version.mjs provider-match --expect <that line's value>`
+right after the check; on exit 1 stop and return `BLOCKED` with its `reason`,
+since a writer works only under the binding of the lead that briefed it. In Codex, run it with escalated
 permissions from the first try (`sandbox_permissions: "require_escalated"`,
 justification "Check whether vibe is up to date"): it reads the latest
 release from GitHub and saves this conversation's result outside the

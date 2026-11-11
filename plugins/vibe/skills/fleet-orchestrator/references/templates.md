@@ -23,7 +23,7 @@ Requirement: <ticket, PRD or acceptance criterion this proves>
 
 ## Worker preamble
 
-Prepend to every Claude writer prompt; keep `Takeover` only when replacing a dead Codex writer and `Inherited scope` whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line. A new Codex writer's brief also names its session command: `vibe-sessions.mjs new --repo <checkout of the repository the ticket changes> --worktree <the --cwd it was launched with>`; `--repo` is required for every repository other than the remembered app checkout.
+Prepend to every Claude writer prompt; keep `Takeover` only when replacing a dead Codex writer and `Inherited scope` whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line. A new Codex writer's brief also names its session command: `vibe-sessions.mjs new --repo <checkout of the repository the ticket changes> --worktree <the --cwd it was launched with>`; `--repo` is required for every repository other than the remembered app checkout. Every new writer's brief, Codex or Claude, carries the lead's own binding on its own line, `Provider: <name>` or `Provider: none` (the `provider` of `node ../vibe/scripts/plugin-version.mjs show`); `codex-session.mjs` refuses a new Codex writer whose brief lacks it or names another.
 
 Before any Claude prompt or reviewer/verifier/critic brief is sent, run
 `node scripts/skill-freshness.mjs <orchDir> <prompt-file> --runtime claude`.

@@ -97,7 +97,7 @@ def test_the_inventory_lists_repairs_and_rejects_authored_test_files() -> None:
     inventory = INVENTORY.read_text()
     classifier = PATH_CLASSIFIER.read_text()
     assert "testRepairs," in inventory
-    assert 'import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs"' in inventory
+    assert 'import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs"' in inventory
     assert 'classifications.get(file.path)?.reason === "test-repair"' in inventory
     assert 'file.status === "M" && !isSnapshot(file.path) && testLocationAllowed' in classifier
     assert 'phase === "pull-request" && pullRequestTest' in classifier

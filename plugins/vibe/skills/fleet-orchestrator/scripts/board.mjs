@@ -104,7 +104,7 @@ import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
 import { placementLines, readPlacementEvidence, recordPlacement, renderPlacements, writerPlacementProblem, writerTickets } from "./writer-placement.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
-import { workItem } from "../../vibe/scripts/tracker-key.mjs";
+import { trackerBound, workItem } from "../../vibe/scripts/tracker-key.mjs";
 
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
@@ -216,7 +216,9 @@ export function missingDuties(board, required) {
 function requiredDuties(orchDir) {
   const configured = readConfig(resolveWorkDir(orchDir)).REQUIRED_DUTIES;
   if (configured !== undefined) return configured.split(/\s+/).filter(Boolean);
-  return existsSync(path.join(orchDir, "prs.txt")) ? ["green-watch", "status-sweep"] : [];
+  // The status sweep moves tracker tickets, so it is a duty only with a tracker bound.
+  if (!existsSync(path.join(orchDir, "prs.txt"))) return [];
+  return trackerBound() ? ["green-watch", "status-sweep"] : ["green-watch"];
 }
 
 /** Every recipient of every delivery not yet told. */

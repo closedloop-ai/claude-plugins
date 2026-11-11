@@ -69,9 +69,9 @@ comes from handoff.
 <!-- block: read-first -->
 ## Read first
 
-`../skills/vibe/references/closedloop-graph.md`,
+`provider:closedloop-graph.md`,
 `../skills/vibe/references/environment.md`, and
-`../skills/vibe/references/ticket-template.md`. The session record:
+`provider:ticket-template.md`. The session record:
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"` (mode,
 branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
@@ -270,8 +270,8 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
      when stories changed, and the typecheck of every package the session
      changed against the main it captured, plus the packages that depend on
      them (`pnpm turbo typecheck --filter="...[<mainSha>]"`), so a main merge
-     never widens it by main's own changes (operator ruling, 2026-10-28;
-     ISS-13321). There is still no broad or full test suite: the verify
+     never widens it by main's own changes (operator ruling, 2026-10-28).
+     There is still no broad or full test suite: the verify
      worker runs the tests `code_tests_for` selects for each changed file,
      and CI runs the broad suites.
    - The shared executor owns fixed selected process budgets and the
@@ -289,7 +289,7 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
      checklist.
    - A check under `machineLimitedChecks` ran out of its time limit on the
      session commit and on the captured main alike: this machine's limit,
-     not the session's failure (ISS-13321). It does not block either: push
+     not the session's failure. It does not block either: push
      and request as usual, and return each entry with its time limit, for
      the ticket's Engineering checklist.
    - Any other unexplained failure, including one the executor called
@@ -408,7 +408,7 @@ and add your Progress line.
 
 A verified engineering-only block (`../skills/vibe/references/guardrails.md`,
 "Plugins and tooling") uses this supported handover so the work does not
-remain only on the person's machine (ISS-13321).
+remain only on the person's machine.
 
 1. The orchestrator has already committed the session's work.
    `git -C "<wt>" status --porcelain` must list nothing except `localFixes`
@@ -474,7 +474,7 @@ changes and gates fields.
      their results.
    When the record cannot support a required answer, say so in that section
    for the reviewer instead of inventing one. The body and every review reply
-   follow the live ticket's hard rule (`../skills/vibe/references/ticket-template.md`):
+   follow the live ticket's hard rule (`provider:ticket-template.md`):
    no path on the operator's machine and no plan
    pointed at by path; cite the ticket's embedded evidence or quote text
    inline, briefly. `blocking.prBody` refuses a line naming one.
@@ -488,7 +488,7 @@ changes and gates fields.
    head or an ancestor equal to it on the changed paths, a check claimed for
    a package with no such script, a promised follow-up ticket with no slug,
    and an E2E lane described as passed without a passing lane receipt or
-   left unnamed as not run (ISS-13947). `env-ctl.mjs pr --draft` opens a
+   left unnamed as not run. `env-ctl.mjs pr --draft` opens a
    draft; it is never required. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
    must pass (each test lane the report names has a passing run recorded at
    HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). On a machine
@@ -497,7 +497,7 @@ changes and gates fields.
    run locally and relies on the containerized or CI run. On a machine
    without the displayless Linux Electron harness it records the Desktop
    e2e lane not run the same way, and the Test plan says the post-merge
-   `desktop-e2e/validated` run covers it (ISS-13321). A lane printed as
+   `desktop-e2e/validated` run covers it. A lane printed as
    `MAIN-PREEXISTING-LANE`, and every `testRuns` or `runs` entry recorded
    `main-preexisting`, also fails on the captured main: list each in the
    body under a `Known main failures` line with the main commit it failed

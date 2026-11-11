@@ -11,7 +11,7 @@ import { comparisonBudgetMs } from "./main-sync-validation-recipe.js";
 import { discoverRequiredE2eLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
 import { committedLocalPlans } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
-import { artifactRootOf, isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
+import { artifactRootOf, isPlanFile, planPrefixesOf } from "./main-sync-plan-folder.js";
 import { verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
 import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
 import { checkSteps, reportOutputsFor, type MainSyncStep } from "./main-sync-recipe.js";
@@ -101,7 +101,7 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
       if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
     }
   }
-  const plans = committedLocalPlans((args) => git(root, args), planPrefixOf(root));
+  const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans((args) => git(root, args), prefix));
   if (plans.length) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   if (recognizedDerivative) {
     const after = trackedInputs(root);

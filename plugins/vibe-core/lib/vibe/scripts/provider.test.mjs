@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   assembleProviderText, boundWith, Capability, installedProviders, probeProvider, providerBlock, providerData, providerDataOr, providerPath,
-  ProviderState, ProviderUnavailable, readContract, recordedBinding, ticketReference,
+  bindForRepository, ProviderState, ProviderUnavailable, readContract, recordedBinding, ticketReference,
 } from "./provider.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -216,4 +216,36 @@ test("the ClosedLoop provider bound in a symphony-alpha checkout without the opt
   assert.deepEqual(bound.withheld, [{ capability: "recipes", reason: ".closedloop-ai/vibe-recipes.json is not in this repository" }]);
   writeFileSync(path.join(repo, ".closedloop-ai", "vibe-recipes.json"), JSON.stringify({ schema: 1, provider: contract.name }));
   assert.ok(probe().capabilities.includes("recipes"), "the committed opt-in file binds the recipes");
+});
+
+test("a session judges the recipes opt-in in its own repository, not the directory the check ran in", (t) => {
+  const root = tree(t);
+  const elsewhere = path.join(root, "elsewhere");
+  mkdirSync(elsewhere, { recursive: true });
+  const real = path.resolve(HERE, "../../../../vibe-closedloop-provider");
+  const contract = readContract(real);
+  const providers = [{ name: contract.name, root: real, version: "1.0.0", enabled: true, contract }];
+  const fromElsewhere = probeProvider({ runtime: "codex", cwd: elsewhere, providers, connections: { tracker: "connected", graph: "connected" } });
+  assert.ok(!fromElsewhere.capabilities.includes("recipes"), "the check ran outside the repository");
+  const repo = path.join(root, "symphony-alpha");
+  mkdirSync(path.join(repo, ".closedloop-ai"), { recursive: true });
+  const withoutFile = bindForRepository(fromElsewhere, repo);
+  assert.ok(!withoutFile.capabilities.includes("recipes"));
+  assert.deepEqual(withoutFile.withheld, [{ capability: "recipes", reason: ".closedloop-ai/vibe-recipes.json is not in this repository" }]);
+  writeFileSync(path.join(repo, ".closedloop-ai", "vibe-recipes.json"), JSON.stringify({ schema: 1, provider: contract.name }));
+  const opted = bindForRepository(fromElsewhere, repo);
+  assert.deepEqual(opted.capabilities, ["tickets", "plans", "graph", "memory", "recipes"]);
+  assert.equal(opted.withheld, undefined);
+  writeFileSync(path.join(repo, ".closedloop-ai", "vibe-recipes.json"), "{}");
+  assert.match(bindForRepository(opted, repo).withheld[0].reason, /must hold exactly/, "a malformed file withholds them again with one reason");
+  assert.deepEqual(bindForRepository({ state: "none" }, repo), { state: "none" });
+});
+
+test("a binding whose release an update replaced finds the same provider where it is installed now", () => {
+  const checkout = path.resolve(HERE, "../../../..");
+  const [installed] = installedProviders({ cwd: checkout });
+  assert.ok(installed, "this checkout's provider is installed beside vibe-core");
+  const stale = { state: "bound", name: installed.name, root: path.join(checkout, "no-such-release"), capabilities: ["tickets"] };
+  assert.equal(boundWith(stale, "tickets")?.root, installed.root);
+  assert.equal(boundWith({ ...stale, name: "gone-provider" }, "tickets"), null, "a provider no longer installed binds nothing");
 });

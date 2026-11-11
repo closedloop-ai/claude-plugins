@@ -11,7 +11,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -569,4 +569,21 @@ test('the board refuses writes to a flat dir outside a fleet home and still repo
   assert.match(run([flat, 'status']).stdout, /^board: 0 writers/m);
   const dir = tempDir(t);
   assert.equal(run([dir, 'duty', 'main-health', '--owner', 'main-ci-watch']).status, 0, 'a program in a home is written');
+});
+
+test('with no tracker bound a watched program needs only its green-watch owner, never a status sweep', (t) => {
+  const dir = tempDir(t);
+  const generic = { CLAUDE_CODE_SESSION_ID: '', CODEX_THREAD_ID: '' };
+  writeFileSync(path.join(dir, 'prs.txt'), 'acme/app 7\n');
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120 }));
+  const now = ['--now', '2026-10-22T06:00:00Z'];
+  assert.match(run([dir, 'status', ...now], generic).stdout, /^MISSING-DUTY green-watch/m);
+  const evidence = path.join(dir, 'placement.json');
+  writeFileSync(evidence, JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ['web screenshots'] }));
+  assert.equal(run([dir, 'placement', '#1', '--evidence', evidence], generic).status, 0, 'a local work id is placed like a ticket');
+  assert.equal(run([dir, 'writer', 'keeper', '--tickets', '#1'], generic).status, 0);
+  assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'keeper'], generic).status, 0);
+  const status = run([dir, 'status', ...now], generic);
+  assert.doesNotMatch(status.stdout, /status-sweep/);
+  assert.equal(status.status, 0, status.stdout);
 });

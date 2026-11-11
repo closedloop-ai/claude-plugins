@@ -130,9 +130,10 @@ read-only `vibe-storybook-decomposer` Placement block, copy it into the local
 plan, and build to it. Log each Conflict (the block's Conflict line, or a
 precedent that disagrees with the owner rules in Prep step 5) in the change
 log as `Conflict (design|engineering): <what disagreed>; decided: <how>;
-evidence: <doc section or precedent paths>`, with the audience from
-`../skills/vibe/references/ticket-template.md` ("Conflicts"), `engineering`
-when unsure; it is never a `NEEDS_PERSON` question.
+evidence: <doc section or precedent paths>`, with its audience: `design`
+for Storybook placement, taxonomy, story granularity or a visual or UX
+choice, `engineering` for everything else and when unsure; it is never a
+`NEEDS_PERSON` question.
 
 <!-- generic: local-plan -->
 Load core `plan-structure` by name (`$plan-structure` in Codex or

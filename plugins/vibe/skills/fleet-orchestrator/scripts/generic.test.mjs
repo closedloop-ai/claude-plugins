@@ -15,8 +15,8 @@ const MACHINE_SPECIFIC = [
   ['email address', /[\w.+-]+@[\w-]+\.[A-Za-z]{2,}/],
   ['ticket id', /\b[A-Z]{2,}-\d{2,}\b/],
   ['owner/repo#number reference', /\b[\w.-]+\/[\w.-]+#\d+/],
-  // The plugin family's own tools (closedloop-graph, closedloop-core, closedloop-intel, vibe) may be named; the org and its repos may not.
-  ['organization or repo name', /closed-?loop(?!-(?:graph|core|intel)\b)|symphony|claude-plugins/i],
+  // vibe's own dependency closedloop-core may be named; the graph, intel, the org and its repos are the provider's.
+  ['organization or repo name', /closed-?loop(?!-core\b)|symphony|claude-plugins/i],
 ];
 
 function files(dir) {
@@ -45,8 +45,9 @@ test('the skill carries no machine, account, repo or ticket specific values', ()
 test('each pattern catches the kind of value it names', () => {
   const samples = ['/Users/someone/x', '10.0.0.12', 'me@example.com', 'ABC-123', 'acme/app#42', 'ClosedLoop'];
   MACHINE_SPECIFIC.forEach(([kind, pattern], index) => assert.match(samples[index], pattern, kind));
-  for (const allowed of ['closedloop-graph', 'closedloop-core', 'closedloop-intel', 'vibe:vibe']) {
+  for (const allowed of ['closedloop-core', 'vibe:vibe']) {
     for (const [kind, pattern] of MACHINE_SPECIFIC) assert.doesNotMatch(allowed, pattern, `${kind} on ${allowed}`);
   }
   assert.match('closedloop-ai', MACHINE_SPECIFIC.at(-1)[1]);
+  for (const provider of ['closedloop-graph', 'closedloop-intel']) assert.match(provider, MACHINE_SPECIFIC.at(-1)[1], provider);
 });

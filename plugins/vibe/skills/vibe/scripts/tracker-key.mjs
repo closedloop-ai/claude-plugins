@@ -22,6 +22,11 @@ export function requirementsKey(worktree = null) {
   return providerDataOr(sessionBinding(worktree), "tickets", "requirementsKey", NO_KEY);
 }
 
+/** Whether a tracker is bound to the session at `worktree` (or this conversation). */
+export function trackerBound(worktree = null) {
+  return providerDataOr(sessionBinding(worktree), "tickets", "keyPattern", null) !== null;
+}
+
 /**
  * A work item reference, anchored: the bound tracker's ticket key, or with no tracker a GitHub issue or pull
  * request number (`#123`).

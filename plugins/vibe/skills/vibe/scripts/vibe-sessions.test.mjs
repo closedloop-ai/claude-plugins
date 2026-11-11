@@ -1213,6 +1213,9 @@ test("with no provider bound a session has no hosted environment or tracker, and
   assert.deepEqual(session.operator, { id: "dev-one", email: "dev@example.com", name: "Dev One" });
   const worktree = session.worktree;
   assert.equal(JSON.parse(readFileSync(recordFile(worktree, home), "utf8")).provider, undefined);
+  const exclude = path.join(git(checkout, ["rev-parse", "--path-format=absolute", "--git-common-dir"], home).trim(), "info", "exclude");
+  assert.ok(readFileSync(exclude, "utf8").split("\n").includes("/.claude/worktrees/"), "a repository that does not ignore session worktrees excludes them locally");
+  assert.equal(git(checkout, ["status", "--porcelain"], home).trim(), "", "the checkout never shows the session worktree");
 
   const ticket = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-7"], home, env);
   assert.equal(ticket.status, 1);

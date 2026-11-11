@@ -10,7 +10,7 @@ import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome, mutateSourceRead, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "frozen-render.mjs");

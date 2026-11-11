@@ -883,6 +883,7 @@ test("the provider install is offered only when nothing was ever installed and v
   assert.equal(providerOffer({ state: "none", reason: "the provider is disabled" }, null), null, "a disabled provider is never re-enabled");
   assert.equal(providerOffer({ state: "candidate", name: "vibe-closedloop-provider" }, null), null, "an enabled provider needs no install");
   assert.equal(providerOffer(none, { name: "vibe-closedloop-provider" }), null, "an uninstall after vibe's own install stays");
+  assert.equal(providerOffer(none, { seenAt: "2026-11-11T00:00:00.000Z" }), null, "a provider once seen installed is never offered again");
   const harnesses = [
     { harness: "claude", cli: "/bin/claude", installed: true, plugins: [{ name: "vibe", scope: "user" }] },
     { harness: "codex", cli: "/bin/codex", installed: true, plugins: [{ name: "vibe" }] },
@@ -909,4 +910,41 @@ test("the provider install is offered only when nothing was ever installed and v
   const again = installOfferedProvider({ candidate: none, connections: { tracker: "connected" }, home, harnesses, run });
   assert.equal(again.output.installed, false);
   assert.deepEqual(ran, [], "vibe never reinstalls a provider it installed once");
+});
+
+test("adopting keeps a session's binding: generic stays generic, bound stays bound, a disconnected one rebinds", async () => {
+  const { adoptedProvider } = await import("./plugin-version.mjs");
+  const bound = { state: "bound", name: "vibe-closedloop-provider", capabilities: ["tickets"] };
+  const none = { state: "none", reason: "no provider is installed" };
+  assert.deepEqual(adoptedProvider({ provider: none }, bound), none, "a generic session stays generic");
+  assert.deepEqual(adoptedProvider({ provider: bound }, none), bound, "a bound session stays bound");
+  const disconnected = { ...bound, state: "bound-disconnected" };
+  assert.deepEqual(adoptedProvider({ provider: disconnected }, bound), bound);
+  assert.deepEqual(adoptedProvider({ provider: disconnected }, { ...bound, name: "other" }), disconnected);
+  assert.deepEqual(adoptedProvider({}, bound), bound, "a session with none takes the chat's");
+  assert.deepEqual(adoptedProvider({}, none), none);
+  assert.equal(adoptedProvider({ liveTicket: "ISS-1" }, none), null, "a legacy tracker session waits for a chat that binds");
+  assert.deepEqual(adoptedProvider({ liveTicket: "ISS-1" }, bound), bound);
+});
+
+test("a provider seen installed is recorded once, so removing it by hand is never undone by an offer", async (t) => {
+  const { markProviderSeen, readProviderInstall } = await import("./plugin-version.mjs");
+  const home = mkdtempSync(path.join(os.tmpdir(), "vibe-provider-seen-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  assert.equal(markProviderSeen(home, new Date("2026-11-11T00:00:00Z")), true);
+  assert.deepEqual(readProviderInstall(home), { seenAt: "2026-11-11T00:00:00.000Z" });
+  assert.equal(markProviderSeen(home), false, "the first record stays");
+});
+
+test("a writer works only under the lead's binding: provider-match refuses any other", async () => {
+  const { providerMatch } = await import("./plugin-version.mjs");
+  const bound = { state: "bound", name: "vibe-closedloop-provider" };
+  assert.equal(providerMatch("vibe-closedloop-provider", bound).code, 0);
+  assert.equal(providerMatch("none", null).code, 0);
+  assert.equal(providerMatch("none", { state: "none" }).code, 0);
+  const mismatch = providerMatch("vibe-closedloop-provider", { ...bound, state: "bound-disconnected" });
+  assert.equal(mismatch.code, 1);
+  assert.match(mismatch.output.reason, /lead was bound as vibe-closedloop-provider and this chat is bound as none/);
+  assert.equal(providerMatch("none", bound).code, 1, "a generic lead's writer never works bound");
+  assert.equal(providerMatch(undefined, bound).code, 1);
 });

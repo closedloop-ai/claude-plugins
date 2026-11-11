@@ -96,7 +96,7 @@ def test_the_one_classifier_owns_post_qa_scope() -> None:
     assert "commentOnlyImpact" in source
     assert "cat-file" in source
     assert '"--raw", "-z"' in source
-    assert "FEATURE_MAP_DEFAULT" in source
+    assert "repositoryLayout().qaFeatureMap" in source, "the feature map default is the provider's layout recipe"
     assert "CONFIG_DEFAULT" in source
     assert "UI_LOCATION" not in source
     assert "QA evidence is screen and state based" in source

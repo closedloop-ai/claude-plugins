@@ -71,9 +71,27 @@ let activeWorktree = worktreeArgument(process.argv);
 /** The contract at a plugin `root`, or null when it is not a provider vibe can speak to. */
 export function readContract(root) {
   const file = path.join(root, CONTRACT_FILE);
+  let stat;
+  try { stat = statSync(file); } catch { return null; }
+  if (stat.size > MAX_CONTRACT_BYTES) return null;
+  // One validation per distinct contract text: every data lookup reads the contract, so a hook or script would
+  // otherwise parse and validate it again on each one.
+  let text;
+  try { text = readFileSync(file, "utf8"); } catch { return null; }
+  const cached = contracts.get(file);
+  if (cached?.text === text) return cached.contract;
+  const contract = parseContract(root, text);
+  if (!contracts.has(file) && contracts.size >= CONTRACT_CACHE_LIMIT) contracts.delete(contracts.keys().next().value);
+  contracts.set(file, { text, contract });
+  return contract;
+}
+
+const CONTRACT_CACHE_LIMIT = 8;
+const contracts = new Map();
+
+function parseContract(root, text) {
   try {
-    if (statSync(file).size > MAX_CONTRACT_BYTES) return null;
-    const contract = JSON.parse(readFileSync(file, "utf8"));
+    const contract = JSON.parse(text);
     const manifest = pluginManifest(root);
     if (contract?.vibeProvider !== PROVIDER_PROTOCOL || manifest?.name !== contract.name) return null;
     if (typeof contract.skill !== "string" || typeof contract.references !== "string") return null;
@@ -180,6 +198,32 @@ export function optInProblem(need, repo, providerName) {
 }
 
 /**
+ * `binding` with its repository-file needs judged in the session repository `repo` instead of the chat's working
+ * directory: each capability that needs a committed opt-in file binds only when `repo` holds a valid one, and is
+ * listed in `withheld` with its one reason otherwise. A binding that is not bound comes back unchanged.
+ */
+export function bindForRepository(binding, repo) {
+  if (binding?.state !== ProviderState.Bound || typeof binding.root !== "string" || !repo) return binding;
+  const contract = readContract(binding.root);
+  if (contract?.name !== binding.name) return binding;
+  const capabilities = new Set(binding.capabilities ?? []);
+  const withheld = (binding.withheld ?? []).filter((entry) => !contract.capabilities[entry.capability]?.needs.some((need) => need.startsWith("repo-file:")));
+  for (const [capability, spec] of Object.entries(contract.capabilities)) {
+    // A bound provider met every connection need when it was probed, so only the repository's files decide here.
+    const files = spec.needs.filter((need) => need.startsWith("repo-file:"));
+    if (!files.length) continue;
+    const missing = files.find((need) => !existsSync(path.join(repo, need.slice("repo-file:".length))));
+    const problem = missing ? `${missing.slice("repo-file:".length)} is not in this repository`
+      : files.map((need) => optInProblem(need, repo, binding.name)).find(Boolean);
+    if (problem) { capabilities.delete(capability); withheld.push({ capability, reason: problem }); }
+    else capabilities.add(capability);
+  }
+  const order = Object.keys(contract.capabilities).filter((capability) => capabilities.has(capability));
+  const { withheld: _previous, ...rest } = binding;
+  return { ...rest, capabilities: order, ...(withheld.length ? { withheld } : {}) };
+}
+
+/**
  * The one enabled provider a start would bind, with the connection checks the model makes first, or why
  * there is none: `{ state: "candidate", name, skill, connections }` or `{ state: "none", reason }`.
  */
@@ -228,16 +272,34 @@ export function useSessionWorktree(worktree) {
 }
 
 /**
- * `binding` when it is bound with `capability` and its provider is still where it was bound; else null.
- * A provider removed or replaced since the binding no longer answers, so a bound session keeps its local work
+ * `binding` when it is bound with `capability` and its provider is still installed (where it was bound, or where an
+ * update put it); else null. A provider removed or disabled since no longer answers, so a bound session keeps its local work
  * and stops its provider steps with one named failure (`requireProvider`).
  */
 export function boundWith(binding, capability) {
   if (binding?.state !== ProviderState.Bound || !binding.capabilities?.includes(capability)) return null;
-  if (typeof binding.root !== "string" || !existsSync(binding.root)) return null;
-  const contract = readContract(binding.root);
-  return contract?.name === binding.name ? { ...binding, contract } : null;
+  const root = currentRoot(binding);
+  if (!root) return null;
+  const contract = readContract(root);
+  return contract?.name === binding.name ? { ...binding, root, contract } : null;
 }
+
+/**
+ * Where the bound provider is now: the recorded root, or, when an update replaced that release, the root of the same
+ * provider still installed and enabled. A provider removed or disabled since has none.
+ */
+function currentRoot(binding) {
+  if (typeof binding.root === "string" && existsSync(binding.root)) return binding.root;
+  if (!movedRoots.has(binding.name)) {
+    let found = null;
+    try { found = installedProviders().find((provider) => provider.name === binding.name && provider.enabled)?.root ?? null; }
+    catch { found = null; }
+    movedRoots.set(binding.name, found);
+  }
+  return movedRoots.get(binding.name);
+}
+
+const movedRoots = new Map();
 
 /** `boundWith`, or a ProviderUnavailable naming what is missing. */
 export function requireProvider(binding, capability) {

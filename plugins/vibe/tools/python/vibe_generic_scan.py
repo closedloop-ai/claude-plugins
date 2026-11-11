@@ -240,12 +240,17 @@ def present_digests(root: Path, tops: Iterable[str]) -> dict[str, set[str]]:
 
 
 def diff(before: list[Record], root: Path, mapping: dict[str, str], tops: Iterable[str]) -> list[str]:
-    """Before rows found neither in the tree under `tops` nor in `mapping` (digest to what replaced the row)."""
+    """Before rows found neither in the tree under `tops` nor in `mapping` (digest to what replaced the row).
+
+    A runtime row counts as kept only where runtime text lives (a gated file or the provider plugin), never because a
+    test, fixture or eval still quotes it; a test or eval row may be kept anywhere."""
     held = present_digests(root, tops)
+    runtime = {digest for digest, paths in held.items()
+               if any(gated(path) or path.startswith("plugins/vibe-closedloop-provider/") for path in paths)}
     missing = []
     for row in before:
         digest = row["digest"]
-        if digest in held or digest in mapping:
+        if digest in mapping or digest in (runtime if gated(row["path"]) else held):
             continue
         missing.append(f"{row['path']}:{row['line']} {','.join(row['families'])} {digest}")
     return missing

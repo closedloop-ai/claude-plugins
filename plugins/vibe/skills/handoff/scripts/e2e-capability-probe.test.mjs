@@ -7,7 +7,7 @@ import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { selectE2eTier, specExecutionLimitation } from "./e2e-tier.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 test("the capability producer reports working Docker and only boolean prerequisite presence", (t) => {

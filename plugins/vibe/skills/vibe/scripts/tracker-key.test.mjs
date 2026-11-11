@@ -31,3 +31,20 @@ test("with the tracker bound its keys match and a work item is its slug", (t) =>
   assert.ok(new RegExp(`^${bound.requirements}$`).test("PRD-7"));
   assert.deepEqual(bound.items, [true, false, false, false]);
 });
+
+test("a fleet $vibe brief names a tracker ticket when one is bound, else a local work id", (t) => {
+  const briefIn = (env) => {
+    const fixture = makeHome("tracker-brief-");
+    t.after(fixture.cleanup);
+    const script = `
+      const { vibeBriefTicket } = await import(${JSON.stringify(new URL("../../fleet-orchestrator/scripts/writer-launch.mjs", import.meta.url).href)});
+      const { trackerBound } = await import(${JSON.stringify(new URL("./tracker-key.mjs", import.meta.url).href)});
+      process.stdout.write(JSON.stringify({ bound: trackerBound(), names: ["$vibe ISS-12 fix it", "$vibe #12 fix it", "$vibe fix it"].map((brief) => vibeBriefTicket().exec(brief)?.[1] ?? null) }));`;
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", script],
+      { encoding: "utf8", env: { ...process.env, HOME: fixture.home, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "", ...env(fixture.home) } });
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout);
+  };
+  assert.deepEqual(briefIn(() => ({})), { bound: false, names: [null, "#12", null] });
+  assert.deepEqual(briefIn((home) => bindProvider(home)), { bound: true, names: ["ISS-12", null, null] });
+});

@@ -831,6 +831,38 @@ describe("production Claude CLI adapter", () => {
     expect(generic.agent.prompt).toContain("Never write a tracker or session record.");
     expect(generic.agent.prompt).not.toContain("ClosedLoop");
   });
+  it("resolves the role's provider stubs against the session binding, and keeps the generic text without one", () => {
+    const value = setup();
+    const body = "Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.\n\n"
+      + "<!-- generic: lane-default -->\nRun the lanes the repository documents.\n<!-- end generic: lane-default -->\n"
+      + "> Provider `recipes` (block `lane-default` of `agents/vibe-verify-worker.md`)\n";
+    writeFileSync(join(value.agentRoot, "agents", "vibe-verify-worker.md"),
+      `---\nname: vibe-verify-worker\ndescription: Fixture role\nmodel: sonnet\ntools: Read, Grep, Glob, Bash, Skill\n---\n${body}`);
+    const launch = () => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities: graph, mode: "request" }).agent.prompt;
+    const bound = launch();
+    expect(bound).toContain("Command-based repositories default to `pnpm test:lanes`");
+    expect(bound).not.toContain("Run the lanes the repository documents.");
+    expect(bound).not.toContain("> Provider");
+    writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
+    const generic = boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", []),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities: [], mode: "request" }).agent.prompt;
+    expect(generic).toContain("Run the lanes the repository documents.");
+    expect(generic).not.toContain("pnpm test:lanes");
+    expect(generic).not.toContain("> Provider");
+  });
+  it("launches a brief that names the lead's binding only in a session bound the same way", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    const launch = (input: string) => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input, timeoutMs: 1000, capabilities: graph, mode: "request" });
+    expect(() => launch("verify the change\nProvider: vibe-closedloop-provider")).not.toThrow();
+    expect(() => launch("verify the change")).not.toThrow();
+    expect(() => launch("verify the change\nProvider: none")).toThrow(/this lead is bound as "Provider: vibe-closedloop-provider"/);
+  });
   it("with no tracker bound a record action keeps its turn and grants no tracker write", () => {
     const value = setup();
     writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
@@ -838,8 +870,10 @@ describe("production Claude CLI adapter", () => {
     const base = { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-change-worker",
       requestId: "one", capabilities: [...graph, recordWrite], input: "test", timeoutMs: 1000 };
     expect(() => boundDefinition(definition, { ...base, mode: "record", recordAction: "progress", exclusiveRecordTurn: true }))
-      .toThrow(/cannot receive record-write capabilities/);
-    expect(boundDefinition(definition, { ...base, capabilities: graph, mode: "record", recordAction: "progress", exclusiveRecordTurn: true }).tools)
+      .toThrow(/Unsupported capability binding/);
+    expect(() => boundDefinition(definition, { ...base, capabilities: graph, mode: "request" }))
+      .toThrow(/Unsupported capability binding/);
+    expect(boundDefinition(definition, { ...base, capabilities: [], mode: "record", recordAction: "progress", exclusiveRecordTurn: true }).tools)
       .not.toContain(recordWrite.name);
   });
   it("permits only an exclusive declared record turn to activate record writes", () => {

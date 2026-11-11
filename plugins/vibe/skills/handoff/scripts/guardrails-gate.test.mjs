@@ -7,7 +7,7 @@ import {
 import { parseUnifiedDiff } from "./diff-rules.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const HEAD = "a".repeat(40);
@@ -332,4 +332,22 @@ test("conventions: a TypeScript file whose head text cannot be read makes the ch
   const report = gateFor({ diffText: diff("apps/app/a.tsx", ["const a = 1;"]), readable: false }).gate.gate({ worktree: "/wt" });
   assert.ok(!report.checks_run.includes(Check.Conventions));
   assert.match(report.checks_skipped.find((entry) => entry.name === Check.Conventions).reason, /^partial: .*apps\/app\/a\.tsx/);
+});
+
+test("with no verify recipe bound, the formatter and source gates are skipped with one reason each and never run", (t) => {
+  const saved = { claude: process.env.CLAUDE_CODE_SESSION_ID, codex: process.env.CODEX_THREAD_ID };
+  t.after(() => {
+    for (const [key, value] of [["CLAUDE_CODE_SESSION_ID", saved.claude], ["CODEX_THREAD_ID", saved.codex]]) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
+  });
+  process.env.CLAUDE_CODE_SESSION_ID = "";
+  process.env.CODEX_THREAD_ID = "";
+  const { gate, calls } = gateFor({ diffText: diff("src/app.ts", ["export const a = 1;"]) });
+  const report = gate.gate({ worktree: "/wt" });
+  const reason = (name) => report.checks_skipped.find((entry) => entry.name === name)?.reason;
+  assert.equal(reason(Check.Biome), "the repository's recipe names no formatter");
+  assert.equal(reason(Check.SourceGates), "the repository's recipe names no source gates");
+  assert.ok(!calls.some((call) => /biome|check:source-gates/.test(call.line)));
 });

@@ -4,7 +4,7 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 
 <!-- block: read-first -->
 `../skills/vibe/references/preflight.md`, `../skills/vibe/references/environment.md`,
-and `../skills/vibe/references/closedloop-graph.md`. Use closedloop-graph
+and `provider:closedloop-graph.md`. Use closedloop-graph
 first: `fts_search` for an unfamiliar error to find known setup problems and
 open tickets, and `blast_radius_tickets` on a file you suspect.
 <!-- end: read-first -->
@@ -70,7 +70,7 @@ open tickets, and `blast_radius_tickets` on a file you suspect.
     off) is `vibe-sessions.mjs stop --worktree "<wt>"`, never a signal by
     hand: it stops the recorded Storybook and Desktop only after proving each
     is still the session's own process, and leaves a stale or reused pid
-    alone (ISS-13321). A confirmed `discard` runs it first.
+    alone. A confirmed `discard` runs it first.
   - Stop Desktop only (before a step that merges main or swaps the
     worktree's commit, per "Never swap the worktree under a running Desktop"
     in `environment.md`): stop the recorded Desktop launch as `environment.md`

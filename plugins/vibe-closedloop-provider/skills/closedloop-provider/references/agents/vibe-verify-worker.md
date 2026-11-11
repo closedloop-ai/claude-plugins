@@ -8,13 +8,13 @@ Command-based repositories default to `pnpm test:lanes`; their existing
 <!-- end: lane-default -->
 
 <!-- block: read-graph -->
-Read `../skills/vibe/references/closedloop-graph.md`, `quality-loop.md`,
+Read `provider:closedloop-graph.md`, `quality-loop.md`,
 `guardrails.md` and the root/owning AGENTS.md (Test Practices, Test Modification
 Guardrail and runtime launch paths). Graph `code_tests_for` is required.
 <!-- end: read-graph -->
 
 <!-- block: read-ticket-fields -->
-At handoff read `../skills/vibe/references/ticket-template.md` and the SAME
+At handoff read `provider:ticket-template.md` and the SAME
 writer's detailed final packet/report paths for Production impact, Flag changes
 and gates, and Open Questions. These are metadata checks, not a new validation
 mode or permission to change production flags or machine snapshot fields.
@@ -147,7 +147,7 @@ names any lanes or screens. A selected failure runs once more on captured main (
 or `--impact` selection file). When it fails there
 too, record it `status: "main-preexisting"` with that `mainSha`: it does not
 block the pull request, and the body lists it under Known main failures
-(ISS-13321). One that passes on main stays a failure for the writer. A
+. One that passes on main stays a failure for the writer. A
 Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
 `testRuns` the same way, with its `reason`.
 For each selected or edited E2E spec that this machine cannot run under an
@@ -295,7 +295,7 @@ request for its reserved version and counts. A wrong bump relative to the
 pinned base or a count mismatch is blocking evidence, not an advisory. A
 version another open pull request reserves, and main moving on after the
 pin, are reported for the packet and never block: the next free version is
-taken and named there (ISS-13321).
+taken and named there.
 <!-- end: footprint -->
 
 <!-- block: control -->

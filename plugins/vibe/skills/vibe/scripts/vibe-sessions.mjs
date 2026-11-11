@@ -444,6 +444,7 @@ function newSession({ prototype = false } = {}) {
   if (prototypeRoot && git(repo, ["ls-tree", "--name-only", `origin/${base}`, `${prototypeRoot}/${slug}`])) {
     throw new Error(`Prototype ${slug} already exists on the fresh base. Pick another slug.`);
   }
+  excludeWorktrees(repo, worktree);
   git(repo, ["worktree", "add", "--no-track", "-b", branch, worktree, `origin/${base}`]);
   const now = new Date().toISOString();
   const record = {
@@ -1337,4 +1338,26 @@ function cwdCheckout() {
   } catch {
     return null;
   }
+}
+
+/**
+ * A repository that does not ignore its session worktrees gets a local exclude rule for them, so the checkout's own
+ * `git status` and `git add -A` never pick up a session worktree. The rule is local to this clone; nothing is committed.
+ */
+function excludeWorktrees(repo, worktree) {
+  const inside = path.relative(repo, worktree);
+  if (!inside || inside.startsWith("..") || path.isAbsolute(inside)) return false;
+  try {
+    execFileSync("git", ["-C", repo, "check-ignore", "-q", "--no-index", inside], { stdio: "ignore" });
+    return false;
+  } catch {
+    // Not ignored yet: add the folder below.
+  }
+  const exclude = path.join(gitCommonDir(repo), "info", "exclude");
+  mkdirSync(path.dirname(exclude), { recursive: true });
+  const current = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+  const rule = `/${WORKTREE_DIR}/`;
+  if (current.split("\n").includes(rule)) return false;
+  writeFileSync(exclude, `${current}${current && !current.endsWith("\n") ? "\n" : ""}${rule}\n`);
+  return true;
 }

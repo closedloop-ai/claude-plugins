@@ -3,6 +3,8 @@
 
 import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { vibeScriptPath } from "../shared/vibe-install.mjs";
+import { briefProviderProblem } from "../lib/vibe/scripts/provider-brief.mjs";
+import { recordedBinding } from "../lib/vibe/scripts/provider.mjs";
 
 const VIBE_WORKER = /^vibe:vibe-[a-z0-9-]+-worker$/;
 // Seed refresh is a Codex-owned automation; the launcher refuses seed roles by design.
@@ -33,9 +35,22 @@ export function agentLaunchProblem(input, cwd = process.cwd()) {
 }
 
 /** The PreToolUse result for a native vibe agent launch, or null. */
-export function agentGuard(event) {
-  const problem = agentLaunchProblem(event?.tool_input, eventCwd(event));
+export function agentGuard(event, home) {
+  const problem = agentLaunchProblem(event?.tool_input, eventCwd(event))
+    ?? writerBindingProblem(event, home);
   return problem ? deny(problem) : null;
+}
+
+/**
+ * A Claude writer started through the Agent tool (a fleet writer preamble that invokes vibe:vibe) carries the
+ * binding of the chat that starts it, so it works under the lead's provider, as a Codex writer does.
+ */
+export function writerBindingProblem(event, home) {
+  const prompt = event?.tool_input?.prompt;
+  if (typeof prompt !== "string") return null;
+  const binding = recordedBinding({ worktree: eventCwd(event), conversation: event?.session_id ?? null, ...(home ? { home } : {}) });
+  const problem = briefProviderProblem(prompt, binding);
+  return problem ? `${problem}; add that line to the writer's brief` : null;
 }
 
 function launcherRequest(subagent, mode, sessionless, worktree) {

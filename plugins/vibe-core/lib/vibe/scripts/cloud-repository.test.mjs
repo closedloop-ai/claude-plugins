@@ -10,7 +10,7 @@ import { parseValidationResult, startCodex, validateCommit, validateRequest, val
 import { git, makeHome } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
 import { bindProviderInProcess } from "../../../../vibe/skills/vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const COMMIT = 'a85ef364cf20ee97af92ecfc2e93aa8b1c79ef29';

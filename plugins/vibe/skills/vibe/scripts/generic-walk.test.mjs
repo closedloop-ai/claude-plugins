@@ -1,7 +1,8 @@
 // The deterministic steps of a vibe and fleet walk in a repository with no provider: a personal GitHub repository
 // with npm, Playwright and an AGENTS.md naming `npm test` and `npm run dev`, no tracker, graph, seed, Storybook or
-// Desktop. Each step either runs here against that repository or names the suite that runs it; the ledger of steps
-// that still block a generic session must be empty.
+// Desktop, with the provider absent or present and disabled. Each step either runs here against that repository or
+// names the test, in the suite that runs it, that proves it; the ledger of steps that still block a generic session
+// must be empty.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -44,13 +45,28 @@ function personalRepository(t) {
 
 /** Steps another suite runs end to end, by file and test name; the ledger checks each still exists. */
 const COVERED_ELSEWHERE = [
-  ["D1 preflight passes any checkout", "plugins/vibe/skills/vibe/scripts/vibe-preflight.test.mjs"],
+  ["D1 preflight passes any checkout", "plugins/vibe/skills/vibe/scripts/vibe-preflight.test.mjs",
+    "the checkout this command runs in is used, spaces and all, whatever its remote, and remembered"],
+  ["D2 repository resolution order", "plugins/vibe/skills/vibe/scripts/vibe-preflight.test.mjs",
+    "--repo wins over the working folder and remembers the main checkout of a worktree"],
   ["D6 workers launch with no graph capability", "tools/vibe-workers/src/claude-worker.test.ts",
     "requires the parent's graph tools only with a graph bound"],
   ["D7 session record with no tracker, operator from GitHub", "plugins/vibe/skills/vibe/scripts/vibe-sessions.test.mjs",
     "with no provider bound a session has no hosted environment or tracker"],
+  ["D8 the checkout never shows a session worktree", "plugins/vibe/skills/vibe/scripts/vibe-sessions.test.mjs",
+    "a repository that does not ignore session worktrees excludes them locally"],
+  ["D10 no hosted environment is requested without a recipe", "plugins/vibe/skills/vibe/scripts/env-ctl.test.mjs",
+    "with no environment recipe, requests are refused before any gh call"],
+  ["D14 a commit takes the subject it is given", "plugins/vibe/skills/vibe/scripts/commit-worktree.test.mjs",
+    "refuses a missing, multi-line, or over-long subject and commits nothing"],
+  ["D15 lanes from the AGENTS.md test command", "plugins/vibe/skills/handoff/scripts/ci-job-shape.test.mjs",
+    "with no declaration a lane command is the AGENTS.md test command"],
+  ["D15 the built-in path default", "plugins/vibe/skills/handoff/scripts/handoff-inventory.test.mjs",
+    "with no target declaration the built-in default admits every path"],
   ["D18 the PR override takes any reference", "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
     "the override names its ticket the way the session's tracker does"],
+  ["D21 no status sweep without a tracker", "plugins/vibe/skills/fleet-orchestrator/scripts/board.test.mjs",
+    "with no tracker bound a watched program needs only its green-watch owner"],
   ["D23 hooks stay silent in a plain chat", "plugins/vibe-core/hooks/activation.test.mjs",
     "a chat that never activated vibe gets no output, no write and no gh call"],
   ["main sync runs the AGENTS.md test command", "tools/vibe-workers/src/main-sync-recipe.test.ts",
@@ -74,6 +90,12 @@ test("the generic walk's deterministic steps leave an empty blocker ledger", asy
     if (candidate.state !== "none") return `a provider is a candidate: ${JSON.stringify(candidate)}`;
     const block = statusBlock({ harnesses: [] }, {}, candidate.connections ?? {});
     return PROVIDER_WORDS.test(block) ? `the setup check names a provider: ${block}` : null;
+  });
+  await step("D4 a disabled provider binds nothing and is never offered", () => {
+    const disabled = { name: "vibe-closedloop-provider", root: "/nowhere", version: "1.0.0", enabled: false, contract: {} };
+    const candidate = providerCandidate({ cwd: root, providers: [disabled] });
+    if (candidate.state !== "none") return `a disabled provider is a candidate: ${JSON.stringify(candidate)}`;
+    return providerOffer(candidate, null) ? "a disabled provider is offered for install" : null;
   });
   await step("D4 install offer stays an offer", () => {
     const offer = providerOffer({ state: "none", reason: "no provider is installed" }, null);

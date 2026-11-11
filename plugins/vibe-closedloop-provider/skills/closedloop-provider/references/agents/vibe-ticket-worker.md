@@ -43,8 +43,8 @@ complete child classification.
 
 ## Read first
 
-`../skills/vibe/references/closedloop-graph.md` and
-`../skills/vibe/references/ticket-template.md` (the body, and the rules every
+`provider:closedloop-graph.md` and
+`provider:ticket-template.md` (the body, and the rules every
 editor follows). The session record:
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"`
 (except cancel: its target is gone, so use the parent-held receipt and verify
@@ -268,7 +268,7 @@ Read the required session decision table and row IDs with actual whole-table
 source/test/review evidence. Require `Final Alignment Status: Aligned`, or,
 only when the person chose passing it on, `Aligned except criteria waiting on
 <tickets>` with each such criterion marked `not met yet: waits on <ticket>`
-(handoff SKILL.md step 6; ISS-13321); required
+(handoff SKILL.md step 6); required
 coverage gaps return NEEDS_CHANGE to the same writer rather than a completed
 ticket claim, except a missing test that is on the writer's missing tests list,
 which goes under Missing tests as engineering's scope of work. The table covers
@@ -402,25 +402,25 @@ historical inspections accurately. Preserve the existing grading block.
      claims, and name the exact command and reason for any surface control
      could not drive.
    - Place each `Conflict` entry in the change log once, by its audience
-     (`../skills/vibe/references/ticket-template.md`, "Conflicts"): `design`
+     (`provider:ticket-template.md`, "Conflicts"): `design`
      on Design Review's Design conflicts line; anything else, or no clear
      audience, as an unchecked item at the end of the Engineering checklist.
      Never in the Handoff section, never in both, and never to the person.
    - Place each `Engineering needed (forbidden path)` entry in the change log
      once, as an unchecked item at the end of the Engineering checklist in its
-     logged shape (`../skills/vibe/references/ticket-template.md`,
+     logged shape (`provider:ticket-template.md`,
      "Engineering needed").
    - Place each `Engineering decision` entry in the change log once, as an
      unchecked item at the end of the Engineering checklist in its logged
-     shape (`../skills/vibe/references/ticket-template.md`, "Engineering
+     shape (`provider:ticket-template.md`, "Engineering
      decisions").
    - Place each file in the inventory's `compileOnlyV1Repairs` once, as an
      unchecked item at the end of the Engineering checklist in the template's
-     shape (`../skills/vibe/references/ticket-template.md`, "Compile-only v1.0
+     shape (`provider:ticket-template.md`, "Compile-only v1.0
      repairs").
    - Place each `mainPreexistingFailures` entry once, as an unchecked item at
      the end of the Engineering checklist
-     (`../skills/vibe/references/ticket-template.md`, "Known main failures").
+     (`provider:ticket-template.md`, "Known main failures").
      Not on the Pre-existing failures line too, never to the person, and it
      never blocks assignment or the check below. The item's shape:
 
@@ -428,10 +428,10 @@ historical inspections accurately. Preserve the existing grading block.
    - Place each `machineLimitedChecks`, `e2eLeftForCi` and waiting-criterion
      entry, and each vibe tooling blocker, once, as an unchecked item at the
      end of the Engineering checklist in the template's shape
-     (`../skills/vibe/references/ticket-template.md`, "Checks that ran out of
+     (`provider:ticket-template.md`, "Checks that ran out of
      time", "E2E left for CI", "Criteria waiting on other work" and "Vibe
      tooling blockers"). None of them blocks assignment or the check below,
-     and none goes to the person (ISS-13321).
+     and none goes to the person.
    - Fill Grading with the template's Grading section copied unchanged,
      adding the section after Handoff when the ticket has none.
    - Include the handoff's same-Storybook-version check: the version, every
@@ -442,7 +442,7 @@ historical inspections accurately. Preserve the existing grading block.
      reservation. A wrong bump relative to that base or a conflicting count
      returns `NEEDS_CHANGE`; main moving on after the pin and a version
      another open pull request reserves do not (handoff SKILL.md, "the next
-     free version"; ISS-13321).
+     free version").
 7. Run "Source link and session plan" A to F. The handoff's code is
    written and checked, so step F leaves the PLN `APPROVED` (an `EXECUTED`
    one stays). The ticket is not complete until the source link (when the
@@ -512,7 +512,7 @@ bound to a pre-existing issue never enters cancel mode.
 ## Return (under 100 words)
 
 After the final read-back, call the native `StructuredOutput` tool with only
-an object such as `{ "status": "DONE", "summary": "ISS-123 handoff verified." }`.
+an object such as `{ "status": "DONE", "summary": "<ticket> handoff verified." }`.
 Do not put tool tags, XML parameter markup or the ticket body in either field.
 If the output tool fails after a write, do not repeat that write: the
 orchestrator performs a read-only reconciliation of the live ticket and

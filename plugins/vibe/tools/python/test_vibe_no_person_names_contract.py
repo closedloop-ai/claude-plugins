@@ -63,9 +63,13 @@ def names_in(line: str) -> list[str]:
     return found
 
 
+PROVIDER_ROOT = PLUGIN_ROOT.parent / "vibe-closedloop-provider"
+
+
 def test_no_person_is_named_anywhere_in_the_plugin() -> None:
     hits: list[str] = []
-    for path in sorted(PLUGIN_ROOT.rglob("*")):
+    # The provider ships the text vibe follows when it is bound, so it is held to the same rule.
+    for path in sorted([*PLUGIN_ROOT.rglob("*"), *PROVIDER_ROOT.rglob("*")]):
         if not path.is_file() or path.name in VENDORED or "__pycache__" in path.parts:
             continue
         try:

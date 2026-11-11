@@ -21,7 +21,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 <!-- block: research -->
 ## Research with closedloop-graph
 
-The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](../vibe/references/closedloop-graph.md).
+The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](provider:closedloop-graph.md).
 
 - Before assigning work or ruling between PRs, check `query_collisions` and `blast_radius_tickets`, read PRD lineage with `ticket_detail`, and resolve tickets to screen map entries when the repo publishes them. Shared entries count as overlap across files; assign one owner or an explicit merge order.
 - Every status sweep includes the current `rulings.md` text, the PR-number-to-ticket resolutions, and the live BLOCKS links in the `status-audit.mjs` snapshot. Fix every `SEQUENCING-BLOCKS-MISSING` finding by creating and confirming that blocker-to-blocked link; report `SEQUENCING-UNRESOLVED` references instead of skipping them.

@@ -19,7 +19,7 @@ import json
 import re
 from pathlib import Path
 
-from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+from vibe_contract_text import PROVIDER_DATA, PROVIDER_REFERENCES, agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -81,17 +81,19 @@ def test_the_graph_pack_is_wired_into_the_graph_reference_and_never_claims_the_g
     assert "It is not graph evidence" in text
     assert "the Graph block below is not satisfied by the pack" in text
     pack = source("graph-pack.mjs")
-    assert "not the closedloop-graph" in pack
+    # The pack's source line and the graph calls it still owes are the bound graph provider's data.
+    assert 'providerDataOr(binding, "graph", "packSource"' in pack or '"packSource"' in pack
+    assert "not the closedloop-graph" in PROVIDER_DATA["graph"]["packSource"]
     for call in ("code_tests_for", "blast_radius_tickets", "query_collisions", "code_callers", "code_importers", "code_symbols"):
-        assert f'"{call}"' in pack, call
+        assert call in PROVIDER_DATA["graph"]["packCallsOwed"], call
 
 
 def test_scripts_wrap_the_existing_scripts_and_gates_instead_of_copying_them() -> None:
     expectations = {
         "setup-ctl.mjs": ("vibe-preflight.sh", "run-bounded.mjs", "vibe-sessions.mjs", 'recipe(worktree, "bootstrap")'),
-        "env-ctl.mjs": ("vibe-sessions.mjs", "posthog-key.mjs", "local-plans.mjs", "migration-publish.mjs", "pr-preflight.mjs", "DISPATCH_WORKFLOW"),
-        "verify-run.mjs": ("run-bounded.mjs", "pre-pr-lanes.mjs", "reportLanes", "check:source-gates", "typecheck:affected", "biome"),
-        "guardrails-gate.mjs": ("runDiffRules", "parseUnifiedDiff", "check:source-gates", "biome", "isTestFile"),
+        "env-ctl.mjs": ("vibe-sessions.mjs", "posthog-key.mjs", "local-plans.mjs", "migration-publish.mjs", "pr-preflight.mjs", "requestWorkflow"),
+        "verify-run.mjs": ("run-bounded.mjs", "pre-pr-lanes.mjs", "reportLanes"),
+        "guardrails-gate.mjs": ("runDiffRules", "parseUnifiedDiff", "isTestFile"),
         "prototype-share.mjs": ("local-plans.mjs", "main-sync-share", "main-sync-push", "prototype-result"),
         "inventory-bundle.mjs": ("createGraphPack", "storyId", "parseUnifiedDiff"),
         "req-gather.mjs": ("createGraphPack",),
@@ -109,9 +111,12 @@ def test_scripts_wrap_the_existing_scripts_and_gates_instead_of_copying_them() -
 def test_the_gate_scripts_do_not_reimplement_the_repository_rules() -> None:
     gate = source("guardrails-gate.mjs")
     verify = source("verify-run.mjs")
+    # Both run the repository's own formatter and gates, which its verify recipe names; neither carries a copy.
     for text in (gate, verify):
-        assert '"exec", "biome", "check"' in text
-        assert "check:source-gates" in text
+        assert '"verify"' in text
+    recipe = PROVIDER_DATA["recipes"]["verify"]
+    assert recipe["formatter"]["command"] == ["pnpm", "exec", "biome", "check"]
+    assert ["pnpm", "check:source-gates"] in [check["command"] for check in recipe["checks"]]
     # No rule engine of its own: the wrapped gates are invoked, their rule files never read.
     assert "biome.json" not in gate and "source-gate-allowlist" not in gate
 
@@ -122,7 +127,8 @@ def test_the_env_ctl_never_bypasses_hooks_force_pushes_merges_or_arms_auto_merge
         assert forbidden not in code, forbidden
     # The push is the sessions script's exact-SHA gate, and no environment request starts without it.
     assert '"main-sync-push"' in code
-    assert "vibe-environment.yml" in code and "never start" not in code
+    assert "resultWorkflow" in code and "never start" not in code
+    assert PROVIDER_DATA["recipes"]["environment"]["resultWorkflow"] == "vibe-environment.yml"
 
 
 def test_env_ctl_reuses_the_environment_workers_own_sentences() -> None:
@@ -223,8 +229,10 @@ def test_the_gate_lists_the_reviewers_judgment_checks_as_skipped_never_as_run() 
 
 def test_req_gather_lists_missing_queries_and_cannot_make_them() -> None:
     code = source("req-gather.mjs")
+    # The queries a brief needs are the bound graph and tracker providers' data, which req-gather reads.
+    assert '"requirementsQueries"' in code
     for query in ("ticket_detail", "get-document-comments", "query_collisions", "code_symbols", "blast_radius_tickets", "search_nodes", "shipped_lineage"):
-        assert f'"{query}"' in code, query
+        assert query in PROVIDER_DATA["graph"]["requirementsQueries"], query
     graph = (PROVIDER_REFERENCES / "closedloop-graph.md").read_text()
     row = next(line for line in graph.split("\n") if line.startswith("| `vibe-requirements-worker`"))
     for query in ("query_collisions", "code_symbols", "blast_radius_tickets", "search_nodes"):

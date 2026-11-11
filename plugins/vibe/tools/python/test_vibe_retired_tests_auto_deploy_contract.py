@@ -59,7 +59,8 @@ def test_only_tests_of_retired_code_may_be_deleted() -> None:
 
 def test_the_recorder_and_inventory_gate_deletions_outside_a_pull_request() -> None:
     recorder = RECORDER.read_text()
-    assert 'const RETIRING_DOCUMENT = /^(?:ISS|PRD|FEA)-\\d+$/;' in recorder
+    # The retiring document is the bound tracker's issue or requirements document key.
+    assert "new RegExp(`^(?:${issueKey()}|${requirementsKey()})$`)" in recorder
     assert '"vibe-retired-tests.json"' in recorder
     inventory = INVENTORY.read_text()
     assert "readRetiredTests(worktree)" in inventory

@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - vibe-core runs in any repository (ISS-13446). `lib/vibe/scripts/provider.mjs` records a session's provider binding and assembles provider text; the guards read their rules from the bound provider and stay silent in a chat that never activated vibe. The PR-create override and the program-change reminder take the session tracker's reference, else a GitHub issue or URL. The cloud worker reads its ticket key, connectors, graph tools and graph label from the provider; without one, graph research is optional and no connector attaches. Owned cleanup reads the repository's generated paths from the provider recipe.
 - New `lib/vibe/scripts/repository-commands.mjs` is the one reader of a repository's AGENTS.md test command and its lockfile install, shared by vibe's handoff lanes, setup and main sync.
+- The recipes opt-in file must hold exactly `{"schema": 1, "provider": "<name>"}` and is judged in the session's own repository; a missing or malformed one withholds `recipes` with one named reason and never fails the binding. A binding whose provider release an update replaced finds the provider where it is installed now.
+- A writer works only under the binding of the lead that briefed it: a writer brief carries `Provider: <name>` or `Provider: none`, and the Agent guard and `provider-brief.mjs` refuse a brief without it or naming another. The bound PR-create override names only the tracker's issue.
 
 ### vibe v1.1.81
 
@@ -22,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A start with no provider ever installed offers it once: after its ClosedLoop connection answers, `plugin-version.mjs provider-install` installs it in each harness that has vibe and records that, so a later uninstall stays. A disabled provider is never re-enabled.
 - The Codex eval runner has a provider arm and a generic arm (`--arm`); the generic arm installs no provider and runs the cases tagged `generic`, which cover the generic walk's model-driven steps. vibe-bench loads the provider snapshot when the pinned tree has it.
 - `vibe_generic_scan.py check` gates every runtime file against provider-specific text; `generic-walk.test.mjs` runs the walk's deterministic steps in a personal repository and requires an empty blocker ledger.
+- Adopting a session keeps its binding (a generic session stays generic), and a session repository that does not ignore `.claude/worktrees/` gets a local exclude rule for them. Every installed provider's plan folder stays private whether or not it is bound. The Claude launcher resolves a role's provider text against the session binding, and `codex-session.mjs` and the Claude launcher refuse a writer brief whose `Provider:` line differs from the lead's; `plugin-version.mjs provider-match` lets a writer check its own. The vibe-workers bundles build byte-identically from any working directory.
 
 ### vibe-core v1.0.4
 

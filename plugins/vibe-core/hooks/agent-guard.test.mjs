@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { agentGuard, agentLaunchProblem } from "./agent-guard.mjs";
+import { agentGuard, agentLaunchProblem, writerBindingProblem } from "./agent-guard.mjs";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 import { vibeRoot } from "../shared/vibe-install.mjs";
 import { activatedChat } from "./activation-test-support.mjs";
@@ -93,4 +93,19 @@ test("the seed-refresh skill claims no Claude Code worker path", () => {
   const skill = readFileSync(path.join(PLUGIN_ROOT, "skills/vibe-seed-refresh/SKILL.md"), "utf8");
   assert.doesNotMatch(skill, /in Claude Code use `vibe:<name>`|--runtime claude/);
   assert.match(skill, /Seed refresh has no Claude Code worker path/);
+});
+
+test("a Claude writer started through the Agent tool carries the starting chat's binding, and another binding is refused", (t) => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "vibe-agent-binding-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const records = path.join(home, ".codex", "vibe", "plugin-version");
+  mkdirSync(records, { recursive: true });
+  writeFileSync(path.join(records, "lead-chat.json"), JSON.stringify({ conversation: "lead-chat", status: "current",
+    provider: { state: "bound", name: "vibe-closedloop-provider", capabilities: ["tickets"], root: home } }));
+  const writer = (prompt, session_id = "lead-chat") => writerBindingProblem({ cwd: home, session_id, tool_input: { subagent_type: "general-purpose", prompt } }, home);
+  assert.equal(writer("Invoke vibe:vibe first: fix ISS-12\nProvider: vibe-closedloop-provider\n"), null);
+  assert.match(writer("Invoke vibe:vibe first: fix ISS-12\n"), /carries the lead's binding on its own line: "Provider: vibe-closedloop-provider"/);
+  assert.match(writer("Invoke vibe:vibe first: fix #12\nProvider: none\n"), /this lead is bound as "Provider: vibe-closedloop-provider"/);
+  assert.equal(writer("Invoke vibe:vibe first: fix #12\nProvider: none\n", "generic-chat"), null, "a generic lead's writer carries Provider: none");
+  assert.equal(writer("Review this diff and report findings."), null, "a prompt that starts no writer is untouched");
 });

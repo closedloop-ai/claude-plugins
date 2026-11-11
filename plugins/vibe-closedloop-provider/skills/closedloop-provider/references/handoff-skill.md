@@ -23,9 +23,9 @@ them the branch to merge.
 <!-- block: graph-and-ticket-briefs -->
 summary in plain words (`../vibe/references/guardrails.md`, "Checks"). Every
 worker brief says closedloop-graph is required
-(`../vibe/references/closedloop-graph.md`): a worker that locates, changes or
+(`provider:closedloop-graph.md`): a worker that locates, changes or
 reviews code ends with a Graph block listing its calls; otherwise dispatch the worker again saying so. On `unreachable` the step goes on; dispatch `vibe-setup-worker` to restore the connection before the next one. Every worker that edits the live ticket
-follows `../vibe/references/ticket-template.md`. You and every worker leave
+follows `provider:ticket-template.md`. You and every worker leave
 <!-- end: graph-and-ticket-briefs -->
 
 <!-- block: control-row -->
@@ -110,11 +110,11 @@ leaves a named missing test for the uncovered host.
 No criterion or PLN task that depends on external work is complete until the
 deployed collector, selector, monitor or other dependency evidence is present.
 An explicitly missing dependency keeps final alignment open, with one
-exception (ISS-13321): when the person chose passing it on, a criterion whose
+exception: when the person chose passing it on, a criterion whose
 only gap is work another ticket owns (an API or data ticket that has not
 shipped) is marked `not met yet: waits on <ticket>`, and the table may then
 say `Final Alignment Status: Aligned except criteria waiting on <tickets>`.
-Each such criterion goes on the Engineering checklist (`../vibe/references/ticket-template.md`,
+Each such criterion goes on the Engineering checklist (`provider:ticket-template.md`,
 "Criteria waiting on other work"), so the people who close the dependency
 receive the work. A requested pull request still needs every criterion met.
 <!-- end: alignment -->
@@ -234,7 +234,7 @@ run's log, the running app verification's artifact paths
 with what each proves and any surface it could not drive with its command and
 reason, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open
-Questions per `../vibe/references/ticket-template.md`,
+Questions per `provider:ticket-template.md`,
 and every answer from the person so far with how it was handled. For a source
 PRD, also pass every child classification and its current
 ownership, status and activity. The ticket worker moves to In Review only
@@ -287,7 +287,7 @@ head. For an owner-assignment handoff without a PR, use
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`.
 The PR worker never writes session state. Then stop local Storybook and Desktop with
 `node ../vibe/scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals
-only a recorded process it proves is still the session's own (ISS-13321).
+only a recorded process it proves is still the session's own.
 Run `node ../vibe/scripts/e2e-lock.mjs cleanup-sweep sweep` from a retained checkout
 after the stop; a live PR leaves its retirement record pending for a fleet
 supervisor or the next vibe session-entry sweep. The sweep never removes the

@@ -86,7 +86,9 @@ export function makeCheckout({ root, home, checkout, files = {}, remoteUrl = SYM
   const seed = path.join(root, `seed-${Math.random().toString(16).slice(2)}`);
   git(root, ["init", "--quiet", "--bare", "--initial-branch=main", origin], home);
   git(root, ["init", "--quiet", "--initial-branch=main", seed], home);
-  const allFiles = { "README.md": "seed\n", ...files };
+  // The modeled symphony-alpha commits the provider's recipes opt-in, as that repository does.
+  const optIn = remoteUrl === SYMPHONY_REMOTE ? { ".closedloop-ai/vibe-recipes.json": `${JSON.stringify({ schema: 1, provider: "vibe-closedloop-provider" })}\n` } : {};
+  const allFiles = { "README.md": "seed\n", ...optIn, ...files };
   for (const [file, content] of Object.entries(allFiles)) {
     const absolute = path.join(seed, file);
     mkdirSync(path.dirname(absolute), { recursive: true });

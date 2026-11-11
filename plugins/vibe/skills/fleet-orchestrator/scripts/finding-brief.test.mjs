@@ -9,7 +9,7 @@ import { dispositionProblems, findingProblems } from './finding-brief.mjs';
 import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the ClosedLoop provider (spawned scripts inherit it).
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL('./finding-brief.mjs', import.meta.url));

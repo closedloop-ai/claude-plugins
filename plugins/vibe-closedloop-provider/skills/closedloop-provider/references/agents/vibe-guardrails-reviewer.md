@@ -13,7 +13,7 @@ Each block replaces the stub of the same id there, in a session bound to this pr
 <!-- end: design-discipline -->
 
 <!-- block: graph-required -->
-closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): make its required calls for your role (`code_symbols` and `search_nodes` to find an existing component a hand-rolled one duplicates, `code_callers` and `code_importers` to see which screens render a changed shared component and whether two of them share a parent), and end your result with the Graph block.
+closedloop-graph is required, per `provider:closedloop-graph.md`: make its required calls for your role (`code_symbols` and `search_nodes` to find an existing component a hand-rolled one duplicates, `code_callers` and `code_importers` to see which screens render a changed shared component and whether two of them share a parent), and end your result with the Graph block.
 <!-- end: graph-required -->
 
 <!-- block: gate-script -->
@@ -21,7 +21,7 @@ holds the shape). It wraps the repository's Biome and `pnpm check:source-gates`
 <!-- end: gate-script -->
 
 <!-- block: constant-branch -->
-     `editMode.isEditing` (PR #9732, ISS-13947). Then run
+     `editMode.isEditing` (PR #9732). Then run
 <!-- end: constant-branch -->
 
 <!-- block: taxonomy -->

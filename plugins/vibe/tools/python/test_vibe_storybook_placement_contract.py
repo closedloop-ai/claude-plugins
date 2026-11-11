@@ -335,13 +335,14 @@ def test_producers_carry_the_audience() -> None:
     decomposer = agent("vibe-storybook-decomposer")
     assert "- Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted" in decomposer
     conflict = paragraph(decomposer, "5. A precedent that disagrees")
-    assert f"its audience, `design` or `engineering`, by `../skills/vibe/references/ticket-template.md` {CONFLICTS_RULE}" in conflict
+    # The audience rule is stated in place, so it holds with or without a tracker's ticket template.
+    assert "its audience: `design` for Storybook placement, taxonomy, story granularity or a visual or UX choice, `engineering` for everything else" in conflict
     assert "when unsure it is `engineering`" in conflict
     writer = paragraph(agent("vibe-change-worker"), "return `NEEDS_STORYBOOK` with the capability")
     for required in (
         "Log each Conflict (the block's Conflict line, or a precedent that disagrees with the owner rules in Prep step 5)",
         "`Conflict (design|engineering): <what disagreed>; decided: <how>; evidence: <doc section or precedent paths>`",
-        f"`../skills/vibe/references/ticket-template.md` {CONFLICTS_RULE}, `engineering` when unsure",
+        "`design` for Storybook placement, taxonomy, story granularity or a visual or UX choice, `engineering` for everything else and when unsure",
     ):
         assert required in writer, required
     skill = paragraph(VIBE_SKILL.read_text(), "returns `NEEDS_STORYBOOK` with the capability")
@@ -351,12 +352,12 @@ def test_producers_carry_the_audience() -> None:
 def test_consumers_place_each_conflict_once_by_audience() -> None:
     ticket = flat(agent("vibe-ticket-worker"))
     for required in (
-        "Place each `Conflict` entry in the change log once, by its audience (`../skills/vibe/references/ticket-template.md`, \"Conflicts\")",
+        "Place each `Conflict` entry in the change log once, by its audience (`provider:ticket-template.md`, \"Conflicts\")",
         "`design` on Design Review's Design conflicts line; anything else, or no clear audience, as an unchecked item at the end of the Engineering checklist",
         "Never in the Handoff section, never in both, and never to the person.",
     ):
         assert required in ticket, required
     storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
-    assert "the ticket worker places it by that audience (`../vibe/references/ticket-template.md`, \"Conflicts\")" in storybook
+    assert "the ticket worker places it by that audience (`provider:ticket-template.md`, \"Conflicts\")" in storybook
     readme = paragraph(README.read_text(), "the read-only `vibe-storybook-decomposer` places it")
     assert "design conflicts under Design Review and everything else on the Engineering checklist" in readme

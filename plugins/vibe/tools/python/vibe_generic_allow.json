@@ -107,7 +107,7 @@
  {
   "path": "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs",
   "text": "if (ROLLOUT.test(bullet[1]) || level) fromPrd.push({ id: `PRD-${count}`, text: bullet[1] });",
-  "reason": "The id of a requirements item; change log `Rollout:` lines name it."
+  "reason": "Compatibility: the change log `Rollout:` lines earlier sessions wrote name a requirements item by this id, so the gate must keep reading it."
  },
  {
   "path": "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs",
@@ -178,5 +178,10 @@
   "path": "tools/vibe-workers/src/main-sync-lanes.ts",
   "text": "if (!step?.run || step['working-directory'] !== 'apps/desktop') throw new Error('Canonical displayless harness is unavailable');",
   "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/references/closedloop-graph.md",
+  "text": "`node <plugin-root>/skills/vibe/scripts/provider.mjs path graph provider:closedloop-graph.md`",
+  "reason": "Pointer kept at the path the byte-unchanged seed-refresh files (ruling Q5) read; it sends them to the provider's reference."
  }
 ]

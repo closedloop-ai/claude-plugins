@@ -224201,17 +224201,9 @@ function requirePrototypePublication(record, headSha) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module2 = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding: sessionBinding2, ticketReference, useSessionWorktree } = module2;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, installedProviders, optInProblem, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, sessionBinding: sessionBinding2, ticketReference, useSessionWorktree } = module2;
 
 // src/contracts.ts
-function capabilityOperations(binding = sessionBinding2()) {
-  const operations = (capability, key) => new Set(providerDataOr2(binding, capability, key, []));
-  return {
-    graph: operations("graph", "operations"),
-    read: operations("tickets", "readOperations"),
-    record: operations("tickets", "recordOperations")
-  };
-}
 var TRACKER_SERVICE = "tracker";
 var LEGACY_TRACKER_SERVICE = "closedloop";
 var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
@@ -224226,9 +224218,7 @@ var capabilitySchema = external_exports.object({
   operation: external_exports.string(),
   access: external_exports.enum(["read", "write"])
 }).strict().superRefine((value, ctx) => {
-  const operations = capabilityOperations();
-  const validOperation = value.service === "graph" ? value.access === "read" && operations.graph.has(value.operation) : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation);
-  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
+  if (mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation || value.service === "graph" && value.access !== "read") {
     ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
@@ -225487,7 +225477,7 @@ import path3 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { parseArgs } from "node:util";
 var { git: git4, readSessionRecord: readSessionRecord3 } = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { providerDataOr: providerDataOr3, sessionBinding: sessionBinding3 } = await vibeCore("lib/vibe/scripts/provider.mjs");
+var { installedProviders: installedProviders2, providerDataOr: providerDataOr3, sessionBinding: sessionBinding3 } = await vibeCore("lib/vibe/scripts/provider.mjs");
 var ARTIFACT_ROOT = /^\.[a-z0-9][a-z0-9._-]*\/$/;
 var RESERVED_ROOTS = /* @__PURE__ */ new Set([".git/", ".claude/", ".codex/", ".agents/"]);
 var REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -225498,6 +225488,22 @@ function localPlanPrefix(binding) {
     throw new Error(`The provider's artifact root ${JSON.stringify(root)} is not one dot folder at the repository root.`);
   }
   return `${root}vibe-plans/`;
+}
+function knownLocalPlanPrefixes(binding) {
+  const prefixes2 = /* @__PURE__ */ new Set();
+  const bound = localPlanPrefix(binding);
+  if (bound) prefixes2.add(bound);
+  let installed = [];
+  try {
+    installed = installedProviders2();
+  } catch {
+    installed = [];
+  }
+  for (const provider of installed) {
+    const root = provider.contract?.data?.recipes?.artifactRoot;
+    if (typeof root === "string" && ARTIFACT_ROOT.test(root) && !RESERVED_ROOTS.has(root)) prefixes2.add(`${root}vibe-plans/`);
+  }
+  return [...prefixes2];
 }
 function sessionLocalPlanPrefix(worktree) {
   return localPlanPrefix(sessionBinding3(worktree));
@@ -225536,7 +225542,7 @@ if (process.argv[1] && realpathSync6(fileURLToPath3(import.meta.url)) === realpa
       process.stdout.write(`${JSON.stringify({ ok: true, ...localPlanPaths(values.worktree, { requestId: values["request-id"] ?? null }) })}
 `);
     } else {
-      const plans = committedLocalPlans((args) => git4(values.worktree, args), sessionLocalPlanPrefix(values.worktree));
+      const plans = knownLocalPlanPrefixes(sessionBinding3(values.worktree)).flatMap((prefix) => committedLocalPlans((args) => git4(values.worktree, args), prefix));
       process.stdout.write(`${JSON.stringify({ ok: plans.length === 0, committedLocalPlans: plans })}
 `);
       process.exitCode = plans.length ? 1 : 0;
@@ -225550,12 +225556,17 @@ if (process.argv[1] && realpathSync6(fileURLToPath3(import.meta.url)) === realpa
 
 // src/main-sync-plan-folder.ts
 var prefixes = /* @__PURE__ */ new Map();
+var knownPrefixes = /* @__PURE__ */ new Map();
 function planPrefixOf(root) {
   if (!prefixes.has(root)) prefixes.set(root, sessionLocalPlanPrefix(root));
   return prefixes.get(root) ?? null;
 }
+function planPrefixesOf(root) {
+  if (!knownPrefixes.has(root)) knownPrefixes.set(root, knownLocalPlanPrefixes(sessionBinding2(root)));
+  return knownPrefixes.get(root) ?? [];
+}
 function isPlanFile(root, file) {
-  return isLocalPlanPath(file, planPrefixOf(root));
+  return planPrefixesOf(root).some((prefix) => isLocalPlanPath(file, prefix));
 }
 function artifactRootOf(root) {
   const prefix = planPrefixOf(root);
@@ -227553,9 +227564,8 @@ function verifyPrivateInput(root, file, head) {
   }
 }
 function verifyPrivateRoot(root) {
-  const prefix = planPrefixOf(root);
-  const artifactRoot = artifactRootOf(root);
-  for (const path4 of prefix && artifactRoot ? [artifactRoot.slice(0, -1), prefix.slice(0, -1)] : []) {
+  const paths = planPrefixesOf(root).flatMap((prefix) => [prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/")), prefix.slice(0, -1)]).filter(Boolean);
+  for (const path4 of [...new Set(paths)]) {
     const stat = lstatSync3(join12(root, path4), { throwIfNoEntry: false });
     if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync9(join12(root, path4)) !== join12(root, path4))) {
       throw new MainSyncError("Private planning evidence requires its canonical owned directory; no symlink or alias is accepted", "NEEDS_CHANGE");
@@ -228338,7 +228348,7 @@ function inspectInventory(root, completion) {
       if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
     }
   }
-  const plans = committedLocalPlans((args) => git(root, args), planPrefixOf(root));
+  const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans((args) => git(root, args), prefix));
   if (plans.length) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   if (recognizedDerivative) {
     const after = trackedInputs(root);

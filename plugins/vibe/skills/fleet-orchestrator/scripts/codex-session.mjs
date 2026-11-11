@@ -28,7 +28,7 @@ import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
-import { launchCwd, recoveryTurnProblem, threadCwd, vibeBriefTicket, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
+import { briefProviderProblem, launchCwd, recoveryTurnProblem, threadCwd, vibeBriefTicket, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, readThreadState, summarize } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
@@ -36,6 +36,7 @@ const { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } = awai
 const { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
 const { recordWorkerScope } = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
+const { sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { canonicalWorktree, ensureReloadFence, e2eLockDir: machineE2eLockDir, machineSlotLockDir, readE2eWaiters, regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
@@ -710,6 +711,10 @@ async function runControlled(client, options, { warn = (text) => console.error(`
   if (!prompt.trim()) throw new Error(`${options.promptFile} is empty`);
   if (options.command === 'turn' && !saved && !VIBE_PROMPT.test(prompt)) {
     throw new Error(`a new session's prompt must start with $vibe; ${options.promptFile} does not`);
+  }
+  if (options.command === 'turn' && !saved) {
+    const inherited = briefProviderProblem(prompt, (dependencies.binding ?? sessionBinding)());
+    if (inherited) throw new Error(inherited);
   }
   if (DONE_CLAIMS.test(prompt) && !REVERIFY.test(prompt)) {
     throw new Error(`${options.promptFile} hands over "Done:" claims with no "Re-verify:" line; the writer re-verifies each with a test or a measurement before building on it`);

@@ -34,14 +34,29 @@ export const capabilitySchema = z.object({
   operation: z.string(),
   access: z.enum(["read", "write"]),
 }).strict().superRefine((value, ctx) => {
-  const operations = capabilityOperations();
-  const validOperation = value.service === "graph"
-    ? value.access === "read" && operations.graph.has(value.operation)
-    : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation);
-  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
+  // Shape only: a stored ledger stays readable whatever chat reads it. Whether the session's provider offers the
+  // operation is checked where a capability is granted (`unsupportedCapabilities`, at register and launch).
+  if (mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation || (value.service === "graph" && value.access !== "read")) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
+
+/** The capabilities whose operation the session's provider does not offer for their service and access. */
+export function unsupportedCapabilities(capabilities: readonly { name: string; service: string; operation: string; access: string }[],
+  binding: unknown) {
+  const operations = capabilityOperations(binding);
+  return capabilities.filter((value) => !(value.service === "graph" ? operations.graph.has(value.operation)
+    : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation)));
+}
+
+/** Refuses a grant naming an operation the session's provider does not offer, as the schema refusal did. */
+export function requireSupportedCapabilities(capabilities: readonly { name: string; service: string; operation: string; access: string }[],
+  binding: unknown) {
+  const unsupported = unsupportedCapabilities(capabilities, binding);
+  if (unsupported.length) {
+    throw new z.ZodError([{ code: z.ZodIssueCode.custom, path: ["capabilities"], message: "Unsupported capability binding" }]);
+  }
+}
 export type Capability = z.infer<typeof capabilitySchema>;
 export const capabilitiesSchema = z.array(capabilitySchema).max(48).refine(
   (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,

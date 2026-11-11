@@ -93,7 +93,7 @@ def test_claude_workers_launch_through_the_owned_launcher_without_a_guessed_root
     notes = section(VIBE_SKILL.read_text(), "## Harness notes")
     for required in (
         "Launch every worker through `scripts/dist/claude-worker.mjs`, never through the native Agent tool",
-        "with no ClosedLoop or closedloop-graph tools",
+        "with no tracker or graph MCP",
         "Leave `agentRoot` out",
         "`STALE_PLUGIN_ROOT`",
         "`MISSING_CAPABILITIES`",
