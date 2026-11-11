@@ -29,10 +29,9 @@
 // keeps the offset of the last whole line scanned. Fails open: any error
 // returns null, so nothing is printed and no tool call or compaction is blocked.
 
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { existsSync } from "node:fs";
 import { resolveWorkDir } from "../lib/codex-fleet-monitor/scripts/work-dir.mjs";
 import { bindChat, programFor, unboundLine, validChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 import { COMPACT_WINDOW_RANGE, contextGuardConfig, defaultHome, FLEET_HOME_SCRIPT, PROGRAM_READING } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";

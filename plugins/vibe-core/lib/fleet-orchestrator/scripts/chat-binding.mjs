@@ -12,13 +12,18 @@
 // chat. Binding a program another chat holds is refused, naming that chat and
 // when it bound, unless the caller passes takeover (the hand-over to a new
 // chat after the old one finished; orchestrator, 2026-11-11: an accidental
-// resume must not steal a live chat's program). The claim is atomic: each
-// program has one claim file under fleet-binding/claims/, created with an
-// exclusive link, so of two chats claiming one program at the same moment
-// exactly one wins and the other gets HELD. A claim whose holder has since
-// bound another program is stale and is replaced. The chat is the harness
+// resume must not steal a live chat's program). Each program has one claim
+// file under fleet-binding/claims/, and a bind runs its check and writes
+// (claim, binding, the claim it leaves, the chats it takes over) under that
+// program's lock file, created exclusively, so of two chats claiming one
+// program at the same moment exactly one wins and the other gets HELD. A lock
+// whose owning process has exited is reclaimed. A claim whose holder has since
+// bound another program is stale and is replaced. A chat taken over keeps a
+// note under fleet-binding/taken/, so its scripts given the home path are
+// refused (TAKEN-OVER) instead of resolving `current`. The chat is the harness
 // conversation (harness-identity.mjs for a command; a hook passes its event's
-// session_id, the same id).
+// session_id, the same id). Only that one id is recorded: when both harness
+// ids are set, the other one was inherited from another conversation.
 //
 // Resolution (programFor): FLEET_HOME names the home when set; else the
 // chat's binding; else ~/fleet-orchestrator. In that home the chat's own
@@ -35,6 +40,10 @@ const CHAT = /^[A-Za-z0-9_.:-]{1,128}$/;
 const BINDING_DIR = path.join(".vibe-hook-scope", "fleet-binding");
 const MAX_BINDING_BYTES = 4096;
 const STALE_TRANSCRIPT_MS = 60 * 60 * 1000;
+const LOCK_WAIT_MS = 5000;
+const LOCK_RETRY_MS = 10;
+// A bind holds its lock for a few file writes; an unreadable lock this old was left by a process that died mid-write.
+const LOCK_STALE_MS = 30_000;
 
 /** The chat a command runs in (CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID), or null outside a harness. */
 export function commandChat(env = process.env) {
@@ -65,24 +74,31 @@ function readBindingFile(file) {
   }
 }
 
-/** Every readable binding record. */
-function allBindings(env) {
-  const dir = bindingDir(env);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((name) => name.endsWith(".json")).map((name) => readBindingFile(path.join(dir, name))).filter(Boolean);
-}
-
-/** Whether `record` is `chat`'s own: its id, or another id the same conversation carried when it bound. */
-function isOwn(record, chat) {
-  return record.chat === chat || (Array.isArray(record.aliases) && record.aliases.includes(chat));
-}
-
-/** `{ chat, aliases, home, program, boundAt }` for `chat`, or null when it has none. */
+/** `{ chat, home, program, boundAt }` for `chat`, or null when it has none. */
 export function chatBinding(chat, env = process.env) {
   if (!validChat(chat)) return null;
   const record = readBindingFile(bindingFile(chat, env));
-  if (record && record.chat === chat) return record;
-  return allBindings(env).find((other) => isOwn(other, chat)) ?? null;
+  return record && record.chat === chat ? record : null;
+}
+
+function takenFile(chat, env) {
+  return path.join(bindingDir(env), "taken", `${chat}.json`);
+}
+
+/**
+ * `{ chat, home, program, takenBy, at }` when another chat took `chat`'s program, still holds it, and `chat` has
+ * bound nothing since, else null.
+ */
+export function takenOver(chat, env = process.env) {
+  if (!validChat(chat)) return null;
+  let record;
+  try {
+    record = JSON.parse(readFileSync(takenFile(chat, env), "utf8"));
+  } catch {
+    return null;
+  }
+  if (record?.chat !== chat || typeof record.home !== "string" || typeof record.program !== "string") return null;
+  return claimHolder(record.home, record.program, env)?.chat === record.takenBy ? record : null;
 }
 
 function claimsDir(env) {
@@ -116,8 +132,7 @@ export function programChats(home, program, env = process.env) {
 /** The chats other than `chat` bound to `program` in `home`. */
 function programHolders(home, program, chat, env) {
   const holder = claimHolder(home, program, env);
-  if (!holder || holder.chat === chat || (holder.binding && isOwn(holder.binding, chat))) return [];
-  return [holder.chat];
+  return !holder || holder.chat === chat ? [] : [holder.chat];
 }
 
 /** The programs of `home` that some chat holds. */
@@ -137,48 +152,122 @@ function releaseClaim(home, program, chat, env) {
 
 /**
  * Binds `chat` to `program` in `home`; returns the other chats it was taken from. A null chat binds nothing.
- * Throws `HELD ...` when another chat holds the program, unless `takeover`. The command's other harness id,
- * when one is set (harness-identity.mjs picks between them), is kept as an alias, so a hook keyed by it agrees.
+ * Throws `HELD ...` when another chat holds the program, unless `takeover`. The check and every write run under
+ * the program's lock, so two chats binding one program at once cannot both pass the check.
  */
 export function bindChat(chat, home, program, env = process.env, { now = new Date(), takeover = false } = {}) {
   const file = bindingFile(chat, env);
   if (!file) return [];
   const resolved = path.resolve(home);
-  const others = refuseHeld(chat, resolved, program, env, { now, takeover });
-  const aliases = [env.CLAUDE_CODE_SESSION_ID, env.CODEX_THREAD_ID].filter((id) => validChat(id) && id !== chat);
-  const record = `${JSON.stringify({ chat, ...(aliases.length > 0 ? { aliases } : {}), home: resolved, program, boundAt: now.toISOString() })}\n`;
-  claim(chat, resolved, program, record, env, { now, takeover, replace: others.length > 0 });
-  const previous = chatBinding(chat, env);
-  if (previous && (path.resolve(previous.home) !== resolved || previous.program !== program)) releaseClaim(previous.home, previous.program, previous.chat, env);
-  if (previous && previous.chat !== chat) unlinkSync(bindingFile(previous.chat, env));
-  writeAtomic(file, record);
-  for (const other of others) unbindChat(other, env);
-  return others;
+  const bound = withProgramLock(resolved, program, env, () => {
+    const others = refuseHeld(chat, resolved, program, env, { now, takeover });
+    const record = `${JSON.stringify({ chat, home: resolved, program, boundAt: now.toISOString() })}\n`;
+    writeAtomic(claimFile(resolved, program, env), record);
+    const previous = chatBinding(chat, env);
+    writeAtomic(file, record);
+    try { unlinkSync(takenFile(chat, env)); } catch {}
+    for (const other of others) {
+      const record = chatBinding(other, env);
+      if (record && path.resolve(record.home) === resolved && record.program === program) unlinkSync(bindingFile(other, env));
+      writeAtomic(takenFile(other, env), `${JSON.stringify({ chat: other, home: resolved, program, takenBy: chat, at: now.toISOString() })}\n`);
+    }
+    return { others, previous };
+  });
+  // The program left behind is released under its own lock, after this one is let go, so two chats swapping
+  // programs never wait on each other's lock.
+  const left = bound.previous;
+  if (left && (path.resolve(left.home) !== resolved || left.program !== program)) {
+    withProgramLock(left.home, left.program, env, () => releaseClaim(left.home, left.program, chat, env));
+  }
+  return bound.others;
 }
 
 /**
- * Takes the claim file for `program` in `home`: an exclusive link, so a concurrent claimer gets EEXIST and then
- * HELD; replaced only for a takeover, a stale claim or this chat's own.
+ * Runs `fn` holding `program`'s lock in `home`. The lock is a file linked into place already holding
+ * `<pid> <token>`, so no process ever reads it half written. A live owner is waited on, then refused (BUSY).
+ * A lock whose owner has exited, or one older than LOCK_STALE_MS that cannot be read, is reclaimed by
+ * renaming exactly that file aside and checking it is the one read; one renamed by mistake is put back.
+ * The lock is removed at the end only while it still holds this call's token.
  */
-function claim(chat, home, program, record, env, { now, takeover, replace }) {
-  const file = claimFile(home, program, env);
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temp, record, { mode: 0o600 });
+function withProgramLock(home, program, env, fn) {
+  const lock = `${claimFile(home, program, env)}.lock`;
+  mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 });
+  const token = `${process.pid} ${randomUUID()}`;
+  const temp = `${lock}.${randomUUID()}.tmp`;
+  writeFileSync(temp, `${token}\n`, { mode: 0o600 });
+  const deadline = Date.now() + LOCK_WAIT_MS;
   try {
-    if (replace) {
-      renameSync(temp, file);
-      return;
-    }
-    try {
-      linkSync(temp, file);
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      refuseHeld(chat, home, program, env, { now, takeover });
-      renameSync(temp, file);
+    for (;;) {
+      try {
+        linkSync(temp, lock);
+        break;
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+      }
+      const seen = readOr(lock);
+      const owner = Number(seen.trim().split(/\s+/)[0]);
+      if (staleLock(lock, seen, owner)) {
+        reclaim(lock, seen);
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error(`BUSY ${program}: another fleet-home.mjs (pid ${owner || "unknown"}) is binding it; run the command again`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_MS);
     }
   } finally {
     try { unlinkSync(temp); } catch {}
+  }
+  try {
+    return fn();
+  } finally {
+    if (readOr(lock).trim() === token) {
+      try { unlinkSync(lock); } catch {}
+    }
+  }
+}
+
+/** Whether the lock holding `seen` is abandoned: its owner exited, or it cannot be read and is older than LOCK_STALE_MS. */
+function staleLock(lock, seen, owner) {
+  if (/^\d+ \S+$/.test(seen.trim())) return !processAlive(owner);
+  try {
+    return Date.now() - lstatSync(lock).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
+/** Moves the abandoned lock holding `seen` aside; a lock that changed in between is put back. */
+function reclaim(lock, seen) {
+  const aside = `${lock}.${randomUUID()}.stale`;
+  try {
+    renameSync(lock, aside);
+  } catch {
+    return;
+  }
+  if (readOr(aside) === seen) {
+    try { unlinkSync(aside); } catch {}
+    return;
+  }
+  try {
+    linkSync(aside, lock);
+  } catch {}
+  try { unlinkSync(aside); } catch {}
+}
+
+function readOr(file) {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
   }
 }
 
@@ -193,9 +282,11 @@ function writeAtomic(file, text) {
 export function unbindChat(chat, env = process.env) {
   const record = chatBinding(chat, env);
   if (!record) return null;
-  releaseClaim(record.home, record.program, record.chat, env);
-  unlinkSync(bindingFile(record.chat, env));
-  return record;
+  return withProgramLock(record.home, record.program, env, () => {
+    releaseClaim(record.home, record.program, chat, env);
+    try { unlinkSync(bindingFile(chat, env)); } catch {}
+    return record;
+  });
 }
 
 /** The home a chat works in: FLEET_HOME when set, else its binding's home, else ~/fleet-orchestrator. */
@@ -217,6 +308,8 @@ export function programFor(home, chat, env = process.env) {
   if (binding && path.resolve(binding.home) === resolved && isDir(path.join(resolved, "programs", binding.program))) {
     return { program: binding.program, source: "bound" };
   }
+  const taken = takenOver(chat, env);
+  if (taken && path.resolve(taken.home) === resolved) return { program: null, current: taken.program, owners: [taken.takenBy] };
   const current = currentProgram(resolved);
   if (!current) return { program: null, current: null };
   const owners = programHolders(resolved, current, chat, env);
@@ -233,7 +326,7 @@ export function currentProgram(home) {
 /** The other chats holding `program` in `home`; throws `HELD ...` when there are any and `takeover` is not set. */
 export function refuseHeld(chat, home, program, env = process.env, { now = new Date(), takeover = false } = {}) {
   const others = programHolders(home, program, chat, env);
-  if (others.length > 0 && !takeover) throw new Error(`HELD ${program} is bound to ${describeHolders(others, env, now)}. Pass --takeover only if that chat has finished; it then resolves no program`);
+  if (others.length > 0 && !takeover) throw new Error(`HELD ${program} is bound to ${describeHolders(others, env, now)}. Pass --takeover only if that chat has finished; it is then told it has no program, and its scripts given the home path are refused`);
   return others;
 }
 

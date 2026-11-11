@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { writeRemoteCodexStub } from '../../../../vibe/skills/fleet-orchestrator/scripts/fleet-test-support.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
+import { bindChat } from './chat-binding.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = vibeRoot();
@@ -370,6 +371,9 @@ test('a chat with no binding is told how to bind, never handed the program anoth
   assert.match(taken.stdout, /^BOUND prog-a chat-c$/m);
   assert.match(taken.stdout, new RegExp(`^ACTIVE prog-a ${programA}$`, 'm'));
   assert.match(run(['resume'], { ...chatEnv('chat-a'), FLEET_HOME: home }).stdout, /^UNBOUND: .*is bound to chat chat-c /m, 'the chat it was taken from is told, not left writing it');
+  run(['close'], { ...chatEnv('chat-c'), FLEET_HOME: home });
+  const afterClose = spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', home], { encoding: 'utf8', env: outsideChat(chatEnv('chat-a')) });
+  assert.doesNotMatch(afterClose.stderr, /TAKEN-OVER/, 'once the chat that took over lets the program go, the takeover note no longer applies');
 });
 
 test('a chat bound in a second home finds it with no FLEET_HOME, and FLEET_HOME still overrides the home', (t) => {
@@ -532,7 +536,7 @@ test("binding a program another chat holds is refused by default and needs --tak
   for (const args of [['resume', 'prog-h'], ['start', 'prog-h', '--shape', 'fleet']]) {
     const refused = run([...args, '--home', home], chatEnv('chat-intruder'));
     assert.equal(refused.status, 2, `${args[0]} is refused`);
-    assert.equal(refused.stderr, `HELD prog-h is bound to chat chat-holder (bound ${holder.boundAt}). Pass --takeover only if that chat has finished; it then resolves no program\n`);
+    assert.equal(refused.stderr, `HELD prog-h is bound to chat chat-holder (bound ${holder.boundAt}). Pass --takeover only if that chat has finished; it is then told it has no program, and its scripts given the home path are refused\n`);
     assert.match(run(['resume', '--home', home], chatEnv('chat-holder')).stdout, /^ACTIVE prog-h /m, 'the holder keeps its program');
   }
   assert.equal(existsSync(path.join(TEST_HOME, '.vibe-hook-scope', 'fleet-binding', 'chat-intruder.json')), false, 'a refused chat is bound to nothing');
@@ -554,6 +558,14 @@ test("binding a program another chat holds is refused by default and needs --tak
   assert.match(taken.stdout, /^TAKEOVER chat-holder: /m);
   assert.match(taken.stdout, /^BOUND prog-h chat-intruder$/m);
   assert.match(run(['resume', '--home', home], chatEnv('chat-holder')).stdout, /^UNBOUND: .*is bound to chat chat-intruder /m, 'the old holder resolves no program after the takeover');
+  const oldHolder = spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', home], { encoding: 'utf8', env: outsideChat(chatEnv('chat-holder')) });
+  assert.equal(oldHolder.status, 2, "the old holder's scripts given the home path are refused, not handed current");
+  assert.match(oldHolder.stderr, /^TAKEN-OVER prog-h: chat chat-intruder took this chat's program over/m);
+  const worker = spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', home], { encoding: 'utf8', env: outsideChat(chatEnv('chat-worker-h')) });
+  assert.match(worker.stdout, new RegExp(`^W='${path.join(home, 'programs', 'prog-h')}'$`, 'm'), 'a worker bound to nothing still gets current');
+  assert.equal(run(['start', 'prog-new', '--shape', 'fleet', '--home', home], chatEnv('chat-holder')).status, 0);
+  assert.match(spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', home], { encoding: 'utf8', env: outsideChat(chatEnv('chat-holder')) }).stdout,
+    new RegExp(`^W='${path.join(home, 'programs', 'prog-new')}'$`, 'm'), 'binding again clears the takeover note');
 });
 
 test("a chat from before bindings still cannot start a second program while its current one is open", (t) => {
@@ -614,19 +626,18 @@ test('migrate refuses merging append-only files whose entries span several lines
   assert.deepEqual(treeSnapshot(root), before);
 });
 
-test('a binding made with both harness ids set is found by either', (t) => {
+test("a Codex thread that inherited another chat's Claude id binds only its own id, so that chat never resolves or closes it", (t) => {
   const home = path.join(tempRoot(t), 'fleet');
-  assert.equal(run(['start', 'other', '--shape', 'fleet', '--home', home], chatEnv('chat-other-holder')).status, 0, 'current stays another chat program');
-  const both = { CLAUDE_CODE_SESSION_ID: 'claude-both', CODEX_THREAD_ID: 'codex-both', PATH: path.dirname(process.execPath) };
-  const started = run(['start', 'pz', '--shape', 'fleet', '--home', home], both);
+  assert.equal(run(['start', 'other', '--shape', 'fleet', '--home', home], chatEnv('claude-parent')).status, 0);
+  // No ps on PATH, so harness-identity.mjs cannot read the ancestry and picks the Codex thread, as in a sandbox.
+  const thread = { CLAUDE_CODE_SESSION_ID: 'claude-parent', CODEX_THREAD_ID: 'codex-thread', PATH: path.dirname(process.execPath) };
+  const started = run(['start', 'pz', '--shape', 'fleet', '--home', home], thread);
   assert.equal(started.status, 0, started.stderr);
-  const boundAs = /^BOUND pz (\S+)$/m.exec(started.stdout)?.[1];
-  assert.ok(['claude-both', 'codex-both'].includes(boundAs), started.stdout);
-  for (const chat of ['claude-both', 'codex-both']) {
-    const resolved = spawnSync(process.execPath, [path.join(MONITOR, 'work-dir.mjs'), 'sh', home], { encoding: 'utf8', env: outsideChat(chatEnv(chat)) });
-    assert.match(resolved.stdout, new RegExp(`^W='${path.join(home, 'programs', 'pz')}'$`, 'm'), `${chat} resolves the program it bound: ${resolved.stderr}`);
-  }
-  assert.equal(run(['resume', 'pz', '--home', home], chatEnv('someone-else')).status, 2, 'a third chat is still refused');
+  assert.match(started.stdout, /^BOUND pz codex-thread$/m);
+  assert.doesNotMatch(readFileSync(path.join(TEST_HOME, '.vibe-hook-scope', 'fleet-binding', 'codex-thread.json'), 'utf8'), /claude-parent/, 'the inherited id is not recorded');
+  assert.match(run(['resume', '--home', home], chatEnv('claude-parent')).stdout, /^ACTIVE other /m, 'the Claude chat keeps its own program');
+  run(['close', '--home', home], chatEnv('claude-parent'));
+  assert.match(run(['resume', '--home', home], chatEnv('codex-thread')).stdout, /^ACTIVE pz /m, "the Claude chat's close leaves the thread's binding alone");
 });
 
 test('two chats claiming one program at the same moment: exactly one wins and the other gets HELD', async (t) => {
@@ -649,6 +660,11 @@ catch (error) { console.log(String(error.message).startsWith('HELD ') ? 'HELD' :
   });
   for (let round = 0; round < 12; round += 1) {
     const program = `race-${round}`;
+    // Odd rounds race chats moving off a program they already hold, whose old binding is still in place mid-claim.
+    if (round % 2 === 1) {
+      bindChat(`racer-a-${round}`, home, `old-a-${round}`, { HOME: userHome });
+      bindChat(`racer-b-${round}`, home, `old-b-${round}`, { HOME: userHome });
+    }
     const at = Date.now() + 400;
     const results = await Promise.all([claim(`racer-a-${round}`, program, at), claim(`racer-b-${round}`, program, at)]);
     assert.deepEqual([...results].sort(), ['HELD', 'WON'], `round ${round}: ${results.join(', ')}`);
@@ -656,6 +672,79 @@ catch (error) { console.log(String(error.message).startsWith('HELD ') ? 'HELD' :
     const loser = winner.includes('-a-') ? `racer-b-${round}` : `racer-a-${round}`;
     const bindings = path.join(userHome, '.vibe-hook-scope', 'fleet-binding');
     assert.equal(JSON.parse(readFileSync(path.join(bindings, `${winner}.json`), 'utf8')).program, program);
-    assert.equal(existsSync(path.join(bindings, `${loser}.json`)), false, 'the loser is bound to nothing');
+    if (round % 2 === 1) {
+      assert.equal(JSON.parse(readFileSync(path.join(bindings, `${loser}.json`), 'utf8')).program, loser.replace(/^racer-(.)-/, 'old-$1-'), 'the loser keeps its own program');
+    } else {
+      assert.equal(existsSync(path.join(bindings, `${loser}.json`)), false, 'the loser is bound to nothing');
+    }
   }
+});
+
+test('eight chats claiming one program at once: exactly one wins every round', async (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs'), { recursive: true });
+  const userHome = path.join(root, 'user');
+  mkdirSync(userHome);
+  const claimer = `import { bindChat } from ${JSON.stringify(pathToFileURL(path.join(HERE, 'chat-binding.mjs')).href)};
+const [chat, home, program, at] = process.argv.slice(1);
+while (Date.now() < Number(at)) {}
+try { bindChat(chat, home, program, { HOME: process.env.HOME }); console.log('WON'); }
+catch (error) { console.log(String(error.message).startsWith('HELD ') ? 'HELD' : 'ERROR ' + error.message); }`;
+  const claim = (chat, program, at) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', claimer, chat, home, program, String(at)], { env: { PATH: process.env.PATH, HOME: userHome } });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', reject);
+    child.on('close', () => resolve(out.trim()));
+  });
+  for (let round = 0; round < 6; round += 1) {
+    const at = Date.now() + 600;
+    const results = await Promise.all(Array.from({ length: 8 }, (_, n) => claim(`crowd-${round}-${n}`, `crowd-${round}`, at)));
+    assert.equal(results.filter((result) => result === 'WON').length, 1, `round ${round}: ${results.join(', ')}`);
+    assert.equal(results.filter((result) => result === 'HELD').length, 7, `round ${round}: ${results.join(', ')}`);
+  }
+});
+
+test('a lock file mid-write is never taken for an abandoned one, and an abandoned one is reclaimed', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('lock-probe', home, 'locked', env);
+  const claims = path.join(env.HOME, '.vibe-hook-scope', 'fleet-binding', 'claims');
+  const lock = path.join(claims, readdirSync(claims).find((name) => name.endsWith('.locked.json')) + '.lock');
+  writeFileSync(lock, '');
+  assert.throws(() => bindChat('lock-probe', home, 'locked', env), /^Error: BUSY locked: /, 'an empty lock still being written is waited on, not deleted');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  assert.deepEqual(bindChat('lock-probe', home, 'locked', env), [], 'an unreadable lock older than the stale limit is reclaimed');
+  writeFileSync(lock, '2147483646 dead-owner\n');
+  assert.deepEqual(bindChat('lock-probe', home, 'locked', env), [], 'a lock whose owner exited is reclaimed');
+  assert.equal(existsSync(lock), false, 'the lock is removed after the bind');
+});
+
+test('a migrate whose final bind fails is rolled back with the rest', async (t) => {
+  const { migrate } = await import('./fleet-migrate.mjs');
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  const flat = path.join(root, 'orch');
+  mkdirSync(flat);
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  writeFileSync(path.join(flat, 'handover.md'), 'handover\n');
+  const userHome = path.join(root, 'user');
+  const bindings = path.join(userHome, '.vibe-hook-scope', 'fleet-binding');
+  mkdirSync(bindings, { recursive: true });
+  chmodSync(bindings, 0o500);
+  let restored = false;
+  const restore = () => {
+    if (!restored) chmodSync(bindings, 0o700);
+    restored = true;
+  };
+  const before = treeSnapshot(flat);
+  assert.throws(() => migrate(flat, home, 'iss-1', { reusable: ['handover.md'], skip: ['programs', 'current'], programDirs: ['sessions'], chat: 'chat-migrate', env: { HOME: userHome } }),
+    /^Error: ROLLED-BACK migrate stopped/);
+  restore();
+  assert.deepEqual(treeSnapshot(flat), before, 'the source is as it was');
+  assert.equal(existsSync(home), false, 'nothing is left in the home');
 });

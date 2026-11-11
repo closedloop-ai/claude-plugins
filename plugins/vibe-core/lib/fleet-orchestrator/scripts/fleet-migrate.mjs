@@ -18,12 +18,13 @@
 // differing file is a COLLISION. The real run journals each step and, on any failure, undoes the
 // completed ones in reverse (ROLLED-BACK), so it never ends half moved.
 // `current` is written only when the home has no current program or already
-// names this one; the calling chat is bound to the migrated program either way.
+// names this one; the calling chat is bound to the migrated program as the
+// journal's last step, so a refused bind is rolled back like any other.
 
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseConfig } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { bindChat, currentProgram, refuseHeld } from "./chat-binding.mjs";
+import { bindChat, currentProgram, refuseHeld, unbindChat } from "./chat-binding.mjs";
 
 /** Reusable files that hold one entry per line and only ever grow, so two copies merge by appending. */
 const APPEND_ONLY = Object.freeze(["lessons.md", "standing-rulings.md"]);
@@ -116,7 +117,6 @@ export function migrate(from, home, slug, { dryRun = false, reusable, skip, prog
     }
     for (const [source, target] of plan.merges) {
       const before = readFileSync(target, "utf8");
-      const sourceText = readFileSync(source, "utf8");
       const added = newLines(source, target);
       writeFileSync(target, `${before}${before === "" || before.endsWith("\n") ? "" : "\n"}${added.map((line) => `${line}\n`).join("")}`);
       undo.push(() => writeFileSync(target, before));
@@ -148,6 +148,10 @@ export function migrate(from, home, slug, { dryRun = false, reusable, skip, prog
       writeFileSync(currentFile, `${slug}\n`);
       undo.push(() => (before === null ? unlinkSync(currentFile) : writeFileSync(currentFile, before)));
     }
+    if (chat) {
+      bindChat(chat, homeDir, slug, env, { takeover });
+      undo.push(() => unbindChat(chat, env));
+    }
   } catch (error) {
     const failed = [];
     for (const step of undo.reverse()) {
@@ -162,7 +166,6 @@ export function migrate(from, home, slug, { dryRun = false, reusable, skip, prog
       ? `ROLLED-BACK migrate stopped (${reason}); every completed step was undone and ${fromDir} is as it was`
       : `ROLLBACK-INCOMPLETE migrate stopped (${reason}) and ${failed.length} undo steps failed: ${failed.join("; ")}`);
   }
-  if (chat) bindChat(chat, homeDir, slug, env, { takeover });
   return { lines, refused: false };
 }
 

@@ -24,7 +24,7 @@ One fleet home per machine holds everything (default `~/fleet-orchestrator`; `FL
 
 ## A new chat
 
-1. `fleet-home.mjs resume` (or `resume <slug>` for a named program): read each `READ` file in order and note its `SHAPE`. It binds this chat to the program it prints after `ACTIVE`. On `NO-ACTIVE-PROGRAM`, `start` a fresh one. On `UNBOUND`, the home's current program is bound to another chat, named with when it bound: if that chat has finished (this chat replaces it), `resume <slug> --takeover`; otherwise `start` your own. `HELD` refuses a program another chat holds and names that chat and when it bound; add `--takeover` only when that chat has finished (`TAKEOVER` names it, and it then resolves no program).
+1. `fleet-home.mjs resume` (or `resume <slug>` for a named program): read each `READ` file in order and note its `SHAPE`. It binds this chat to the program it prints after `ACTIVE`. On `NO-ACTIVE-PROGRAM`, `start` a fresh one. On `UNBOUND`, the home's current program is bound to another chat, named with when it bound: if that chat has finished (this chat replaces it), `resume <slug> --takeover`; otherwise `start` your own. `HELD` refuses a program another chat holds and names that chat and when it bound; add `--takeover` only when that chat has finished (`TAKEOVER` names it; that chat's scripts given the home path are then refused with `TAKEN-OVER`).
 2. Run the plugin version check its `PLUGIN-VERSION` line names (SKILL.md, Setup) before anything else.
    Then show the setup check block (SKILL.md, Setup) once.
 3. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
