@@ -19,12 +19,13 @@
 // completed ones in reverse (ROLLED-BACK), so it never ends half moved.
 // `current` is written only when the home has no current program or already
 // names this one; the calling chat is bound to the migrated program as the
-// journal's last step, so a refused bind is rolled back like any other.
+// journal's last step, and a rollback puts its earlier binding, the claims and
+// any chat it took over back as they were.
 
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseConfig } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { bindChat, currentProgram, refuseHeld, unbindChat } from "./chat-binding.mjs";
+import { bindChat, captureBinding, currentProgram, refuseHeld, restoreBinding } from "./chat-binding.mjs";
 
 /** Reusable files that hold one entry per line and only ever grow, so two copies merge by appending. */
 const APPEND_ONLY = Object.freeze(["lessons.md", "standing-rulings.md"]);
@@ -82,10 +83,11 @@ export function migrationPlan(from, home, slug, { reusable, skip }) {
 
 /**
  * Runs (or with `dryRun` prints) the migration: `{ lines, refused }`. `programDirs` are created in the
- * program; `chat` is bound to it; `ops.rename` replaces renameSync (a test injects a failure there).
+ * program; `chat` is bound to it; `ops.rename` and `ops.bind` replace renameSync and bindChat (tests inject failures there).
  */
 export function migrate(from, home, slug, { dryRun = false, reusable, skip, programDirs, chat = null, takeover = false, env = process.env, ops = {} }) {
   const rename = ops.rename ?? renameSync;
+  const bind = ops.bind ?? bindChat;
   const fromDir = path.resolve(from);
   const homeDir = path.resolve(home);
   const plan = migrationPlan(fromDir, homeDir, slug, { reusable, skip });
@@ -149,8 +151,9 @@ export function migrate(from, home, slug, { dryRun = false, reusable, skip, prog
       undo.push(() => (before === null ? unlinkSync(currentFile) : writeFileSync(currentFile, before)));
     }
     if (chat) {
-      bindChat(chat, homeDir, slug, env, { takeover });
-      undo.push(() => unbindChat(chat, env));
+      const before = captureBinding(chat, homeDir, slug, env);
+      undo.push(() => restoreBinding(before));
+      bind(chat, homeDir, slug, env, { takeover });
     }
   } catch (error) {
     const failed = [];

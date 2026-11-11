@@ -31,7 +31,7 @@
 // single-orchestrator behavior from before bindings; else no program.
 
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { harnessActor } from "../../vibe/scripts/harness-identity.mjs";
@@ -113,13 +113,16 @@ function claimFile(home, program, env) {
   return path.join(claimsDir(env), `${homeKey(home)}.${program}.json`);
 }
 
-/** The chat holding `program` in `home` with its binding (null while that binding is being written), or null when none does. */
+/**
+ * The chat holding `program` in `home`, with its binding, or null when none does. A claim whose chat is bound
+ * elsewhere or not at all is stale: a bind writes the claim and the binding under the program's lock, and every
+ * bind checks again under that lock, so a reader outside it never needs the moment between the two writes.
+ */
 function claimHolder(home, program, env) {
   const claim = readBindingFile(claimFile(home, program, env));
   if (!claim) return null;
   const binding = readBindingFile(bindingFile(claim.chat, env));
-  // A holder whose binding names another program has moved on; its claim is stale.
-  if (binding && (path.resolve(binding.home) !== path.resolve(home) || binding.program !== program)) return null;
+  if (!binding || path.resolve(binding.home) !== path.resolve(home) || binding.program !== program) return null;
   return { chat: claim.chat, binding };
 }
 
@@ -163,7 +166,6 @@ export function bindChat(chat, home, program, env = process.env, { now = new Dat
     const others = refuseHeld(chat, resolved, program, env, { now, takeover });
     const record = `${JSON.stringify({ chat, home: resolved, program, boundAt: now.toISOString() })}\n`;
     writeAtomic(claimFile(resolved, program, env), record);
-    const previous = chatBinding(chat, env);
     writeAtomic(file, record);
     try { unlinkSync(takenFile(chat, env)); } catch {}
     for (const other of others) {
@@ -171,23 +173,22 @@ export function bindChat(chat, home, program, env = process.env, { now = new Dat
       if (record && path.resolve(record.home) === resolved && record.program === program) unlinkSync(bindingFile(other, env));
       writeAtomic(takenFile(other, env), `${JSON.stringify({ chat: other, home: resolved, program, takenBy: chat, at: now.toISOString() })}\n`);
     }
-    return { others, previous };
+    return { others };
   });
-  // The program left behind is released under its own lock, after this one is let go, so two chats swapping
-  // programs never wait on each other's lock.
-  const left = bound.previous;
-  if (left && (path.resolve(left.home) !== resolved || left.program !== program)) {
-    withProgramLock(left.home, left.program, env, () => releaseClaim(left.home, left.program, chat, env));
-  }
+  // Released after this lock is let go, so two chats swapping programs never wait on each other's lock. Best effort, after the bind committed, each under its own program's lock: the claims this chat held
+  // elsewhere, and any the chats it took over still hold. One left behind on a busy lock is released by the
+  // chat's next bind or unbind, and reads as stale meanwhile, since that chat is bound elsewhere or not at all.
+  releaseLeftoverClaims(chat, env, { home: resolved, program });
+  for (const other of bound.others) releaseLeftoverClaims(other, env, null);
   return bound.others;
 }
 
 /**
  * Runs `fn` holding `program`'s lock in `home`. The lock is a file linked into place already holding
  * `<pid> <token>`, so no process ever reads it half written. A live owner is waited on, then refused (BUSY).
- * A lock whose owner has exited, or one older than LOCK_STALE_MS that cannot be read, is reclaimed by
- * renaming exactly that file aside and checking it is the one read; one renamed by mistake is put back.
- * The lock is removed at the end only while it still holds this call's token.
+ * A lock whose owner has exited, or one older than LOCK_STALE_MS that cannot be read, is reclaimed (reclaimStaleLock),
+ * after which every waiter goes back through the exclusive link, which one wins. The lock is removed at the end
+ * only while it still holds this call's token.
  */
 function withProgramLock(home, program, env, fn) {
   const lock = `${claimFile(home, program, env)}.lock`;
@@ -206,10 +207,7 @@ function withProgramLock(home, program, env, fn) {
       }
       const seen = readOr(lock);
       const owner = Number(seen.trim().split(/\s+/)[0]);
-      if (staleLock(lock, seen, owner)) {
-        reclaim(lock, seen);
-        continue;
-      }
+      if (staleLock(lock, seen, owner) && reclaimStaleLock(lock, seen)) continue;
       if (Date.now() > deadline) throw new Error(`BUSY ${program}: another fleet-home.mjs (pid ${owner || "unknown"}) is binding it; run the command again`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_MS);
     }
@@ -225,6 +223,42 @@ function withProgramLock(home, program, env, fn) {
   }
 }
 
+/**
+ * Clears a reclaim guard older than LOCK_STALE_MS, left by a reclaimer that died: renames it aside, which only one
+ * waiter can do, and puts it back if what moved was a newer guard (guards hold unique tokens). Returns whether one
+ * was cleared.
+ */
+function clearAbandonedGuard(guard) {
+  let seen;
+  let fd;
+  try {
+    // One open file gives both the age and the contents, so they belong to the same guard.
+    fd = openSync(guard, "r");
+    if (Date.now() - fstatSync(fd).mtimeMs <= LOCK_STALE_MS) return false;
+    seen = readFileSync(fd, "utf8");
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  const aside = `${guard}.${randomUUID()}.stale`;
+  try {
+    renameSync(guard, aside);
+  } catch {
+    return false;
+  }
+  if (readOr(aside) !== seen) {
+    // A newer guard moved by mistake goes back; if another took its place, it is left aside, never deleted.
+    try {
+      linkSync(aside, guard);
+      unlinkSync(aside);
+    } catch {}
+    return false;
+  }
+  try { unlinkSync(aside); } catch {}
+  return true;
+}
+
 /** Whether the lock holding `seen` is abandoned: its owner exited, or it cannot be read and is older than LOCK_STALE_MS. */
 function staleLock(lock, seen, owner) {
   if (/^\d+ \S+$/.test(seen.trim())) return !processAlive(owner);
@@ -235,22 +269,41 @@ function staleLock(lock, seen, owner) {
   }
 }
 
-/** Moves the abandoned lock holding `seen` aside; a lock that changed in between is put back. */
-function reclaim(lock, seen) {
-  const aside = `${lock}.${randomUUID()}.stale`;
+/**
+ * Removes the abandoned lock holding `seen`. Only the holder of `<lock>.reclaim` (linked into place exclusively)
+ * may remove a stale lock, and it re-reads the lock first: while that stale lock exists nobody can link a new one,
+ * and its dead owner never removes it, so the file it unlinks is the one it read. A reclaim guard left by a process
+ * that died mid-reclaim is removed once it is older than LOCK_STALE_MS.
+ */
+// Exported for the tests, which drive the guard directly.
+export function reclaimStaleLock(lock, seen) {
+  // Returns whether this call removed the stale lock or an abandoned guard, so the caller retries at once;
+  // otherwise another reclaim is under way and the caller waits like any other contender.
+  const guard = `${lock}.reclaim`;
+  const token = `${process.pid} ${randomUUID()}`;
+  const temp = `${guard}.${randomUUID()}.tmp`;
+  writeFileSync(temp, `${token}\n`, { mode: 0o600 });
   try {
-    renameSync(lock, aside);
-  } catch {
-    return;
+    try {
+      linkSync(temp, guard);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      return clearAbandonedGuard(guard);
+    }
+    let removed = false;
+    try {
+      if (readFileSync(lock, "utf8") === seen) {
+        unlinkSync(lock);
+        removed = true;
+      }
+    } catch {}
+    if (readOr(guard).trim() === token) {
+      try { unlinkSync(guard); } catch {}
+    }
+    return removed;
+  } finally {
+    try { unlinkSync(temp); } catch {}
   }
-  if (readOr(aside) === seen) {
-    try { unlinkSync(aside); } catch {}
-    return;
-  }
-  try {
-    linkSync(aside, lock);
-  } catch {}
-  try { unlinkSync(aside); } catch {}
 }
 
 function readOr(file) {
@@ -282,11 +335,74 @@ function writeAtomic(file, text) {
 export function unbindChat(chat, env = process.env) {
   const record = chatBinding(chat, env);
   if (!record) return null;
-  return withProgramLock(record.home, record.program, env, () => {
+  withProgramLock(record.home, record.program, env, () => {
     releaseClaim(record.home, record.program, chat, env);
     try { unlinkSync(bindingFile(chat, env)); } catch {}
-    return record;
   });
+  releaseLeftoverClaims(chat, env, null);
+  return record;
+}
+
+/**
+ * Releases, best effort and each under its program's lock, every claim naming `chat` except the one at `keep` and
+ * the one `chat` is bound to when the lock is taken: a chat taken over may have bound another program meanwhile.
+ * Exported for the tests.
+ */
+export function releaseLeftoverClaims(chat, env, keep) {
+  let names = [];
+  try { names = readdirSync(claimsDir(env)); } catch {}
+  for (const name of names.filter((entry) => entry.endsWith(".json"))) {
+    const claim = readBindingFile(path.join(claimsDir(env), name));
+    if (claim?.chat !== chat || (keep && path.resolve(claim.home) === path.resolve(keep.home) && claim.program === keep.program)) continue;
+    try {
+      withProgramLock(claim.home, claim.program, env, () => {
+        const bound = chatBinding(chat, env);
+        if (bound && path.resolve(bound.home) === path.resolve(claim.home) && bound.program === claim.program) return;
+        releaseClaim(claim.home, claim.program, chat, env);
+      });
+    } catch {}
+  }
+}
+
+/**
+ * The binding files a bind of `chat` to `program` in `home` may change, with their current contents (null when
+ * absent): the chat's binding and takeover note, the program's claim, the claim of the program the chat holds now,
+ * and the binding and note of the chat holding `program`. restoreBinding writes them back.
+ */
+export function captureBinding(chat, home, program, env = process.env) {
+  if (!validChat(chat)) return { chat, files: [] };
+  const files = [bindingFile(chat, env), takenFile(chat, env), claimFile(home, program, env)];
+  const previous = chatBinding(chat, env);
+  if (previous) files.push(claimFile(previous.home, previous.program, env));
+  const holder = claimHolder(home, program, env);
+  if (holder && holder.chat !== chat) files.push(bindingFile(holder.chat, env), takenFile(holder.chat, env));
+  return { chat, files: [...new Set(files)].map((file) => ({ file, text: existsSync(file) ? readFileSync(file, "utf8") : null })) };
+}
+
+/**
+ * Puts the files captureBinding recorded back as they were, touching only a file that is now absent or that this
+ * chat's bind wrote, so a claim another chat made since is never overwritten.
+ */
+export function restoreBinding(snapshot) {
+  for (const { file, text } of snapshot.files ?? []) {
+    const now = readOr(file);
+    if (now === (text ?? "")) continue;
+    if (now !== "" && !writtenBy(now, snapshot.chat)) continue;
+    if (text === null) {
+      try { unlinkSync(file); } catch {}
+    } else {
+      writeAtomic(file, text);
+    }
+  }
+}
+
+function writtenBy(text, chat) {
+  try {
+    const record = JSON.parse(text);
+    return record?.chat === chat || record?.takenBy === chat;
+  } catch {
+    return false;
+  }
 }
 
 /** The home a chat works in: FLEET_HOME when set, else its binding's home, else ~/fleet-orchestrator. */
