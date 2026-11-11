@@ -440,7 +440,7 @@ function writerIdentities(worktree) {
 }
 
 /**
- * A Claude import needs a Codex review or a review whose trace proves the Fable 5.2 model (Daniel, 2026-11-11,
+ * A Claude import needs a Codex review or a review whose trace proves the Fable 5.2 model (operator ruling, 2026-11-11,
  * ISS-14039: "Accept a Fable review instead"), neither from the session's writer; a Codex import still needs Claude.
  */
 function independentReviewProblem(worktree, provider, reviews) {
