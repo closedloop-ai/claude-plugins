@@ -146,4 +146,35 @@ describe("selected closure scale and evidence boundaries", () => {
       expect(probe.calls().length).toBeLessThanOrEqual(8);
     } finally { probe.restore(); }
   }, 120000);
+
+  /** The shape of symphony-alpha's pixel-core/compare.mjs (#9744): it reads back only the results file it writes into its caller's directory. */
+  const ownOutputReader = (directory: string) => [
+    "import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';",
+    "import { join } from 'node:path';",
+    "const RESULTS_FILE = 'results.json';",
+    `function previous(outDir) { const path = join(${directory}, RESULTS_FILE); return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : []; }`,
+    "export function compareRuns({ outDir }) { mkdirSync(outDir, { recursive: true }); const results = previous(outDir);",
+    "  writeFileSync(join(outDir, RESULTS_FILE), JSON.stringify(results)); return results; }",
+    "",
+  ].join("\n");
+
+  function retainedReport(module: string) {
+    const value = setup();
+    value.write("packages/control/src/vibe-shots/pixel-core/compare.mjs", module);
+    value.write(".gitignore", "apps/desktop/playwright-report-e2e/\n");
+    value.commit();
+    value.write("apps/desktop/playwright-report-e2e/results.json", "stale retained failure\n");
+    return value;
+  }
+
+  it("admits a module that reads back its own results file under its caller's directory", () => {
+    const value = retainedReport(ownOutputReader("outDir"));
+    expect(() => verifyReportProducerInputs(value.worktree, value.worktree, "origin-producer", ["packages/control"])).not.toThrow();
+  });
+
+  it("still refuses a reader that names the retained report's directory under an unbound root", () => {
+    const value = retainedReport(ownOutputReader("outDir, 'playwright-report-e2e'"));
+    expect(() => verifyReportProducerInputs(value.worktree, value.worktree, "origin-producer", ["packages/control"]))
+      .toThrow(/Selected committed reader consumes retained report evidence: packages\/control\/src\/vibe-shots\/pixel-core\/compare.mjs/);
+  });
 });

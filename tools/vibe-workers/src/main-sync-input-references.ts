@@ -732,3 +732,14 @@ function nativeArgumentChoices(environment: NativeReferenceEnvironment, indexes:
   }
   return choices;
 }
+
+/** An uncertain path whose every known piece is the file name names no directory, so it locates no nested file (ISS-14015). */
+export function inputUnlocatedFileName(reference: InputReference) {
+  if (reference.kind !== "path" || !(reference.possibleOnly || reference.unknownPrefix || reference.value.includes(UNKNOWN))) return false;
+  const terms = [reference.unknownPrefix ? `${UNKNOWN}${reference.value}` : reference.value, ...reference.uncertainTerms];
+  return terms.every((term) => {
+    const cut = term.lastIndexOf("/");
+    if (cut < 0) return !term.split(UNKNOWN).join("");
+    return term.slice(0, cut).split("/").every((part) => ["", ".", ".."].includes(part.split(UNKNOWN).join("")));
+  });
+}

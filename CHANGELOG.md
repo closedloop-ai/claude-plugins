@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.81
+
+#### Fixed
+- main-sync no longer refuses every symphony-alpha build-purpose check after symphony-alpha #9744 (ISS-14015). The closure walk in `tools/vibe-workers/src/main-sync-report-closure.ts` refused `packages/control/src/vibe-shots/pixel-core/compare.mjs` as a reader of retained report evidence whenever `pnpm typecheck:affected` selected `@repo/control#typecheck`. That module reads back only its own `results.json`, as `join(outDir, RESULTS_FILE)` with `outDir` its caller's parameter, and the walk turned that unbound directory into `*/results.json`, which matched the catalog's `apps/desktop/playwright-report-e2e/results.json`. New `inputUnlocatedFileName` in `main-sync-input-references.ts` recognizes an uncertain path whose only known piece is the file name, and the closure walk no longer counts it as a report read. A reader that names the report's directory under an unbound root, or the report's full path, is still refused.
+- The committed vibe-workers bundles are rebuilt; the README version line and the Python and vibe-bench release-pin tests move to 1.1.81.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.80 (origin/main at this update, f1506e7c); only the README version line changed.
+
 ### vibe-core v1.0.4
 
 #### Fixed
