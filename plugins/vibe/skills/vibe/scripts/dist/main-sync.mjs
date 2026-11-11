@@ -226304,6 +226304,15 @@ function nativeArgumentChoices(environment, indexes) {
   }
   return choices;
 }
+function inputUnlocatedFileName(reference) {
+  if (reference.kind !== "path" || !(reference.possibleOnly || reference.unknownPrefix || reference.value.includes(UNKNOWN))) return false;
+  const terms = [reference.unknownPrefix ? `${UNKNOWN}${reference.value}` : reference.value, ...reference.uncertainTerms];
+  return terms.every((term) => {
+    const cut = term.lastIndexOf("/");
+    if (cut < 0) return !term.split(UNKNOWN).join("");
+    return term.slice(0, cut).split("/").every((part) => ["", ".", ".."].includes(part.split(UNKNOWN).join("")));
+  });
+}
 
 // src/main-sync-report-command.ts
 var packageSchema = external_exports.object({ scripts: external_exports.record(external_exports.string()).optional() }).passthrough();
@@ -226840,6 +226849,7 @@ function walkReportClosure(execution, entries) {
     const source = readInputModule(execution.root, entry.file, nativeEnvironment(entry.context, entry.argv));
     const collected = /* @__PURE__ */ new Set();
     if (inputModuleReferences(execution.root, entry.file, (file, reference) => {
+      if (inputUnlocatedFileName(reference)) return false;
       if (reference.kind !== "path") {
         for (const candidate of tracked) {
           if (PUBLIC_MODULE.test(candidate) && !isPlanFile(execution.root, candidate) && referenceMatches(execution.root, file, reference, [candidate])) collected.add(candidate);
