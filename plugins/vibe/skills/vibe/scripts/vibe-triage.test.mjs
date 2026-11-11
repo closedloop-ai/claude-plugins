@@ -537,15 +537,15 @@ test('AC-4 and AC-5: Claude branch imports its one operator-authored commit into
   assert.match(imported.changed, /existing.txt/);
   assert.equal(readFileSync(path.join(worktree, 'existing.txt'), 'utf8'), 'cloud edit\n');
   assert.equal(gitAt(worktree, 'rev-parse', 'HEAD'), before);
-  assert.throws(() => readyForPr(request, { gate: () => null, reviews: () => ['codex'] }), /stale for the current source/);
+  assert.throws(() => readyForPr(request, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }), /stale for the current source/);
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   writeFileSync(path.join(gitDir, 'vibe-handoff-gate.json'), '{}\n');
-  assert.throws(() => refreshImportWitness(worktree, { gate: () => null, reviews: () => ['claude'] }), /independent codex review/);
-  refreshImportWitness(worktree, { gate: () => null, reviews: () => ['codex'] });
-  assert.equal(cloudPrProblem(worktree, { gate: () => null, reviews: () => ['codex'] }), null);
-  assert.throws(() => readyForPr(request, { gate: () => null, reviews: () => ['claude'] }), /independent codex review/);
-  assert.equal(readyForPr(request, { gate: () => null, reviews: () => ['codex'] }).ready, true);
-  assert.equal(readyForPr({ ...request, reservedVersion: '1.1.62' }, { gate: () => null, reviews: () => ['codex'] }).ready, true, 'local publication may reserve the next free version without replaying the cloud task');
+  assert.throws(() => refreshImportWitness(worktree, { gate: () => null, reviews: () => [{ runtime: 'claude', model: null }] }), /independent codex or Fable 5.2 \(claude-fable-5-2\) review is missing/);
+  refreshImportWitness(worktree, { gate: () => null, reviews: () => [{ runtime: 'codex' }] });
+  assert.equal(cloudPrProblem(worktree, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }), null);
+  assert.throws(() => readyForPr(request, { gate: () => null, reviews: () => [{ runtime: 'claude', model: null }] }), /independent codex or Fable 5.2 \(claude-fable-5-2\) review is missing/);
+  assert.equal(readyForPr(request, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }).ready, true);
+  assert.equal(readyForPr({ ...request, reservedVersion: '1.1.62' }, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }).ready, true, 'local publication may reserve the next free version without replaying the cloud task');
   const receiptFile = path.join(gitDir, 'cloud-worker-iss-13804.json');
   const witnessFile = path.join(gitDir, 'vibe-cloud-import.json');
   const beforeReceipt = readFileSync(receiptFile, 'utf8');
@@ -556,7 +556,7 @@ test('AC-4 and AC-5: Claude branch imports its one operator-authored commit into
   assert.equal(existsSync(blocked.marker), false, 'the remote CLI was not called');
   assert.equal(readFileSync(receiptFile, 'utf8'), beforeReceipt);
   assert.equal(readFileSync(witnessFile, 'utf8'), beforeWitness);
-  assert.equal(cloudPrProblem(worktree, { gate: () => null, reviews: () => ['codex'] }), null, 'PR readiness survives the refused follow-up');
+  assert.equal(cloudPrProblem(worktree, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }), null, 'PR readiness survives the refused follow-up');
   assert.deepEqual(verifyAuthor(worktree, 'HEAD', OPERATOR), { name: OPERATOR.name, email: OPERATOR.email });
   assert.throws(() => verifyAuthor(worktree, 'HEAD', { name: 'Unrelated Author', email: 'unrelated@example.test' }), /not the Vibe operator/);
 });
@@ -574,6 +574,58 @@ test('AC-5: Claude branch with an AI-authored commit is refused before applying 
   const receipt = completedReceipt(request, gitDir, 'run_1');
   assert.throws(() => importResult(request, receipt), /not the Vibe operator/);
   assert.equal(readFileSync(path.join(worktree, 'existing.txt'), 'utf8'), 'old\n');
+});
+
+test('ISS-14039: a Claude import accepts a Codex or trace-proven Fable 5.2 review that is not the writer', () => {
+  const { worktree, gitDir } = vibeFixture();
+  gitAt(worktree, 'switch', '-c', 'cloud/iss-13804-cloud');
+  writeFileSync(path.join(worktree, 'existing.txt'), 'cloud edit\n');
+  gitAt(worktree, 'add', '.');
+  gitAt(worktree, 'commit', '-m', 'cloud change');
+  gitAt(worktree, 'push', 'origin', 'cloud/iss-13804-cloud');
+  gitAt(worktree, 'switch', 'vibe/iss-13804-cloud-dispatch');
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  importResult(request, completedReceipt(request, gitDir, 'run_1', { runId: 'run_1', sessionId: 'session_1' }));
+  gitAt(worktree, 'commit', '-m', 'local reviewed import');
+  const gate = () => null;
+  const handoff = (models) => {
+    const receipts = REVIEW_ROLES.map((role, index) => {
+      const sessionId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;
+      const tracePath = path.join(gitDir, `${role}.jsonl`);
+      writeFileSync(tracePath, [{ type: 'system', subtype: 'init', model: models[index] },
+        { type: 'assistant', message: { model: models[index], content: [{ type: 'tool_use', name: 'mcp__closedloop_graph__code_symbols' }] } },
+        { type: 'result', session_id: sessionId }].map((event) => JSON.stringify(event)).join('\n'));
+      const resultFile = path.join(gitDir, `${role}-result.json`);
+      writeFileSync(resultFile, JSON.stringify({ runtime: 'claude', agentName: role, status: 'DONE', sessionId, requestId: `request-${index}`, tracePath, source: sourceIdentity(worktree), graphToolAliases: ['mcp__closedloop_graph__code_symbols'], data: { findings: [] } }));
+      const outFile = path.join(gitDir, `${role}-receipt.json`);
+      captureReviewReceipt({ worktree, resultFile, outFile, role });
+      return { path: outFile, sessionId };
+    });
+    writeFileSync(path.join(gitDir, 'vibe-handoff-gate.json'), `${JSON.stringify({ receipts: receipts.map((item) => ({ path: item.path })) })}\n`);
+    return receipts;
+  };
+  const opus = 'claude-opus-5-5';
+  const fable = 'claude-fable-5-2';
+  const missing = /independent codex or Fable 5\.2 \(claude-fable-5-2\) review is missing/;
+  handoff([opus, opus, opus, opus]);
+  assert.throws(() => refreshImportWitness(worktree, { gate }), missing, 'a non-Fable Claude review is not independent of a Claude import');
+  const claimed = handoff([opus, opus, opus, opus]);
+  const forged = JSON.parse(readFileSync(claimed[0].path, 'utf8'));
+  writeFileSync(claimed[0].path, `${JSON.stringify({ ...forged, model: fable })}\n`);
+  assert.throws(() => refreshImportWitness(worktree, { gate }), missing, 'a recorded Fable model its trace does not show is unverified');
+  const reviewed = handoff([fable, opus, opus, opus]);
+  assert.equal(JSON.parse(readFileSync(reviewed[0].path, 'utf8')).model, fable, 'the receipt records the model the CLI ran');
+  const writerFile = path.join(gitDir, 'vibe-writer.json');
+  writeFileSync(writerFile, JSON.stringify({ workerId: 'writer-now', migrations: [{ previous: { workerId: reviewed[0].sessionId } }] }));
+  assert.throws(() => refreshImportWitness(worktree, { gate }), missing, "the session writer's own Fable review is refused");
+  assert.throws(() => refreshImportWitness(worktree, { gate, reviews: () => [{ runtime: 'codex', identities: ['writer-now'] }] }), missing, "the session writer's own Codex review is refused");
+  writeFileSync(writerFile, JSON.stringify({ workerId: 'writer-now', migrations: [] }));
+  refreshImportWitness(worktree, { gate });
+  assert.equal(cloudPrProblem(worktree, { gate }), null, 'a Fable 5.2 review proven by its trace clears the PR guard');
+  assert.equal(readyForPr(request, { gate }).ready, true);
+  const fableTrace = reviewed[0].path.replace(/-receipt\.json$/, '.jsonl');
+  writeFileSync(fableTrace, `${readFileSync(fableTrace, 'utf8')}\n`);
+  assert.match(cloudPrProblem(worktree, { gate }), missing, 'a trace changed after capture no longer proves the model');
 });
 
 test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.log', async () => {
@@ -621,7 +673,7 @@ test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.
   recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: reviews[0], receipts: reviews }, { runScript: () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: '' }) });
   refreshImportWitness(worktree, { bodyFile });
   const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${bodyFile}` } };
-  assert.equal(prCreateGuard(event), null, 'the actual PR hook admits the imported source after handoff and opposite-harness review');
+  assert.equal(prCreateGuard(event), null, 'the actual PR hook admits the imported source after handoff and an independent Claude review');
   writeFileSync(path.join(worktree, 'existing.txt'), 'changed after review\n');
   assert.match(prCreateGuard(event)?.reason ?? '', /cloud import witness is stale for the current source/);
 });
