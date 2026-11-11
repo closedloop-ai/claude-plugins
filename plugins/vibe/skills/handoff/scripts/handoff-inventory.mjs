@@ -305,7 +305,7 @@ const result = withStableSource(worktree, () => {
     let overlapError;
     if (values.overlap || values.body || values["prs-json"]) {
       try {
-        prs = values["prs-json"] ? JSON.parse(readFileSync(values["prs-json"], "utf8")) : loadOpenPrs();
+        prs = values["prs-json"] ? JSON.parse(readFileSync(values["prs-json"], "utf8")) : loadOpenPrs(worktree);
       } catch (error) {
         overlapError = error instanceof Error ? error.message.split("\n")[0] : String(error);
       }

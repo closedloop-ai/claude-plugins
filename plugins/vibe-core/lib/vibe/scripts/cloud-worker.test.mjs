@@ -28,7 +28,8 @@ const validationRequest = (worktree = '/tmp/validate-example') => ({
   branch: 'fix/sessionless-launch', commit: COMMIT, lanes: LANES.map((lane) => ({ ...lane })), pollMs: 1000, claudeEnvironment: 'env_01TestRequest',
 });
 
-const resultLine = (fields = {}) => `VIBE_VALIDATION_RESULT ${JSON.stringify({ commit: COMMIT, lanes: [{ name: 'node', exitCode: 0 }, { name: 'pytest', exitCode: 1 }], status: [], ...fields })}`;
+const PROVENANCE = Object.freeze({ host: 'vm', remote: 'true', origin: 'https://github.com/closedloop-ai/claude-plugins', commit: COMMIT });
+const resultLine = (fields = {}) => `VIBE_VALIDATION_RESULT ${JSON.stringify({ commit: COMMIT, provenance: PROVENANCE, lanes: [{ name: 'node', exitCode: 0 }, { name: 'pytest', exitCode: 1 }], status: [], ...fields })}`;
 
 /** A RemoteTrigger stand-in: one routine, one run that is already idle, and a log holding the given report. */
 function fakeRemote(report) {

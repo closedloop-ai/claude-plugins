@@ -4,8 +4,9 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { CloudRepoError, githubRepository, installInstruction, installScript, resolveRepository } from './cloud-repository.mjs';
-import { startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
+import { CloudRepoError, installInstruction, installScript, PROVENANCE_COMMAND, resolveRepository } from './cloud-repository.mjs';
+import { githubRepository } from './github-remote.mjs';
+import { parseValidationResult, startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
 import { git, makeHome } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
 
 const COMMIT = 'a85ef364cf20ee97af92ecfc2e93aa8b1c79ef29';
@@ -26,7 +27,7 @@ const validation = (worktree, fields = {}) => ({ worktree, provider: 'claude', m
 /** A RemoteTrigger stand-in whose idle run reports one passing lane. */
 function fakeRemote() {
   const calls = [];
-  const report = `VIBE_VALIDATION_RESULT ${JSON.stringify({ commit: COMMIT, lanes: [{ name: LANE.name, exitCode: 0 }], status: [] })}`;
+  const report = `VIBE_VALIDATION_RESULT ${JSON.stringify({ commit: COMMIT, provenance: { host: 'vm', remote: 'true', origin: 'https://github.com/acme/LocalFork', commit: COMMIT }, lanes: [{ name: LANE.name, exitCode: 0 }], status: [] })}`;
   const remote = (action, payload) => {
     calls.push({ action, payload });
     if (action === 'create' || action === 'update') return { trigger: { id: 'routine_r', mcp_connections: [] } };
@@ -140,4 +141,22 @@ test('Codex cloud is refused without a Codex environment configured for the repo
   const calls = [];
   startCodex({ ...request, codexEnvironment: 'local-fork' }, 'brief', { cwd, run: (command, args) => { calls.push([command, ...args]); return { status: 0, stdout: 'Task ID: task_abc', stderr: '' }; } });
   assert.deepEqual(calls[0].slice(0, 5), ['codex', 'cloud', 'exec', '--env', 'local-fork']);
+});
+
+test('a validation result must prove where it ran: a cloud session, the requested repository and the commit', () => {
+  const request = validation('/tmp/checkout', { repository: 'acme/LocalFork' });
+  assert.ok(validationBrief(request).includes(PROVENANCE_COMMAND), 'the brief has the cloud print its provenance');
+  const line = (provenance) => `VIBE_VALIDATION_RESULT ${JSON.stringify({ commit: COMMIT, ...(provenance === undefined ? {} : { provenance }), lanes: [{ name: LANE.name, exitCode: 0 }], status: [] })}`;
+  const cloud = { host: 'vm', remote: 'true', origin: 'git@github.com:Acme/LocalFork.git', commit: COMMIT };
+  assert.deepEqual(parseValidationResult(line(cloud), request).provenance, { host: 'vm', remote: 'true', origin: cloud.origin, commit: COMMIT });
+  for (const [provenance, refusal] of [
+    [undefined, /reported no provenance; result refused/],
+    [{ ...cloud, remote: '' }, /reported no CLAUDE_CODE_REMOTE marker, so it did not run in a Claude cloud session; result refused/],
+    [{ ...cloud, host: '' }, /reported no provenance host/],
+    [{ ...cloud, origin: 'https://github.com/acme/other' }, /ran in https:\/\/github\.com\/acme\/other, not acme\/LocalFork; result refused/],
+    [{ ...cloud, origin: '/srv/git/LocalFork.git' }, /ran in \/srv\/git\/LocalFork\.git, not acme\/LocalFork/],
+    [{ ...cloud, commit: '182af94e9c6c3362f2eb8a1cc33f9ca55da6d0f7' }, /reported provenance commit 182af94e9c6c3362f2eb8a1cc33f9ca55da6d0f7, not a85ef364/],
+  ]) {
+    assert.throws(() => parseValidationResult(line(provenance), request), refusal);
+  }
 });

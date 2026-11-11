@@ -11,6 +11,7 @@
  * the install from the tree's lockfile.
  */
 import { cloudSetupError } from "./cloud-environment.mjs";
+import { githubRepository } from "./github-remote.mjs";
 
 export const CloudRepoError = Object.freeze({
   NotGithub: "CLOUD_REPO_NOT_GITHUB",
@@ -20,7 +21,6 @@ export const CloudRepoError = Object.freeze({
 });
 
 const OWNER_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const GITHUB_URL = /^(?:https:\/\/(?:[^@/\s]+@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
 const SHELL_CONTROL = /[;&|`$<>\n]/;
 const DEV_GROUP = String.raw`awk '/^\[/{s=($0=="[dependency-groups]")} s&&/^[[:space:]]*dev[[:space:]]*=/{f=1} END{exit !f}' pyproject.toml 2>/dev/null`;
 
@@ -31,11 +31,6 @@ export const INSTALL_RULES = Object.freeze([
   ["package-lock.json", "npm ci"],
   ["yarn.lock", "yarn install --frozen-lockfile"],
 ]);
-
-/** `owner/repo` from an HTTPS or SSH github.com remote URL, or null. */
-export function githubRepository(url) {
-  return GITHUB_URL.exec(String(url ?? "").trim())?.[1] ?? null;
-}
 
 /** The repository to clone: the requested one (which a GitHub origin must match), else the origin's. */
 export function resolveRepository(requested, origin) {
@@ -80,4 +75,21 @@ export function codexEnvironment(request) {
     throw cloudSetupError(CloudRepoError.CodexEnvMissing, `Codex cloud needs a Codex environment configured for ${request.repository ?? "this repository"}. Fix: name it as "codexEnvironment" in the request, or use provider claude.`);
   }
   return environment;
+}
+
+/** Printed in the cloud before the lanes. A Claude cloud session sets CLAUDE_CODE_REMOTE; a local run leaves it unset. */
+export const PROVENANCE_COMMAND = 'echo "host=$(hostname)"; echo "remote=${CLAUDE_CODE_REMOTE:-}"; echo "origin=$(git remote get-url origin)"; echo "commit=$(git rev-parse HEAD)"';
+
+/** Why a reported provenance does not prove a cloud run of this repository and commit, or null. */
+export function provenanceProblem(provenance, { repository, commit }) {
+  if (!provenance || typeof provenance !== "object") return "reported no provenance";
+  for (const field of ["host", "remote", "origin", "commit"]) {
+    if (typeof provenance[field] !== "string" || !provenance[field].trim()) {
+      return field === "remote" ? "reported no CLAUDE_CODE_REMOTE marker, so it did not run in a Claude cloud session" : `reported no provenance ${field}`;
+    }
+  }
+  const ran = githubRepository(provenance.origin);
+  if (ran?.toLowerCase() !== repository.toLowerCase()) return `ran in ${provenance.origin}, not ${repository}`;
+  if (provenance.commit !== commit) return `reported provenance commit ${provenance.commit}, not ${commit}`;
+  return null;
 }

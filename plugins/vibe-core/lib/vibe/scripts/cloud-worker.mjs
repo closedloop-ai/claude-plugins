@@ -37,7 +37,7 @@ import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from 
 import { gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
 import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
 import { checkCloudSetup, createRefusal, resolveClaudeEnvironment, runNotCreated } from "./cloud-environment.mjs";
-import { codexEnvironment, installInstruction, resolveRepository } from "./cloud-repository.mjs";
+import { codexEnvironment, installInstruction, PROVENANCE_COMMAND, provenanceProblem, resolveRepository } from "./cloud-repository.mjs";
 
 const MAX_WALL_MS = 35 * 60 * 1000;
 const DEFAULT_WALL_MS = 35 * 60 * 1000;
@@ -581,10 +581,11 @@ export function validationBrief(request) {
   return [
     `Validation only. Repository: ${requireRepository(request)}. Branch: ${request.branch}. Commit: ${request.commit}.`,
     `Check out the exact commit: run \`git fetch origin refs/heads/${request.branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
+    `After checkout, run \`${PROVENANCE_COMMAND}\` as one call, exactly as written, and keep its four lines.`,
     installInstruction(request),
     "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + request.lanes.map((lane) => `- ${lane.name}: ${lane.command}`).join("\n"),
     "Change no files. Do not edit, create or delete a tracked file, commit, push, open a pull request or trigger a review. After the lanes, run `git status --porcelain` and keep its lines.",
-    `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the output of git rev-parse HEAD), "lanes" (one {"name", "exitCode"} per lane above, in order) and "status" (the git status --porcelain lines, an empty list when there are none).`,
+    `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the output of git rev-parse HEAD), "provenance" ({"host", "remote", "origin", "commit"}, each the value from its line of that command, an empty string when the line is empty), "lanes" (one {"name", "exitCode"} per lane above, in order) and "status" (the git status --porcelain lines, an empty list when there are none).`,
   ].join("\n\n") + "\n";
 }
 
@@ -595,6 +596,8 @@ export function parseValidationResult(text, request) {
   let result;
   try { result = JSON.parse(lines.at(-1)[1]); } catch { throw new Error("cloud validation result line is not JSON"); }
   if (result?.commit !== request.commit) throw new Error(`cloud validation ran commit ${result?.commit}, not the requested ${request.commit}; result refused`);
+  const unproven = provenanceProblem(result.provenance, { repository: requireRepository(request), commit: request.commit });
+  if (unproven) throw new Error(`cloud validation ${unproven}; result refused`);
   if (!Array.isArray(result.status)) throw new Error("cloud validation result has no git status; result refused");
   if (result.status.length > 0) throw new Error(`cloud validation changed files (${result.status.join(", ")}); result refused`);
   if (!Array.isArray(result.lanes) || result.lanes.length !== request.lanes.length) throw new Error("cloud validation did not report every requested lane; result refused");
@@ -603,7 +606,8 @@ export function parseValidationResult(text, request) {
     if (reported?.name !== lane.name || !Number.isInteger(reported.exitCode)) throw new Error(`cloud validation lane ${lane.name} has no exit code; result refused`);
     return { name: lane.name, command: lane.command, exitCode: reported.exitCode, passed: reported.exitCode === 0 };
   });
-  return { commit: request.commit, branch: request.branch, ...(request.repository ? { repository: request.repository } : {}), lanes, passed: lanes.every((lane) => lane.passed) };
+  const { host, remote, origin } = result.provenance;
+  return { commit: request.commit, branch: request.branch, repository: request.repository, provenance: { host, remote, origin, commit: request.commit }, lanes, passed: lanes.every((lane) => lane.passed) };
 }
 
 /** Every string in a run log, whatever its shape, so the worker's final message can be found. */
