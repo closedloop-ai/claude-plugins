@@ -5,7 +5,7 @@ import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "n
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
+import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
 import { workflowLaneDefinitions } from "./ci-job-shape.mjs";
@@ -158,20 +158,21 @@ test("facts name overlap by shared and imported file, assertion and export chang
 test("overlap retrieves a complete file list when gh pr diff rejects a large PR", (t) => {
   const fixture = makeHome("pr-overlap-large-");
   t.after(fixture.cleanup);
+  const worktree = sessionCheckout(fixture, "git@github.com:acme/widgets.git");
   const bin = path.join(fixture.root, "bin");
   mkdirSync(bin);
   const script = path.join(bin, "gh");
   writeFileSync(script, `#!/bin/sh
 case "$1 $2" in
-  "pr list") printf '%s\\n' '[{"number":9191,"title":"Large PR","headRefName":"feature/large","files":${JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ path: `src/file-${i}.ts` })))} }]' ;;
+  "pr list") [ "$4" = acme/widgets ] || exit 4; printf '%s\\n' '[{"number":9191,"title":"Large PR","headRefName":"feature/large","files":${JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ path: `src/file-${i}.ts` })))} }]' ;;
   "pr diff") echo 'HTTP 422: diff exceeds 300 files' >&2; exit 1 ;;
-  "api repos/closedloop-ai/symphony-alpha/pulls/9191") printf '%s\\n' '320' ;;
+  "api repos/acme/widgets/pulls/9191") printf '%s\\n' '320' ;;
   "api --paginate") i=0; while [ "$i" -lt 320 ]; do printf 'src/file-%s.ts\\n' "$i"; i=$((i+1)); done ;;
   *) exit 3 ;;
 esac
 `);
   chmodSync(script, 0o700);
-  const code = `import { loadOpenPrs } from ${JSON.stringify(new URL("./pr-facts.mjs", import.meta.url).href)}; console.log(JSON.stringify({ prs: loadOpenPrs() }));`;
+  const code = `import { loadOpenPrs } from ${JSON.stringify(new URL("./pr-facts.mjs", import.meta.url).href)}; console.log(JSON.stringify({ prs: loadOpenPrs(${JSON.stringify(worktree)}) }));`;
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
     cwd: fixture.root, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
   });
@@ -998,4 +999,33 @@ test("direct sibling scope rejects an impacted older passing lane even with cons
   writeFileSync(path.join(f.g("rev-parse","--absolute-git-dir"),record.receipt.path),bytes);
   record.receipt.sha256=createHash("sha256").update(bytes).digest("hex");
   assert.match(targetedEvidenceProblems(e,f.published,f.wt).join(),/scope includes this lane/);
+});
+
+/** A checkout whose origin remote is `origin`, for the session-repository cases. */
+function sessionCheckout(fixture, origin) {
+  const worktree = path.join(fixture.root, `checkout-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(worktree);
+  git(worktree, ["init", "--quiet"], fixture.home);
+  if (origin) git(worktree, ["remote", "add", "origin", origin], fixture.home);
+  return worktree;
+}
+
+test("collision facts list the open pull requests of the session's own repository, never a fixed one", (t) => {
+  const fixture = makeHome("pr-overlap-repo-");
+  t.after(fixture.cleanup);
+  assert.equal(sessionRepository(sessionCheckout(fixture, "https://github.com/closedloop-ai/claude-plugins.git")), "closedloop-ai/claude-plugins");
+  assert.equal(sessionRepository(sessionCheckout(fixture, "git@github.com:acme/LocalFork.git")), "acme/LocalFork");
+  for (const origin of ["/srv/git/LocalFork.git", undefined]) {
+    assert.throws(() => sessionRepository(sessionCheckout(fixture, origin)), /is not a github\.com repository, so its open pull requests cannot be listed/);
+  }
+  const bin = path.join(fixture.root, "bin");
+  mkdirSync(bin);
+  const asked = path.join(fixture.root, "asked");
+  writeFileSync(path.join(bin, "gh"), `#!/bin/sh\necho "$@" >> ${JSON.stringify(asked)}\nprintf '%s\\n' '[]'\n`);
+  chmodSync(path.join(bin, "gh"), 0o700);
+  const worktree = sessionCheckout(fixture, "git@github.com:closedloop-ai/claude-plugins.git");
+  const code = `import { loadOpenPrs } from ${JSON.stringify(new URL("./pr-facts.mjs", import.meta.url).href)}; console.log(JSON.stringify(loadOpenPrs(${JSON.stringify(worktree)})));`;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { cwd: fixture.root, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(readFileSync(asked, "utf8"), /^pr list --repo closedloop-ai\/claude-plugins --state open/m);
 });

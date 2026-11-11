@@ -238,6 +238,7 @@ test("the review steps carry effective: apply with the switch on and as-today wi
 
 const cloudRequest = (worktree = '/tmp/vibe-example') => ({
   worktree, ticket: 'ISS-13804', provider: 'codex', model: 'gpt-6-sol', reservedVersion: '1.1.61', branch: 'codex-cloud/iss-13804-cloud',
+  repository: 'acme/widgets', codexEnvironment: 'widgets-env',
   placement: { codeOnly: true, needsRunningApp: false, localEvidence: [] },
   criteria: [{ id: 'AC-1', source: 'ISS-13804 v2', text: 'Dispatch autonomously.' }],
   graph: { ownership: 'dispatch-route.mjs owns routing', collisions: 'No active duplicate', blastRadius: 'fleet skill and tests' },
@@ -279,7 +280,7 @@ test('AC-2: generated brief embeds sourced criteria, local graph findings and re
 });
 
 test('AC-1: Claude clears auto-attached connectors before run and refuses an unconfirmed allow list', () => {
-  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', connectorAllowlist: [] };
+  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', connectorAllowlist: [], claudeEnvironment: 'env_01TestRequest' };
   const calls = [];
   const remote = (action, payload) => {
     calls.push({ action, payload });
@@ -290,7 +291,7 @@ test('AC-1: Claude clears auto-attached connectors before run and refuses an unc
   assert.equal(startClaude(request, 'brief', { remote }).taskId, 'run_1');
   assert.deepEqual(calls.map((call) => call.action), ['create', 'update', 'run']);
   assert.equal(calls[1].payload.body.clear_mcp_connections, true);
-  assert.equal(calls[0].payload.body.job_config.ccr.environment_id, 'env_01V3WaRD75hgdYdtKUQZz8MW');
+  assert.equal(calls[0].payload.body.job_config.ccr.environment_id, 'env_01TestRequest');
   assert.equal(calls[0].payload.body.job_config.ccr.session_context.model, request.model);
   assert.throws(() => startClaude(request, 'brief', { remote: (action) => action === 'create' ? { trigger: { id: 'routine_2', mcp_connections: [{ name: 'Slack' }] } } : { trigger: { mcp_connections: [{ name: 'Slack' }] } } }), /connector clearing/);
   assert.throws(() => validateRequest({ ...request, connectorAllowlist: ['slack'] }), /connector allow list/);
@@ -329,7 +330,7 @@ test('AC-1 and AC-3: Codex uses legacy environment and treats exit 1 as pending 
   const run = (command, args) => { calls.push([command, ...args]); writeFileSync(path.join(cwd, 'error.log'), 'CLI diagnostic'); return { status: 0, stdout: 'Task ID: task_abc', stderr: '' }; };
   assert.equal(startCodex(cloudRequest(), 'brief', { run, cwd }).taskId, 'task_abc');
   assert.equal(existsSync(path.join(cwd, 'error.log')), false);
-  assert.deepEqual(calls[0].slice(0, 7), ['codex', 'cloud', 'exec', '--env', 'claude-plugins', '--branch', 'main']);
+  assert.deepEqual(calls[0].slice(0, 7), ['codex', 'cloud', 'exec', '--env', 'widgets-env', '--branch', 'main']);
   assert.ok(calls[0].includes('model=gpt-6-sol'));
   assert.deepEqual(codexStatus('task_abc', { cwd, run: () => ({ status: 1, stdout: 'Pending', stderr: '' }) }), { status: 'pending' });
   assert.deepEqual(codexStatus('task_abc', { cwd, run: () => ({ status: 1, stdout: '[PENDING] Task name\nrepo • now', stderr: '' }) }), { status: 'pending' });
@@ -377,7 +378,7 @@ test('AC-3: Claude active session becomes complete only when its worker is idle'
 });
 
 test('DT-14: Claude uses run ID for list matching and a distinct session ID for logs', async () => {
-  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', claudeEnvironment: 'env_01TestRequest' };
   const started = startClaude(request, 'brief', { remote: (action) => {
     if (action === 'create') return { trigger: { id: 'routine_1', mcp_connections: [] } };
     if (action === 'update') return { trigger: { mcp_connections: [] } };

@@ -8,6 +8,7 @@ import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { inVibeSession } from "./foreground-guard.mjs";
 import { handoffGateProblem } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { cloudPrProblem } from "../lib/vibe/scripts/cloud-worker.mjs";
+import { githubRepository } from "../lib/vibe/scripts/github-remote.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import os from "node:os";
 
@@ -106,10 +107,8 @@ export function vibeWorktree(cwd) {
 function repositoryMatches(cwd, overrides) {
   if (overrides.length === 0) return true;
   try {
-    const origin = git(cwd, ["remote", "get-url", "origin"]);
-    const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(origin);
-    if (!match) return false;
-    const actual = match[1].toLowerCase();
+    const actual = githubRepository(git(cwd, ["remote", "get-url", "origin"]))?.toLowerCase();
+    if (!actual) return false;
     return overrides.every(value => {
       const selected = /^(?:github\.com\/)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.exec(value ?? "");
       return selected?.[1].toLowerCase() === actual;

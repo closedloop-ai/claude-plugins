@@ -25,8 +25,8 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 
-const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
 const GH_LIST_FILE_CAP = 100;
 const SCOPED_CORPUS_AUTHORITY = Symbol("scoped pull-request corpus authenticated by inventory");
@@ -372,12 +372,22 @@ export function bodyProblems(body, facts, files, prBase, template = "", runsFile
   ];
 }
 
-/** Every open PR's complete file list; GitHub's diff endpoint caps large patches at 300 files. */
-export function loadOpenPrs() {
-  const prs = JSON.parse(gh(["pr", "list", "--repo", REPO, "--state", "open", "--limit", "200", "--json", "number,title,headRefName,files"]));
+/** The session's own GitHub repository, from its worktree's origin remote; its open PRs are the ones it can collide with. */
+export function sessionRepository(worktree) {
+  let origin = null;
+  try { origin = git(worktree, ["remote", "get-url", "origin"]); } catch { /* reported below */ }
+  const repository = githubRepository(origin);
+  if (!repository) throw new Error(`the worktree's origin remote (${origin ?? "none"}) is not a github.com repository, so its open pull requests cannot be listed`);
+  return repository;
+}
+
+/** Every open PR of the session's repository with its complete file list; GitHub's diff endpoint caps large patches at 300 files. */
+export function loadOpenPrs(worktree) {
+  const repo = sessionRepository(worktree);
+  const prs = JSON.parse(gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number,title,headRefName,files"]));
   return prs.map(({ files, ...pr }) => {
     if (files.length < GH_LIST_FILE_CAP) return { ...pr, files: files.map((file) => file.path) };
-    const endpoint = `repos/${REPO}/pulls/${pr.number}`;
+    const endpoint = `repos/${repo}/pulls/${pr.number}`;
     const count = Number(gh(["api", endpoint, "--jq", ".changed_files"]));
     const names = gh(["api", "--paginate", `${endpoint}/files?per_page=100`, "--jq", ".[].filename"]).split("\n").filter(Boolean);
     if (!Number.isSafeInteger(count) || count < GH_LIST_FILE_CAP || names.length > count) {

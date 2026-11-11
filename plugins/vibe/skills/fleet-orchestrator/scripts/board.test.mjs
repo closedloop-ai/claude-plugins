@@ -21,9 +21,18 @@ const tempDir = (t) => {
   writeFileSync(path.join(home, 'current'), 'p1\n');
   const program = path.join(home, 'programs', 'p1');
   writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'now', loadedSkill: actorLoad(), harnesses: [] }));
+  placeLocal(t, program, 'ISS-1');
   return program;
 };
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'board.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+// Every new board writer needs its ticket's recorded placement (writer-placement.mjs); these cases start writers on ISS-1, placed local.
+const placeLocal = (t, dir, ticket) => {
+  const evidence = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-placement-'));
+  t.after(() => rmSync(evidence, { recursive: true, force: true }));
+  writeFileSync(path.join(evidence, 'placement.json'), JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ['web screenshots'] }));
+  const recorded = run([dir, 'placement', ticket, '--evidence', path.join(evidence, 'placement.json')]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+};
 
 test('scope delivery refuses stale loaded instructions and deleted plugin scripts', (t) => {
   const dir = tempDir(t);
@@ -40,15 +49,15 @@ test('scope delivery refuses stale loaded instructions and deleted plugin script
 
 test('a writer row whose head is behind the pushed head is stale until the writer row is updated', (t) => {
   const dir = tempDir(t);
-  assert.equal(run([dir, 'writer', 'w1', '--pr', '101', '--head', 'aaa', '--status', 'building', '--deps', 'w2']).status, 0);
-  assert.equal(run([dir, 'writer', 'w2', '--head', 'ccc']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--pr', '101', '--head', 'aaa', '--status', 'building', '--deps', 'w2']).status, 0);
+  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-1', '--head', 'ccc']).status, 0);
   const stale = run([dir, 'status', '--pushed', 'w1=bbb', '--pushed', 'w2=ccc']);
   assert.equal(stale.status, 1);
   assert.match(stale.stdout, /^STALE w1 board head aaa, pushed bbb$/m);
   assert.doesNotMatch(stale.stdout, /STALE w2/);
   assert.match(stale.stdout, /board: 2 writers, 1 stale, 0 untold/);
 
-  assert.equal(run([dir, 'writer', 'w1', '--head', 'bbb', '--status', 'QA ready']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--head', 'bbb', '--status', 'QA ready']).status, 0);
   assert.equal(run([dir, 'status', '--pushed', 'w1=bbb']).status, 0);
   const page = readFileSync(path.join(dir, 'board.md'), 'utf8');
   assert.match(page, /^\| w1 \| #101 \| bbb \|  \| QA ready \| w2 \| /m, 'the update keeps the PR and dependencies');
@@ -69,20 +78,20 @@ test('status and watcher report every local commit not declared push-ready, even
   const base = git('rev-parse', 'HEAD');
   git('branch', 'pushed', base);
   git('branch', '--set-upstream-to=pushed');
-  run([dir, 'writer', 'w', '--head', base, '--worktree', wt]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--head', base, '--worktree', wt]);
   git('commit', '--quiet', '--allow-empty', '-m', 'intermediate grader tweak');
   const intermediate = git('rev-parse', 'HEAD');
   git('commit', '--quiet', '--allow-empty', '-m', 'final');
   const final = git('rev-parse', 'HEAD');
-  run([dir, 'writer', 'w', '--ready', final]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', final]);
   const status = run([dir, 'status']);
   assert.equal(status.status, 1, status.stdout);
   assert.match(status.stdout, new RegExp(`UNREADY-COMMIT w ${intermediate}`));
   assert.doesNotMatch(status.stdout, new RegExp(`UNREADY-COMMIT w ${final}`));
   assert.match(run([dir, 'watch-lines']).stdout, /board UNREADY-COMMIT w/);
   assert.equal(run([dir, 'push-check', 'w', '--head', final]).status, 1);
-  run([dir, 'writer', 'w', '--ready', intermediate]);
-  run([dir, 'writer', 'w', '--ready', final]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', intermediate]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', final]);
   assert.equal(run([dir, 'status']).status, 0);
   assert.equal(run([dir, 'push-check', 'w', '--head', final]).status, 0);
   const branch = git('branch', '--show-current');
@@ -94,7 +103,7 @@ test('status and watcher report every local commit not declared push-ready, even
   git('merge', '--quiet', '--no-ff', 'incoming', '-m', 'sync main');
   const merge = git('rev-parse', 'HEAD');
   assert.match(run([dir, 'status']).stdout, new RegExp(`UNREADY-COMMIT w ${merge}`));
-  run([dir, 'writer', 'w', '--ready', merge]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', merge]);
   const synced = run([dir, 'status']);
   assert.equal(synced.status, 0, synced.stdout);
   assert.doesNotMatch(synced.stdout, new RegExp(`UNREADY-COMMIT w ${incoming}`), 'incoming main ancestry is not a writer checkpoint');
@@ -104,13 +113,13 @@ test('status and watcher report every local commit not declared push-ready, even
   git('checkout', '--quiet', branch);
   git('merge', '--quiet', '--no-ff', 'local-side', '-m', 'integrate local side');
   const sideMerge = git('rev-parse', 'HEAD');
-  run([dir, 'writer', 'w', '--ready', sideMerge]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', sideMerge]);
   const hidden = run([dir, 'status']);
   assert.equal(hidden.status, 1, hidden.stdout);
   assert.match(hidden.stdout, new RegExp(`UNREADY-COMMIT w ${checkpoint}`), 'a merge cannot launder an undeclared local checkpoint');
   assert.equal(run([dir, 'push-check', 'w', '--head', sideMerge]).status, 1);
-  run([dir, 'writer', 'w', '--ready', checkpoint]);
-  run([dir, 'writer', 'w', '--ready', sideMerge]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', checkpoint]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', sideMerge]);
   assert.equal(run([dir, 'status']).status, 0);
 });
 
@@ -118,7 +127,7 @@ test('remote writers report NO-HEAD without blocking status or push-check', t =>
   const dir = tempDir(t);
   const head = 'a'.repeat(40);
   const base = 'b'.repeat(40);
-  const recorded = run([dir, 'writer', 'remote-w', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
+  const recorded = run([dir, 'writer', 'remote-w', '--tickets', 'ISS-1', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
     '--ready', head, '--base', base]);
   assert.equal(recorded.status, 0, recorded.stderr);
   const status = run([dir, 'status', '--pushed', `remote-w=${head}`]);
@@ -135,7 +144,7 @@ test('the pushed head is read from gh for a row with a PR and repo', (t) => {
   const gh = path.join(dir, 'gh');
   writeFileSync(gh, '#!/bin/sh\necho "pushed-$3"\n');
   chmodSync(gh, 0o755);
-  assert.equal(run([dir, 'writer', 'w1', '--pr', '7', '--repo', 'acme/app', '--head', 'old']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--pr', '7', '--repo', 'acme/app', '--head', 'old']).status, 0);
   const stale = run([dir, 'status'], { BOARD_GH: gh });
   assert.match(stale.stdout, /^STALE w1 board head old, pushed pushed-7$/m);
 });
@@ -156,7 +165,7 @@ test('trusted stacked parent ancestry is excluded without declaring parent commi
   git('checkout', '-qb', 'writer');
   git('commit', '-q', '--allow-empty', '-m', 'writer ready change');
   const head = git('rev-parse', 'HEAD');
-  run([dir, 'writer', 'w', '--worktree', wt, '--head', head, '--ready', head]);
+  run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--worktree', wt, '--head', head, '--ready', head]);
   const file = path.join(dir, 'board.json');
   const board = JSON.parse(readFileSync(file, 'utf8'));
   board.writers.w.trustedBase = { ref: 'refs/remotes/origin/parent', oid: parent };
@@ -164,10 +173,10 @@ test('trusted stacked parent ancestry is excluded without declaring parent commi
   const status = run([dir, 'status', '--pushed', `w=${published}`]);
   assert.doesNotMatch(status.stdout, new RegExp(`UNREADY-COMMIT w ${parent}`));
   assert.equal(run([dir, 'push-check', 'w', '--head', head, '--pushed', `w=${published}`]).status, 0);
-  assert.equal(run([dir, 'writer', 'w', '--base', 'origin/parent']).status, 0);
+  assert.equal(run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--base', 'origin/parent']).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).writers.w.trustedBase, { ref: 'origin/parent', oid: parent });
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).writers.w.readyHeads, [head]);
-  const inheritedReady = run([dir, 'writer', 'w', '--ready', parent]);
+  const inheritedReady = run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', parent]);
   assert.equal(inheritedReady.status, 2, 'inherited parent commits cannot be declared writer-ready');
   assert.match(inheritedReady.stderr, /trusted base.*push-ready/);
   const gh = path.join(dir, 'gh');
@@ -180,7 +189,7 @@ test('trusted stacked parent ancestry is excluded without declaring parent commi
   git('update-ref', 'refs/remotes/origin/trunk', parent);
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
   git('update-ref', '-d', 'refs/remotes/origin/main');
-  assert.equal(run([dir, 'writer', 'default', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
+  assert.equal(run([dir, 'writer', 'default', '--tickets', 'ISS-1', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
   const fallback = run([dir, 'status'], { BOARD_GH: gh });
   assert.equal(fallback.status, 0, fallback.stdout + fallback.stderr);
   assert.doesNotMatch(fallback.stdout, /PUSH-READY-UNKNOWN default/, 'pre-PR fallback follows the repository default, not a hardcoded main');
@@ -216,7 +225,7 @@ test('a standing duty whose owner is stopped or unknown is UNOWNED-DUTY, and its
   assert.equal(helpers(['start', 'main-ci-watch']).status, 0);
   assert.equal(run([dir, 'duty', 'main-health', '--owner', 'main-ci-watch']).status, 0);
   assert.equal(run([dir, 'duty', 'pr-shepherd', '--owner', 'w1']).status, 0);
-  assert.equal(run([dir, 'writer', 'w1', '--head', 'aaa']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--head', 'aaa']).status, 0);
   assert.match(run([dir, 'status']).stdout, /board: 1 writers, 0 stale, 0 untold, 0 slow, 0 unowned duties/);
   assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /^- main-health: main-ci-watch \(since /m);
 
@@ -236,9 +245,9 @@ test('a standing duty whose owner is stopped or unknown is UNOWNED-DUTY, and its
 
 test('a Codex writer with no push for 30 minutes on a PR with unresolved human threads is SLOW', (t) => {
   const dir = tempDir(t);
-  assert.equal(run([dir, 'writer', 'w1', '--runtime', 'codex', '--head', 'aaa', '--now', '2026-10-21T12:00:00Z']).status, 0);
-  assert.equal(run([dir, 'writer', 'w2', '--runtime', 'claude', '--head', 'bbb', '--now', '2026-10-21T12:00:00Z']).status, 0);
-  assert.equal(run([dir, 'writer', 'w1', '--status', 'review fixes', '--now', '2026-10-21T12:20:00Z']).status, 0, 'a status update is not a push');
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--runtime', 'codex', '--head', 'aaa', '--now', '2026-10-21T12:00:00Z']).status, 0);
+  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-1', '--runtime', 'claude', '--head', 'bbb', '--now', '2026-10-21T12:00:00Z']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--status', 'review fixes', '--now', '2026-10-21T12:20:00Z']).status, 0, 'a status update is not a push');
   const at = (time, threads = 'w1=9') => run([dir, 'status', '--threads', threads, '--threads', 'w2=4', '--now', time]);
   assert.equal(at('2026-10-21T12:29:00Z').status, 0);
   const slow = at('2026-10-21T12:35:00Z');
@@ -247,9 +256,9 @@ test('a Codex writer with no push for 30 minutes on a PR with unresolved human t
     'SLOW w1 no push for 35m with 9 unresolved human threads; hand it to a Claude writer',
   ]);
   assert.equal(at('2026-10-21T12:35:00Z', 'w1=0').status, 0, 'no unresolved human thread, nothing to hand over');
-  assert.equal(run([dir, 'writer', 'w1', '--head', 'ccc', '--now', '2026-10-21T12:40:00Z']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--head', 'ccc', '--now', '2026-10-21T12:40:00Z']).status, 0);
   assert.equal(at('2026-10-21T12:41:00Z').status, 0, 'a push restarts the clock');
-  assert.equal(run([dir, 'writer', 'w3', '--runtime', 'gemini']).status, 2);
+  assert.equal(run([dir, 'writer', 'w3', '--tickets', 'ISS-1', '--runtime', 'gemini']).status, 2);
 });
 
 test('unresolved human threads are read with gh for a Codex row with a PR and repo; bot threads do not count', (t) => {
@@ -263,7 +272,7 @@ test('unresolved human threads are read with gh for a Codex row with a PR and re
   ];
   writeFileSync(gh, `#!/bin/sh\ncase "$*" in\n  "api graphql"*) echo '${JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes } } } } })}' ;;\n  *) echo aaa ;;\nesac\n`);
   chmodSync(gh, 0o755);
-  assert.equal(run([dir, 'writer', 'w1', '--runtime', 'codex', '--pr', '7', '--repo', 'acme/app', '--head', 'aaa', '--now', '2026-10-21T12:00:00Z']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--runtime', 'codex', '--pr', '7', '--repo', 'acme/app', '--head', 'aaa', '--now', '2026-10-21T12:00:00Z']).status, 0);
   const slow = run([dir, 'status', '--now', '2026-10-21T13:00:00Z'], { BOARD_GH: gh });
   assert.match(slow.stdout, /^SLOW w1 no push for 60m with 2 unresolved human threads; hand it to a Claude writer$/m);
 });
@@ -274,7 +283,7 @@ test('a work dir that watches sessions or PRs fails status while its watcher is 
   writeFileSync(path.join(dir, 'prs.txt'), 'acme/app 7\n');
   assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'w1']).status, 0);
   assert.equal(run([dir, 'duty', 'status-sweep', '--owner', 'w1']).status, 0);
-  assert.equal(run([dir, 'writer', 'w1']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1']).status, 0);
   const missing = run([dir, 'status', '--now', '2026-10-22T06:00:00Z']);
   assert.equal(missing.status, 1);
   assert.match(missing.stdout, /^WATCHER-MISSING \(no watcher\.json\): re-arm watch\.sh now/m);
@@ -334,7 +343,7 @@ test('a watched program needs a green-watch owner; REQUIRED_DUTIES names others'
   const bare = run([dir, 'status', ...now]);
   assert.equal(bare.status, 1);
   assert.match(bare.stdout, /^MISSING-DUTY green-watch: give it an owner/m);
-  assert.equal(run([dir, 'writer', 'keeper']).status, 0);
+  assert.equal(run([dir, 'writer', 'keeper', '--tickets', 'ISS-1']).status, 0);
   assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'keeper']).status, 0);
   assert.match(run([dir, 'status', ...now]).stdout, /^MISSING-DUTY status-sweep/m, 'the status sweep is a standing duty too');
   assert.equal(run([dir, 'duty', 'status-sweep', '--owner', 'keeper']).status, 0);
@@ -345,11 +354,11 @@ test('a watched program needs a green-watch owner; REQUIRED_DUTIES names others'
 
 test('a head is pushed for a writer only when the writer declared it ready (a partial commit was pushed)', (t) => {
   const dir = tempDir(t);
-  assert.equal(run([dir, 'writer', 'w1', '--head', 'a77421d8fa00']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--head', 'a77421d8fa00']).status, 0);
   const none = run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']);
   assert.equal(none.status, 1);
   assert.match(none.stdout, /^NOT-READY w1 head a77421d8fa00, declared ready none/);
-  assert.equal(run([dir, 'writer', 'w1', '--ready', '5ec6633da7ff']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--ready', '5ec6633da7ff']).status, 0);
   assert.equal(run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']).status, 1, 'the committed head is not the ready one');
   assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec6633da7']).status, 0);
   assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec']).status, 1, 'a short prefix proves nothing');
@@ -396,7 +405,7 @@ const gitRepo = (t) => {
 test('a scope change the writer never acknowledges is UNACKED-SCOPE, and a worktree still clean at the old head is SCOPE-NOT-STARTED (2026-10-26)', (t) => {
   const dir = tempDir(t);
   const worktree = gitRepo(t);
-  assert.equal(run([dir, 'writer', 'fix-13096', '--runtime', 'claude', '--worktree', worktree, '--now', '2026-10-26T14:49:00Z']).status, 0);
+  assert.equal(run([dir, 'writer', 'fix-13096', '--tickets', 'ISS-1', '--runtime', 'claude', '--worktree', worktree, '--now', '2026-10-26T14:49:00Z']).status, 0);
   assert.equal(run([dir, 'deliver', 'item-5', '--kind', 'scope', '--to', 'fix-13096', '--text', 'restore legacy Project Detail row selection (AC-5)', '--now', '2026-10-26T15:15:00Z']).status, 0);
   assert.equal(run([dir, 'told', 'item-5', 'fix-13096', '--now', '2026-10-26T15:15:30Z']).status, 0);
   const at = (time) => run([dir, 'status', '--now', time]);
@@ -430,11 +439,11 @@ test('a scope change the writer never acknowledges is UNACKED-SCOPE, and a workt
 
 test('a scope change needs content and a writer whose worktree status can read; a pending answer carries its text', (t) => {
   const dir = tempDir(t);
-  assert.equal(run([dir, 'writer', 'w1']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1']).status, 0);
   const noTree = run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1', '--text', 'add item 4']);
   assert.equal(noTree.status, 2);
   assert.match(noTree.stderr, /board writer with a worktree/);
-  assert.equal(run([dir, 'writer', 'w1', '--worktree', gitRepo(t)]).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--worktree', gitRepo(t)]).status, 0);
   const empty = run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1']);
   assert.equal(empty.status, 2);
   assert.match(empty.stderr, /carries its content/);
@@ -454,7 +463,8 @@ test('a scope change needs content and a writer whose worktree status can read; 
 
 test('a unit lists its tickets on the board page and in the resume log; a fold adds and a ticket has one unit', (t) => {
   const dir = tempDir(t);
-  assert.equal(run([dir, 'writer', 'w1', '--pr', '7', '--repo', 'o/r']).status, 0);
+  for (const ticket of ['ISS-2', 'ISS-3']) placeLocal(t, dir, ticket);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--pr', '7', '--repo', 'o/r']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1', '--repo', 'o/r', '--now', '2026-11-09T10:00:00Z']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-3', '--now', '2026-11-09T11:00:00Z']).status, 0);
   const board = JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8'));
@@ -470,7 +480,8 @@ test('a unit lists its tickets on the board page and in the resume log; a fold a
 
 test('a unit closes only with its writer row\'s PR and a passing review; the board and log show it, and a new unit takes the next free name', (t) => {
   const dir = tempDir(t);
-  assert.equal(run([dir, 'writer', 'w1', '--pr', '7', '--repo', 'o/r']).status, 0);
+  for (const ticket of ['ISS-2', 'ISS-3']) placeLocal(t, dir, ticket);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--pr', '7', '--repo', 'o/r']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1', '--now', '2026-11-09T10:00:00Z']).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-9', '--closed', '7']).status, 2, 'only a recorded unit closes');
   assert.equal(run([dir, 'unit', 'ISS-5', '--tickets', 'ISS-5']).status, 0);
@@ -504,13 +515,14 @@ test('a unit closes only with its writer row\'s PR and a passing review; the boa
 
 test('status flags a unit whose writer has not recorded every other ticket, and every case it cannot check', (t) => {
   const dir = tempDir(t);
+  for (const ticket of ['ISS-2', 'ISS-3', 'ISS-4', 'ISS-5', 'ISS-6']) placeLocal(t, dir, ticket);
   const worktree = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-unit-wt-'));
   const plain = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-unit-plain-'));
   t.after(() => { rmSync(worktree, { recursive: true, force: true }); rmSync(plain, { recursive: true, force: true }); });
   execFileSync('git', ['init', '-q', worktree]);
   const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
   const record = (memberTickets) => writeFileSync(path.join(gitDir, 'vibe-session.json'), JSON.stringify({ liveTicket: 'ISS-1', memberTickets }));
-  assert.equal(run([dir, 'writer', 'w1', '--worktree', worktree]).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--worktree', worktree]).status, 0);
   assert.equal(run([dir, 'unit', 'ISS-1', '--tickets', 'ISS-1,ISS-2,ISS-3', '--writer', 'w1']).status, 0);
   let status = run([dir, 'status']);
   assert.match(status.stdout, /^UNIT-MEMBERS-UNCHECKED ISS-1 w1: no vibe session record in its worktree yet;/m);
@@ -522,9 +534,9 @@ test('status flags a unit whose writer has not recorded every other ticket, and 
   status = run([dir, 'status']);
   assert.doesNotMatch(status.stdout, /UNIT-MEMBERS/);
   assert.match(status.stdout, /, 0 unit member problems/);
-  assert.equal(run([dir, 'writer', 'w2', '--worktree', plain]).status, 0);
-  assert.equal(run([dir, 'writer', 'w3', '--where', 'remote', '--worktree', worktree]).status, 0);
-  assert.equal(run([dir, 'writer', 'w4', '--pr', '9']).status, 0);
+  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-1', '--worktree', plain]).status, 0);
+  assert.equal(run([dir, 'writer', 'w3', '--tickets', 'ISS-1', '--where', 'remote', '--worktree', worktree]).status, 0);
+  assert.equal(run([dir, 'writer', 'w4', '--tickets', 'ISS-1', '--pr', '9']).status, 0);
   for (const [unit, writer] of [['ISS-4', 'w2'], ['ISS-5', 'w3'], ['ISS-6', 'w4'], ['ISS-7', 'ghost'], ['ISS-8', '']]) {
     assert.equal(run([dir, 'unit', unit, '--tickets', unit, ...(writer ? ['--writer', writer] : [])]).status, 0);
   }
