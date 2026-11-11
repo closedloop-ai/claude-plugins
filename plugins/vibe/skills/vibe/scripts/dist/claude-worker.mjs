@@ -13124,6 +13124,10 @@ var readerRoles = /* @__PURE__ */ new Set([
   "vibe-verify-worker"
 ]);
 var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
+var REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
+var ReviewModelError = class extends Error {
+  code = REVIEW_MODEL_REFUSED;
+};
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
 var testAuthoringModes = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
 var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
@@ -13855,10 +13859,6 @@ function workerSessionName(agentName, branch, requestId) {
 function checkoutHead(root) {
   return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }
-var REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
-var ReviewModelError = class extends Error {
-  code = REVIEW_MODEL_REFUSED;
-};
 export {
   armMcpInitWatchdog,
   boundDefinition,

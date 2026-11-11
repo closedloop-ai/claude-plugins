@@ -58,6 +58,12 @@ const readerRoles = new Set([
   "vibe-verify-worker",
 ]);
 const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
+const REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
+
+/** A `reviewModel` the launcher refuses, surfaced with its reason rather than the generic turn failure. */
+class ReviewModelError extends Error {
+  readonly code = REVIEW_MODEL_REFUSED;
+}
 const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
 const testAuthoringModes = new Set(["request", "fix", "handoff", "pull-request"]);
 const PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
@@ -726,11 +732,4 @@ export function workerSessionName(agentName: string, branch: string, requestId: 
 
 function checkoutHead(root: string) {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-}
-
-const REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
-
-/** A `reviewModel` the launcher refuses, surfaced with its reason rather than the generic turn failure. */
-class ReviewModelError extends Error {
-  readonly code = REVIEW_MODEL_REFUSED;
 }
