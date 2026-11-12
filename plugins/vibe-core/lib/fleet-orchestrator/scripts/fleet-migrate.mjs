@@ -152,7 +152,7 @@ export function migrate(from, home, slug, { dryRun = false, reusable, skip, prog
     }
     if (chat) {
       const before = captureBinding(chat, homeDir, slug, env);
-      undo.push(() => restoreBinding(before));
+      undo.push(() => restoreBinding(before, env));
       bind(chat, homeDir, slug, env, { takeover });
     }
   } catch (error) {

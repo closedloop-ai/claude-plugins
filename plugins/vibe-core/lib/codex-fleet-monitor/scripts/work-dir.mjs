@@ -31,7 +31,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { ambiguousHome, chatBinding, commandChat, takenOver } from "../../fleet-orchestrator/scripts/chat-binding.mjs";
+import { ambiguousHome, canonicalHome, chatBinding, commandChat, takenOver } from "../../fleet-orchestrator/scripts/chat-binding.mjs";
 
 export const PER_PROGRAM_KEYS = ["LOCAL_STATE_DIR", "REQUESTS_DIR", "REMOTE_STATE_DIR", "REMOTE_REQUESTS_DIR"];
 
@@ -44,11 +44,11 @@ export function resolveWorkDir(dir, { env = process.env, chat } = {}) {
   if (isDir(path.join(abs, "programs"))) {
     const caller = chat === undefined ? commandChat(env) : chat;
     const binding = chatBinding(caller, env);
-    if (binding && path.resolve(binding.home) === abs && isDir(path.join(abs, "programs", binding.program))) {
+    if (binding && canonicalHome(binding.home) === canonicalHome(abs) && isDir(path.join(abs, "programs", binding.program))) {
       return { home: abs, program: binding.program, dir: path.join(abs, "programs", binding.program) };
     }
     const taken = takenOver(caller, env);
-    if (taken && path.resolve(taken.home) === abs) {
+    if (taken && canonicalHome(taken.home) === canonicalHome(abs)) {
       throw new Error(`TAKEN-OVER ${taken.program}: chat ${taken.takenBy} took this chat's program over at ${taken.at}; this chat has no program in ${abs}. Run fleet-home.mjs start <slug>, or fleet-home.mjs resume ${taken.program} --takeover if that chat has finished`);
     }
     const ambiguous = ambiguousHome(abs, env);

@@ -31,7 +31,7 @@
 // single-orchestrator behavior from before bindings; else no program.
 
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { harnessActor } from "../../vibe/scripts/harness-identity.mjs";
@@ -44,6 +44,8 @@ const LOCK_WAIT_MS = 5000;
 const LOCK_RETRY_MS = 10;
 // A bind holds its lock for a few file writes; an unreadable lock this old was left by a process that died mid-write.
 const LOCK_STALE_MS = 30_000;
+// Each reclaimer that dies holding a tombstone adds one link to the chain; past this many the lock stays BUSY.
+const MAX_RECLAIM_CHAIN = 16;
 
 /** The chat a command runs in (CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID), or null outside a harness. */
 export function commandChat(env = process.env) {
@@ -105,12 +107,47 @@ function claimsDir(env) {
   return path.join(bindingDir(env), "claims");
 }
 
+/**
+ * A home's one spelling: its real path when it exists, so a symlinked, relative or (on a case-insensitive volume)
+ * differently cased spelling of the same home gets the same claims and lock rather than a second set. The native
+ * realpath returns the case on disk; the JavaScript one keeps the case it was given.
+ */
+export function canonicalHome(home) {
+  const resolved = path.resolve(home);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+/**
+ * A program's one spelling: the name of the dir `program` opens, matched exactly first and then ignoring case, so
+ * `P` and `p` on a case-insensitive volume get the same claim and lock. With no such dir the name stays as given:
+ * on a case-sensitive volume `P` and `p` are two programs.
+ */
+export function canonicalProgram(home, program) {
+  const programs = path.join(home, "programs");
+  if (!isDir(path.join(programs, program))) return program;
+  try {
+    const names = readdirSync(programs);
+    return names.find((name) => name === program) ?? names.find((name) => name.toLowerCase() === program.toLowerCase()) ?? program;
+  } catch {
+    return program;
+  }
+}
+
 function homeKey(home) {
-  return createHash("sha256").update(path.resolve(home)).digest("hex").slice(0, 16);
+  return createHash("sha256").update(canonicalHome(home)).digest("hex").slice(0, 16);
 }
 
 function claimFile(home, program, env) {
-  return path.join(claimsDir(env), `${homeKey(home)}.${program}.json`);
+  return path.join(claimsDir(env), `${homeKey(home)}.${canonicalProgram(canonicalHome(home), program)}.json`);
+}
+
+/** Whether two `{ home, program }` records name one program: they share its claim file, whatever their spelling. */
+function sameProgram(a, b, env) {
+  return Boolean(a && b) && claimFile(a.home, a.program, env) === claimFile(b.home, b.program, env);
 }
 
 /**
@@ -122,7 +159,7 @@ function claimHolder(home, program, env) {
   const claim = readBindingFile(claimFile(home, program, env));
   if (!claim) return null;
   const binding = readBindingFile(bindingFile(claim.chat, env));
-  if (!binding || path.resolve(binding.home) !== path.resolve(home) || binding.program !== program) return null;
+  if (!sameProgram(binding, claim, env)) return null;
   return { chat: claim.chat, binding };
 }
 
@@ -162,17 +199,21 @@ export function bindChat(chat, home, program, env = process.env, { now = new Dat
   const file = bindingFile(chat, env);
   if (!file) return [];
   const resolved = path.resolve(home);
+  program = canonicalProgram(resolved, program);
   const bound = withProgramLock(resolved, program, env, () => {
     const others = refuseHeld(chat, resolved, program, env, { now, takeover });
+    // Order matters if this process dies between writes: each chat taken over loses its binding (and gets its note)
+    // before the claim changes hands, and the claim is written before this chat's binding, so a crash leaves at
+    // worst a program nobody holds, never a binding beside another chat's claim.
+    for (const other of others) {
+      const record = chatBinding(other, env);
+      if (sameProgram(record, { home: resolved, program }, env)) unlinkSync(bindingFile(other, env));
+      writeAtomic(takenFile(other, env), `${JSON.stringify({ chat: other, home: resolved, program, takenBy: chat, at: now.toISOString() })}\n`);
+    }
     const record = `${JSON.stringify({ chat, home: resolved, program, boundAt: now.toISOString() })}\n`;
     writeAtomic(claimFile(resolved, program, env), record);
     writeAtomic(file, record);
     try { unlinkSync(takenFile(chat, env)); } catch {}
-    for (const other of others) {
-      const record = chatBinding(other, env);
-      if (record && path.resolve(record.home) === resolved && record.program === program) unlinkSync(bindingFile(other, env));
-      writeAtomic(takenFile(other, env), `${JSON.stringify({ chat: other, home: resolved, program, takenBy: chat, at: now.toISOString() })}\n`);
-    }
     return { others };
   });
   // Released after this lock is let go, so two chats swapping programs never wait on each other's lock. Best effort, after the bind committed, each under its own program's lock: the claims this chat held
@@ -223,42 +264,6 @@ function withProgramLock(home, program, env, fn) {
   }
 }
 
-/**
- * Clears a reclaim guard older than LOCK_STALE_MS, left by a reclaimer that died: renames it aside, which only one
- * waiter can do, and puts it back if what moved was a newer guard (guards hold unique tokens). Returns whether one
- * was cleared.
- */
-function clearAbandonedGuard(guard) {
-  let seen;
-  let fd;
-  try {
-    // One open file gives both the age and the contents, so they belong to the same guard.
-    fd = openSync(guard, "r");
-    if (Date.now() - fstatSync(fd).mtimeMs <= LOCK_STALE_MS) return false;
-    seen = readFileSync(fd, "utf8");
-  } catch {
-    return false;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-  const aside = `${guard}.${randomUUID()}.stale`;
-  try {
-    renameSync(guard, aside);
-  } catch {
-    return false;
-  }
-  if (readOr(aside) !== seen) {
-    // A newer guard moved by mistake goes back; if another took its place, it is left aside, never deleted.
-    try {
-      linkSync(aside, guard);
-      unlinkSync(aside);
-    } catch {}
-    return false;
-  }
-  try { unlinkSync(aside); } catch {}
-  return true;
-}
-
 /** Whether the lock holding `seen` is abandoned: its owner exited, or it cannot be read and is older than LOCK_STALE_MS. */
 function staleLock(lock, seen, owner) {
   if (/^\d+ \S+$/.test(seen.trim())) return !processAlive(owner);
@@ -270,37 +275,62 @@ function staleLock(lock, seen, owner) {
 }
 
 /**
- * Removes the abandoned lock holding `seen`. Only the holder of `<lock>.reclaim` (linked into place exclusively)
- * may remove a stale lock, and it re-reads the lock first: while that stale lock exists nobody can link a new one,
- * and its dead owner never removes it, so the file it unlinks is the one it read. A reclaim guard left by a process
- * that died mid-reclaim is removed once it is older than LOCK_STALE_MS.
+ * Removes the abandoned lock holding `seen` and returns whether it did (the caller then retries at once; otherwise it
+ * waits like any contender). Only the holder of a tombstone tied to that exact lock may remove it: a file linked
+ * into place exclusively, holding the holder's pid and token, named `<lock>.reclaim.<key>` with key a hash of
+ * `seen`. The holder re-reads the lock and unlinks it only if it still holds `seen`: while that lock exists nobody
+ * can link a new one, and its dead owner never removes it, so the file unlinked is the one read, and lock contents
+ * carry a unique token, so that lock never comes back. A tombstone is never moved or cleared by age. A live holder,
+ * however slow, is waited on. When a holder died, the next reclaimer links a new tombstone whose key also hashes
+ * the dead holder's, so exactly one process moves on from each dead holder; their tombstones are removed with a token lock and left
+ * in place for an unreadable one. A tombstone whose pid was reused by a live process keeps the lock BUSY. `hooks.beforeRemove` runs just before the re-read, for the tests.
  */
-// Exported for the tests, which drive the guard directly.
-export function reclaimStaleLock(lock, seen) {
-  // Returns whether this call removed the stale lock or an abandoned guard, so the caller retries at once;
-  // otherwise another reclaim is under way and the caller waits like any other contender.
-  const guard = `${lock}.reclaim`;
+export function reclaimStaleLock(lock, seen, hooks = {}) {
   const token = `${process.pid} ${randomUUID()}`;
-  const temp = `${guard}.${randomUUID()}.tmp`;
-  writeFileSync(temp, `${token}\n`, { mode: 0o600 });
-  try {
-    try {
-      linkSync(temp, guard);
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      return clearAbandonedGuard(guard);
+  let key = createHash("sha256").update(seen).digest("hex").slice(0, 32);
+  const passed = [];
+  for (let depth = 0; depth < MAX_RECLAIM_CHAIN; depth += 1) {
+    const tomb = `${lock}.reclaim.${key}`;
+    if (!linkFilled(tomb, `${token}\n`)) {
+      const holder = readOr(tomb).trim();
+      // A tombstone is linked into place already filled, so one that is empty or unreadable was never a live holder's
+      // (cut short by a crash, or unlinked just now by its holder after the removal): it is passed like a dead one.
+      if (/^\d+ \S+$/.test(holder) && processAlive(Number(holder.split(/\s+/)[0]))) return false;
+      passed.push(tomb);
+      key = createHash("sha256").update(`${key}\n${holder}`).digest("hex").slice(0, 32);
+      continue;
     }
     let removed = false;
     try {
+      hooks.beforeRemove?.();
       if (readFileSync(lock, "utf8") === seen) {
         unlinkSync(lock);
         removed = true;
       }
     } catch {}
-    if (readOr(guard).trim() === token) {
-      try { unlinkSync(guard); } catch {}
+    // This call's own tombstone goes: a reclaimer that links it again re-reads a different lock. The dead holders'
+    // tombstones go too once a lock with a unique token was removed, since no lock can hold `seen` again. For an
+    // unreadable lock, whose contents can repeat, they stay, so every later taker passes the same chain links.
+    // Each tombstone left behind is one reclaimer that died holding it, so they are bounded by crashes.
+    const unique = /^\d+ \S+$/.test(seen.trim());
+    for (const file of [tomb, ...(removed && unique ? passed : [])]) {
+      try { unlinkSync(file); } catch {}
     }
     return removed;
+  }
+  return false;
+}
+
+/** Links a file holding `text` into place at `file` exclusively; returns false when one is already there. */
+function linkFilled(file, text) {
+  const temp = `${file}.${randomUUID()}.tmp`;
+  writeFileSync(temp, text, { mode: 0o600 });
+  try {
+    linkSync(temp, file);
+    return true;
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    return false;
   } finally {
     try { unlinkSync(temp); } catch {}
   }
@@ -336,8 +366,10 @@ export function unbindChat(chat, env = process.env) {
   const record = chatBinding(chat, env);
   if (!record) return null;
   withProgramLock(record.home, record.program, env, () => {
+    // Read again under the lock, since a takeover may have removed the binding. The binding goes before the claim,
+    // so a crash between them leaves a stale claim, never an unclaimed binding.
+    if (sameProgram(chatBinding(chat, env), record, env)) unlinkSync(bindingFile(chat, env));
     releaseClaim(record.home, record.program, chat, env);
-    try { unlinkSync(bindingFile(chat, env)); } catch {}
   });
   releaseLeftoverClaims(chat, env, null);
   return record;
@@ -353,11 +385,11 @@ export function releaseLeftoverClaims(chat, env, keep) {
   try { names = readdirSync(claimsDir(env)); } catch {}
   for (const name of names.filter((entry) => entry.endsWith(".json"))) {
     const claim = readBindingFile(path.join(claimsDir(env), name));
-    if (claim?.chat !== chat || (keep && path.resolve(claim.home) === path.resolve(keep.home) && claim.program === keep.program)) continue;
+    if (claim?.chat !== chat || sameProgram(claim, keep, env)) continue;
     try {
       withProgramLock(claim.home, claim.program, env, () => {
         const bound = chatBinding(chat, env);
-        if (bound && path.resolve(bound.home) === path.resolve(claim.home) && bound.program === claim.program) return;
+        if (sameProgram(bound, claim, env)) return;
         releaseClaim(claim.home, claim.program, chat, env);
       });
     } catch {}
@@ -365,44 +397,63 @@ export function releaseLeftoverClaims(chat, env, keep) {
 }
 
 /**
- * The binding files a bind of `chat` to `program` in `home` may change, with their current contents (null when
- * absent): the chat's binding and takeover note, the program's claim, the claim of the program the chat holds now,
- * and the binding and note of the chat holding `program`. restoreBinding writes them back.
+ * What a bind of `chat` to `program` in `home` may change, for restoreBinding: the chat's binding and takeover note,
+ * the program's claim, and the chat's previous program and its claim. Contents are null when absent.
  */
 export function captureBinding(chat, home, program, env = process.env) {
-  if (!validChat(chat)) return { chat, files: [] };
-  const files = [bindingFile(chat, env), takenFile(chat, env), claimFile(home, program, env)];
+  const read = (file) => (existsSync(file) ? readFileSync(file, "utf8") : null);
+  const resolved = path.resolve(home);
   const previous = chatBinding(chat, env);
-  if (previous) files.push(claimFile(previous.home, previous.program, env));
-  const holder = claimHolder(home, program, env);
-  if (holder && holder.chat !== chat) files.push(bindingFile(holder.chat, env), takenFile(holder.chat, env));
-  return { chat, files: [...new Set(files)].map((file) => ({ file, text: existsSync(file) ? readFileSync(file, "utf8") : null })) };
+  return {
+    chat, home: resolved, program: canonicalProgram(resolved, program),
+    binding: read(bindingFile(chat, env)), taken: read(takenFile(chat, env)), claim: read(claimFile(resolved, program, env)),
+    previous: previous && { home: path.resolve(previous.home), program: previous.program, claim: read(claimFile(previous.home, previous.program, env)) },
+  };
 }
 
 /**
- * Puts the files captureBinding recorded back as they were, touching only a file that is now absent or that this
- * chat's bind wrote, so a claim another chat made since is never overwritten.
+ * Undoes a bind captureBinding recorded, under the program's lock and then the previous program's, re-reading every
+ * file inside the lock. It never gives a program to a chat that does not hold it already, so the worst it leaves is
+ * a chat with no program, never a program with two holders:
+ * - it removes the chat's claim and binding on the program while they are still the chat's;
+ * - it puts the program's earlier claim back only for a chat whose binding still names the program (a bind that
+ *   failed before it took that chat's binding over);
+ * - a chat this bind did take over stays taken over and can resume the program, which nobody then holds;
+ * - it gives the chat its previous program back only when the captured claim and binding were the chat's own and
+ *   nobody claims that program now.
+ * A bind to the program the chat already held is left as it is.
  */
-export function restoreBinding(snapshot) {
-  for (const { file, text } of snapshot.files ?? []) {
-    const now = readOr(file);
-    if (now === (text ?? "")) continue;
-    if (now !== "" && !writtenBy(now, snapshot.chat)) continue;
-    if (text === null) {
-      try { unlinkSync(file); } catch {}
-    } else {
-      writeAtomic(file, text);
+export function restoreBinding(snapshot, env = process.env) {
+  const { chat, home, program, previous } = snapshot;
+  if (!validChat(chat)) return;
+  const samePlace = (record, at) => sameProgram(record, at, env);
+  if (samePlace(previous, { home, program })) return;
+  // A bind that failed before writing anything left nothing to undo.
+  const now = (file) => (existsSync(file) ? readFileSync(file, "utf8") : null);
+  if (now(claimFile(home, program, env)) === snapshot.claim && now(bindingFile(chat, env)) === snapshot.binding
+    && (!previous || now(claimFile(previous.home, previous.program, env)) === previous.claim)) return;
+  const parse = (text) => {
+    try { return text === null ? null : JSON.parse(text); } catch { return null; }
+  };
+  withProgramLock(home, program, env, () => {
+    // The binding goes before the claim, so a crash between them leaves a stale claim, never an unclaimed binding.
+    if (samePlace(chatBinding(chat, env), { home, program })) unlinkSync(bindingFile(chat, env));
+    if (readBindingFile(claimFile(home, program, env))?.chat === chat) unlinkSync(claimFile(home, program, env));
+    const earlier = parse(snapshot.claim);
+    if (!existsSync(claimFile(home, program, env)) && validChat(earlier?.chat) && earlier.chat !== chat
+      && samePlace(chatBinding(earlier.chat, env), { home, program })) {
+      writeAtomic(claimFile(home, program, env), snapshot.claim);
     }
-  }
-}
-
-function writtenBy(text, chat) {
-  try {
-    const record = JSON.parse(text);
-    return record?.chat === chat || record?.takenBy === chat;
-  } catch {
-    return false;
-  }
+    if (snapshot.taken !== null && !existsSync(takenFile(chat, env))) writeAtomic(takenFile(chat, env), snapshot.taken);
+  });
+  if (!previous || parse(previous.claim)?.chat !== chat || !samePlace(parse(snapshot.binding), previous)) return;
+  withProgramLock(previous.home, previous.program, env, () => {
+    const holder = readBindingFile(claimFile(previous.home, previous.program, env));
+    if (holder && holder.chat !== chat) return;
+    if (existsSync(bindingFile(chat, env))) return;
+    writeAtomic(claimFile(previous.home, previous.program, env), previous.claim);
+    writeAtomic(bindingFile(chat, env), snapshot.binding);
+  });
 }
 
 /** The home a chat works in: FLEET_HOME when set, else its binding's home, else ~/fleet-orchestrator. */
@@ -421,22 +472,22 @@ export function chatHome(chat, env = process.env) {
 export function programFor(home, chat, env = process.env) {
   const resolved = path.resolve(home);
   const binding = chatBinding(chat, env);
-  if (binding && path.resolve(binding.home) === resolved && isDir(path.join(resolved, "programs", binding.program))) {
-    return { program: binding.program, source: "bound" };
+  if (binding && canonicalHome(binding.home) === canonicalHome(resolved) && isDir(path.join(resolved, "programs", binding.program))) {
+    return { program: canonicalProgram(resolved, binding.program), source: "bound" };
   }
   const taken = takenOver(chat, env);
-  if (taken && path.resolve(taken.home) === resolved) return { program: null, current: taken.program, owners: [taken.takenBy] };
+  if (taken && canonicalHome(taken.home) === canonicalHome(resolved)) return { program: null, current: taken.program, owners: [taken.takenBy] };
   const current = currentProgram(resolved);
   if (!current) return { program: null, current: null };
   const owners = programHolders(resolved, current, chat, env);
   return owners.length === 0 ? { program: current, source: "current" } : { program: null, current, owners };
 }
 
-/** The slug `<home>/current` names when its program dir exists, else null. */
+/** The program `<home>/current` names, spelled as its dir is, when that dir exists, else null. */
 export function currentProgram(home) {
   const file = path.join(home, "current");
   const slug = existsSync(file) ? readFileSync(file, "utf8").trim() : "";
-  return slug && isDir(path.join(home, "programs", slug)) ? slug : null;
+  return slug && isDir(path.join(home, "programs", slug)) ? canonicalProgram(home, slug) : null;
 }
 
 /** The other chats holding `program` in `home`; throws `HELD ...` when there are any and `takeover` is not set. */
@@ -480,7 +531,7 @@ export function unboundLine(home, resolved, env = process.env) {
  */
 export function ambiguousHome(home, env = process.env) {
   const current = currentProgram(home);
-  const others = boundPrograms(home, env).filter((program) => program !== current);
+  const others = boundPrograms(home, env).filter((program) => canonicalProgram(home, program) !== current);
   if (others.length === 0) return null;
   return `AMBIGUOUS-HOME ${path.resolve(home)} runs several chats' programs (${[...(current ? [`${current} current`] : []), ...others].join(", ")}): pass the program dir (${path.join(path.resolve(home), "programs", "<slug>")}) instead of the home, or run this from the chat bound to the program`;
 }

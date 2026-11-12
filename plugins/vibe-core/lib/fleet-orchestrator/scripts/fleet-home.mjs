@@ -78,7 +78,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { bindChat, chatBinding, chatHome, commandChat, currentProgram, programChats, programFor, refuseHeld, unbindChat, unboundLine } from "./chat-binding.mjs";
+import { bindChat, canonicalHome, canonicalProgram, chatBinding, chatHome, commandChat, currentProgram, programChats, programFor, refuseHeld, unbindChat, unboundLine } from "./chat-binding.mjs";
 import { migrate } from "./fleet-migrate.mjs";
 import { skillFreshnessProblem } from "./skill-freshness.mjs";
 import { vibeScriptPath } from "../../../shared/vibe-install.mjs";
@@ -301,6 +301,7 @@ function pluginVersionLine(programDir) {
 export function startProgram(home, slug, shape, { env = process.env, chat = commandChat(env), takeover = false } = {}) {
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(slug)) throw new Error(`invalid program slug ${slug}`);
   requireShape(shape);
+  slug = canonicalProgram(home, slug);
   const current = currentProgram(home);
   const open = chat ? programFor(home, chat, env).program : current;
   if (open && open !== slug) {
@@ -319,7 +320,7 @@ export function startProgram(home, slug, shape, { env = process.env, chat = comm
 /** The program `chat` is bound to in `home` when its dir still exists, else null. */
 function boundProgram(home, chat, env) {
   const binding = chatBinding(chat, env);
-  return binding && path.resolve(binding.home) === path.resolve(home) && existsSync(path.join(home, "programs", binding.program)) ? binding.program : null;
+  return binding && canonicalHome(binding.home) === canonicalHome(home) && existsSync(path.join(home, "programs", binding.program)) ? canonicalProgram(home, binding.program) : null;
 }
 
 /** Unbinds `chat` from its program in `home` and clears `current` when it named that program; returns a line. */
@@ -337,6 +338,7 @@ export function closeProgram(home, { env = process.env, chat = commandChat(env) 
 /** Binds `chat` to `slug` in `home` for `resume <slug>`; returns the TAKEOVER and BOUND lines. Another chat's program needs `takeover`. */
 function resumeProgram(home, slug, chat, env, takeover) {
   if (!existsSync(path.join(home, "programs", slug))) throw new Error(`no program ${slug} in ${home}: start it with fleet-home.mjs start ${slug} --shape no-writer|one-writer|fleet`);
+  slug = canonicalProgram(home, slug);
   const taken = chat ? bindChat(chat, home, slug, env, { takeover }) : [];
   if (!currentProgram(home)) writeFileSync(path.join(home, "current"), `${slug}\n`);
   if (!chat) return [`NO-CHAT: this command runs outside Claude Code and Codex, so no chat is bound; ${slug} resolves only as current or through its program dir`];

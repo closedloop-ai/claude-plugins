@@ -9,9 +9,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { writeRemoteCodexStub } from '../../../../vibe/skills/fleet-orchestrator/scripts/fleet-test-support.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
-import { bindChat, chatBinding, programChats, reclaimStaleLock, releaseLeftoverClaims, unbindChat } from './chat-binding.mjs';
+import { ambiguousHome, bindChat, captureBinding, chatBinding, programChats, programFor, reclaimStaleLock, releaseLeftoverClaims, restoreBinding, unbindChat } from './chat-binding.mjs';
+import { closeProgram, startProgram } from './fleet-home.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+// Whether the temp volume ignores case (macOS by default; Linux CI does not), for the cases that need it.
+const CASE_INSENSITIVE_TMP = (() => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-home-case-'));
+  writeFileSync(path.join(dir, 'a'), '');
+  const insensitive = existsSync(path.join(dir, 'A'));
+  rmSync(dir, { recursive: true, force: true });
+  return insensitive;
+})();
 const PLUGIN_ROOT = vibeRoot();
 // fleet.sh and board.mjs stay in vibe; these cases run them against this module.
 const VIBE_FLEET_SCRIPTS = path.join(PLUGIN_ROOT, 'skills', 'fleet-orchestrator', 'scripts');
@@ -822,25 +831,29 @@ test('a migrate rolled back after its bind committed restores the chat to the pr
   assert.equal(existsSync(path.join(home, 'programs', 'iss-1')), false);
 });
 
-test('only the holder of the reclaim guard removes a stale lock, and only the lock it read', (t) => {
+const tombstoneFor = (lock, seen) => `${lock}.reclaim.${createHash('sha256').update(seen).digest('hex').slice(0, 32)}`;
+const reclaimFiles = (lock) => readdirSync(path.dirname(lock)).filter((name) => name.startsWith(`${path.basename(lock)}.reclaim.`));
+
+test('only the holder of the tombstone for a stale lock removes it, and only the lock it read', (t) => {
   const root = tempRoot(t);
   const lock = path.join(root, 'p.json.lock');
   const stale = '2147483646 dead-owner\n';
+  assert.equal(reclaimStaleLock(lock, ''), false, 'a lock that is gone is not reclaimed as an empty one');
   writeFileSync(lock, stale);
-  writeFileSync(`${lock}.reclaim`, `${process.pid} another-reclaimer\n`);
-  reclaimStaleLock(lock, stale);
-  assert.equal(readFileSync(lock, 'utf8'), stale, 'while another process holds the guard, this one removes nothing');
-  rmSync(`${lock}.reclaim`);
+  writeFileSync(tombstoneFor(lock, stale), `${process.pid} another-reclaimer\n`);
+  assert.equal(reclaimStaleLock(lock, stale), false);
+  assert.equal(readFileSync(lock, 'utf8'), stale, 'while a live process holds the tombstone, this one removes nothing');
+  rmSync(tombstoneFor(lock, stale));
   writeFileSync(lock, `${process.pid} live-owner\n`);
-  reclaimStaleLock(lock, stale);
+  assert.equal(reclaimStaleLock(lock, stale), false);
   assert.equal(readFileSync(lock, 'utf8'), `${process.pid} live-owner\n`, 'a lock replaced since it was read is left alone');
   writeFileSync(lock, stale);
-  reclaimStaleLock(lock, stale);
+  assert.equal(reclaimStaleLock(lock, stale), true);
   assert.equal(existsSync(lock), false, 'the stale lock it read is removed');
-  assert.equal(existsSync(`${lock}.reclaim`), false, 'and the guard is released');
+  assert.deepEqual(reclaimFiles(lock), [], 'and its tombstone with it');
 });
 
-test('a reclaim guard left by a reclaimer that died holds the lock BUSY until it is 30 seconds old, then the lock is reclaimed', (t) => {
+test("a paused live reclaimer's tombstone is never cleared, however old: the lock stays BUSY", (t) => {
   const root = tempRoot(t);
   const home = path.join(root, 'fleet');
   mkdirSync(path.join(home, 'programs'), { recursive: true });
@@ -848,33 +861,122 @@ test('a reclaim guard left by a reclaimer that died holds the lock BUSY until it
   const claims = path.join(env.HOME, '.vibe-hook-scope', 'fleet-binding', 'claims');
   mkdirSync(claims, { recursive: true });
   const key = createHash('sha256').update(path.resolve(home)).digest('hex').slice(0, 16);
-  const lock = path.join(claims, `${key}.guarded.json.lock`);
-  writeFileSync(lock, '2147483646 dead-owner\n');
-  writeFileSync(`${lock}.reclaim`, '2147483645 dead-reclaimer\n');
-  assert.throws(() => bindChat('chat-after-crash', home, 'guarded', env), /^Error: BUSY guarded: /, 'a fresh guard is honored even though its owner died');
-  assert.equal(existsSync(lock), true);
-  const old = new Date(Date.now() - 31_000);
-  utimesSync(`${lock}.reclaim`, old, old);
-  assert.deepEqual(bindChat('chat-after-crash', home, 'guarded', env), [], 'an abandoned guard older than 30 s is cleared and the stale lock reclaimed');
-  assert.equal(chatBinding('chat-after-crash', env).program, 'guarded');
-  assert.equal(existsSync(`${lock}.reclaim`), false);
-});
-
-test('reclaim treats a missing lock as nothing to remove, and clears an abandoned guard only once', (t) => {
-  const root = tempRoot(t);
-  const lock = path.join(root, 'q.json.lock');
-  assert.equal(reclaimStaleLock(lock, ''), false, 'a lock that is gone is not reclaimed as an empty one');
+  const lock = path.join(claims, `${key}.paused.json.lock`);
   const stale = '2147483646 dead-owner\n';
   writeFileSync(lock, stale);
-  writeFileSync(`${lock}.reclaim`, '2147483645 dead-reclaimer\n');
-  const old = new Date(Date.now() - 31_000);
-  utimesSync(`${lock}.reclaim`, old, old);
-  assert.equal(reclaimStaleLock(lock, stale), true, 'the abandoned guard is cleared');
-  assert.equal(existsSync(`${lock}.reclaim`), false);
-  assert.equal(readFileSync(lock, 'utf8'), stale, 'clearing the guard removes no lock');
-  assert.equal(reclaimStaleLock(lock, stale), true, 'the next reclaim takes the guard and removes the stale lock');
-  assert.equal(existsSync(lock), false);
+  const tomb = tombstoneFor(lock, stale);
+  writeFileSync(tomb, `${process.pid} paused-reclaimer\n`);
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  utimesSync(tomb, old, old);
+  assert.throws(() => bindChat('chat-impatient', home, 'paused', env), /^Error: BUSY paused: /);
+  assert.equal(readFileSync(tomb, 'utf8'), `${process.pid} paused-reclaimer\n`, 'the live holder keeps its tombstone');
+  assert.equal(readFileSync(lock, 'utf8'), stale, 'and nobody else removes the lock it is reclaiming');
 });
+
+test("a dead reclaimer's tombstone passes to exactly one next reclaimer", (t) => {
+  const root = tempRoot(t);
+  const lock = path.join(root, 'r.json.lock');
+  const stale = '2147483646 dead-owner\n';
+  writeFileSync(lock, stale);
+  writeFileSync(tombstoneFor(lock, stale), '2147483645 dead-reclaimer\n');
+  const others = [];
+  const removed = reclaimStaleLock(lock, stale, { beforeRemove: () => {
+    // Two more takers arrive while the first holds the next tombstone, the interleaving that let two in before.
+    others.push(reclaimStaleLock(lock, stale), reclaimStaleLock(lock, stale));
+  } });
+  assert.equal(removed, true, 'one reclaimer moves on from the dead holder and removes the lock');
+  assert.deepEqual(others, [false, false], 'the others remove nothing while it holds the next tombstone');
+  assert.equal(existsSync(lock), false);
+  assert.deepEqual(reclaimFiles(lock), [], "with the token lock gone for good, its own tombstone and the dead holder's are removed");
+});
+
+test("takers meeting a dead owner's lock and a dead reclaimer's tombstone at once: exactly one wins", async (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs'), { recursive: true });
+  const userHome = path.join(root, 'user');
+  const claims = path.join(userHome, '.vibe-hook-scope', 'fleet-binding', 'claims');
+  mkdirSync(claims, { recursive: true });
+  const key = createHash('sha256').update(path.resolve(home)).digest('hex').slice(0, 16);
+  const claimer = `import { bindChat } from ${JSON.stringify(pathToFileURL(path.join(HERE, 'chat-binding.mjs')).href)};
+const [chat, home, program, at] = process.argv.slice(1);
+while (Date.now() < Number(at)) {}
+try { bindChat(chat, home, program, { HOME: process.env.HOME }); console.log('WON'); }
+catch (error) { console.log(String(error.message).startsWith('HELD ') ? 'HELD' : 'ERROR ' + error.message); }`;
+  const claim = (chat, program, at) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', claimer, chat, home, program, String(at)], { env: { PATH: process.env.PATH, HOME: userHome } });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', reject);
+    child.on('close', () => resolve(out.trim()));
+  });
+  for (let round = 0; round < 5; round += 1) {
+    const program = `abandoned-${round}`;
+    const lock = path.join(claims, `${key}.${program}.json.lock`);
+    const stale = `2147483646 dead-owner-${round}\n`;
+    writeFileSync(lock, stale);
+    writeFileSync(tombstoneFor(lock, stale), '2147483645 dead-reclaimer\n');
+    const at = Date.now() + 600;
+    const results = await Promise.all(Array.from({ length: 6 }, (_, n) => claim(`abandoned-${round}-${n}`, program, at)));
+    assert.equal(results.filter((result) => result === 'WON').length, 1, `round ${round}: ${results.join(', ')}`);
+    assert.equal(results.filter((result) => result === 'HELD').length, 5, `round ${round}: ${results.join(', ')}`);
+  }
+});
+
+test('a migrate undo that races another chat claiming its previous program leaves that program with one holder', async (t) => {
+  const { migrate } = await import('./fleet-migrate.mjs');
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'prog-old'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-undo', home, 'prog-old', env);
+  const flat = path.join(root, 'orch');
+  mkdirSync(flat);
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  const raced = (...args) => {
+    bindChat(...args);
+    bindChat('chat-other', home, 'prog-old', env);
+    throw new Error('injected after another chat claimed prog-old');
+  };
+  assert.throws(() => migrate(flat, home, 'iss-1', { reusable: [], skip: ['programs', 'current'], programDirs: ['sessions'], chat: 'chat-undo', env, ops: { bind: raced } }), /^Error: ROLLED-BACK/);
+  assert.deepEqual(programChats(home, 'prog-old', env), ['chat-other']);
+  assert.equal(chatBinding('chat-undo', env), null, 'the undone chat gets no program rather than a second claim on prog-old');
+  assert.deepEqual(programChats(home, 'iss-1', env), []);
+});
+
+test('a migrate undo that races a takeover of the migrated program leaves it with the chat that took it', async (t) => {
+  const { migrate } = await import('./fleet-migrate.mjs');
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'prog-old'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-undo', home, 'prog-old', env);
+  const flat = path.join(root, 'orch');
+  mkdirSync(flat);
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  let tookOver;
+  const raced = (chat, at, program, bindEnv, options) => {
+    bindChat(chat, at, program, bindEnv, options);
+    mkdirSync(path.join(home, 'programs', program), { recursive: true });
+    tookOver = bindChat('chat-taker', home, program, env, { takeover: true });
+    throw new Error('injected after a takeover');
+  };
+  assert.throws(() => migrate(flat, home, 'iss-1', { reusable: [], skip: ['programs', 'current'], programDirs: ['sessions'], chat: 'chat-undo', env, ops: { bind: raced } }), /^Error: ROLLED-BACK/);
+  assert.deepEqual(tookOver, ['chat-undo']);
+  assert.equal(chatBinding('chat-taker', env).program, 'iss-1');
+  assert.equal(readBindingFileForTest(env, home, 'iss-1')?.chat, 'chat-taker', "the undo leaves the taker's claim");
+  assert.equal(chatBinding('chat-undo', env).program, 'prog-old', 'the undone chat gets its own previous program back');
+  assert.deepEqual(programChats(home, 'prog-old', env), ['chat-undo']);
+});
+
+const readBindingFileForTest = (env, home, program) => {
+  const key = createHash('sha256').update(path.resolve(home)).digest('hex').slice(0, 16);
+  try {
+    return JSON.parse(readFileSync(path.join(env.HOME, '.vibe-hook-scope', 'fleet-binding', 'claims', `${key}.${program}.json`), 'utf8'));
+  } catch {
+    return null;
+  }
+};
 
 test('a claim whose chat is bound to nothing holds nothing', (t) => {
   const root = tempRoot(t);
@@ -898,4 +1000,280 @@ test("releasing a chat's leftover claims never releases the program it is bound 
   releaseLeftoverClaims('chat-moved', env, null);
   assert.deepEqual(programChats(home, 'q', env), ['chat-moved'], 'a chat taken over elsewhere that has since bound q keeps q');
   assert.throws(() => bindChat('chat-third', home, 'q', env), /^Error: HELD q /);
+});
+
+test('a rollback after takeovers leaves the program with nobody rather than give it to a chat that lost it', async (t) => {
+  const { migrate } = await import('./fleet-migrate.mjs');
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'prog-old'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-undo', home, 'prog-old', env);
+  bindChat('chat-first', home, 'iss-1', env);
+  const flat = path.join(root, 'orch');
+  mkdirSync(flat);
+  writeFileSync(path.join(flat, 'resume-log.md'), 'log\n');
+  const raced = (chat, at, program, bindEnv) => {
+    bindChat('chat-second', home, program, env, { takeover: true });
+    bindChat(chat, at, program, bindEnv, { takeover: true });
+    throw new Error('injected after two takeovers');
+  };
+  assert.throws(() => migrate(flat, home, 'iss-1', { reusable: [], skip: ['programs', 'current'], programDirs: ['sessions'], chat: 'chat-undo', takeover: true, env, ops: { bind: raced } }), /^Error: ROLLED-BACK/);
+  assert.equal(readBindingFileForTest(env, home, 'iss-1'), null, 'nobody holds iss-1');
+  assert.equal(chatBinding('chat-second', env), null, 'the chat this bind took over stays taken over');
+  assert.equal(chatBinding('chat-first', env), null);
+  assert.equal(chatBinding('chat-undo', env).program, 'prog-old');
+  assert.deepEqual(bindChat('chat-second', home, 'iss-1', env), [], 'and can take the program back with no takeover');
+});
+
+test("a bind that fails between its claim and its binding leaves the earlier holder's claim in place", (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-holder-v', home, 'p', env);
+  const before = captureBinding('chat-failing', home, 'p', env);
+  const bindings = path.join(env.HOME, '.vibe-hook-scope', 'fleet-binding');
+  chmodSync(bindings, 0o500);
+  let restored = false;
+  const restore = () => {
+    if (!restored) chmodSync(bindings, 0o700);
+    restored = true;
+  };
+  t.after(restore);
+  assert.throws(() => bindChat('chat-failing', home, 'p', env, { takeover: true }), /EACCES/, 'the claim is written, then the binding write fails');
+  restore();
+  restoreBinding(before, env);
+  assert.deepEqual(programChats(home, 'p', env), ['chat-holder-v'], 'the chat still bound to p keeps its claim');
+  assert.throws(() => bindChat('chat-third', home, 'p', env), /^Error: HELD p /);
+});
+
+test("a rollback never restores a previous program whose captured claim was another chat's", (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'q'), { recursive: true });
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-c', home, 'q', env);
+  const capturedBinding = readFileSync(path.join(env.HOME, '.vibe-hook-scope', 'fleet-binding', 'chat-c.json'), 'utf8');
+  bindChat('chat-z', home, 'q', env, { takeover: true });
+  const key = createHash('sha256').update(path.resolve(home)).digest('hex').slice(0, 16);
+  const zClaim = readFileSync(path.join(env.HOME, '.vibe-hook-scope', 'fleet-binding', 'claims', `${key}.q.json`), 'utf8');
+  // The takeover lands inside captureBinding: it read chat-c's binding on q, then z's claim on q.
+  const snapshot = { chat: 'chat-c', home: path.resolve(home), program: 'p', binding: capturedBinding, taken: null, claim: null,
+    previous: { home: path.resolve(home), program: 'q', claim: zClaim } };
+  bindChat('chat-c', home, 'p', env);
+  unbindChat('chat-z', env);
+  restoreBinding(snapshot, env);
+  assert.equal(chatBinding('chat-c', env), null, 'chat-c gets no program rather than q on a claim that was never its own');
+  assert.deepEqual(bindChat('chat-w', home, 'q', env), []);
+  assert.deepEqual(programChats(home, 'q', env), ['chat-w']);
+});
+
+test('an old takeover note never makes a rollback hand the program back', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  for (const program of ['p', 'r']) mkdirSync(path.join(home, 'programs', program), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-v', home, 'p', env);
+  bindChat('chat-c', home, 'p', env, { takeover: true });
+  bindChat('chat-c', home, 'r', env);
+  const before = captureBinding('chat-c', home, 'p', env);
+  bindChat('chat-c', home, 'p', env);
+  restoreBinding(before, env);
+  assert.equal(chatBinding('chat-v', env), null, 'the chat taken over long ago is not handed p');
+  assert.deepEqual(programChats(home, 'p', env), []);
+  assert.equal(chatBinding('chat-c', env).program, 'r', 'the undone chat is back on r');
+});
+
+test('undoing a bind to the program the chat already held leaves it held', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-same', home, 'p', env);
+  const before = captureBinding('chat-same', home, 'p', env);
+  bindChat('chat-same', home, 'p', env);
+  restoreBinding(before, env);
+  assert.equal(chatBinding('chat-same', env)?.program, 'p');
+  assert.deepEqual(programChats(home, 'p', env), ['chat-same']);
+});
+
+test('a tombstone cut short to nothing is passed like a dead one', (t) => {
+  const root = tempRoot(t);
+  const lock = path.join(root, 'e.json.lock');
+  const stale = '2147483646 dead-owner\n';
+  writeFileSync(lock, stale);
+  writeFileSync(tombstoneFor(lock, stale), '');
+  assert.equal(reclaimStaleLock(lock, stale), true, 'an empty tombstone does not keep the lock BUSY forever');
+  assert.equal(existsSync(lock), false);
+});
+
+test("an unreadable lock's chain keeps the dead holders' tombstones, so takers of a repeated empty lock pass the same links", (t) => {
+  const root = tempRoot(t);
+  const lock = path.join(root, 'u.json.lock');
+  writeFileSync(lock, '');
+  writeFileSync(tombstoneFor(lock, ''), '2147483645 dead-reclaimer\n');
+  assert.equal(reclaimStaleLock(lock, ''), true);
+  assert.deepEqual(reclaimFiles(lock), [path.basename(tombstoneFor(lock, ''))], "the dead holder's tombstone stays; only the reclaimer's own goes");
+});
+
+// Write-order cases: a write that fails partway stands in for a process killed between two writes.
+const lockedBindings = (t, env) => {
+  const bindings = path.join(env.HOME, '.vibe-hook-scope', 'fleet-binding');
+  let open = true;
+  const unlock = () => {
+    if (!open) chmodSync(bindings, 0o700);
+    open = true;
+  };
+  t.after(unlock);
+  return { lock: () => { chmodSync(bindings, 0o500); open = false; }, unlock };
+};
+
+test("a takeover cut short before it removes the old holder's binding hands the claim to nobody else", (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-e', home, 'p', env);
+  const files = lockedBindings(t, env);
+  files.lock();
+  assert.throws(() => bindChat('chat-a', home, 'p', env, { takeover: true }), /EACCES/);
+  files.unlock();
+  assert.throws(() => bindChat('chat-y', home, 'p', env), /^Error: HELD p /, 'the old holder still holds p; no third chat binds it');
+});
+
+test("an unbind cut short leaves a stale claim, never a binding with no claim", (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-e', home, 'p', env);
+  const files = lockedBindings(t, env);
+  files.lock();
+  assert.throws(() => unbindChat('chat-e', env), /EACCES/);
+  files.unlock();
+  assert.throws(() => bindChat('chat-y', home, 'p', env), /^Error: HELD p /, 'chat-e is still bound to p and still holds it');
+});
+
+test('a rollback cut short leaves a stale claim, never a binding with no claim', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  const before = captureBinding('chat-a', home, 'p', env);
+  bindChat('chat-a', home, 'p', env);
+  const files = lockedBindings(t, env);
+  files.lock();
+  assert.throws(() => restoreBinding(before, env), /EACCES/);
+  files.unlock();
+  assert.throws(() => bindChat('chat-y', home, 'p', env), /^Error: HELD p /, 'chat-a is still bound to p and still holds it');
+});
+
+test('two spellings of one program, P and p, share one claim', { skip: !CASE_INSENSITIVE_TMP && 'needs a case-insensitive volume' }, (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'P'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-e', home, 'P', env);
+  assert.throws(() => bindChat('chat-y', home, 'p', env), /^Error: HELD P /);
+});
+
+test('two spellings of one home, a path and a symlink to it, share one claim', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  symlinkSync(home, path.join(root, 'fleet-alias'));
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-e', home, 'p', env);
+  assert.throws(() => bindChat('chat-y', path.join(root, 'fleet-alias'), 'p', env), /^Error: HELD p /);
+});
+
+test('two case spellings of one home share one claim', { skip: !CASE_INSENSITIVE_TMP && 'needs a case-insensitive volume' }, (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-e', home, 'p', env);
+  assert.throws(() => bindChat('chat-y', path.join(root, 'FLEET'), 'p', env), /^Error: HELD p /);
+});
+
+test('a takeover of a program whose dir was renamed from P to p after its bind leaves the old chat with nothing', { skip: !CASE_INSENSITIVE_TMP && 'needs a case-insensitive volume' }, (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'P'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  bindChat('chat-e', home, 'P', env);
+  renameSync(path.join(home, 'programs', 'P'), path.join(home, 'programs', 'p'));
+  assert.deepEqual(bindChat('chat-y', home, 'p', env, { takeover: true }), ['chat-e']);
+  assert.equal(chatBinding('chat-e', env), null);
+  assert.equal(programFor(home, 'chat-e', env).program, null);
+  assert.deepEqual(programFor(home, 'chat-y', env), { program: 'p', source: 'bound' });
+});
+
+test("a program started under another case spelling of its dir is current under the dir's name, and close clears it", { skip: !CASE_INSENSITIVE_TMP && 'needs a case-insensitive volume' }, (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const env = { HOME: path.join(root, 'user') };
+  startProgram(home, 'P', 'no-writer', { env, chat: 'chat-e' });
+  assert.equal(readFileSync(path.join(home, 'current'), 'utf8'), 'p\n');
+  assert.equal(chatBinding('chat-e', env).program, 'p');
+  assert.equal(ambiguousHome(home, env), null);
+  closeProgram(home, { env, chat: 'chat-e' });
+  assert.equal(existsSync(path.join(home, 'current')), false);
+  assert.deepEqual(programFor(home, 'chat-y', env), { program: null, current: null });
+  // A current file written in another spelling, as before this release, reads as the dir's name.
+  writeFileSync(path.join(home, 'current'), 'P\n');
+  bindChat('chat-e', home, 'p', env);
+  assert.equal(ambiguousHome(home, env), null);
+  closeProgram(home, { env, chat: 'chat-e' });
+  assert.equal(existsSync(path.join(home, 'current')), false);
+});
+
+test('close through a symlink to the home unbinds the chat bound through its real path', (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  const env = { HOME: path.join(root, 'user') };
+  startProgram(home, 'p', 'no-writer', { env, chat: 'chat-e' });
+  symlinkSync(home, path.join(root, 'fleet-alias'));
+  closeProgram(path.join(root, 'fleet-alias'), { env, chat: 'chat-e' });
+  assert.equal(chatBinding('chat-e', env), null);
+  assert.deepEqual(programChats(home, 'p', env), []);
+  assert.equal(existsSync(path.join(home, 'current')), false);
+});
+
+test('a close that waits on the lock while a takeover removes its binding finishes and leaves the taker holding', async (t) => {
+  const root = tempRoot(t);
+  const home = path.join(root, 'fleet');
+  mkdirSync(path.join(home, 'programs', 'p'), { recursive: true });
+  const userHome = path.join(root, 'user');
+  const env = { HOME: userHome };
+  bindChat('chat-e', home, 'p', env);
+  const bindings = path.join(userHome, '.vibe-hook-scope', 'fleet-binding');
+  const claims = path.join(bindings, 'claims');
+  const claim = path.join(claims, readdirSync(claims).find((name) => name.endsWith('.p.json')));
+  const lock = `${claim}.lock`;
+  writeFileSync(lock, `${process.pid} held-by-test\n`);
+  const closer = `import { unbindChat } from ${JSON.stringify(pathToFileURL(path.join(HERE, 'chat-binding.mjs')).href)};
+try { unbindChat('chat-e', { HOME: process.env.HOME }); console.log('OK'); } catch (error) { console.log('ERROR ' + error.message); }`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', closer], { env: { PATH: process.env.PATH, HOME: userHome } });
+  const done = new Promise((resolve, reject) => {
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', reject);
+    child.on('close', () => resolve(out.trim()));
+  });
+  // The closer has read its binding once its lock temp file exists.
+  const waiting = () => readdirSync(claims).some((name) => name.startsWith(`${path.basename(lock)}.`) && name.endsWith('.tmp'));
+  for (const deadline = Date.now() + 4000; !waiting() && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(waiting(), 'the closer is waiting on the lock');
+  // What a takeover by chat-y writes under the lock.
+  const record = JSON.stringify({ chat: 'chat-y', home, program: 'p', boundAt: new Date().toISOString() });
+  rmSync(path.join(bindings, 'chat-e.json'));
+  writeFileSync(claim, record);
+  writeFileSync(path.join(bindings, 'chat-y.json'), record);
+  rmSync(lock);
+  assert.equal(await done, 'OK');
+  assert.deepEqual(programChats(home, 'p', env), ['chat-y']);
 });
