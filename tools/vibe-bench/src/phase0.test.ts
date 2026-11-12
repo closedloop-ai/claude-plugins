@@ -1,3 +1,4 @@
+import "./no-model-overrides.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -155,7 +156,7 @@ test("agent model inventory preserves the adversarial reviewer's Opus choice", (
     mkdirSync(join(pluginDir, "agents"));
     writeFileSync(join(pluginDir, "agents/vibe-change-worker.md"), "---\nname: vibe-change-worker\nmodel: opus\n---\n");
     writeFileSync(join(pluginDir, "agents/vibe-adversarial-reviewer.md"), "---\nname: vibe-adversarial-reviewer\nmodel: opus\n---\n");
-    const models = agentModels(pluginDir, { env: {}, home: pluginDir });
+    const models = agentModels(pluginDir);
     assert.equal(models["vibe-change-worker"], "opus");
     assert.equal(models["vibe-adversarial-reviewer"], "opus");
     // A model the person chose for the writer is what the launcher runs, so it is what the run records (ISS-14109).
