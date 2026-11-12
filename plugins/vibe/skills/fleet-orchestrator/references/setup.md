@@ -53,7 +53,10 @@ ticket, not a fleet they run) or the program is `one-writer` or `no-writer`:
 the defaults already fit one writer, so the answers would change nothing.
 Write every default below and report
 them in one plain line, such as "I set this up with the defaults: this
-machine, Claude writers, no outside product for UX precedent." Ask about
+machine, Claude writers, no outside product for UX precedent." Always
+offer the launcher in that line ("Want me to install fleet-claude, which
+starts orchestrator chats with their compaction window?") and install it
+only on a yes; never install it silently. Ask about
 machines only when the operator already named another machine, never about
 writers, models, effort, budget or the move threshold.
 
@@ -63,6 +66,7 @@ writers, models, effort, budget or the move threshold.
 | Writers: Claude only, Codex only, or both? | Claude only | `WRITERS` |
 | Codex (when chosen): which machine's account has budget, at what usage band to move work, and which thread model and effort? | this machine; move at 80 | `CODEX_MACHINES`, `MOVE_AT_PERCENT`, `CODEX_MODEL`, `CODEX_EFFORT` |
 | Which product does the team follow for UX precedent? | none; repo siblings only | `UX_PRECEDENT` |
+| Install `fleet-claude` to start orchestrator chats, so each compacts at the window in `context-guard.json` without anyone setting `CLAUDE_CODE_AUTO_COMPACT_WINDOW`? | not installed until the operator says yes | on yes, runs `fleet-home.mjs launcher --install` (writes `~/.local/bin/fleet-claude`; `--bin <dir>` for another directory) |
 
 Then set the slot counts from this machine's core count, write the file, and run steps 3 and 5 of the checklist below plus a check that this plugin is installed on each machine. Report each check as passed or failed.
 

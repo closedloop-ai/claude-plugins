@@ -8,11 +8,13 @@ import { fileURLToPath } from "node:url";
 import { compactionInstructions, contextGuard, latestContextTokens } from "./context-guard.mjs";
 import { recordHookSkill } from "./hook-session-scope.mjs";
 import { POST_TOOL_USE_GUARDS } from "./post-tool-use.mjs";
+import { vibeRoot } from "../shared/vibe-install.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const POST_TOOL_USE = path.join(HERE, "post-tool-use.mjs");
 const PRE_COMPACT = path.join(HERE, "pre-compact.mjs");
 const WINDOW_VARIABLE = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+const FLEET_HOME_CLI = path.join(vibeRoot(), "skills", "fleet-orchestrator", "scripts", "fleet-home.mjs");
 const ORCHESTRATOR_LOAD = JSON.stringify({ type: "user", isMeta: true, message: { content: [{ type: "text", text: "Base directory for this skill: /plugins/vibe/skills/fleet-orchestrator\n\n# fleet-orchestrator" }] } });
 const ORCHESTRATOR_SKILL_CALL = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Skill", input: { skill: "vibe:fleet-orchestrator" } }] } });
 const WRITER_LOAD = JSON.stringify({ type: "user", isMeta: true, message: { content: "Base directory for this skill: /plugins/vibe/skills/vibe\n\n# Vibe" } });
@@ -52,7 +54,7 @@ test("launched without the window variable, the operator is told once how to rel
   const { env, event, request, fleetHome } = fixture(t);
   request(50_000);
   const first = contextGuard(event, env);
-  assert.equal(first.systemMessage, `This fleet-orchestrator chat has no usable ${WINDOW_VARIABLE}, so it compacts where Claude Code's own settings put it. To compact at 300k (set in ${path.join(fleetHome, "context-guard.json")}), relaunch it with: ${WINDOW_VARIABLE}=300000 claude --resume s-1`);
+  assert.equal(first.systemMessage, `This fleet-orchestrator chat has no usable ${WINDOW_VARIABLE}, so it compacts where Claude Code's own settings put it. To compact at 300k (set in ${path.join(fleetHome, "context-guard.json")}), relaunch it with fleet-claude, which sets ${WINDOW_VARIABLE}=300000 from that file: fleet-claude --resume s-1 (install fleet-claude once with: node ${FLEET_HOME_CLI} launcher --install)`);
   assert.equal(first.context, undefined, "below the flush point there is nothing to flush");
   request(60_000);
   assert.equal(contextGuard(event, env), null, "the notice is not repeated");
@@ -116,7 +118,7 @@ test("with no active program there are no state files, so neither hook names the
 test("the limits come from the editable file on every call, with no restart", (t) => {
   const { env, event, request, fleetHome } = fixture(t, { config: { compactWindowTokens: 500_000 } });
   request(300_000);
-  assert.match(contextGuard(event, env).systemMessage, /To compact at 500k .* relaunch it with: CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000 claude --resume s-1$/);
+  assert.match(contextGuard(event, env).systemMessage, /To compact at 500k .* relaunch it with fleet-claude, which sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000 from that file: fleet-claude --resume s-1 /);
   writeFileSync(path.join(fleetHome, "context-guard.json"), JSON.stringify({ compactWindowTokens: 300_000, flushAtPercent: 90 }));
   assert.match(contextGuard(event, env).context, /this repeats every 30k of growth/, "300k is past 90% of the edited 300k window, and the step is the edited 10%");
   writeFileSync(path.join(fleetHome, "context-guard.json"), JSON.stringify({ enabled: false }));
@@ -216,7 +218,7 @@ test("both hook scripts exit 0 with no output on malformed input or config, and 
   const result = runScript(POST_TOOL_USE, JSON.stringify(event), env);
   assert.equal(result.status, 0, result.stderr);
   const output = JSON.parse(result.stdout);
-  assert.match(output.systemMessage, /relaunch it with: CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 claude --resume s-1$/);
+  assert.match(output.systemMessage, /relaunch it with fleet-claude, which sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 from that file: fleet-claude --resume s-1 /);
   assert.equal(output.hookSpecificOutput.hookEventName, "PostToolUse");
   assert.match(output.hookSpecificOutput.additionalContext, /CONTEXT GUARD \(flush\)/);
 });

@@ -12460,7 +12460,7 @@ function bindTakeoverWriter(worktree, binding) {
 // ../../plugins/vibe/shared/vibe-core.mjs
 import path2 from "node:path";
 import { pathToFileURL as pathToFileURL3 } from "node:url";
-var VIBE_CORE_MIN = "1.0.5";
+var VIBE_CORE_MIN = "1.0.7";
 var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
 var cachedRoot = null;
 function vibeCoreRoot() {

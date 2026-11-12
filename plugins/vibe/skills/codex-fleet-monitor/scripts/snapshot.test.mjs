@@ -126,6 +126,8 @@ test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, ()
   assert.deepEqual(entries, [
     'plugins/vibe-core/.claude-plugin/plugin.json', 'plugins/vibe-core/.codex-plugin/plugin.json',
     'plugins/vibe-core/lib/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe-core/lib/codex-fleet-monitor/scripts/work-dir.mjs',
+    // work-dir.mjs resolves a chat's bound program (ISS-14028).
+    'plugins/vibe-core/lib/fleet-orchestrator/scripts/chat-binding.mjs', 'plugins/vibe-core/lib/vibe/scripts/harness-identity.mjs',
     'plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.mjs', 'plugins/vibe-core/lib/vibe/scripts/session-record.mjs',
     'plugins/vibe/.claude-plugin/plugin.json', 'plugins/vibe/.codex-plugin/plugin.json',
     'plugins/vibe/shared/plugin-roots.mjs', 'plugins/vibe/shared/vibe-core.mjs',
