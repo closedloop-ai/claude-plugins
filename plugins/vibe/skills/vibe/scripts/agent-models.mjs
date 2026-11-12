@@ -1,6 +1,6 @@
 // Each vibe agent's role, and the models a person chose in place of the
-// defaults. Every vibe agent's model is a default (ISS-14109; Daniel's
-// 2026-11-12 rulings, "opus should be the default for code writing, sonnet for
+// defaults. Every vibe agent's model is a default (ISS-14109; operator
+// rulings of 2026-11-12, "opus should be the default for code writing, sonnet for
 // exploration", "the user can override the model to whatever they want" and
 // "the models should be defaults, not mandatory"). Claude Code takes the
 // default from the agent file's `model:` frontmatter, Codex from the role
