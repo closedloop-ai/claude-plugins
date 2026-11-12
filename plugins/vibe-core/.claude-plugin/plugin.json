@@ -1,6 +1,6 @@
 {
   "name": "vibe-core",
   "description": "The hooks behind vibe sessions and the modules they run, released apart from vibe so its hook approval lasts",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"}
 }

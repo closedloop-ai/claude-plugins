@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.85
+
+#### Changed
+- Every vibe agent's model is now a default the person can override, and the agents that write product code default to Opus in Claude Code (ISS-14109; Daniel's 2026-11-12 rulings, "opus should be the default for code writing, sonnet for exploration", "the user can override the model to whatever they want" and "the models should be defaults, not mandatory like we have them"). `agents/vibe-change-worker.md` (the session's sole implementation writer) and `agents/vibe-seed-fix-worker.md` (edits the seed producers and coverage files) move from `model: sonnet` to `model: opus`. No other agent's default changes; explorers stay on Sonnet.
+- `VIBE_AGENT_ROLES` gains an `operational` role for the five workers that run setup, records, environments and publication and never write product code (`vibe-environment-worker`, `vibe-prototype-worker`, `vibe-seed-pr-worker`, `vibe-setup-worker`, `vibe-ticket-worker`), which were listed as writers. `writer` now means code writing only. On Codex `operational` has the writer's binding (`gpt-6-sol`, `high`), so no Codex default changes.
+- The Claude launcher (`claude-worker.mjs`) no longer fixes a role to its definition's model. It starts each worker on, in order: the launch input's new `model` (any role), the person's override for that agent, their override for its role, then the agent file's `model:`. `reviewModel` is still accepted as the earlier name of `model`, now for any role and any model, so `REVIEW_MODEL_REFUSED` is gone. The model reaches both `claude --model` and the definition passed to `--agents`. A review receipt still records the model its trace shows, so it stays right under an override.
+- `worker-model.mjs codex <name>` applies the same overrides to the Codex spawn binding; the reasoning effort is unchanged.
+- The vibe-bench writer pin (`tools/vibe-bench/src/agent-models.ts`) expects `opus` for `vibe-change-worker`; the nightly benchmark starts a new lineage because the declared writer model changed. Its per-agent model record now names the model the launcher resolves (a chosen model, else the declared default), so a run on a machine with overrides is checked against what really ran.
+
+#### Added
+- `skills/vibe/scripts/agent-models.mjs` holds each agent's role and reads one overrides file per machine, `~/.codex/vibe/models.json` (`VIBE_MODELS_FILE` names another file): `{"claude": {"roles": {"writer": "<model>"}, "agents": {"vibe-verify-worker": "<model>"}}, "codex": {...}}`. Any model name is accepted; there is no list. An absent file or key keeps the default. A file that cannot be parsed, or whose `roles` or `agents` name something that is not a vibe role or agent or hold something other than a model name, refuses the launch (`MODEL_OVERRIDES_INVALID`, "Model overrides in <file> could not be read: <reason>") instead of dropping the person's choice.
+- `worker-model.mjs set <claude|codex> <role or agent name> <model>` and `unset <claude|codex> <role or agent name>` write that file; `worker-model.mjs claude <name>` prints the model the launcher would start an agent on.
+- The vibe-workers bundles are rebuilt, the vitest config points `VIBE_MODELS_FILE` at a path that never exists so no test reads this machine's overrides, and the README version line and the Python and vibe-bench release-pin tests move to 1.1.85.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 69 words longer than in 1.1.84 (origin/main at this update, 7c341191).
+
+### vibe-core v1.0.8
+
+#### Changed
+- The comment on `FABLE_REVIEW_MODELS` (`lib/vibe/scripts/review-models.mjs`) no longer says the Claude launcher accepts only those models as a `reviewModel` (ISS-14109). The cloud import's independent-review gate (ISS-14039) still reads the list and is unchanged.
+
 ### vibe-core v1.0.7
 
 #### Added

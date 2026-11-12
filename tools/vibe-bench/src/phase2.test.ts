@@ -242,7 +242,7 @@ test("accepted-nightly plugin snapshot archives exact Git objects and tolerates 
     writeFileSync(join(repo, "plugins/closedloop-core/.claude-plugin/plugin.json"),
       JSON.stringify({ name: "closedloop-core", version: "1.0" }));
     writeFileSync(join(repo, "plugins/vibe/agents/vibe-change-worker.md"),
-      "---\nname: vibe-change-worker\nmodel: sonnet\n---\n");
+      "---\nname: vibe-change-worker\nmodel: opus\n---\n");
     writeFileSync(join(repo, "plugins/vibe/agents/vibe-adversarial-reviewer.md"),
       "---\nname: vibe-adversarial-reviewer\nmodel: opus\n---\n");
     execFileSync("git", ["init", "-b", "main", repo], { stdio: "ignore" });

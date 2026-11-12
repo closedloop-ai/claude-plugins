@@ -1,7 +1,7 @@
 ---
 name: vibe-seed-fix-worker
 description: Fixes the repository's vibe seed for the vibe-seed-refresh orchestrator. Creates the fix worktree from fresh main, seeds every drifted model through the product's own producers, flips coverage files, and runs every check until they pass; in follow-up mode fixes failing PR checks, merge-queue removals, and human review comments on the seed PR. Returns a short status.
-model: sonnet
+model: opus
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 

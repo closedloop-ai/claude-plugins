@@ -1,8 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ModelRuntime, resolveWorkerModel, VIBE_AGENT_ROLES,
+  type ModelOverrideOptions } from "../../../plugins/vibe/skills/vibe/scripts/agent-models.mjs";
 
-/** Record every canonical vibe agent's declared model, including Opus roles. */
-export function agentModels(pluginDir: string): Record<string, string> {
+/**
+ * Record the model the Claude launcher starts every canonical vibe agent on: the model this machine's person chose
+ * for it, else its declared default (ISS-14109). The run's calls are checked against this record, so it must name
+ * what the launcher resolves, not only what the agent file declares.
+ */
+export function agentModels(pluginDir: string, options?: ModelOverrideOptions): Record<string, string> {
   const definitions: Record<string, string> = {};
   for (const file of readdirSync(join(pluginDir, "agents")).filter((name) => name.endsWith(".md"))) {
     const source = readFileSync(join(pluginDir, "agents", file), "utf8");
@@ -12,8 +18,9 @@ export function agentModels(pluginDir: string): Record<string, string> {
     if (!name || !model) throw new Error(`benchmark-agent-model-missing: ${file}`);
     definitions[name] = model;
   }
-  if (definitions["vibe-change-worker"] !== "sonnet") {
+  if (definitions["vibe-change-worker"] !== "opus") {
     throw new Error("benchmark-writer-model-policy-changed");
   }
-  return definitions;
+  return Object.fromEntries(Object.entries(definitions).map(([name, model]) => [name,
+    Object.hasOwn(VIBE_AGENT_ROLES, name) ? resolveWorkerModel(ModelRuntime.Claude, name, model, options).model : model]));
 }
