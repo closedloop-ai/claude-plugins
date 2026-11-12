@@ -13,6 +13,7 @@ import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWri
   readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
+import { FABLE_REVIEW_MODELS } from "../../../plugins/vibe-core/lib/vibe/scripts/review-models.mjs";
 import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
@@ -33,6 +34,8 @@ const launchSchema = recordContextSchema.extend({
   testsRequired: z.boolean().optional(),
   previewRequirements: z.array(z.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
   previewProducer: z.literal("runtime-provider").optional(),
+  /** A review role run on Fable 5.2 instead of its definition's model; the receipt proves the model from the trace (ISS-14039). */
+  reviewModel: z.string().refine((model) => FABLE_REVIEW_MODELS.includes(model), "reviewModel must be an accepted Fable review model").optional(),
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 type LaunchInput = z.infer<typeof launchSchema>;
 type Definition = ReturnType<typeof readDefinition>;
@@ -55,6 +58,12 @@ const readerRoles = new Set([
   "vibe-verify-worker",
 ]);
 const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
+const REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
+
+/** A `reviewModel` the launcher refuses, surfaced with its reason rather than the generic turn failure. */
+class ReviewModelError extends Error {
+  readonly code = REVIEW_MODEL_REFUSED;
+}
 const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
 const testAuthoringModes = new Set(["request", "fix", "handoff", "pull-request"]);
 const PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
@@ -150,6 +159,10 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(recordModes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
   }
+  if (input.reviewModel && !receiptRoles.has(input.agentName)) {
+    throw new ReviewModelError(`reviewModel applies only to a receipt review role (${[...receiptRoles].join(", ")}), not ${input.agentName}`);
+  }
+  const model = input.reviewModel ?? definition.metadata.model;
   const prototypeAdvice = input.agentName === "vibe-prototype-worker" && input.mode !== "record";
   const reader = readerRoles.has(input.agentName) || prototypeAdvice;
   const declaredModes = recordModes[input.agentName];
@@ -215,9 +228,9 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     + "Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. "
     + "Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. "
     + "DONE means the whole current request is complete; intermediate units keep the request active.";
-  const agent = { description: definition.metadata.description, prompt, model: definition.metadata.model, tools,
+  const agent = { description: definition.metadata.description, prompt, model, tools,
     ...(definition.skills.length ? { skills: definition.skills } : {}) };
-  return { agent, reader, tools };
+  return { agent, reader, tools, model };
 }
 
 function pushPolicy(input: LaunchInput) {
@@ -332,7 +345,7 @@ export async function runWorker(rawInput: unknown) {
     if (persistent && lease) resume = markClaudeStarted(input.worktree, workerId, lease).resume;
     const args = ["--print", "--verbose", "--output-format", "stream-json", "--agent", definition.name,
       "--json-schema", JSON.stringify(workerResultJsonSchema),
-      "--agents", definitionFile, "--model", definition.metadata.model,
+      "--agents", definitionFile, "--model", bound.model,
       "--tools", bound.tools.join(","), "--disallowedTools", bound.reader
         ? "Agent,Task,Write,Edit,NotebookEdit,EnterWorktree,ExitWorktree"
         : bound.tools.includes("Agent") ? "Task,EnterWorktree,ExitWorktree,NotebookEdit"
@@ -572,7 +585,10 @@ function safeFailure(error: unknown): { code: string; summary: string; personAct
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...(error.personAction ? { personAction: error.personAction } : {}) };
   }
-  if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
+  if (error instanceof AgentRootError || error instanceof MissingSessionError || error instanceof ReviewModelError) return { code: error.code, summary: error.message };
+  if (error instanceof z.ZodError && error.issues.some((issue) => issue.path[0] === "reviewModel")) {
+    return { code: REVIEW_MODEL_REFUSED, summary: `reviewModel must be one of ${FABLE_REVIEW_MODELS.join(", ")}` };
+  }
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error
     && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
