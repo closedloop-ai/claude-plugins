@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { MCP_ROUTE } from "./pre-tool-use.mjs";
 import { unitStatusProblem } from "./unit-status-guard.mjs";
 import { activatedChat } from "./activation-test-support.mjs";
+import { bindChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 // The ClosedLoop provider's status-write rule, as a session it is bound to reads it.
@@ -89,5 +90,21 @@ test("with no tracker bound the guard holds nothing, and another MCP tool passes
     }).stdout.trim();
     if (!provider) assert.equal(run(UPDATE_DOCUMENT_TOOL), "", "no binding: the tracker's write is not this guard's");
     assert.equal(run("mcp__other__update-document"), "", "another server's tool is never the rule's");
+  }
+});
+
+test("a chat with no program of its own is still gated by the home's current board while another chat holds it", (t) => {
+  const { home } = fleetHome(t);
+  const userHome = mkdtempSync(path.join(tmpdir(), "unit-status-user-"));
+  const before = Object.getOwnPropertyDescriptor(process.env, "HOME");
+  process.env.HOME = userHome;
+  t.after(() => {
+    if (before) process.env.HOME = before.value;
+    else Reflect.deleteProperty(process.env, "HOME");
+    rmSync(userHome, { recursive: true, force: true });
+  });
+  bindChat("chat-orchestrator", home, "p1", { HOME: userHome });
+  for (const chat of ["chat-orchestrator", "chat-other"]) {
+    assert.match(unitStatusProblem({ slug: "ISS-2", status: "DONE", cwd: home, home, chat, rule: RULE }) ?? "", /^ISS-2 stays IN_PROGRESS, not DONE/, chat);
   }
 });

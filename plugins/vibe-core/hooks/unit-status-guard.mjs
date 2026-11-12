@@ -18,10 +18,12 @@
 // Any other ticket, status or write passes untouched. Runs from pre-tool-use.mjs.
 
 import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { gatePath } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { openBoardUnits, unitReviewProblem } from "../lib/handoff/scripts/unit-review-record.mjs";
-import { defaultHome } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";
+import { currentProgram, validChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
+import { chatProgramDir, defaultHome } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";
 import { readSessionRecord } from "../lib/vibe/scripts/session-record.mjs";
 import { providerDataOr, recordedBinding } from "../lib/vibe/scripts/provider.mjs";
 
@@ -34,30 +36,46 @@ export function unitStatusRule(event, home) {
 }
 
 /** Why `slug` may not move to `status` yet under `rule`, or null. */
-export function unitStatusProblem({ slug, status, cwd, rule, home = defaultHome() }) {
+export function unitStatusProblem({ slug, status, cwd, rule, home = defaultHome(), chat }) {
   if (!rule?.keyPattern || !(rule.guarded ?? []).includes(status) || typeof slug !== "string"
     || !new RegExp(`^${rule.keyPattern}$`).test(slug)) return null;
-  return boardProblem(slug, status, home) ?? sessionProblem(slug, status, cwd);
+  return boardProblem(slug, status, home, chat) ?? sessionProblem(slug, status, cwd);
 }
 
 /** The PreToolUse result for the tracker's status write: a deny while its ticket's unit is unreviewed, else null. */
 export function unitStatusGuard(event, rule = unitStatusRule(event)) {
   if (!rule || event?.tool_name !== rule.tool) return null;
   const input = event?.tool_input ?? {};
-  const problem = unitStatusProblem({ slug: input[rule.slugField], status: input[rule.statusField], cwd: eventCwd(event), rule });
+  const chat = validChat(event?.session_id);
+  const problem = unitStatusProblem({ slug: input[rule.slugField], status: input[rule.statusField], cwd: eventCwd(event), rule,
+    home: defaultHome(process.env, chat), chat });
   return problem ? deny(problem) : null;
 }
 
-function boardProblem(slug, status, home) {
+function boardProblem(slug, status, home, chat) {
   let units;
-  try { units = openBoardUnits(home); }
+  let orchDir = home;
+  try {
+    if (chat && existsSync(path.join(home, "programs"))) orchDir = boundOrCurrent(home, chat);
+    units = openBoardUnits(orchDir);
+  }
   catch { return null; }
   for (const [name, unit] of Object.entries(units)) {
     if (!(unit.tickets ?? []).includes(slug)) continue;
-    const problem = unitReviewProblem(home, name, unit);
+    const problem = unitReviewProblem(orchDir, name, unit);
     if (problem) return `${slug} stays IN_PROGRESS, not ${status}: ${problem}. Every member and PRD criterion needs a code review row and a visual QA capture on each page and surface it names; give the operator its GAP lines.`;
   }
   return null;
+}
+
+/** The program dir `chat` is bound to in `home`, else the home's `current` one, which this gate checked before bindings. */
+function boundOrCurrent(home, chat) {
+  try {
+    return chatProgramDir(home, chat).dir;
+  } catch {
+    const current = currentProgram(home);
+    return current ? path.join(home, "programs", current) : home;
+  }
 }
 
 function sessionProblem(slug, status, cwd) {

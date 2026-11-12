@@ -5,9 +5,16 @@
 //
 // PostToolUse (contextGuard): when the chat was launched without
 // CLAUDE_CODE_AUTO_COMPACT_WINDOW (Claude Code reads it at launch, 100k to 1M
-// tokens, over every other window setting), the operator is told once how to
-// relaunch with the window in <fleetHome>/context-guard.json. Nothing writes the
-// variable or the autoCompactWindow setting, which would change every chat. At
+// tokens, over every other window setting), the operator is told once to
+// relaunch it with fleet-claude, the launcher `fleet-home.mjs launcher --install`
+// writes, which sets the window in <fleetHome>/context-guard.json.
+// Nothing writes the variable or the autoCompactWindow setting, which would
+// change every chat. The program is the one this chat is bound to
+// (chat-binding.mjs, keyed by the event's session_id); an orchestrator chat
+// with none is bound on a tool call to its home's current program while no
+// other chat holds it, so one started before bindings keeps its program, and
+// a chat with none whose home's current program belongs to another chat is
+// told how to bind, never handed that program's files. At
 // flushAtPercent of the window the model is told, once per compaction cycle, to
 // bring the program's state files current (with no window, at each step of growth).
 // PreCompact (compactionInstructions): Claude Code uses the hook's stdout as the
@@ -22,11 +29,13 @@
 // keeps the offset of the last whole line scanned. Fails open: any error
 // returns null, so nothing is printed and no tool call or compaction is blocked.
 
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveWorkDir } from "../lib/codex-fleet-monitor/scripts/work-dir.mjs";
-import { COMPACT_WINDOW_RANGE, contextGuardConfig, defaultHome, PROGRAM_READING } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";
+import { bindChat, programFor, unboundLine, validChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
+import { COMPACT_WINDOW_RANGE, contextGuardConfig, defaultHome, FLEET_HOME_SCRIPT, PROGRAM_READING } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";
+import { vibeScriptPath } from "../shared/vibe-install.mjs";
 import { hookStatePath } from "./hook-session-scope.mjs";
 
 const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
@@ -50,8 +59,8 @@ export function contextGuard(event, env = process.env) {
 export function compactionInstructions(event, env = process.env) {
   try {
     const chat = fleetChat(event, env);
-    const dirs = chat && stateDirs(chat.home);
-    if (!dirs) return null;
+    const dirs = chat && stateDirs(chat.home, chat.chat, env);
+    if (!dirs?.programDir) return null;
     const { programDir, home } = dirs;
     return [
       "This chat is a vibe fleet-orchestrator chat. Its program state lives in files that vibe's SessionStart hook has the chat reread right after this compaction:",
@@ -71,15 +80,16 @@ export function compactionInstructions(event, env = process.env) {
 function evaluate(event, env) {
   const chat = fleetChat(event, env);
   if (!chat) return null;
+  claimCurrent(chat.home, chat.chat, env);
   const { state, config, stateFile, size } = chat;
   const result = {};
   const window = windowTokens(env[WINDOW_VARIABLE]);
   if (window === null && state.windowNoticeShown !== true) {
     state.windowNoticeShown = true;
-    result.systemMessage = `This fleet-orchestrator chat has no usable ${WINDOW_VARIABLE}, so it compacts where Claude Code's own settings put it. To compact at ${kilo(config.compactWindowTokens)} (set in ${config.file}), relaunch it with: ${WINDOW_VARIABLE}=${config.compactWindowTokens} claude --resume ${event.session_id}`;
+    result.systemMessage = `This fleet-orchestrator chat has no usable ${WINDOW_VARIABLE}, so it compacts where Claude Code's own settings put it. To compact at ${kilo(config.compactWindowTokens)} (set in ${config.file}), relaunch it with fleet-claude, which sets ${WINDOW_VARIABLE}=${config.compactWindowTokens} from that file: fleet-claude --resume ${event.session_id} (install fleet-claude once with: node ${vibeScriptPath(FLEET_HOME_SCRIPT)} launcher --install)`;
   }
   const tokens = latestContextTokens(event.transcript_path, size);
-  const dirs = stateDirs(chat.home);
+  const dirs = stateDirs(chat.home, chat.chat, env);
   const flushAt = (window ?? config.compactWindowTokens) * config.flushAtPercent / 100;
   if (tokens !== null && tokens < flushAt) state.flushedAt = null;
   // With no window the chat compacts where Claude Code's own settings put it, so instead of once
@@ -91,7 +101,9 @@ function evaluate(event, env) {
     const point = window === null
       ? `has no usable ${WINDOW_VARIABLE}, so it compacts where Claude Code's own settings put it; this repeats every ${kilo(step)} of growth`
       : `compacts at about ${kilo(window)}`;
-    result.context = `CONTEXT GUARD (flush): this chat re-reads about ${kilo(tokens)} tokens per request and ${point}. Before that, bring the program state files in ${dirs.programDir} current (${PROGRAM_READING.join(", ")}): open operator questions, rulings not yet in rulings.md, live workers and sessions, and promises to the operator. After compaction vibe's SessionStart reading list reloads them.`;
+    result.context = dirs.programDir
+      ? `CONTEXT GUARD (flush): this chat re-reads about ${kilo(tokens)} tokens per request and ${point}. Before that, bring the program state files in ${dirs.programDir} current (${PROGRAM_READING.join(", ")}): open operator questions, rulings not yet in rulings.md, live workers and sessions, and promises to the operator. After compaction vibe's SessionStart reading list reloads them.`
+      : `CONTEXT GUARD (flush): this chat re-reads about ${kilo(tokens)} tokens per request and ${point}. It has no fleet program of its own to bring current. ${dirs.unbound}`;
   }
   return writeState(stateFile, state, Object.keys(result).length > 0 ? result : null);
 }
@@ -102,7 +114,8 @@ function fleetChat(event, env) {
   const transcript = event?.transcript_path;
   const stateFile = hookStatePath(event?.session_id, "context-guard", env.HOME || os.homedir());
   if (typeof transcript !== "string" || transcript === "" || !stateFile) return null;
-  const home = defaultHome(env);
+  const chat = validChat(event?.session_id);
+  const home = defaultHome(env, chat);
   const config = contextGuardConfig(home);
   if (!config.enabled) return null;
   const state = readState(stateFile);
@@ -114,7 +127,19 @@ function fleetChat(event, env) {
     state.scannedBytes = scan.scannedBytes;
     if (!state.matched) return writeState(stateFile, state, null);
   }
-  return { state, config, stateFile, size, home };
+  return { state, config, stateFile, size, home, chat };
+}
+
+/**
+ * Binds an orchestrator chat with no binding to its home's unheld `current` program on a tool call, so a chat
+ * started before bindings holds its program before a newer chat's plain `resume` can take it.
+ */
+function claimCurrent(home, chat, env) {
+  if (!chat) return;
+  try {
+    const resolved = programFor(home, chat, env);
+    if (resolved.source === "current") bindChat(chat, home, resolved.program, env);
+  } catch {}
 }
 
 /** The window Claude Code compacts at for a CLAUDE_CODE_AUTO_COMPACT_WINDOW value, or null when unset or unusable. */
@@ -127,11 +152,19 @@ function windowTokens(value) {
   return Number.isFinite(tokens) && tokens > 0 ? Math.min(Math.max(tokens, COMPACT_WINDOW_RANGE[0]), COMPACT_WINDOW_RANGE[1]) : null;
 }
 
-/** The active program's dir and the home, or null with no active program (no state files to flush or reread). */
-function stateDirs(home) {
+/**
+ * `{ programDir, home }` for the program `chat` runs, `{ unbound }` (the bind instruction) when the home's
+ * current program belongs to another chat, or null with no program (no state files to flush or reread).
+ */
+function stateDirs(home, chat, env) {
   try {
-    const resolved = resolveWorkDir(home);
-    return resolved.program ? { programDir: resolved.dir, home: path.resolve(home) } : null;
+    if (!existsSync(path.join(home, "programs"))) {
+      const resolved = resolveWorkDir(home, { env, chat });
+      return resolved.program ? { programDir: resolved.dir, home: resolved.home } : null;
+    }
+    const resolved = programFor(home, chat, env);
+    if (resolved.program) return { programDir: path.join(path.resolve(home), "programs", resolved.program), home: path.resolve(home) };
+    return resolved.current ? { unbound: unboundLine(path.resolve(home), resolved, env) } : null;
   } catch {
     return null;
   }

@@ -10,7 +10,12 @@
 // the active program's slug) at its top, and each program's state under
 // programs/<slug>/. Given the home, the work dir is the active program's dir;
 // given programs/<slug> itself, that dir. Any other directory is a flat work
-// dir from before the home layout and is used as is.
+// dir from before the home layout and is used as is. Given the home, a chat
+// bound to one of its programs (chat-binding.mjs) gets its own
+// program; anything else gets `current`, unless another program of the home
+// is bound to a chat, when `current` may be another chat's: then it is
+// refused (AMBIGUOUS-HOME) and the caller passes the program dir. A chat whose
+// program another chat took over is refused too (TAKEN-OVER).
 //
 // In a home, config.env at the top is read first and programs/<slug>/config.env
 // second, and the per-program state keys are always derived, never configured:
@@ -26,13 +31,28 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { ambiguousHome, canonicalHome, chatBinding, commandChat, takenOver } from "../../fleet-orchestrator/scripts/chat-binding.mjs";
 
 export const PER_PROGRAM_KEYS = ["LOCAL_STATE_DIR", "REQUESTS_DIR", "REMOTE_STATE_DIR", "REMOTE_REQUESTS_DIR"];
 
-/** `{ home, program, dir }` for `dir`; home and program are null for a flat work dir. */
-export function resolveWorkDir(dir) {
+/**
+ * `{ home, program, dir }` for `dir`; home and program are null for a flat work dir. `chat` defaults to
+ * the harness conversation running this command; `env` supplies it and the binding store's HOME.
+ */
+export function resolveWorkDir(dir, { env = process.env, chat } = {}) {
   const abs = path.resolve(dir);
   if (isDir(path.join(abs, "programs"))) {
+    const caller = chat === undefined ? commandChat(env) : chat;
+    const binding = chatBinding(caller, env);
+    if (binding && canonicalHome(binding.home) === canonicalHome(abs) && isDir(path.join(abs, "programs", binding.program))) {
+      return { home: abs, program: binding.program, dir: path.join(abs, "programs", binding.program) };
+    }
+    const taken = takenOver(caller, env);
+    if (taken && canonicalHome(taken.home) === canonicalHome(abs)) {
+      throw new Error(`TAKEN-OVER ${taken.program}: chat ${taken.takenBy} took this chat's program over at ${taken.at}; this chat has no program in ${abs}. Run fleet-home.mjs start <slug>, or fleet-home.mjs resume ${taken.program} --takeover if that chat has finished`);
+    }
+    const ambiguous = ambiguousHome(abs, env);
+    if (ambiguous) throw new Error(ambiguous);
     const slug = existsSync(path.join(abs, "current")) ? readFileSync(path.join(abs, "current"), "utf8").trim() : "";
     if (!slug || !isDir(path.join(abs, "programs", slug))) {
       throw new Error(`no active program in ${abs}: start one with fleet-home.mjs start <slug>`);

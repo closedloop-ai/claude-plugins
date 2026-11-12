@@ -198,5 +198,10 @@
   "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
   "text": "record.environmentOrgId ? { ...record, clerkOrgId: record.environmentOrgId } : record);",
   "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
+ },
+ {
+  "path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.mjs",
+  "text": "const LAUNCHER_MARK = \"# Written by vibe fleet-home.mjs launcher (ISS-14028).\";",
+  "reason": "Compatibility: the exact mark already written into installed fleet launchers; `launcher --install` overwrites only a file that carries it."
  }
 ]
