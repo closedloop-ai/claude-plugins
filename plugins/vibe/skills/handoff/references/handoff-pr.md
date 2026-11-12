@@ -41,7 +41,9 @@ link, never a branch to merge.
 For a requested pull request, after step 8 is `DONE`, capture the final
 launcher result for each mandatory read-only review role with
 `node scripts/review-receipts.mjs --worktree "<wt>" --result <exact launcher
-output file> --role <role> --out <private receipt file>`.
+output file> --role <role> --out <private receipt file>`. The receipt records
+the model its trace shows the CLI ran; a launcher input with `"reviewModel":
+"claude-fable-5-2"` runs a review role on Fable 5.2.
 For a native Codex reviewer or verifier, use a managed App Server thread whose
 `thread/read` exposes completed turn items. Register its exact thread ID with
 `helpers.mjs start --kind reviewer|verifier --runtime codex --worker-id <thread ID>

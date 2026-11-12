@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
-import { captureNativeReviewReceipt, captureReviewReceipt, REVIEW_ROLES, reviewReceiptProblems } from "./review-receipts.mjs";
+import { captureNativeReviewReceipt, captureReviewReceipt, REVIEW_ROLES, reviewReceiptProblems, verifiedReviewModel } from "./review-receipts.mjs";
 import { finalMarker } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { gatePath, handoffGateProblem, mergeabilityProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
 import { recordHandoffGate } from "../../../../vibe/skills/handoff/scripts/handoff-gate.mjs";
@@ -272,4 +272,52 @@ test("S5 DT-12: publication gate refreshes a stale local main before checking co
   assert.throws(() => recordHandoffGate({ worktree, base: "parent", body, runs, receipts }, { runScript: acceptedInventory }), /main/);
   assert.equal(existsSync(gatePath(worktree)), false);
   assert.equal(git("rev-parse", "refs/remotes/origin/main"), remoteMain);
+});
+
+test("a launcher receipt records the model its trace shows and the gate refuses a model claim the trace does not prove (ISS-14039)", () => {
+  const worktree = mkdtempSync(path.join(tmpdir(), "review-model-"));
+  execFileSync("git", ["init", "-q", "-b", "vibe/example", worktree]);
+  writeFileSync(path.join(worktree, "app.txt"), "source\n");
+  execFileSync("git", ["-C", worktree, "add", "."]);
+  execFileSync("git", ["-C", worktree, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "base"]);
+  const source = sourceIdentity(worktree);
+  const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  const capture = (role, index, events) => {
+    const sessionId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    const tracePath = path.join(gitDir, `${role}.jsonl`);
+    writeFileSync(tracePath, [...events, { type: "result", session_id: sessionId }].map(event => JSON.stringify(event)).join("\n"));
+    const resultFile = path.join(gitDir, `${role}-result.json`);
+    writeFileSync(resultFile, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `m-${index}`, tracePath, source,
+      graphToolAliases: [], data: { findings: [] } }));
+    const outFile = path.join(gitDir, `${role}-receipt.json`);
+    return { receipt: captureReviewReceipt({ worktree, resultFile, outFile, role }), outFile, tracePath };
+  };
+  const ran = model => [{ type: "system", subtype: "init", model }, { type: "assistant", message: { model, content: [] } }];
+  const relaunched = [...ran("claude-fable-5-2"), { type: "system", subtype: "init", model: "claude-opus-5-5" }];
+  const [fable, mixed, absent, opus] = [
+    capture(REVIEW_ROLES[0], 0, ran("claude-fable-5-2")),
+    capture(REVIEW_ROLES[1], 1, [...ran("claude-fable-5-2"), { type: "assistant", message: { model: "claude-opus-5-5", content: [] } }]),
+    capture(REVIEW_ROLES[2], 2, [{ type: "assistant", message: { model: "claude-fable-5-2", content: [] } }]),
+    capture(REVIEW_ROLES[3], 3, ran("claude-opus-5-5")),
+  ];
+  assert.equal(fable.receipt.model, "claude-fable-5-2");
+  assert.equal(mixed.receipt.model, null, "a trace naming two models proves neither");
+  assert.equal(absent.receipt.model, null, "a trace with no init record proves no model");
+  assert.equal(opus.receipt.model, "claude-opus-5-5");
+  assert.equal(capture(REVIEW_ROLES[3], 4, relaunched).receipt.model, null, "a later init naming another model proves neither");
+  capture(REVIEW_ROLES[3], 3, ran("claude-opus-5-5"));
+  assert.equal(verifiedReviewModel(fable.receipt), "claude-fable-5-2");
+  assert.equal(verifiedReviewModel(mixed.receipt), null);
+  const receipts = [fable, mixed, absent, opus].map(item => item.receipt);
+  assert.deepEqual(reviewReceiptProblems(receipts, source).problems, []);
+  const legacy = { ...fable.receipt };
+  delete legacy.model;
+  assert.deepEqual(reviewReceiptProblems([legacy, ...receipts.slice(1)], source).problems, [], "a receipt from before receipts recorded a model still passes handoff");
+  assert.equal(verifiedReviewModel(legacy), null, "and proves no model");
+  const forged = { ...opus.receipt, model: "claude-fable-5-2" };
+  assert.equal(verifiedReviewModel(forged), null, "a recorded model the trace does not show is not proven");
+  assert.match(reviewReceiptProblems([...receipts.slice(0, 3), forged], source).problems.join(), /recorded model differs from its trace/);
+  assert.equal(verifiedReviewModel({ ...fable.receipt, runtime: "codex" }), null, "only a Claude launcher receipt proves a model this way");
+  writeFileSync(fable.tracePath, ran("claude-fable-5-2").concat({ type: "result", session_id: fable.receipt.sessionId, extra: true }).map(event => JSON.stringify(event)).join("\n"));
+  assert.equal(verifiedReviewModel(fable.receipt), null, "a trace changed after capture proves nothing");
 });

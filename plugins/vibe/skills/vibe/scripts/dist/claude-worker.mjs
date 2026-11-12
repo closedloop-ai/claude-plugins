@@ -11608,7 +11608,7 @@ function compareIdentifier(left, right) {
 // ../../plugins/vibe/shared/vibe-core.mjs
 import path2 from "node:path";
 import { pathToFileURL } from "node:url";
-var VIBE_CORE_MIN = "1.0.5";
+var VIBE_CORE_MIN = "1.0.6";
 var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
 var cachedRoot = null;
 function vibeCoreRoot() {
@@ -12479,17 +12479,21 @@ var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScri
 var module3 = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
 var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, providerLine } = module3;
 
+// vibe-core:lib/vibe/scripts/review-models.mjs
+var module4 = await vibeCore("lib/vibe/scripts/review-models.mjs");
+var { FABLE_REVIEW_MODELS } = module4;
+
 // vibe-core:lib/vibe/scripts/worker-scope.mjs
-var module4 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
-var { launcherWorker, recordWorkerScope } = module4;
+var module5 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
+var { launcherWorker, recordWorkerScope } = module5;
 
 // src/record-context.ts
 import { existsSync as existsSync4, readFileSync as readFileSync6, realpathSync as realpathSync7 } from "node:fs";
 import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
-var module5 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module5;
+var module6 = await vibeCore("lib/vibe/scripts/session-record.mjs");
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module6;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -13066,7 +13070,9 @@ var launchSchema = recordContextSchema.extend({
   /** Explicit top-level orchestrator requirement; raw brief text never grants test authoring. */
   testsRequired: external_exports.boolean().optional(),
   previewRequirements: external_exports.array(external_exports.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
-  previewProducer: external_exports.literal("runtime-provider").optional()
+  previewProducer: external_exports.literal("runtime-provider").optional(),
+  /** A review role run on Fable 5.2 instead of its definition's model; the receipt proves the model from the trace. */
+  reviewModel: external_exports.string().refine((model) => FABLE_REVIEW_MODELS.includes(model), "reviewModel must be an accepted Fable review model").optional()
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 var resultSchema = external_exports.object({
   type: external_exports.literal("result"),
@@ -13111,6 +13117,10 @@ var readerRoles = /* @__PURE__ */ new Set([
   "vibe-verify-worker"
 ]);
 var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
+var REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
+var ReviewModelError = class extends Error {
+  code = REVIEW_MODEL_REFUSED;
+};
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
 var testAuthoringModes = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
 var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
@@ -13203,6 +13213,10 @@ function boundDefinition(definition, input) {
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
   }
+  if (input.reviewModel && !receiptRoles.has(input.agentName)) {
+    throw new ReviewModelError(`reviewModel applies only to a receipt review role (${[...receiptRoles].join(", ")}), not ${input.agentName}`);
+  }
+  const model = input.reviewModel ?? definition.metadata.model;
   const prototypeAdvice = input.agentName === "vibe-prototype-worker" && input.mode !== "record";
   const reader = readerRoles.has(input.agentName) || prototypeAdvice;
   const declaredModes = modes[input.agentName];
@@ -13238,11 +13252,11 @@ Runtime binding: work only in ${input.worktree}. Resolve this canonical definiti
   const agent = {
     description: definition.metadata.description,
     prompt,
-    model: definition.metadata.model,
+    model,
     tools,
     ...definition.skills.length ? { skills: definition.skills } : {}
   };
-  return { agent, reader, tools };
+  return { agent, reader, tools, model };
 }
 function pushPolicy(input) {
   if (isPublisherContext(input)) {
@@ -13387,7 +13401,7 @@ async function runWorker(rawInput) {
       "--agents",
       definitionFile,
       "--model",
-      definition.metadata.model,
+      bound.model,
       "--tools",
       bound.tools.join(","),
       "--disallowedTools",
@@ -13712,8 +13726,11 @@ function safeFailure(error) {
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
-  if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
+  if (error instanceof AgentRootError || error instanceof MissingSessionError || error instanceof ReviewModelError) return { code: error.code, summary: error.message };
   if (error instanceof ProviderBroken) return { code: "PROVIDER_BROKEN", summary: error.message };
+  if (error instanceof external_exports.ZodError && error.issues.some((issue) => issue.path[0] === "reviewModel")) {
+    return { code: REVIEW_MODEL_REFUSED, summary: `reviewModel must be one of ${FABLE_REVIEW_MODELS.join(", ")}` };
+  }
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }

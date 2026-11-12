@@ -17,7 +17,7 @@ const VIBE_BRANCH = "vibe/";
 const OVERRIDE_HINT = "if every real check and review passed and a known Vibe gate bug is the only blocker (operator ruling 2026-11-08), add the line `Vibe gate override: <ticket>: <reason>` naming that bug's ticket (the bound tracker's issue, or with no tracker a GitHub issue `#<number>` or its URL) to the PR body file";
 const LOCAL_RETRY = "run gh pr create on this machine from a checkout of the target repository so the guard can find the session that owns the head";
 const LITERAL_CWD_RETRY = "cd to a literal checkout path, then run gh pr create";
-const CLOUD_RETRY = "pass the handoff gate, then finish the cloud task with cloud-worker.mjs import, the opposite-harness review and refresh-import, and rerun gh pr create";
+const CLOUD_RETRY = "pass the handoff gate, then finish the cloud task with cloud-worker.mjs import, the independent review (Codex or Fable 5.2 for a Claude import, Claude for a Codex import) and refresh-import, and rerun gh pr create";
 const PLAIN_GH_RETRY = "run gh pr create as a plain command, not inside nested shells, from a checkout of the target repository";
 const PR_CREATE_DATA_OPTIONS = new Set(["--body", "-b", "--title", "-t", "--template", "-T",
   "--assignee", "-a", "--reviewer", "-r", "--label", "-l", "--milestone", "-m", "--project", "-p"]);
