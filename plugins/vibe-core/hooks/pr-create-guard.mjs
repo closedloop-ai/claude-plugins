@@ -267,7 +267,7 @@ export function prCreateGuard(event, home = os.homedir()) {
       return refuse("no vibe session record in the command worktree", OVERRIDE_HINT);
     }
     // Cloud import readiness, its own rerun of the handoff gate included, is a separate protection the override does not clear.
-    const cloudProblem = cloudPrProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile });
+    const cloudProblem = cloudPrProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile, title: call.title });
     if (cloudProblem) return refuse(cloudProblem, CLOUD_RETRY);
     const problem = handoffGateProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile, title: call.title });
     if (problem && !override) return refuse(problem, `run the final handoff gate on the published source, or ${OVERRIDE_HINT}`);

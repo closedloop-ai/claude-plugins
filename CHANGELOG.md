@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - The handoff gate witness (`lib/handoff/scripts/handoff-gate-check.mjs`, `EVIDENCE_KEYS`) also binds the program rulings file the gate was given with `--rulings`, so a changed rulings file makes the witness stale for the PR guard and the cloud import refresh, like a changed ticket or body (ISS-14077). The PR guard's order is unchanged: a cloud import's own readiness is still checked before, and never cleared by, the gate override.
+- `cloud-worker.mjs refresh-import` and `ready` take `--title`, and the cloud readiness check (`refresh-import`, `ready` and the PR hook) passes the PR title to the handoff gate check, so a cloud import whose session delivers member tickets can refresh and open its PR (ISS-14077). Before this the check ran with no title, which the gate refuses for a session with member tickets. The hook's order and the override's scope are unchanged.
 
 ### vibe v1.1.86
 

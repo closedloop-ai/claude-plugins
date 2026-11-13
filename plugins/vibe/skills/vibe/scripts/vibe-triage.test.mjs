@@ -15,7 +15,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
 const { cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
-const { writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
@@ -709,6 +709,42 @@ test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted
   writeFileSync(rulingsFile, RULINGS.replace('TARGETED inventory', 'full suites'));
   assert.match(prCreateGuard(event)?.reason ?? '', /handoff rulings evidence changed/, 'the witness binds the rulings file it was judged with');
   assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: handoff rulings evidence changed/);
+});
+
+test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refreshes and opens its PR when the PR title names them', () => {
+  const { worktree, gitDir } = vibeFixture();
+  // What `vibe-sessions.mjs touch --member-ticket` leaves on the session record.
+  writeSessionRecord(worktree, { ...readSessionRecord(worktree), memberTickets: ['ISS-13805', 'ISS-13806'] });
+  const request = sourcedCloudRequest(worktree);
+  const receipt = completedReceipt(request, gitDir, 'task_members');
+  importResult(request, receipt, { run: (_command, args) => {
+    if (args[1] === 'diff') return { status: 0, stdout: 'diff --git a/existing.txt b/existing.txt\n', stderr: '' };
+    writeFileSync(path.join(worktree, 'existing.txt'), 'codex edit\n');
+    return { status: 0, stdout: '', stderr: '' };
+  } });
+  gitAt(worktree, 'add', 'existing.txt');
+  gitAt(worktree, 'commit', '-m', 'local reviewed import');
+  const bodyFile = path.join(gitDir, 'body.md');
+  writeFileSync(bodyFile, 'Delivers ISS-13804, ISS-13805 and ISS-13806.\n');
+  const title = 'ISS-13804, ISS-13805, ISS-13806: Cloud dispatch';
+  const oneMember = 'ISS-13804, ISS-13805: Cloud dispatch';
+  const reviews = claudeReviewReceipts(worktree, gitDir);
+  recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: reviews[0], receipts: reviews, title }, { runScript: () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: '' }) });
+
+  const before = readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8');
+  assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: the session delivers member tickets ISS-13805, ISS-13806; pass --title so the gate checks the PR names them/);
+  assert.throws(() => refreshImportWitness(worktree, { bodyFile, title: oneMember }), /cloud import cannot refresh: the PR title does not name member ticket ISS-13806/);
+  assert.equal(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8'), before, 'a refused refresh leaves the import witness as it was');
+
+  assert.equal(refreshImportWitness(worktree, { bodyFile, title }).reviewedSource.head, gitAt(worktree, 'rev-parse', 'HEAD'));
+  assert.equal(cloudPrProblem(worktree, { bodyFile, title }), null);
+  assert.match(cloudPrProblem(worktree, { bodyFile, title: oneMember }) ?? '', /the PR title does not name member ticket ISS-13806/);
+  assert.equal(readyForPr(request, { bodyFile, title }).ready, true);
+  assert.throws(() => readyForPr(request, { bodyFile, title: oneMember }), /PR refused: the PR title does not name member ticket ISS-13806/);
+
+  const create = (prTitle) => prCreateGuard({ cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --title "${prTitle}" --body-file ${bodyFile}` } });
+  assert.equal(create(title), null, 'the PR hook admits the import with no gate override in its body');
+  assert.match(create(oneMember)?.reason ?? '', /the PR title does not name member ticket ISS-13806/);
 });
 
 /** One clean Claude launcher receipt per handoff review role, captured on the worktree's current source. */
