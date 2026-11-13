@@ -199,6 +199,19 @@ block the pull request, and the body lists it under Known main failures
 (ISS-13321). One that passes on main stays a failure for the writer. A
 Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
 `testRuns` the same way, with its `reason`.
+When the operator ruled targeted tests only and the ruling is recorded once,
+labeled with its `R-<WORDS>` id and dated, as a heading in the program's
+rulings file (`## R-TARGETED-TESTS (Daniel, 2026-10-23)`) or a ruling line in
+the live ticket (`- Ruling R-TARGETED-TESTS 2026-10-23 (Daniel): "..."`), write
+`targetedTestsRuling: { id, source: "rulings" | "ticket" }`. Then a selected
+test outside `targetedInventory`, a matching lane, or the `web-host` or
+`desktop-host` lane may be left with its own row (a test or matching lane in
+`testRuns`, a host lane in `runs`): `status: "not-run"`, `ruling: <id>`, a
+`reason`, its `path` or `lane` and `command`, and the final `commit`. At least
+one inventory test passes on that commit, its entries still run and pass,
+and a diff-rule required test or a spec the branch edits is never left this
+way (`../skills/handoff/scripts/targeted-tests-ruling.mjs`). Pass the rulings
+file as `--rulings` to the gate and the comment renderer.
 For each selected or edited E2E spec that this machine cannot run under an
 available tier, also record one spec-level `testRuns` item with its full
 repo-relative `path`, `status: "not-run"`, the exact final `commit`,

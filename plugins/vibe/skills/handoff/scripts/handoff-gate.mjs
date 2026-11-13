@@ -15,6 +15,8 @@
 // PRD criterion passed code review and visual QA on each page and surface it
 // names. Their fingerprints join the witness, and `unitReviewPassed` records it
 // for vibe-core's ticket status guard.
+// Evidence that cites a targeted-tests ruling from the program's rulings file
+// (targeted-tests-ruling.mjs) needs that file as `--rulings`; it is bound too.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -42,7 +44,7 @@ export function unitReviewArgs({ review, prds = [], plans = [] }) {
 }
 
 /** Run the canonical inventory with PR body and verifier evidence before recording readiness. */
-export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix, members = [], prds = [], plans = [], review, title }, { runScript = spawnSync } = {}) {
+export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base, receipts, audit, matrix, members = [], prds = [], plans = [], review, title }, { runScript = spawnSync } = {}) {
   const witness = gatePath(worktree);
   if (existsSync(witness)) unlinkSync(witness);
   fetchCurrentMain(worktree);
@@ -66,7 +68,7 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   const args = [path.join(path.dirname(fileURLToPath(import.meta.url)), "handoff-inventory.mjs"),
     "--worktree", worktree, "--phase", "pull-request", "--body", body, "--runs", runs,
     "--commit", execFileSync("git", ["-C", worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-    ...(ticket ? ["--ticket", ticket] : []), ...members.flatMap((member) => ["--ticket", member.slice(member.indexOf("=") + 1)])];
+    ...(ticket ? ["--ticket", ticket] : []), ...(rulings ? ["--rulings", rulings] : []), ...members.flatMap((member) => ["--ticket", member.slice(member.indexOf("=") + 1)])];
   const result = runScript(process.execPath, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`pull-request inventory failed: ${result.stderr || result.stdout}`);
   const inventory = JSON.parse(result.stdout);
@@ -75,7 +77,7 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   }
   const branch = execFileSync("git", ["-C", worktree, "branch", "--show-current"], { encoding: "utf8" }).trim();
   if (!sameSource(source, sourceIdentity(worktree))) throw new Error("source changed while the handoff gate ran");
-  const evidenceInputs = { body, runs, ticket, audit, matrix, review };
+  const evidenceInputs = { body, runs, ticket, rulings, audit, matrix, review };
   const evidence = Object.fromEntries(EVIDENCE_KEYS.filter(key => evidenceInputs[key]).map(key => [key, evidenceFingerprint(evidenceInputs[key])]));
   for (const [key, entries] of [["members", members], ["prds", prds], ["plans", plans]]) {
     if (entries.length) evidence[key] = entries.map((entry) => evidenceFingerprint(entry.slice(entry.indexOf("=") + 1)));
@@ -91,8 +93,8 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, title: { type: "string" } } });
-  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file> [--member <slug>=<file> ...] [--prd <slug>=<file> ...] [--plan <slug>=<file> ...] [--review <review.json>] [--title <PR title>]]");
+  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, rulings: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, title: { type: "string" } } });
+  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file> [--member <slug>=<file> ...] [--prd <slug>=<file> ...] [--plan <slug>=<file> ...] [--review <review.json>] [--title <PR title>]] [--rulings <program rulings file>]");
   values.receipts = values.receipt;
   values.members = values.member ?? [];
   values.prds = values.prd ?? [];
