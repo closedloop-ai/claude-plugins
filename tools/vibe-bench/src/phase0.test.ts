@@ -1,3 +1,4 @@
+import "./no-model-overrides.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -153,11 +154,15 @@ test("agent model inventory preserves the adversarial reviewer's Opus choice", (
   const pluginDir = mkdtempSync(join(tmpdir(), "vibe-bench-models-"));
   try {
     mkdirSync(join(pluginDir, "agents"));
-    writeFileSync(join(pluginDir, "agents/vibe-change-worker.md"), "---\nname: vibe-change-worker\nmodel: sonnet\n---\n");
+    writeFileSync(join(pluginDir, "agents/vibe-change-worker.md"), "---\nname: vibe-change-worker\nmodel: opus\n---\n");
     writeFileSync(join(pluginDir, "agents/vibe-adversarial-reviewer.md"), "---\nname: vibe-adversarial-reviewer\nmodel: opus\n---\n");
     const models = agentModels(pluginDir);
-    assert.equal(models["vibe-change-worker"], "sonnet");
+    assert.equal(models["vibe-change-worker"], "opus");
     assert.equal(models["vibe-adversarial-reviewer"], "opus");
+    // A model the person chose for the writer is what the launcher runs, so it is what the run records (ISS-14109).
+    const chosen = { env: { VIBE_MODELS_FILE: join(pluginDir, "models.json") } };
+    writeFileSync(chosen.env.VIBE_MODELS_FILE, JSON.stringify({ claude: { roles: { writer: "claude-fable-5-2" } } }));
+    assert.deepEqual(agentModels(pluginDir, chosen), { "vibe-change-worker": "claude-fable-5-2", "vibe-adversarial-reviewer": "opus" });
   } finally {
     rmSync(pluginDir, { recursive: true, force: true });
   }

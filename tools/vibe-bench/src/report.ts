@@ -66,7 +66,7 @@ export function buildReport(
       table([facet, "calls", "input", "cache read", "cache write", "output", "request ms"], groupedRows(result.calls, facet)));
   }
   lines.push("", "### Declared agent models", "",
-    table(["agent", "frontmatter model"], Object.entries(result.agentModels).sort(([a], [b]) => a.localeCompare(b))));
+    table(["agent", "model"], Object.entries(result.agentModels).sort(([a], [b]) => a.localeCompare(b))));
   if (comparison) {
     lines.push("", `Comparison: ${comparison.status}.`, "", "### Comparison with baseline", "",
       table(["signal", "baseline median", "baseline MAD", "candidate median", "yellow above", "red above", "status"],

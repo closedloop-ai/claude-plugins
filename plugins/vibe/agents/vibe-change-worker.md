@@ -1,7 +1,7 @@
 ---
 name: vibe-change-worker
 description: The one persistent implementation writer for a vibe session. Keeps the same context, worktree and branch while planning, implementing all frontend/backend/prototype/component work, fixing reviewed issues, repairing existing tests its change broke and listing the missing tests for engineering at handoff; it writes tests only under an explicit top-level pull-request or testsRequired grant. Uses graph-first owner and product-decision research, local canonical plans, Storybook and existing checks. Never commits or opens a PR.
-model: sonnet
+model: opus
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill, SendMessage, Agent
 ---
 

@@ -4,7 +4,8 @@ accounts' weekly Codex limits.
 1. Codex workers default to reasoning effort `high`; `xhigh` only when raised explicitly.
 2. Model by role from one policy per harness: Codex explorers on `gpt-5.6-terra`, writers, reviewers and
    verifiers on the existing `gpt-6-sol` (`skills/cl-sweep/scripts/model-policy.mjs`, read through
-   `skills/vibe/scripts/worker-model.mjs`); Claude Code explorers on sonnet in agent frontmatter.
+   `skills/vibe/scripts/worker-model.mjs`); Claude Code explorers on sonnet in agent frontmatter. Since
+   ISS-14109 these are defaults a person can override (`skills/vibe/scripts/agent-models.mjs`).
 3. Targeted validation: the tests `code_tests_for` returns per changed file plus typecheck and lint, never a
    broad or full local suite.
 4. Targeted E2E uses the strongest capable container, native or remote tier and the repository's lock.
