@@ -493,7 +493,7 @@ changes and gates fields.
    <adversarial receipt> --receipt <Storybook receipt> --receipt
    <verifier receipt> --ticket
    <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
-   file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`, which with members must name each one, as must the body) immediately before creation. Use the paths step 9 of handoff passed;
+   file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`, which with members must name each one, as must the body, and `--rulings <program rulings file>` when the evidence cites a targeted-tests ruling recorded there) immediately before creation. Use the paths step 9 of handoff passed;
    when there is no ticket, omit the ticket/audit/matrix arguments. A failed
    gate is `BLOCKED`, not a reason to bypass the hook, except through the
    exception the hook's refusal names. Create it with
@@ -506,7 +506,8 @@ changes and gates fields.
    mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
    Capture the new URL, render the validated evidence with
-   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --worktree "<wt>" --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
+   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --worktree "<wt>" --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`
+   (plus `--ticket <ticket body file>` or `--rulings <rulings file>` when the evidence cites a `targetedTestsRuling`),
    and post it with `gh pr comment <url> --body-file <file>`. Do not return
    `DONE` until the comment lists the inventory, result SHAs, probe and tier.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI

@@ -82,9 +82,11 @@
 // (pr-facts.mjs); `--ticket` adds `asks` (repeat it for a fleet unit's member tickets), `--overlap` adds `overlap` (one
 // `gh pr list`, or `--prs-json`). In the pull-request phase `--body` adds
 // `blocking.prBody` and `--runs` with `--commit` adds `blocking.prEvidence`.
+// `--rulings` is the program's rulings file, read when the evidence cites a
+// targeted-tests ruling recorded there (targeted-tests-ruling.mjs).
 //
 // Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff|pull-request]
-//   [--ticket <file>] [--overlap] [--prs-json <file>] [--body <file>] [--runs <file> --commit <sha>]
+//   [--ticket <file>] [--rulings <file>] [--overlap] [--prs-json <file>] [--body <file>] [--runs <file> --commit <sha>]
 
 import { laneSourceBootstrap } from "./ci-job-shape.mjs";
 import { laneSourceShapeProblems } from "./pr-evidence-schema.mjs";
@@ -141,6 +143,7 @@ const { values } = parseArgs({
     worktree: { type: "string" },
     phase: { type: "string", default: "build" },
     ticket: { type: "string", multiple: true },
+    rulings: { type: "string" },
     overlap: { type: "boolean" },
     "prs-json": { type: "string" },
     body: { type: "string" },
@@ -318,6 +321,7 @@ const result = withStableSource(worktree, () => {
       ownBranch: branch,
       prBase: getComparison().branch,
       ticketText: values.ticket?.length ? values.ticket.map((file) => readFileSync(file, "utf8")).join("\n") : undefined,
+      rulingsText: values.rulings ? readFileSync(values.rulings, "utf8") : undefined,
       body: values.body ? readFileSync(values.body, "utf8") : undefined,
       runs: values.runs ? JSON.parse(readFileSync(values.runs, "utf8")) : undefined,
       commit: values.commit,

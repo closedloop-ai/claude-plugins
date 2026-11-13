@@ -4,6 +4,7 @@
  * to the original Vibe worktree. The existing handoff gate remains the PR gate.
  *
  * Usage: cloud-worker.mjs record-evidence|brief|dispatch|poll|import|followup|refresh-import|ready|validate --request <json>
+ *        refresh-import and ready also take --title <PR title>
  *        cloud-worker.mjs check [--request <json>]
  * Request fields: worktree, ticket, provider, model, reservedVersion, branch,
  * placement {codeOnly, needsRunningApp, localEvidence[]}, criteria
@@ -461,7 +462,7 @@ function importMatchesReceipt(witness, receipt, ticket, receiptBytes) {
 }
 
 /** Bind the cloud import to the exact source that passed the existing local handoff gate. */
-export function refreshImportWitness(worktree, { bodyFile, base = "main", gate = handoffGateProblem, reviews = reviewRuntimes } = {}) {
+export function refreshImportWitness(worktree, { bodyFile, title, base = "main", gate = handoffGateProblem, reviews = reviewRuntimes } = {}) {
   const record = readSessionRecord(worktree);
   if (!record?.liveTicket) throw new Error("cloud import requires a Vibe ticket");
   requireVibeSession(worktree, record.liveTicket);
@@ -471,7 +472,7 @@ export function refreshImportWitness(worktree, { bodyFile, base = "main", gate =
   const receipt = JSON.parse(receiptBytes);
   if (!importMatchesReceipt(witness, receipt, record.liveTicket, receiptBytes)) throw new Error("cloud import witness does not match the completed provider result");
   verifyAuthor(worktree, "HEAD", record.operator);
-  const problem = gate(worktree, { base, bodyFile });
+  const problem = gate(worktree, { base, bodyFile, title });
   if (problem) throw new Error(`cloud import cannot refresh: ${problem}`);
   const missing = independentReviewProblem(worktree, witness.provider, reviews);
   if (missing) throw new Error(`cloud import cannot refresh: ${missing}`);
@@ -481,7 +482,7 @@ export function refreshImportWitness(worktree, { bodyFile, base = "main", gate =
 }
 
 /** PR-hook admission for cloud work; ordinary Vibe sessions have no cloud receipt. */
-export function cloudPrProblem(worktree, { base = "main", bodyFile, gate = handoffGateProblem, reviews = reviewRuntimes } = {}) {
+export function cloudPrProblem(worktree, { base = "main", bodyFile, title, gate = handoffGateProblem, reviews = reviewRuntimes } = {}) {
   try {
     const record = readSessionRecord(worktree);
     const ticket = record?.liveTicket;
@@ -498,20 +499,20 @@ export function cloudPrProblem(worktree, { base = "main", bodyFile, gate = hando
     if (!witness.reviewedSource || !sameSource(witness.reviewedSource, sourceIdentity(worktree))) return "cloud import witness is stale for the current source; refresh after handoff";
     if (witness.handoffGateSha256 !== sha256(readFileSync(gatePath(worktree)))) return "cloud import witness is stale for the handoff gate";
     verifyAuthor(worktree, "HEAD", record.operator);
-    const problem = gate(worktree, { base, bodyFile });
+    const problem = gate(worktree, { base, bodyFile, title });
     if (problem) return problem;
     return independentReviewProblem(worktree, receipt.provider, reviews);
   } catch (error) { return `cloud PR readiness could not be verified: ${firstLine(error?.message ?? error)}`; }
 }
 
 /** Refuse PR progression until author, independent review and final handoff evidence match. */
-export function readyForPr(request, { bodyFile, gate = handoffGateProblem, reviews = reviewRuntimes, receiptReader = readReceipt } = {}) {
+export function readyForPr(request, { bodyFile, title, gate = handoffGateProblem, reviews = reviewRuntimes, receiptReader = readReceipt } = {}) {
   const record = requireVibeSession(request.worktree, request.ticket);
   request = hydrateCloudRequest(request, { requireCurrentSource: false });
   verifyRepository(request.worktree, request.repository);
   const receipt = receiptReader(request.worktree, request.ticket);
   if (receipt.provider !== request.provider || receipt.requestDigest !== requestDigest(request) || receipt.status !== "completed") throw new Error("PR refused: completed matching cloud receipt is missing");
-  const problem = cloudPrProblem(request.worktree, { base: "main", bodyFile, gate, reviews });
+  const problem = cloudPrProblem(request.worktree, { base: "main", bodyFile, title, gate, reviews });
   if (problem) throw new Error(`PR refused: ${problem}`);
   return { ready: true, branch: record.branch };
 }
@@ -526,7 +527,7 @@ export function followupClaude(sessionId, message, { run = runCommand, cwd, time
 
 async function main(argv) {
   const [action, ...rest] = argv;
-  const { values } = parseArgs({ args: rest, options: { request: { type: "string" }, "evidence-file": { type: "string" }, "body-file": { type: "string" }, "session-id": { type: "string" }, message: { type: "string" } } });
+  const { values } = parseArgs({ args: rest, options: { request: { type: "string" }, "evidence-file": { type: "string" }, "body-file": { type: "string" }, title: { type: "string" }, "session-id": { type: "string" }, message: { type: "string" } } });
   if (action === "check") {
     const request = values.request ? JSON.parse(readFileSync(values.request, "utf8")) : {};
     const result = checkCloudSetup(request, { remote: (name, input) => remoteTrigger(name, input, { cwd: request.worktree }) });
@@ -570,7 +571,7 @@ async function main(argv) {
     if (receipt.requestDigest !== requestDigest(request)) throw new Error("cloud receipt belongs to another request");
     return importResult(request, receipt);
   }
-  if (action === "refresh-import") return refreshImportWitness(request.worktree, { bodyFile: values["body-file"] });
+  if (action === "refresh-import") return refreshImportWitness(request.worktree, { bodyFile: values["body-file"], title: values.title });
   if (action === "followup") {
     const receipt = readReceipt(request.worktree, request.ticket);
     if (receipt.provider !== "claude" || receipt.requestDigest !== requestDigest(request) || receipt.status !== "completed" || receipt.sessionId !== values["session-id"]) throw new Error("follow-up requires the completed matching Claude cloud session");
@@ -579,7 +580,7 @@ async function main(argv) {
     saveReceipt(request.worktree, request.ticket, { ...receipt, followups: (receipt.followups ?? 0) + 1 });
     return result;
   }
-  if (action === "ready") return readyForPr(request, { bodyFile: values["body-file"] });
+  if (action === "ready") return readyForPr(request, { bodyFile: values["body-file"], title: values.title });
   throw new Error("action must be brief, dispatch, poll, import, followup, ready, validate or check");
 }
 

@@ -7,10 +7,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
-import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, gitEnv, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
 import { workflowLaneDefinitions } from "./ci-job-shape.mjs";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { qaImpact, qaImpactRequest } from "./qa-impact.mjs";
+import { RULING_ID, RULINGS, TICKET } from "./targeted-tests-ruling-test-fixture.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { sourceIdentity, committedSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
@@ -1028,4 +1029,40 @@ test("collision facts list the open pull requests of the session's own repositor
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { cwd: fixture.root, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
   assert.equal(child.status, 0, child.stderr);
   assert.match(readFileSync(asked, "utf8"), /^pr list --repo closedloop-ai\/claude-plugins --state open/m);
+});
+
+test("ISS-14077 AC-1: the inventory reads the cited targeted-tests ruling from --rulings or --ticket", (t) => {
+  const s = session(t);
+  git(s.wt, ["add", "-A"], s.home);
+  git(s.wt, ["commit", "--quiet", "-m", "checked fixture"], s.home);
+  const commit = git(s.wt, ["rev-parse", "HEAD"], s.home);
+  const other = "packages/api/src/other.test.ts";
+  const ruled = { path: other, command: `vitest run ${other}`, status: "not-run", ruling: RULING_ID, reason: "left to CI under the ruling", commit };
+  const evidence = (source) => ({ ...SELECTED, source: sourceIdentity(s.wt), targetedTestsRuling: { id: RULING_ID, source },
+    testSelection: SELECTED.testSelection.map((entry) => (entry.selector === "code_tests_for" ? { ...entry, tests: [TEST, other] } : entry)),
+    targetedInventory: { ...SELECTED.targetedInventory, commit },
+    testRuns: [...SELECTED.testRuns.map(run => ({ ...run, commit })), ruled] });
+  const prs = s.file("prs.json", PRS);
+  const ask = "Say why POST vs DELETE in the PR.\n";
+  const run = (source, extra) => runNode(INVENTORY, ["--worktree", s.wt, "--phase", "pull-request", "--prs-json", prs,
+    "--body", s.file("body.md", COMPLETE_BODY), "--runs", s.file("runs.json", { touchFlows: [], touchFlowsReason: "server only", runs: [], ...evidence(source) }),
+    "--commit", commit, ...extra], s.home);
+  const unread = run("rulings", ["--ticket", s.file("ticket.md", ask)]);
+  assert.equal(unread.json.blocking.prEvidence, false);
+  assert.match(unread.json.prEvidenceProblems.join("\n"), /pass the rulings file with --rulings/);
+  assert.match(unread.json.prEvidenceProblems.join("\n"), new RegExp(`${other}: selected but no passing`));
+  const fromRulings = run("rulings", ["--ticket", s.file("ticket.md", ask), "--rulings", s.file("rulings.md", RULINGS)]);
+  assert.equal(fromRulings.json.blocking.prEvidence, true, JSON.stringify(fromRulings.json.prEvidenceProblems));
+  const fromTicket = run("ticket", ["--ticket", s.file("ticket.md", `${ask}${TICKET}`)]);
+  assert.equal(fromTicket.json.blocking.prEvidence, true, JSON.stringify(fromTicket.json.prEvidenceProblems));
+  const comment = (extra, source = "rulings") => spawnSync(process.execPath, [path.join(HERE, "pr-evidence-comment.mjs"), "--worktree", s.wt,
+    "--evidence", s.file("comment-runs.json", { touchFlows: [], touchFlowsReason: "server only", runs: [], ...evidence(source) }),
+    "--output", path.join(s.root, "comment.md"), ...extra], { encoding: "utf8", env: gitEnv(s.home) });
+  assert.match(comment([]).stderr, /pass the rulings file with --rulings/, "the comment CLI refuses a citation it cannot read");
+  const rendered = comment(["--rulings", s.file("rulings.md", RULINGS)]);
+  assert.equal(rendered.status, 0, rendered.stderr);
+  assert.match(readFileSync(path.join(s.root, "comment.md"), "utf8"), new RegExp(`Not run under targeted-tests ruling ${RULING_ID} \\(rulings\\): \`${other}\``));
+  const fromTicketComment = comment(["--ticket", s.file("ticket.md", `${ask}${TICKET}`)], "ticket");
+  assert.equal(fromTicketComment.status, 0, fromTicketComment.stderr);
+  assert.match(readFileSync(path.join(s.root, "comment.md"), "utf8"), new RegExp(`Not run under targeted-tests ruling ${RULING_ID} \\(ticket\\): \`${other}\``));
 });
