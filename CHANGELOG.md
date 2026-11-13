@@ -4,19 +4,39 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe-core v1.0.8
+### vibe-core v1.0.9
 
 #### Changed
 - The handoff gate witness (`lib/handoff/scripts/handoff-gate-check.mjs`, `EVIDENCE_KEYS`) also binds the program rulings file the gate was given with `--rulings`, so a changed rulings file makes the witness stale for the PR guard and the cloud import refresh, like a changed ticket or body (ISS-14077). The PR guard's order is unchanged: a cloud import's own readiness is still checked before, and never cleared by, the gate override.
 
-### vibe v1.1.85
+### vibe v1.1.86
 
 #### Added
 - The handoff gate honors an operator's recorded ruling for targeted tests (ISS-14077; Daniel, 2026-11-12: "we should still fix vibe"). Verifier evidence may cite one as `targetedTestsRuling: { id, source: "rulings" | "ticket" }`. New `skills/handoff/scripts/targeted-tests-ruling.mjs` verifies it: the id has the form `R-<WORDS>`, and the program's rulings file (`--rulings`, new on `handoff-gate.mjs`, `handoff-inventory.mjs` and `pr-evidence-comment.mjs`) or the live ticket (`--ticket`) must record it once, dated and labeled with the id (a heading in a rulings file, a `- Ruling` line in a ticket), not an orchestrator direction, not marked withdrawn or superseded in its section or the headings above it, named by no other line (a later line naming it may withdraw it), and with an entry that, apart from the id, is about targeted tests (`targeted tests`, `targeted inventory` and the like). A refusal names the shape to record, so an existing ruling with no id can be given one. Under a verified ruling, `blocking.prEvidence` accepts a `not-run` row with `ruling: <id>` and a reason for a selected test outside the targeted inventory, a matching post-merge lane, or the `web-host` or `desktop-host` lane. Every such item keeps its own row. At least one targeted inventory test must pass on the published commit (a failure that also happens on main does not count), and the inventory entries still need their passing run on the published commit, and a diff-rule required test, a spec the branch edits and the touch-flow and Storybook lanes are never left this way. The PR evidence comment names the ruling and each item it left not run. Before this, a reviewed cloud import run under a targeted-tests ruling could never pass the gate, so `refresh-import` refused and its PR could not open even with the gate override; it now passes with no override.
 - The E2E capability probe and `ciCheckRepros` are unchanged: they are not test selections, and `ciCheckRepros` keeps its `[]` with `noCiCheckReason` path.
 - The not-run E2E body rule is unchanged. On symphony-alpha main every `e2e-test.yml` job skips `pull_request` and `merge_group`, so "no CI runs ... before merge" is true there.
-- The verify and environment workers and the handoff PR reference say how to record ruling rows and pass `--rulings`. The README version line and the Python and vibe-bench release-pin tests move to 1.1.85.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 195 words longer than in 1.1.84 (origin/main at this update, 7c341191).
+- The verify and environment workers and the handoff PR reference say how to record ruling rows and pass `--rulings`. The README version line and the Python and vibe-bench release-pin tests move to 1.1.86.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 195 words longer than in 1.1.85 (origin/main at this update, 80a05853).
+
+### vibe v1.1.85
+
+#### Changed
+- Every vibe agent's model is now a default the person can override, and the agents that write product code default to Opus in Claude Code (ISS-14109; Daniel's 2026-11-12 rulings, "opus should be the default for code writing, sonnet for exploration", "the user can override the model to whatever they want" and "the models should be defaults, not mandatory like we have them"). `agents/vibe-change-worker.md` (the session's sole implementation writer) and `agents/vibe-seed-fix-worker.md` (edits the seed producers and coverage files) move from `model: sonnet` to `model: opus`. No other agent's default changes; explorers stay on Sonnet.
+- `VIBE_AGENT_ROLES` gains an `operational` role for the five workers that run setup, records, environments and publication and never write product code (`vibe-environment-worker`, `vibe-prototype-worker`, `vibe-seed-pr-worker`, `vibe-setup-worker`, `vibe-ticket-worker`), which were listed as writers. `writer` now means code writing only. On Codex `operational` has the writer's binding (`gpt-6-sol`, `high`), so no Codex default changes.
+- The Claude launcher (`claude-worker.mjs`) no longer fixes a role to its definition's model. It starts each worker on, in order: the launch input's new `model` (any role), the person's override for that agent, their override for its role, then the agent file's `model:`. `reviewModel` is still accepted as the earlier name of `model`, now for any role and any model, so `REVIEW_MODEL_REFUSED` is gone. The model reaches both `claude --model` and the definition passed to `--agents`. A review receipt still records the model its trace shows, so it stays right under an override.
+- `worker-model.mjs codex <name>` applies the same overrides to the Codex spawn binding; the reasoning effort is unchanged.
+- The vibe-bench writer pin (`tools/vibe-bench/src/agent-models.ts`) expects `opus` for `vibe-change-worker`; the nightly benchmark starts a new lineage because the declared writer model changed. Its per-agent model record now names the model the launcher resolves (a chosen model, else the declared default), so a run on a machine with overrides is checked against what really ran.
+
+#### Added
+- `skills/vibe/scripts/agent-models.mjs` holds each agent's role and reads one overrides file per machine, `~/.codex/vibe/models.json` (`VIBE_MODELS_FILE` names another file, and is listed as configuration in `review-class-guard-baseline.json`): `{"claude": {"roles": {"writer": "<model>"}, "agents": {"vibe-verify-worker": "<model>"}}, "codex": {...}}`. Any model name is accepted; there is no list. An absent file or key keeps the default. A file that cannot be parsed, or whose `roles` or `agents` name something that is not a vibe role or agent or hold something other than a model name, refuses the launch (`MODEL_OVERRIDES_INVALID`, "Model overrides in <file> could not be read: <reason>") instead of dropping the person's choice.
+- `worker-model.mjs set <claude|codex> <role or agent name> <model>` and `unset <claude|codex> <role or agent name>` write that file; `worker-model.mjs claude <name>` prints the model the launcher would start an agent on.
+- The vibe-workers bundles are rebuilt, the vitest config points `VIBE_MODELS_FILE` at a path that never exists so no test reads this machine's overrides, and the README version line and the Python and vibe-bench release-pin tests move to 1.1.85.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 69 words longer than in 1.1.84 (origin/main at this update, 7c341191).
+
+### vibe-core v1.0.8
+
+#### Changed
+- The comment on `FABLE_REVIEW_MODELS` (`lib/vibe/scripts/review-models.mjs`) no longer says the Claude launcher accepts only those models as a `reviewModel` (ISS-14109). The cloud import's independent-review gate (ISS-14039) still reads the list and is unchanged.
 
 ### vibe-core v1.0.7
 

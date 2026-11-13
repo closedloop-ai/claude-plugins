@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
@@ -88,6 +88,12 @@ function run(value: ReturnType<typeof fixture>, input: Record<string, unknown>, 
   });
 }
 
+/** The model of the last launch: the `--model` argument and the model in the definition handed to `--agents`. */
+function launchedModel(value: ReturnType<typeof fixture>, agent = "vibe:vibe-change-worker") {
+  const proof = readProof(value.metadata).at(-1);
+  return { flag: proof?.args[(proof?.args.indexOf("--model") ?? -1) + 1], definition: proof?.definition[agent]?.model };
+}
+
 describe("production Claude CLI adapter", () => {
   it("honors explicit top-level test requirements only for the persistent writer's eligible modes", () => {
     const grant = { agentName: "vibe-change-worker", mode: "request", testsRequired: true } as const;
@@ -174,26 +180,57 @@ describe("production Claude CLI adapter", () => {
     expect(proof?.args).not.toContain("--permission-prompts");
   });
 
-  it("runs a receipt review role on the Fable review model and refuses that model for any other role (ISS-14039)", () => {
+  it("starts the writer on opus from its shipped definition when no model was chosen (ISS-14109)", () => {
     const value = setup();
-    const result = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", reviewModel: "claude-fable-5-2" });
+    copyFileSync(join(bundleDirectory, "../../../../agents/vibe-change-worker.md"), join(value.agentRoot, "agents/vibe-change-worker.md"));
+    const result = run(value, { input: "WRITE_ALLOWED" });
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    const proof = readProof(value.metadata)[0];
-    expect(proof?.args[proof.args.indexOf("--model") + 1]).toBe("claude-fable-5-2");
-    expect(proof?.definition["vibe:vibe-guardrails-reviewer"]?.model).toBe("claude-fable-5-2");
-    const plain = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", requestId: "plain" });
-    expect(plain.status, plain.stdout + plain.stderr).toBe(0);
-    expect(readProof(value.metadata)[1]?.definition["vibe:vibe-guardrails-reviewer"]?.model).toBe("sonnet");
-    const refusal = (result: ReturnType<typeof run>) => {
+    expect(launchedModel(value)).toEqual({ flag: "opus", definition: "opus" });
+  });
+
+  it("starts a role on the model its person chose, and no other role on it (ISS-14109)", () => {
+    const value = setup();
+    const env = { VIBE_MODELS_FILE: join(value.base, "models.json") };
+    writeFileSync(env.VIBE_MODELS_FILE, JSON.stringify({ claude: { roles: { writer: "any-model-9[1m]", explorer: "explorer-model" } },
+      codex: { roles: { reviewer: "codex-only" } } }));
+    const launch = (input: Record<string, unknown>) => {
+      const result = run(value, input, undefined, env);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      return launchedModel(value, "agentName" in input ? `vibe:${String(input.agentName)}` : undefined);
+    };
+    expect(launch({ input: "WRITE_ALLOWED" })).toEqual({ flag: "any-model-9[1m]", definition: "any-model-9[1m]" });
+    expect(launch({ agentName: "vibe-guardrails-reviewer", input: "inspect", requestId: "review" })).toEqual({ flag: "sonnet", definition: "sonnet" });
+    expect(launch({ agentName: "vibe-requirements-worker", input: "inspect", requestId: "explore", capabilities: [...graph, ...liveReads] }))
+      .toEqual({ flag: "explorer-model", definition: "explorer-model" });
+    expect(launch({ agentName: "vibe-setup-worker", input: "inspect", requestId: "setup" }))
+      .toEqual({ flag: "sonnet", definition: "sonnet" });
+  });
+
+  it("takes one launch's model for any role over the chosen one, and still accepts reviewModel (ISS-14109, ISS-14039)", () => {
+    const value = setup();
+    const env = { VIBE_MODELS_FILE: join(value.base, "models.json") };
+    writeFileSync(env.VIBE_MODELS_FILE, JSON.stringify({ claude: { agents: { "vibe-requirements-worker": "chosen-model" } } }));
+    const launch = (input: Record<string, unknown>) => {
+      const result = run(value, { agentName: "vibe-requirements-worker", input: "inspect", capabilities: [...graph, ...liveReads], ...input }, undefined, env);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      return launchedModel(value, `vibe:${String(input.agentName ?? "vibe-requirements-worker")}`).flag;
+    };
+    expect(launch({})).toBe("chosen-model");
+    expect(launch({ requestId: "launch", model: "launch-model" })).toBe("launch-model");
+    expect(launch({ requestId: "alias", agentName: "vibe-guardrails-reviewer", reviewModel: "claude-fable-5-2" })).toBe("claude-fable-5-2");
+    expect(launch({ requestId: "any", agentName: "vibe-guardrails-reviewer", reviewModel: "opus" })).toBe("opus");
+    const proofs = readProof(value.metadata).length;
+    const refusal = (input: Record<string, unknown>) => {
+      const result = run(value, { agentName: "vibe-requirements-worker", input: "inspect", capabilities: [...graph, ...liveReads], ...input }, undefined, env);
       expect(result.status).not.toBe(0);
       return JSON.parse(result.stdout) as { code: string; summary: string };
     };
-    const wrongRole = refusal(run(value, { agentName: "vibe-requirements-worker", input: "inspect", requestId: "advisor", reviewModel: "claude-fable-5-2" }));
-    expect(wrongRole.code).toBe("REVIEW_MODEL_REFUSED");
-    expect(wrongRole.summary).toMatch(/applies only to a receipt review role .* not vibe-requirements-worker/);
-    const unknownModel = refusal(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", requestId: "other", reviewModel: "opus" }));
-    expect(unknownModel).toMatchObject({ code: "REVIEW_MODEL_REFUSED", summary: "reviewModel must be one of claude-fable-5-2" });
-    expect(readProof(value.metadata)).toHaveLength(2);
+    expect(refusal({ requestId: "flag", model: "--dangerous" }).code).toBe("INVALID_REQUEST");
+    writeFileSync(env.VIBE_MODELS_FILE, "{not json");
+    const unreadable = refusal({ requestId: "unreadable" });
+    expect(unreadable.code).toBe("MODEL_OVERRIDES_INVALID");
+    expect(unreadable.summary).toContain(`Model overrides in ${env.VIBE_MODELS_FILE} could not be read`);
+    expect(readProof(value.metadata)).toHaveLength(proofs);
   });
 
   it("constructs exact inline hook matchers without a settings file", () => {

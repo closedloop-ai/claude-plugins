@@ -8,9 +8,9 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
   registered agents, so spawn a subagent with the file's body as its
   instructions plus the inputs below, and set the spawn's `model` and
   `reasoning_effort` to what `node scripts/worker-model.mjs codex <name>`
-  prints: explorers (requirements, backend, primitive and Storybook advice,
-  the handoff summary) run on `gpt-5.6-terra`, every writer, reviewer and
-  verifier on `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
+  prints: by default explorers (requirements, backend, primitive and Storybook
+  advice, the handoff summary) run on `gpt-5.6-terra`, every other role on
+  `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
   asked for it. Spawn `vibe-change-worker` only ONCE per
   session with a read-only hold brief, record its returned actual native ID
   (the agent path `spawn_agent` returns, such as `/root/vibe_writer`, is that

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // Most tests here start git, the bundled CLIs and fake claude processes one after
@@ -8,5 +9,9 @@ import { defineConfig } from "vitest/config";
 // (ISS-13171). src/test-budget.test.ts keeps this cap and lets a per-test timeout only shrink.
 export const MAX_WORKERS = 3;
 
+// A path that never exists, so no test launches a worker on the models this machine's person chose (ISS-14109).
+export const NO_MODEL_OVERRIDES = fileURLToPath(new URL("./no-model-overrides/models.json", import.meta.url));
+
 // Pinned release commits are fetched once here, never inside a timed test or hook (ISS-13662).
-export default defineConfig({ test: { maxWorkers: MAX_WORKERS, globalSetup: ["./src/global-setup.ts"] } });
+export default defineConfig({ test: { maxWorkers: MAX_WORKERS, globalSetup: ["./src/global-setup.ts"],
+  env: { VIBE_MODELS_FILE: NO_MODEL_OVERRIDES } } });

@@ -117,17 +117,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path3) {
-      const ctrl = callVisitor(key, node, visitor, path3);
+    function visit_(key, node, visitor, path4) {
+      const ctrl = callVisitor(key, node, visitor, path4);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path3, ctrl);
-        return visit_(key, ctrl, visitor, path3);
+        replaceNode(key, path4, ctrl);
+        return visit_(key, ctrl, visitor, path4);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path3 = Object.freeze(path3.concat(node));
+          path4 = Object.freeze(path4.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path3);
+            const ci = visit_(i, node.items[i], visitor, path4);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -138,13 +138,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path3 = Object.freeze(path3.concat(node));
-          const ck = visit_("key", node.key, visitor, path3);
+          path4 = Object.freeze(path4.concat(node));
+          const ck = visit_("key", node.key, visitor, path4);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path3);
+          const cv = visit_("value", node.value, visitor, path4);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -165,17 +165,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path3) {
-      const ctrl = await callVisitor(key, node, visitor, path3);
+    async function visitAsync_(key, node, visitor, path4) {
+      const ctrl = await callVisitor(key, node, visitor, path4);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path3, ctrl);
-        return visitAsync_(key, ctrl, visitor, path3);
+        replaceNode(key, path4, ctrl);
+        return visitAsync_(key, ctrl, visitor, path4);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path3 = Object.freeze(path3.concat(node));
+          path4 = Object.freeze(path4.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path3);
+            const ci = await visitAsync_(i, node.items[i], visitor, path4);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -186,13 +186,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path3 = Object.freeze(path3.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path3);
+          path4 = Object.freeze(path4.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path4);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path3);
+          const cv = await visitAsync_("value", node.value, visitor, path4);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -219,23 +219,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path3) {
+    function callVisitor(key, node, visitor, path4) {
       if (typeof visitor === "function")
-        return visitor(key, node, path3);
+        return visitor(key, node, path4);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path3);
+        return visitor.Map?.(key, node, path4);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path3);
+        return visitor.Seq?.(key, node, path4);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path3);
+        return visitor.Pair?.(key, node, path4);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path3);
+        return visitor.Scalar?.(key, node, path4);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path3);
+        return visitor.Alias?.(key, node, path4);
       return void 0;
     }
-    function replaceNode(key, path3, node) {
-      const parent = path3[path3.length - 1];
+    function replaceNode(key, path4, node) {
+      const parent = path4[path4.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -847,10 +847,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path3, value) {
+    function collectionFromPath(schema, path4, value) {
       let v = value;
-      for (let i = path3.length - 1; i >= 0; --i) {
-        const k = path3[i];
+      for (let i = path4.length - 1; i >= 0; --i) {
+        const k = path4[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -869,7 +869,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path3) => path3 == null || typeof path3 === "object" && !!path3[Symbol.iterator]().next().done;
+    var isEmptyPath = (path4) => path4 == null || typeof path4 === "object" && !!path4[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -899,11 +899,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path3, value) {
-        if (isEmptyPath(path3))
+      addIn(path4, value) {
+        if (isEmptyPath(path4))
           this.add(value);
         else {
-          const [key, ...rest] = path3;
+          const [key, ...rest] = path4;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -917,8 +917,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path3) {
-        const [key, ...rest] = path3;
+      deleteIn(path4) {
+        const [key, ...rest] = path4;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -932,8 +932,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path3, keepScalar) {
-        const [key, ...rest] = path3;
+      getIn(path4, keepScalar) {
+        const [key, ...rest] = path4;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -951,8 +951,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path3) {
-        const [key, ...rest] = path3;
+      hasIn(path4) {
+        const [key, ...rest] = path4;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -962,8 +962,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path3, value) {
-        const [key, ...rest] = path3;
+      setIn(path4, value) {
+        const [key, ...rest] = path4;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3478,9 +3478,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path3, value) {
+      addIn(path4, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path3, value);
+          this.contents.addIn(path4, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3555,14 +3555,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path3) {
-        if (Collection.isEmptyPath(path3)) {
+      deleteIn(path4) {
+        if (Collection.isEmptyPath(path4)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path3) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path4) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3577,10 +3577,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path3, keepScalar) {
-        if (Collection.isEmptyPath(path3))
+      getIn(path4, keepScalar) {
+        if (Collection.isEmptyPath(path4))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path3, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path4, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3591,10 +3591,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path3) {
-        if (Collection.isEmptyPath(path3))
+      hasIn(path4) {
+        if (Collection.isEmptyPath(path4))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path3) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path4) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3611,13 +3611,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path3, value) {
-        if (Collection.isEmptyPath(path3)) {
+      setIn(path4, value) {
+        if (Collection.isEmptyPath(path4)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path3), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path4), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path3, value);
+          this.contents.setIn(path4, value);
         }
       }
       /**
@@ -5578,9 +5578,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path3) => {
+    visit.itemAtPath = (cst, path4) => {
       let item = cst;
-      for (const [field, index] of path3) {
+      for (const [field, index] of path4) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5589,23 +5589,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path3) => {
-      const parent = visit.itemAtPath(cst, path3.slice(0, -1));
-      const field = path3[path3.length - 1][0];
+    visit.parentCollection = (cst, path4) => {
+      const parent = visit.itemAtPath(cst, path4.slice(0, -1));
+      const field = path4[path4.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path3, item, visitor) {
-      let ctrl = visitor(item, path3);
+    function _visit(path4, item, visitor) {
+      let ctrl = visitor(item, path4);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path3.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path4.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5616,10 +5616,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path3);
+            ctrl = ctrl(item, path4);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path3) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path4) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7373,7 +7373,7 @@ var require_dist = __commonJS({
 // src/claude-worker.ts
 import { execFileSync as execFileSync2, spawn, spawnSync as spawnSync2 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync, existsSync as existsSync5, openSync, realpathSync as realpathSync8, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
+import { closeSync, existsSync as existsSync6, openSync, realpathSync as realpathSync8, rmSync as rmSync2, writeFileSync as writeFileSync3, writeSync } from "node:fs";
 import { join as join8 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -7855,8 +7855,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path3, errorMaps, issueData } = params;
-  const fullPath = [...path3, ...issueData.path || []];
+  const { data, path: path4, errorMaps, issueData } = params;
+  const fullPath = [...path4, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7972,11 +7972,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path3, key) {
+  constructor(parent, value, path4, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path3;
+    this._path = path4;
     this._key = key;
   }
   get path() {
@@ -12115,9 +12115,9 @@ function readReferenceImages(metadataDir) {
   for (const raw of record.data.referenceImages ?? []) {
     const entry = referenceSchema.safeParse(raw);
     if (!entry.success) continue;
-    const path3 = resolve2(entry.data.path);
-    if (dirname2(path3) !== owned || !existsSync2(path3) || !statSync2(path3).isFile()) continue;
-    images.push({ path: path3, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
+    const path4 = resolve2(entry.data.path);
+    if (dirname2(path4) !== owned || !existsSync2(path4) || !statSync2(path4).isFile()) continue;
+    images.push({ path: path4, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
   }
   return images;
 }
@@ -12488,17 +12488,141 @@ function vibeCore(relative) {
 var module = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
 var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScriptReferences } = module;
 
-// vibe-core:lib/vibe/scripts/review-models.mjs
-var module2 = await vibeCore("lib/vibe/scripts/review-models.mjs");
-var { FABLE_REVIEW_MODELS } = module2;
+// ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import os from "node:os";
+import path3 from "node:path";
+
+// ../../plugins/vibe/skills/cl-sweep/scripts/model-policy.mjs
+var TICKET_OWNER_MODEL = "gpt-6-sol";
+var EXPLORER_MODEL = "gpt-5.6-terra";
+var MECHANICAL_SUPPORT_MODEL = "gpt-6-luna";
+var DEFAULT_REASONING_EFFORT = "high";
+var MECHANICAL_SUPPORT_REASONING_EFFORT = "low";
+var CodexWorkerRole = Object.freeze({
+  Writer: "writer",
+  Operational: "operational",
+  Reviewer: "reviewer",
+  Verifier: "verifier",
+  Explorer: "explorer",
+  Mechanical: "mechanical"
+});
+var CODEX_ROLE_BINDINGS = Object.freeze({
+  [CodexWorkerRole.Writer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
+  [CodexWorkerRole.Operational]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
+  [CodexWorkerRole.Reviewer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
+  [CodexWorkerRole.Verifier]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
+  [CodexWorkerRole.Explorer]: Object.freeze({ model: EXPLORER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
+  [CodexWorkerRole.Mechanical]: Object.freeze({
+    model: MECHANICAL_SUPPORT_MODEL,
+    reasoningEffort: MECHANICAL_SUPPORT_REASONING_EFFORT
+  })
+});
+
+// ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
+var VIBE_AGENT_ROLES = Object.freeze({
+  "vibe-adversarial-reviewer": CodexWorkerRole.Reviewer,
+  "vibe-backend-worker": CodexWorkerRole.Explorer,
+  "vibe-change-worker": CodexWorkerRole.Writer,
+  "vibe-consolidated-reviewer": CodexWorkerRole.Reviewer,
+  "vibe-environment-worker": CodexWorkerRole.Operational,
+  "vibe-guardrails-reviewer": CodexWorkerRole.Reviewer,
+  "vibe-handoff-summarizer": CodexWorkerRole.Explorer,
+  "vibe-primitive-worker": CodexWorkerRole.Explorer,
+  "vibe-prototype-worker": CodexWorkerRole.Operational,
+  "vibe-requirements-worker": CodexWorkerRole.Explorer,
+  "vibe-seed-check-worker": CodexWorkerRole.Verifier,
+  "vibe-seed-fix-worker": CodexWorkerRole.Writer,
+  "vibe-seed-pr-worker": CodexWorkerRole.Operational,
+  "vibe-setup-worker": CodexWorkerRole.Operational,
+  "vibe-storybook-decomposer": CodexWorkerRole.Explorer,
+  "vibe-ticket-worker": CodexWorkerRole.Operational,
+  "vibe-verify-worker": CodexWorkerRole.Verifier
+});
+var ModelRuntime = Object.freeze({ Claude: "claude", Codex: "codex" });
+var ModelSource = Object.freeze({ Launch: "launch", Agent: "agent", Role: "role", Default: "default" });
+var MODELS_FILE_ENV = "VIBE_MODELS_FILE";
+var MODEL_OVERRIDES_INVALID = "MODEL_OVERRIDES_INVALID";
+var RUNTIMES = Object.values(ModelRuntime);
+var GROUPS = Object.freeze(["roles", "agents"]);
+var ROLES = new Set(Object.values(VIBE_AGENT_ROLES));
+var MODEL_NAME = /^[^\s-]\S*$/;
+function isModelName(value) {
+  return typeof value === "string" && MODEL_NAME.test(value);
+}
+function agentRole(agentName) {
+  const agent = typeof agentName === "string" ? agentName.replace(/^vibe:/, "") : agentName;
+  const role = Object.hasOwn(VIBE_AGENT_ROLES, agent) ? VIBE_AGENT_ROLES[agent] : void 0;
+  if (!role) {
+    throw new Error(`Unknown vibe agent: ${agentName}`);
+  }
+  return { agent, role };
+}
+function modelsFile({ env = process.env, home = os.homedir() } = {}) {
+  return env[MODELS_FILE_ENV] || path3.join(home, ".codex", "vibe", "models.json");
+}
+function readModelOverrides(options) {
+  const file = modelsFile(options);
+  if (!existsSync4(file)) {
+    return {};
+  }
+  const refuse = (reason) => {
+    throw Object.assign(new Error(`Model overrides in ${file} could not be read: ${reason}`), { code: MODEL_OVERRIDES_INVALID });
+  };
+  let overrides;
+  try {
+    overrides = JSON.parse(readFileSync6(file, "utf8"));
+  } catch (error) {
+    refuse(error instanceof Error ? error.message : String(error));
+  }
+  if (!isRecord(overrides)) {
+    refuse("it is not a JSON object");
+  }
+  for (const runtime of RUNTIMES.filter((name) => overrides[name] !== void 0)) {
+    if (!isRecord(overrides[runtime])) {
+      refuse(`${runtime} is not an object`);
+    }
+    for (const group of GROUPS.filter((name) => overrides[runtime][name] !== void 0)) {
+      if (!isRecord(overrides[runtime][group])) {
+        refuse(`${runtime}.${group} is not an object`);
+      }
+      for (const [key, model] of Object.entries(overrides[runtime][group])) {
+        if (!(group === "roles" ? ROLES.has(key) : Object.hasOwn(VIBE_AGENT_ROLES, key))) {
+          refuse(`${runtime}.${group}.${key} is not a vibe ${group === "roles" ? "role" : "agent"}`);
+        }
+        if (!isModelName(model)) {
+          refuse(`${runtime}.${group}.${key} is not a model name`);
+        }
+      }
+    }
+  }
+  return overrides;
+}
+function resolveWorkerModel(runtime, agentName, defaultModel, { launchModel, ...options } = {}) {
+  const { agent, role } = agentRole(agentName);
+  if (launchModel) {
+    return { model: launchModel, source: ModelSource.Launch };
+  }
+  const chosen = readModelOverrides(options)[runtime] ?? {};
+  if (Object.hasOwn(chosen.agents ?? {}, agent)) {
+    return { model: chosen.agents[agent], source: ModelSource.Agent };
+  }
+  if (Object.hasOwn(chosen.roles ?? {}, role)) {
+    return { model: chosen.roles[role], source: ModelSource.Role };
+  }
+  return { model: defaultModel, source: ModelSource.Default };
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 // src/record-context.ts
-import { existsSync as existsSync4, readFileSync as readFileSync6, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync7, realpathSync as realpathSync7 } from "node:fs";
 import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
-var module3 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module3;
+var module2 = await vibeCore("lib/vibe/scripts/session-record.mjs");
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module2;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -12650,10 +12774,10 @@ function resolveRecordContext(input) {
     const takeover = input.sessionless.kind === "takeover" && !input.recordAction && !input.exclusiveRecordTurn && (TAKEOVER_REVIEWERS.has(input.agentName) && input.mode === "pull-request" || input.agentName === TAKEOVER_WRITER && input.mode !== "record" && input.mode !== "plan" && Boolean(input.sessionless.evidence.sourceBranch));
     if (!startup && !cancel && !takeover) throw new Error("This role/action has no sessionless operation");
     place = checkoutLocation(input.worktree);
-    if (existsSync4(join6(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync5(join6(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
   } else {
     const checkout = checkoutLocation(input.worktree);
-    if (!existsSync4(join6(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
+    if (!existsSync5(join6(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
     place = sessionPlace(checkout);
   }
   return { place, target: discardLocation(input, place) };
@@ -12670,13 +12794,13 @@ function discardLocation(input, stable) {
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
-    JSON.parse(readFileSync6(join6(target.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync7(join6(target.dir, "vibe-session.json"), "utf8"))
   );
   const recordedTicket = sessionLiveTicket(record);
   const recordedCreated = record.liveTicketCreatedBySession ?? recordedTicket !== null;
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync4(join6(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
-  const common = readFileSync6(join6(target.dir, "commondir"), "utf8").trim();
-  const stableCommon = existsSync4(join6(stable.dir, "commondir")) ? realpathSync7(join6(stable.dir, readFileSync6(join6(stable.dir, "commondir"), "utf8").trim())) : realpathSync7(stable.dir);
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join6(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  const common = readFileSync7(join6(target.dir, "commondir"), "utf8").trim();
+  const stableCommon = existsSync5(join6(stable.dir, "commondir")) ? realpathSync7(join6(stable.dir, readFileSync7(join6(stable.dir, "commondir"), "utf8").trim())) : realpathSync7(stable.dir);
   if (realpathSync7(join6(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (recordedTicket ?? void 0) !== evidence.liveTicket || recordedCreated !== evidence.liveTicketCreatedBySession) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
@@ -12729,13 +12853,13 @@ var mainSyncPurposeSchema = external_exports.enum(["build", "handoff"]);
 var commitSchema = validationCommitSchema;
 var digestSchema = external_exports.string().regex(/^[a-f0-9]{64}$/);
 var originFileSchema = external_exports.object({
-  path: external_exports.string().min(1).max(2048).refine((path3) => !path3.startsWith("/") && !path3.includes("\\") && !path3.includes("\0") && !path3.split("/").includes("..")),
+  path: external_exports.string().min(1).max(2048).refine((path4) => !path4.startsWith("/") && !path4.includes("\\") && !path4.includes("\0") && !path4.split("/").includes("..")),
   bytes: external_exports.number().int().nonnegative().max(128 * 1024 * 1024),
   sha256: digestSchema,
   mode: external_exports.literal("100644")
 }).strict();
 var producerInputSchema = originFileSchema.extend({ mode: external_exports.enum(["100644", "100755"]) });
-var canonicalRelativeSchema = external_exports.string().min(1).max(2048).refine((path3) => !path3.startsWith("/") && !path3.includes("\\") && !path3.includes("\0") && !path3.split("/").some((part) => !part || part === "." || part === ".."));
+var canonicalRelativeSchema = external_exports.string().min(1).max(2048).refine((path4) => !path4.startsWith("/") && !path4.includes("\\") && !path4.includes("\0") && !path4.split("/").some((part) => !part || part === "." || part === ".."));
 var packageOwnerSchema = external_exports.object({
   path: canonicalRelativeSchema,
   name: external_exports.string().min(1).max(128),
@@ -13078,8 +13202,10 @@ var launchSchema = recordContextSchema.extend({
   testsRequired: external_exports.boolean().optional(),
   previewRequirements: external_exports.array(external_exports.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
   previewProducer: external_exports.literal("runtime-provider").optional(),
-  /** A review role run on Fable 5.2 instead of its definition's model; the receipt proves the model from the trace (ISS-14039). */
-  reviewModel: external_exports.string().refine((model) => FABLE_REVIEW_MODELS.includes(model), "reviewModel must be an accepted Fable review model").optional()
+  /** This launch's model for any role, in place of the person's override and the definition's default (ISS-14109). */
+  model: external_exports.string().refine(isModelName).optional(),
+  /** The earlier name of `model` (ISS-14039), still accepted; a review receipt proves the model from the trace. */
+  reviewModel: external_exports.string().refine(isModelName).optional()
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 var resultSchema = external_exports.object({
   type: external_exports.literal("result"),
@@ -13124,10 +13250,6 @@ var readerRoles = /* @__PURE__ */ new Set([
   "vibe-verify-worker"
 ]);
 var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
-var REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
-var ReviewModelError = class extends Error {
-  code = REVIEW_MODEL_REFUSED;
-};
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
 var testAuthoringModes = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
 var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
@@ -13215,10 +13337,12 @@ function boundDefinition(definition, input) {
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(recordModes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
   }
-  if (input.reviewModel && !receiptRoles.has(input.agentName)) {
-    throw new ReviewModelError(`reviewModel applies only to a receipt review role (${[...receiptRoles].join(", ")}), not ${input.agentName}`);
-  }
-  const model = input.reviewModel ?? definition.metadata.model;
+  const { model } = resolveWorkerModel(
+    ModelRuntime.Claude,
+    input.agentName,
+    definition.metadata.model,
+    { launchModel: input.model ?? input.reviewModel }
+  );
   const prototypeAdvice = input.agentName === "vibe-prototype-worker" && input.mode !== "record";
   const reader = readerRoles.has(input.agentName) || prototypeAdvice;
   const declaredModes = recordModes[input.agentName];
@@ -13378,14 +13502,14 @@ async function runWorker(rawInput) {
         };
         if (input.mainSyncCiRun) operationContext.mainSyncCiRun = input.mainSyncCiRun;
         if (input.mainSyncValidation) operationContext.mainSyncValidation = input.mainSyncValidation;
-        writeFileSync2(join8(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
+        writeFileSync3(join8(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
           context: operationContext,
           branch: place.branch,
           ...persistent && lease ? { primaryOwner: { workerId, lease } } : {}
         }), { mode: 384, flag: "wx" });
       }
     }
-    writeFileSync2(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 384, flag: "wx" });
+    writeFileSync3(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 384, flag: "wx" });
     trace = openSync(tracePath, "wx", 384);
     const timeoutMs = input.mainSyncValidation ? await deriveValidationEnvelope(operationContext, place.dir, place.branch, () => prelaunchCanceled) : input.timeoutMs;
     if (prelaunchCanceled) throw new Error("Owned worker turn canceled before Claude spawn");
@@ -13727,10 +13851,8 @@ function safeFailure(error) {
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
-  if (error instanceof AgentRootError || error instanceof MissingSessionError || error instanceof ReviewModelError) return { code: error.code, summary: error.message };
-  if (error instanceof external_exports.ZodError && error.issues.some((issue) => issue.path[0] === "reviewModel")) {
-    return { code: REVIEW_MODEL_REFUSED, summary: `reviewModel must be one of ${FABLE_REVIEW_MODELS.join(", ")}` };
-  }
+  if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
+  if (error instanceof Error && "code" in error && error.code === MODEL_OVERRIDES_INVALID) return { code: MODEL_OVERRIDES_INVALID, summary: error.message };
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
@@ -13841,11 +13963,11 @@ function capCheckpoint(root, gitDir, turnId) {
       stdio: ["ignore", "pipe", "ignore"]
     });
     const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
-    const midMerge = existsSync5(join8(gitDir, "MERGE_HEAD"));
+    const midMerge = existsSync6(join8(gitDir, "MERGE_HEAD"));
     const diff = run(["diff", "--binary", "HEAD"]);
     if (!diff) return { dirtyFiles, midMerge };
     const patch = join8(gitDir, `vibe-cap-${turnId}.patch`);
-    writeFileSync2(patch, diff, { mode: 384, flag: "wx" });
+    writeFileSync3(patch, diff, { mode: 384, flag: "wx" });
     return { dirtyFiles, midMerge, patch };
   } catch {
     return void 0;
