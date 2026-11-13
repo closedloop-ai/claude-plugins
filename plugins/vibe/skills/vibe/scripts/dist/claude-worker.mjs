@@ -12492,13 +12492,6 @@ var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScri
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import os from "node:os";
 import path3 from "node:path";
-
-// ../../plugins/vibe/skills/cl-sweep/scripts/model-policy.mjs
-var TICKET_OWNER_MODEL = "gpt-6-sol";
-var EXPLORER_MODEL = "gpt-5.6-terra";
-var MECHANICAL_SUPPORT_MODEL = "gpt-6-luna";
-var DEFAULT_REASONING_EFFORT = "high";
-var MECHANICAL_SUPPORT_REASONING_EFFORT = "low";
 var CodexWorkerRole = Object.freeze({
   Writer: "writer",
   Operational: "operational",
@@ -12507,19 +12500,6 @@ var CodexWorkerRole = Object.freeze({
   Explorer: "explorer",
   Mechanical: "mechanical"
 });
-var CODEX_ROLE_BINDINGS = Object.freeze({
-  [CodexWorkerRole.Writer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Operational]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Reviewer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Verifier]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Explorer]: Object.freeze({ model: EXPLORER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Mechanical]: Object.freeze({
-    model: MECHANICAL_SUPPORT_MODEL,
-    reasoningEffort: MECHANICAL_SUPPORT_REASONING_EFFORT
-  })
-});
-
-// ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
 var VIBE_AGENT_ROLES = Object.freeze({
   "vibe-adversarial-reviewer": CodexWorkerRole.Reviewer,
   "vibe-backend-worker": CodexWorkerRole.Explorer,
@@ -12607,10 +12587,14 @@ function resolveWorkerModel(runtime, agentName, defaultModel, { launchModel, ...
   if (Object.hasOwn(chosen.agents ?? {}, agent)) {
     return { model: chosen.agents[agent], source: ModelSource.Agent };
   }
-  if (Object.hasOwn(chosen.roles ?? {}, role)) {
-    return { model: chosen.roles[role], source: ModelSource.Role };
+  return resolveRoleModel(runtime, role, defaultModel, options);
+}
+function resolveRoleModel(runtime, role, defaultModel, { launchModel, ...options } = {}) {
+  if (launchModel) {
+    return { model: launchModel, source: ModelSource.Launch };
   }
-  return { model: defaultModel, source: ModelSource.Default };
+  const roles = readModelOverrides(options)[runtime]?.roles ?? {};
+  return Object.hasOwn(roles, role) ? { model: roles[role], source: ModelSource.Role } : { model: defaultModel, source: ModelSource.Default };
 }
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);

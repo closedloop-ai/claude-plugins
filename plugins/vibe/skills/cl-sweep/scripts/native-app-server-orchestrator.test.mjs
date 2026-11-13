@@ -3,8 +3,11 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
-import { endSession, initializeSession, startThread, startTurn } from './native-app-server-orchestrator.mjs';
+import { DEFAULT_WORKER_MODEL, endSession, initializeSession, startThread, startTurn } from './native-app-server-orchestrator.mjs';
 import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { withoutModelOverrides } from './core-client-fixture.mjs';
+
+withoutModelOverrides();
 
 class FakeClient {
   constructor(handler) {
@@ -165,4 +168,23 @@ test('a turn on an ended worker unarchives its thread before resuming it', async
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
   assert.equal(saved.ended, undefined);
   assert.equal(saved.archivedAt, undefined);
+});
+
+test('AC-2: a new session with no model takes this machine\'s Codex writer model, else the default gpt-5.6-sol', (t) => {
+  const root = realpathSync(mkdtempSync(resolve(tmpdir(), 'orchestrator-model-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const previous = process.env.VIBE_MODELS_FILE;
+  t.after(() => { if (previous === undefined) delete process.env.VIBE_MODELS_FILE; else process.env.VIBE_MODELS_FILE = previous; });
+  const models = resolve(root, 'models.json');
+  process.env.VIBE_MODELS_FILE = resolve(root, 'none.json');
+  const model = (name, options = {}) => initializeSession({ stateFile: resolve(root, `${name}.json`), cwd: root, ...options }).options.model;
+  assert.equal(DEFAULT_WORKER_MODEL, 'gpt-5.6-sol');
+  assert.equal(model('default'), 'gpt-5.6-sol');
+  process.env.VIBE_MODELS_FILE = models;
+  writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'gpt-writer-choice', reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } }));
+  assert.equal(model('chosen'), 'gpt-writer-choice');
+  assert.equal(model('explicit', { model: 'gpt-explicit-choice' }), 'gpt-explicit-choice');
+  writeFileSync(models, JSON.stringify({ codex: { roles: { reviewer: 'gpt-reviewer-choice' } } }));
+  assert.equal(model('other-role'), 'gpt-5.6-sol');
+  assert.throws(() => model('legacy', { model: 'gpt-5.5' }), /New worker sessions cannot use legacy model gpt-5\.5; use gpt-5\.6-sol/);
 });

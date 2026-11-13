@@ -10,7 +10,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
   `reasoning_effort` to what `node scripts/worker-model.mjs codex <name>`
   prints: by default explorers (requirements, backend, primitive and Storybook
   advice, the handoff summary) run on `gpt-5.6-terra`, every other role on
-  `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
+  `gpt-5.6-sol`, all at `high`. Never pass `xhigh` unless the person
   asked for it. Spawn `vibe-change-worker` only ONCE per
   session with a read-only hold brief, record its returned actual native ID
   (the agent path `spawn_agent` returns, such as `/root/vibe_writer`, is that

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -45,16 +45,63 @@ test("every vibe agent file has exactly one role, and every role names a real ag
   assert.deepEqual(Object.keys(VIBE_AGENT_ROLES).sort(), names);
 });
 
-test("explorers run on gpt-5.6-terra and every other role keeps gpt-6-sol, all at high effort on Codex", () => {
+test("AC-1: explorers run on gpt-5.6-terra and every other role defaults to gpt-5.6-sol, all at high effort on Codex", () => {
   const explorer = codexWorkerBinding("vibe-requirements-worker");
   assert.deepEqual(explorer, { agent: "vibe-requirements-worker", role: "explorer", model: "gpt-5.6-terra", reasoning_effort: "high" });
   const writer = codexWorkerBinding("vibe:vibe-change-worker");
-  assert.deepEqual(writer, { agent: "vibe-change-worker", role: "writer", model: "gpt-6-sol", reasoning_effort: "high" });
-  assert.equal(codexWorkerBinding("vibe-adversarial-reviewer").model, "gpt-6-sol");
-  assert.equal(codexWorkerBinding("vibe-verify-worker").model, "gpt-6-sol");
+  assert.deepEqual(writer, { agent: "vibe-change-worker", role: "writer", model: "gpt-5.6-sol", reasoning_effort: "high" });
+  assert.equal(codexWorkerBinding("vibe-adversarial-reviewer").model, "gpt-5.6-sol");
+  assert.equal(codexWorkerBinding("vibe-verify-worker").model, "gpt-5.6-sol");
   for (const name of Object.keys(VIBE_AGENT_ROLES)) {
     assert.notEqual(codexWorkerBinding(name).reasoning_effort, "xhigh", name);
   }
+});
+
+test("AC-1: the evals policy file is the one source the agents' binding and cl-sweep read", () => {
+  const policyFile = path.resolve(HERE, "../../../evals/codex/model-policy.json");
+  assert.equal(JSON.parse(readFileSync(policyFile, "utf8")).codexModel, "gpt-5.6-sol");
+  // A copy of the policy scripts beside an edited policy file follows the file, so no script carries its own default.
+  // The real path: the command only runs when its own path matches the path it was started with.
+  const copy = path.join(realpathSync(scratch), "one-source");
+  for (const file of ["skills/cl-sweep/scripts/model-policy.mjs", "skills/vibe/scripts/agent-models.mjs", "skills/vibe/scripts/worker-model.mjs"]) {
+    cpSync(path.resolve(HERE, "../../..", file), path.join(copy, file));
+  }
+  mkdirSync(path.join(copy, "evals/codex"), { recursive: true });
+  const copiedPolicy = path.join(copy, "evals/codex/model-policy.json");
+  const sweepDefault = `import(${JSON.stringify(path.join(copy, "skills/cl-sweep/scripts/model-policy.mjs"))}).then((policy) => console.log(policy.TICKET_OWNER_MODEL))`;
+  writeFileSync(copiedPolicy, JSON.stringify({ codexModel: "gpt-9-probe" }));
+  for (const [agent, role] of [["vibe-change-worker", "writer"], ["vibe-adversarial-reviewer", "reviewer"], ["vibe-verify-worker", "verifier"],
+    ["vibe-ticket-worker", "operational"]]) {
+    const binding = spawnSync(process.execPath, [path.join(copy, "skills/vibe/scripts/worker-model.mjs"), "codex", agent], { encoding: "utf8" });
+    assert.equal(binding.status, 0, binding.stderr);
+    assert.deepEqual(JSON.parse(binding.stdout), { agent, role, model: "gpt-9-probe", reasoning_effort: "high" });
+  }
+  const explorer = spawnSync(process.execPath, [path.join(copy, "skills/vibe/scripts/worker-model.mjs"), "codex", "vibe-requirements-worker"], { encoding: "utf8" });
+  assert.equal(JSON.parse(explorer.stdout).model, "gpt-5.6-terra");
+  const sweep = spawnSync(process.execPath, ["-e", sweepDefault], { encoding: "utf8" });
+  assert.equal(sweep.stdout.trim(), "gpt-9-probe", sweep.stderr);
+  // A policy file with no usable model is refused, never replaced by a built-in default.
+  // The same holds when the file is missing or cannot be read. The refusal names the policy, in both consumers.
+  for (const body of ["{}", JSON.stringify({ codexModel: "two words" }), JSON.stringify({ codexModel: 5 }), "{not json", null]) {
+    rmSync(copiedPolicy, { force: true });
+    if (body !== null) {
+      writeFileSync(copiedPolicy, body);
+    }
+    for (const args of [[path.join(copy, "skills/vibe/scripts/worker-model.mjs"), "codex", "vibe-change-worker"], ["-e", sweepDefault]]) {
+      const refused = spawnSync(process.execPath, args, { encoding: "utf8" });
+      assert.notEqual(refused.status, 0, String(body));
+      assert.equal(refused.stdout, "", String(body));
+      assert.match(refused.stderr, /eval-codex-model-policy-invalid/, String(body));
+      assert.doesNotMatch(refused.stderr, /gpt-5\.6-sol|gpt-6-sol/, String(body));
+    }
+  }
+});
+
+test("AC-1: the Claude launcher bundle carries no copy of the Codex model policy", () => {
+  const bundle = readFileSync(path.join(HERE, "dist/claude-worker.mjs"), "utf8");
+  // `includes`, not a pattern assertion: a failure must not print the whole bundle.
+  assert.equal(bundle.includes("model-policy"), false, "the bundle names the Codex model policy");
+  assert.equal(bundle.includes("TICKET_OWNER_MODEL"), false, "the bundle carries the Codex default");
 });
 
 test("Claude explorers only read and search, on sonnet or haiku", () => {
@@ -87,7 +134,7 @@ test("no agent's Codex default changed when the operational role was split from 
   const explorers = ["vibe-backend-worker", "vibe-handoff-summarizer", "vibe-primitive-worker", "vibe-requirements-worker", "vibe-storybook-decomposer"];
   for (const name of Object.keys(VIBE_AGENT_ROLES)) {
     const { model, reasoning_effort: effort } = codexWorkerBinding(name);
-    assert.deepEqual({ model, effort }, { model: explorers.includes(name) ? "gpt-5.6-terra" : "gpt-6-sol", effort: "high" }, name);
+    assert.deepEqual({ model, effort }, { model: explorers.includes(name) ? "gpt-5.6-terra" : "gpt-5.6-sol", effort: "high" }, name);
   }
 });
 
@@ -95,7 +142,7 @@ test("a person's model for a role reaches that role's agents on its harness and 
   const { options } = modelsAt("role.json", { claude: { roles: { writer: "any-model-9[1m]" } }, codex: { roles: { explorer: "gpt-anything" } } });
   const codexWriter = modelsAt("codex-writer.json", { codex: { roles: { writer: "gpt-writer" } } }).options;
   assert.equal(codexWorkerBinding("vibe-seed-fix-worker", codexWriter).model, "gpt-writer");
-  assert.equal(codexWorkerBinding("vibe-ticket-worker", codexWriter).model, "gpt-6-sol", "an operational worker is not a writer");
+  assert.equal(codexWorkerBinding("vibe-ticket-worker", codexWriter).model, "gpt-5.6-sol", "an operational worker is not a writer");
   assert.equal(claudeWorkerBinding("vibe-change-worker", codexWriter).model, "opus", "the Codex writer override does not reach Claude Code");
   assert.deepEqual(claudeWorkerBinding("vibe:vibe-change-worker", options), { agent: "vibe-change-worker", role: "writer", model: "any-model-9[1m]" });
   assert.equal(claudeWorkerBinding("vibe-seed-fix-worker", options).model, "any-model-9[1m]");
@@ -103,10 +150,10 @@ test("a person's model for a role reaches that role's agents on its harness and 
     ["vibe-adversarial-reviewer", "opus"]]) {
     assert.equal(claudeWorkerBinding(name, options).model, model, name);
   }
-  assert.equal(codexWorkerBinding("vibe-change-worker", options).model, "gpt-6-sol", "the Claude writer override does not reach Codex");
+  assert.equal(codexWorkerBinding("vibe-change-worker", options).model, "gpt-5.6-sol", "the Claude writer override does not reach Codex");
   assert.deepEqual(codexWorkerBinding("vibe-requirements-worker", options),
     { agent: "vibe-requirements-worker", role: "explorer", model: "gpt-anything", reasoning_effort: "high" });
-  assert.equal(codexWorkerBinding("vibe-verify-worker", options).model, "gpt-6-sol");
+  assert.equal(codexWorkerBinding("vibe-verify-worker", options).model, "gpt-5.6-sol");
 });
 
 test("an agent's model beats its role's, one launch's model beats both, and with none the default applies", () => {
@@ -118,7 +165,7 @@ test("an agent's model beats its role's, one launch's model beats both, and with
   assert.deepEqual(resolveWorkerModel("claude", "vibe-change-worker", "opus", options), { model: "opus", source: "default" });
   const absent = modelsAt("absent.json");
   assert.deepEqual(readModelOverrides(absent.options), {});
-  assert.deepEqual(resolveWorkerModel("codex", "vibe-change-worker", "gpt-6-sol", absent.options), { model: "gpt-6-sol", source: "default" });
+  assert.deepEqual(resolveWorkerModel("codex", "vibe-change-worker", "gpt-5.6-sol", absent.options), { model: "gpt-5.6-sol", source: "default" });
 });
 
 test("set and unset save any model name for a role or an agent and keep the other entries", () => {

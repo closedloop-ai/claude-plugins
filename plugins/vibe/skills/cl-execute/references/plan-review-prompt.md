@@ -82,7 +82,7 @@ SUBAGENTS
     so route anything needing closedloop-graph to a worker that has them, and
     tell workers to load the tools with ToolSearch first.
   - Codex: use same-family `spawn_agent` workers with `fork_turns: "none"`
-    and `model: "gpt-6-sol"` at `high` (`xhigh` only when you raise it
+    and `model: "gpt-5.6-sol"` at `high` (`xhigh` only when you raise it
     explicitly for that worker). They inherit no conversation, so give each
     one the plan path, these sources, and its question.
   - When you run as a support lane, which never delegates, do the workers'

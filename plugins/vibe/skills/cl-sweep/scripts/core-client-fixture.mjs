@@ -48,3 +48,13 @@ export function installRegistryFixture() {
     rmSync(path, { recursive: true, force: true });
   };
 }
+
+/**
+ * Points this process, and the commands it starts, at a model overrides file that never exists, so no test result
+ * depends on the models this machine's person chose (ISS-14109). Returns that path.
+ */
+export function withoutModelOverrides() {
+  const file = join(mkdtempSync(join(tmpdir(), 'cl-sweep-models-')), 'none.json');
+  process.env.VIBE_MODELS_FILE = file;
+  return file;
+}

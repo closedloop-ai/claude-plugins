@@ -90,24 +90,25 @@ Every new `run`/`launch` turn requires `--activity-phase planning|coding|reviewi
 `reviewing` additionally requires `--review-kind plan|code`. The session runtime
 records this after turn acceptance and returns it as `currentActivity` from
 `status`; an active turn with missing or unrecorded activity is not reconciled.
-Every new native ticket session persists and revalidates
-`requestedModel: gpt-6-sol` and its protocol schema hash proof before
-start/resume/turn-start. A pre-existing session bound to `gpt-5.5` or
-`gpt-5.6-*` may recover an already-active turn under its exact persisted model.
-Never rewrite its model binding or interrupt that turn. At the next
-authoritatively verified idle/no-active-turn boundary, replace its owner/session
-under the CLI lease replacement protocol before another turn. New legacy-model
-sessions and implicit fallback/model-family reroutes are forbidden.
+Every new native ticket session persists and revalidates the model resolved
+for that session as `requestedModel` and its protocol schema hash proof before
+start/resume/turn-start. A saved session is never refused for its model and
+may recover an already-active turn under its exact persisted model.
+Never rewrite its model binding or interrupt that turn. When its model differs
+from the model resolved for that session (an explicitly requested model, else this machine's override, else the default), replace its owner/session at the next
+authoritatively verified idle/no-active-turn boundary
+under the CLI lease replacement protocol before another turn.
+Implicit fallback/model-family reroutes are forbidden.
 
 `codex exec -C <worktree>` is only a compatibility fallback when the installed
 App Server schema or daemon probe genuinely lacks the complete native surface.
 Connector absence, an untested schema, or an available daemon used only for
 callbacks is not a valid fallback reason. Use `scripts/cli-worker-session.mjs`
 only for that proven fallback. Its probe must prove `-m/--model` on both launch
-and resume; new fallback sessions persist `gpt-6-sol` and pass it explicitly on
-each invocation. A legacy fallback process already running may finish; a
-persisted old model or missing model binding requires replacement after process
-exit and exact idle proof before another invocation.
+and resume; new fallback sessions persist the resolved model and pass it explicitly on
+each invocation. A fallback process already running may finish; a
+saved model that differs from the model resolved for that session requires
+replacement after process exit and exact idle proof before another invocation.
 
 Inspect one CLI ticket worker without polling its model turn:
 
@@ -126,9 +127,9 @@ before rotating ownership. Use `steer` to deliver a parent correction to an acti
 turn. Use `reconcile` after a client or daemon interruption before starting
 another turn. When strict parsing rejects a malformed final event from a
 completed turn, reconciliation clears its stale `activeTurnId` and preserves
-the thread, session, worktree, lease, and generation. For `gpt-6-sol`, use `run`
+the thread, session, worktree, lease, and generation. On the resolved model, use `run`
 with a correction prompt to create exactly one recovery turn on that same
-thread. For a legacy model, replace after idle proof and issue the correction
+thread. On any other saved model, replace after idle proof and issue the correction
 from the new session.
 
 If `reconcile` instead reports that the stored turn is absent from history,
@@ -138,7 +139,7 @@ and cwd are idle with no active turn may the root run the documented
 ownership ledger and exact expected bindings, fences any detached waiter,
 records the stale turn in session audit history, and clears it. Never edit the
 session JSON manually. The command starts no model turn; a later `launch` reuses
-the same thread and worktree only for a `gpt-6-sol` binding. A legacy binding
+the same thread and worktree only on the resolved model. Any other saved model
 instead follows the idle-boundary replacement protocol.
 
 Direct `spawn_agent` has no cwd in this CLI version. It is never a mutating
@@ -186,7 +187,7 @@ sublease, file-ownership, and callback fencing exist.
 
 - Every such `spawn_agent` call uses `fork_turns: "none"` and explicitly sets a
   role-bounded model from `../scripts/model-policy.mjs`. Use
-  `model: "gpt-6-sol"` for planning, correctness-sensitive review/QA,
+  `model: "gpt-5.6-sol"` for planning, correctness-sensitive review/QA,
   synthesis, and any high-judgment work where mistakes matter. Explorer lanes
   use `model: "gpt-5.6-terra"`. Only when the ticket owner actually decomposes
   a separate bounded, deterministic lower-risk support role may it use
@@ -234,7 +235,7 @@ sublease, file-ownership, and callback fencing exist.
   planning review, ordinary or high-risk correctness review, visual QA,
   logical QA, compatibility/test diagnosis, cross-boundary architecture,
   security/privacy, database/migration, ambiguous-correctness judgment, and
-  synthesis; use `model: "gpt-6-sol"` with `reasoning_effort: "high"`, raised
+  synthesis; use `model: "gpt-5.6-sol"` with `reasoning_effort: "high"`, raised
   to `"xhigh"` only by an explicit choice for that lane. Support lanes return
   bounded evidence only and never own
   orchestration, ticket work, coding/planning, final judgment, or mutation.

@@ -317,12 +317,12 @@ applies to other shared skills such as `decision-table`.
 
 Each model is a default. In Claude Code the `model:` line in each agent file
 sets it; in Codex, `skills/vibe/scripts/worker-model.mjs` puts the read-only
-explorers on `gpt-5.6-terra` and every other role on `gpt-6-sol`, at reasoning
+explorers on `gpt-5.6-terra` and every other role on `gpt-5.6-sol`, at reasoning
 effort `high`. To use another model on this machine, run
 `node skills/vibe/scripts/worker-model.mjs set <claude|codex> <role or agent name> <model>`
 (roles: writer, operational, reviewer, verifier, explorer); it is saved in
 `~/.codex/vibe/models.json` and holds for every vibe session here. `unset`
-removes it. Any model name is accepted.
+removes it. Any model name is accepted. cl-sweep ticket-owner sessions use the Codex writer model, including an override set this way.
 
 ### Evals
 
@@ -376,7 +376,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.85` contains 17 skills and 17 agents, and no hook manifest: its
+Version `1.1.87` contains 17 skills and 17 agents, and no hook manifest: its
 hooks, and every module they run, ship in the `vibe-core` plugin, which vibe
 declares as a dependency. vibe loads those modules from vibe-core through
 `shared/vibe-core.mjs`, and the commands among them keep thin wrappers at

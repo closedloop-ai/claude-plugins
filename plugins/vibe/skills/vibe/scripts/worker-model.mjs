@@ -4,7 +4,8 @@
 // read a model from; the vibe and handoff skills take every spawn's `model`
 // and `reasoning_effort` from here. The Codex defaults live in
 // `../../cl-sweep/scripts/model-policy.mjs`, the plugin's one Codex model
-// policy. A Claude Code worker's default is the `model:` frontmatter of its
+// policy, which takes the writer, operational, reviewer and verifier model
+// from `../../../evals/codex/model-policy.json`. A Claude Code worker's default is the `model:` frontmatter of its
 // agent file, which `scripts/dist/claude-worker.mjs` passes to
 // `claude --model`. Both are defaults: `agent-models.mjs` applies the models
 // this machine's person chose, by role or by agent.

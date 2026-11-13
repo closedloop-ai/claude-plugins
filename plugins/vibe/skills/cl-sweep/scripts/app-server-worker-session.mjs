@@ -55,9 +55,11 @@ import {
 } from './feature-ownership.mjs';
 import {
   DEFAULT_REASONING_EFFORT,
-  isLegacyTicketOwnerModel,
-  LEGACY_UNVERSIONED_MODEL,
   TICKET_OWNER_MODEL,
+  assertNoReplacementNeeded,
+  ticketOwnerModel,
+  ticketOwnerReplacementStatus,
+  validateModelName,
 } from './model-policy.mjs';
 
 export const SESSION_SCHEMA = 'CL_SWEEP_APP_SERVER_WORKER_SESSION v1';
@@ -67,8 +69,7 @@ const MAX_FINAL_RESPONSE_BYTES = 256 * 1024;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 export const MAX_RESULT_ARTIFACT_BYTES = 4 * 1024 * 1024;
 const MAX_PARENT_ACTION_CHARS = 512;
-export const REQUIRED_WORKER_MODEL = TICKET_OWNER_MODEL;
-export const LEGACY_COMPATIBLE_WORKER_MODEL = LEGACY_UNVERSIONED_MODEL;
+export const DEFAULT_WORKER_MODEL = TICKET_OWNER_MODEL;
 export const DEFAULT_TICKET_REASONING_EFFORT = DEFAULT_REASONING_EFFORT;
 const EXTERNAL_PARENT_WRITER_FAILURE = 'The target thread has an active writer outside this managed App Server daemon';
 const SESSION_PATH = Symbol('sessionPath');
@@ -460,13 +461,6 @@ function validateBinding(session) {
   return current;
 }
 
-function validateModelName(value, label) {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value)) {
-    fail(`${label} must be a compact model identifier`);
-  }
-  return value;
-}
-
 function validateReasoningEffort(value, label) {
   if (typeof value !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(value)) {
     fail(`${label} must be a compact reasoning effort identifier`);
@@ -475,12 +469,8 @@ function validateReasoningEffort(value, label) {
 }
 
 function validateModelBinding(session) {
-  if (session.requestedModel !== REQUIRED_WORKER_MODEL && !isLegacyTicketOwnerModel(session.requestedModel)) {
-    fail(
-      `Worker session requestedModel must be ${REQUIRED_WORKER_MODEL}`
-      + ' or a persisted legacy gpt-5.5/gpt-5.6-* binding',
-    );
-  }
+  // A saved session keeps the exact model it was started on; no model is required of it.
+  validateModelName(session.requestedModel, 'requestedModel');
   if (!session.modelBinding || session.modelBinding.field !== 'model') {
     fail('Worker session is missing proven App Server model binding field');
   }
@@ -823,7 +813,7 @@ async function probeAppServer(args) {
     turnSteerModelOverride: generic.turnSteerModelOverride,
     effortBindingField: generic.effortBindingField,
     turnStartEffort: generic.turnStartEffort,
-    requiredWorkerModel: REQUIRED_WORKER_MODEL,
+    defaultWorkerModel: DEFAULT_WORKER_MODEL,
     defaultTicketReasoningEffort: DEFAULT_TICKET_REASONING_EFFORT,
     liveSteering: generic.liveSteering,
   };
@@ -891,10 +881,10 @@ export function initializeSession(args) {
   if (!Number.isSafeInteger(generation) || generation < 1) fail('--generation must be a positive integer');
   const leaseTokenHash = required(args, 'lease-token-hash');
   if (!/^[a-f0-9]{64}$/.test(leaseTokenHash)) fail('--lease-token-hash must be a sha256 hex digest');
-  const requestedModel = validateModelName(args['requested-model'] || REQUIRED_WORKER_MODEL, '--requested-model');
-  if (requestedModel !== REQUIRED_WORKER_MODEL) {
-    fail(`--requested-model must be ${REQUIRED_WORKER_MODEL}; no fallback model is allowed`);
-  }
+  // The resolved model can come from this machine's overrides file, which accepts names a session cannot store.
+  const requestedModel = validateModelName(ticketOwnerModel({
+    launchModel: args['requested-model'] ? validateModelName(args['requested-model'], '--requested-model') : undefined,
+  }), 'requestedModel');
   const requestedReasoningEffort = validateReasoningEffort(
     args['reasoning-effort'] || DEFAULT_TICKET_REASONING_EFFORT,
     '--reasoning-effort',
@@ -924,6 +914,8 @@ export function initializeSession(args) {
     appServerVersion: args['app-server-version'] || null,
     protocolSchemaSha256,
     requestedModel,
+    // Written only when a model was explicitly requested for this session; it then keeps that model.
+    ...(args['requested-model'] ? { requestedModelExplicit: true } : {}),
     requestedReasoningEffort,
     modelBinding: {
       field: 'model',
@@ -1267,9 +1259,7 @@ async function runTurn(args, dependencies = {}) {
   const { path, session } = loadSession(required(args, 'session-file'));
   assertRecoveryUnlocked(path);
   validateModelBinding(session);
-  if (session.requestedModel !== REQUIRED_WORKER_MODEL) {
-    fail(`Persisted ${session.requestedModel} worker requires idle-boundary replacement with a new ${REQUIRED_WORKER_MODEL} session before another turn`);
-  }
+  assertNoReplacementNeeded(session);
   if (!['READY', 'WAITING', 'FAILED', 'INTERRUPTED'].includes(session.state)) {
     fail(`Session cannot start a turn from state ${session.state}`);
   }
@@ -1565,9 +1555,7 @@ function launchDetached(args) {
   assertRecoveryUnlocked(path);
   validateBinding(session);
   const command = session.activeTurnId ? 'supervise' : 'run';
-  if (command === 'run' && session.requestedModel !== REQUIRED_WORKER_MODEL) {
-    fail(`Persisted ${session.requestedModel} worker requires idle-boundary replacement with a new ${REQUIRED_WORKER_MODEL} session before another turn`);
-  }
+  if (command === 'run') assertNoReplacementNeeded(session);
   if (command === 'run' && !args['prompt-file']) fail('Detached run requires --prompt-file');
   const activity = command === 'run' ? normalizeRunActivity(args) : null;
   const logFile = resolve(required(args, 'log-file'));
@@ -1662,13 +1650,7 @@ async function statusSession(args, dependencies = {}) {
     requestedModel: session.requestedModel || null,
     requestedReasoningEffort: session.requestedReasoningEffort || null,
     modelBinding,
-    modelReplacement: isLegacyTicketOwnerModel(session.requestedModel)
-      ? {
-        targetModel: REQUIRED_WORKER_MODEL,
-        requiredBeforeNextTurn: true,
-        idleCandidate: !activeTurnId && ['idle', 'notStarted'].includes(threadStatus),
-      }
-      : null,
+    ...ticketOwnerReplacementStatus(session, !activeTurnId && ['idle', 'notStarted'].includes(threadStatus)),
     worktree: session.worktree,
     branch: session.branch,
     bindingValid,
