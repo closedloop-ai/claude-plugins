@@ -66,7 +66,8 @@ After composing the final PR body, the PR worker runs `handoff-gate.mjs`
 immediately before `gh pr create` with the body, verifier evidence, receipts,
 current fetched base, and when available the criteria ticket, audit
 and matrix; a unit also passes `--review`, `--prd` and any `--plan`, so its review of the completed work
-is rechecked and bound. This gate rechecks mergeability, acceptance criteria, the PR body,
+is rechecked and bound. Evidence citing a targeted-tests ruling from the
+program's rulings file also passes that file as `--rulings`. This gate rechecks mergeability, acceptance criteria, the PR body,
 verifier evidence and machine-produced reviewer findings,
 then records a private witness bound to the source. A later source change
 invalidates it; finish the affected handoff steps and rerun this gate. The

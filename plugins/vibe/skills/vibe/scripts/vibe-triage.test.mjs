@@ -9,11 +9,13 @@ import { fileURLToPath } from "node:url";
 import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify, parsePathList, pathKind, switchOn, validateManifest } from "./vibe-triage.mjs";
 import { chooseDispatch } from "../../fleet-orchestrator/scripts/dispatch-route.mjs";
 import { recordHandoffGate } from "../../handoff/scripts/handoff-gate.mjs";
+import { prEvidenceValidationProblems } from "../../handoff/scripts/pr-facts.mjs";
+import { COMMIT as RULED_COMMIT, FILES as RULED_FILES, RULINGS, ruledEvidence } from "../../handoff/scripts/targeted-tests-ruling-test-fixture.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
 const { cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
-const { writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
@@ -660,7 +662,94 @@ test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   const bodyFile = path.join(gitDir, 'body.md');
   writeFileSync(bodyFile, 'PR body\n');
-  const reviews = REVIEW_ROLES.map((role, index) => {
+  const reviews = claudeReviewReceipts(worktree, gitDir);
+  recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: reviews[0], receipts: reviews }, { runScript: () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: '' }) });
+  refreshImportWitness(worktree, { bodyFile });
+  const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${bodyFile}` } };
+  assert.equal(prCreateGuard(event), null, 'the actual PR hook admits the imported source after handoff and an independent Claude review');
+  writeFileSync(path.join(worktree, 'existing.txt'), 'changed after review\n');
+  assert.match(prCreateGuard(event)?.reason ?? '', /cloud import witness is stale for the current source/);
+});
+
+test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted-tests ruling refreshes and opens its PR without an override', () => {
+  const { worktree, gitDir } = vibeFixture();
+  const request = sourcedCloudRequest(worktree);
+  const receipt = completedReceipt(request, gitDir, 'task_ruled');
+  importResult(request, receipt, { run: (_command, args) => {
+    if (args[1] === 'diff') return { status: 0, stdout: 'diff --git a/existing.txt b/existing.txt\n', stderr: '' };
+    writeFileSync(path.join(worktree, 'existing.txt'), 'codex edit\n');
+    return { status: 0, stdout: '', stderr: '' };
+  } });
+  gitAt(worktree, 'add', 'existing.txt');
+  gitAt(worktree, 'commit', '-m', 'local reviewed import');
+  const bodyFile = path.join(gitDir, 'body.md');
+  writeFileSync(bodyFile, 'PR body\n');
+  const runsFile = path.join(gitDir, 'vibe-pr-evidence.json');
+  writeFileSync(runsFile, JSON.stringify(ruledEvidence('rulings')));
+  const rulingsFile = path.join(gitDir, 'rulings.md');
+  writeFileSync(rulingsFile, RULINGS);
+  const receipts = claudeReviewReceipts(worktree, gitDir);
+  // The inventory needs a whole repository, so this stand-in judges only the verifier evidence, with the real
+  // pr-facts check and the rulings file the gate passed it.
+  const runScript = (_command, args) => {
+    const value = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
+    const rulings = value('--rulings');
+    const problems = prEvidenceValidationProblems(JSON.parse(readFileSync(value('--runs'), 'utf8')), RULED_COMMIT,
+      { candidateFiles: RULED_FILES, receiptDir: gitDir, rulingsText: rulings && readFileSync(rulings, 'utf8') });
+    return { status: 0, stdout: JSON.stringify({ ok: problems.length === 0, blocking: { prBody: true, prEvidence: problems.length === 0 } }), stderr: '' };
+  };
+  const gate = (rulings) => recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: runsFile, rulings, receipts }, { runScript });
+  const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${bodyFile}` } };
+  assert.throws(() => gate(undefined), /did not pass body and verifier evidence checks/, 'the cited ruling is unverified without its rulings file');
+  assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: handoff gate has not passed/);
+  gate(rulingsFile);
+  refreshImportWitness(worktree, { bodyFile });
+  assert.equal(cloudPrProblem(worktree, { bodyFile }), null);
+  assert.equal(prCreateGuard(event), null, 'the PR opens with no gate override in its body');
+  writeFileSync(rulingsFile, RULINGS.replace('TARGETED inventory', 'full suites'));
+  assert.match(prCreateGuard(event)?.reason ?? '', /handoff rulings evidence changed/, 'the witness binds the rulings file it was judged with');
+  assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: handoff rulings evidence changed/);
+});
+
+test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refreshes and opens its PR when the PR title names them', () => {
+  const { worktree, gitDir } = vibeFixture();
+  // What `vibe-sessions.mjs touch --member-ticket` leaves on the session record.
+  writeSessionRecord(worktree, { ...readSessionRecord(worktree), memberTickets: ['ISS-13805', 'ISS-13806'] });
+  const request = sourcedCloudRequest(worktree);
+  const receipt = completedReceipt(request, gitDir, 'task_members');
+  importResult(request, receipt, { run: (_command, args) => {
+    if (args[1] === 'diff') return { status: 0, stdout: 'diff --git a/existing.txt b/existing.txt\n', stderr: '' };
+    writeFileSync(path.join(worktree, 'existing.txt'), 'codex edit\n');
+    return { status: 0, stdout: '', stderr: '' };
+  } });
+  gitAt(worktree, 'add', 'existing.txt');
+  gitAt(worktree, 'commit', '-m', 'local reviewed import');
+  const bodyFile = path.join(gitDir, 'body.md');
+  writeFileSync(bodyFile, 'Delivers ISS-13804, ISS-13805 and ISS-13806.\n');
+  const title = 'ISS-13804, ISS-13805, ISS-13806: Cloud dispatch';
+  const oneMember = 'ISS-13804, ISS-13805: Cloud dispatch';
+  const reviews = claudeReviewReceipts(worktree, gitDir);
+  recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: reviews[0], receipts: reviews, title }, { runScript: () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: '' }) });
+
+  const before = readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8');
+  assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: the session delivers member tickets ISS-13805, ISS-13806; pass --title so the gate checks the PR names them/);
+  assert.throws(() => refreshImportWitness(worktree, { bodyFile, title: oneMember }), /cloud import cannot refresh: the PR title does not name member ticket ISS-13806/);
+  assert.equal(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8'), before, 'a refused refresh leaves the import witness as it was');
+
+  assert.equal(refreshImportWitness(worktree, { bodyFile, title }).reviewedSource.head, gitAt(worktree, 'rev-parse', 'HEAD'));
+  assert.equal(cloudPrProblem(worktree, { bodyFile, title }), null);
+  assert.match(cloudPrProblem(worktree, { bodyFile, title: oneMember }) ?? '', /the PR title does not name member ticket ISS-13806/);
+  assert.equal(readyForPr(request, { bodyFile, title }).ready, true);
+  assert.throws(() => readyForPr(request, { bodyFile, title: oneMember }), /PR refused: the PR title does not name member ticket ISS-13806/);
+
+  const create = (prTitle) => prCreateGuard({ cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --title "${prTitle}" --body-file ${bodyFile}` } });
+  assert.equal(create(title), null, 'the PR hook admits the import with no gate override in its body');
+  assert.match(create(oneMember)?.reason ?? '', /the PR title does not name member ticket ISS-13806/);
+});
+
+/** One clean Claude launcher receipt per handoff review role, captured on the worktree's current source. */
+function claudeReviewReceipts(worktree, gitDir) {
+  return REVIEW_ROLES.map((role, index) => {
     const sessionId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;
     const tracePath = path.join(gitDir, `${role}.jsonl`);
     writeFileSync(tracePath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'mcp__closedloop_graph__code_symbols' }] } })}\n${JSON.stringify({ type: 'result', session_id: sessionId })}\n`);
@@ -670,10 +759,4 @@ test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.
     captureReviewReceipt({ worktree, resultFile, outFile, role });
     return outFile;
   });
-  recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: reviews[0], receipts: reviews }, { runScript: () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: '' }) });
-  refreshImportWitness(worktree, { bodyFile });
-  const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${bodyFile}` } };
-  assert.equal(prCreateGuard(event), null, 'the actual PR hook admits the imported source after handoff and an independent Claude review');
-  writeFileSync(path.join(worktree, 'existing.txt'), 'changed after review\n');
-  assert.match(prCreateGuard(event)?.reason ?? '', /cloud import witness is stale for the current source/);
-});
+}

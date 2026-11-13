@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { prEvidenceValidationProblems } from "./pr-facts.mjs";
+import { leftByRuling, targetedTestsRuling } from "./targeted-tests-ruling.mjs";
 import { laneReportLabel } from "./ci-job-shape.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -53,13 +54,22 @@ function renderValidatedComment(evidence, worktree, options, publishedHead) {
       lines.push(`| ${tableCell(proof.class)} | \`${tableCell(proof.path)}\`: ${tableCell(proof.case)} | ${tableCell(proof.mutation)} | ${tableCell(failure)}; passed after restore with \`${tableCell(proof.command)}\` at \`${tableCell(proof.commit)}\` |`);
     }
   }
+  const ruling = targetedTestsRuling(evidence, options).id;
+  const ruled = [...(evidence.testRuns ?? []), ...(evidence.runs ?? [])].filter((run) => leftByRuling(run, ruling));
+  if (ruled.length) {
+    lines.push("", `Not run under targeted-tests ruling ${ruling} (${evidence.targetedTestsRuling.source}): ${ruled.map((run) => `\`${run.path ?? run.lane}\``).join(", ")}.`);
+  }
   if ((capability.unavailableSpecs ?? []).length) lines.push("", `Left for CI: ${capability.unavailableSpecs.map((spec) => `\`${spec}\``).join(", ")} via ${(capability.ciCoverage ?? []).join(", ")}.`);
   if ((capability.notRunLocally ?? []).length) lines.push("", `Host-incompatible visual baselines left for CI: ${capability.notRunLocally.map((spec) => `\`${spec}\``).join(", ")}.`);
   return `${lines.join("\n")}\n`;
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  const { values } = parseArgs({ options: { evidence: { type: "string" }, output: { type: "string" }, worktree: { type: "string" } } });
-  if (!values.evidence || !values.output) throw new Error("--evidence and --output are required");
-  writeFileSync(values.output, renderEvidenceComment(JSON.parse(readFileSync(values.evidence, "utf8")), values.worktree));
+  const { values } = parseArgs({ options: { evidence: { type: "string" }, output: { type: "string" }, worktree: { type: "string" },
+    ticket: { type: "string" }, rulings: { type: "string" } } });
+  if (!values.evidence || !values.output) throw new Error("--evidence and --output are required (--ticket or --rulings when the evidence cites a targeted-tests ruling)");
+  writeFileSync(values.output, renderEvidenceComment(JSON.parse(readFileSync(values.evidence, "utf8")), values.worktree, {
+    ticketText: values.ticket ? readFileSync(values.ticket, "utf8") : undefined,
+    rulingsText: values.rulings ? readFileSync(values.rulings, "utf8") : undefined,
+  }));
 }
