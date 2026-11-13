@@ -201,8 +201,8 @@ Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
 `testRuns` the same way, with its `reason`.
 When the operator ruled targeted tests only and the ruling is recorded once,
 labeled with its `R-<WORDS>` id and dated, as a heading in the program's
-rulings file (`## R-TARGETED-TESTS (Daniel, 2026-10-23)`) or a ruling line in
-the live ticket (`- Ruling R-TARGETED-TESTS 2026-10-23 (Daniel): "..."`), write
+rulings file (`## R-TARGETED-TESTS (operator, 2026-10-23)`) or a ruling line in
+the live ticket (`- Ruling R-TARGETED-TESTS 2026-10-23 (operator): "..."`), write
 `targetedTestsRuling: { id, source: "rulings" | "ticket" }`. Then a selected
 test outside `targetedInventory`, a matching lane, or the `web-host` or
 `desktop-host` lane may be left with its own row (a test or matching lane in

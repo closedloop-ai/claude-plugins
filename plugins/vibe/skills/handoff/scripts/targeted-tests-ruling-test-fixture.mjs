@@ -6,16 +6,16 @@ export const RULING_ID = "R-TARGETED-TESTS";
 export const RULINGS = [
   "# Program rulings",
   "",
-  "## R-REVERT-SORT (Daniel, 2026-10-23 ~03:36Z)",
+  "## R-REVERT-SORT (operator, 2026-10-23 ~03:36Z)",
   "- Revert the default sort change.",
   "",
-  `## ${RULING_ID} (Daniel, 2026-10-23 ~03:58Z)`,
+  `## ${RULING_ID} (operator, 2026-10-23 ~03:58Z)`,
   "- Pre-merge runs use the subagent's TARGETED inventory first (not full suites).",
   "",
 ].join("\n");
 export const TICKET = [
   "## Scope and acceptance criteria",
-  `- Ruling ${RULING_ID} 2026-11-12 (Daniel): "where possible we should run targeted tests not full suites"; amends: none`,
+  `- Ruling ${RULING_ID} 2026-11-12 (operator): "where possible we should run targeted tests not full suites"; amends: none`,
   "",
 ].join("\n");
 export const COMMIT = "e".repeat(40);

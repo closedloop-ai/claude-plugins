@@ -44,7 +44,7 @@ test("AC-1: the ruling counts only when its text records it, by id, with a date,
   assert.match(targetedTestsRuling(cite("ticket", "R-NEVER-RULED"), RECORDED).problems.join(), /list line `- Ruling R-<WORDS> <YYYY-MM-DD> \(<who>\)/,
     "a ticket gets the ticket's ruling line shape");
   assert.match(targetedTestsRuling(cite("rulings", "R-REVERT-SORT"), RECORDED).problems.join(), /R-REVERT-SORT in the rulings is not about targeted tests/);
-  const undated = RULINGS.replace(" (Daniel, 2026-10-23 ~03:58Z)", "");
+  const undated = RULINGS.replace(" (operator, 2026-10-23 ~03:58Z)", "");
   assert.match(targetedTestsRuling(cite("rulings"), { rulingsText: undated }).problems.join(), /is not recorded with a date/);
   const mentioned = `${RULINGS}\nThe orchestrator said ${RULING_ID} on 2026-11-12 targeted tests.\n`.replace(`## ${RULING_ID}`, "## R-RENAMED");
   assert.match(targetedTestsRuling(cite("rulings"), { rulingsText: mentioned }).problems.join(), /is not recorded/, "prose naming the id is not a recorded ruling");
@@ -57,42 +57,42 @@ test("AC-1: only an entry labeled with the id counts, once, not withdrawn, not a
     "a bare word is not a ruling id");
   assert.match(verify("- 2026-11-10: ran the targeted suite under R-SUITE locally\n", "R-SUITE").problems.join(), /is not recorded/,
     "an entry that only mentions the id is not that ruling");
-  assert.match(verify("- R-2.1 2026-11-10 (Daniel): run targeted tests\n", "R-2").problems.join(), /is not recorded/, "R-2 is not R-2.1");
+  assert.match(verify("- R-2.1 2026-11-10 (operator): run targeted tests\n", "R-2").problems.join(), /is not recorded/, "R-2 is not R-2.1");
   assert.match(verify(`- (orchestrator) ${RULING_ID} 2026-11-12 run targeted tests\n`).problems.join(), /is not recorded/,
     "an orchestrator direction is not labeled with the id");
   assert.match(verify(`- ${RULING_ID} 2026-11-12 (orchestrator): run targeted tests\n`).problems.join(), /orchestrator direction, not an operator ruling/);
-  assert.match(verify(`## ${RULING_ID} (Daniel, 2026-10-23) withdrawn\n- Run targeted tests.\n`).problems.join(), /withdrawn or superseded/);
-  assert.match(verify(`## ${RULING_ID} (Daniel, 2026-10-23)\n- Revert the default sort.\n`).problems.join(), /is not about targeted tests/,
+  assert.match(verify(`## ${RULING_ID} (operator, 2026-10-23) withdrawn\n- Run targeted tests.\n`).problems.join(), /withdrawn or superseded/);
+  assert.match(verify(`## ${RULING_ID} (operator, 2026-10-23)\n- Revert the default sort.\n`).problems.join(), /is not about targeted tests/,
     "the id's own words do not make the entry about targeted tests");
-  assert.match(verify("## R-TARGETED tests (Daniel, 2026-10-23)\n- Revert the default sort.\n", "R-TARGETED").problems.join(), /is not about targeted tests/,
+  assert.match(verify("## R-TARGETED tests (operator, 2026-10-23)\n- Revert the default sort.\n", "R-TARGETED").problems.join(), /is not about targeted tests/,
     "a word after the id does not make the id a topic phrase");
   assert.match(verify(`${TICKET}${TICKET}`).problems.join(), /is recorded 2 times/);
-  const subsection = `## R-REVERT-SORT (Daniel, 2026-10-23)\n- Revert the sort.\n### Notes\n- targeted tests ran\n`;
+  const subsection = `## R-REVERT-SORT (operator, 2026-10-23)\n- Revert the sort.\n### Notes\n- targeted tests ran\n`;
   assert.match(verify(subsection, "R-REVERT-SORT").problems.join(), /is not about targeted tests/, "a sub-heading is not part of the entry");
-  assert.match(verify(`- Ruling R-REVERT-SORT 2026-10-23 (Daniel): revert the sort\n- Ruling ${RULING_ID} 2026-11-12 (Daniel): run targeted tests\n`, "R-REVERT-SORT").problems.join(), /is not about targeted tests/,
+  assert.match(verify(`- Ruling R-REVERT-SORT 2026-10-23 (operator): revert the sort\n- Ruling ${RULING_ID} 2026-11-12 (operator): run targeted tests\n`, "R-REVERT-SORT").problems.join(), /is not about targeted tests/,
     "the next list item is another entry");
-  const ruled = `## ${RULING_ID} (Daniel, 2026-10-23)\n- Run targeted tests.\n`;
+  const ruled = `## ${RULING_ID} (operator, 2026-10-23)\n- Run targeted tests.\n`;
   const withdrawn = [
     [`${ruled}### Status\n- Withdrawn 2026-11-05\n`, "a withdrawal under its own sub-heading"],
-    [`## ${RULING_ID} (Daniel, 2026-10-23)\n- Run targeted tests. No longer in effect.\n`, "no longer in effect"],
-    [`${ruled}\nDaniel withdrew it on 2026-11-05.\n`, "a withdrawal in its own section"],
+    [`## ${RULING_ID} (operator, 2026-10-23)\n- Run targeted tests. No longer in effect.\n`, "no longer in effect"],
+    [`${ruled}\nThe operator withdrew it on 2026-11-05.\n`, "a withdrawal in its own section"],
     [`# Withdrawn rulings\n\n${ruled}`, "a ruling filed under a withdrawn parent heading"],
-    [`## Superseded\n- Ruling ${RULING_ID} 2026-10-23 (Daniel): run targeted tests\n`, "a list ruling under a Superseded heading"],
+    [`## Superseded\n- Ruling ${RULING_ID} 2026-10-23 (operator): run targeted tests\n`, "a list ruling under a Superseded heading"],
   ];
   for (const [text, shape] of withdrawn) assert.match(verify(text).problems.join(), /withdrawn or superseded/, shape);
   const namedLater = [
-    [`${ruled}\n## R-FULL-SUITE (Daniel, 2026-11-01)\n- Supersedes ${RULING_ID}: run full suites.\n`, "a later ruling that supersedes it by id"],
-    [`${ruled}\n## R-FULL-SUITE (Daniel, 2026-11-01)\n- Supersedes ${RULING_ID}.\n`, "the id ending a sentence"],
-    [`${ruled}\n## Notes\nDaniel withdrew the\n${RULING_ID} rule on 2026-11-05.\n`, "a withdrawal wrapped over two lines"],
+    [`${ruled}\n## R-FULL-SUITE (operator, 2026-11-01)\n- Supersedes ${RULING_ID}: run full suites.\n`, "a later ruling that supersedes it by id"],
+    [`${ruled}\n## R-FULL-SUITE (operator, 2026-11-01)\n- Supersedes ${RULING_ID}.\n`, "the id ending a sentence"],
+    [`${ruled}\n## Notes\nThe operator withdrew the\n${RULING_ID} rule on 2026-11-05.\n`, "a withdrawal wrapped over two lines"],
     [`${ruled}\n## Superseded\n- ${RULING_ID}\n`, "a Superseded section listing it"],
   ];
   for (const [text, shape] of namedLater) assert.match(verify(text).problems.join(), /is also named outside its own entry/, shape);
-  assert.deepEqual(verify(`${ruled}\n## R-2 (Daniel, 2026-11-01)\n- Revert R-2.1 only.\n`).problems, [], "another id that merely starts the same is not a mention");
+  assert.deepEqual(verify(`${ruled}\n## R-2 (operator, 2026-11-01)\n- Revert R-2.1 only.\n`).problems, [], "another id that merely starts the same is not a mention");
   for (const who of [`## ${RULING_ID} (orchestrator, 2026-11-12)\n- Run targeted tests.\n`, `- Ruling ${RULING_ID} 2026-11-12 (orchestrator relay): run targeted tests\n`]) {
     assert.match(verify(who).problems.join(), /orchestrator direction, not an operator ruling/, who);
   }
   assert.deepEqual(verify(ruled.replaceAll("\n", "\r\n")).problems, [], "a CRLF file reads like any other");
-  assert.match(verify("## R-FLAGS (Daniel, 2026-10-23)\n- Flags are targeted per organization.\n", "R-FLAGS").problems.join(), /is not about targeted tests/,
+  assert.match(verify("## R-FLAGS (operator, 2026-10-23)\n- Flags are targeted per organization.\n", "R-FLAGS").problems.join(), /is not about targeted tests/,
     "the word targeted alone is not a targeted-tests ruling");
 });
 
