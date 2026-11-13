@@ -319,13 +319,13 @@ applies to other shared skills such as `decision-table`.
 
 ### Agents
 
-| Agent | Model | Responsibility |
+| Agent | Default model | Responsibility |
 |---|---|---|
 | `vibe-setup-worker` | sonnet | Machine preflight, worktree bootstrap, owned local processes, and confirmed session discard |
 | `vibe-requirements-worker` | sonnet | Read-only requirements, overlap and owning-route discovery; reference mode (the behaviors and visual and UX requirements of a product the person named or showed in a screenshot); precedent mode (how an established product behaves, observed live in the operator's signed-in browser or from that product's own documentation) |
 | `vibe-ticket-worker` | sonnet | With a tracker provider bound: live ticket creation and source link, the session plan as a linked plan document, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
-| `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
+| `vibe-change-worker` | opus | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
 | `vibe-backend-worker` | sonnet | Read-only decision-table and backend guidance for that writer |
 | `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
 | `vibe-prototype-worker` | sonnet | Read-only canonical prototype guidance or operational immutable Vercel sharing of the writer's reviewed committed result |
@@ -336,13 +336,17 @@ applies to other shared skills such as `decision-table`.
 | `vibe-consolidated-reviewer` | opus | Read-only single read of the final diff over the precomputed guardrails findings, used only when `review-scope.mjs` chooses the consolidated path (off unless `VIBE_CONSOLIDATED_REVIEW=1`) |
 | `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |
 | `vibe-seed-check-worker` | sonnet | Fresh-main seed checks and latest Vibe Seed Walk inspection |
-| `vibe-seed-fix-worker` | sonnet | Seed drift fixes, validation, and follow-up PR-check and review-comment fixes |
+| `vibe-seed-fix-worker` | opus | Seed drift fixes, validation, and follow-up PR-check and review-comment fixes |
 | `vibe-seed-pr-worker` | sonnet | Seed PR push, status, main sync, merge queue, review replies, and owned worktree cleanup |
 
-In Claude Code the `model:` line in each agent file sets its model. In Codex,
-`skills/vibe/scripts/worker-model.mjs` puts the read-only explorers on
-`gpt-5.6-terra` and every writer, reviewer and verifier on `gpt-6-sol`, at
-reasoning effort `high`.
+Each model is a default. In Claude Code the `model:` line in each agent file
+sets it; in Codex, `skills/vibe/scripts/worker-model.mjs` puts the read-only
+explorers on `gpt-5.6-terra` and every other role on `gpt-6-sol`, at reasoning
+effort `high`. To use another model on this machine, run
+`node skills/vibe/scripts/worker-model.mjs set <claude|codex> <role or agent name> <model>`
+(roles: writer, operational, reviewer, verifier, explorer); it is saved in
+`~/.codex/vibe/models.json` and holds for every vibe session here. `unset`
+removes it. Any model name is accepted.
 
 ### Evals
 
@@ -396,7 +400,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.85` contains 17 skills and 17 agents, and no hook manifest: its
+Version `1.1.88` contains 17 skills and 17 agents, and no hook manifest: its
 hooks, and every module they run, ship in the `vibe-core` plugin, which vibe
 declares as a dependency. vibe loads those modules from vibe-core through
 `shared/vibe-core.mjs`, and the commands among them keep thin wrappers at

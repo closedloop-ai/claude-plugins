@@ -2,7 +2,9 @@
 // plugin starts on Codex: cl-sweep ticket owners, cl-execute and cl-sweep
 // support lanes, and the vibe skill's own native workers
 // (`../../vibe/scripts/worker-model.mjs`). Claude Code workers take their
-// model from each agent file's `model:` frontmatter instead.
+// default model from each agent file's `model:` frontmatter instead. For the
+// vibe skill's workers these are defaults a person can override
+// (`../../vibe/scripts/agent-models.mjs`).
 
 export const TICKET_OWNER_MODEL = 'gpt-6-sol';
 export const LEGACY_UNVERSIONED_MODEL = 'gpt-5.5';
@@ -16,15 +18,17 @@ export const MECHANICAL_SUPPORT_REASONING_EFFORT = 'low';
 
 export const CodexWorkerRole = Object.freeze({
   Writer: 'writer',
+  Operational: 'operational',
   Reviewer: 'reviewer',
   Verifier: 'verifier',
   Explorer: 'explorer',
   Mechanical: 'mechanical',
 });
 
-/** Role to Codex binding. Explorer covers codebase exploration, graph lookups, requirements or precedent research and read-only search. */
+/** Role to Codex binding. Operational covers setup, record, environment and publication workers that write no product code. Explorer covers codebase exploration, graph lookups, requirements or precedent research and read-only search. */
 export const CODEX_ROLE_BINDINGS = Object.freeze({
   [CodexWorkerRole.Writer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
+  [CodexWorkerRole.Operational]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
   [CodexWorkerRole.Reviewer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
   [CodexWorkerRole.Verifier]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
   [CodexWorkerRole.Explorer]: Object.freeze({ model: EXPLORER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),

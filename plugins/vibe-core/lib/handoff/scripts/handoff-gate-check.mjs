@@ -17,7 +17,7 @@ import { missingTicketNames } from "./ticket-names.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
 const GATE_FILE = "vibe-handoff-gate.json";
-export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "audit", "matrix", "review"]);
+export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "rulings", "audit", "matrix", "review"]);
 const DOCUMENT_EVIDENCE = Object.freeze({ members: "member ticket", prds: "PRD", plans: "plan" });
 
 /** The parsed review receipts the given files fingerprint. */

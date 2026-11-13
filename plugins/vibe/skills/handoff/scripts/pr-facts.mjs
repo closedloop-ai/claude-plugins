@@ -25,6 +25,7 @@ import { prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { GRAPH_SELECTOR, prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
+import { leftByRuling, RULING_HOST_LANES, targetedTestsRuling } from "./targeted-tests-ruling.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -324,8 +325,12 @@ function recomputedImpact(runsFile, worktree, commit) {
   } catch (error) { return { problem: `tree-equivalent carry refused: ${error.message}` }; }
 }
 
-/** Every required lane finished and passed for its recomputed changed-file scope. */
-export function evidenceProblems(runsFile, changed, commit, worktree) {
+/**
+ * Every required lane finished and passed for its recomputed changed-file scope.
+ * A recorded targeted-tests ruling (`rulingId`, targeted-tests-ruling.mjs) may
+ * leave a host lane not run on a row that names it.
+ */
+export function evidenceProblems(runsFile, changed, commit, worktree, rulingId = null) {
   if (!Array.isArray(runsFile?.touchFlows) || (runsFile.touchFlows.length === 0 && !runsFile.touchFlowsReason)) {
     return ["list every touched card, narrow or touch flow in touchFlows, or [] with a touchFlowsReason"];
   }
@@ -337,7 +342,8 @@ export function evidenceProblems(runsFile, changed, commit, worktree) {
   return requiredLanes(changed, runsFile.touchFlows, sessionAreas(worktree)).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit, prRules(worktree)))).flatMap((lane) => {
     const runs = allRuns.filter((run) => run.lane === lane);
     if (runs.length === 0) return [`${lane}: no run recorded`];
-    return runs.flatMap((run) => [
+    return runs.flatMap((run) => RULING_HOST_LANES.includes(lane) && leftByRuling(run, rulingId, commit)
+      ? (run.command ? [] : [`${lane}: command missing`]) : [
       ...(passedOrMainPreexisting(run) ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
       ...(impactKey && run.commit !== commit && run.laneKey !== impactKey && !recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)) ? [`${lane}: changed-file scope ${run.laneKey ?? "missing"} does not match recomputed ${impactKey}`] : []),
@@ -403,7 +409,7 @@ export function loadOpenPrs(worktree) {
 }
 
 /** The facts for the inventory's JSON, with the gates when a body or a runs file is given. */
-export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, body, runs, commit, prBase = "main", requiredTests = [], template,
+export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, rulingsText, body, runs, commit, prBase = "main", requiredTests = [], template,
   probeCapability = currentCapabilityProbe }) {
   return withStableSource(worktree, current => {
     const binding = runs?.source === undefined ? { testedCommit: commit, problems: [] }
@@ -436,7 +442,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
         ...prEvidenceValidationProblems(runs, testedCommit, { worktree, files, scopeBase: base, scopeInclude: include,
           scopeAuthority: SCOPED_CORPUS_AUTHORITY,
           readSource: file => proofSourceAt(worktree, file), probeCapability, currentCommit: commit,
-          requiredTests }),
+          requiredTests, ticketText, rulingsText }),
         ...ciCheckProblems(runs, changed, testedCommit),
       ] }),
     };
@@ -550,10 +556,16 @@ export function prEvidenceValidationProblems(evidence, commit, options = {}) {
   } : readSource);
   const specs = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : [])
     .filter(entry => entry?.kind === "e2e").map(entry => entry.path);
+  const ruling = targetedTestsRuling(evidence, options);
+  const testRuns = Array.isArray(evidence?.testRuns) ? evidence.testRuns : [];
+  const inventoryTests = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : [])
+    .filter((entry) => testRuns.some((run) => run?.path === entry?.path && run.status === "passed" && run.commit === (entry.resultCommit ?? commit))).length;
   return [
-    ...evidenceProblems(evidence, files.map(file => file.path), commit, worktree),
-    ...selectionProblems(evidence, files, options.requiredTests ?? [], commit, prRules(worktree ?? null)),
-    ...targetedEvidenceProblems(evidence, commit, worktree, receiptDir),
+    ...ruling.problems,
+    ...(ruling.id && inventoryTests === 0 ? [`targeted-tests ruling ${ruling.id} needs at least one targeted inventory test that passed on the published commit`] : []),
+    ...evidenceProblems(evidence, files.map(file => file.path), commit, worktree, ruling.id),
+    ...selectionProblems(evidence, files, options.requiredTests ?? [], commit, prRules(worktree ?? null), ruling.id),
+    ...targetedEvidenceProblems(evidence, commit, worktree, receiptDir, ruling.id, mustRunTests(options.requiredTests ?? [], files)),
     ...tierEvidenceProblems(evidence?.e2eCapability, specs),
     ...sourceProblems,
     ...scopeProblems,
@@ -591,9 +603,11 @@ export function templateHeadingProblems(body, template) {
  * drive the app. Every selected test, every required test of the diff rules and
  * every spec the branch edits needs a passing run on the published commit;
  * skipped CI is not a run. A required test with `flagStates` needs a passing
- * run for each state, recorded with `flag`.
+ * run for each state, recorded with `flag`. Under a recorded targeted-tests
+ * ruling (`rulingId`), a selected test that is neither required nor edited by
+ * the branch may instead have a `not-run` row naming the ruling.
  */
-export function selectionProblems(runsFile, files, requiredTests, commit, rules = GENERIC_PR_RULES) {
+export function selectionProblems(runsFile, files, requiredTests, commit, rules = GENERIC_PR_RULES, rulingId = null) {
   const { entries: selection, problems: shapeProblems } = readTestSelection(runsFile);
   const listed = (entry) => Array.isArray(entry?.tests) && entry.tests.every((test) => typeof test === "string");
   const problems = [...shapeProblems];
@@ -607,10 +621,10 @@ export function selectionProblems(runsFile, files, requiredTests, commit, rules 
       problems.push(`${file}: no e2e by-reference selection (routes, request fields, test IDs, accessible names, channels and flag keys it touches)`);
     }
   }
+  const mustRun = mustRunTests(requiredTests, files);
   const selected = new Set([
     ...selection.filter((entry) => TEST_SELECTORS.includes(entry?.selector) && listed(entry)).flatMap((entry) => entry.tests),
-    ...requiredTests.map((entry) => entry.path),
-    ...live.filter((entry) => TEST_SPEC_PATTERN.test(entry.path)).map((entry) => entry.path),
+    ...mustRun,
   ]);
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   const inventoryEntries = Array.isArray(runsFile?.targetedInventory?.entries) ? runsFile.targetedInventory.entries : [];
@@ -623,8 +637,9 @@ export function selectionProblems(runsFile, files, requiredTests, commit, rules 
     && (flag === undefined || entry.flag === flag) && (!isE2ePath(test) || (!unavailable.has(test)
       && entry.command === target(test)?.command && Array.isArray(entry.cases)
       && target(test)?.cases?.every((name) => entry.cases.includes(name)))));
+  const ruled = (test) => ruledByRuling(runs, test, rulingId, commit, mustRun);
   for (const test of [...selected].sort()) {
-    if (!passed(test) && !e2eCarriedForCi(runsFile, selection, test, commit, rules)) {
+    if (!passed(test) && !e2eCarriedForCi(runsFile, selection, test, commit, rules) && !ruled(test)) {
       problems.push(`${test}: selected but no passing or carried run for ${commit ?? "the published commit"} in testRuns`);
     }
   }
@@ -675,9 +690,13 @@ function e2eCarriedForCi(evidence, selection, spec, commit, rules) {
 /**
  * A PR is gated on a read-only inventory of its final committed diff. Every
  * inventory row names exact cases and a command, and has a passing result at
- * that SHA unless the E2E capability record explicitly leaves it to CI.
+ * that SHA unless the E2E capability record explicitly leaves it to CI. Under a
+ * recorded targeted-tests ruling (`rulingId`), a matching lane or a selected
+ * test outside the inventory may instead have a `not-run` row naming the ruling;
+ * a diff-rule required test or a spec the branch edits (`mustRun`) is never
+ * left this way.
  */
-export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir) {
+export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir, rulingId = null, mustRun = new Set()) {
   const inventory = runsFile?.targetedInventory;
   if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
   const { entries: selection } = readTestSelection(runsFile);
@@ -700,6 +719,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir)
   for (const lane of laneMatches) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
+      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && leftByRuling(run, rulingId, commit))
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command
         && (!impactKey || run.commit === commit || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
         && (!recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
@@ -744,7 +764,8 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir)
   }
   const selected = new Set(selection.flatMap((entry) => Array.isArray(entry.tests) ? entry.tests : []));
   const inventoried = new Set(entries.map((entry) => entry?.path));
-  for (const test of [...selected].filter(Boolean).filter((test) => !inventoried.has(test))) {
+  const ruled = (test) => ruledByRuling(runs, test, rulingId, commit, mustRun);
+  for (const test of [...selected].filter(Boolean).filter((test) => !inventoried.has(test) && !ruled(test))) {
     problems.push(`${test}: selected test is absent from the targeted inventory`);
   }
   if (!Array.isArray(runsFile?.rerunCycles)) problems.push("rerunCycles must record isolated reruns, or [] when none failed");
@@ -852,4 +873,15 @@ export function prRulesFor(binding) {
 /** prRulesFor the session at `worktree`. */
 export function prRules(worktree) {
   return prRulesFor(sessionBinding(worktree));
+}
+
+/** The tests no ruling may leave not run: the diff rules' required tests and every spec the branch edits. */
+function mustRunTests(requiredTests, files) {
+  return new Set([...requiredTests.map((entry) => entry.path),
+    ...files.filter((file) => file.status !== "D" && TEST_SPEC_PATTERN.test(file.path)).map((file) => file.path)]);
+}
+
+/** Whether a verified ruling leaves `test` not run: never a `mustRun` test, and only on a row naming the ruling. */
+function ruledByRuling(runs, test, rulingId, commit, mustRun) {
+  return !mustRun.has(test) && runs.some((run) => run?.path === test && leftByRuling(run, rulingId, commit));
 }

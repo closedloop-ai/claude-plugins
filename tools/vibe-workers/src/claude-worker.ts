@@ -15,7 +15,7 @@ import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRo
 import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
 import { assembleProviderText, boundWith, connectionLabel, ProviderBroken, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { briefProviderProblem } from "../../../plugins/vibe-core/lib/vibe/scripts/provider-brief.mjs";
-import { FABLE_REVIEW_MODELS } from "../../../plugins/vibe-core/lib/vibe/scripts/review-models.mjs";
+import { isModelName, MODEL_OVERRIDES_INVALID, ModelRuntime, resolveWorkerModel } from "../../../plugins/vibe/skills/vibe/scripts/agent-models.mjs";
 import { recordWorkerScope } from "../../../plugins/vibe-core/lib/vibe/scripts/worker-scope.mjs";
 import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
@@ -37,8 +37,10 @@ const launchSchema = recordContextSchema.extend({
   testsRequired: z.boolean().optional(),
   previewRequirements: z.array(z.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
   previewProducer: z.literal("runtime-provider").optional(),
-  /** A review role run on Fable 5.2 instead of its definition's model; the receipt proves the model from the trace. */
-  reviewModel: z.string().refine((model) => FABLE_REVIEW_MODELS.includes(model), "reviewModel must be an accepted Fable review model").optional(),
+  /** This launch's model for any role, in place of the person's override and the definition's default. */
+  model: z.string().refine(isModelName).optional(),
+  /** The earlier name of `model`, still accepted; a review receipt proves the model from the trace. */
+  reviewModel: z.string().refine(isModelName).optional(),
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 type LaunchInput = z.infer<typeof launchSchema>;
 type Definition = ReturnType<typeof readDefinition>;
@@ -61,12 +63,6 @@ const readerRoles = new Set([
   "vibe-verify-worker",
 ]);
 const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
-const REVIEW_MODEL_REFUSED = "REVIEW_MODEL_REFUSED";
-
-/** A `reviewModel` the launcher refuses, surfaced with its reason rather than the generic turn failure. */
-class ReviewModelError extends Error {
-  readonly code = REVIEW_MODEL_REFUSED;
-}
 const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
 const testAuthoringModes = new Set(["request", "fix", "handoff", "pull-request"]);
 const PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
@@ -168,10 +164,8 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
   }
-  if (input.reviewModel && !receiptRoles.has(input.agentName)) {
-    throw new ReviewModelError(`reviewModel applies only to a receipt review role (${[...receiptRoles].join(", ")}), not ${input.agentName}`);
-  }
-  const model = input.reviewModel ?? definition.metadata.model;
+  const { model } = resolveWorkerModel(ModelRuntime.Claude, input.agentName, definition.metadata.model,
+    { launchModel: input.model ?? input.reviewModel });
   const prototypeAdvice = input.agentName === "vibe-prototype-worker" && input.mode !== "record";
   const reader = readerRoles.has(input.agentName) || prototypeAdvice;
   const declaredModes = modes[input.agentName];
@@ -603,11 +597,9 @@ export function safeFailure(error: unknown): { code: string; summary: string; pe
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...(error.personAction ? { personAction: error.personAction } : {}) };
   }
-  if (error instanceof AgentRootError || error instanceof MissingSessionError || error instanceof ReviewModelError) return { code: error.code, summary: error.message };
+  if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
   if (error instanceof ProviderBroken) return { code: "PROVIDER_BROKEN", summary: error.message };
-  if (error instanceof z.ZodError && error.issues.some((issue) => issue.path[0] === "reviewModel")) {
-    return { code: REVIEW_MODEL_REFUSED, summary: `reviewModel must be one of ${FABLE_REVIEW_MODELS.join(", ")}` };
-  }
+  if (error instanceof Error && "code" in error && error.code === MODEL_OVERRIDES_INVALID) return { code: MODEL_OVERRIDES_INVALID, summary: error.message };
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error
     && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };

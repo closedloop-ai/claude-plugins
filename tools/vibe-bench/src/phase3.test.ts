@@ -1,3 +1,4 @@
+import "./no-model-overrides.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -1408,7 +1409,7 @@ class DriftingCommands extends FakeCommands {
     if (!this.changed && args.length !== 1) {
       this.changed = true;
       writeFileSync(join(this.repo, "plugins/vibe/agents/vibe-change-worker.md"),
-        "---\nname: vibe-change-worker\nmodel: sonnet\n---\nchanged during run\n");
+        "---\nname: vibe-change-worker\nmodel: opus\n---\nchanged during run\n");
     }
     return result;
   }
@@ -1437,7 +1438,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
       name: "closedloop-core", version: "1.5.3",
     }));
     writeFileSync(join(repo, "plugins/vibe/agents/vibe-change-worker.md"),
-      "---\nname: vibe-change-worker\nmodel: sonnet\n---\n");
+      "---\nname: vibe-change-worker\nmodel: opus\n---\n");
     writeFileSync(join(repo, "plugins/vibe/skills/vibe/SKILL.md"), "fixture skill\n");
     for (const name of ["tested-head.mjs", "session-record.mjs"]) {
       // The identity helper's code lives in vibe-core; the fixture places its bytes where the driver runs it.

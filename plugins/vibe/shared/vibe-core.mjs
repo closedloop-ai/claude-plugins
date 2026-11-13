@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { comparePluginVersions, ownPluginRoot, pluginManifest, siblingPluginRoot } from "./plugin-roots.mjs";
 
 /** The oldest vibe-core release this vibe works with; raise it when vibe starts using something newer. */
-export const VIBE_CORE_MIN = "1.0.8";
+export const VIBE_CORE_MIN = "1.0.10";
 /** The commands that add vibe-core beside this vibe in each harness. */
 export const VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
 

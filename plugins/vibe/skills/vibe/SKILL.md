@@ -161,6 +161,13 @@ and tell the person what it printed. In provider text, a file named
   records and when a render is allowed.
 > Read `references/vibe-harness-codex.md` (block `codex-invoke-and-workers`) when this orchestrator runs in Codex or a recorded writer's runtime is Codex.
 > Read `references/vibe-harness-codex.md` (block `codex-hooks-and-compaction`) when this orchestrator runs in Codex or a recorded writer's runtime is Codex.
+- Models (both harnesses). Each worker's model is a default. When the person
+  asks for another model for a role or a worker, run
+  `node scripts/worker-model.mjs set <claude|codex> <role or agent name> <model>`
+  (roles: writer, operational, reviewer, verifier, explorer; `unset` restores
+  the default). It holds for every vibe session on this machine, and any
+  model name is accepted. For one launch only, pass `"model"` in the Claude
+  launcher input.
 - Usage limits (both harnesses). In Codex, run
   `node scripts/codex-usage.mjs check` before spawning a worker or
   forwarding a request to the writer, and again when a worker turn stalls
