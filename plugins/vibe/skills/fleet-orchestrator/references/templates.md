@@ -1,5 +1,9 @@
 # Templates
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
 Fill every `<field>`; delete a line only when it does not apply.
 
 ## Visual request
@@ -21,7 +25,7 @@ Requirement: <ticket, PRD or acceptance criterion this proves>
 
 ## Worker preamble
 
-Prepend to every Claude writer prompt; keep `Takeover` only when replacing a dead Codex writer and `Inherited scope` whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line. A new Codex writer's brief also names its session command: `vibe-sessions.mjs new --repo <checkout of the repository the ticket changes> --worktree <the --cwd it was launched with>`; `--repo` is required for every repository other than the remembered app checkout.
+Prepend to every Claude writer prompt; keep `Takeover` only when replacing a dead Codex writer and `Inherited scope` whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line. A new Codex writer's brief also names its session command: `vibe-sessions.mjs new --repo <checkout of the repository the ticket changes> --worktree <the --cwd it was launched with>`; `--repo` is required for every repository other than the remembered app checkout. A new writer, Codex or Claude, works under the lead's own binding. Its brief may name it on its own line, `Provider: <name>` or `Provider: none` (the `provider` of `node ../vibe/scripts/plugin-version.mjs show`); a brief without that line inherits the lead's binding (`codex-session.mjs` adds the lead's line to a new Codex writer's brief), and a line naming another binding is refused.
 
 Before any Claude prompt or reviewer/verifier/critic brief is sent, run
 `node scripts/skill-freshness.mjs <orchDir> <prompt-file> --runtime claude`.
@@ -58,7 +62,10 @@ Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start on
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
 Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
 Takeover: a Codex vibe session wrote this branch and stopped (<usage-limit|runtime-unavailable>). Resume that same vibe session and, before any other step, move its writer to you with vibe's harness switch (`writer-state.mjs migrate` with `harnessSwitch`, vibe's quality loop, "A writer whose runtime cannot run"). Never start a second session on this branch. Continue from its last pushed head <sha>; iterate uncommitted until push-ready. Re-verify every "done" claim in its report, change log and thread replies with a test or a measurement before building on it.
-Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion you inherit from the previous writer (its plan, PLN, change log or report) to a human source: a ticket AC, a PRD line, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped; `rulings-check.mjs --plan` lists a linked PLN's uncited exclusions.
+<!-- generic: inherited-scope-a -->
+Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion you inherit from the previous writer (its plan, change log or report) to a human source: an acceptance criterion, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped.
+<!-- end generic: inherited-scope-a -->
+> Provider `tickets` (block `inherited-scope-a` of `fleet/templates.md`)
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
 Tests: run the repository-selected lanes for the feature-complete change. After QA, run handoff's `qa-impact.mjs` and execute only the lanes or screens it names; a `None` result relies on ordinary per-push CI.
 Start independent repository selected validation lanes concurrently through assigned heavy slots, including non-e2e lanes while e2e runs elsewhere. Ask the orchestrator to move a lane waiting only on load or a full slot to another allowed machine; report the move and obey exclusions and limits.
@@ -91,9 +98,15 @@ Worktree <path> on <machine>, branch <branch>, PR <owner/repo>#<number>, pushed 
 Done: <what is finished and pushed>
 Re-verify: each Done claim with a test or a measurement before building on it.
 Left: <what remains, in order>
-Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion the previous writer left (its plan, PLN, change log or report) to a human source: a ticket AC, a PRD line, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped; `rulings-check.mjs --plan` lists a linked PLN's uncited exclusions.
+<!-- generic: inherited-scope-b -->
+Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion the previous writer left (its plan, change log or report) to a human source: an acceptance criterion, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped.
+<!-- end generic: inherited-scope-b -->
+> Provider `tickets` (block `inherited-scope-b` of `fleet/templates.md`)
 Rulings in force: read <orchDir>/rulings.md; the ticket carries the applicable per-ticket rulings through handoff's rulings check.
-Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
+<!-- generic: graph-first -->
+Research the code before changing it, as vibe's repository-intelligence reference says: open pull requests touching the same files, and callers and importers before a shared change.
+<!-- end generic: graph-first -->
+> Provider `graph` (block `graph-first` of `fleet/templates.md`)
 Tests: run the repository-selected lanes for the feature-complete change. After QA, run handoff's `qa-impact.mjs` and execute only the lanes or screens it names; a `None` result relies on ordinary per-push CI.
 Start independent repository selected validation lanes concurrently through assigned heavy slots, including non-e2e lanes while e2e runs elsewhere. Ask the orchestrator to move a lane waiting only on load or a full slot to another allowed machine; report the move and obey exclusions and limits.
 Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).

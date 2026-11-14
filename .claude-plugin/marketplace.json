@@ -17,7 +17,12 @@
     {
       "name": "vibe",
       "source": "./plugins/vibe",
-      "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows"
+      "description": "Vibe sessions, handoff, seed refresh, and ticket workflows"
+    },
+    {
+      "name": "vibe-closedloop-provider",
+      "source": "./plugins/vibe-closedloop-provider",
+      "description": "ClosedLoop and symphony-alpha knowledge for vibe and fleet-orchestrator; disable it to run vibe and fleet generically"
     },
     {
       "name": "bootstrap",

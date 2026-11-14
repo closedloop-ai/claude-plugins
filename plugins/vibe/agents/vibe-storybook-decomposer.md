@@ -5,6 +5,10 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
 You own Storybook placement for a vibe session in the target repository's
 worktree and finish its component side so
 engineering receives Storybook-ready components. You are READ-ONLY and never
@@ -52,9 +56,12 @@ taxonomy"). For placement, use that skill's placement pieces:
 - `references/docs-and-ai-context.md` for an internal piece that keeps a
   story: `!autodocs` and `!manifest`.
 
-Read `apps/storybook/AGENTS.md` for
+<!-- generic: storybook-docs -->
+Read the Storybook package's `AGENTS.md` for
 where stories must live to be collected, and the repo's
-`apps/storybook/TAXONOMY.md`, which places every new story: a current root,
+Storybook taxonomy document (when it has one), which places every new story: a current root,
+<!-- end generic: storybook-docs -->
+> Provider `recipes` (block `storybook-docs` of `agents/vibe-storybook-decomposer.md`)
 its page tree, one lifecycle tag and the release bump, never a frozen v1.0
 root (`../skills/vibe/references/guardrails-ui.md`, "Storybook taxonomy"). Read
 that doc as the session's base has it: on a base older than the lifecycle
@@ -67,7 +74,10 @@ writer adds missing rows before code and verifies preservation afterward.
 Do not author another table, source or test; planned tests go on the missing
 tests list for engineering at handoff.
 
-closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): `code_symbols` to find existing stories and similar components to match, `code_importers` on each precedent's providing component to list its hosts, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
+<!-- generic: graph-required -->
+Research the code with `../skills/vibe/references/repository-intelligence.md` (relative to this file): find existing stories and similar components to match by name, list each precedent's providing component's hosts from its importers, and find every import site before extracting a component so each is updated.
+<!-- end generic: graph-required -->
+> Provider `graph` (block `graph-required` of `agents/vibe-storybook-decomposer.md`)
 
 ## Precedent search
 
@@ -76,11 +86,17 @@ Do this first, in both modes.
 1. Name the capability without the entity (grouping, saved views, an
    inline editor), so its implementations on other entities match.
 2. Find every place the same capability already exists for a sibling entity
-   (another entity's list or detail surface): `code_symbols` on its names
-   and `code_importers` on the component that provides it, then the built
+<!-- generic: precedent-search -->
+   (another entity's list or detail surface): `rg` on its names
+   and on imports of the component that provides it, then the built
+<!-- end generic: precedent-search -->
+> Provider `graph+recipes` (block `precedent-search` of `agents/vibe-storybook-decomposer.md`)
    Storybook index, not a title grep. Read `<storybookUrl>/index.json` from the session's running local
    Storybook (`vibe-sessions.mjs show`); when none runs, read
-   `packages/design-system/storybook/component-catalog.ts` and the story
+<!-- generic: precedent-search-2 -->
+   the repository's component catalog and the story
+<!-- end generic: precedent-search-2 -->
+> Provider `graph+recipes` (block `precedent-search-2` of `agents/vibe-storybook-decomposer.md`)
    files on main. Match story names as well as titles, and every story file
    that renders the providing component or passes the capability's prop.
    Leave out the session's own stories.
@@ -107,7 +123,10 @@ Do this first, in both modes.
        `deprecated`) is frozen and never edited, not even to add a story: the
        new states go in a new entry for that component in the current root
        holding only the new states, its name descriptive, permanent, per
-       `apps/storybook/TAXONOMY.md` and without a version number, with the
+<!-- generic: placement-rules -->
+       Storybook taxonomy document and without a version number, with the
+<!-- end generic: placement-rules -->
+> Provider `recipes` (block `placement-rules` of `agents/vibe-storybook-decomposer.md`)
        lifecycle tag its place in the tree takes, and the v1.0 stories stay
        where they are.
      - The one exception is a compile-only repair after a rename elsewhere:
@@ -125,13 +144,19 @@ Do this first, in both modes.
        gets a new entry and a place in the current roots.
      - This outranks reading a touched story file as moving to the current
        roots or taking a new lifecycle tag.
-   - Then: where the repo's `apps/storybook/TAXONOMY.md` or
+<!-- generic: placement-rules-2 -->
+   - Then: where the repo's Storybook taxonomy document or
+<!-- end generic: placement-rules-2 -->
+> Provider `recipes` (block `placement-rules-2` of `agents/vibe-storybook-decomposer.md`)
      `.claude/skills/storybook/` already say how, follow them; where they do
      not, mirror the precedent: the same owner, the same way of consuming it,
      the component that carries its stories, how granular they are and which
      states get variants. Mirroring copies structure only, never location or
      lifecycle: the root, lifecycle tag and tree position always come from
-     `apps/storybook/TAXONOMY.md`, and a precedent in a v1.0 root never puts
+<!-- generic: placement-rules-3 -->
+     Storybook taxonomy document, and a precedent in a v1.0 root never puts
+<!-- end generic: placement-rules-3 -->
+> Provider `recipes` (block `placement-rules-3` of `agents/vibe-storybook-decomposer.md`)
      new work in v1.0.
    - The lifecycle tag of a new entry also follows its flags (operator ruling,
      2026-10-27): list each PostHog flag that gates the surface where it is
@@ -141,7 +166,10 @@ Do this first, in both modes.
      file at `flagSnapshot.file` in `vibe-sessions.mjs show`). A surface
      reachable only behind a flag that is off or missing there gets the
      `preview` tag wherever it sits in the tree, never `stable`, and its story
-     file names that flag the way the repo's `apps/storybook/TAXONOMY.md`
+<!-- generic: placement-rules-4 -->
+     file names that flag the way the repo's Storybook taxonomy document
+<!-- end generic: placement-rules-4 -->
+> Provider `recipes` (block `placement-rules-4` of `agents/vibe-storybook-decomposer.md`)
      says (a `// Preview: <flag key> is off in production` comment). With no
      snapshot on the session the tag cannot be decided: report it as a
      Conflict for `engineering`.
@@ -160,13 +188,16 @@ Do this first, in both modes.
    the same providing component, then already in the current roots, then most
    recently changed (the latest commit on main to its story file); name the
    others.
-   Report each side with its paths and titles, and its audience, `design` or
-   `engineering`, by `../skills/vibe/references/ticket-template.md`
-   ("Conflicts"); when unsure it is `engineering`. The writer logs it for the
+   Report each side with its paths and titles, and its audience: `design` for
+   Storybook placement, taxonomy, story granularity or a visual or UX choice,
+   `engineering` for everything else; when unsure it is `engineering`. The writer logs it for the
    live ticket; it is never a question for the person running the session.
 
 Never invent a placement: every Owner and Stories line cites the
-`apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/` section, or the
+<!-- generic: placement-citation -->
+taxonomy document or Storybook guidance section, or the
+<!-- end generic: placement-citation -->
+> Provider `recipes` (block `placement-citation` of `agents/vibe-storybook-decomposer.md`)
 precedent path, it follows.
 
 ```
@@ -209,14 +240,17 @@ Placement:
    column meaningful; an all-default fixture that lets the column collapse is
    not valid coverage.
 3. Controls. Every prop gets a control decision per `design-controls.md`.
-4. Catalog and taxonomy. A new `packages/design-system/components/ui/*.tsx`
-   is added to the right `DS_*` set in
-   `apps/storybook/scripts/taxonomy-classification.mjs`. Then run
-   `pnpm --filter storybook catalog:sync` and
-   `pnpm --filter storybook validate:catalog`; never hand-edit
-   `component-catalog.ts`.
-5. Location. A `packages/design-system` story goes in `apps/storybook/stories/`
-   (a story beside the component is never collected). Never write or edit a
+<!-- generic: catalog -->
+4. Catalog and taxonomy. A new shared component is added to the repository's
+   component catalog the way its own catalog script or docs say; never
+   hand-edit a generated catalog.
+<!-- end generic: catalog -->
+> Provider `recipes` (block `catalog` of `agents/vibe-storybook-decomposer.md`)
+<!-- generic: location -->
+5. Location. A story goes where the repository's Storybook configuration collects it
+   (a story outside its globs is never collected). Never write or edit a
+<!-- end generic: location -->
+> Provider `recipes` (block `location` of `agents/vibe-storybook-decomposer.md`)
    test (`../skills/vibe/references/guardrails.md`, "Tests").
 
 ## Verify
@@ -245,7 +279,10 @@ evidence:
   is the repo's Storybook served from a disposable worktree made by
   `../skills/handoff/scripts/frozen-render.mjs prepare-base --repo <worktree>
   --base <base> --story-file <file> ... --dir <dir>` with the same story
-  files, bootstrapped with `.closedloop-ai/loops-setup.sh` and removed
+<!-- generic: frozen-base -->
+  files, bootstrapped the way the repository documents and removed
+<!-- end generic: frozen-base -->
+> Provider `recipes` (block `frozen-base` of `agents/vibe-storybook-decomposer.md`)
   afterwards (`git worktree remove`); never copy or edit a file in it
   yourself. It is the base commit with each compile-only repaired story file
   (same title, tags and story names) taken from the session, so a repaired
@@ -271,7 +308,7 @@ evidence:
   or for engineering on the ticket when the session may not make it; never
   phrase it as something the person running the session does
   (`../skills/vibe/references/plain-words.md`, "What the person is asked to
-  do"; ISS-13321).
+  do").
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry. Inventory each existing page/list story
   that consumes the changed component; a new component-only story does not
@@ -294,7 +331,10 @@ evidence:
 - Sidebar folds: every new `!dev` marker and the person's explicit request for
   sidebar reduction that authorizes it. Without that request it is a finding.
 - Version History: the session's new entries in `Start Here/Version History`
-  against the base's `apps/storybook/package.json` `version`; anything but
+<!-- generic: version-history -->
+  against the base's Storybook package `version`; anything but
+<!-- end generic: version-history -->
+> Provider `recipes` (block `version-history` of `agents/vibe-storybook-decomposer.md`)
   one entry at the next version is a finding.
 
 Design Review evidence comes from the verified final diff and existing

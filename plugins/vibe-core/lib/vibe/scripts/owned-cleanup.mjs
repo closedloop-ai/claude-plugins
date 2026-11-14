@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { readProcessIdentity } from '../../../shared/process-identity.mjs';
 import { readSessionRecord } from './session-record.mjs';
+import { providerDataOr, sessionBinding } from './provider.mjs';
 import { reconcileGeneratedE2E } from './owned-docker.mjs';
 import { cleanupDir, dockerRun, e2eLockDir as defaultLockDir, markPending, OWNERSHIP_VERSION as VERSION,
   refreshMarker, regularJson, writeAtomic } from './owned-state.mjs';
@@ -217,30 +218,37 @@ function setupEnvTargets(worktree) {
   } catch { return new Set(); }
 }
 
-function generatedIgnored(relative, worktree, envTargets = setupEnvTargets(worktree), publishedPlans = false) {
+/**
+ * The repository's own generated paths, from the session provider's recipe (`recipes.cleanup.generated`), plus its
+ * published plan folder (`recipes.cleanup.publishedPlans`) once the session's plan is published; none without one.
+ */
+export function repositoryGenerated(binding, publishedPlans = false) {
+  const cleanup = providerDataOr(binding, 'recipes', 'cleanup', null) ?? {};
+  return [...(cleanup.generated ?? []), ...(publishedPlans && cleanup.publishedPlans ? [cleanup.publishedPlans] : [])]
+    .map((source) => new RegExp(source));
+}
+
+function generatedIgnored(relative, worktree, envTargets = setupEnvTargets(worktree), repository = []) {
   const clean = relative.replace(/\/$/, '');
   if (envTargets.has(clean)) return true;
-  if (publishedPlans && /^\.closedloop-ai\/(?:vibe-plans|plans)(?:\/.*)?$/.test(clean)) return true;
+  if (repository.some((pattern) => pattern.test(clean))) return true;
   return /^(?:coverage|\.perf|tsconfig\.tsbuildinfo)$/.test(clean)
     || /(?:^|\/)(?:node_modules|\.turbo|\.next|\.cache)$/.test(clean)
     || /^(?:\.husky\/_)(?:\/.*)?$/.test(clean)
-    || /^(?:\.closedloop-ai\/\.env\.setup|\.biome-noscan\.jsonc)$/.test(clean)
     || /^(?:apps|packages)\/[^/]+\/(?:node_modules|\.turbo|\.next|\.cache|dist|generated)$/.test(clean)
-    || /^(?:apps|packages)\/[^/]+\/(?:tsconfig(?:\.[^/]+)?\.tsbuildinfo|next-env\.d\.ts)$/.test(clean)
-    || /^apps\/desktop\/src\/(?:main\/database\/(?:generated|migration\/migrations-manifest\.ts)|main\/docs-help\/docs-bundle-manifest\.ts|shared\/(?:auth-handoff-assets\.generated\.ts|build-info\.ts))$/.test(clean)
-    || /^apps\/web\/\.source$/.test(clean);
+    || /^(?:apps|packages)\/[^/]+\/(?:tsconfig(?:\.[^/]+)?\.tsbuildinfo|next-env\.d\.ts)$/.test(clean);
 }
 
-function generatedIgnoredTree(relative, worktree, envTargets, publishedPlans) {
-  if (generatedIgnored(relative, worktree, envTargets, publishedPlans)) return true;
+function generatedIgnoredTree(relative, worktree, envTargets, repository) {
+  if (generatedIgnored(relative, worktree, envTargets, repository)) return true;
   const absolute = path.join(worktree, relative);
   let entries;
   try { entries = readdirSync(absolute, { withFileTypes: true }); } catch { return false; }
   return entries.length > 0 && entries.every((entry) => {
     const child = path.relative(worktree, path.join(absolute, entry.name));
     if (entry.isSymbolicLink()) return envTargets.has(child);
-    return entry.isDirectory() ? generatedIgnoredTree(child, worktree, envTargets, publishedPlans)
-      : generatedIgnored(child, worktree, envTargets, publishedPlans);
+    return entry.isDirectory() ? generatedIgnoredTree(child, worktree, envTargets, repository)
+      : generatedIgnored(child, worktree, envTargets, repository);
   });
 }
 
@@ -364,7 +372,8 @@ function verifyWorktree(record, processAlive, lockHeld, home, { processCwds = de
   const envTargets = setupEnvTargets(root);
   const session = readSessionRecord(root);
   const publishedPlans = Boolean(session?.livePlan && ['APPROVED', 'EXECUTED'].includes(session.livePlanStatus));
-  const unknown = ignored.filter((relative) => !generatedIgnoredTree(relative, root, envTargets, publishedPlans));
+  const repository = repositoryGenerated(sessionBinding(root), publishedPlans);
+  const unknown = ignored.filter((relative) => !generatedIgnoredTree(relative, root, envTargets, repository));
   if (unknown.length) throw new Error('worktree has unknown ignored data: ' + unknown.slice(0, 3).join(', '));
   for (const relative of ignored) {
     const absolute = path.resolve(root, relative);

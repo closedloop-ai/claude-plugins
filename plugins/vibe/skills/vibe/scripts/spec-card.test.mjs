@@ -3,9 +3,13 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assumptionsText, budgetReport, cardProblems, checkpointEnabled, auditSkeleton, lockedChangeProblems } from "./spec-card.mjs";
+import { bindProviderInProcess } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL("./spec-card.mjs", import.meta.url));
 const OPTIONS = [{ label: "A", summary: "one end-to-end way" }, { label: "B", summary: "another end-to-end way" }];

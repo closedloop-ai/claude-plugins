@@ -13,39 +13,51 @@ import { killGuard } from "./kill-guard.mjs";
 import { mergeGuard } from "./merge-guard.mjs";
 import { pauseGuard } from "./pause-guard.mjs";
 import { pluginVersionGuard, pluginVersionSkillStart } from "./plugin-version-guard.mjs";
-import { prCreateGuard } from "./pr-create-guard.mjs";
+import { createsPullRequest, prCreateGuard } from "./pr-create-guard.mjs";
 import { QUESTION_TOOLS, questionGuard } from "./question-guard.mjs";
-import { shellSafetyGuard } from "./shell-safety-guard.mjs";
-import { UPDATE_DOCUMENT_TOOL, unitStatusGuard } from "./unit-status-guard.mjs";
+import { runsE2eScript, shellSafetyGuard } from "./shell-safety-guard.mjs";
+import { unitStatusGuard } from "./unit-status-guard.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import { commandSegments } from "./command-segments.mjs";
 import path from "node:path";
 
-/** The guards each tool runs, in order; hooks.json's PreToolUse matcher names exactly these tools. */
+const WRITE_TOOL = /(?:^|[_-])(?:update|set|create|move|transition|edit)(?:[_-]|$)/i;
+
+/**
+ * The guards each tool runs, in order; hooks.json's PreToolUse matcher names exactly these tools and every MCP tool. A guard
+ * marked `activated` runs only in a chat that activated vibe (activation.mjs); the others check their own
+ * scope (a vibe worktree, a vibe or fleet conversation, or its startup record) before they act.
+ */
 export const PRE_TOOL_USE_ROUTES = Object.freeze({
   Bash: Object.freeze([
-    { name: "kill-guard", run: killGuard },
+    { name: "kill-guard", run: killGuard, activated: true },
     { name: "foreground-guard", run: foregroundGuard },
-    { name: "merge-guard", run: mergeGuard },
-    { name: "pr-create-guard", run: prCreateGuard },
-    { name: "shell-safety-guard", run: shellSafetyGuard },
+    { name: "merge-guard", run: mergeGuard, activated: true },
+    { name: "pr-create-guard", run: prCreateGuard, guards: (event) => createsPullRequest(event?.tool_input?.command) },
+    { name: "shell-safety-guard", run: shellSafetyGuard, activated: true, guards: runsE2eScript },
     { name: "scratch-creation-guard", run: scratchCreationGuard },
     { name: "plugin-version-guard", run: pluginVersionGuard },
   ]),
   Agent: Object.freeze([
-    { name: "agent-guard", run: agentGuard },
+    { name: "agent-guard", run: agentGuard, activated: true },
     { name: "plugin-version-guard", run: pluginVersionGuard },
   ]),
-  SendMessage: Object.freeze([{ name: "pause-guard", run: pauseGuard }, { name: "plugin-version-guard", run: pluginVersionGuard }]),
+  SendMessage: Object.freeze([{ name: "pause-guard", run: pauseGuard, activated: true }, { name: "plugin-version-guard", run: pluginVersionGuard }]),
   Skill: Object.freeze([{ name: "plugin-version-start", run: pluginVersionSkillStart }]),
-  [UPDATE_DOCUMENT_TOOL]: Object.freeze([{ name: "unit-status-guard", run: unitStatusGuard }]),
   ...Object.fromEntries(QUESTION_TOOLS.map((tool) => [tool, Object.freeze([{ name: "question-guard", run: questionGuard }])])),
 });
+
+/**
+ * The guards of an MCP tool call: the rules a bound provider supplies as data for its tools (hooks.json matches every
+ * `mcp__` tool, and each rule names its own); with no provider bound they do nothing.
+ */
+export const MCP_ROUTE = Object.freeze([{ name: "unit-status-guard", run: unitStatusGuard, activated: true, guards: writesStatus }]);
 
 /** The PreToolUse output for `event`, or null; `report(line)` receives each failing guard's error. */
 export function preToolUse(event, report) {
   const tool = event?.tool_name;
-  const guards = typeof tool === "string" && Object.hasOwn(PRE_TOOL_USE_ROUTES, tool) ? PRE_TOOL_USE_ROUTES[tool] : [];
+  const guards = typeof tool !== "string" ? []
+    : Object.hasOwn(PRE_TOOL_USE_ROUTES, tool) ? PRE_TOOL_USE_ROUTES[tool] : tool.startsWith("mcp__") ? MCP_ROUTE : [];
   return mergeResults("PreToolUse", runGuards(guards, event, report));
 }
 
@@ -144,3 +156,11 @@ function scratchCreationGuard(event) {
 }
 
 if (isMain(import.meta.url)) runHookScript("pre-tool-use", preToolUse);
+
+/**
+ * A status write, the action unit-status-guard guards: with its bound provider broken it cannot read which tool is the
+ * tracker's, so any MCP tool named for a write that sets a status is refused, and reads that filter by status are not.
+ */
+function writesStatus(event) {
+  return typeof event?.tool_input?.status === "string" && WRITE_TOOL.test(String(event?.tool_name ?? ""));
+}

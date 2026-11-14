@@ -5,7 +5,8 @@
 // the fleet watcher started with `&` or inside a compound command detached and
 // held its lock while its events never arrived; `set -- $var` in a merge watcher
 // never fired, because zsh (this tool's shell on macOS) does not word-split an
-// unquoted parameter; and e2e-slot.sh reruns tested an old commit when they
+// unquoted parameter; and a machine's shared e2e slot wrapper (the bound
+// provider's `data.guards.e2eSlot` rule) reran tests on an old commit when a run
 // started before the push landed, because the slot captured whatever HEAD was.
 // And `echo ====` (2026-10-22): zsh expands an unquoted word starting with `=`
 // to a command path, fails on `===`, and aborts the whole list, so the reads
@@ -15,7 +16,10 @@
 
 import path from "node:path";
 import { commandPrefix, commandSegments } from "./command-segments.mjs";
-import { deny } from "./hook-dispatch.mjs";
+import { deny, eventCwd } from "./hook-dispatch.mjs";
+import { providerGuardRule, recordedBinding } from "../lib/vibe/scripts/provider.mjs";
+
+const E2E_SCRIPT = /e2e/i;
 
 const TOKEN = /(?:\b(?:gh_token|github_token|[a-z][a-z0-9_]*token)\b|\$\{?[a-z][a-z0-9_]*token\}?|--password(?:-stdin)?\b|(?:^|\s)-p(?:\s|$)|["']?auth["']?\s*:)/i;
 const CREDENTIAL_ROUTE = /(?:\bDOCKER_CONFIG\b|\bdocker\s+login\b|["']?auths["']?\s*:)/i;
@@ -134,16 +138,21 @@ function invocationIndex(words) {
   }
 }
 
-/** Require the deployed remote wrapper's real `--head <sha> <owner> <command>` interface. */
-export function e2eSlotProblem(command) {
+/**
+ * Require the deployed slot wrapper's real `<headFlag> <sha> <owner> <command>` interface, under `rule` (the bound
+ * provider's `data.guards.e2eSlot`: the wrapper's name, its head flag and the flags it refuses); none without one.
+ */
+export function e2eSlotProblem(command, rule) {
+  if (!rule?.script) return null;
   for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
     const start = invocationIndex(words);
-    if (path.basename(words[start] ?? "") !== "e2e-slot.sh") continue;
-    if (words[start + 1] !== '--head' || !SHA.test(words[start + 2] ?? '')) {
-      return 'e2e-slot.sh needs --head <sha> before the owner label, the committed HEAD underlying the tested source';
+    if (path.basename(words[start] ?? "") !== rule.script) continue;
+    if (words[start + 1] !== rule.headFlag || !SHA.test(words[start + 2] ?? '')) {
+      return `${rule.script} needs ${rule.headFlag} <sha> before the owner label, the committed HEAD underlying the tested source`;
     }
-    if (words[start + 3] === '--source-hash') {
-      return 'e2e-slot.sh does not accept --source-hash; it would treat that flag as the owner label and execute the hash as a command';
+    const refused = (rule.refusedFlags ?? []).find((flag) => words[start + 3] === flag);
+    if (refused) {
+      return `${rule.script} does not accept ${refused}; it would treat that flag as the owner label and execute the hash as a command`;
     }
   }
   return null;
@@ -158,6 +167,22 @@ export function shellSafetyGuard(event) {
   const command = event?.tool_input?.command;
   if (typeof command !== "string") return null;
   const problem = credentialProblem(command) ?? forcePushProblem(command) ?? watcherLaunchProblem(event.tool_input)
-    ?? wordSplitProblem(command) ?? equalsWordProblem(command) ?? e2eSlotProblem(command);
+    ?? wordSplitProblem(command) ?? equalsWordProblem(command) ?? e2eSlotProblem(command, e2eSlotRule(event));
   return problem ? deny(problem) : null;
+}
+
+/**
+ * Whether `event` runs a script named for e2e: with the bound provider broken, its slot wrapper's name cannot be read,
+ * so the dispatcher refuses every such command rather than run one unchecked.
+ */
+export function runsE2eScript(event) {
+  const command = event?.tool_input?.command;
+  if (typeof command !== "string") return false;
+  return commandSegments(command, { expandShellPayloads: true })
+    .some(({ words }) => E2E_SCRIPT.test(path.basename(words[invocationIndex(words)] ?? "")));
+}
+
+/** The bound provider's e2e slot rule for this event's chat (its session worktree, then the chat), or null. */
+function e2eSlotRule(event) {
+  return providerGuardRule(recordedBinding({ worktree: eventCwd(event), conversation: event?.session_id ?? null }), "e2eSlot");
 }

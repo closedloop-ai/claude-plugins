@@ -212,6 +212,12 @@ session() {
   fi
   local plugin_arg=
   if [ "$command" = turn ] || [ "$command" = steer ]; then plugin_arg=' --plugin-root "$remote_root"'; fi
+  # The remote host has no chat of this lead's, so a new writer there gets the lead's binding with the launch.
+  if [ "$command" = turn ]; then
+    local lead_provider
+    lead_provider=$(node "$skills/vibe/scripts/provider.mjs" show) || { echo "fleet: could not read this lead's provider binding" >&2; return 2; }
+    plugin_arg+=" --lead-provider $(printf %q "$lead_provider")"
+  fi
   local pending= marker= legacy= attempt= owner_started= remote_command= stage=
   # Publish complete ownership atomically before a remote turn can create a writer.
   # An incomplete private staging file never claims the pending name or blocks a retry.

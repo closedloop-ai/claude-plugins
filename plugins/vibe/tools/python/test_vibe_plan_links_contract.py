@@ -14,13 +14,13 @@ import json
 import subprocess
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 REFERENCES = VIBE / "references"
 QUALITY = REFERENCES / "quality-loop.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 VIBE_SKILL = VIBE / "SKILL.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 README = PLUGIN_ROOT / "README.md"
@@ -203,7 +203,10 @@ def test_the_session_record_has_the_pln_next_to_the_live_ticket(tmp_path: Path) 
     worktree = tmp_path / "session"
     worktree.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "vibe/plan-field", str(worktree)], check=True)
-    record = {"slug": "plan-field", "branch": "vibe/plan-field", "status": "active", "liveTicket": "ISS-1"}
+    # A live plan is the plans capability's, so the session is bound to the ClosedLoop provider.
+    binding = {"state": "bound", "name": "vibe-closedloop-provider", "root": str(PROVIDER_REFERENCES.parents[2]),
+               "capabilities": ["tickets", "plans", "graph", "memory", "recipes"]}
+    record = {"slug": "plan-field", "branch": "vibe/plan-field", "status": "active", "liveTicket": "ISS-1", "provider": binding}
     (worktree / ".git" / "vibe-session.json").write_text(json.dumps(record))
     result = subprocess.run(
         ["node", str(SESSIONS), "touch", "--worktree", str(worktree), "--live-plan", "PLN-2", "--live-plan-status", "DRAFT"],

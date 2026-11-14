@@ -2,7 +2,7 @@
 // CLAUDECODE=1 and CLAUDE_CODE_SESSION_ID to its commands and Codex exports
 // CODEX_THREAD_ID, and each harness's children inherit the other's variables:
 // a Codex App Server started from a Claude Code chat hands that chat's
-// CLAUDE_CODE_SESSION_ID to every Codex thread it runs (ISS-13834). When both
+// CLAUDE_CODE_SESSION_ID to every Codex thread it runs. When both
 // ids are set, the nearest harness process above this one owns the command.
 
 import { execFileSync } from "node:child_process";

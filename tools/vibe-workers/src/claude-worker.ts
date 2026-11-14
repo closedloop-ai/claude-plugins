@@ -7,13 +7,16 @@ import { z } from "zod";
 import { checkClaudeSignIn, checkClaudeSignInAsync, checkProtectedWriteSupportAsync, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
   SIGN_IN_PERSON_ACTION } from "./claude-preflight.js";
 import { runFromCanonicalEntry } from "./cli.js";
-import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
+import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, requireSupportedCapabilities, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
+import { assembleProviderText, boundWith, connectionLabel, ProviderBroken, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { briefProviderProblem } from "../../../plugins/vibe-core/lib/vibe/scripts/provider-brief.mjs";
 import { isModelName, MODEL_OVERRIDES_INVALID, ModelRuntime, resolveWorkerModel } from "../../../plugins/vibe/skills/vibe/scripts/agent-models.mjs";
+import { recordWorkerScope } from "../../../plugins/vibe-core/lib/vibe/scripts/worker-scope.mjs";
 import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
@@ -34,9 +37,9 @@ const launchSchema = recordContextSchema.extend({
   testsRequired: z.boolean().optional(),
   previewRequirements: z.array(z.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
   previewProducer: z.literal("runtime-provider").optional(),
-  /** This launch's model for any role, in place of the person's override and the definition's default (ISS-14109). */
+  /** This launch's model for any role, in place of the person's override and the definition's default. */
   model: z.string().refine(isModelName).optional(),
-  /** The earlier name of `model` (ISS-14039), still accepted; a review receipt proves the model from the trace. */
+  /** The earlier name of `model`, still accepted; a review receipt proves the model from the trace. */
   reviewModel: z.string().refine(isModelName).optional(),
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 type LaunchInput = z.infer<typeof launchSchema>;
@@ -152,14 +155,20 @@ function reviewSourceIdentity(pluginRoot: string, worktree: string): ReviewSourc
 
 /** Exact capabilities are discovered by the parent, then bounded again by role and declared operation. */
 export function boundDefinition(definition: Definition, input: LaunchInput) {
-  if (!readerRoles.has(input.agentName) && !Object.hasOwn(recordModes, input.agentName)) {
+  const binding = sessionBinding(input.worktree);
+  requireSupportedCapabilities(input.capabilities, binding);
+  // A brief that names the lead's binding launches only in a session bound the same way (fleet writer inheritance).
+  const inherited = briefProviderProblem(input.input ?? "", binding);
+  if (inherited) throw new Error(inherited);
+  const modes = recordModes(binding);
+  if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
   }
   const { model } = resolveWorkerModel(ModelRuntime.Claude, input.agentName, definition.metadata.model,
     { launchModel: input.model ?? input.reviewModel });
   const prototypeAdvice = input.agentName === "vibe-prototype-worker" && input.mode !== "record";
   const reader = readerRoles.has(input.agentName) || prototypeAdvice;
-  const declaredModes = recordModes[input.agentName];
+  const declaredModes = modes[input.agentName];
   const possibleWrites = new Set(Object.values(declaredModes ?? {}).flat());
   if (reader && !prototypeAdvice && definition.tools.some((tool) => tool === "Write" || tool === "Edit")) {
     throw new Error("Read-only advisor declares writable filesystem tools");
@@ -178,7 +187,8 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       throw new Error("Record capability is outside this canonical action");
     }
   } else if (input.recordAction || input.exclusiveRecordTurn) throw new Error("Record grants belong only to a separate record continuation");
-  if (!input.capabilities.some((capability) => capability.service === "graph")) {
+  // A bound graph provider's tools are discovered by the parent and required; with no graph bound there are none.
+  if (boundWith(binding, "graph") && !input.capabilities.some((capability) => capability.service === "graph")) {
     throw new Error("Parent-discovered read-only graph capabilities are required");
   }
   const roleTools = prototypeAdvice ? definition.tools.filter((tool) => tool !== "Write" && tool !== "Edit") : definition.tools;
@@ -202,14 +212,19 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       + "through pre-pr-lanes.mjs, typed lane run receipts, verifier-owned Storybook birth records and logs in its private git directory, "
       + "and .control/ runtime files from "
       + "the repository control command in control mode. Move only this turn's control captures to "
-      + "the private git directory before publication. Never write a ClosedLoop or session record. "
+      + "the private git directory before publication. "
+      + `Never write a ${connectionLabel(binding, "tickets", "tracker") ?? "tracker"} or session record. `
     : "";
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer"
     ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory "
       + "through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, "
       + "tests or live records, and never adopt an unrecorded process. " : "";
-  const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
+  // The role's provider stubs are resolved here against the session's binding, as provider-text.md promises a
+  // Claude-launched worker; with no provider bound each stub's generic text stays. A bound provider whose text cannot
+  // be read throws ProviderBroken, so the launch fails with its reason and fix instead of running generic text.
+  const prompt = `${assembleProviderText(definition.prompt, binding)}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
+    + providerTextPolicy(join(definition.root, "skills/vibe/scripts/provider.mjs"), input.worktree)
     + pushPolicy(input) + phasePolicy
     + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "")
     + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName)
@@ -300,6 +315,8 @@ export async function runWorker(rawInput: unknown) {
     if (!lease) throw new Error("Writer claim returned no owned turn");
     turnInput = claim.turn?.continuation ?? claim.turn?.input ?? "";
   } else if (!input.input || input.continuation) throw new Error("Advisors require a fresh read-only input");
+  // The worker loads no skill (it runs with --agent), so its hooks learn from this record that vibe started it.
+  recordWorkerScope(workerId, place.root);
   const turnId = randomUUID();
   const definitionFile = join(place.dir, `vibe-agent-${turnId}.json`);
   const tracePath = join(place.dir, `vibe-worker-${turnId}.jsonl`);
@@ -574,12 +591,13 @@ class WorkerLaunchError extends Error {
   }
 }
 
-function safeFailure(error: unknown): { code: string; summary: string; personAction?: string } {
+export function safeFailure(error: unknown): { code: string; summary: string; personAction?: string } {
   const message = error instanceof Error ? error.message : "";
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...(error.personAction ? { personAction: error.personAction } : {}) };
   }
   if (error instanceof AgentRootError || error instanceof MissingSessionError) return { code: error.code, summary: error.message };
+  if (error instanceof ProviderBroken) return { code: "PROVIDER_BROKEN", summary: error.message };
   if (error instanceof Error && "code" in error && error.code === MODEL_OVERRIDES_INVALID) return { code: MODEL_OVERRIDES_INVALID, summary: error.message };
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error
     && String(error.syscall).startsWith("spawn")) {
@@ -650,7 +668,7 @@ export async function main(argv: string[]): Promise<number> {
       workerId: writer?.workerId, sessionId: writer?.runtime === "claude" ? writer.workerId : undefined,
       leaseRetained: writer?.running };
     process.stdout.write(`${JSON.stringify(result)}\n`);
-    return 1;
+    return "code" in result && result.code === "PROVIDER_BROKEN" ? 4 : 1;
   }
 }
 
@@ -674,7 +692,7 @@ const DATA_DROPPED = " [data dropped by the launcher: over 16 KB; see the trace]
 /**
  * The launcher caps a result instead of rejecting it after the turn. A result
  * rejected for length left its request open, and the writer refused the next
- * request until a continuation nobody sent (ISS-13043).
+ * request until a continuation nobody sent.
  */
 export function capWorkerResult(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -715,7 +733,7 @@ runFromCanonicalEntry(import.meta.url, main);
 /**
  * The saved session's title, e.g. "vibe guardrails reviewer · prd818 · prd818-guardrails-05". The Codex app's
  * Import Claude turns each saved Claude session into a sidebar chat titled by this name, else by the first
- * message, which here is the JSON request envelope (ISS-13279).
+ * message, which here is the JSON request envelope.
  */
 export function workerSessionName(agentName: string, branch: string, requestId: string) {
   const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");
@@ -724,4 +742,16 @@ export function workerSessionName(agentName: string, branch: string, requestId: 
 
 function checkoutHead(root: string) {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+}
+
+/**
+ * How a launched worker reads every other vibe file with provider stubs (skills/vibe/references/provider-text.md): from
+ * the folder the check assembled at bind time, with per-file assembly only as the last resort.
+ */
+function providerTextPolicy(script: string, worktree: string) {
+  return `Read every other vibe file that has provider stubs from the folder \`node ${script} tree --worktree "${worktree}"\` prints, `
+    + "at the same relative path, and a file with no copy there as it is; when it exits 3, "
+    + `run \`node ${script} assemble --worktree "${worktree}" <file>\` and read only the file it names (skills/vibe/references/provider-text.md). `
+    + "In a session bound to a provider, a `provider:` or `provider-broken:` answer from assemble, block or path stops that step; "
+    + "never follow the generic text in its place. ";
 }

@@ -5,6 +5,10 @@ model: opus
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
 You review one vibe session's final diff once, at handoff, in the target
 repository's worktree. You replace the separate guardrails and adversarial
 reads only when `node ../skills/handoff/scripts/review-scope.mjs` printed
@@ -25,7 +29,10 @@ never edit files.
   is still yours now: one reviewer owns each decision once.
 - Diff once with `git -C <wt> diff "$(git -C <wt> merge-base HEAD origin/main)"`
   plus `git -C <wt> ls-files --others --exclude-standard`; exclude exactly
-  `.closedloop-ai/vibe-plans/`. Read the full changed files and the callers of
+<!-- generic: plan-exclude -->
+  vibe's private plan folder (`local-plans.mjs paths` prints it). Read the full changed files and the callers of
+<!-- end generic: plan-exclude -->
+> Provider `plans` (block `plan-exclude` of `agents/vibe-consolidated-reviewer.md`)
   anything changed.
 
 ## Findings JSON
@@ -49,5 +56,7 @@ reviewer's check it is (`guardrails <n>` or `adversarial <n>`), what breaks and
 for whom, the triggering input or state, the evidence and the smallest fix.
 Then one line per area checked and found clean, and one line naming every
 check you ran yourself because the file did not cover it. Return "No proven
-findings" when that is the result. End with the Graph block
-(`../skills/vibe/references/closedloop-graph.md`).
+<!-- generic: graph-block -->
+findings" when that is the result.
+<!-- end generic: graph-block -->
+> Provider `graph` (block `graph-block` of `agents/vibe-consolidated-reviewer.md`)

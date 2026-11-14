@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { makeCheckout, makeHome, portableSurfaceChecker, runNode, SYMPHONY_PATH_POLICY } from "./test-fixtures.mjs";
+import { readAssembled } from "./skill-split.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCOPE = path.join(HERE, "dist", "scope-intake.mjs");
@@ -74,9 +75,9 @@ test("intake preserves owned prototype paths, pull-request root tests, and canon
     "--path", "e2e/issues.spec.ts"], app.home).json.allowed, ["e2e/issues.spec.ts"]);
 
   const plugin = path.resolve(HERE, "../../..");
-  const worker = readFileSync(path.join(plugin, "agents", "vibe-change-worker.md"), "utf8");
-  const quality = readFileSync(path.join(plugin, "skills", "vibe", "references", "quality-loop.md"), "utf8");
-  const guardrails = readFileSync(path.join(plugin, "skills", "vibe", "references", "guardrails.md"), "utf8");
+  const worker = readAssembled(path.join(plugin, "agents", "vibe-change-worker.md"));
+  const quality = readAssembled(path.join(plugin, "skills", "vibe", "references", "quality-loop.md"));
+  const guardrails = readAssembled(path.join(plugin, "skills", "vibe", "references", "guardrails.md"));
   assert.match(worker, /dist\/scope-intake\.mjs[\s\S]*before any source edit/);
   assert.match(worker, /allOutsideAllowed[\s\S]*Engineering needed \(forbidden path\)[\s\S]*`BLOCKED`/);
   assert.match(quality, /planned file[\s\S]*dist\/scope-intake\.mjs[\s\S]*before implementation/);

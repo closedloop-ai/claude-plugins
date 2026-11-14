@@ -9,7 +9,7 @@ import { contextGuard } from "./context-guard.mjs";
 import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
 
 /** The guards every tool call runs after it finishes, in order. */
-export const POST_TOOL_USE_GUARDS = Object.freeze([{ name: "context-guard", run: contextGuard }]);
+export const POST_TOOL_USE_GUARDS = Object.freeze([{ name: "context-guard", run: contextGuard, activated: true }]);
 
 /** The PostToolUse output for `event`, or null; `report(line)` receives each failing guard's error. */
 function postToolUse(event, report) {

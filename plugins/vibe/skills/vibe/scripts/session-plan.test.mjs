@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkPublishableText } from "./publishable-text.mjs";
 import { localPlanFiles, planDigest, renderSessionPlan, SELF_APPROVED_MARKER } from "./session-plan.mjs";
-import { git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+import { bindProviderInProcess, git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "session-plan.mjs");
 const WORKTREE = "/Users/vibe-person/symphony-alpha/.claude/worktrees/vibe-board";

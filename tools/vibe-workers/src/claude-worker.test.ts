@@ -2,7 +2,9 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
+import { providerAware } from "./cli.js";
+import { ProviderBroken } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
@@ -876,6 +878,95 @@ describe("production Claude CLI adapter", () => {
       "mcp__custom_graph__sync-status"]);
     expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", capabilities: [...graph, recordWrite] }).status).toBe(1);
     expect(readProof(value.metadata)).toHaveLength(1);
+  });
+  it("requires the parent's graph tools only with a graph bound, and names the bound tracker in the verify footer", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    const launch = (capabilities: typeof graph) => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", capabilities),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities, mode: "request" });
+    expect(() => launch([])).toThrow(/graph capabilities are required/);
+    expect(launch(graph).agent.prompt).toContain("Never write a ClosedLoop or session record.");
+    writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
+    const generic = launch([]);
+    expect(generic.agent.prompt).toContain("Never write a tracker or session record.");
+    expect(generic.agent.prompt).not.toContain("ClosedLoop");
+  });
+  it("resolves the role's provider stubs against the session binding, and keeps the generic text without one", () => {
+    const value = setup();
+    const body = "Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.\n\n"
+      + "<!-- generic: lane-default -->\nRun the lanes the repository documents.\n<!-- end generic: lane-default -->\n"
+      + "> Provider `recipes` (block `lane-default` of `agents/vibe-verify-worker.md`)\n";
+    writeFileSync(join(value.agentRoot, "agents", "vibe-verify-worker.md"),
+      `---\nname: vibe-verify-worker\ndescription: Fixture role\nmodel: sonnet\ntools: Read, Grep, Glob, Bash, Skill\n---\n${body}`);
+    const launch = () => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities: graph, mode: "request" }).agent.prompt;
+    const bound = launch();
+    const script = join(value.agentRoot, "skills/vibe/scripts/provider.mjs");
+    expect(bound).toContain(`from the folder \`node ${script} tree --worktree "${value.worktree}"\` prints`);
+    expect(bound).toContain(`when it exits 3, run \`node ${script} assemble --worktree "${value.worktree}" <file>\``);
+    expect(bound).not.toContain("Open every other vibe file that has provider stubs through");
+    expect(bound).toContain("Command-based repositories default to `pnpm test:lanes`");
+    expect(bound).not.toContain("Run the lanes the repository documents.");
+    expect(bound).not.toContain("> Provider");
+    writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
+    const generic = boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", []),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities: [], mode: "request" }).agent.prompt;
+    expect(generic).toContain("Run the lanes the repository documents.");
+    expect(generic).not.toContain("pnpm test:lanes");
+    expect(generic).not.toContain("> Provider");
+  });
+  it("reports a broken bound provider as PROVIDER_BROKEN with its reason and fix, and a CLI entry exits 4 on one", async () => {
+    const broken = new ProviderBroken("the provider acme this session is bound to is no longer installed at /gone", "acme");
+    expect(safeFailure(broken)).toEqual({ code: "PROVIDER_BROKEN", summary: broken.message });
+    expect(broken.message).toMatch(/Fix: reinstall or update the acme plugin/);
+    expect(safeFailure(new Error("other")).code).toBe("WORKER_TURN_FAILED");
+    const written: string[] = [];
+    const write = process.stdout.write;
+    process.stdout.write = ((chunk: string) => { written.push(chunk); return true; }) as typeof process.stdout.write;
+    try {
+      expect(await providerAware(() => { throw broken; })([])).toBe(4);
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(written).toEqual([`provider-broken: ${broken.message}\n`]);
+    await expect(providerAware(() => { throw new Error("other"); })([])).rejects.toThrow("other");
+  });
+  it("refuses to launch a role whose bound provider lacks a block, naming the reason and fix instead of keeping the generic text", () => {
+    const value = setup();
+    const body = "<!-- generic: nowhere -->\nRun the lanes the repository documents.\n<!-- end generic: nowhere -->\n"
+      + "> Provider `recipes` (block `nowhere` of `agents/vibe-verify-worker.md`)\n";
+    writeFileSync(join(value.agentRoot, "agents", "vibe-verify-worker.md"),
+      `---\nname: vibe-verify-worker\ndescription: Fixture role\nmodel: sonnet\ntools: Read, Grep, Glob, Bash, Skill\n---\n${body}`);
+    expect(() => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input: "verify", timeoutMs: 1000, capabilities: graph, mode: "request" }))
+      .toThrow(/has no block nowhere\. Fix: reinstall or update the vibe-closedloop-provider plugin/);
+  });
+  it("launches a brief that names the lead's binding only in a session bound the same way", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    const launch = (input: string) => boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
+        input, timeoutMs: 1000, capabilities: graph, mode: "request" });
+    expect(() => launch("verify the change\nProvider: vibe-closedloop-provider")).not.toThrow();
+    expect(() => launch("verify the change")).not.toThrow();
+    expect(() => launch("verify the change\nProvider: none")).toThrow(/this lead is bound as "Provider: vibe-closedloop-provider"/);
+  });
+  it("with no tracker bound a record action keeps its turn and grants no tracker write", () => {
+    const value = setup();
+    writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify({ worktree: value.worktree, branch: "vibe/test", provider: { state: "none" } }));
+    const definition = readDefinition(value.agentRoot, "vibe-change-worker", [...graph, recordWrite]);
+    const base = { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-change-worker",
+      requestId: "one", capabilities: [...graph, recordWrite], input: "test", timeoutMs: 1000 };
+    expect(() => boundDefinition(definition, { ...base, mode: "record", recordAction: "progress", exclusiveRecordTurn: true }))
+      .toThrow(/Unsupported capability binding/);
+    expect(() => boundDefinition(definition, { ...base, capabilities: graph, mode: "request" }))
+      .toThrow(/Unsupported capability binding/);
+    expect(boundDefinition(definition, { ...base, capabilities: [], mode: "record", recordAction: "progress", exclusiveRecordTurn: true }).tools)
+      .not.toContain(recordWrite.name);
   });
   it("permits only an exclusive declared record turn to activate record writes", () => {
     const value = setup();

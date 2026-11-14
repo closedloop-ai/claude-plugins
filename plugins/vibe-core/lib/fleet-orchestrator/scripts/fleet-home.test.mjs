@@ -4,13 +4,17 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { writeRemoteCodexStub } from '../../../../vibe/skills/fleet-orchestrator/scripts/fleet-test-support.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
 import { ambiguousHome, bindChat, captureBinding, chatBinding, programChats, programFor, reclaimStaleLock, releaseLeftoverClaims, restoreBinding, unbindChat } from './chat-binding.mjs';
 import { closeProgram, startProgram } from './fleet-home.mjs';
+import { bindProviderInProcess } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Whether the temp volume ignores case (macOS by default; Linux CI does not), for the cases that need it.

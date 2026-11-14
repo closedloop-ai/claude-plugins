@@ -19,11 +19,12 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { isTestFile } from "./test-files.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { issueKey, requirementsKey } from "./tracker-key.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const RECORD_FILE = "vibe-retired-tests.json";
-const RETIRING_DOCUMENT = /^(?:ISS|PRD|FEA)-\d+$/;
 const MAX_TEXT = 500;
 
 /** Every recorded retired-only test deletion, oldest first; empty when none were recorded. */
@@ -70,7 +71,7 @@ function isValidEntry(entry) {
     typeof entry.path === "string" && !path.isAbsolute(entry.path) && !entry.path.split("/").includes("..") &&
     isTestFile(entry.path) &&
     (entry.case === undefined || isText(entry.case)) &&
-    typeof entry.retiredBy === "string" && RETIRING_DOCUMENT.test(entry.retiredBy) &&
+    typeof entry.retiredBy === "string" && new RegExp(`^(?:${issueKey()}|${requirementsKey()})$`).test(entry.retiredBy) &&
     isText(entry.covers);
 }
 
@@ -102,6 +103,6 @@ if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpath
     process.stdout.write(`${JSON.stringify({ ok: true, retiredTests })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error.message })}\n`);
-    process.exitCode = 1;
+    process.exitCode = scriptExitCode(error, 1);
   }
 }

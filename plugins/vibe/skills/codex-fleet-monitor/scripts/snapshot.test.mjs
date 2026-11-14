@@ -32,12 +32,14 @@ case "$*" in
 esac
 `;
 
-function fixture() {
+function fixture({ fleetHome = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'fleet-snapshot-'));
   const bin = join(root, 'bin');
-  const work = join(root, 'work');
+  // The board writes only to a program in a fleet home (fleet-home.mjs), so a case that drives it uses one.
+  const work = fleetHome ? join(root, 'home', 'programs', 'p1') : join(root, 'work');
   mkdirSync(bin);
-  mkdirSync(work);
+  mkdirSync(work, { recursive: true });
+  if (fleetHome) writeFileSync(join(root, 'home', 'current'), 'p1\n');
   writeFileSync(join(bin, 'gh'), FAKE_GH);
   // No App Server here: codex fails, so the usage line reads READFAIL on every run.
   writeFileSync(join(bin, 'codex'), '#!/bin/sh\nexit 1\n');
@@ -277,7 +279,7 @@ test('a PR another chat owns is never added or reported: prs-ignore.txt, or anot
 });
 
 test('board lines are snapshot lines: a scope change the writer has not acknowledged wakes the watcher (2026-10-26)', TIMEOUT, () => {
-  const f = fixture();
+  const f = fixture({ fleetHome: true });
   assert.doesNotMatch(f.run('ok'), /^board /m, 'no board, no board lines');
   const board = fileURLToPath(new URL('../../fleet-orchestrator/scripts/board.mjs', import.meta.url));
   const tree = join(f.root, 'tree');
@@ -293,8 +295,8 @@ test('board lines are snapshot lines: a scope change the writer has not acknowle
   git('branch', '--set-upstream-to=pushed');
   const boardRun = (...args) => spawnSync(process.execPath, [board, f.work, ...args], { encoding: 'utf8' });
   writeFileSync(join(f.root, 'placement.json'), JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: [] }));
-  assert.equal(boardRun('placement', 'ISS-1', '--evidence', join(f.root, 'placement.json')).status, 0, 'a writer start needs its ticket placed');
-  assert.equal(boardRun('writer', 'w1', '--tickets', 'ISS-1', '--worktree', tree).status, 0);
+  assert.equal(boardRun('placement', '#1', '--evidence', join(f.root, 'placement.json')).status, 0, 'a writer start needs its ticket placed');
+  assert.equal(boardRun('writer', 'w1', '--tickets', '#1', '--worktree', tree).status, 0);
   writeFileSync(join(f.work, 'plugin-version.json'), JSON.stringify({
     status: 'current',
     loadedSkill: loadedSkillEvidence('snapshot-orchestrator', 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved),

@@ -4,15 +4,20 @@
 // command. Each blocking finding names the fix, or the change log line that
 // records why the code stays; `requiredTests` and `requiredChecks` are what the
 // diff needs run whatever the graph maps. Git reads and file reads only.
+// The rules that name one repository's paths, commands and models (its
+// migrations, Desktop sync lanes, host parity tests, Storybook order files and
+// docs folders) are the bound provider's `recipes.diffRules`; without one those
+// rules do not run and only the generic rules apply.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { isLocalPlanPath, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
-import { checkCommentRules } from "./comment-rules.mjs";
+import { checkCommentRules, citationPattern } from "./comment-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
@@ -24,10 +29,8 @@ import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baselin
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { providerDataOr, sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
-const PRIVATE_PLANS = ".closedloop-ai/vibe-plans/";
-const MIGRATION_DIR = /^packages\/database\/prisma\/migrations\/[^/]+\/migration\.sql$/;
-const DESKTOP_MIGRATION = /^apps\/desktop\/prisma\/migrations\/[^/]+\/migration\.sql$/;
 const SQL_TABLE_TOUCH = /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX\b[^;]*?\bON\s+(?:ONLY\s+)?|ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?|(?<!\bON\s{1,10})UPDATE\s+)"?(\w+)"?/gi;
 const SQL_CREATE_TABLE = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?/gi;
 const SQL_UPDATE_STATEMENT = /(?<!\bON\s{1,10})\bUPDATE\s+"?(\w+)"?[^;]*;/gi;
@@ -39,36 +42,22 @@ const TX_WRITE = /\btx\.(?:\w+\.(?:create|createMany|update|updateMany|upsert|de
 const RESULT_ERR_RETURN = /\breturn\s+(?:Result\.)?err\(/;
 const LINK_DELETE = /\.artifactLink\.deleteMany\(|\bDELETE\s+FROM\s+"?artifact_links"?/i;
 const LINK_EDGE_KEYS = [/\bsourceId\b|\bsource_id\b/, /\btargetId\b|\btarget_id\b/, /\blinkType\b|\blink_type\b/];
-const DESKTOP_LANE_FILE = /^apps\/desktop\/src\/main\/.*(?:outbox|lane|sync)[^/]*\.ts$/;
 const SYNC_TABLE = /outbox|sync/i;
-const GIVE_UP_IMPORT = /from\s+["'][^"']*(?:shared\/lane-give-up|sync-lane-give-up-telemetry)(?:\.js)?["']/;
 const HAND_ROLLED_BACKOFF = /\*\*\s*\(?\s*\w*(?:attempt|retry|retries|n)\b/i;
-const TICKETED = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\/\S+/;
-const TICKET_TOKENS = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\/\S+/g;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
-const SHARED_PATH = /^(?:apps\/api\/lib\/.+|apps\/api\/app\/.*service[^/]*|packages\/app\/.*data-source[^/]*)\.tsx?$/;
-const GRID_TABLE = /grid-table-v2/;
-const GRID_SYMBOL = /\bGridTableV2\b/;
-const GRID_PARITY_TEST = "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts";
-const HOST_PARITY_TEST = /^apps\/app\/__tests__\/[^/]+-host-capability-parity\.test\.ts$/;
-const ISSUE_DETAIL_PARITY_TEST = "apps/app/__tests__/issues-detail-host-capability-parity.test.ts";
-const ISSUE_BREADCRUMB_PATH = /^(?:packages\/app\/documents\/components\/document-detail-header\.tsx|apps\/desktop\/src\/renderer\/navigation\/breadcrumb-model\.ts|packages\/app\/issues\/lib\/issues-v2-navigation\.ts)$/;
 const BREADCRUMB_SIGNAL = /breadcrumb|crumb|ancestor/i;
 const BREADCRUMB_BUILDER = /^(?:export\s+)?(?:function|const|let)\s+\w*(?:breadcrumb|crumb|ancestor)\w*\b/i;
-const HEADER_BREADCRUMB_INPUT = /^\s*(?:const|let)\s+buildOrgPath\s*=/;
-const HEADER_BREADCRUMB_USE = /\bbuildDocumentBreadcrumbs\s*\([^)]*\bbuildOrgPath\b/;
 const STORY_FILE = /\.stories\.tsx?$/;
-const SIDEBAR_ORDER_FILES = new Set(["apps/storybook/story-group-order.ts", "apps/storybook/.storybook/preview.tsx", "apps/storybook/.storybook/manager.ts"]);
-const SIDEBAR_ORDER_TESTS = ["apps/storybook/__tests__/preview-story-sort-order.test.ts", "apps/storybook/__tests__/story-group-order.test.ts"];
-const STORY_VERSION_FILE = "apps/storybook/package.json";
+// A human source with no tracker bound: an issue or pull request number, or a URL.
+const GENERIC_SOURCE = String.raw`(?:#\d+|https?:\/\/\S+)`;
+// Docs and agent folders a session may not edit, without a provider naming the repository's own.
+const GENERIC_DOCS = ["docs/", ".claude/"];
 const STORY_COMPONENT = /\bcomponent:\s*([A-Z]\w*)/;
 const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
 const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
-const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
 const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
 const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
 const FROZEN_LINE_STATES = /; states ([^;]*);/;
-const UNEDITABLE_REFERENCE = /^(?:docs\/|apps\/web\/content\/docs\/|\.claude\/)/;
 const FORBIDDEN_REFERENCE = /^(?:AGENTS|CLAUDE|AGENTS\.override)\.md$/;
 const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
 const HARNESS_NAME = /harness|adapter/i;
@@ -106,8 +95,11 @@ const CAPABILITY_COMPONENT = /search|filter|sort|range|toolbar|pagination|contro
 const PRIMITIVE_LEAF = /(?:Item|Content|Trigger)$/;
 const PAGE_COMPOSER = /(?:^|\/)[^/]*(?:page|route|toolbar|list|shell|surface|adapter)[^/]*\.[jt]sx$/i;
 
-/** Parses `git diff --unified=0` output into per-file added and removed lines. */
-export function parseUnifiedDiff(text) {
+/**
+ * Parses `git diff --unified=0` output into per-file added and removed lines, leaving out the in-worktree
+ * local plan folder `planPrefix` (local-plans.mjs; null when the plans live in the git directory).
+ */
+export function parseUnifiedDiff(text, planPrefix = null) {
   const files = [];
   let current = null;
   let oldLine = 0;
@@ -141,7 +133,7 @@ export function parseUnifiedDiff(text) {
       current.removed.push({ line: oldLine++, text: line.slice(1) });
     }
   }
-  return files.filter((file) => file.path && !file.path.startsWith(PRIVATE_PLANS));
+  return files.filter((file) => file.path && !isLocalPlanPath(file.path, planPrefix));
 }
 
 /**
@@ -157,12 +149,14 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   const add = (rule, file, line, problem, fix) => blocking.push({ rule, file, line, problem, fix });
   const live = files.filter((file) => file.status !== "D");
 
-  checkMigrations(live, repo, logged, add, requiredChecks);
+  if (repo.rules?.migrations) checkMigrations(live, repo, logged, add, requiredChecks);
   const newMigrations = live.filter((file) => file.status === "A" && migrationId(file.path)).map((file) => ({ path: file.path, sql: repo.head(file.path) ?? "" }));
   for (const problem of migrationProblems(newMigrations, changeLog, (file) => repo.headFiles.includes(file) || repo.head(file) !== null)) {
     add("migration-test", problem.slice(0, problem.indexOf(":")), 1, problem.slice(problem.indexOf(":") + 2), "add the test (and the measured scale test for per-row work) and record it; vibe-environment-worker runs migration-publish.mjs before every push");
   }
-  const shared = live.filter((file) => file.status === "M" && SHARED_PATH.test(file.path) && !logged("Shared path:", file.path));
+  const rules = repo.rules ?? compileDiffRules(null);
+  const shared = rules.sharedPaths
+    ? live.filter((file) => file.status === "M" && rules.sharedPaths.test(file.path) && !logged("Shared path:", file.path)) : [];
   const importers = shared.length ? repo.importerCounts(shared.map((file) => file.path)) : new Map();
   for (const file of shared.filter((entry) => (importers.get(entry.path) ?? 0) >= 2)) {
     add("shared-path", file.path, file.added[0]?.line ?? 1, "changes a shared read or write path without recorded evidence that existing callers are unchanged", "record `Shared path: <path>: unchanged for existing callers; evidence: <test or missing test entry with legacy fixtures>` or `...: changed; ruling: <human source>`");
@@ -174,19 +168,19 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   }
   for (const file of live.filter((entry) => SOURCE_FILE.test(entry.path) && !isTestFile(entry.path))) {
     const head = repo.head(file.path) ?? "";
-    checkActivityCapture(file, head, logged, add);
+    if (rules.activityCapture) checkActivityCapture(file, head, logged, add, rules.activityCapture);
     checkTransactions(file, head, add);
     checkLinkDeletes(file, head, add);
   }
-  checkDesktopLane(live, repo, logged, add);
-  checkTicketedComments(files, repo, logged, add);
+  if (rules.desktopLane) checkDesktopLane(live, repo, logged, add, rules);
+  checkTicketedComments(files, repo, logged, add, rules);
   checkCommentRules(live, repo, add);
   checkStories(live, files, repo, logged, add);
   checkFrozenRenders(files, repo, changeLog, add);
   checkLostStoryIds(files, repo, logged, add);
   checkCopyProvenance(live, files, repo, logged, add);
-  checkNewControls(live, files, changeLog, add);
-  checkSharedCapabilityOwners(live, changeLog, repo, add);
+  checkNewControls(live, files, changeLog, add, rules);
+  checkSharedCapabilityOwners(live, changeLog, repo, add, rules);
   for (const problem of visualBaselineLedgerProblems(changeLog, live.filter((file) => isVisualBaseline(file.path)).map((file) => file.path))) {
     const file = problem.slice(0, problem.indexOf(":"));
     add("visual-baseline-ledger", file, 1, problem.slice(problem.indexOf(":") + 2), "compare the baseline diff with the requirement inventory; record its counted `Baseline inventory:` and one cited `Baseline element:` line per new element");
@@ -205,7 +199,7 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
 /**
  * Mounts the whole diff removed, and components it defines, are moved or wrapped, not newly enabled:
  * extracting a control into a shared parent counted twice, once in the parent and once in the
- * consumer that mounts it (ISS-13321). The parent's own new controls are still checked in its file.
+ * consumer that mounts it. The parent's own new controls are still checked in its file.
  */
 function movedMounts(allFiles) {
   return new Set([
@@ -231,13 +225,14 @@ function controlSignals(file, removedMounts) {
 }
 
 /** A newly wired control needs a cited criterion or ruling that names it on this surface. */
-function checkNewControls(files, allFiles, changeLog, add) {
+function checkNewControls(files, allFiles, changeLog, add, { criterionSource }) {
   const moved = movedMounts(allFiles);
   for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
     for (const [signal, line] of controlSignals(file, moved)) {
       const prefix = `Control: ${file.path}: ${signal}:`;
       const record = changeLog.split("\n").find((entry) => entry.trimStart().startsWith(prefix));
-      if (!record || !/^\s*[^:\n]+:\s*(?:(?:ISS|PRD|FEA)-\d+\s+(?:AC(?:-?\d+)?|acceptance criterion|ruling)\b|operator ruling\b)/i.test(record.slice(record.indexOf(prefix) + prefix.length))) {
+      const cited = new RegExp(String.raw`^\s*[^:\n]+:\s*(?:${criterionSource}\s+(?:AC(?:-?\d+)?|acceptance criterion|ruling)\b|operator ruling\b)`, "i");
+      if (!record || !cited.test(record.slice(record.indexOf(prefix) + prefix.length))) {
         add("control-provenance", file.path, line, `newly enables ${signal} with no surface-specific ticket acceptance criterion or ruling`, `remove it, or record \`Control: ${file.path}: ${signal}: <surface>: <ticket AC or ruling that names this control on that surface>\`; "preserve" in another mode is not authorization`);
       }
     }
@@ -274,9 +269,9 @@ function componentImports(source) {
  * rules that the pages need separate compositions. Only a page that did not
  * compose it on the base counts, and never a type or a primitive's leaf part:
  * one more menu item on a page that already had the menu once demanded a
- * repo-wide refactor (ISS-13321).
+ * repo-wide refactor.
  */
-function checkSharedCapabilityOwners(files, changeLog, repo, add) {
+function checkSharedCapabilityOwners(files, changeLog, repo, add, { slugSource }) {
   const checked = new Set();
   for (const file of files.filter((entry) => PAGE_COMPOSER.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
     const addedLines = new Set(file.added.map((entry) => entry.line));
@@ -297,7 +292,7 @@ function checkSharedCapabilityOwners(files, changeLog, repo, add) {
           componentImports(repo.head(candidate) ?? "").some((entry) => entry.source === imported.source && entry.names.includes(name))
         );
         if (composers.length < 2) continue;
-        const exception = new RegExp(String.raw`^\s*(?:[-*]\s+)?Shared capability exception:\s*${escapeRegExp(name)}:\s*(?:(?:ISS|PRD|PLN|FEA)-\d+\s+ruling\b|operator ruling\b)`, "im");
+        const exception = new RegExp(String.raw`^\s*(?:[-*]\s+)?Shared capability exception:\s*${escapeRegExp(name)}:\s*(?:${slugSource}\s+ruling\b|operator ruling\b)`, "im");
         if (exception.test(changeLog)) continue;
         const line = file.added.find((entry) => entry.line >= imported.start && entry.line <= imported.end)?.line ?? imported.start;
         add("shared-capability-owner", file.path, line, `${name} is composed directly by ${composers.length} page-level adapters instead of one shared parent`, `move ${name} into one shared parent and make every consumer inherit it; only an explicit ruling for separate compositions may record \`Shared capability exception: ${name}: <ticket ruling or operator ruling>\``);
@@ -307,10 +302,11 @@ function checkSharedCapabilityOwners(files, changeLog, repo, add) {
 }
 
 function checkMigrations(files, repo, logged, add, requiredChecks) {
+  const { migrations } = repo.rules;
   let touched = false;
   for (const file of files) {
-    const match = MIGRATION_DIR.exec(file.path);
-    if (!match && !DESKTOP_MIGRATION.test(file.path)) {
+    const match = migrations.server?.exec(file.path);
+    if (!match && !migrations.desktop?.test(file.path)) {
       continue;
     }
     touched = true;
@@ -332,10 +328,7 @@ function checkMigrations(files, repo, logged, add, requiredChecks) {
     }
   }
   if (touched) {
-    requiredChecks.push(
-      { command: "pnpm check:destructive-migrations", reason: "a migration changed; the repo's index-lock and migration-order gate, rerun on the merged tree after every main sync (fix an out-of-order migration by renaming its folder, SQL unchanged)" },
-      { command: "pnpm check:migration-immutability", reason: "a migration changed" }
-    );
+    requiredChecks.push(...migrations.checks.map(({ command, reason }) => ({ command, reason })));
   }
 }
 
@@ -343,13 +336,13 @@ function headWindow(head, line) {
   return head.split("\n").slice(line - 1, line - 1 + WINDOW).join("\n");
 }
 
-function checkActivityCapture(file, head, logged, add) {
+function checkActivityCapture(file, head, logged, add, { fix }) {
   if (CAPTURE_CALL.test(head) || logged("Activity capture:", file.path)) {
     return;
   }
   for (const entry of file.added) {
     if (ARTIFACT_WRITE.test(entry.text) && CAPTURED_FIELD.test(headWindow(head, entry.line))) {
-      add("activity-capture", file.path, entry.line, "writes a captured artifact field with no capture call in the file", "call the canonical capture from apps/api/lib/artifact-activity-capture.ts on the same transaction, or record `Activity capture: <path>: <covering call>`");
+      add("activity-capture", file.path, entry.line, "writes a captured artifact field with no capture call in the file", fix);
     }
   }
 }
@@ -403,10 +396,10 @@ function checkLinkDeletes(file, head, add) {
   }
 }
 
-function checkDesktopLane(files, repo, logged, add) {
-  const laneFiles = files.filter((file) => file.status === "A" && DESKTOP_LANE_FILE.test(file.path) && !isTestFile(file.path));
+function checkDesktopLane(files, repo, logged, add, { desktopLane: lane, migrations }) {
+  const laneFiles = files.filter((file) => file.status === "A" && lane.files.test(file.path) && !isTestFile(file.path));
   const syncTables = files
-    .filter((file) => file.status === "A" && DESKTOP_MIGRATION.test(file.path))
+    .filter((file) => file.status === "A" && migrations?.desktop?.test(file.path))
     .flatMap((file) => [...(repo.head(file.path) ?? "").matchAll(SQL_CREATE_TABLE)].map((found) => ({ file: file.path, table: found[1] })))
     .filter((entry) => SYNC_TABLE.test(entry.table));
   if (laneFiles.length === 0 && syncTables.length === 0) {
@@ -416,16 +409,16 @@ function checkDesktopLane(files, repo, logged, add) {
   if (!logged("Synchronizing-susan:")) {
     add("desktop-sync-lane", where, 1, "adds a Desktop sync lane without a recorded synchronizing-susan pass", "run the repo's synchronizing-susan agent and record `Synchronizing-susan: <verdict and findings>`");
   }
-  if (laneFiles.length > 0 && !laneFiles.some((file) => GIVE_UP_IMPORT.test(repo.head(file.path) ?? ""))) {
-    add("desktop-sync-lane", where, 1, "the new lane does not import the shared give-up (shared/lane-give-up.ts or telemetry/sync-lane-give-up-telemetry.ts)", "use the shared give-up and re-arm (apps/desktop/src/main/sync/AGENTS.md, invariant 3)");
+  if (laneFiles.length > 0 && !laneFiles.some((file) => lane.giveUpImport.test(repo.head(file.path) ?? ""))) {
+    add("desktop-sync-lane", where, 1, lane.giveUpProblem, lane.giveUpFix);
   }
   for (const file of laneFiles) {
     for (const entry of file.added.filter((item) => HAND_ROLLED_BACKOFF.test(item.text))) {
-      add("desktop-sync-lane", file.path, entry.line, "hand-rolls an exponential backoff", "use exponentialBackoffMs from apps/desktop/src/shared/exponential-backoff.ts (invariant 5)");
+      add("desktop-sync-lane", file.path, entry.line, "hand-rolls an exponential backoff", lane.backoffFix);
     }
   }
-  if (syncTables.length > 0 && !logged("Engineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md")) {
-    add("desktop-sync-lane", syncTables[0].file, 1, `new sync table ${syncTables[0].table} is not on the lane roster`, "record `Engineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: the lane roster names the new lane`");
+  if (syncTables.length > 0 && !logged(`Engineering needed (forbidden path): ${lane.roster}`)) {
+    add("desktop-sync-lane", syncTables[0].file, 1, `new sync table ${syncTables[0].table} is not on the lane roster`, `record \`Engineering needed (forbidden path): ${lane.roster}; why: the lane roster names the new lane\``);
   }
 }
 
@@ -451,16 +444,17 @@ function explainedCodeSurvives(file, entry, baseText, addedTexts) {
   return false;
 }
 
-function checkTicketedComments(files, repo, logged, add) {
+function checkTicketedComments(files, repo, logged, add, { ticketed }) {
   const addedLines = files.flatMap((file) => file.added);
   const addedComments = addedLines.filter((entry) => COMMENT_LINE.test(entry.text));
   const carried = new Set(addedComments.map((entry) => commentBody(entry.text)));
-  const carriedTokens = new Set(addedComments.flatMap((entry) => entry.text.match(TICKET_TOKENS) ?? []));
+  const tokens = new RegExp(ticketed.source, "g");
+  const carriedTokens = new Set(addedComments.flatMap((entry) => entry.text.match(tokens) ?? []));
   const addedTexts = new Set(addedLines.map((entry) => entry.text.trim()));
   for (const file of files.filter((entry) => entry.status !== "D" && SOURCE_FILE.test(entry.path))) {
     for (const entry of file.removed) {
       const body = commentBody(entry.text);
-      const ticket = TICKETED.exec(entry.text)?.[0];
+      const ticket = ticketed.exec(entry.text)?.[0];
       if (COMMENT_LINE.test(entry.text) && ticket && !carried.has(body) && !carriedTokens.has(ticket) && !logged("Comment removed:", file.path)
         && explainedCodeSurvives(file, entry, repo.base(file.oldPath ?? file.path) ?? "", addedTexts)) {
         add("ticketed-comment", file.oldPath ?? file.path, entry.line, `removes a comment citing ${ticket} that no added line carries`, "keep the comment with the code it explains, or record `Comment removed: <path>: <slug or URL>: <what the change made false>`");
@@ -470,7 +464,8 @@ function checkTicketedComments(files, repo, logged, add) {
 }
 
 function checkStories(files, allFiles, repo, logged, add) {
-  const versionChanged = allFiles.some((file) => file.path === STORY_VERSION_FILE && file.added.some((entry) => entry.text.includes('"version"')));
+  const versionFile = repo.rules?.storybook?.versionFile;
+  const versionChanged = allFiles.some((file) => file.path === versionFile && file.added.some((entry) => entry.text.includes('"version"')));
   for (const file of files.filter((entry) => STORY_FILE.test(entry.path))) {
     const flipped = file.removed.some((entry) => EXPECT_CALL.test(entry.text)) && file.added.some((entry) => EXPECT_CALL.test(entry.text));
     if (file.status !== "A" && flipped && !versionChanged && !logged("Story outcome unchanged:", file.path)) {
@@ -520,8 +515,8 @@ function checkFrozenRenders(files, repo, changeLog, add) {
     return [...baseClosure([story]), ...headClosure([story])]
       .some((file) => file !== story && changed.has(file));
   });
-  // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion (ISS-13291).
-  // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317). It names the
+  // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion.
+  // It counts story files, as `affected` does; their stories follow in parentheses. It names the
   // rendered states and their dependency inputs. Unrelated branch changes do not invalidate that evidence.
   const prefix = `Frozen render unchanged: all ${affected.length} story files (`;
   const current = (line) => {
@@ -571,8 +566,8 @@ function checkLostStoryIds(files, repo, logged, add) {
     }
     for (const id of lost) {
       for (const hit of repo.filesNaming(id)) {
-        // A session may not edit docs or agent files, so there the engineering line stands in for the edit (ISS-13321).
-        if (UNEDITABLE_REFERENCE.test(hit) || FORBIDDEN_REFERENCE.test(path.basename(hit))) {
+        // A session may not edit docs or agent files, so there the engineering line stands in for the edit.
+        if ((repo.rules ?? compileDiffRules(null)).docs.some((folder) => hit.startsWith(folder)) || FORBIDDEN_REFERENCE.test(path.basename(hit))) {
           if (!logged("Engineering needed (forbidden path):", hit)) {
             add("lost-story-id", hit, 1, `still names the removed or renamed story ID ${id}`, `the session may not edit this file: record \`Engineering needed (forbidden path): ${hit}; why: point it at the story's current ID instead of ${id}\``);
           }
@@ -602,31 +597,36 @@ function changedBreadcrumbBuilder(file, repo) {
   return inBuilder(repo.head(file.path), file.added) || inBuilder(repo.base(file.oldPath ?? file.path), file.removed);
 }
 
-/** GridTableV2 and Issue breadcrumb parity tests read other files' source, so the graph never maps them. */
+/**
+ * The provider's host parity tests (a shared grid table's and an Issue breadcrumb's) read other files' source, so
+ * the graph never maps them. None without a provider naming them.
+ */
 export function gridParityTests(files, repo, add = () => {}) {
-  const touched = files.some((file) => GRID_TABLE.test(file.path) || [...file.added, ...file.removed].some((entry) => GRID_SYMBOL.test(entry.text)));
-  const breadcrumbFiles = files.filter((file) => ISSUE_BREADCRUMB_PATH.test(file.path)
+  const parity = repo.rules?.hostParity;
+  if (!parity) return [];
+  const touched = files.some((file) => parity.gridTable.test(file.path) || [...file.added, ...file.removed].some((entry) => parity.gridSymbol.test(entry.text)));
+  const breadcrumbFiles = files.filter((file) => parity.breadcrumbPaths.test(file.path)
     && ([...file.added, ...file.removed].some((entry) => BREADCRUMB_SIGNAL.test(entry.text))
-      || (file.path === "packages/app/documents/components/document-detail-header.tsx"
-        && [...file.added, ...file.removed].some((entry) => HEADER_BREADCRUMB_INPUT.test(entry.text))
-        && [repo.head(file.path), repo.base(file.oldPath ?? file.path)].some((source) => HEADER_BREADCRUMB_USE.test(source ?? "")))
+      || (file.path === parity.headerFile
+        && [...file.added, ...file.removed].some((entry) => parity.headerInput.test(entry.text))
+        && [repo.head(file.path), repo.base(file.oldPath ?? file.path)].some((source) => parity.headerUse.test(source ?? "")))
       || changedBreadcrumbBuilder(file, repo)));
   const addedFiles = files.filter((file) => file.status !== "D").map((file) => file.path);
   const present = (file) => (repo.headFiles.includes(file) || addedFiles.includes(file)) && repo.head(file) != null;
-  if (breadcrumbFiles.length && !present(ISSUE_DETAIL_PARITY_TEST)) {
+  if (breadcrumbFiles.length && !present(parity.issueDetailTest)) {
     for (const file of breadcrumbFiles) {
       add("host-parity-missing", file.path, file.added[0]?.line ?? 1,
         "changes the Issue breadcrumb model without a shared web and Desktop host parity test",
-        `add ${ISSUE_DETAIL_PARITY_TEST} with one fixture checking both host trails and navigation targets`);
+        `add ${parity.issueDetailTest} with one fixture checking both host trails and navigation targets`);
     }
   }
-  const selected = [...(touched ? [GRID_PARITY_TEST, ...[...repo.headFiles, ...addedFiles].filter((file) => HOST_PARITY_TEST.test(file))] : []),
-    ...(breadcrumbFiles.length ? [ISSUE_DETAIL_PARITY_TEST] : [])];
+  const selected = [...(touched ? [parity.gridTest, ...[...repo.headFiles, ...addedFiles].filter((file) => parity.hostTests.test(file))] : []),
+    ...(breadcrumbFiles.length ? [parity.issueDetailTest] : [])];
   return [...new Set(selected)]
     .filter(present)
-    .map((file) => ({ path: file, reason: breadcrumbFiles.length && file === ISSUE_DETAIL_PARITY_TEST
-      ? "an Issue breadcrumb model changed; this web and Desktop parity test is not mapped by code_tests_for"
-      : "a GridTableV2 type, adapter or mount changed; this parity test is not mapped by code_tests_for" }));
+    .map((file) => ({ path: file, reason: breadcrumbFiles.length && file === parity.issueDetailTest
+      ? parity.issueDetailReason
+      : parity.gridReason }));
 }
 
 /**
@@ -675,10 +675,11 @@ function checkRestoredRemovalsDeepening(files, allFiles, repo, changeLog, add) {
  * A component mounted again, or a file added back, that a base commit removed needs a human's restore
  * authorization naming the removal it overrides. Only a removal from the same file counts (a deleted
  * module comes back as an added file): a removal anywhere in the repo blamed every new mount of a
- * common component on an unrelated cleanup (ISS-13321). Returns how many history lookups found no removal.
+ * common component on an unrelated cleanup. Returns how many history lookups found no removal.
  */
 function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
-  const authorized = (name) => new RegExp(String.raw`^\s*(?:[-*]\s+)?Restore authorization:\s*${escapeRegExp(name)}:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2},\s*[^;\n]+;\s*overrides\s+(?:ISS|PRD|PLN|FEA)-\d+`, "m").test(changeLog);
+  const { slugSource } = repo.rules ?? compileDiffRules(null);
+  const authorized = (name) => new RegExp(String.raw`^\s*(?:[-*]\s+)?Restore authorization:\s*${escapeRegExp(name)}:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2},\s*[^;\n]+;\s*overrides\s+${slugSource}`, "m").test(changeLog);
   const removed = new Set(allFiles.flatMap((file) => file.removed.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1]))));
   let checked = 0;
   let unresolved = 0;
@@ -693,7 +694,7 @@ function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
     // An added file has no history of its own; a file deleted and added back is the finding above.
     if (file.status === "A") continue;
     const before = repo.base(file.path) ?? "";
-    // A shared primitive is mounted everywhere and unmounted by every cleanup, so mounting one is never a restore (ISS-13321).
+    // A shared primitive is mounted everywhere and unmounted by every cleanup, so mounting one is never a restore.
     const primitives = new Set(componentImports(repo.head(file.path) ?? "").filter((entry) => DESIGN_SYSTEM_CONTROL.test(entry.source)).flatMap((entry) => entry.names));
     const mounted = new Set(file.added.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1])));
     for (const name of [...mounted].filter((item) => !before.includes(`<${item}`) && !removed.has(item) && !primitives.has(item) && !authorized(item))) {
@@ -752,14 +753,16 @@ export function copyLiterals(line) {
 
 /** The sidebar order is copied into preview.tsx; only these tests catch the copy drifting. */
 export function sidebarOrderTests(files, repo) {
-  const touched = files.some((file) => SIDEBAR_ORDER_FILES.has(file.path) || (STORY_FILE.test(file.path)
+  const order = repo.rules?.storybook;
+  if (!order) return [];
+  const touched = files.some((file) => order.sidebarOrderFiles.has(file.path) || (STORY_FILE.test(file.path)
     && (file.status !== "M" || [...file.added, ...file.removed].some((entry) => STORY_TITLE.test(entry.text)))));
   return touched
-    ? SIDEBAR_ORDER_TESTS.filter((test) => repo.headFiles.includes(test)).map((test) => ({ path: test, reason: "the sidebar order or a story title changed" }))
+    ? order.sidebarOrderTests.filter((test) => repo.headFiles.includes(test)).map((test) => ({ path: test, reason: "the sidebar order or a story title changed" }))
     : [];
 }
 
-function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
+function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules) {
   let deepened = 0;
   const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
@@ -827,7 +830,8 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
       }
     },
     frozenInputs: (ref, stories) => { try { return frozenInputs(worktree, ref, stories); } catch { return null; } },
-    filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...STORY_ID_PATHSPECS])),
+    filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"])),
+    rules,
     isFrozenStory,
     frozenStories: () => {
       const candidates = lines(() => git(worktree, ["grep", "-l", "-E", FROZEN_CANDIDATE, base, "--", "*.stories.tsx", "*.stories.ts"]))
@@ -862,9 +866,9 @@ function lines(read) {
   }
 }
 
-function untrackedAsAdded(worktree) {
+function untrackedAsAdded(worktree, planPrefix) {
   return git(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)
-    .filter((file) => !file.startsWith(PRIVATE_PLANS))
+    .filter((file) => !isLocalPlanPath(file, planPrefix))
     .map((file) => ({
       path: file,
       oldPath: null,
@@ -900,14 +904,18 @@ function readBlobs(worktree, base, files) {
  * session's work (local fixes); `isFrozenStory` is the base's v1.0 predicate
  * (storybook-taxonomy.mjs, by the base's scheme); `storyReplacements` holds
  * story files recorded as a sibling replacement's entry; `phase` is the
- * inventory's (only the pull-request phase writes tests).
+ * inventory's (only the pull-request phase writes tests); `binding` is the
+ * session's provider binding, whose `recipes.diffRules` and tracker slugs the
+ * repository rules read (none without one).
  */
-export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set(), phase = "pull-request" }) {
-  const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base])), ...untrackedAsAdded(worktree)]
+export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set(), phase = "pull-request",
+  binding = sessionBinding(worktree) }) {
+  const planPrefix = localPlanPrefix(binding);
+  const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base]), planPrefix), ...untrackedAsAdded(worktree, planPrefix)]
     .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements), phase);
+  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements, compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding)), phase);
 }
 
 /** Every tracked file importing each of `files` by its directory and stem, or by `./stem` beside it. */
@@ -934,4 +942,32 @@ function importersOf(worktree, files) {
     found.set(target.file, importing);
   }
   return found;
+}
+
+/**
+ * `data` (a provider's `recipes.diffRules`, or null) with its patterns compiled. A missing group is null, and the
+ * rule it feeds does not run; `ticketed` is the reference a ticketed comment carries for `binding`.
+ */
+export function compileDiffRules(data, binding = null) {
+  const pattern = (source) => (typeof source === "string" ? new RegExp(source) : null);
+  const migrations = data?.migrations
+    ? { server: pattern(data.migrations.server), desktop: pattern(data.migrations.desktop), checks: data.migrations.checks ?? [] } : null;
+  const lane = data?.desktopLane;
+  const parity = data?.hostParity;
+  return {
+    migrations,
+    activityCapture: data?.activityCapture?.fix ? { fix: data.activityCapture.fix } : null,
+    desktopLane: lane?.files ? { ...lane, files: pattern(lane.files), giveUpImport: pattern(lane.giveUpImport) } : null,
+    sharedPaths: pattern(data?.sharedPaths),
+    hostParity: parity?.gridTest ? { ...parity, gridTable: pattern(parity.gridTable), gridSymbol: pattern(parity.gridSymbol),
+      hostTests: pattern(parity.hostTests), breadcrumbPaths: pattern(parity.breadcrumbPaths), headerInput: pattern(parity.headerInput),
+      headerUse: pattern(parity.headerUse) } : null,
+    storybook: data?.storybook ? { ...data.storybook, sidebarOrderFiles: new Set(data.storybook.sidebarOrderFiles ?? []),
+      sidebarOrderTests: data.storybook.sidebarOrderTests ?? [] } : null,
+    docs: data?.docs ?? GENERIC_DOCS,
+    ticketed: ticketReference(binding),
+    citations: citationPattern(binding),
+    slugSource: providerDataOr(binding, "tickets", "slugSource", null) ?? GENERIC_SOURCE,
+    criterionSource: providerDataOr(binding, "tickets", "criterionSource", null) ?? GENERIC_SOURCE,
+  };
 }

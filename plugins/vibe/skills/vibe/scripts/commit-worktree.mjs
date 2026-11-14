@@ -29,7 +29,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { committedLocalPlans, isLocalPlanPath } from "./local-plans.mjs";
+import { committedLocalPlans, isLocalPlanPath, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { mainSyncFailure, prepareMainSync, readMainSyncInput } from "./dist/main-sync.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -79,14 +79,15 @@ function commitWorktree() {
   }
   const localFixes = (readSessionRecord(worktree)?.localFixes ?? []).flatMap((fix) => fix.paths ?? []);
 
-  const committedPlans = committedLocalPlans(args => git(worktree, args));
+  const planPrefix = sessionLocalPlanPrefix(worktree);
+  const committedPlans = committedLocalPlans(args => git(worktree, args), planPrefix);
   if (committedPlans.length) {
     throw new Error(`Local technical plans are already committed; publication is blocked: ${committedPlans.join(", ")}`);
   }
 
   const foreign = foreignFiles(worktree, values.exclude);
   git(worktree, ["add", "-A"]);
-  const excluded = stagedFiles(worktree).filter((file) => isLocalFix(file, localFixes) || neverCommitted(file) || foreign.has(file));
+  const excluded = stagedFiles(worktree).filter((file) => isLocalFix(file, localFixes) || neverCommitted(file, planPrefix) || foreign.has(file));
   for (const file of excluded) {
     git(worktree, ["restore", "--staged", "--", file]);
   }
@@ -194,8 +195,8 @@ function isLocalFix(file, localFixes) {
   return localFixes.some((fix) => file === fix || file.startsWith(`${fix}/`));
 }
 
-function neverCommitted(file) {
-  if (isLocalPlanPath(file)) {
+function neverCommitted(file, planPrefix) {
+  if (isLocalPlanPath(file, planPrefix)) {
     return true;
   }
   const segments = file.split("/");

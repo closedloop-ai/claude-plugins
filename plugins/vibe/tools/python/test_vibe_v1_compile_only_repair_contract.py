@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, paragraph, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +27,7 @@ AGENTS = PLUGIN_ROOT / "agents"
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 GUARDRAILS = VIBE / "references" / "guardrails.md"
 DESIGN_PASS = VIBE / "references" / "design-pass.md"
-TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 README = PLUGIN_ROOT / "README.md"
@@ -118,6 +118,6 @@ def test_the_ticket_worker_places_each_repair_once_on_the_engineering_checklist(
     handoff_mode = section(agent("vibe-ticket-worker"), "## Handoff mode")
     assert (
         "Place each file in the inventory's `compileOnlyV1Repairs` once, as an unchecked item at the end of the "
-        "Engineering checklist in the template's shape (`../skills/vibe/references/ticket-template.md`, "
+        "Engineering checklist in the template's shape (`provider:ticket-template.md`, "
         "\"Compile-only v1.0 repairs\")."
     ) in handoff_mode

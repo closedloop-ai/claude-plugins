@@ -28,13 +28,15 @@ import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
-import { launchCwd, recoveryTurnProblem, threadCwd, VIBE_BRIEF_TICKET, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
+import { briefProviderProblem, briefWithProviderLine, launchCwd, recoveryTurnProblem, threadCwd, vibeBriefTicket, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, readThreadState, summarize } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 const { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
+const { recordWorkerScope } = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
+const { parseLeadBinding, sessionBinding, useLeadBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { canonicalWorktree, ensureReloadFence, e2eLockDir: machineE2eLockDir, machineSlotLockDir, readE2eWaiters, regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
@@ -77,6 +79,7 @@ export function parseCli(argv) {
       count: { type: 'string' },
       'plugin-root': { type: 'string' },
       'fleet-claim': { type: 'string' },
+      'lead-provider': { type: 'string' },
       retry: { type: 'boolean' },
     },
   });
@@ -97,6 +100,7 @@ export function parseCli(argv) {
   }
   if (!['turn', 'steer', 'reload'].includes(command) && values['plugin-root'] !== undefined) throw new Error('--plugin-root applies to turn, steer and reload only');
   if (command !== 'turn' && values['fleet-claim'] !== undefined) throw new Error('--fleet-claim applies to turn only');
+  if (command !== 'turn' && values['lead-provider'] !== undefined) throw new Error('--lead-provider applies to turn only');
   if (values.retry && command !== 'reload') throw new Error('--retry applies to reload only');
   if (command !== 'last' && values.count !== undefined) throw new Error('--count applies to last only');
   if (values.effort !== undefined && !EFFORT_PATTERN.test(values.effort)) throw new Error('effort must be an identifier such as high');
@@ -117,6 +121,7 @@ export function parseCli(argv) {
     count,
     ...(values['plugin-root'] === undefined ? {} : { pluginRoot: resolve(values['plugin-root']) }),
     ...(values['fleet-claim'] === undefined ? {} : { fleetClaim: resolve(values['fleet-claim']) }),
+    ...(values['lead-provider'] === undefined ? {} : { leadBinding: parseLeadBinding(values['lead-provider']) }),
     ...(values.retry ? { retry: true } : {}),
   };
 }
@@ -175,7 +180,7 @@ function requireNewSessionWorktree(saved, worktree, ticket, prompt) {
     throw new Error(`cannot inspect --cwd ${worktree}: ${error.message}`);
   }
   const fix = `pass a not-yet-existing path and let the writer's vibe new create it, or use cloud-worker.mjs / pr-takeover for imported work`;
-  const briefTicket = VIBE_BRIEF_TICKET.exec(prompt)?.[1];
+  const briefTicket = vibeBriefTicket().exec(prompt)?.[1];
   if (!briefTicket) throw new Error(`existing --cwd ${worktree} needs a $vibe brief naming its ticket; ${fix}`);
   if (ticket && ticket !== briefTicket) throw new Error(`--ticket ${ticket} does not match the $vibe brief ticket ${briefTicket}; ${fix}`);
   let record;
@@ -588,6 +593,8 @@ export async function startTurn(client, state, prompt, promptFile, {
     threadId = started?.thread?.id;
     if (!threadId) throw new Error('App Server returned no thread id');
     afterNewThread(threadId);
+    // vibe-core's hooks treat a thread the launcher started as an activated chat before its first skill load.
+    recordWorkerScope(threadId, cwd);
     for (const warning of await labelWorkerThread(client, threadId, workerThreadName(name, state.ticket))) warn(warning);
   }
   const result = await client.request('turn/start', defined({
@@ -707,6 +714,14 @@ async function runControlled(client, options, { warn = (text) => console.error(`
   if (!prompt.trim()) throw new Error(`${options.promptFile} is empty`);
   if (options.command === 'turn' && !saved && !VIBE_PROMPT.test(prompt)) {
     throw new Error(`a new session's prompt must start with $vibe; ${options.promptFile} does not`);
+  }
+  // A remote host has no chat of the lead's: the lead's binding comes with the launch, and binds this process.
+  if (options.leadBinding) useLeadBinding(options.leadBinding);
+  if (options.command === 'turn' && !saved) {
+    const lead = (dependencies.binding ?? (() => options.leadBinding ?? sessionBinding()))();
+    const inherited = briefProviderProblem(prompt, lead);
+    if (inherited) throw new Error(inherited);
+    prompt = briefWithProviderLine(prompt, lead);
   }
   if (DONE_CLAIMS.test(prompt) && !REVERIFY.test(prompt)) {
     throw new Error(`${options.promptFile} hands over "Done:" claims with no "Re-verify:" line; the writer re-verifies each with a test or a measurement before building on it`);

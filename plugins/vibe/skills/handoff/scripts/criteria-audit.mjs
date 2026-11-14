@@ -6,10 +6,10 @@
 // after merge.
 //
 // Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--at head]
-//          [--member <ISS-124>=<that ticket's body .md> ...] [--prd <slug>=<PRD body .md> ...] [--plan <slug>=<plan body .md> ...] [--review <review.json>] [--slug <ticket slug>]
+//          [--member <slug>=<that ticket's body .md> ...] [--prd <slug>=<PRD body .md> ...] [--plan <slug>=<plan body .md> ...] [--review <review.json>] [--slug <ticket slug>]
 //
 // The criteria are the ticket's `- Acceptance criteria:` checklist, numbered
-// AC-1, AC-2, ... in order. A fleet unit's session (ISS-13924) delivers other
+// AC-1, AC-2, ... in order. A fleet unit's session delivers other
 // tickets in the same PR; it records them with `vibe-sessions.mjs touch
 // --member-ticket`, and each needs `--member <slug>=<body>`, whose criteria are
 // <slug>:AC-1, <slug>:AC-2, ... in the audit and the matrix. A recorded member
@@ -54,25 +54,28 @@ import { parseArgs } from "node:util";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
+import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { reviewUnit } from "./unit-review.mjs";
 
 export { criteriaStates, memberCriteria, ticketCriteria };
 
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
 
-const AUDIT_ROW = /^\|\s*((?:[A-Z]+-\d+:)?AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
+// A criterion row, optionally prefixed with the member ticket key it belongs to; see trackerKey.
+const auditRow = () => new RegExp(String.raw`^\|\s*((?:${trackerKey()}:)?AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$`, "gm");
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
-const WAITS_REF = /^not met yet: waits on(?:\s+([A-Z]+-\d+)\b)?/;
+const waitsRef = () => new RegExp(String.raw`^not met yet: waits on(?:\s+(${trackerKey()})\b)?`);
 const CLOSED_TICKET = new Set(["DONE", "CANCELED"]);
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
 const RUNTIME_REF = /\be2e\b|\.spec\.[cm]?[jt]sx?\b|\bplaywright\b|\bcontrol\b/i;
 
 /** Criteria with no valid MET row, rows that are not MET or are unproven, and rows for criteria the ticket does not list. */
 export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree, { passingOn = false, statuses = {}, waiting = [] } = {}) {
-  const rows = [...audit.matchAll(AUDIT_ROW)].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
+  const rows = [...audit.matchAll(auditRow())].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
   const problems = [];
   for (const { id, text } of criteria) {
     const entries = rows.filter((row) => row.criterion === id);
@@ -80,12 +83,12 @@ export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.
       problems.push(`${id}: not audited`);
       continue;
     }
-    const waits = entries.filter((row) => row.verdict === "PARTIAL" && WAITS_REF.test(row.ref));
+    const waits = entries.filter((row) => row.verdict === "PARTIAL" && waitsRef().test(row.ref));
     const waitProblems = waits.flatMap((row) => waitingRowProblems(id, row, { passingOn, statuses }));
     const rowProblems = [...waitProblems, ...entries.filter((row) => !waits.includes(row)).flatMap((row) => auditRowProblems(id, row, worktree, at))];
     problems.push(...rowProblems);
     if (rowProblems.length === 0 && waits.length > 0) {
-      waiting.push(...waits.map((row) => `${id} waits on ${WAITS_REF.exec(row.ref)[1]}`));
+      waiting.push(...waits.map((row) => `${id} waits on ${waitsRef().exec(row.ref)[1]}`));
       continue;
     }
     if (rowProblems.length === 0 && !entries.some((row) => row.verdict === "MET")) problems.push(`${id}: no MET audit row`);
@@ -137,7 +140,7 @@ export function matrixProblems(matrix, criteria) {
  * (a pull request needs every criterion met) and the caller's `--ticket-status` shows that ticket still open.
  */
 function waitingRowProblems(id, row, { passingOn, statuses }) {
-  const slug = WAITS_REF.exec(row.ref)[1];
+  const slug = waitsRef().exec(row.ref)[1];
   if (!slug) return [`${id}: a waiting row names the ticket it waits on: not met yet: waits on <ticket>`];
   if (!passingOn) return [`${id}: waits on ${slug}, but a pull request needs every criterion met; only a session passed on to its next owner may leave a criterion waiting`];
   const status = statuses[slug];
@@ -214,10 +217,10 @@ function main(argv) {
   return problems.length === 0 ? 0 : 1;
 }
 
-/** `--ticket-status ISS-9=IN_PROGRESS` entries as a map. */
+/** `--ticket-status <slug>=<status>` entries as a map. */
 function ticketStatuses(entries) {
   return Object.fromEntries(entries.map((entry) => {
-    const match = /^([A-Z]+-\d+)=([A-Z_]+)$/.exec(entry);
+    const match = new RegExp(String.raw`^(${trackerKey()})=([A-Z_]+)$`).exec(entry);
     if (!match) throw new Error(`--ticket-status needs <slug>=<STATUS>, got ${entry}`);
     return [match[1], match[2]];
   }));
@@ -238,7 +241,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

@@ -10,13 +10,16 @@ import { proofSourceAt, testIntegrityProofShapeProblems } from "./test-integrity
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { validSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
-export const TEST_SELECTORS = Object.freeze(["code_tests_for", "related", "e2e-reference"]);
+// The selector a graph's test lookup records (the evidence file's version-skewed contract keeps its name).
+export const GRAPH_SELECTOR = "code_tests_for";
+export const TEST_SELECTORS = Object.freeze([GRAPH_SELECTOR, "related", "e2e-reference"]);
 
 /**
  * Read canonical per-source test selections without discarding malformed
  * evidence. Every problem blocks the PR, even when valid sibling rows remain.
- * A `code_tests_for` null list means the graph did not establish coverage and
+ * A graph selector's null list means the graph did not establish coverage and
  * requires a separate `related` row for that file.
  */
 export function readTestSelection(evidence) {
@@ -35,8 +38,8 @@ export function readTestSelection(evidence) {
       continue;
     }
     if (!(Array.isArray(entry.tests) && entry.tests.every((test) => typeof test === "string" && test.trim()))
-      && !(entry.selector === "code_tests_for" && entry.tests === null)) {
-      problems.push(`testSelection entry for ${entry.file}: tests must be an array of exact repo-relative paths${entry.selector === "code_tests_for" ? " or null when the graph found none" : ""}`);
+      && !(entry.selector === GRAPH_SELECTOR && entry.tests === null)) {
+      problems.push(`testSelection entry for ${entry.file}: tests must be an array of exact repo-relative paths${entry.selector === GRAPH_SELECTOR ? " or null when the graph found none" : ""}`);
       continue;
     }
     entries.push(entry);
@@ -156,6 +159,7 @@ export function treeEquivalentCarryShapeProblems(carry) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  exitOnProviderBroken();
   const { values } = parseArgs({ options: { file: { type: "string" }, worktree: { type: "string" } } });
   if (!values.file) throw new Error("Usage: pr-evidence-schema.mjs --file <private vibe-pr-evidence.json>");
   const problems = prEvidenceShapeProblems(JSON.parse(readFileSync(values.file, "utf8")), dirname(values.file),

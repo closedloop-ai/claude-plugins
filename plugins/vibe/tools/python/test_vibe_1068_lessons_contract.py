@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -55,7 +55,7 @@ def test_new_data_mechanisms_need_a_traced_decision() -> None:
 def test_newest_ruling_is_searched_recorded_and_checked() -> None:
     requirements = flat(agent("vibe-requirements-worker"))
     assert "search_memory_facts" in requirements and '"descoped"' in requirements
-    assert "Newest ruling:" in (VIBE / "references" / "ticket-template.md").read_text()
+    assert "Newest ruling:" in (PROVIDER_REFERENCES / "ticket-template.md").read_text()
     assert "Newest ruling" in (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
     assert "Newest ruling and Prior removal lines" in flat(agent("vibe-ticket-worker"))
     fleet = flat((FLEET / "SKILL.md").read_text())
@@ -66,7 +66,7 @@ def test_newest_ruling_is_searched_recorded_and_checked() -> None:
 def test_prior_removals_are_searched_recorded_and_gated() -> None:
     rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
     assert '"restored-removal"' in rules and "Restore authorization:" in rules
-    assert "Prior removal:" in (VIBE / "references" / "ticket-template.md").read_text()
+    assert "Prior removal:" in (PROVIDER_REFERENCES / "ticket-template.md").read_text()
     assert "Prior removal" in (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
     for name in ("vibe-requirements-worker", "vibe-change-worker", "vibe-ticket-worker"):
         assert "Prior removal" in flat(agent(name))

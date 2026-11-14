@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_DATA, PROVIDER_REFERENCES, agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +32,7 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
 GUARDRAILS = REFERENCES / "guardrails.md"
 QUALITY = REFERENCES / "quality-loop.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 RECORD_CONTEXT = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "record-context.ts"
 TWO_WAY = ("Do you want me to open a pull request so you can take it through review and merge, "
            "or pass it to someone, usually design and then engineering, to finish?")
@@ -160,8 +160,10 @@ def test_the_environment_worker_opens_the_pull_request_from_the_template_and_nev
         assert required in mode, required
     assert "`pull-request`), the worktree path" in flat(worker)
     record = RECORD_CONTEXT.read_text()
-    assert '"pull-request": [] }' in record
+    # The pull-request action is the environment worker's, and it writes nothing in a tracker.
+    assert '"vibe-environment-worker": ["create", "redeploy", "flags", "desktop", "handover", "pull-request"],' in record
     assert '"pull-request"]);' in record
+    assert "pull-request" not in PROVIDER_DATA["tickets"]["recordWrites"]["vibe-environment-worker"]
 
 
 def test_the_ticket_stays_with_the_person_on_the_pull_request_path() -> None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The mechanical half of `vibe-environment-worker` (PRD-823, WS3 D2, ISS-13344):
+// The mechanical half of `vibe-environment-worker`:
 // the flag snapshot, the publish checks and push, the environment request, the
 // run polling and the recording, with no model reading `gh` output every 15
 // seconds. It wraps `vibe-sessions.mjs` (dispatch-inputs, flag-snapshot,
@@ -10,21 +10,25 @@
 // without this script.
 //
 // Usage:
-//   env-ctl.mjs flags    --worktree <path> --distinct-id <clerkId> --org-id <orgId> [--replace]
+//   env-ctl.mjs flags    --worktree <path> --distinct-id <analytics user id> --org-id <orgId> [--replace]
 //   env-ctl.mjs request  --worktree <path> --mode create|flags|desktop|redeploy [--person-email <email>]
 //                        [--keep-flag-snapshot true|false] [--poll-seconds 15] [--find-seconds 600] [--give-up-seconds 2700]
 //   env-ctl.mjs publish  --worktree <path> [--since <sha>]       (checks, then main-sync-push; parent context on stdin)
 //   env-ctl.mjs redeploy --worktree <path> [--since <sha>] [--person-email <email>]
-//       With VIBE_REDEPLOY_UI_ONLY=1 (off by default, PRD-823 P2) the push still happens but the
+//       With VIBE_REDEPLOY_UI_ONLY=1 (off by default) the push still happens but the
 //       environment is not requested again when every path changed since the session's
 //       lastDeployedCommit is one that cannot change a build (`NON_BUILD_PATH`, area-paths.mjs); the result says so in `skippedRedeploy`.
 //   env-ctl.mjs desktop  --worktree <path> [--person-email <email>]
 //   env-ctl.mjs pr       --worktree <path> --branch <vibe/slug> --commit <sha> --title <text> --body-file <file> --base <sha> [--draft]
 //   env-ctl.mjs pr-update --worktree <path> --pr <number> --body-file <file> --title <text>
 //
-// `identity` (the distinct id and org id) comes from the worker's ClosedLoop
-// `get-me`; this script has no credential of its own and never prints the
-// public PostHog key. Every command prints one JSON object whose `status` is
+// `identity` (the distinct id and org id) comes from the bound tracker's user
+// lookup; this script has no credential of its own and never prints the
+// public PostHog key. The repository is the one the worktree's `origin`
+// names, and the hosted environment's workflows, artifact and log markers are
+// the bound provider's environment recipe (`data.recipes.environment`); with
+// none, `request`, `redeploy`, `desktop` and `flags` have nothing to request and
+// return BLOCKED, while `publish`, `pr` and `pr-update` work in any repository. Every command prints one JSON object whose `status` is
 // DONE, BLOCKED, NEEDS_PERSON, NEEDS_AGENT or a status `main-sync-push`
 // returned (such as NEEDS_DESKTOP_STOP), and exits 0 only for DONE.
 // NEEDS_AGENT means the run said something only the worker can decide on
@@ -36,11 +40,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { NON_BUILD_PATH } from "./area-paths.mjs";
-import { DISPATCH_WORKFLOW } from "./vibe-session-data.mjs";
+import { isLocalPlanPath, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { execCommand, parseJson, stdoutOf, tailLines } from "./ws3-exec.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
 
-export const REPO = "closedloop-ai/symphony-alpha";
-export const ENVIRONMENT_WORKFLOW = "vibe-environment.yml";
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 export const REDEPLOY_UI_ONLY_ENV = "VIBE_REDEPLOY_UI_ONLY";
 export const RUN_FAILURES = new Set(["failure", "cancelled", "timed_out"]);
 // agents/vibe-environment-worker.md, the sentence it returns when no analytics key can be found.
@@ -48,7 +54,7 @@ export const NO_ANALYTICS_KEY = "I couldn't find the product's analytics key, so
 // agents/vibe-environment-worker.md, the sentence it returns when the result artifact is missing or refused.
 export const NOT_CONFIRMED_READY = "Your copy of the app could not be confirmed as ready, so I haven't opened it.";
 // The files commit-worktree.mjs always leaves out of a commit.
-const LEFT_OUT = [/(^|\/)\.env(\.|$)/, /^\.control\//, /^\.closedloop-ai\/vibe-plans\//];
+const LEFT_OUT = [/(^|\/)\.env(\.|$)/, /^\.control\//];
 // Evidence for the agent, not a sentence for the person: the launcher's grant did not reach this script's stdin intact.
 export const MAIN_SYNC_CONTEXT_MISSING = "The parent-issued main-sync context is missing or invalid: expected { \"context\": <operationContext> } on stdin, copied verbatim from the launch envelope (environment.md, Main-sync before publication).";
 export const Status = Object.freeze({
@@ -100,15 +106,20 @@ export function parseWorkflowInputs(yaml) {
   return { declared, required };
 }
 
-/** What a failed job's log says: its `##[error]` lines and the org lines the worker's steps 5 to 7 read. */
-export function extractFailure(log) {
+/**
+ * What a failed job's log says: its `##[error]` lines and the org lines the worker's steps 5 to 7 read (under the
+ * environment recipe's `orgRefusalMarker` and `orgListMarker`; a recipe without them yields none).
+ */
+export function extractFailure(log, environment = null) {
   const clean = log.replace(/\u001b\[[0-9;]*m/g, "");
   const strip = (line) => line.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z\s*/, "");
   const lines = clean.split("\n").map(strip);
   const errors = lines.filter((line) => line.startsWith("##[error]")).map((line) => line.slice("##[error]".length).trim());
-  const refusal = lines.map((line) => /clerk_org_refusal=(\S+)/.exec(line)?.[1]).find(Boolean) ?? null;
-  const orgsLine = lines.find((line) => line.includes("clerk_orgs_json="));
-  const orgsJson = orgsLine ? orgsLine.slice(orgsLine.indexOf("clerk_orgs_json=") + "clerk_orgs_json=".length).trim() : null;
+  const refusalMarker = environment?.orgRefusalMarker;
+  const listMarker = environment?.orgListMarker;
+  const refusal = refusalMarker ? lines.map((line) => markedValue(line, refusalMarker)?.split(/\s/)[0]).find(Boolean) ?? null : null;
+  const orgsLine = listMarker ? lines.find((line) => line.includes(listMarker)) : undefined;
+  const orgsJson = orgsLine ? markedValue(orgsLine, listMarker).trim() : null;
   const orgs = orgsJson ? parseJson(orgsJson.replace(/^'|'$/g, ""), null) : null;
   const orgLines = lines.filter((line) => /^org:\s/.test(line.trim())).map((line) => line.trim());
   return { errors: errors.slice(0, 8), refusal, orgs, orgLines };
@@ -120,10 +131,10 @@ export function runForRequest(runs, requestId) {
 }
 
 /** Paths in `porcelain` that a commit would still need to take: everything but local fixes and the always-left-out files. */
-export function uncommittedDeliverables(porcelain, localFixes = []) {
+export function uncommittedDeliverables(porcelain, localFixes = [], planPrefix = null) {
   const skip = new Set(localFixes);
   return porcelain.split("\n").filter((line) => line.trim() !== "").map((line) => line.slice(3).replace(/^"|"$/g, ""))
-    .filter((file) => !skip.has(file) && !LEFT_OUT.some((pattern) => pattern.test(file)));
+    .filter((file) => !skip.has(file) && !LEFT_OUT.some((pattern) => pattern.test(file)) && !isLocalPlanPath(file, planPrefix));
 }
 
 /**
@@ -143,7 +154,9 @@ export function createEnvCtl({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now = () => Date.now(),
   fetchFn = globalThis.fetch,
-  repo = REPO,
+  repo = null,
+  environmentFor = (worktree) => providerDataOr(sessionBinding(worktree), "recipes", "environment", null),
+  planPrefixFor = sessionLocalPlanPrefix,
   env = process.env,
   write = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); },
   read = (file) => readFileSync(file, "utf8"),
@@ -152,9 +165,29 @@ export function createEnvCtl({
   const sessions = (args, options) => run(process.execPath, [SESSIONS, ...args], options);
   const gh = (args, options) => run("gh", args, options);
   const gitDir = (worktree) => stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
+  // The repository each command works in: the injected one, else the worktree's GitHub `origin`.
+  let activeRepo = repo;
+  let environment = null;
+  const useWorktree = (worktree) => {
+    environment = environmentFor(worktree);
+    if (repo) return;
+    const url = stdoutOf(run("git", ["-C", worktree, "config", "--get", "remote.origin.url"]), "git config remote.origin.url").trim();
+    activeRepo = githubRepository(url);
+    if (!activeRepo) throw new Error(`origin (${url}) is not a GitHub repository.`);
+  };
+  // The branch `origin/HEAD` names (the repository's default branch), else main.
+  const defaultBranch = (worktree) => {
+    const head = run("git", ["-C", worktree, "rev-parse", "--abbrev-ref", "origin/HEAD"]);
+    const name = head.status === 0 ? head.stdout.trim().replace(/^origin\//, "") : "";
+    return name && name !== "HEAD" ? name : "main";
+  };
+  const noEnvironment = () => ({ status: Status.Blocked,
+    error: "This session has no hosted environment: no provider recipe names one for the repository." });
 
   async function flags({ worktree, distinctId, orgId, replace = false }) {
-    if (!distinctId || !orgId) return { status: Status.Blocked, error: "--distinct-id and --org-id come from ClosedLoop get-me." };
+    if (!distinctId || !orgId) return { status: Status.Blocked, error: "--distinct-id and --org-id come from the bound tracker's user lookup." };
+    useWorktree(worktree);
+    if (!environment) return noEnvironment();
     const repoOut = parseJson(sessions(["repo"]).stdout, {});
     const checkouts = [worktree, repoOut.repo].filter(Boolean).flatMap((checkout) => ["--checkout", checkout]);
     const key = parseJson(node("posthog-key.mjs", checkouts).stdout, {});
@@ -186,7 +219,7 @@ export function createEnvCtl({
   async function findRun(workflow, requestId, { pollSeconds, findSeconds }) {
     const deadline = now() + findSeconds * 1000;
     for (;;) {
-      const listed = gh(["run", "list", "--repo", repo, "--workflow", workflow, "--limit", "20", "--json", "displayTitle,databaseId,status,conclusion"]);
+      const listed = gh(["run", "list", "--repo", activeRepo, "--workflow", workflow, "--limit", "20", "--json", "displayTitle,databaseId,status,conclusion"]);
       const found = runForRequest(parseJson(listed.stdout, []), requestId);
       if (found) return found;
       if (now() >= deadline) return null;
@@ -195,15 +228,15 @@ export function createEnvCtl({
   }
 
   function failedJobEvidence(job) {
-    const log = gh(["api", "--allow-escape-sequences", `repos/${repo}/actions/jobs/${job.databaseId}/logs`]);
-    return { job: job.name ?? String(job.databaseId), conclusion: job.conclusion, ...extractFailure(log.stdout), logTail: tailLines(log.stdout, 6) };
+    const log = gh(["api", "--allow-escape-sequences", `repos/${activeRepo}/actions/jobs/${job.databaseId}/logs`]);
+    return { job: job.name ?? String(job.databaseId), conclusion: job.conclusion, ...extractFailure(log.stdout, environment), logTail: tailLines(log.stdout, 6) };
   }
 
   /** Follows one run job by job; returns { ok: true } or { ok: false, failure | giveUp }. */
   async function followRun(id, { pollSeconds, giveUpSeconds }) {
     const deadline = now() + giveUpSeconds * 1000;
     for (;;) {
-      const view = parseJson(gh(["run", "view", String(id), "--repo", repo, "--json", "status,conclusion,jobs"]).stdout, null);
+      const view = parseJson(gh(["run", "view", String(id), "--repo", activeRepo, "--json", "status,conclusion,jobs"]).stdout, null);
       const jobs = Array.isArray(view?.jobs) ? view.jobs : [];
       const failed = jobs.find((job) => RUN_FAILURES.has(job.conclusion));
       if (failed) return { ok: false, failure: failedJobEvidence(failed) };
@@ -225,7 +258,9 @@ export function createEnvCtl({
   async function request({ worktree, mode, personEmail, keepFlagSnapshot, pollSeconds = 15, findSeconds = 600, giveUpSeconds = 2700, stdin }) {
     const noContext = mainSyncContextProblem(stdin);
     if (noContext) return noContext;
-    const yaml = gh(["workflow", "view", DISPATCH_WORKFLOW, "--repo", repo, "--yaml"]);
+    useWorktree(worktree);
+    if (!environment?.requestWorkflow || !environment.resultWorkflow) return noEnvironment();
+    const yaml = gh(["workflow", "view", environment.requestWorkflow, "--repo", activeRepo, "--yaml"]);
     const workflowInputs = parseWorkflowInputs(yaml.stdout);
     const keep = workflowInputs.declared.has("keep_flag_snapshot") ? (keepFlagSnapshot ?? (mode === "flags" ? "false" : "true")) : undefined;
     const out = path.join(gitDir(worktree), "vibe-dispatch-inputs.json");
@@ -235,14 +270,14 @@ export function createEnvCtl({
     if (dispatched.ok !== true) return { status: dispatched.status ?? Status.Blocked, error: dispatched.error ?? "dispatch-inputs refused", ...(dispatched.problems ? { problems: dispatched.problems } : {}) };
     const missing = [...workflowInputs.required].filter((name) => !dispatched.inputNames.includes(name));
     if (missing.length > 0) return { status: Status.Blocked, error: `The request workflow requires inputs the session does not send: ${missing.join(", ")}.` };
-    const started = gh(["workflow", "run", dispatched.workflow, "--repo", repo, "--ref", dispatched.ref ?? "main", "--json"], { input: read(out) });
+    const started = gh(["workflow", "run", dispatched.workflow, "--repo", activeRepo, "--ref", dispatched.ref ?? "main", "--json"], { input: read(out) });
     if (started.status !== 0) return { status: Status.Blocked, error: tailLines(started.stderr || started.stdout, 3) };
     const timing = { pollSeconds, findSeconds, giveUpSeconds };
     const requestRun = await findRun(dispatched.workflow, dispatched.requestId, timing);
     if (!requestRun) return { status: Status.Blocked, error: "The request run did not appear.", requestId: dispatched.requestId };
     const requestResult = await followRun(requestRun.databaseId, timing);
     if (!requestResult.ok) return finishFailure(requestResult, requestRun);
-    const envRun = await findRun(ENVIRONMENT_WORKFLOW, dispatched.requestId, timing);
+    const envRun = await findRun(environment.resultWorkflow, dispatched.requestId, timing);
     if (!envRun) return { status: Status.Blocked, error: "The environment run did not appear.", requestId: dispatched.requestId };
     const envResult = await followRun(envRun.databaseId, timing);
     if (!envResult.ok) return finishFailure(envResult, envRun);
@@ -255,8 +290,10 @@ export function createEnvCtl({
   }
 
   function recordResult({ worktree, runId, requestId }) {
-    const target = path.join(gitDir(worktree), "vibe-environment-result");
-    const downloaded = gh(["run", "download", String(runId), "--repo", repo, "-n", "vibe-environment-result", "-D", target]);
+    useWorktree(worktree);
+    const artifact = environment?.resultArtifact ?? "vibe-environment-result";
+    const target = path.join(gitDir(worktree), artifact);
+    const downloaded = gh(["run", "download", String(runId), "--repo", activeRepo, "-n", artifact, "-D", target]);
     if (downloaded.status !== 0) return { status: Status.Blocked, message: NOT_CONFIRMED_READY, error: tailLines(downloaded.stderr, 2) };
     const recorded = parseJson(sessions(["environment-result", "--worktree", worktree, "--file", path.join(target, "vibe-environment-result.json"), "--request-id", requestId]).stdout, {});
     if (recorded.ok !== true) return { status: Status.Blocked, message: NOT_CONFIRMED_READY, error: recorded.error ?? "environment-result refused the file" };
@@ -276,7 +313,7 @@ export function createEnvCtl({
     if (!baseline) return { status: Status.Blocked, error: "No --since commit and the record has no lastDeployedCommit or baseCommit." };
     const migrations = parseJson(node("migration-publish.mjs", ["--worktree", worktree, "--since", baseline]).stdout, {});
     if (migrations.ok !== true) return { status: Status.Blocked, problems: migrations.problems ?? ["migration-publish refused"] };
-    const left = uncommittedDeliverables(stdoutOf(run("git", ["-C", worktree, "status", "--porcelain"]), "git status"), (session.localFixes ?? []).map((fix) => fix.path ?? fix));
+    const left = uncommittedDeliverables(stdoutOf(run("git", ["-C", worktree, "status", "--porcelain"]), "git status"), (session.localFixes ?? []).map((fix) => fix.path ?? fix), planPrefixFor(worktree));
     if (left.length > 0) return { status: Status.NeedsCommit, files: left };
     const pushed = parseJson(sessions(["main-sync-push", "--worktree", worktree], { input: stdin }).stdout, {});
     if (pushed.ok !== true) return { status: pushed.status ?? Status.Blocked, error: pushed.error ?? "main-sync-push refused" };
@@ -307,24 +344,26 @@ export function createEnvCtl({
     return { ...requested, pushed: published.pushed };
   }
 
-  /** Opens the pull request, or reports the open one. The body and title are the worker's; `draft` is optional (ISS-13947). */
+  /** Opens the pull request, or reports the open one. The body and title are the worker's; `draft` is optional. */
   function openPullRequest({ worktree, branch, commit, title, bodyFile, base, draft = false }) {
+    useWorktree(worktree);
     const remote = stdoutOf(run("git", ["-C", worktree, "ls-remote", "origin", branch]), "git ls-remote").split(/\s+/)[0];
     if (remote !== commit) return { status: Status.Blocked, error: `origin/${branch} is at ${remote || "nothing"}, not the verified commit; nothing was pushed.` };
-    const existing = parseJson(gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url,number"]).stdout, []);
+    const existing = parseJson(gh(["pr", "list", "--repo", activeRepo, "--head", branch, "--state", "open", "--json", "url,number"]).stdout, []);
     if (existing.length > 0) return { status: Status.Done, created: false, url: existing[0].url, number: existing[0].number };
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--base", base]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
-    const created = gh(["pr", "create", "--repo", repo, "--head", branch, "--base", "main", "--title", title, "--body-file", bodyFile, ...(draft ? ["--draft"] : [])]);
+    const created = gh(["pr", "create", "--repo", activeRepo, "--head", branch, "--base", defaultBranch(worktree), "--title", title, "--body-file", bodyFile, ...(draft ? ["--draft"] : [])]);
     if (created.status !== 0) return { status: Status.Blocked, error: tailLines(created.stderr, 3) };
     return { status: Status.Done, created: true, url: created.stdout.trim().split("\n").pop() };
   }
 
   function updatePullRequest({ worktree, pr, bodyFile, title }) {
     if (!title) return { status: Status.Blocked, error: "pr-update needs --title: pr-preflight.mjs checks the title with the body." };
+    useWorktree(worktree);
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--pr", String(pr)]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
-    const edited = gh(["pr", "edit", String(pr), "--repo", repo, "--body-file", bodyFile, "--title", title]);
+    const edited = gh(["pr", "edit", String(pr), "--repo", activeRepo, "--body-file", bodyFile, "--title", title]);
     return edited.status === 0 ? { status: Status.Done, pr: Number(pr) } : { status: Status.Blocked, error: tailLines(edited.stderr, 3) };
   }
 
@@ -371,7 +410,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     },
     (error) => {
       process.stdout.write(`${JSON.stringify({ status: Status.Blocked, error: error instanceof Error ? error.message : String(error) })}\n`);
-      process.exit(2);
+      process.exit(scriptExitCode(error, 2));
     },
   );
+}
+
+/** What follows `marker` on `line`, or undefined. */
+function markedValue(line, marker) {
+  const at = line.indexOf(marker);
+  return at === -1 ? undefined : line.slice(at + marker.length);
 }

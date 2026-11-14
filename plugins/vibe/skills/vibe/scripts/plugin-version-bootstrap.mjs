@@ -24,8 +24,8 @@ const CODEX = "codex";
 const LABEL = Object.freeze({ [CLAUDE]: "Claude Code", [CODEX]: "Codex" });
 const UPDATE_TIMEOUT_MS = 180_000;
 const OPTIONS = Object.freeze({
-  runtime: { type: "string" }, choice: { type: "string" }, by: { type: "string" }, closedloop: { type: "string" },
-  graph: { type: "string" }, state: { type: "string" }, worktree: { type: "string" }, conversation: { type: "string" },
+  runtime: { type: "string" }, choice: { type: "string" }, by: { type: "string" }, connection: { type: "string", multiple: true },
+  "skill-listed": { type: "string" }, state: { type: "string" }, worktree: { type: "string" }, conversation: { type: "string" },
   claude: { type: "string" }, codex: { type: "string" }, "latest-base": { type: "string" }, "timeout-ms": { type: "string" },
 });
 
@@ -38,13 +38,12 @@ export async function runWithoutVibeCore(argv, problem, env = process.env) {
   const fix = fixCommand(harness, cli, problem);
   const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
   if (command === "check" || command === "status") {
-    const connections = { closedloop: values.closedloop, graph: values.graph };
-    const block = Object.values(connections).every((value) => Object.values(Connection).includes(value))
-      ? { print: true, block: setupBlock(harness, problem, connections, fix) } : {};
-    if (command === "status" && !block.print) {
-      print({ ok: false, error: "--closedloop and --graph must each be connected or not-connected, from this conversation's own get-me and sync_status calls" });
+    const connections = (values.connection ?? []).map((arg) => String(arg).split("="));
+    if (connections.some(([name, state]) => !name || !Object.values(Connection).includes(state))) {
+      print({ ok: false, error: "each --connection must be <name>=connected or <name>=not-connected, from a call made in this conversation" });
       return 1;
     }
+    const block = command === "status" || values.connection !== undefined ? { print: true, block: setupBlock(harness, problem, connections, fix) } : {};
     print(command === "status" ? block : { ...missingRecord(harness, cli, problem, fix), ...block });
     return 0;
   }
@@ -106,9 +105,10 @@ function setupBlock(harness, problem, connections, fix) {
     line = harness === CODEX ? hookApprovalLine({ state: HookApproval.Missing })
       : `vibe-core is not installed in Claude Code, so vibe's guards cannot run there: run \`${VIBE_CORE_INSTALL.claude}\``;
   }
+  // Without vibe-core the provider's contract cannot be read, so each connection shows by the name it was given.
   const word = (value) => (value === Connection.Connected ? "connected" : "not connected");
   return ["Setup check", `- ${label}: ${state}`, `- ${label}: ${line}`,
-    `- ClosedLoop connection: ${word(connections.closedloop)}`, `- closedloop-graph connection: ${word(connections.graph)}`].join("\n");
+    ...connections.map(([name, value]) => `- ${name} connection: ${word(value)}`)].join("\n");
 }
 
 /** Runs the add command and reports it in update's usual shape; in Codex, names an approval the new hooks need. */

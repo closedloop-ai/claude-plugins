@@ -1,5 +1,9 @@
 # Installing vibe on a new Mac
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 For setting up a vibe user's laptop. About ten minutes of
 hands-on time; the `vibe` skill installs everything else on its first run.
 
@@ -7,22 +11,18 @@ hands-on time; the `vibe` skill installs everything else on its first run.
 
 - The vibe user needs:
   - Codex Desktop (inside the ChatGPT app) installed and signed in.
-  - A GitHub account in the `closedloop-ai` org with push access to
-    `symphony-alpha` (every session pushes a `vibe/<slug>` branch and starts
-    its Vercel environment through a GitHub workflow).
-  - A ClosedLoop account.
-  - To have signed in at least once to the stage app,
-    https://app.closedloop-stage.ai, with the same work account and to have
-    an organization there. A seeded session binds its sample company to that
-    account and organization; without them the environment stops and asks
-    for the sign-in.
-- These must be merged to `main`:
-  - claude-plugins, for the skills.
-  - symphony-alpha ISS-12056 (the per-session Vercel environment and its
-    request workflow) and ISS-12048 (the production flag snapshot). Every
-    vibe session starts from fresh `main`.
+<!-- generic: before -->
+  - A GitHub account with push access to the repository they will work in
+    (every session pushes a `vibe/<slug>` branch).
+- claude-plugins `main` carries the skills. Every vibe session starts from
+  fresh `main` of the repository.
+<!-- end generic: before -->
+> Provider `tickets+recipes` (block `before` of `vibe/install.md`)
 
-## 1. Install the plugins and connect ClosedLoop
+<!-- generic: install -->
+## 1. Install the plugins
+<!-- end generic: install -->
+> Provider `tickets+graph` (block `install` of `vibe/install.md`)
 
 In Terminal on the vibe user's Mac:
 
@@ -32,7 +32,7 @@ CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 "$CODEX" plugin add vibe@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
 "$CODEX" plugin add vibe-core@closedloop-ai
-"$CODEX" mcp add closedloop --url https://mcp.closedloop.ai/mcp
+> Provider `tickets+graph` (block `install-2` of `vibe/install.md`)
 ```
 
 vibe-core carries vibe's hooks. Codex runs a plugin's hooks only after you
@@ -40,15 +40,7 @@ approve them: open Codex once and approve vibe-core's hooks in /hooks. Each
 vibe-core release can ask again; a vibe release does not. vibe's setup check
 says when Codex reports that an approval is needed.
 
-The last command opens the browser. Have the vibe user sign in to ClosedLoop
-with their own account. Codex stores an OAuth sign-in, not an API key.
-
-closedloop-graph (ticket and code intelligence) is required: every vibe and
-handoff worker that locates, changes, or reviews code calls it for each
-change. `"$CODEX" mcp list` must show a `closedloop-graph` row with Status
-`enabled`; if there is none, get its connection from engineering before the
-first run. If a connection ever stops answering, the vibe skill has its setup
-worker restore it (`references/preflight.md`, "Restoring a connection").
+> Provider `tickets+graph` (block `connections` of `vibe/install.md`)
 
 Check:
 
@@ -56,8 +48,10 @@ Check:
 "$CODEX" plugin list | grep vibe@closedloop-ai   # installed, enabled
 "$CODEX" plugin list | grep closedloop-core@closedloop-ai   # installed, enabled
 "$CODEX" plugin list | grep vibe-core@closedloop-ai   # installed, enabled
-"$CODEX" mcp list                                # closedloop (OAuth) and closedloop-graph
+<!-- generic: check -->
 ```
+<!-- end generic: check -->
+> Provider `tickets+graph` (block `check` of `vibe/install.md`)
 
 ## 2. Turn on the Codex plugins vibe uses
 
@@ -73,32 +67,35 @@ connector.
 
 Click New chat in the sidebar and type `$vibe`. On the first run it:
 
-- finds an existing symphony-alpha checkout anywhere in the home folder (by
-  its GitHub remote, so the folder can have any name, including spaces) and
-  remembers it in `~/.codex/vibe/config.json`; only when there is none does it
-  clone one to `~/Source/symphony-alpha`. It then bootstraps it
-- installs whatever is missing (Homebrew, Node, pnpm, `gh`, and `jq`), and puts a Node that satisfies the repo's `engines` range first on
-  PATH for every new shell. Docker is not needed: the app runs on Vercel.
+<!-- generic: first-run -->
+- uses the git checkout it runs in, or the one the person names, and
+  remembers it in `~/.codex/vibe/config.json` (folder names can have any
+  name, including spaces). It then bootstraps it the way the repository
+  documents
+- installs whatever is missing (Homebrew, Node, the repository's package
+  manager, `gh`, and `jq`), and puts a Node that satisfies the repo's
+  `engines` range first on PATH for every new shell.
+<!-- end generic: first-run -->
+> Provider `recipes` (block `first-run` of `vibe/install.md`)
 - signs `gh` in to GitHub through the browser
 
 The vibe user only has to type their Mac password when an installer asks for
-it. After that, `$vibe` asks what they want to work on and whether to start
-with sample data (seeded) or empty (blank), sets up that session's own
-Vercel environment (web app, API, and Storybook; a few minutes), and opens
-it in the in-app browser, where they sign in as themselves. Nothing of the
-web app runs on the Mac. The Desktop app runs on the Mac for every session,
-signed in to that environment, and opens as a second in-app browser tab.
+<!-- generic: first-run-2 -->
+it. After that, `$vibe` asks what they want to work on, starts the app the way
+the repository documents, and opens it in the in-app browser.
+<!-- end generic: first-run-2 -->
+> Provider `recipes` (block `first-run-2` of `vibe/install.md`)
 
 If a step fails, run the preflight on its own to see which check is red:
 
 ```bash
-bash ~/.codex/plugins/cache/closedloop-ai/vibe/*/skills/vibe/scripts/vibe-preflight.sh
+bash ~/.codex/plugins/cache/*/vibe/*/skills/vibe/scripts/vibe-preflight.sh
 ```
 
 ## Updating
 
 `$vibe` checks this itself at the start of every session
-(`scripts/plugin-version.mjs`): it compares every ClosedLoop plugin installed
+(`scripts/plugin-version.mjs`): it compares every plugin from vibe's marketplace installed
 in Codex, and in Claude Code when that is installed too, with claude-plugins
 `main`. When one is older, it asks the vibe user whether to update now or keep
 going, saying that an older version could give worse results, and records the
@@ -169,8 +166,11 @@ claude-plugins `main`.
 | Command | What it does |
 |---|---|
 | `$vibe` | Start something new, or pick up where they left off |
-| "redeploy" (in a vibe session) | Put the latest changes on their Vercel copy of the app |
-| `$handoff` | Check and finish the work's ticket and hand it to whoever they name to pick it up next (usually design, then engineering) |
+<!-- generic: daily -->
+| "redeploy" (in a vibe session) | Put the latest changes on their running copy of the app |
+| `$handoff` | Check and finish the work and hand it to whoever they name to pick it up next (usually design, then engineering) |
+<!-- end generic: daily -->
+> Provider `tickets+recipes` (block `daily` of `vibe/install.md`)
 
 ## Worker chats in the Codex app sidebar
 

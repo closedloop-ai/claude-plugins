@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { prototypeRecipe } from "./area-paths.mjs";
 
 const { git, readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
@@ -7,7 +8,6 @@ export const PROTOTYPE_BRANCH_PREFIX = "prototype/";
 const SLUG = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-const STAGE_DEPLOYMENT_HOST = /^prototypes-[a-z0-9]+\.preview\.closedloop-stage\.ai$/;
 
 /** Only a private record created for this branch admits a prototype to vibe. */
 export function isOwnedPrototypeSession(record, branch = record?.branch) {
@@ -33,9 +33,9 @@ export function validatePrototypePublication(result, record, headSha) {
   } catch {
     throw new Error("The prototype preview URL is invalid.");
   }
-  const deploymentHost = url.hostname.endsWith(".vercel.app") || STAGE_DEPLOYMENT_HOST.test(url.hostname);
+  const deployment = url.hostname.endsWith(".vercel.app") || deploymentHost(url.hostname);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash ||
-    !deploymentHost || url.hostname.includes("-git-") ||
+    !deployment || url.hostname.includes("-git-") ||
     url.pathname !== `/p/${record.slug}`) {
     throw new Error("Use the canonical deployment's immutable HTTPS preview URL with /p/<slug>, not an alias.");
   }
@@ -69,4 +69,10 @@ export function savePrototypePublication(worktree, file) {
   const updated = { ...record, prototype, lastActiveAt: new Date().toISOString() };
   writeSessionRecord(worktree, updated);
   return { worktree, ...updated };
+}
+
+/** Whether `host` is the provider's prototype deployment host (`recipes.prototypes.deploymentHost`); none without one. */
+function deploymentHost(host) {
+  const pattern = prototypeRecipe()?.deploymentHost;
+  return typeof pattern === "string" && new RegExp(pattern).test(host);
 }

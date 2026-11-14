@@ -1,0 +1,839 @@
+{
+  "vibeProvider": 1,
+  "name": "vibe-closedloop-provider",
+  "skill": "closedloop-provider",
+  "references": "skills/closedloop-provider/references",
+  "capabilities": {
+    "tickets": {
+      "needs": [
+        "connection:tracker"
+      ]
+    },
+    "plans": {
+      "needs": [
+        "connection:tracker"
+      ]
+    },
+    "graph": {
+      "needs": [
+        "connection:graph"
+      ]
+    },
+    "memory": {
+      "needs": []
+    },
+    "recipes": {
+      "needs": [
+        "repo-file:.closedloop-ai/vibe-recipes.json"
+      ]
+    }
+  },
+  "connections": {
+    "tracker": {
+      "label": "ClosedLoop",
+      "check": "Call ClosedLoop `get-me`; connected only when it answered in this conversation."
+    },
+    "graph": {
+      "label": "closedloop-graph",
+      "check": "Call closedloop-graph `sync_status`; connected only when it answered in this conversation."
+    }
+  },
+  "data": {
+    "recipes": {
+      "bootstrap": {
+        "command": "./.closedloop-ai/loops-setup.sh",
+        "fix": "run-loops-setup"
+      },
+      "posthog": {
+        "envFile": "apps/app/.env.local",
+        "pageUrl": "https://app.closedloop.ai/sign-in"
+      },
+      "storybook": {
+        "command": [
+          "pnpm",
+          "--filter",
+          "storybook",
+          "exec",
+          "storybook",
+          "dev",
+          "-p",
+          "{port}",
+          "--ci",
+          "--no-open"
+        ]
+      },
+      "environment": {
+        "previewDomain": ".preview.closedloop-stage.ai",
+        "projects": {
+          "app": "app-stage",
+          "api": "api-stage",
+          "storybook": "prototypes"
+        },
+        "storybookPath": "/storybook",
+        "requestWorkflow": "vibe-environment-dispatch.yml",
+        "orgInput": "clerk_org_id",
+        "orgIdPattern": "^org_[A-Za-z0-9]+$",
+        "seededLabel": "seeded (Acme Co sample data)",
+        "desktopBridgeTokenParam": "closedloopBridgeToken",
+        "previewCleanupWorkflow": "cleanup-preview-schemas.yml",
+        "resultWorkflow": "vibe-environment.yml",
+        "resultArtifact": "vibe-environment-result",
+        "orgRefusalMarker": "clerk_org_refusal=",
+        "orgListMarker": "clerk_orgs_json="
+      },
+      "prototypes": {
+        "sessionRoot": "apps/prototypes/app/p",
+        "registry": "apps/prototypes/lib/registry.generated.ts",
+        "portableSurfaceChecker": "apps/prototypes/scripts/check-catalog-imports.mjs",
+        "deploymentHost": "^prototypes-[a-z0-9]+\\.preview\\.closedloop-stage\\.ai$",
+        "portableModulePrefix": "@repo/app/",
+        "portableModuleRoot": "packages/app"
+      },
+      "diffRules": {
+        "migrations": {
+          "server": "^packages/database/prisma/migrations/[^/]+/migration\\.sql$",
+          "desktop": "^apps/desktop/prisma/migrations/[^/]+/migration\\.sql$",
+          "checks": [
+            {
+              "command": "pnpm check:destructive-migrations",
+              "reason": "a migration changed; the repo's index-lock and migration-order gate, rerun on the merged tree after every main sync (fix an out-of-order migration by renaming its folder, SQL unchanged)"
+            },
+            {
+              "command": "pnpm check:migration-immutability",
+              "reason": "a migration changed"
+            }
+          ]
+        },
+        "activityCapture": {
+          "fix": "call the canonical capture from apps/api/lib/artifact-activity-capture.ts on the same transaction, or record `Activity capture: <path>: <covering call>`"
+        },
+        "desktopLane": {
+          "files": "^apps/desktop/src/main/.*(?:outbox|lane|sync)[^/]*\\.ts$",
+          "giveUpImport": "from\\s+[\"'][^\"']*(?:shared/lane-give-up|sync-lane-give-up-telemetry)(?:\\.js)?[\"']",
+          "giveUpProblem": "the new lane does not import the shared give-up (shared/lane-give-up.ts or telemetry/sync-lane-give-up-telemetry.ts)",
+          "giveUpFix": "use the shared give-up and re-arm (apps/desktop/src/main/sync/AGENTS.md, invariant 3)",
+          "backoffFix": "use exponentialBackoffMs from apps/desktop/src/shared/exponential-backoff.ts (invariant 5)",
+          "roster": "apps/desktop/src/main/sync/AGENTS.md"
+        },
+        "sharedPaths": "^(?:apps/api/lib/.+|apps/api/app/.*service[^/]*|packages/app/.*data-source[^/]*)\\.tsx?$",
+        "hostParity": {
+          "gridTable": "grid-table-v2",
+          "gridSymbol": "\\bGridTableV2\\b",
+          "gridTest": "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts",
+          "hostTests": "^apps/app/__tests__/[^/]+-host-capability-parity\\.test\\.ts$",
+          "issueDetailTest": "apps/app/__tests__/issues-detail-host-capability-parity.test.ts",
+          "breadcrumbPaths": "^(?:packages/app/documents/components/document-detail-header\\.tsx|apps/desktop/src/renderer/navigation/breadcrumb-model\\.ts|packages/app/issues/lib/issues-v2-navigation\\.ts)$",
+          "headerFile": "packages/app/documents/components/document-detail-header.tsx",
+          "headerInput": "^\\s*(?:const|let)\\s+buildOrgPath\\s*=",
+          "headerUse": "\\bbuildDocumentBreadcrumbs\\s*\\([^)]*\\bbuildOrgPath\\b",
+          "issueDetailReason": "an Issue breadcrumb model changed; this web and Desktop parity test is not mapped by code_tests_for",
+          "gridReason": "a GridTableV2 type, adapter or mount changed; this parity test is not mapped by code_tests_for"
+        },
+        "storybook": {
+          "sidebarOrderFiles": [
+            "apps/storybook/story-group-order.ts",
+            "apps/storybook/.storybook/preview.tsx",
+            "apps/storybook/.storybook/manager.ts"
+          ],
+          "sidebarOrderTests": [
+            "apps/storybook/__tests__/preview-story-sort-order.test.ts",
+            "apps/storybook/__tests__/story-group-order.test.ts"
+          ],
+          "versionFile": "apps/storybook/package.json"
+        },
+        "docs": [
+          "docs/",
+          "apps/web/content/docs/",
+          ".claude/"
+        ]
+      },
+      "artifactRoot": ".closedloop-ai/",
+      "featureMap": "(?:^|/)FEATURE_MAP\\.md$",
+      "verify": {
+        "formatter": {
+          "name": "biome",
+          "command": [
+            "pnpm",
+            "exec",
+            "biome",
+            "check"
+          ],
+          "files": "\\.(?:tsx?|jsx?|mjs|cjs|json|jsonc|css)$",
+          "seconds": 300,
+          "noFiles": "no changed file is one Biome checks"
+        },
+        "checks": [
+          {
+            "name": "source-gates",
+            "script": "check:source-gates",
+            "command": [
+              "pnpm",
+              "check:source-gates"
+            ],
+            "seconds": 600
+          },
+          {
+            "name": "typecheck",
+            "script": "typecheck:affected",
+            "command": [
+              "pnpm",
+              "typecheck:affected"
+            ],
+            "seconds": 900
+          }
+        ],
+        "laneReport": {
+          "command": [
+            "pnpm",
+            "test:lanes"
+          ],
+          "seconds": 300
+        }
+      },
+      "areas": {
+        "ui": [
+          "apps/app/",
+          "apps/web/",
+          "apps/storybook/",
+          "apps/prototypes/",
+          "apps/desktop/src/renderer/",
+          "packages/app/",
+          "packages/design-system/"
+        ],
+        "desktopHost": [
+          "apps/desktop/src/renderer/",
+          "packages/app/"
+        ],
+        "desktopRelevant": [
+          "apps/desktop/",
+          "packages/app/"
+        ],
+        "prototype": "^apps/prototypes/",
+        "backend": "^apps/(api|mcp|relay|realtime|doc-sync)/|^packages/(database|api|github|ai|loops-api|cost)/|^apps/desktop/src/(main|server)/|^apps/desktop/prisma/|(?:^|/)(?:prisma|migrations)/|\\.sql$|schema\\.prisma$",
+        "backendGroups": {
+          "schema": [
+            "packages/database/"
+          ],
+          "routes": [
+            "apps/api/app/"
+          ],
+          "sharedTypes": [
+            "packages/api/"
+          ],
+          "desktopMain": [
+            "apps/desktop/"
+          ]
+        }
+      },
+      "prEvidence": {
+        "e2eOwners": {
+          "web": "e2e-test.yml:e2e",
+          "desktop": "desktop-e2e-validation.yml:desktop-e2e/validated"
+        },
+        "desktopSpecs": "apps/desktop/",
+        "laneReport": "pnpm test:lanes",
+        "refusalPaths": [
+          "apps/api/"
+        ],
+        "workspaceAliases": [
+          {
+            "prefix": "@repo/",
+            "bases": [
+              "packages/{package}/{rest}",
+              "packages/{package}/src/{rest}"
+            ]
+          }
+        ]
+      },
+      "layout": {
+        "storybookPreviewEntry": "^apps/storybook/\\.storybook/preview\\.[cm]?[jt]sx?$",
+        "storybookGlobals": "^apps/storybook/(?:\\.storybook/(?:preview-head\\.html|main\\.ts)$|public/)",
+        "renderManifests": [
+          "apps/storybook/package.json",
+          "packages/design-system/package.json",
+          "packages/app/package.json",
+          "pnpm-lock.yaml"
+        ],
+        "e2eEnvFiles": [
+          "apps/api/.env.local",
+          "apps/app/.env.local"
+        ],
+        "apiRoutes": "^apps/api/app/(.*)/route\\.ts$",
+        "diagnosticRoots": [
+          "packages/app/",
+          "apps/storybook/",
+          "apps/desktop/"
+        ],
+        "sharedPrefixes": [
+          "packages/app/",
+          "packages/design-system/"
+        ],
+        "qaFeatureMap": ".claude/skills/control/feature-map.json",
+        "rootTests": [
+          "apps/desktop/test/"
+        ],
+        "storyGroupOrder": "apps/storybook/story-group-order.ts"
+      },
+      "localQa": {
+        "command": "pnpm vibe up"
+      },
+      "e2e": {
+        "identityKey": "DEVOPS_CLOSEDLOOP_APP_PWD",
+        "identityEnvFile": "apps/app/.env.local",
+        "containerIdentity": [
+          "CLERK_SECRET_KEY",
+          "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+          "DEVOPS_CLOSEDLOOP_APP_PWD"
+        ],
+        "slotCommand": "~/vibe-remote/e2e-slot.sh",
+        "slotUsage": "Usage: e2e-slot.sh [--head <sha>] <owner-label> <command...>",
+        "desktopSpecs": "apps/desktop/"
+      },
+      "cleanup": {
+        "generated": [
+          "^(?:\\.closedloop-ai/\\.env\\.setup|\\.biome-noscan\\.jsonc)$",
+          "^apps/desktop/src/(?:main/database/(?:generated|migration/migrations-manifest\\.ts)|main/docs-help/docs-bundle-manifest\\.ts|shared/(?:auth-handoff-assets\\.generated\\.ts|build-info\\.ts))$",
+          "^apps/web/\\.source$"
+        ],
+        "publishedPlans": "^\\.closedloop-ai/(?:vibe-plans|plans)(?:/.*)?$"
+      },
+      "mainSync": {
+        "producers": [
+          {
+            "id": "shared-prisma",
+            "roots": [
+              "packages/database/generated"
+            ],
+            "inputs": [
+              "packages/database/prisma",
+              "packages/database/prisma.config.ts",
+              "packages/database/package.json",
+              "pnpm-workspace.yaml"
+            ],
+            "argv": [
+              "pnpm",
+              "--dir",
+              "packages/database",
+              "run",
+              "db:generate"
+            ],
+            "package": {
+              "dir": "packages/database",
+              "name": "prisma"
+            },
+            "strategy": "pristine"
+          },
+          {
+            "id": "desktop-prisma",
+            "roots": [
+              "apps/desktop/src/main/database/generated"
+            ],
+            "inputs": [
+              "apps/desktop/prisma",
+              "apps/desktop/prisma.config.ts",
+              "apps/desktop/package.json",
+              "apps/desktop/scripts/generate-prisma-client-lib.mjs",
+              "pnpm-workspace.yaml"
+            ],
+            "argv": [
+              "pnpm",
+              "--dir",
+              "apps/desktop",
+              "exec",
+              "prisma",
+              "generate"
+            ],
+            "package": {
+              "dir": "apps/desktop",
+              "name": "prisma"
+            },
+            "strategy": "pristine"
+          },
+          {
+            "id": "next-api",
+            "roots": [
+              "apps/api/next-env.d.ts",
+              "apps/api/.next/types"
+            ],
+            "inputs": [
+              "apps/api/app",
+              "apps/api/next.config.ts",
+              "apps/api/tsconfig.json",
+              "apps/api/package.json",
+              "pnpm-workspace.yaml"
+            ],
+            "argv": [
+              "pnpm",
+              "--dir",
+              "apps/api",
+              "exec",
+              "next",
+              "typegen"
+            ],
+            "package": {
+              "dir": "apps/api",
+              "name": "next"
+            },
+            "strategy": "pristine"
+          },
+          {
+            "id": "next-app",
+            "roots": [
+              "apps/app/next-env.d.ts",
+              "apps/app/.next/types"
+            ],
+            "inputs": [
+              "apps/app/app",
+              "apps/app/next.config.ts",
+              "apps/app/tsconfig.json",
+              "apps/app/package.json",
+              "pnpm-workspace.yaml"
+            ],
+            "argv": [
+              "pnpm",
+              "--dir",
+              "apps/app",
+              "exec",
+              "next",
+              "typegen"
+            ],
+            "package": {
+              "dir": "apps/app",
+              "name": "next"
+            },
+            "strategy": "pristine"
+          },
+          {
+            "id": "fumadocs",
+            "roots": [
+              "apps/web/.source"
+            ],
+            "inputs": [
+              "apps/web/content/docs",
+              "apps/web/source.config.ts",
+              "apps/web/package.json",
+              "pnpm-workspace.yaml"
+            ],
+            "argv": [
+              "pnpm",
+              "--dir",
+              "apps/web",
+              "exec",
+              "fumadocs-mdx"
+            ],
+            "package": {
+              "dir": "apps/web",
+              "name": "fumadocs-mdx"
+            },
+            "strategy": "full-write"
+          },
+          {
+            "id": "desktop-build",
+            "roots": [
+              "apps/desktop/src/shared/build-info.ts"
+            ],
+            "inputs": [
+              "apps/desktop/package.json",
+              "apps/desktop/scripts/write-build-info-lib.mjs"
+            ],
+            "strategy": "pure",
+            "refreshable": true
+          },
+          {
+            "id": "desktop-migrations",
+            "roots": [
+              "apps/desktop/src/main/database/migration/migrations-manifest.ts"
+            ],
+            "inputs": [
+              "apps/desktop/prisma/migrations",
+              "apps/desktop/scripts/generate-migrations-manifest-lib.mjs",
+              "apps/desktop/scripts/migration-order.mjs"
+            ],
+            "strategy": "pure",
+            "refreshable": true
+          },
+          {
+            "id": "desktop-docs",
+            "roots": [
+              "apps/desktop/src/main/docs-help/docs-bundle-manifest.ts"
+            ],
+            "inputs": [
+              "apps/web/content/docs",
+              "apps/desktop/scripts/generate-docs-bundle-manifest.mjs",
+              "apps/desktop/scripts/generate-docs-bundle-manifest-lib.mjs"
+            ],
+            "argv": [
+              "node",
+              "apps/desktop/scripts/generate-docs-bundle-manifest.mjs"
+            ],
+            "strategy": "pristine",
+            "refreshable": true
+          },
+          {
+            "id": "desktop-auth",
+            "roots": [
+              "apps/desktop/src/shared/auth-handoff-assets.generated.ts"
+            ],
+            "inputs": [
+              "packages/design-system/styles/globals.css",
+              "packages/design-system/brand/logos/Horizontal",
+              "apps/desktop/scripts/generate-auth-handoff-assets-lib.mjs",
+              "packages/design-system/package.json",
+              "pnpm-workspace.yaml"
+            ],
+            "package": {
+              "dir": "packages/design-system",
+              "name": "geist"
+            },
+            "strategy": "pure",
+            "refreshable": true
+          },
+          {
+            "id": "husky",
+            "roots": [
+              ".husky/_/husky.sh"
+            ],
+            "inputs": [
+              "package.json",
+              "pnpm-workspace.yaml"
+            ],
+            "package": {
+              "dir": ".",
+              "name": "husky"
+            },
+            "strategy": "pure"
+          }
+        ],
+        "reportOutputs": [
+          "apps/desktop/playwright-report-e2e/index.html",
+          "apps/desktop/playwright-report-e2e/results.json",
+          "apps/desktop/playwright-report-e2e/dd-quarantine.json"
+        ],
+        "runner": [
+          "pnpm",
+          "exec",
+          "node",
+          "--import",
+          "tsx/esm",
+          "--input-type=module",
+          "--eval"
+        ],
+        "bootstrap": [
+          "bash",
+          ".closedloop-ai/loops-setup.sh"
+        ],
+        "pristineEmpty": [
+          "node_modules",
+          "apps/desktop/src/main/database/migrations-manifest.ts"
+        ],
+        "checks": {
+          "build": [
+            {
+              "biome": true
+            },
+            {
+              "argv": [
+                "pnpm",
+                "typecheck:affected"
+              ]
+            }
+          ],
+          "prototype": [
+            {
+              "argv": [
+                "pnpm",
+                "--filter",
+                "prototypes",
+                "generate:registry"
+              ]
+            },
+            {
+              "argv": [
+                "pnpm",
+                "--filter",
+                "prototypes",
+                "typecheck"
+              ]
+            },
+            {
+              "argv": [
+                "pnpm",
+                "--filter",
+                "prototypes",
+                "test"
+              ]
+            },
+            {
+              "argv": [
+                "pnpm",
+                "exec",
+                "biome",
+                "check",
+                "apps/prototypes"
+              ]
+            },
+            {
+              "argv": [
+                "node",
+                ".claude/skills/prototype-approve/scripts/read-decision-log.mjs",
+                "apps/prototypes/app/p/{slug}/decisions.md"
+              ]
+            }
+          ],
+          "handoff": [
+            {
+              "biome": true
+            },
+            {
+              "laneDiscovery": true
+            },
+            {
+              "argv": [
+                "pnpm",
+                "check:source-gates"
+              ]
+            },
+            {
+              "argv": [
+                "pnpm",
+                "typecheck:affected"
+              ]
+            }
+          ],
+          "final": [
+            {
+              "argv": [
+                "pnpm",
+                "turbo",
+                "typecheck",
+                "--filter=...[{mainSha}]",
+                "--concurrency=1"
+              ]
+            },
+            {
+              "argv": [
+                "pnpm",
+                "--filter",
+                "storybook",
+                "validate:catalog"
+              ],
+              "when": "\\.stories\\.|^apps/storybook/|^packages/design-system/"
+            },
+            {
+              "argv": [
+                "pnpm",
+                "vibe",
+                "storybook-diff"
+              ]
+            }
+          ]
+        },
+        "laneDiscovery": true,
+        "desktopLane": {
+          "dir": "apps/desktop",
+          "script": "test:e2e",
+          "postMergeCoverage": "symphony-alpha desktop-e2e-validation.yml, commit status desktop-e2e/validated"
+        },
+        "ci": {
+          "workflow": ".github/workflows/e2e-test.yml"
+        },
+        "testHistory": "^apps/desktop/test/"
+      }
+    },
+    "tickets": {
+      "slugPattern": "^[A-Z]+-\\d+$",
+      "issuePattern": "^(?:ISS|FEA)-\\d+$",
+      "referencePattern": "\\b(?:ISS|PRD|PLN|FEA)-\\d+\\b",
+      "citationPattern": "\\b[A-Z]{2,5}-\\d+\\b",
+      "slugSource": "(?:ISS|PRD|PLN|FEA)-\\d+",
+      "criterionSource": "(?:ISS|PRD|FEA)-\\d+",
+      "mentionPattern": "\\b(?:ISS|PRD|PLN|FEA|FEAT|PRO)-\\d+\\b",
+      "keyPattern": "[A-Z]+-\\d+",
+      "documentPrefix": "^(?:ISS|FEA|PRD|PLN|DOC|PRO)-",
+      "issueKey": "(?:ISS|FEA)-\\d+",
+      "requirementsKey": "PRD-\\d+",
+      "unitStatusGuard": {
+        "tool": "mcp__closedloop__update-document",
+        "slugField": "documentId",
+        "statusField": "status",
+        "guarded": [
+          "IN_REVIEW",
+          "DONE"
+        ]
+      },
+      "readOperations": [
+        "get_document",
+        "get_document_version",
+        "get_document_content",
+        "get_document_comments",
+        "search",
+        "list_documents",
+        "list_document_versions",
+        "list_users",
+        "get_me",
+        "list_projects",
+        "get_project",
+        "list_artifact_links",
+        "list_templates",
+        "get_template"
+      ],
+      "recordOperations": [
+        "create_document",
+        "create_document_version",
+        "update_document",
+        "upload_attachment",
+        "create_artifact_link"
+      ],
+      "roleReads": {
+        "vibe-requirements-worker": [
+          "get_document"
+        ],
+        "vibe-ticket-worker": [
+          "get_document"
+        ]
+      },
+      "cloudConnectors": [
+        "closedloop"
+      ],
+      "recordWrites": {
+        "vibe-setup-worker": {
+          "create": [
+            "create_document"
+          ],
+          "progress": [
+            "create_document_version"
+          ]
+        },
+        "vibe-change-worker": {
+          "progress": [
+            "create_document_version"
+          ]
+        },
+        "vibe-ticket-worker": {
+          "create": [
+            "create_document",
+            "create_artifact_link"
+          ],
+          "plan": [
+            "create_document",
+            "create_document_version",
+            "create_artifact_link",
+            "update_document"
+          ],
+          "handoff": [
+            "create_document",
+            "create_document_version",
+            "create_artifact_link",
+            "update_document",
+            "upload_attachment"
+          ],
+          "assign": [
+            "update_document"
+          ],
+          "cancel": [
+            "create_document_version",
+            "update_document"
+          ]
+        },
+        "vibe-environment-worker": {
+          "create": [
+            "create_document_version"
+          ],
+          "redeploy": [
+            "create_document_version"
+          ],
+          "flags": [
+            "create_document_version"
+          ],
+          "desktop": [
+            "create_document_version"
+          ],
+          "handover": [
+            "create_document_version"
+          ]
+        },
+        "vibe-prototype-worker": {
+          "share": [
+            "create_document_version"
+          ]
+        }
+      }
+    },
+    "plans": {
+      "planPattern": "^PLN-\\d+$"
+    },
+    "graph": {
+      "packCallsOwed": [
+        "query_collisions",
+        "code_symbols",
+        "code_callers",
+        "code_importers",
+        "code_tests_for",
+        "blast_radius_tickets"
+      ],
+      "packSource": "worktree: git ls-files, git grep, CODEOWNERS and FEATURE_MAP.md; not the closedloop-graph",
+      "requirementsQueries": [
+        "ticket_detail",
+        "get-document-comments",
+        "query_collisions",
+        "code_symbols",
+        "blast_radius_tickets",
+        "search_nodes",
+        "shipped_lineage"
+      ],
+      "trackerQueries": [
+        "get-document-comments"
+      ],
+      "operations": [
+        "blast_radius_tickets",
+        "code_architecture",
+        "code_callers",
+        "code_grep",
+        "code_importers",
+        "code_projects",
+        "code_snippet",
+        "code_symbols",
+        "code_tests_for",
+        "fts_search",
+        "get_entity_edge",
+        "get_routing_protocol",
+        "graph_query",
+        "query_collisions",
+        "query_shipped",
+        "query_wip",
+        "readonly_sql",
+        "search_memory_facts",
+        "search_nodes",
+        "sync_status",
+        "ticket_detail"
+      ],
+      "cloudEvidenceTools": {
+        "ownership": "code_symbols",
+        "collisions": "query_collisions",
+        "blastRadius": "blast_radius_tickets"
+      }
+    },
+    "guards": {
+      "e2eSlot": {
+        "script": "e2e-slot.sh",
+        "headFlag": "--head",
+        "refusedFlags": [
+          "--source-hash"
+        ]
+      }
+    },
+    "memory": {
+      "precedent": {
+        "product": "Asana"
+      },
+      "repository": {
+        "remote": "[:/]closedloop-ai/symphony-alpha(\\.git)?/?$",
+        "repoFlagRemotes": [
+          "[:/]closedloop-ai/symphony-alpha(\\.git)?/?$",
+          "[:/]closedloop-ai/claude-plugins(\\.git)?/?$"
+        ],
+        "repoFlagRefusal": "is not a symphony-alpha or claude-plugins checkout"
+      }
+    }
+  }
+}

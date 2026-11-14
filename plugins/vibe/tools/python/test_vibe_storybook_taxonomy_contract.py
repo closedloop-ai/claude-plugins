@@ -102,7 +102,7 @@ def test_handoff_blocks_on_the_inventory_check() -> None:
     assert "the inventory's `v1Stories` and `retitledStories` block handoff, judged by the scheme of the session's base" in storybook
     inventory = INVENTORY.read_text()
     assert "storiesInV2Taxonomy: v1Stories.length === 0," in inventory
-    assert "storybookSchemeOf(readBaseFile(STORY_GROUP_ORDER_PATH))" in inventory
+    assert "storybookSchemeOf(groupOrder ? readBaseFile(groupOrder) : null)" in inventory
     taxonomy = TAXONOMY_SCRIPT.read_text()
     assert "(?:Foundations|Primitives|Composites|Surfaces)\\//" in taxonomy
     assert "const\\s+StorybookLifecycle" in taxonomy

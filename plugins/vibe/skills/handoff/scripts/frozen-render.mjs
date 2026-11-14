@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// The frozen-render check for handoff and pull-request phases (ISS-13291,
-// ISS-13317). The inventory's `frozen-render` finding lists frozen v1.0 story
+// The frozen-render check for handoff and pull-request phases. The inventory's `frozen-render` finding lists frozen v1.0 story
 // files whose rendered dependencies the session changed. This renders every
 // story in those files twice on a Storybook serving the base and once on one
 // serving the branch, waits for each play to finish, judges the play with
@@ -77,14 +76,16 @@ import { semanticSourceText } from "./qa-impact.mjs";
 import { createImportClosure, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
 const RUN_BOUNDED = fileURLToPath(new URL("../../vibe/scripts/run-bounded.mjs", import.meta.url));
 
 export const FrozenOutcome = Object.freeze({ Identical: "identical", UnstableOnBase: "unstable-on-base", SameFailure: "same-failure", Blocking: "blocking" });
-/** Software rasterizing on one thread with fixed color and font handling, as the ISS-13164 capture launches Chromium. */
+/** Software rasterizing on one thread with fixed color and font handling, as the frozen capture launches Chromium. */
 export const DETERMINISTIC_CHROMIUM_ARGS = Object.freeze([
   "--disable-gpu", "--disable-gpu-rasterization", "--disable-partial-raster", "--num-raster-threads=1",
   "--force-color-profile=srgb", "--font-render-hinting=none", "--disable-lcd-text",
@@ -102,17 +103,17 @@ export const CONFIRM_RENDERS = 2;
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 const STYLESHEET = /\.(?:css|scss|sass|less)$/i;
-const PREVIEW_ENTRY = /^apps\/storybook\/\.storybook\/preview\.[cm]?[jt]sx?$/i;
+// The repository's Storybook preview entry, globals and render manifests (the provider's layout recipe; none without one).
+const layoutPattern = (key, flags = "") => (repositoryLayout()[key] ? new RegExp(repositoryLayout()[key], flags) : null);
 const TOKEN_OR_THEME = /(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)/i;
 const TAILWIND_CONFIG = /(?:^|\/)tailwind\.config\.[cm]?[jt]s$/i;
-const STORYBOOK_GLOBAL = /^apps\/storybook\/(?:\.storybook\/(?:preview-head\.html|main\.ts)$|public\/)/;
-const GLOBAL_MANIFESTS = new Set(["apps/storybook/package.json", "packages/design-system/package.json", "packages/app/package.json", "pnpm-lock.yaml"]);
 
 /** Preview dependencies from both revisions, with extension resolution confined to each revision's files. */
 export function storybookPreviewImportClosure(baseFiles, headFiles, baseTextAt, headTextAt) {
   const walk = (files, textAt) => {
     const closure = createImportClosure(files, (paths) => new Map(paths.map((file) => [file, textAt(file)])));
-    return closure([...files].filter((file) => PREVIEW_ENTRY.test(file)));
+    const preview = layoutPattern("storybookPreviewEntry", "i");
+    return closure([...files].filter((file) => preview?.test(file)));
   };
   return new Set([...walk(baseFiles, baseTextAt), ...walk(headFiles, headTextAt)]);
 }
@@ -120,8 +121,8 @@ export function storybookPreviewImportClosure(baseFiles, headFiles, baseTextAt, 
 /** Global inputs that can affect every frozen story without a direct story import. */
 export function isFrozenGlobalInput(file, previewClosure = new Set()) {
   // Storybook's static build has no manualChunks; one would load CSS outside its importer's graph.
-  return PREVIEW_ENTRY.test(file) || TOKEN_OR_THEME.test(file) || TAILWIND_CONFIG.test(file)
-    || STORYBOOK_GLOBAL.test(file) || GLOBAL_MANIFESTS.has(file)
+  return Boolean(layoutPattern("storybookPreviewEntry", "i")?.test(file)) || TOKEN_OR_THEME.test(file) || TAILWIND_CONFIG.test(file)
+    || Boolean(layoutPattern("storybookGlobals")?.test(file)) || (repositoryLayout().renderManifests ?? []).includes(file)
     || (STYLESHEET.test(file) && previewClosure.has(file));
 }
 
@@ -361,7 +362,7 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
     await resolvePixelHashes(Object.values(renders));
     let { diff, ...result } = classifyStory([renders[Side.Base], renders[Side.BaseAgain]], renders[Side.Head]);
     if (result.outcome === FrozenOutcome.Blocking) {
-      // A base that matched itself twice can still vary (ISS-13167): a blocking verdict stands only after more base renders agree.
+      // A base that matched itself twice can still vary: a blocking verdict stands only after more base renders agree.
       for (let n = 1; n <= CONFIRM_RENDERS; n++) {
         renders[`${Side.BaseConfirm}-${n}`] = await renderStory(browser, baseUrl, id, options, { ...renderDependencies, deferPixels: true });
         saveScreenshot(out, `${Side.BaseConfirm}-${n}`, id, renders[`${Side.BaseConfirm}-${n}`]);
@@ -635,6 +636,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exitCode = summary.ok ? 0 : 1;
   } catch (error) {
     process.stdout.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = 2;
+    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = scriptExitCode(error, 2);
   }
 }

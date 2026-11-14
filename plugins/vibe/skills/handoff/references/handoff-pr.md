@@ -1,5 +1,9 @@
 # Handoff: pull request steps
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
 Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: requested-pull-request -->
@@ -11,9 +15,12 @@ unsuperseded row, production wiring and failure paths, on web and Desktop
 where their adapters differ, and every entry on the missing tests list. Run
 `node scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request`,
 then step 3's guardrail check, step 5's checks with the new tests included and
-step 6's review on the result, with the repo's `review-soul` critic required
-on those tests, then the remaining step 6 candidate gates before step 7's commit and its push and publication through
-`vibe-environment-worker` in redeploy mode. The pull request does not open
+<!-- generic: tests-then-push -->
+step 6's review on the result, then the remaining step 6 candidate gates
+before step 7's commit and its push through `vibe-environment-worker` in
+handover mode. The pull request does not open
+<!-- end generic: tests-then-push -->
+> Provider `recipes` (block `tests-then-push` of `handoff/handoff-pr.md`)
 until those tests pass, their independent review is clean and step 9's gate passes.
 
 During that turn, run `node scripts/parallel-prep.mjs --writer-state running
@@ -23,11 +30,13 @@ hash stable results and ready hidden QA, but never edit source or start a writer
 From the request on, every brief in this handoff carries the `pull-request`
 phase. No brief may say both that the person takes the work to a pull request and that no tests are authored.
 
-On this path the ticket stays with the person: step 8 skips the next-owner
-question and lookup and gives the ticket worker the session's operator as the
-next owner, and step 9 skips assign mode. Handoff opens the pull request as
-its last step (step 9) through `vibe-environment-worker` in `pull-request`
-mode, and the person gets its link, never a branch to merge.
+<!-- generic: ticket-stays -->
+On this path the work stays with the person: step 8 asks for no next owner.
+Handoff opens the pull request as its last step (step 9) through
+`vibe-environment-worker` in `pull-request` mode, and the person gets its
+link, never a branch to merge.
+<!-- end generic: ticket-stays -->
+> Provider `tickets` (block `ticket-stays` of `handoff/handoff-pr.md`)
 <!-- end: requested-pull-request -->
 
 <!-- block: step-9-pull-request -->
@@ -36,7 +45,7 @@ launcher result for each mandatory read-only review role with
 `node scripts/review-receipts.mjs --worktree "<wt>" --result <exact launcher
 output file> --role <role> --out <private receipt file>`. The receipt records
 the model its trace shows the CLI ran; a launcher input with `"reviewModel":
-"claude-fable-5-2"` runs a review role on Fable 5.2 (ISS-14039).
+"claude-fable-5-2"` runs a review role on Fable 5.2.
 For a native Codex reviewer or verifier, use a managed App Server thread whose
 `thread/read` exposes completed turn items. Register its exact thread ID with
 `helpers.mjs start --kind reviewer|verifier --runtime codex --worker-id <thread ID>
@@ -77,25 +86,33 @@ names each way forward, including the gate-bug exception.
 Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
-worktree, the live ticket slug, the confirmed summary, the final verified
-published commit from step 7, the tests the `pull-request` turn wrote and
-step 5's check results, and the ticket's Production impact and Flag changes
-and gates fields. It opens the pull request on the already pushed branch,
+<!-- generic: pr-dispatch -->
+worktree, the confirmed summary, the final verified pushed commit, the tests
+the `pull-request` turn wrote and step 5's check results. It opens the pull request on the already pushed branch,
+<!-- end generic: pr-dispatch -->
+> Provider `tickets` (block `pr-dispatch` of `handoff/handoff-pr.md`)
 blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` and
 `../vibe/scripts/pre-pr-lanes.mjs check` pass
 (`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, record the
-reason on the Engineering checklist as a verified human-only blocker does
+<!-- generic: pr-dispatch-2 -->
+reason in the handoff summary as a verified human-only blocker does
+<!-- end generic: pr-dispatch-2 -->
+> Provider `tickets` (block `pr-dispatch-2` of `handoff/handoff-pr.md`)
 (`../vibe/references/guardrails.md`, "Plugins and tooling"), tell the
 person in one plain line what prevented the pull request and which paths
 were tried. Check for a safe retry or accepted alternative first. When it
 remains a verified engineering-only block, offer to pass the pushed work
 to someone now; never give them the branch to merge instead. When they name
-someone, run step 8's
-lookup and assign mode as for passing it on (ISS-13321). Then mark the
+<!-- generic: pr-dispatch-3 -->
+someone, pass it on as steps 8 and 9 say. Then mark the
+<!-- end generic: pr-dispatch-3 -->
+> Provider `tickets` (block `pr-dispatch-3` of `handoff/handoff-pr.md`)
 session handed off as below.
-After it returns the URL, have the ticket worker attach it to every PRD child
-in review. In Codex, arm the core `$gh-monitor-pr` on it when already set up,
+<!-- generic: prd-children -->
+After it returns the URL, in Codex, arm the core `$gh-monitor-pr` on it when already set up,
+<!-- end generic: prd-children -->
+> Provider `tickets` (block `prd-children` of `handoff/handoff-pr.md`)
 never asking for a restart.
 <!-- end: step-9-pull-request -->
 
@@ -132,14 +149,18 @@ never asking for a restart.
    `fixed` thread `verified` or `not-verified` with `file:line` evidence;
    the writer's own report is never that verification.
    The VQA findings file must also pass `node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition`; a finding on a touched surface cannot be handed off without its fixing SHA or follow-up ticket.
-5. Step 7: ROOT commits the fixes, the main-sync publication gate runs, and
-   `vibe-environment-worker` in redeploy mode pushes the validated commit to
+<!-- generic: fix-push -->
+5. Step 7: ROOT commits the fixes, and
+   `vibe-environment-worker` in handover mode pushes the validated commit to
+<!-- end generic: fix-push -->
+> Provider `recipes` (block `fix-push` of `handoff/handoff-pr.md`)
    the SAME branch through the normal pre-push hook. Never a force push,
    never a new branch or a second pull request.
-6. Step 8's ticket refresh: `vibe-ticket-worker` in handoff mode re-derives
-   every record section the fixes touched (Production impact, Flag changes
-   and gates, the tests, Missing tests) from the session record and the
-   final diff.
+<!-- generic: ticket-refresh -->
+6. Step 8's summary refresh: `vibe-handoff-summarizer` refreshes the
+   handoff summary from the session record and the final diff.
+<!-- end generic: ticket-refresh -->
+> Provider `tickets` (block `ticket-refresh` of `handoff/handoff-pr.md`)
 7. Dispatch `vibe-environment-worker` in `pull-request` mode with the pushed
    fixing commit and the writer's per-thread results. On the existing pull
    request it refreshes the body from the session record so it matches the

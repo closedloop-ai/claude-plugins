@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+import json
+
 import re
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_DATA, PROVIDER_REFERENCES, agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -74,22 +76,24 @@ def test_each_worker_points_at_its_script_and_keeps_working_without_it() -> None
 
 
 def test_the_graph_pack_is_wired_into_the_graph_reference_and_never_claims_the_graph() -> None:
-    text = flat((REFERENCES / "closedloop-graph.md").read_text())
+    text = flat((PROVIDER_REFERENCES / "closedloop-graph.md").read_text())
     assert "graph-pack.mjs" in text
     assert "It is not graph evidence" in text
     assert "the Graph block below is not satisfied by the pack" in text
     pack = source("graph-pack.mjs")
-    assert "not the closedloop-graph" in pack
+    # The pack's source line and the graph calls it still owes are the bound graph provider's data.
+    assert 'providerDataOr(binding, "graph", "packSource"' in pack or '"packSource"' in pack
+    assert "not the closedloop-graph" in PROVIDER_DATA["graph"]["packSource"]
     for call in ("code_tests_for", "blast_radius_tickets", "query_collisions", "code_callers", "code_importers", "code_symbols"):
-        assert f'"{call}"' in pack, call
+        assert call in PROVIDER_DATA["graph"]["packCallsOwed"], call
 
 
 def test_scripts_wrap_the_existing_scripts_and_gates_instead_of_copying_them() -> None:
     expectations = {
-        "setup-ctl.mjs": ("vibe-preflight.sh", "run-bounded.mjs", "vibe-sessions.mjs", "loops-setup.sh"),
-        "env-ctl.mjs": ("vibe-sessions.mjs", "posthog-key.mjs", "local-plans.mjs", "migration-publish.mjs", "pr-preflight.mjs", "DISPATCH_WORKFLOW"),
-        "verify-run.mjs": ("run-bounded.mjs", "pre-pr-lanes.mjs", "reportLanes", "check:source-gates", "typecheck:affected", "biome"),
-        "guardrails-gate.mjs": ("runDiffRules", "parseUnifiedDiff", "check:source-gates", "biome", "isTestFile"),
+        "setup-ctl.mjs": ("vibe-preflight.sh", "run-bounded.mjs", "vibe-sessions.mjs", 'recipe(worktree, "bootstrap")'),
+        "env-ctl.mjs": ("vibe-sessions.mjs", "posthog-key.mjs", "local-plans.mjs", "migration-publish.mjs", "pr-preflight.mjs", "requestWorkflow"),
+        "verify-run.mjs": ("run-bounded.mjs", "pre-pr-lanes.mjs", "reportLanes"),
+        "guardrails-gate.mjs": ("runDiffRules", "parseUnifiedDiff", "isTestFile"),
         "prototype-share.mjs": ("local-plans.mjs", "main-sync-share", "main-sync-push", "prototype-result"),
         "inventory-bundle.mjs": ("createGraphPack", "storyId", "parseUnifiedDiff"),
         "req-gather.mjs": ("createGraphPack",),
@@ -99,14 +103,20 @@ def test_scripts_wrap_the_existing_scripts_and_gates_instead_of_copying_them() -
         text = source(name)
         for needle in needles:
             assert needle in text, (name, needle)
+    # The repository's own bootstrap script is the provider's recipe, which setup-ctl wraps rather than copies.
+    recipes = json.loads((PLUGIN_ROOT.parent / "vibe-closedloop-provider" / "provider.json").read_text())["data"]["recipes"]
+    assert recipes["bootstrap"]["command"].endswith("loops-setup.sh")
 
 
 def test_the_gate_scripts_do_not_reimplement_the_repository_rules() -> None:
     gate = source("guardrails-gate.mjs")
     verify = source("verify-run.mjs")
+    # Both run the repository's own formatter and gates, which its verify recipe names; neither carries a copy.
     for text in (gate, verify):
-        assert '"exec", "biome", "check"' in text
-        assert "check:source-gates" in text
+        assert '"verify"' in text
+    recipe = PROVIDER_DATA["recipes"]["verify"]
+    assert recipe["formatter"]["command"] == ["pnpm", "exec", "biome", "check"]
+    assert ["pnpm", "check:source-gates"] in [check["command"] for check in recipe["checks"]]
     # No rule engine of its own: the wrapped gates are invoked, their rule files never read.
     assert "biome.json" not in gate and "source-gate-allowlist" not in gate
 
@@ -117,7 +127,8 @@ def test_the_env_ctl_never_bypasses_hooks_force_pushes_merges_or_arms_auto_merge
         assert forbidden not in code, forbidden
     # The push is the sessions script's exact-SHA gate, and no environment request starts without it.
     assert '"main-sync-push"' in code
-    assert "vibe-environment.yml" in code and "never start" not in code
+    assert "resultWorkflow" in code and "never start" not in code
+    assert PROVIDER_DATA["recipes"]["environment"]["resultWorkflow"] == "vibe-environment.yml"
 
 
 def test_env_ctl_reuses_the_environment_workers_own_sentences() -> None:
@@ -134,14 +145,16 @@ def test_setup_ctl_returns_only_sentences_preflight_md_writes_and_runs_only_the_
     code = source("setup-ctl.mjs")
     claude = re.search(r'export const CLAUDE_SIGN_IN_WORDS = "([^"]+)";', code)
     assert claude is not None and claude.group(1) in preflight
+    # The folder-access sentence came back with the home-folder search a provider naming its repository runs.
     folder = re.search(r"folderAccessWords = \(folder\) => `([^`]+)`", code)
     assert folder is not None
     assert folder.group(1).replace("${folder}", "<folder>") in preflight
     auto = re.search(r"export const AUTO_FIXES = Object.freeze\(\{(.*?)\n\}\);", code, re.DOTALL)
     assert auto is not None
-    assert set(re.findall(r'^  "([a-z-]+)":', auto.group(1), re.MULTILINE)) == {"install-pnpm", "brew-install-jq", "brew-install-gh"}
+    assert set(re.findall(r'^  "([a-z-]+)":', auto.group(1), re.MULTILINE)) == {"install-pnpm", "install-yarn", "brew-install-jq", "brew-install-gh"}
     # Each automatic fix is the exact command preflight.md's table gives.
     assert "`corepack enable && corepack prepare pnpm@latest --activate`" in preflight
+    assert "`corepack enable && corepack prepare yarn@latest --activate`" in preflight
     assert "`brew install jq`" in preflight and "`brew install gh`" in preflight
     # Nothing that needs the Mac password, a sign-in or plugin installation is ever run.
     for forbidden in ("sudo", "auth login", "curl", "plugin", "install-homebrew", "install-node"):
@@ -218,9 +231,11 @@ def test_the_gate_lists_the_reviewers_judgment_checks_as_skipped_never_as_run() 
 
 def test_req_gather_lists_missing_queries_and_cannot_make_them() -> None:
     code = source("req-gather.mjs")
+    # The queries a brief needs are the bound graph and tracker providers' data, which req-gather reads.
+    assert '"requirementsQueries"' in code
     for query in ("ticket_detail", "get-document-comments", "query_collisions", "code_symbols", "blast_radius_tickets", "search_nodes", "shipped_lineage"):
-        assert f'"{query}"' in code, query
-    graph = (REFERENCES / "closedloop-graph.md").read_text()
+        assert query in PROVIDER_DATA["graph"]["requirementsQueries"], query
+    graph = (PROVIDER_REFERENCES / "closedloop-graph.md").read_text()
     row = next(line for line in graph.split("\n") if line.startswith("| `vibe-requirements-worker`"))
     for query in ("query_collisions", "code_symbols", "blast_radius_tickets", "search_nodes"):
         assert query in row, query
@@ -269,7 +284,7 @@ def test_ticket_ctl_holds_no_credential_source_and_names_the_blocker() -> None:
 
 
 def test_ticket_ctl_formats_match_the_template_rules() -> None:
-    template = flat((REFERENCES / "ticket-template.md").read_text())
+    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
     code = source("ticket-ctl.mjs")
     lines = re.findall(r"`(- \[ \] [^`]+)`", template)
     assert lines
@@ -317,3 +332,23 @@ def test_a_wrapped_gate_that_did_not_run_is_skipped_or_blocked_never_run_or_pass
     assert gate.index("toolDidNotRun(result)") < gate.index("report.ran(name);")
     verify = source("verify-run.mjs")
     assert "toolDidNotRun(result)" in verify and "no node_modules" in verify
+
+
+PREFLIGHT_ROW = r"^\| `%s` \| ([^\n]*) \|$"
+
+
+def test_the_preflight_table_names_a_step_for_each_repository_and_provider_fix() -> None:
+    # The fixes vibe-preflight.sh emits while it finds the bound provider's repository, or meets a broken provider.
+    table = (REFERENCES / "preflight.md").read_text()
+    rows = {}
+    for fix in ("ask-for-repo-path", "choose-repo", "allow-folder-access", "provider-broken"):
+        found = re.search(PREFLIGHT_ROW % fix, table, re.MULTILINE)
+        assert found, fix
+        rows[fix] = found.group(1)
+    assert rows["ask-for-repo-path"].startswith("No git checkout was named, the command does not run in one and none is remembered (with the bound "
+                                                 "provider naming its repository: none of those, nor any found under the home folder, is a checkout of it)")
+    assert "return `BLOCKED` internally rather than asking the person a technical checkout question or guessing" in rows["choose-repo"]
+    assert "Never clone while this is unresolved" in rows["allow-folder-access"]
+    assert "Return `BLOCKED` with the detail; never continue on the generic text." in rows["provider-broken"]
+    for fix in ("choose-repo", "allow-folder-access", "provider-broken"):
+        assert f'"{fix}"' in (SCRIPTS / "vibe-preflight.sh").read_text(), fix

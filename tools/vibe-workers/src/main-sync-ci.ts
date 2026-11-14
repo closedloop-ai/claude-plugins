@@ -4,20 +4,20 @@ import { z } from "zod";
 import { ciEvidenceSchema, commitSchema, MainSyncError } from "./main-sync-contracts.js";
 import { checkedSourceFromJobLog, ciStepSchema, type CiStep } from "./main-sync-ci-logs.js";
 import { digest, type syncContext } from "./main-sync-state.js";
+import { mainSyncRecipe } from "./main-sync-recipe.js";
+import { githubRepository } from "../../../plugins/vibe-core/lib/vibe/scripts/github-remote.mjs";
 
-const REPOSITORY = "closedloop-ai/symphony-alpha";
-const WORKFLOW = ".github/workflows/e2e-test.yml";
 // Exact reviewed Run Electron e2e body at loaded-main 02a7ae03, e5fc4f7 and 51f4d122ba, including both verdict guards.
 const REVIEWED_ELECTRON_RUN_SHA256 = "d42acd228f3da95e0d05b419b0c8f38f36c2233fbf49c3113de6aae1e4697912";
 // The desktop-e2e checkout ref at loaded-main 51f4d122ba: a dispatch on main tests the `ref` input it names.
 export const REVIEWED_CHECKOUT_REF = "${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha || github.event.inputs.ref || (github.event_name == 'schedule' && github.sha) || github.ref }}";
 const SAFE_ID = z.number().int().positive().safe();
-const identitySchema = z.object({ full_name: z.literal(REPOSITORY) }).passthrough();
-const workflowSchema = z.object({ id: SAFE_ID, path: z.literal(WORKFLOW) }).passthrough();
-const runSchema = z.object({ id: SAFE_ID, event: z.enum(["workflow_dispatch", "schedule"]),
+const identitySchema = (repository: string) => z.object({ full_name: z.literal(repository) }).passthrough();
+const workflowSchema = (workflow: string) => z.object({ id: SAFE_ID, path: z.literal(workflow) }).passthrough();
+const runSchema = (repository: string, workflow: string) => z.object({ id: SAFE_ID, event: z.enum(["workflow_dispatch", "schedule"]),
   status: z.literal("completed"), conclusion: z.literal("success"), head_branch: z.literal("main"),
-  head_sha: commitSchema, path: z.literal(WORKFLOW), workflow_id: SAFE_ID, run_attempt: SAFE_ID,
-  repository: identitySchema, head_repository: identitySchema }).passthrough();
+  head_sha: commitSchema, path: z.literal(workflow), workflow_id: SAFE_ID, run_attempt: SAFE_ID,
+  repository: identitySchema(repository), head_repository: identitySchema(repository) }).passthrough();
 const jobSchema = z.object({ id: SAFE_ID, run_id: SAFE_ID, run_attempt: SAFE_ID, name: z.string(),
   status: z.string(), conclusion: z.string().nullable(), steps: z.array(ciStepSchema).max(100) }).passthrough();
 const jobsSchema = z.object({ total_count: z.number().int().nonnegative().max(100), jobs: z.array(jobSchema).max(100) }).passthrough();
@@ -32,23 +32,30 @@ export function verifyExternalCi(value: ReturnType<typeof syncContext>, input: {
   const locator = value.context.mainSyncCiRun;
   if (!locator || value.purpose !== "handoff") throw new MainSyncError("Handoff required E2E is incomplete; Root-bound real CI evidence is needed");
   const root = value.place.root;
-  const workflow = workflowSchema.parse(apiJson(root, `repos/${REPOSITORY}/actions/workflows/e2e-test.yml`));
-  const run = runSchema.parse(apiJson(root, `repos/${REPOSITORY}/actions/runs/${locator.runId}`));
+  // The session's own GitHub repository and the CI producer its recipe names; no other repository's run counts.
+  const ci = mainSyncRecipe(root).ci;
+  if (!ci) throw new MainSyncError("The repository declares no CI producer for required E2E; handoff remains incomplete");
+  const origin = spawnSync("git", ["-C", root, "config", "--get", "remote.origin.url"], { encoding: "utf8", timeout: 10000 });
+  const repository = origin.status === 0 ? githubRepository(origin.stdout.trim()) : null;
+  if (!repository) throw new MainSyncError("The session's origin is not a GitHub repository; no CI evidence can be read");
+  const workflowPath = ci.workflow;
+  const workflow = workflowSchema(workflowPath).parse(apiJson(root, `repos/${repository}/actions/workflows/${workflowPath.split("/").at(-1)}`));
+  const run = runSchema(repository, workflowPath).parse(apiJson(root, `repos/${repository}/actions/runs/${locator.runId}`));
   if (run.id !== locator.runId || run.run_attempt !== locator.attempt || run.workflow_id !== workflow.id) {
     throw new MainSyncError("CI run/workflow/attempt differs from the actual source grant");
   }
-  const contents = contentsSchema.parse(apiJson(root, `repos/${REPOSITORY}/contents/${WORKFLOW}?ref=${run.head_sha}`));
+  const contents = contentsSchema.parse(apiJson(root, `repos/${repository}/contents/${workflowPath}?ref=${run.head_sha}`));
   const test = reviewedProducer(Buffer.from(contents.content, "base64").toString("utf8"));
-  const jobs = jobsSchema.parse(apiJson(root, `repos/${REPOSITORY}/actions/runs/${run.id}/attempts/${locator.attempt}/jobs?per_page=100`));
+  const jobs = jobsSchema.parse(apiJson(root, `repos/${repository}/actions/runs/${run.id}/attempts/${locator.attempt}/jobs?per_page=100`));
   if (jobs.jobs.length !== jobs.total_count) throw new MainSyncError("Required CI job set is incomplete");
   const desktop = only(jobs.jobs.filter((job) => job.name === "desktop-e2e"));
   requireJob(desktop, run.id, locator.attempt);
   const checkoutStep = requiredStep(desktop.steps, "Checkout repository");
   const testStep = requiredStep(desktop.steps, "Run Electron e2e");
-  const log = apiText(root, `repos/${REPOSITORY}/actions/jobs/${desktop.id}/logs`, true);
+  const log = apiText(root, `repos/${repository}/actions/jobs/${desktop.id}/logs`, true);
   const checkoutSha = checkedSourceFromJobLog(log, checkoutStep, testStep, test.run.trimStart().split("\n")[0]!.trim());
   if (checkoutSha !== input.headSha) throw new MainSyncError("Actual CI checkout differs from the owned committed handoff result");
-  const current = runSchema.parse(apiJson(root, `repos/${REPOSITORY}/actions/runs/${locator.runId}`));
+  const current = runSchema(repository, workflowPath).parse(apiJson(root, `repos/${repository}/actions/runs/${locator.runId}`));
   if (current.run_attempt !== run.run_attempt || current.workflow_id !== run.workflow_id || current.head_sha !== run.head_sha) {
     throw new MainSyncError("CI run identity changed during verification; no handoff completion was issued");
   }

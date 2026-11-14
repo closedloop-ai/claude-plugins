@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createEnvCtl, MAIN_SYNC_CONTEXT_MISSING, mainSyncContextProblem, Status } from "./env-ctl.mjs";
 import { execCommand } from "./ws3-exec.mjs";
 import { gitEnv, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+
+// The ClosedLoop provider's environment recipe and repository, as a bound session in that repository has them.
+const ENVIRONMENT = JSON.parse(readFileSync(new URL("../../../../vibe-closedloop-provider/provider.json", import.meta.url), "utf8"))
+  .data.recipes.environment;
+const BOUND = { repo: "closedloop-ai/symphony-alpha", environmentFor: () => ENVIRONMENT, planPrefixFor: () => ".closedloop-ai/vibe-plans/" };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS = path.join(HERE, "vibe-sessions.mjs");
@@ -73,7 +79,7 @@ test("publish hands main-sync-push the exact stdin bytes: key order, whitespace 
   const { context } = realContext(t);
   const bytes = envelope(context);
   const rec = recorder(routesFor());
-  const result = createEnvCtl({ run: rec.run }).publish({ worktree: "/wt", stdin: bytes });
+  const result = createEnvCtl({ ...BOUND, run: rec.run }).publish({ worktree: "/wt", stdin: bytes });
   assert.equal(result.status, Status.Done);
   assert.deepEqual(rec.inputs("main-sync-push"), [bytes]);
   assert.ok(Buffer.from(rec.inputs("main-sync-push")[0]).equals(Buffer.from(bytes)));
@@ -83,7 +89,7 @@ test("request hands dispatch-inputs the same exact bytes", async (t) => {
   const { context } = realContext(t);
   const bytes = envelope(context);
   const rec = recorder(routesFor());
-  const result = await createEnvCtl({ run: rec.run, ...clock() }).request({ worktree: "/wt", mode: "redeploy", stdin: bytes });
+  const result = await createEnvCtl({ ...BOUND, run: rec.run, ...clock() }).request({ worktree: "/wt", mode: "redeploy", stdin: bytes });
   assert.equal(result.status, "NEEDS_CHANGE");
   assert.deepEqual(rec.inputs("dispatch-inputs"), [bytes]);
 });
@@ -92,7 +98,7 @@ test("redeploy hands the same bytes to main-sync-push and then to dispatch-input
   const { context } = realContext(t);
   const bytes = envelope(context);
   const rec = recorder(routesFor());
-  await createEnvCtl({ run: rec.run, ...clock() }).redeploy({ worktree: "/wt", stdin: bytes });
+  await createEnvCtl({ ...BOUND, run: rec.run, ...clock() }).redeploy({ worktree: "/wt", stdin: bytes });
   const order = rec.calls.filter((call) => call.input !== undefined).map((call) => call.line.split(" ")[2]);
   assert.deepEqual(order, ["main-sync-push", "dispatch-inputs"]);
   assert.ok(rec.calls.filter((call) => call.input !== undefined).every((call) => call.input === bytes));
@@ -107,18 +113,18 @@ test("a context with one field altered is forwarded untouched and the real main-
     return run(command, args, options);
   };
   const genuine = envelope(context, { unknown: false });
-  const valid = createEnvCtl({ run: spy }).publish({ worktree, stdin: genuine });
+  const valid = createEnvCtl({ ...BOUND, run: spy }).publish({ worktree, stdin: genuine });
   // A genuine context is accepted by main-sync as the right grant; the session simply has no fresh transaction yet.
   assert.equal(valid.status, "NEEDS_CHANGE", JSON.stringify(valid));
   assert.match(valid.error, /no fresh main-sync transaction/);
   const altered = envelope({ ...context, workerId: "env-worker-2" }, { unknown: false });
-  const refused = createEnvCtl({ run: spy }).publish({ worktree, stdin: altered });
+  const refused = createEnvCtl({ ...BOUND, run: spy }).publish({ worktree, stdin: altered });
   assert.equal(refused.status, Status.Blocked);
   assert.match(refused.error, /differs: workerId/);
   assert.match(refused.error, /never a rebuilt one/);
   // An unknown field is not stripped by env-ctl either: main-sync refuses it, and env-ctl surfaces that refusal.
   const unknown = envelope(context);
-  const strict = createEnvCtl({ run: spy }).publish({ worktree, stdin: unknown });
+  const strict = createEnvCtl({ ...BOUND, run: spy }).publish({ worktree, stdin: unknown });
   assert.equal(strict.status, Status.Blocked);
   assert.match(strict.error, /unrecognized_keys/);
   assert.deepEqual(seen, [genuine, altered, unknown]);
@@ -127,7 +133,7 @@ test("a context with one field altered is forwarded untouched and the real main-
 test("missing or invalid parent context is BLOCKED with evidence for the agent, and nothing runs", async () => {
   for (const stdin of [undefined, "", "   \n", "not json", "[]", "{}", "{\"context\":\"text\"}", "{\"context\":null}", "{\"context\":[1]}"]) {
     const rec = recorder(routesFor());
-    const ctl = createEnvCtl({ run: rec.run, ...clock() });
+    const ctl = createEnvCtl({ ...BOUND, run: rec.run, ...clock() });
     const results = [ctl.publish({ worktree: "/wt", stdin }), await ctl.request({ worktree: "/wt", mode: "create", stdin }), await ctl.redeploy({ worktree: "/wt", stdin })];
     for (const result of results) {
       assert.equal(result.status, Status.Blocked, JSON.stringify(stdin));
@@ -146,7 +152,7 @@ test("recordResult downloads the artifact and records it with the arguments envi
     ["run download", ok("")],
     ["environment-result", ok({ ok: true, appUrl: "https://app.example", apiUrl: "https://api.example", storybookUrl: "https://sb.example", headSha: "a".repeat(40) })],
   ]);
-  const result = createEnvCtl({ run: rec.run }).recordResult({ worktree: "/wt", runId: 22, requestId: "req-9" });
+  const result = createEnvCtl({ ...BOUND, run: rec.run }).recordResult({ worktree: "/wt", runId: 22, requestId: "req-9" });
   assert.deepEqual(rec.calls.map((call) => call.line), [
     "git -C /wt rev-parse --absolute-git-dir",
     "gh run download 22 --repo closedloop-ai/symphony-alpha -n vibe-environment-result -D /gd/vibe-environment-result",
@@ -169,11 +175,11 @@ test("no context or lease value ever appears in the status env-ctl returns", asy
   };
   const bytes = envelope(context);
   const fake = recorder(routesFor());
-  const ctl = createEnvCtl({ run: fake.run, ...clock() });
+  const ctl = createEnvCtl({ ...BOUND, run: fake.run, ...clock() });
   guard(ctl.publish({ worktree: "/wt", stdin: bytes }));
   guard(await ctl.request({ worktree: "/wt", mode: "create", stdin: bytes }));
   guard(await ctl.redeploy({ worktree: "/wt", stdin: bytes }));
   const real = (command, args, options = {}) => execCommand(command, args, { ...options, env: gitEnv(home) });
-  guard(createEnvCtl({ run: real }).publish({ worktree, stdin: bytes }));
-  guard(createEnvCtl({ run: real }).publish({ worktree, stdin: envelope({ ...context, lease: "a-different-lease" }) }));
+  guard(createEnvCtl({ ...BOUND, run: real }).publish({ worktree, stdin: bytes }));
+  guard(createEnvCtl({ ...BOUND, run: real }).publish({ worktree, stdin: envelope({ ...context, lease: "a-different-lease" }) }));
 });

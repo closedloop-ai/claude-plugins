@@ -1,4 +1,4 @@
-// An operator's recorded ruling for targeted tests (ISS-14077) lets the verifier
+// An operator's recorded ruling for targeted tests lets the verifier
 // evidence leave named runs not run: graph-selected tests outside the targeted
 // inventory, the matching post-merge lanes, and the web and Desktop host lanes.
 // The evidence cites the ruling as `targetedTestsRuling: {id, source}`, where

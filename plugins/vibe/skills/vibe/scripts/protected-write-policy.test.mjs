@@ -9,9 +9,9 @@ import { readAssembled } from "./skill-split.mjs";
 
 test("writer refusal and internal preflight routing name the protected-write policy", () => {
   const plugin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-  const writer = readFileSync(path.join(plugin, "agents", "vibe-change-worker.md"), "utf8");
+  const writer = readAssembled(path.join(plugin, "agents", "vibe-change-worker.md"));
   const skill = readAssembled(path.join(plugin, "skills", "vibe", "SKILL.md"));
-  const preflight = readFileSync(path.join(plugin, "skills", "vibe", "references", "preflight.md"), "utf8");
+  const preflight = readAssembled(path.join(plugin, "skills", "vibe", "references", "preflight.md"));
   assert.match(writer, /After any native edit refusal,[\s\S]*return `BLOCKED`/);
   assert.match(writer, /Never retry the[\s\S]*through Bash, Python, Node, tee, redirection/);
   assert.match(skill, /`PROTECTED_PATH_HOOK_UNAVAILABLE`:[\s\S]*dispatch `vibe-setup-worker`/);

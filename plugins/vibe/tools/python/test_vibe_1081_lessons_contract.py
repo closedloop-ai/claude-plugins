@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 from vibe_contract_text import hook_guard_routed
@@ -37,7 +39,9 @@ def test_bot_threads_and_holds_have_owned_rules() -> None:
 def test_env_less_sessions_push_and_qa_env_uses_vibe_up() -> None:
     environment = read("agents/vibe-environment-worker.md")
     assert "A session with no environment (no `lastRequestId`)" in environment
-    assert 'command: "pnpm vibe up"' in read("skills/handoff/scripts/parallel-prep.mjs")
+    recipes = json.loads((ROOT.parent / "vibe-closedloop-provider" / "provider.json").read_text())["data"]["recipes"]
+    assert recipes["localQa"]["command"] == "pnpm vibe up", "the provider's local QA command"
+    assert "localQa?.command" in read("skills/handoff/scripts/parallel-prep.mjs")
     verify = read("agents/vibe-verify-worker.md")
     assert "--head <HEAD> --source-hash <treeSha256>" in verify
     assert "`image-head.mjs` refuses stale images" in verify

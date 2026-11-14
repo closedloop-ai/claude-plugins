@@ -1,4 +1,4 @@
-// Which fleet program an orchestrator chat runs (ISS-14028). A fleet home once
+// Which fleet program an orchestrator chat runs. A fleet home once
 // had one `current` program, and every vibe hook and script resolved that home
 // from FLEET_HOME at launch, so a second orchestrator chat on the same machine
 // read and wrote the first chat's program unless it was launched with the

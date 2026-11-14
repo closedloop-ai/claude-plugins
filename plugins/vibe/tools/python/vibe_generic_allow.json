@@ -1,0 +1,217 @@
+[
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "\"clerk-org-id\": { type: \"string\" },",
+  "reason": "Compatibility alias: provider text and older chats still pass the option under its earlier name."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "* `handoffTicket` as `liveTicket` and its `clerkOrgId` as `environmentOrgId`,",
+  "reason": "Compatibility read of a record field written by older vibe versions."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "const { handoffTicket, clerkOrgId: legacyOrgId, scope: _retiredScope, ...rest } = record;",
+  "reason": "Compatibility read of a record field written by older vibe versions."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "const orgId = values[\"environment-org\"] ?? values[\"clerk-org-id\"];",
+  "reason": "Compatibility alias: provider text and older chats still pass the option under its earlier name."
+ },
+ {
+  "path": "plugins/vibe/README.md",
+  "text": "| `vibe-seed-check-worker` | sonnet | Fresh-main seed checks and latest Vibe Seed Walk inspection |",
+  "reason": "The seed refresh and its workers stay in vibe by operator ruling; the agents table lists every agent vibe ships."
+ },
+ {
+  "path": "plugins/vibe/README.md",
+  "text": "`visual-qa`, `storybook`;",
+  "reason": "Eval tag names, which name the eval cases, not a repository skill."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/INSTALL.md",
+  "text": "To update by hand, check which version is installed and where the `closedloop-ai` marketplace",
+  "reason": "Publisher identity: the marketplace vibe installs from is named closedloop-ai."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/INSTALL.md",
+  "text": "\"$CODEX\" plugin list --marketplace closedloop-ai   # VERSION column of vibe@closedloop-ai",
+  "reason": "Publisher identity: the marketplace vibe installs from is named closedloop-ai."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/INSTALL.md",
+  "text": "\"$CODEX\" plugin marketplace list                  # ROOT of closedloop-ai",
+  "reason": "Publisher identity: the marketplace vibe installs from is named closedloop-ai."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/INSTALL.md",
+  "text": "\"$CODEX\" plugin marketplace upgrade closedloop-ai",
+  "reason": "Publisher identity: the marketplace vibe installs from is named closedloop-ai."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/INSTALL.md",
+  "text": "\"$CODEX\" plugin list --marketplace closedloop-ai",
+  "reason": "Publisher identity: the marketplace vibe installs from is named closedloop-ai."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-cli.mjs",
+  "text": "export const MARKETPLACE = \"closedloop-ai\";",
+  "reason": "Publisher identity: the marketplace vibe and its plugins install from."
+ },
+ {
+  "path": "plugins/vibe/skills/handoff/scripts/pr-evidence-schema.mjs",
+  "text": "export const GRAPH_SELECTOR = \"code_tests_for\";",
+  "reason": "Evidence-file selector name, a version-skewed contract older workers already write."
+ },
+ {
+  "path": "plugins/vibe/skills/handoff/scripts/pr-evidence-schema.mjs",
+  "text": "if (!report?.source && report?.command !== \"pnpm test:lanes\") problems.push(\"legacy lane report needs pnpm test:lanes\");",
+  "reason": "Compatibility: evidence written before typed lane sources named only this command."
+ },
+ {
+  "path": ".claude-plugin/marketplace.json",
+  "text": "\"description\": \"Shared ClosedLoop planning, intelligence, review, QA, measurement, and PR monitoring\"",
+  "reason": "Another plugin's description (closedloop-core manifests are out of scope by operator ruling)."
+ },
+ {
+  "path": ".claude-plugin/marketplace.json",
+  "text": "\"description\": \"ClosedLoop and symphony-alpha knowledge for vibe and fleet-orchestrator; disable it to run vibe and fleet generically\"",
+  "reason": "The provider's own description: it is the ClosedLoop provider by design."
+ },
+ {
+  "path": ".claude-plugin/marketplace.json",
+  "text": "\"description\": \"Bootstrap plugin for ClosedLoop\"",
+  "reason": "Another plugin's description in the shared marketplace, outside vibe."
+ },
+ {
+  "path": ".claude-plugin/marketplace.json",
+  "text": "\"description\": \"ClosedLoop Platform plugin\"",
+  "reason": "Another plugin's description in the shared marketplace, outside vibe."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/codex-app-server.mjs",
+  "text": "export function codexAppServerRequest(executable, cwd, method, params, { timeoutMs = 20_000, label = \"Codex App Server\", clientName = \"closedloop_vibe\" } = {}) {",
+  "reason": "The Codex App Server client identity, a wire value existing Codex threads already carry."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/publishable-text.mjs",
+  "text": "[\"credential in a URL\", /[?&](?:closedloopBridgeToken|token|access_token|api_key|apikey|key|secret|password|sig|signature)=[^\\s&]{8,}/i],",
+  "reason": "Redaction: a known credential query parameter is refused in published text whatever the session's provider."
+ },
+ {
+  "path": "plugins/vibe/skills/handoff/scripts/unit-review.mjs",
+  "text": "const ID_LINE = /^\\s*(?:[-*]\\s+(?:\\[[ xX]\\]\\s*)?)?(?:\\*\\*)?([A-Z]{1,6}-\\d+(?:[-.]\\d+)*)\\.?(?:\\*\\*)?[.:]?\\s+(\\S.*)$/;",
+  "reason": "A criterion id form (AC-1, R-2.1), not a tracker slug."
+ },
+ {
+  "path": "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs",
+  "text": "if (ROLLOUT.test(bullet[1]) || level) fromPrd.push({ id: `PRD-${count}`, text: bullet[1] });",
+  "reason": "Compatibility: the change log `Rollout:` lines earlier sessions wrote name a requirements item by this id, so the gate must keep reading it."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs",
+  "text": "const LEGACY_E2E_SOURCE = \"pnpm test:lanes and the e2e path filter\";",
+  "reason": "Compatibility: manifests written by earlier vibe versions carry this value."
+ },
+ {
+  "path": "plugins/vibe-core/lib/handoff/scripts/mcp-tool-names.mjs",
+  "text": "const CAPABILITY_SERVICES = new Set([\"graph\", \"tracker\", \"closedloop\"]);",
+  "reason": "Compatibility: capability records written by earlier vibe versions name the tracker service by its earlier name."
+ },
+ {
+  "path": "tools/vibe-workers/src/contracts.ts",
+  "text": "const LEGACY_TRACKER_SERVICE = \"closedloop\";",
+  "reason": "Compatibility: launch requests from earlier vibe versions name the tracker service by its earlier name."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/review-class-guards.mjs",
+  "text": "{ id: \"e2e-slot\", file: \"plugins/vibe/skills/fleet-orchestrator/SKILL.md\", pattern: /shared e2e stack .* machine-wide e2e lock/s },",
+  "reason": "A guard id naming the fleet skill rule it checks, not a command vibe runs."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "export const OFFERED_PROVIDER = Object.freeze({ name: \"vibe-closedloop-provider\", connection: \"tracker\",",
+  "reason": "The one provider vibe offers to install (operator ruling on the install default); it names no repository and runs only after its connection answered."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "label: \"ClosedLoop\", check: \"Call ClosedLoop `get-me`; connected only when it answered in this conversation.\" });",
+  "reason": "The one provider vibe offers to install (operator ruling on the install default); it names no repository and runs only after its connection answered."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-input-pure.ts",
+  "text": "const owner=await load('apps/desktop/scripts/write-build-info-lib.mjs');",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-input-pure.ts",
+  "text": "body=owner.renderBuildInfoSource({commitHash:input.head,appVersion:owner.resolveAppVersion(JSON.parse(read('apps/desktop/package.json').toString('utf8')))});",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-input-pure.ts",
+  "text": "const owner=await load('apps/desktop/scripts/generate-migrations-manifest-lib.mjs');",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-input-pure.ts",
+  "text": "const appDir=join(root,'apps/desktop'),migrationsDir=join(appDir,'prisma/migrations');",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-input-pure.ts",
+  "text": "const owner=await load('apps/desktop/scripts/generate-auth-handoff-assets-lib.mjs');",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-input-pure.ts",
+  "text": "const base='packages/design-system';",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-lanes.ts",
+  "text": "const workflow = loadWorkflowOrThrow('.github/workflows/e2e-test.yml');",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "tools/vibe-workers/src/main-sync-lanes.ts",
+  "text": "if (!step?.run || step['working-directory'] !== 'apps/desktop') throw new Error('Canonical displayless harness is unavailable');",
+  "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/references/closedloop-graph.md",
+  "text": "`node <plugin-root>/skills/vibe/scripts/provider.mjs path graph provider:closedloop-graph.md`",
+  "reason": "Pointer kept at the path the byte-unchanged seed-refresh files (ruling Q5) read; it sends them to the provider's reference."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "const LEGACY_PROVIDER_FIELDS = [\"liveTicket\", \"handoffTicket\", \"livePlan\", \"mode\", \"vercel\", \"clerkOrgId\", \"environmentOrgId\", \"flagSnapshot\"];",
+  "reason": "Compatibility read of record fields written by older vibe versions, so a legacy provider session is never written generic."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "// An older vibe (another harness on this machine, or a rollback) reads the environment org as `clerkOrgId`, so a",
+  "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "text": "record.environmentOrgId ? { ...record, clerkOrgId: record.environmentOrgId } : record);",
+  "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
+ },
+ {
+  "path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.mjs",
+  "text": "const LAUNCHER_MARK = \"# Written by vibe fleet-home.mjs launcher (ISS-14028).\";",
+  "reason": "Compatibility: the exact mark already written into installed fleet launchers; `launcher --install` overwrites only a file that carries it."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "//                               [--closedloop <state>] [--graph <state>]   (aliases of --connection tracker=<state>, graph=<state>)",
+  "reason": "Compatibility alias: the 1.1.86 check flags, still passed by provider text, older chats and vibe-bench."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "const CONNECTION_ALIASES = Object.freeze({ closedloop: \"tracker\", graph: \"graph\" });",
+  "reason": "Compatibility alias: the 1.1.86 check flags, still passed by provider text, older chats and vibe-bench."
+ }
+]

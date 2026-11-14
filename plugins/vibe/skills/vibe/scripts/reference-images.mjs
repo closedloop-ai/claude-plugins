@@ -120,7 +120,7 @@ export function attachedImageGroups(transcriptText) {
 
 /**
  * The current harness's own transcript file, from the conversation harness-identity.mjs
- * resolves; never the other harness's transcript under an inherited id (ISS-13834).
+ * resolves; never the other harness's transcript under an inherited id.
  */
 export function findTranscript(env = process.env, harness = {}) {
   const actor = harnessActor(env, harness);

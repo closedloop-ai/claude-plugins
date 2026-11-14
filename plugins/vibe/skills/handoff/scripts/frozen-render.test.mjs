@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
 import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, isFrozenGlobalInput, prepareBase, rebuildStatic, runOwnedFrozenComparison, storybookPreviewImportClosure, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
-import { git, makeHome, mutateSourceRead } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeHome, mutateSourceRead, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "frozen-render.mjs");
 const BASE = "http://storybook-base";
@@ -453,12 +457,12 @@ test("the line it prints passes handoff's frozen-render rule, which counts story
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
   const isFrozenStory = (text) => / v1\.0\//.test(text);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), "");
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"]);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking.map((finding) => finding.rule), ["frozen-render"]);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking, []);
   // The 1.1.11 line counted stories where the rule counts story files, so it is not accepted.
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `Frozen render unchanged: all 2 stories: frozen-render.mjs --base ${base}: 1 identical, 1 known main failures; ${out}\n`);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"]);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking.map((finding) => finding.rule), ["frozen-render"]);
 });
 
 test("the line the command prints is the line the gate accepts when story files hold several story IDs (ISS-13317)", async (t) => {
@@ -482,7 +486,7 @@ test("the line the command prints is the line the gate accepts when story files 
   const isFrozenStory = (text) => / v1\.0\//.test(text);
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), "");
-  const [finding] = runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking;
+  const [finding] = runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking;
   assert.equal(finding.rule, "frozen-render");
   assert.match(finding.problem, /^2 frozen v1\.0 story files /);
   const storyFiles = ["apps/storybook/stories/rows.stories.tsx", "apps/storybook/stories/table.stories.tsx"];
@@ -494,10 +498,10 @@ test("the line the command prints is the line the gate accepts when story files 
     browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
   assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; states ${ids.join(",")}; inputs ${frozenInputs(checkout, base, storyFiles)}; ${path.join(out, "results.json")}`);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking, []);
   // A line counting the 4 stories as story files, as 1.1.11 did, is refused.
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine.replace("all 2 story files (4 stories)", "all 4 story files (4 stories)")}\n`);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((entry) => entry.rule), ["frozen-render"]);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking.map((entry) => entry.rule), ["frozen-render"]);
 });
 
 /**
@@ -565,9 +569,9 @@ test("a compile-only repaired story runs the head's story file against both app 
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
   const isFrozenStory = (text) => / v1\.0\//.test(text);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), "");
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((entry) => entry.rule), ["frozen-render"]);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking.map((entry) => entry.rule), ["frozen-render"]);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking, []);
 });
 
 test("a repaired story whose render the app code changed still blocks", async (t) => {
@@ -650,18 +654,18 @@ test("a recorded line survives unrelated commits and clears only proven unchange
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
   const isFrozenStory = (text) => / v1\.0\//.test(text);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking, []);
   git(checkout, ["commit", "--quiet", "-am", "the rendered change"], home);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "a commit boundary alone changes no evidence");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking, [], "a commit boundary alone changes no evidence");
   writeFileSync(path.join(checkout, "notes.md"), "unrelated docs\n");
   git(checkout, ["add", "notes.md"], home);
   git(checkout, ["commit", "--quiet", "-m", "docs"], home);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "unrelated docs preserve the render evidence");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking, [], "unrelated docs preserve the render evidence");
   writeFileSync(path.join(checkout, row), "// explanation\nexport const Row = 2;\n");
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [],
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking, [],
     "the bundled parser proves a comment in the rendered closure cannot change the render");
   writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory, binding: PROVIDER_BINDING }).blocking.map((finding) => finding.rule), ["frozen-render"],
     "a rendered dependency change invalidates the recorded states");
 });
 

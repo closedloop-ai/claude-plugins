@@ -1,19 +1,21 @@
 #!/usr/bin/env node
-// The scriptable part of `vibe-verify-worker` (PRD-823, WS3 D5, ISS-13347):
-// run the repository's own required checks at an exact head, bounded, and write
-// ONE evidence JSON that keeps every outcome distinct. It runs nothing the
-// repository does not already define: Biome through `pnpm exec biome check` on
-// the changed files, `pnpm check:source-gates`, `pnpm typecheck:affected`, the
-// lanes `pnpm test:lanes` names (through `pre-pr-lanes.mjs`, which owns their
+// The scriptable part of `vibe-verify-worker`, for a repository whose bound
+// provider names its checks (`data.recipes.verify`): run the repository's own
+// required checks at an exact head, bounded, and write ONE evidence JSON that
+// keeps every outcome distinct. It runs nothing the repository does not already
+// define: the recipe's formatter on the changed files, each of its checks, the
+// lanes its lane report names (through `pre-pr-lanes.mjs`, which owns their
 // records, the not-run rules and main-preexisting), and the selected tests the
-// verify worker supplies. Every command goes through `run-bounded.mjs`.
+// verify worker supplies. Every command goes through `run-bounded.mjs`. With no
+// recipe every check is `blocked` with that reason, and the worker runs the
+// repository's documented checks by hand.
 //
 // Usage: verify-run.mjs --worktree <path> --head <sha> [--base <sha>] [--tests-file <file>]
 //                       [--out <file>] [--no-cache] [--no-lanes]
-//   --tests-file  [{ "file": "<source path>", "selector": "code_tests_for"|"related",
+//   --tests-file  [{ "file": "<source path>", "selector": "<the graph tool that selected them>"|"related",
 //                    "tests": ["<test path>"], "command": "<the package command that runs them>" }]
-//                 The graph's `code_tests_for` is an MCP tool this script cannot call, so
-//                 the worker supplies its result; an entry with no command is `not-run`.
+//                 A graph's test lookup is an MCP tool this script cannot call, so the
+//                 worker supplies its result; an entry with no command is `not-run`.
 //
 // Evidence statuses, never merged: `passed` (ran at this head and exited 0),
 // `failed`, `blocked` (could not run, or timed out on this machine),
@@ -32,13 +34,13 @@
 // A typecheck or other turbo run that replayed every task from its cache is
 // `cached` with `cachedFrom.kind` `turbo-cache`, never `passed`: the code did not run.
 //
-// Lanes are scheduled, never skipped (ISS-13587, lane-pool.mjs): pure script-suite lanes run in
+// Lanes are scheduled, never skipped (lane-pool.mjs): pure script-suite lanes run in
 // a pool sized from the worker budget (at most 2 by default), every other lane, and any lane the
 // pool list does not name, runs serially, and e2e lanes run under e2e-lock.mjs. The records come
 // back in lane-report order whatever finished first. `scheduling` in the evidence is additive.
 // Leaving VIBE_HEAVY_BUDGET unset (the default) or setting VIBE_VERIFY_POOL_SIZE=1 is the previous strictly serial path.
 //
-// Background (ISS-13586, verify-background.mjs): `--background` starts the same run detached and prints a
+// Background (verify-background.mjs): `--background` starts the same run detached and prints a
 // run id at once; `--status <id>` and `--wait <id>` (both need --worktree) read its record under
 // `<gitdir>/vibe-verify-runs/`. A run whose process is gone without a result is `orphaned`, a run
 // whose result is for another head than the worktree's (or `--head`) is `head-moved`; only `passed`
@@ -57,6 +59,10 @@ import { budgetDisabled, createBudget, resolveSettings } from "./heavy-budget.mj
 import { classifyLane, LaneKind, poolSizeFor, runScheduled } from "./lane-pool.mjs";
 import { readRun, RunExit, startBackground, waitForRun, writeRecord } from "./verify-background.mjs";
 import { execCommand, execCommandAsync, parseJson, stdoutOf, tailLines, toolDidNotRun } from "./ws3-exec.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const SCHEMA = "vibe.verify-evidence/1";
 export const Status = Object.freeze({
@@ -64,10 +70,10 @@ export const Status = Object.freeze({
   NoOp: "no-op", Skipped: "skipped", NotRun: "not-run",
 });
 // Fixed per-check limits: a check that outruns its limit is `blocked` on this machine, not failed and not passed.
-export const TIME_LIMITS = Object.freeze({ biome: 300, sourceGates: 600, typecheck: 900, lane: 1800, tests: 900, report: 300, laneCheck: 600 });
+export const TIME_LIMITS = Object.freeze({ lane: 1800, tests: 900, report: 300, laneCheck: 600 });
 const TIMED_OUT = 124;
-const BIOME_FILE = /\.(?:tsx?|jsx?|mjs|cjs|json|jsonc|css)$/;
-const BIOME_CHUNK = 200;
+const FORMATTER_CHUNK = 200;
+const NO_RECIPE = "the bound provider names no verify recipe for this repository, so the checks were not run here; the verify worker runs the repository's documented checks by hand";
 const LANE_CHECK_SUMMARY = /^pre-pr lanes: /m;
 export const LEFT_TO_WORKER = Object.freeze([
   { name: "e2e-specs", reason: "E2E specs run through the tier the capability probe selects, under the repository's lock" },
@@ -146,7 +152,9 @@ export function createVerifyRun({
   budget = null,
   env = process.env,
   onProgress = () => {},
+  recipeFor = (worktree) => providerDataOr(sessionBinding(worktree), "recipes", "verify", null),
 } = {}) {
+  const label = (command) => command.join(" ");
   /** One bounded command through run-bounded.mjs: its exit code, a time out as 124, and the output tail on failure. */
   function bounded(seconds, command, args, cwd) {
     const started = now();
@@ -199,29 +207,34 @@ export function createVerifyRun({
     return required(name, full, done.status, { exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}), ...(result.load ? { load: result.load } : {}) });
   }
 
-  function biomeCheck({ files, worktree, head, cache, useCache }) {
-    const targets = files.filter((file) => BIOME_FILE.test(file) && exists(path.join(worktree, file)));
-    if (targets.length === 0) return required("biome", "pnpm exec biome check", Status.NoOp, { reason: "no changed file is one Biome checks" });
+  /** The recipe's formatter over the changed files it checks, in bounded chunks. */
+  function formatterCheck({ formatter, files, worktree, head, cache, useCache }) {
+    const checks = new RegExp(formatter.files);
+    const [command, ...args] = formatter.command;
+    const targets = files.filter((file) => checks.test(file) && exists(path.join(worktree, file)));
+    if (targets.length === 0) return required(formatter.name, label(formatter.command), Status.NoOp, { reason: formatter.noFiles });
     let last = null;
-    for (let at = 0; at < targets.length; at += BIOME_CHUNK) {
-      const chunk = targets.slice(at, at + BIOME_CHUNK);
-      last = repoCheck({ name: "biome", command: "pnpm", args: ["exec", "biome", "check", ...chunk], seconds: TIME_LIMITS.biome, worktree, head, cache, useCache });
+    for (let at = 0; at < targets.length; at += FORMATTER_CHUNK) {
+      const chunk = targets.slice(at, at + FORMATTER_CHUNK);
+      last = repoCheck({ name: formatter.name, command, args: [...args, ...chunk], seconds: formatter.seconds, worktree, head, cache, useCache });
       if (last.status !== Status.Passed && last.status !== Status.Cached) break;
     }
-    return { ...last, command: `pnpm exec biome check <${targets.length} changed files>`, files: targets.length };
+    return { ...last, command: `${label(formatter.command)} <${targets.length} changed files>`, files: targets.length };
   }
 
   /** The lane report, the lane check and the records that need no run; each lane still to run carries its key and its scheduling class. */
-  function planLanes({ worktree, head, cache, useCache, state }) {
+  function planLanes({ worktree, head, cache, useCache, state, recipe }) {
     const gitDir = stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
-    const reportRun = bounded(TIME_LIMITS.report, "pnpm", ["test:lanes"], worktree);
+    const report = recipe.laneReport;
+    const reportLabel = label(report.command);
+    const reportRun = bounded(report.seconds ?? TIME_LIMITS.report, report.command[0], report.command.slice(1), worktree);
     if (reportRun.status !== 0) {
-      return { done: [required("lanes", "pnpm test:lanes", Status.Blocked, { reason: "the repository's lane report did not run", exitCode: reportRun.status, evidenceTail: tailLines(`${reportRun.stdout}\n${reportRun.stderr}`) })] };
+      return { done: [required("lanes", reportLabel, Status.Blocked, { reason: "the repository's lane report did not run", exitCode: reportRun.status, evidenceTail: tailLines(`${reportRun.stdout}\n${reportRun.stderr}`) })] };
     }
     state.coveredByNoLane = uncoveredPaths(reportRun.stdout);
     const lanes = reportLanes(reportRun.stdout);
-    if (lanes === null) return { done: [required("lanes", "pnpm test:lanes", Status.Blocked, { reason: "the lane report names no lane and does not say nothing changed" })] };
-    if (lanes.length === 0) return { done: [required("lanes", "pnpm test:lanes", Status.NoOp, { reason: "the lane report says there is nothing to cover on this diff" })] };
+    if (lanes === null) return { done: [required("lanes", reportLabel, Status.Blocked, { reason: "the lane report names no lane and does not say nothing changed" })] };
+    if (lanes.length === 0) return { done: [required("lanes", reportLabel, Status.NoOp, { reason: "the lane report says there is nothing to cover on this diff" })] };
     const reportFile = path.join(gitDir, "vibe-verify-lane-report.txt");
     write(reportFile, reportRun.stdout);
     const checkRun = run(process.execPath, [PRE_PR_LANES, "check", "--worktree", worktree, "--report", reportFile], { timeoutMs: TIME_LIMITS.laneCheck * 1000 });
@@ -301,7 +314,7 @@ export function createVerifyRun({
 
   function selectedTests({ entries, worktree }) {
     if (!Array.isArray(entries)) {
-      return [{ name: "selected-tests", command: null, status: Status.NotRun, required: false, owner: "verify-worker", reason: "no --tests-file: the graph's code_tests_for is an MCP tool this script cannot call" }];
+      return [{ name: "selected-tests", command: null, status: Status.NotRun, required: false, owner: "verify-worker", reason: "no --tests-file: a graph's test lookup is an MCP tool this script cannot call" }];
     }
     const byCommand = new Map();
     for (const entry of entries) {
@@ -329,10 +342,17 @@ export function createVerifyRun({
     const actual = stdoutOf(run("git", ["-C", worktree, "rev-parse", "HEAD"]), "git rev-parse HEAD").trim();
     const dirty = stdoutOf(run("git", ["-C", worktree, "status", "--porcelain", "--untracked-files=no"]), "git status").trim();
     const evidence = { schema: SCHEMA, head: actual, base: base ?? null, ranAt: new Date(now()).toISOString(), checks: [], coveredByNoLane: null, leftToWorker: LEFT_TO_WORKER };
+    const recipe = recipeFor(worktree);
+    if (!recipe?.laneReport) {
+      evidence.checks = [required("verify", null, Status.Blocked, { reason: NO_RECIPE })];
+      onProgress({ stage: "checks", names: evidence.checks.map((check) => `${check.name}: ${check.status}`) });
+      return { done: finish(evidence) };
+    }
+    const checkNames = [...(recipe.formatter ? [recipe.formatter.name] : []), ...(recipe.checks ?? []).map((check) => check.name), "lanes"];
     const intended = (head ?? "").toLowerCase();
     if (!/^[0-9a-f]{7,40}$/.test(intended) || !actual.startsWith(intended) || dirty) {
       const reason = !actual.startsWith(intended) ? `HEAD-MISMATCH the worktree is at ${actual.slice(0, 12)}, not ${head}` : `DIRTY-WORKTREE modified tracked files: ${dirty.split("\n").map((line) => line.replace(/^\s*\S+\s+/, "")).join(", ")}`;
-      evidence.checks = ["biome", "source-gates", "typecheck", "lanes"].map((name) => required(name, null, Status.Blocked, { reason }));
+      evidence.checks = checkNames.map((name) => required(name, null, Status.Blocked, { reason }));
       return { done: finish(evidence) };
     }
     const cacheFile = path.join(gitDir, "vibe-verify-cache.json");
@@ -343,12 +363,12 @@ export function createVerifyRun({
     const state = { coveredByNoLane: null };
     const common = { worktree, head: actual, cache, useCache };
     evidence.checks.push(
-      biomeCheck({ files: changed, ...common }),
-      repoCheck({ name: "source-gates", scriptName: "check:source-gates", command: "pnpm", args: ["check:source-gates"], seconds: TIME_LIMITS.sourceGates, ...common }),
-      repoCheck({ name: "typecheck", scriptName: "typecheck:affected", command: "pnpm", args: ["typecheck:affected"], seconds: TIME_LIMITS.typecheck, ...common }),
+      ...(recipe.formatter ? [formatterCheck({ formatter: recipe.formatter, files: changed, ...common })] : []),
+      ...(recipe.checks ?? []).map((check) => repoCheck({ name: check.name, scriptName: check.script, command: check.command[0], args: check.command.slice(1),
+        seconds: check.seconds, ...common })),
     );
     onProgress({ stage: "checks", names: evidence.checks.map((check) => `${check.name}: ${check.status}`) });
-    return { evidence, common, state, cache, cacheFile, useCache };
+    return { evidence, common: { ...common, recipe }, state, cache, cacheFile, useCache };
   }
 
   function conclude({ evidence, state, cache, cacheFile, useCache }, { worktree, testsFile }) {
@@ -358,13 +378,13 @@ export function createVerifyRun({
     return finish(evidence);
   }
 
-  const notRunLanes = () => [required("lanes", "pnpm test:lanes", Status.NotRun, { reason: "--no-lanes was given", owner: "verify-worker" })];
+  const notRunLanes = (recipe) => [required("lanes", label(recipe.laneReport.command), Status.NotRun, { reason: "--no-lanes was given", owner: "verify-worker" })];
 
   /** Runs every scriptable check at `head` and returns the evidence; lanes run one after another. */
   function verify(options) {
     const begun = begin(options);
     if (begun.done) return begun.done;
-    begun.evidence.checks.push(...(options.runLanes ?? true ? laneChecks({ ...begun.common, state: begun.state }) : notRunLanes()));
+    begun.evidence.checks.push(...(options.runLanes ?? true ? laneChecks({ ...begun.common, state: begun.state }) : notRunLanes(begun.common.recipe)));
     return conclude(begun, options);
   }
 
@@ -377,7 +397,7 @@ export function createVerifyRun({
       begun.evidence.checks.push(...checks);
       if (scheduling) begun.evidence.scheduling = scheduling;
     } else {
-      begun.evidence.checks.push(...notRunLanes());
+      begun.evidence.checks.push(...notRunLanes(begun.common.recipe));
     }
     return conclude(begun, options);
   }
@@ -465,8 +485,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exit(2);
+      process.exit(failScript(error, 2));
     },
   );
 }

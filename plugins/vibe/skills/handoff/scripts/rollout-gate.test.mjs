@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { rolloutProblems, rolloutRequirements } from "./rollout-gate.mjs";
 import { criteriaChangeProblems, rulingNamesScope } from "./rulings-check.mjs";
 import { git, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "rollout-gate.mjs");
 // Shaped like PRD-729: a closed-by-default flag, the legacy list kept as a rollback path, and a staged rollout.

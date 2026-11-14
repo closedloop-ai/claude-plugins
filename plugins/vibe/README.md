@@ -1,13 +1,25 @@
 # vibe
 
-vibe lets a person change the ClosedLoop product (symphony-alpha) by saying
-what they want in plain words. They work from the in-app browser in Codex
-Desktop, or from Claude Code, and nobody in a session has to touch git, a
-terminal command or the backend. Each change is built for them and deployed to
-their own copy of the app on Vercel, which they sign in to as themselves. They
-look at the real product with their change in it, ask for more, and when they
-are done vibe either opens a pull request they take through review and merge,
-or passes the work to the next owner, usually design and then engineering.
+<!-- provider-rule -->
+Lines that start `> Provider` follow `skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
+<!-- generic: intro -->
+vibe lets a person change the product in any git repository by saying what
+they want in plain words. They work from the in-app browser in Codex Desktop,
+or from Claude Code, and nobody in a session has to touch git, a terminal
+command or the backend. Each change is built for them and run the way the
+repository documents running it, so they look at the product with their change
+in it, ask for more, and when they are done vibe either opens a pull request
+they take through review and merge, or passes the work to the next owner,
+usually design and then engineering.
+
+A provider plugin from vibe's marketplace can add one tracker's, organization's
+or repository's knowledge to a session (its tickets, plans, code graph,
+repository memory and repository recipes). vibe runs without one; with one
+bound it also follows that provider's text and data.
+<!-- end generic: intro -->
+> Provider `tickets+recipes` (block `intro` of `readme.md`)
 
 It is built for executives, designers, product managers and engineers:
 
@@ -17,14 +29,20 @@ It is built for executives, designers, product managers and engineers:
 - **Designers** work from a reference screenshot or iterate on the look of a
   screen. vibe maps what the reference shows onto the design system's tokens
   and components, compares each touched screen with it (in light and dark
-  where the screen has both), and can run a visual QA pass when the change is ready to polish.
+<!-- generic: audience -->
+  where the screen has both), and runs the repository's own visual QA when it has one.
+<!-- end generic: audience -->
+> Provider `recipes` (block `audience` of `readme.md`)
 - **Engineers** build fast with the same guardrails, Storybook rules and
   handoff review as everyone else, and take the pull request through review
   and merge themselves.
 
-Everything a session does is recorded on a live ClosedLoop ticket, so whoever
-picks the work up next sees what was asked for, what was built and what is
-still open.
+<!-- generic: record -->
+Everything a session does is recorded in its local plan and decision table,
+so whoever picks the work up next sees what was asked for, what was built and
+what is still open.
+<!-- end generic: record -->
+> Provider `tickets` (block `record` of `readme.md`)
 
 For an operator running several pull requests at once, `fleet-orchestrator`
 runs Claude Code and Codex writers side by side and moves work between them
@@ -37,39 +55,47 @@ runs one run at a time per machine under a lock.
 ## What a session looks like
 
 1. **Start.** The person types `$vibe` in Codex (`/vibe:vibe` in Claude Code)
-   and names a ClosedLoop ticket or describes the change. vibe checks its own
-   version, shows a short setup check (the installed closedloop-core and vibe
-   versions for each harness, and whether the ClosedLoop and closedloop-graph
-   connections answer), installs anything missing on the machine, creates the
-   live ticket assigned to them, and opens their copy of the app. A lost
-   connection or a GitHub sign-in is restored by the setup worker: the person
-   only signs in in the browser, clicks Allow once when Codex asks to run a
-   setup command, and starts a new chat only when the connection still fails
-   in the current one. It starts with an example
-   company that already has people and work in it, or empty when the request
-   is about what a new account looks like. Desktop opens as a second tab when
-   it is available.
+<!-- generic: session-steps -->
+   in the repository's checkout and describes the change. vibe checks its own
+   version, shows a short setup check (the installed vibe versions for each
+   harness, and each provider connection when a provider is enabled), installs
+   anything missing on the machine, bootstraps the worktree the way the
+   repository documents, and starts the app when the repository documents how.
+   A lost GitHub sign-in is restored by the setup worker: the person only
+   signs in in the browser and clicks Allow once when Codex asks to run a
+   setup command.
+<!-- end generic: session-steps -->
+> Provider `tickets+graph+recipes` (block `session-steps` of `readme.md`)
 2. **Ask for changes.** They click Annotate in the browser toolbar (or press
    Cmd + .), point at what they want changed and type a comment, or they just
    describe it in chat. A designer can attach a reference screenshot,
    including one of another product, or ask for changes to the look; anyone
    can name a product to work like.
-3. **See it live.** Each finished change deploys to their copy of the app
-   without being asked. vibe says when it is ready to look at, and names any
-   acceptance criterion that is not done yet instead of claiming it.
+<!-- generic: session-steps-2 -->
+3. **See it live.** Each finished change is running for them without being
+   asked. vibe says when it is ready to look at, and names any acceptance
+   criterion that is not done yet instead of claiming it.
+<!-- end generic: session-steps-2 -->
+> Provider `tickets+graph+recipes` (block `session-steps-2` of `readme.md`)
 4. **Answer only what only they can answer.** Product questions are researched
    first. A question reaches the person only when nothing else settles it, one
    at a time, and never twice.
 5. **Finish.** They say they are done. Whoever will take it through review
    and merge themselves, often an engineer, gets a pull request opened for
-   them, with full tests written first. Otherwise vibe passes the ticket to
-   the person they name. The ticket stays In Progress either way.
+<!-- generic: session-steps-3 -->
+   them, with full tests written first. Otherwise vibe passes the work to the
+   person they name.
+<!-- end generic: session-steps-3 -->
+> Provider `tickets+graph+recipes` (block `session-steps-3` of `readme.md`)
 
 A short example (the replies are paraphrased, apart from the endings line):
 
 ```text
 You:   $vibe  Add a "Due this week" filter to the Projects board.
-vibe:  Sets up, creates the ticket and opens your copy of the app.
+<!-- generic: example-setup -->
+vibe:  Sets up and opens your copy of the app.
+<!-- end generic: example-setup -->
+> Provider `tickets+recipes` (block `example-setup` of `readme.md`)
        "When you're done, I can either open a pull request for you, or pass
        it to design or engineering to finish."
 You:   (annotates the board header) Put it next to the search box.
@@ -80,7 +106,10 @@ vibe:  "Who should I pass it to? A name or email is fine."
 ```
 
 A request for a mockup with made-up data runs the repository's prototype
-workflow instead and returns a shareable Vercel preview link.
+<!-- generic: mockup -->
+workflow instead, when it has one.
+<!-- end generic: mockup -->
+> Provider `recipes` (block `mockup` of `readme.md`)
 
 ## Why the result can be trusted
 
@@ -91,7 +120,10 @@ Storybook and requirements advise it and never write code themselves. No agent
 commits; the orchestrator commits through the repository's normal hooks.
 
 **Built from the design system, frontend and backend.** The writer reuses the
-component catalog and the paved paths in `packages/app` before building
+<!-- generic: design-system -->
+component catalog and the repository's paved paths before building
+<!-- end generic: design-system -->
+> Provider `recipes` (block `design-system` of `readme.md`)
 anything new, uses design tokens instead of hardcoded colors or pixel values,
 and builds accessible controls. When a screen needs data or an action the API
 does not provide, the same writer builds that backend too.
@@ -99,15 +131,21 @@ does not provide, the same writer builds that backend too.
 **No invented product decisions or words.** User-visible words come from the
 person, or from strings the product already renders; agents never compose
 labels, empty states or error text. Product questions follow one research
-order: the code and data model, the ticket and its PRD, the ClosedLoop graph
-and live decisions, the product owner's direction, the approved prototype, and
-then live Asana observed in the operator's signed-in browser. Public help
-centers and documentation are never precedent. No agent adds a feature flag;
-the person approves each key.
+<!-- generic: no-invented -->
+order: the code and data model, the request and its sources, the repository's
+recorded decisions, and then how an established product behaves, observed
+live in the operator's signed-in browser. Public help centers and
+documentation are never precedent. No agent adds a feature flag; the person
+approves each key.
+<!-- end generic: no-invented -->
+> Provider `tickets+graph` (block `no-invented` of `readme.md`)
 
 **Acceptance criteria are checked before "ready".** Before a change is called
 ready, the writer checks every acceptance criterion it touches, from the
-ticket, its PRD and the person's own words, and records the result in the
+<!-- generic: criteria -->
+request, its sources and the person's own words, and records the result in the
+<!-- end generic: criteria -->
+> Provider `tickets` (block `criteria` of `readme.md`)
 session's decision table. When the person gave a reference image, the writer
 reads it itself, turns what it shows into criteria mapped to tokens and
 components, and compares a screenshot of each touched screen with it, in light
@@ -119,25 +157,33 @@ for engineering. The worker can write tests when its top-level turn explicitly
 requires them. Handoff inventory admits newly authored tests only in the
 pull-request phase, where full tests pass before the pull request opens.
 
-**Paths come from the target repository.** Each target declares its handoff
-paths in repo-root `vibe-handoff-paths.json`, including this plugin repository.
+**Paths come from the target repository.** A target can declare its handoff
+paths in repo-root `vibe-handoff-paths.json`, as this plugin repository does.
 Inventory reads the committed declaration from the target's captured base or
 verified fetched default branch. A nested declaration does not count, and a
-session diff cannot add, edit, or delete any file with that name.
+session diff cannot add, edit, or delete any file with that name. Without one,
+handoff takes its test lanes from the repository's CI workflow and the test
+command its `AGENTS.md` names, and protects no path classes.
 
-**A complete record.** The live ClosedLoop ticket links the document the
-session started from, the session's implementation plan (published as a
-linked PLN), the decision table, the environment and its production flag
-snapshot, Design Review evidence (previews, Storybook changes, screenshots,
-known gaps) and an Engineering checklist.
+<!-- generic: complete-record -->
+**A complete record.** The session's local plan and decision table, kept in
+the repository's private git directory, record what was asked for, what was
+decided and what was built; handoff's summary carries them to the next owner
+with the Storybook changes, screenshots and known gaps.
+<!-- end generic: complete-record -->
+> Provider `tickets+plans` (block `complete-record` of `readme.md`)
 
 **A real review at handoff.** The build loop stays fast; the heavy checks run
 once, at the end. Handoff runs a guardrails review and a separate adversarial
-review, the existing tests that cover each changed file, lint, source gates
-and the affected typecheck, browser E2E, visual QA, logical QA and
-product-contract QA. It also drives each touched screen in the running web app
-and Desktop. Confirmed findings go back to the same writer. A check that also
-fails on main is recorded for engineering instead of blamed on the session.
+<!-- generic: real-review -->
+review, the existing tests that cover each changed file, and the lint, type
+check and other checks the repository documents. A review gate the repository
+ships as its own skill runs when it is there and is recorded as unsupported,
+never as a pass, when it is not. Confirmed findings go back to the same
+writer. A check that also fails on main is recorded for engineering instead
+of blamed on the session.
+<!-- end generic: real-review -->
+> Provider `recipes` (block `real-review` of `readme.md`)
 
 **Humans merge.** vibe opens a pull request only when the person asks, and
 never enqueues or merges it. When reviewers ask for changes, the session
@@ -149,43 +195,37 @@ to the same branch and answers each review thread.
 Before the writer creates, retitles or moves a story or adds a shared
 component, the read-only `vibe-storybook-decomposer` places it: it finds where
 the same capability already exists for sibling entities and returns the owner
-and story placement, following symphony-alpha's `apps/storybook/TAXONOMY.md`
-and Storybook skill where they say how, and mirroring that precedent's
-structure, never its root or version, where they do not. Stories cover the
-components consumers render, not internal render pieces. The writer records
-the placement in its local plan; a conflict goes on the live ticket by
-audience, design conflicts under Design Review and everything else on the
-Engineering checklist, never to the person.
+<!-- generic: storybook-placement -->
+and story placement, following the repository's Storybook taxonomy document
+where it has one, and mirroring that precedent's structure where it does not.
+Stories cover the components consumers render, not internal render pieces.
+The writer records the placement in its local plan, and handoff lists a
+conflict for design or engineering, never for the person.
+<!-- end generic: storybook-placement -->
+> Provider `recipes` (block `storybook-placement` of `readme.md`)
 
-New stories go in the current roots (`Composites/`, `Surfaces/` and the other
-plain levels) with one lifecycle tag. A v1.0 story file (under a
-`<Level> v1.0/` root or tagged `deprecated`) is never edited beyond a
-compile-only repair, so new states of its component go in a new entry in the
-current root holding only them. New states of any other existing component go
-in its existing story file under the same title and tag, since a retitle
-breaks every link to its stories; handoff blocks any other edit of a v1.0
-story file except a compile-only repair, and a retitle unless it is a sibling
-replacement's entry. Story files under the `Start Here/` root are exempt from
-the v1.0 freeze and the title, tag and retitle checks (design ruling,
-2026-10-06). Handoff judges story files by the scheme of the session's base,
-read from that base's `apps/storybook/story-group-order.ts`, so a session
-still based before symphony-alpha #8867 keeps the `v1.0`/`v2.0` rules until it
-syncs main, and a sync is never blamed for the renames it imported.
+<!-- generic: story-freeze -->
+New states of an existing component go in its existing story file under the
+same title, since a retitle breaks every link to its stories.
+<!-- end generic: story-freeze -->
+> Provider `recipes` (block `story-freeze` of `readme.md`)
 
 ### Paths vibe leaves to engineering
 
-The writer may edit all of `apps/storybook/**`, including its `.storybook/`
-config, `TAXONOMY.md` and `apps/storybook/scripts/`. When a request needs a
-change in a path vibe never edits, such as the repo-root `scripts/**`,
+<!-- generic: engineering-paths -->
+When a request needs a change in a path vibe never edits, such as
+<!-- end generic: engineering-paths -->
+> Provider `recipes` (block `engineering-paths` of `readme.md`)
 `.github/**` or an `AGENTS.md`, the writer leaves it alone, builds no
 substitute elsewhere, logs it as `Engineering needed (forbidden path)` and
-builds the rest; handoff puts each one on the live ticket's Engineering
-checklist.
+<!-- generic: engineering-paths-2 -->
+builds the rest; handoff lists each one for engineering.
 
-Nothing agent-written goes into product docs. The writer edits nothing under
-`apps/web/content/docs/` and lists, under the ticket's Feature docs, the
-existing pages that describe a changed feature, for design or engineering to
-update.
+Nothing agent-written goes into product docs. The writer edits no docs page
+and lists the existing pages that describe a changed feature, for design or
+engineering to update.
+<!-- end generic: engineering-paths-2 -->
+> Provider `recipes` (block `engineering-paths-2` of `readme.md`)
 
 ## The skills
 
@@ -216,13 +256,7 @@ Desktop E2E lanes through supported headless or displayless paths, records
 their actual results on the PR, answers review threads, and leaves the PR
 open for the engineer to merge.
 
-### `vibe-seed-refresh`
-
-Keeps the seeded example data behind every session in step with main. It
-checks the seed against fresh main and the latest Vibe Seed Walk run. When it
-finds drift, workers create a ticket, fix the seed in a fresh worktree, run
-the full web and Desktop screen walk, open a pull request, follow it through
-the merge queue and mark the ticket Done.
+> Provider `recipes` (block `seed-refresh` of `readme.md`)
 
 ### `fleet-orchestrator`
 
@@ -261,15 +295,7 @@ recovery on each host with no orchestrator awake.
 handoff rules for the class selected by a session's triage manifest. They are
 internal parts of `$vibe`, not separate entry points.
 
-### ClosedLoop ticket skills
-
-`cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`,
-`cl-work-report`, `cl-sweep` and `cl-execute` cover policy-aware ticket
-analysis, related-ticket discovery, safe one-level splits, private project
-work reports, sweep coordination and end-to-end ticket execution. The sweep
-scripts use the managed Codex App Server through bundled helpers. They rely on
-the operator's normal ClosedLoop, GitHub, `workflow-memory` and
-`closedloop-graph` configuration.
+> Provider `tickets` (block `ticket-skills` of `readme.md`)
 
 ## Reference
 
@@ -279,7 +305,8 @@ Codex installs both `vibe@closedloop-ai` and `closedloop-core@closedloop-ai`.
 Claude Code installs `vibe@closedloop-ai`; its dependency installs core
 automatically. The [Mac installation guide](skills/vibe/INSTALL.md) sets up a
 vibe user's laptop; the `vibe` skill installs everything else on its first
-run.
+run. A provider plugin is optional and installed on its own; vibe never
+depends on one.
 
 ### Invocation names
 
@@ -298,15 +325,15 @@ applies to other shared skills such as `decision-table`.
 | Agent | Default model | Responsibility |
 |---|---|---|
 | `vibe-setup-worker` | sonnet | Machine preflight, worktree bootstrap, owned local processes, and confirmed session discard |
-| `vibe-requirements-worker` | sonnet | Read-only ticket, requirements, overlap and owning-route discovery; reference mode (the behaviors and visual and UX requirements of a product the person named or showed in a screenshot); precedent mode (live Asana observed in the operator's signed-in browser, never public help centers) |
-| `vibe-ticket-worker` | sonnet | Live ticket creation and source link, the session plan as a linked PLN, next-owner lookup, handoff grading, assignment, and cancellation |
+| `vibe-requirements-worker` | sonnet | Read-only requirements, overlap and owning-route discovery; reference mode (the behaviors and visual and UX requirements of a product the person named or showed in a screenshot); precedent mode (how an established product behaves, observed live in the operator's signed-in browser, never public help centers or documentation) |
+| `vibe-ticket-worker` | sonnet | With a tracker provider bound: live ticket creation and source link, the session plan as a linked plan document, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
 | `vibe-change-worker` | opus | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
 | `vibe-backend-worker` | sonnet | Read-only decision-table and backend guidance for that writer |
 | `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
 | `vibe-prototype-worker` | sonnet | Read-only canonical prototype guidance or operational immutable Vercel sharing of the writer's reviewed committed result |
 | `vibe-storybook-decomposer` | sonnet | Read-only Storybook placement owner (precedent search on sibling entities before any story or shared component is placed) and component extraction, story and control guidance for that writer |
-| `vibe-verify-worker` | sonnet | Read-only targeted existing checks (`code_tests_for` per changed file), locked containerized e2e for the specs the change needs, handoff coverage review, Storybook footprint and handoff running app checks with `pnpm control` |
+| `vibe-verify-worker` | sonnet | Read-only targeted existing checks (the tests related to each changed file), the e2e specs the change needs, handoff coverage review, Storybook footprint and handoff running app checks |
 | `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement (including Storybook precedent placement), copy provenance, accessibility, and tests |
 | `vibe-adversarial-reviewer` | opus | Separate read-only handoff review of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
 | `vibe-consolidated-reviewer` | opus | Read-only single read of the final diff over the precomputed guardrails findings, used only when `review-scope.mjs` chooses the consolidated path (off unless `VIBE_CONSOLIDATED_REVIEW=1`) |
@@ -326,9 +353,9 @@ removes it. Any model name is accepted.
 
 ### Evals
 
-`evals/` holds 121 one-turn rehearsals plus two deterministic stateful
+`evals/` holds 125 one-turn rehearsals plus two deterministic stateful
 upgrade-resume cases. Each one-turn case carries the session state in its
-prompt, so it needs no symphony-alpha checkout. The stateful cases run only in
+prompt, so it needs no target repository checkout. The stateful cases run only in
 the local nightly and drive real Claude and Codex root sessions across an
 installed plugin upgrade. Claude tests the root's own resume or migration
 decision. Codex tests its real install, cache and thread-resume boundaries plus
@@ -376,7 +403,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.86` contains 17 skills and 17 agents, and no hook manifest: its
+Version `1.1.88` contains 17 skills and 17 agents, and no hook manifest: its
 hooks, and every module they run, ship in the `vibe-core` plugin, which vibe
 declares as a dependency. vibe loads those modules from vibe-core through
 `shared/vibe-core.mjs`, and the commands among them keep thin wrappers at

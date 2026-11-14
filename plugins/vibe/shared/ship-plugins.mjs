@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Stages the vibe and vibe-core files some vibe scripts need on another host
-// (ISS-13869). fleet.sh and snapshot.sh ship scripts over ssh; since vibe's
+// Stages the vibe and vibe-core files some vibe scripts need on another host.
+// fleet.sh and snapshot.sh ship scripts over ssh; since vibe's
 // scripts load vibe-core's modules, the archive holds both plugins laid out as
 // a checkout (plugins/vibe, plugins/vibe-core), which plugin-roots.mjs reads.
 //

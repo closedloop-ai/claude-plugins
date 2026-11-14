@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { evidenceProblems, prEvidenceValidationProblems } from "./pr-facts.mjs";
 import { targetedTestsRuling } from "./targeted-tests-ruling.mjs";
 import { COMMIT, FILES, LANE, RULING_ID, RULINGS, SELECTED_ONLY, SOURCE, TARGET, TICKET, ruledEvidence } from "./targeted-tests-ruling-test-fixture.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// The fixture's paths, lanes and lane report are those of the repository the ClosedLoop provider serves.
+// In-process checks resolve the session's binding through this conversation, bound like the repository they model.
+bindProviderInProcess(after);
 
 const RECORDED = { rulingsText: RULINGS, ticketText: TICKET };
 

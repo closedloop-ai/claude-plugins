@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +27,7 @@ VIBE_SKILL = VIBE / "SKILL.md"
 QUALITY = REFERENCES / "quality-loop.md"
 GUARDRAILS = REFERENCES / "guardrails.md"
 ENVIRONMENT = REFERENCES / "environment.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 RECORDER = VIBE / "scripts" / "retired-tests.mjs"
@@ -59,7 +59,8 @@ def test_only_tests_of_retired_code_may_be_deleted() -> None:
 
 def test_the_recorder_and_inventory_gate_deletions_outside_a_pull_request() -> None:
     recorder = RECORDER.read_text()
-    assert 'const RETIRING_DOCUMENT = /^(?:ISS|PRD|FEA)-\\d+$/;' in recorder
+    # The retiring document is the bound tracker's issue or requirements document key.
+    assert "new RegExp(`^(?:${issueKey()}|${requirementsKey()})$`)" in recorder
     assert '"vibe-retired-tests.json"' in recorder
     inventory = INVENTORY.read_text()
     assert "readRetiredTests(worktree)" in inventory

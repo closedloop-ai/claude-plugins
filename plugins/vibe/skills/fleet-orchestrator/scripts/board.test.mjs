@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { recordUsageReading } from '../../codex-fleet-monitor/scripts/usage-state.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -550,4 +554,36 @@ test('status flags a unit whose writer has not recorded every other ticket, and 
     /^UNIT-MEMBERS-UNCHECKED ISS-8 -: the unit has no writer;/m,
   ]) assert.match(status.stdout, line);
   assert.match(status.stdout, /, 5 unit member problems/);
+});
+
+// After a compaction the hooks read the fleet home, so a program kept in a flat dir outside it was acted on
+// as a stale one (operator ruling, 2026-11-11): the board refuses to write there and still reads.
+test('the board refuses writes to a flat dir outside a fleet home and still reports status there', (t) => {
+  const flat = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-flat-write-'));
+  t.after(() => rmSync(flat, { recursive: true, force: true }));
+  writeFileSync(path.join(flat, 'config.env'), 'REQUIRED_DUTIES=""\n');
+  const refused = run([flat, 'duty', 'main-health', '--owner', 'main-ci-watch']);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /not a program in a fleet home.*fleet-home\.mjs migrate/s);
+  assert.equal(existsSync(path.join(flat, 'board.json')), false);
+  assert.match(run([flat, 'status']).stdout, /^board: 0 writers/m);
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'duty', 'main-health', '--owner', 'main-ci-watch']).status, 0, 'a program in a home is written');
+});
+
+test('with no tracker bound a watched program needs only its green-watch owner, never a status sweep', (t) => {
+  const dir = tempDir(t);
+  const generic = { CLAUDE_CODE_SESSION_ID: '', CODEX_THREAD_ID: '' };
+  writeFileSync(path.join(dir, 'prs.txt'), 'acme/app 7\n');
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120 }));
+  const now = ['--now', '2026-10-22T06:00:00Z'];
+  assert.match(run([dir, 'status', ...now], generic).stdout, /^MISSING-DUTY green-watch/m);
+  const evidence = path.join(dir, 'placement.json');
+  writeFileSync(evidence, JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ['web screenshots'] }));
+  assert.equal(run([dir, 'placement', '#1', '--evidence', evidence], generic).status, 0, 'a local work id is placed like a ticket');
+  assert.equal(run([dir, 'writer', 'keeper', '--tickets', '#1'], generic).status, 0);
+  assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'keeper'], generic).status, 0);
+  const status = run([dir, 'status', ...now], generic);
+  assert.doesNotMatch(status.stdout, /status-sweep/);
+  assert.equal(status.status, 0, status.stdout);
 });

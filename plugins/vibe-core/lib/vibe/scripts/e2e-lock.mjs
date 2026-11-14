@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// One containerized e2e stack per machine. symphony-alpha's e2e stack
-// (`e2e/compose.yml`, run directly or through `dagger call e-2-e`) uses one
+// One containerized e2e stack per machine. A repository's containerized e2e stack (one
+// repository's compose file, run directly or through Dagger) uses one
 // fixed compose project name, fixed host ports and shared Dagger cache
 // volumes, so two vibe sessions that start it at the same time break each
 // other's run. Every vibe e2e command runs through this lock: it waits for the
@@ -66,6 +66,7 @@ import { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetir
 import { captureOwnedDockerResources, plannedLocalTags, reconcileGeneratedE2E, recordE2EChild,
   removeOwnedDockerResources, reserveGeneratedE2E } from './owned-docker.mjs';
 import { e2eWaitersDir, readE2eWaiters, waitForReloadFence, writeAtomic } from './owned-state.mjs';
+import { failScript } from "./provider.mjs";
 
 export { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
 export { installOwnedBuildShim, ownedBuildEnvironment, prepareRunOwnedBuild, recordBuiltTags } from './owned-builder.mjs';
@@ -547,8 +548,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     },
     (error) => {
       if (isSandboxRefusal(error)) process.stdout.write(`${JSON.stringify(escalation(error, ESCALATION_JUSTIFICATION))}\n`);
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exit(2);
+      process.exit(failScript(error, 2));
     }
   );
 }

@@ -3,7 +3,8 @@
 import json
 from pathlib import Path
 
-from vibe_contract_text import agent, flat
+import skill_split
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -71,7 +72,7 @@ def test_criteria_audit_and_rulings_check_gate_the_handoff() -> None:
         assert f"scripts/{script}" in handoff, script
     assert "audit the uncommitted candidate" in handoff
     assert "after independent review" in handoff
-    assert '- Ruling <date> (<who>): "' in (VIBE / "references" / "ticket-template.md").read_text()
+    assert '- Ruling <date> (<who>): "' in (PROVIDER_REFERENCES / "ticket-template.md").read_text()
 
 
 def test_findings_reach_a_writer_with_their_evidence() -> None:
@@ -165,3 +166,29 @@ def test_product_questions_use_the_shared_live_precedent_order() -> None:
     assert "return `NEEDS_PERSON` to the orchestrator" in requirements
     assert "do not copy or reorder it here" in fleet
     assert "--product --code-evidence" in _text(VIBE / "SKILL.md")
+
+
+
+def _generic(path: Path) -> str:
+    return flat(skill_split.assembled(path, provider=False))
+
+
+def test_generic_precedent_text_is_the_live_app_never_public_docs() -> None:
+    readme = _generic(PLUGIN / "README.md")
+    requirements = _generic(PLUGIN / "agents" / "vibe-requirements-worker.md")
+    quality = _generic(VIBE / "references" / "quality-loop.md")
+    description = next(line for line in skill_split.raw(PLUGIN / "agents" / "vibe-requirements-worker.md").splitlines()
+                       if line.startswith("description:"))
+    assert "never public help centers or documentation)" in readme
+    assert "Public help centers and documentation are never precedent." in readme
+    assert "through whichever actor has the operator's signed-in browser, never public help centers or documentation" in description
+    assert "never a public help center, documentation page or web-search result" in requirements
+    assert "never a public help center or documentation page" in quality
+    for name, text in (
+        ("README.md", readme),
+        ("vibe-requirements-worker.md", requirements),
+        ("vibe-change-worker.md", _generic(PLUGIN / "agents" / "vibe-change-worker.md")),
+        ("quality-loop.md", quality),
+    ):
+        for weakened in ("own documentation", "documentation URL", "help-center URL"):
+            assert weakened not in text, (name, weakened)

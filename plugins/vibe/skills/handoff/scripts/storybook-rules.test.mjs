@@ -5,7 +5,8 @@ import { checkStorybookRules, readStorybookRules, STORYBOOK_RULES_FILE, storyboo
 
 // The example declaration is the one symphony-alpha uses, so the fixtures below
 // are the shapes its merged pull requests produced (#8953, #8959, #8960, #8962, #8963).
-const EXAMPLE = readFileSync(new URL("../references/storybook-rules.example.json", import.meta.url), "utf8");
+// The declaration of the repository the ClosedLoop provider serves, kept as a fixture.
+const EXAMPLE = readFileSync(new URL("../../vibe/scripts/fixtures/symphony-storybook-rules.json", import.meta.url), "utf8");
 const VERSION_FILE = "apps/storybook/package.json";
 const HISTORY = "apps/storybook/stories/start-here-version-history.stories.tsx";
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, paragraph, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +26,7 @@ AGENTS = PLUGIN_ROOT / "agents"
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 VIBE_SKILL = VIBE / "SKILL.md"
 GUARDRAILS = VIBE / "references" / "guardrails.md"
-TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 README = PLUGIN_ROOT / "README.md"
 LOG_SHAPE = "`Engineering needed (forbidden path): <path or area>; why: <need>`"
@@ -90,7 +90,7 @@ def test_the_ticket_worker_and_handoff_carry_each_need_to_the_checklist() -> Non
     ticket = flat(agent("vibe-ticket-worker"))
     assert (
         f"Place each {TAG} entry in the change log once, as an unchecked item at the end of the Engineering "
-        "checklist in its logged shape (`../skills/vibe/references/ticket-template.md`, \"Engineering needed\")."
+        "checklist in its logged shape (`provider:ticket-template.md`, \"Engineering needed\")."
     ) in ticket
     guardrail = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
     assert (

@@ -30,6 +30,7 @@ import { CLASSES, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const DISPATCH_ROUTE_SCHEMA = "vibe.fleet-dispatch-route/1";
 export const SWITCH_ENV = "FLEET_CLASS_ROUTING";
@@ -118,7 +119,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

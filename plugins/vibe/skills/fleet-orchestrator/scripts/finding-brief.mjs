@@ -23,8 +23,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { workItem } from "../../vibe/scripts/tracker-key.mjs";
 
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 /** What is missing from each finding, or an empty list when every finding can be acted on. */
 export function findingProblems(findings, exists = existsSync) {
@@ -57,7 +59,9 @@ export function dispositionProblems(findings) {
     const name = finding?.id ?? `finding ${index + 1}`;
     if (typeof finding?.touchedSurface !== "boolean") return [`${name}: touchedSurface must say true or false`];
     if (!finding.touchedSurface) return [];
-    if (/^(?:fixed:\s*[0-9a-f]{7,40}|ticket:\s*[A-Z]+-\d+)$/i.test(finding?.disposition ?? "")) return [];
+    const disposition = String(finding?.disposition ?? "").trim();
+    const ticket = /^ticket:\s*(\S+)$/i.exec(disposition)?.[1];
+    if (/^fixed:\s*[0-9a-f]{7,40}$/i.test(disposition) || (ticket && workItem().test(ticket))) return [];
     return [`${name}: a finding on a touched surface needs disposition "fixed: <sha>" or "ticket: <id>"`];
   });
 }
@@ -121,7 +125,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

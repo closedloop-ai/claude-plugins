@@ -21,7 +21,10 @@ import { isVisualBaseline, visualBaselineLedgerProblems } from "../../handoff/sc
 import { isDesktopE2eLane, isWebE2eLane, readRecords } from "./pre-pr-lanes.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
+const { sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
+
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const CLAIM = /\b(?:(?:pixel|byte)[- ]identical|identical to|no (?:visual |pixel )?(?:diffs?|differences?)\b|match(?:es|ing)? (?:the )?(?:CI|baseline|snapshot|reference|golden|Linux|main)\b)/i;
 const MEASURED = /\b\d[\d,.]*\s*(?:%|px\b|pixels?\b|bytes?\b|lines?\b|differ\w*|diffs?\b|of\s+\d)/i;
@@ -31,7 +34,6 @@ const CHECK_WORD = /\b(typecheck|type-check|lint|test|build)\b/gi;
 const PASS_WORD = /\b(?:pass(?:es|ed)?|ran|green|clean|succeed(?:s|ed)?)\b/i;
 const BACKTICKED = /`([^`\n]+)`/g;
 const FOLLOW_UP_PROMISE = /\b(?:(?:follow[- ]up|separate|new)\s+(?:ticket|issue)\b|(?:ticket|issue)\b[^.!?\n]*?\bfollows\b|(?:ticket|issue)\s+(?:will|is\s+to)\s+be\s+(?:filed|opened|created)\b|will\s+(?:file|open|create)\s+(?:a|an|the)\s+(?:\w+\s+){0,3}(?:ticket|issue)\b)/i;
-const TICKET_SLUG = /\b(?:ISS|PRD|PLN|FEA)-\d+\b/;
 const E2E_TERM = /\be2e\b|\be-2-e\b|end[- ]to[- ]end/i;
 const NEGATED = /\b(?:not|never|no|without|skipp(?:ed|ing)|unrun)\b|n't\b|not[- ]run/i;
 const NOT_RUN_STATEMENT = /\bnot[- ]run\b|\b(?:has|have|was|were|did)\s+not\s+(?:been\s+)?run\b|\b(?:hasn't|haven't|wasn't|weren't|didn't)\s+(?:been\s+)?run\b/i;
@@ -78,8 +80,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }
 
@@ -143,7 +144,7 @@ export function claimedCheckProblems(body, worktree) {
 
 /** A sentence promising a follow-up ticket that names no ticket slug. */
 export function followUpTicketProblems(body) {
-  return body.split(/(?<=[.!?])\s+|\n/).filter((sentence) => FOLLOW_UP_PROMISE.test(sentence) && !TICKET_SLUG.test(sentence))
+  return body.split(/(?<=[.!?])\s+|\n/).filter((sentence) => FOLLOW_UP_PROMISE.test(sentence) && !ticketReference(sessionBinding()).test(sentence))
     .map((sentence) => `a promised follow-up ticket names no slug; file it and cite its ISS slug: ${sentence.trim().slice(0, 160)}`);
 }
 

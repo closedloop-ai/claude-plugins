@@ -2,7 +2,7 @@
 // An e2e run that reuses built images tests the commit those images were built
 // from, not the worktree's HEAD. On 2026-10-24 a queued rerun reused images
 // built from a spec-only baseline worktree, which would have reported baseline
-// code as the fix run (ISS-13067, #9241), and a `--no-build` baseline half
+// code as the fix run, and a `--no-build` baseline half
 // later reused the fix's images. So a build records, per compose project, the
 // commit and worktree its images came from, and a run that reuses images
 // (`--no-build`) starts only when that record names the same commit and

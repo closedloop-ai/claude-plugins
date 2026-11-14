@@ -7,16 +7,17 @@ import { existsSync, readFileSync, statfsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { NO_DISPLAYLESS_ELECTRON, REQUIRED_CONTAINER_IDENTITY } from "./e2e-tier.mjs";
+import { NO_DISPLAYLESS_ELECTRON, requiredContainerIdentity } from "./e2e-tier.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const GIB = 1024 ** 3;
 const MIN_MEMORY_GIB = 20;
 const MIN_DISK_GIB = 64;
-const ENV_FILES = ["apps/api/.env.local", "apps/app/.env.local"];
 const HARNESS_TOOLS = ["dbus-run-session", "xvfb-run", "gnome-keyring-daemon"];
 
 function command(name, args) {
@@ -26,7 +27,7 @@ function command(name, args) {
 
 function present(worktree, key, env) {
   if (typeof env[key] === "string" && env[key].trim()) return true;
-  return ENV_FILES.some((file) => {
+  return (repositoryLayout().e2eEnvFiles ?? []).some((file) => {
     const absolute = path.join(worktree, file);
     if (!existsSync(absolute)) return false;
     return readFileSync(absolute, "utf8").split("\n").some((line) => {
@@ -53,8 +54,8 @@ export function probeE2eCapability({ worktree, commit, run = command, diskGiB, p
       const stat = statfsSync(worktree);
       return Number(((Number(stat.bavail) * Number(stat.bsize)) / GIB).toFixed(1));
     })();
-    const secretsSet = Object.fromEntries(REQUIRED_CONTAINER_IDENTITY.map((key) => [key, present(worktree, key, env)]));
-    const missing = REQUIRED_CONTAINER_IDENTITY.filter((key) => !secretsSet[key]);
+    const secretsSet = Object.fromEntries(requiredContainerIdentity().map((key) => [key, present(worktree, key, env)]));
+    const missing = requiredContainerIdentity().filter((key) => !secretsSet[key]);
     const ready = dockerReachable && memoryGiB >= MIN_MEMORY_GIB && freeDiskGiB >= MIN_DISK_GIB;
     const harnessTools = Object.fromEntries(HARNESS_TOOLS.map((tool) => [tool, run("sh", ["-c", `command -v ${tool}`]).status === 0]));
     const displayless = platform === "linux" && Object.values(harnessTools).every(Boolean);
@@ -88,6 +89,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.stdout.write(`${JSON.stringify({ ok: true, probe })}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
-    process.exitCode = 1;
+    process.exitCode = scriptExitCode(error, 1);
   }
 }

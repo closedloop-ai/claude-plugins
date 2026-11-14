@@ -82,22 +82,27 @@ test("the CLI prefers a checkout's env file, then the production page, and fails
   const fresh = checkoutWithEnv(fixture.root, "fresh worktree");
   const main = checkoutWithEnv(fixture.root, "main checkout", `NEXT_PUBLIC_POSTHOG_KEY=${KEY}\n`);
 
-  const fromEnv = await run(["--checkout", fresh, "--checkout", main, "--page-url", page]);
+  // Where to look is the bound provider's recipe data; the test names it directly.
+  const ENV_FILE = ["--env-path", path.join("apps", "app", ".env.local")];
+  const none = await run(["--checkout", fresh]);
+  assert.equal(none.status, 1);
+  assert.match(none.json.error, /no flag snapshot source/, "with no provider and no argument there is nowhere to look");
+  const fromEnv = await run(["--checkout", fresh, "--checkout", main, ...ENV_FILE, "--page-url", page]);
   assert.equal(fromEnv.status, 0);
   assert.equal(fromEnv.json.key, KEY);
   assert.equal(fromEnv.json.source, path.join(main, "apps", "app", ".env.local"));
 
-  const fromPage = await run(["--checkout", fresh, "--page-url", page]);
+  const fromPage = await run(["--checkout", fresh, ...ENV_FILE, "--page-url", page]);
   assert.equal(fromPage.status, 0);
   assert.deepEqual(fromPage.json, { ok: true, key: KEY, host: "https://us.i.posthog.com", source: page });
 
   const emptyPage = await servePage(t, "<html>nothing</html>");
-  const missing = await run(["--checkout", fresh, "--page-url", emptyPage]);
+  const missing = await run(["--checkout", fresh, ...ENV_FILE, "--page-url", emptyPage]);
   assert.equal(missing.status, 1);
   assert.match(missing.json.error, /has no phc_ key with a PostHog API host/);
 
   const down = await servePage(t, "error", 503);
-  const unreachable = await run(["--checkout", fresh, "--page-url", down]);
+  const unreachable = await run(["--checkout", fresh, ...ENV_FILE, "--page-url", down]);
   assert.equal(unreachable.status, 1);
   assert.match(unreachable.json.error, /could not be read: HTTP 503/);
 });

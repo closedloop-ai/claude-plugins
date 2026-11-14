@@ -11,12 +11,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from vibe_contract_text import flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
-TICKET_TEMPLATE = PLUGIN_ROOT / "skills" / "vibe" / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 TICKET_WORKER = PLUGIN_ROOT / "agents" / "vibe-ticket-worker.md"
 CHANGE_WORKER = PLUGIN_ROOT / "agents" / "vibe-change-worker.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"

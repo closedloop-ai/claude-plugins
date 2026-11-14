@@ -11,7 +11,7 @@
 // programs/<slug>/. Given the home, the work dir is the active program's dir;
 // given programs/<slug> itself, that dir. Any other directory is a flat work
 // dir from before the home layout and is used as is. Given the home, a chat
-// bound to one of its programs (chat-binding.mjs, ISS-14028) gets its own
+// bound to one of its programs (chat-binding.mjs) gets its own
 // program; anything else gets `current`, unless another program of the home
 // is bound to a chat, when `current` may be another chat's: then it is
 // refused (AMBIGUOUS-HOME) and the caller passes the program dir. A chat whose

@@ -1,7 +1,10 @@
 // Test-file classification shared by the handoff inventory and the retired-test
 // record. Root web and Desktop specs live outside the session's app paths.
 
-export const ROOT_TEST_PREFIXES = ["e2e/", "apps/desktop/test/"];
+// The root e2e folder, plus the repository's other root test folders (the provider's layout recipe).
+import { repositoryLayout } from "./area-paths.mjs";
+
+export const ROOT_TEST_PREFIXES = ["e2e/"];
 export const TEST_SPEC_PATTERN = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const TEST_SUPPORT_PATTERN = /(?:^|\/)(?:__tests__|__fixtures__|__mocks__|__snapshots__|fixtures)\//;
 const SNAPSHOT_PATTERN = /\.snap$/;
@@ -20,7 +23,7 @@ export function isSnapshot(filePath) {
 
 /** A test under a root web or Desktop test directory, or under any e2e suite root. */
 export function isRootTest(filePath) {
-  return ROOT_TEST_PREFIXES.some((prefix) => filePath.startsWith(prefix)) || isE2ePath(filePath);
+  return [...ROOT_TEST_PREFIXES, ...(repositoryLayout().rootTests ?? [])].some((prefix) => filePath.startsWith(prefix)) || isE2ePath(filePath);
 }
 
 /** A file under an e2e suite root, at any depth. */

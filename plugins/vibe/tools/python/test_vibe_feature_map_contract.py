@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-from vibe_contract_text import flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, flat, section
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
 GUARDRAILS = PLUGIN / "skills" / "vibe" / "references" / "guardrails.md"
-TICKET_TEMPLATE = PLUGIN / "skills" / "vibe" / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 CHANGE_WORKER = PLUGIN / "agents" / "vibe-change-worker.md"
 TICKET_WORKER = PLUGIN / "agents" / "vibe-ticket-worker.md"
 ENVIRONMENT_WORKER = PLUGIN / "agents" / "vibe-environment-worker.md"

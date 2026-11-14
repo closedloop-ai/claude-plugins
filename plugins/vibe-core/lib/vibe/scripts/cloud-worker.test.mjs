@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
-import { generateBrief, parseValidationResult, remoteTrigger, startClaude, startCodex, validateCommit, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
+import test, { after } from 'node:test';
+import { cloudRules, generateBrief, parseValidationResult, validateRequest, remoteTrigger, startClaude, startCodex, validateCommit, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
 import { git, makeHome } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
+import { bindProviderInProcess } from "../../../../vibe/skills/vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const COMMIT = 'a85ef364cf20ee97af92ecfc2e93aa8b1c79ef29';
 const OTHER_COMMIT = '182af94e9c6c3362f2eb8a1cc33f9ca55da6d0f7';
@@ -142,4 +146,41 @@ test('a real condensed run log reaches the parser: the header line, then the log
   const result = await validateCommit(validationRequest(worktree), { remote, sleep: async () => {} });
   assert.equal(result.commit, COMMIT);
   assert.deepEqual(result.lanes.map(({ name, exitCode }) => [name, exitCode]), [['node', 0], ['pytest', 1]]);
+});
+
+test('dispatch rules come from the session provider: its tracker key, connectors, graph tools and graph label, else none', () => {
+  const bound = cloudRules({ state: 'bound', name: 'vibe-closedloop-provider', capabilities: ['tickets', 'plans', 'graph', 'memory', 'recipes'],
+    root: path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../../vibe-closedloop-provider') });
+  assert.ok(bound.ticket.test('ISS-13804'));
+  assert.ok(!bound.ticket.test('PLN-7'), 'only an issue is dispatched');
+  assert.deepEqual([...bound.connectors], ['closedloop']);
+  assert.equal(bound.graphTools.ownership, 'code_symbols');
+  assert.equal(bound.graphLabel, 'closedloop-graph');
+  const generic = cloudRules(null);
+  assert.equal(generic.ticket, null);
+  assert.equal(generic.connectors.size, 0);
+  assert.equal(generic.graphTools, null);
+  assert.equal(generic.graphLabel, null);
+});
+
+test('without a provider no ticket dispatches, and a request may omit graph research and attach no connector', () => {
+  const request = {
+    worktree: '/tmp/vibe-example', ticket: 'ISS-13804', provider: 'claude', model: 'claude-sonnet-5-5', reservedVersion: '1.0.3', branch: 'cloud/widget-fix',
+    placement: { codeOnly: true, needsRunningApp: false, localEvidence: [] },
+    criteria: [{ id: 'AC-1', source: 'the request', text: 'Fix the widget.' }],
+    validationCommands: ['node --test x.test.mjs'], connectorAllowlist: [], repository: 'acme/widgets',
+  };
+  const generic = cloudRules(null);
+  assert.throws(() => validateRequest(request, generic), /a live tracker ticket is required/);
+  const tracked = { ...generic, ticket: /^#\d+$/ };
+  const accepted = validateRequest({ ...request, ticket: '#42' }, tracked);
+  assert.equal(accepted.ticket, '#42', 'graph research is optional with no graph bound');
+  assert.throws(() => validateRequest({ ...request, ticket: '#42', graph: { ownership: '   ' } }, tracked), /graph ownership research is required/,
+    'research that is given still has to say something');
+  assert.throws(() => validateRequest({ ...request, ticket: '#42', connectorAllowlist: ['closedloop'] }, tracked), /may contain no connector once/);
+  const brief = generateBrief({ ...request, ticket: '#42' }, { summary: 'x', branch: 'vibe/x', operator: { name: 'Test Operator', email: 'operator@example.test' } }, tracked);
+  assert.match(brief, /no local Vibe record, running app or local logs\. Work only from the evidence below\./);
+  assert.doesNotMatch(brief, /graph/i, 'no graph section or graph server is named without one');
+  assert.throws(() => validateRequest({ ...request, ticket: '#42' }, { ...tracked, graphTools: { ownership: 'x', collisions: 'y', blastRadius: 'z' } }),
+    /graph ownership research is required/, 'a bound graph keeps the research required');
 });

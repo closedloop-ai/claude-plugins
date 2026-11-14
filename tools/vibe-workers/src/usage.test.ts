@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { graphOperations, liveReadOperations, recordOperations } from "./contracts.js";
+import { capabilityOperations } from "./contracts.js";
+
+const { graph: graphOperations, read: liveReadOperations, record: recordOperations } = capabilityOperations();
 import { bundleDirectory } from "./test-fixtures.js";
 
 const run = (bundle: string, args: string[]) => spawnSync(process.execPath, [join(bundleDirectory, bundle), ...args],

@@ -5,6 +5,8 @@ import { agentModels } from "./agent-models.ts";
 
 /** vibe 1.1.71 and later ship their hooks, and the modules those run, in this plugin (ISS-13869). */
 const HOOKS_PLUGIN = "vibe-core";
+/** The provider for the repository the benchmark task runs in; a vibe session there binds it. */
+const PROVIDER_PLUGIN = "vibe-closedloop-provider";
 
 /** Run-owned bytes of the pinned main plugin and its declared core dependency. */
 export interface PluginSnapshot {
@@ -13,6 +15,8 @@ export interface PluginSnapshot {
   coreDir: string;
   /** vibe-core, when the pinned tree has it. */
   hooksDir?: string;
+  /** The provider, when the pinned tree has it. */
+  providerDir?: string;
   agentModels: Record<string, string>;
 }
 
@@ -150,7 +154,8 @@ function archivePlugins(repo: string, expectedSha: string, runRoot: string): Plu
   if (existsSync(snapshotDir)) throw new Error("benchmark-plugin-snapshot-exists");
   mkdirSync(snapshotDir, { recursive: true });
   const archive = execFileSync("git", ["-C", repo, "archive", "--format=tar", expectedSha,
-    "plugins/vibe", "plugins/closedloop-core", ...(hasHooksPlugin(repo, expectedSha) ? [`plugins/${HOOKS_PLUGIN}`] : [])],
+    "plugins/vibe", "plugins/closedloop-core", ...(hasHooksPlugin(repo, expectedSha) ? [`plugins/${HOOKS_PLUGIN}`] : []),
+    ...(hasPlugin(repo, expectedSha, PROVIDER_PLUGIN) ? [`plugins/${PROVIDER_PLUGIN}`] : [])],
   { maxBuffer: 80 * 1024 * 1024 });
   const unpack = spawnSync("tar", ["-xf", "-"], { cwd: snapshotDir, input: archive, encoding: "utf8" });
   if (unpack.status !== 0) throw new Error(`benchmark-plugin-archive-failed:${unpack.stderr ?? "unknown"}`);
@@ -173,7 +178,18 @@ function archivePlugins(repo: string, expectedSha: string, runRoot: string): Plu
     agentModels: models,
   }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   sealSnapshotRepository(snapshotDir);
-  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), agentModels: models };
+  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), ...snapshotProviderDir(snapshotDir), agentModels: models };
+}
+
+/** The provider in a snapshot, when the snapshot has it. */
+function snapshotProviderDir(snapshotDir: string): { providerDir?: string } {
+  const providerDir = join(snapshotDir, "plugins", PROVIDER_PLUGIN);
+  return existsSync(providerDir) ? { providerDir: realpathSync(providerDir) } : {};
+}
+
+/** Whether the tree at `sha` has plugin `name`. */
+function hasPlugin(repo: string, sha: string, name: string): boolean {
+  return spawnSync("git", ["-C", repo, "cat-file", "-e", `${sha}:plugins/${name}`]).status === 0;
 }
 
 /** vibe-core in a snapshot, when the snapshot has it. */
@@ -215,7 +231,7 @@ export function snapshotPluginsAtWorktree(repo: string, expectedSha: string,
   if (existsSync(snapshotDir)) throw new Error("benchmark-plugin-snapshot-exists");
   mkdirSync(join(snapshotDir, "plugins"), { recursive: true });
   const copier = join(repo, "plugins/vibe/skills/vibe/scripts/tested-head.mjs");
-  for (const name of ["vibe", "closedloop-core", ...(existsSync(join(repo, "plugins", HOOKS_PLUGIN)) ? [HOOKS_PLUGIN] : [])]) {
+  for (const name of ["vibe", "closedloop-core", ...[HOOKS_PLUGIN, PROVIDER_PLUGIN].filter((plugin) => existsSync(join(repo, "plugins", plugin)))]) {
     execFileSync(process.execPath, [copier, "copy", join(repo, "plugins", name),
       join(snapshotDir, "plugins", name)], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
   }
@@ -233,7 +249,7 @@ export function snapshotPluginsAtWorktree(repo: string, expectedSha: string,
   writeFileSync(join(snapshotDir, "snapshot.json"), `${JSON.stringify({ sha: expectedSha,
     mode: "worktree", agentModels: models }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   sealSnapshotRepository(snapshotDir);
-  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), agentModels: models };
+  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), ...snapshotProviderDir(snapshotDir), agentModels: models };
 }
 
 /** Archive the latest accepted nightly, which may precede documentation-only main commits. */

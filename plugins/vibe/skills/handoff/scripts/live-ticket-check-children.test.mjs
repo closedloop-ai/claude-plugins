@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkChildEvidence, parseAddedLines, readFacts } from "./live-ticket-check.mjs";
-import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess, git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "live-ticket-check.mjs");
 const PULL = "https://github.com/closedloop-ai/symphony-alpha/pull/8947";

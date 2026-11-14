@@ -1,5 +1,5 @@
 // vibe's compaction control for a long-running fleet-orchestrator chat in Claude
-// Code (ISS-13859; the operator ruled on 2026-11-09 to "rescope to compaction").
+// Code (the operator ruled on 2026-11-09 to "rescope to compaction").
 // Every request re-reads the whole conversation from the prompt cache, so the
 // cost of a request follows where compaction happens and what its summary keeps.
 //
@@ -7,7 +7,7 @@
 // CLAUDE_CODE_AUTO_COMPACT_WINDOW (Claude Code reads it at launch, 100k to 1M
 // tokens, over every other window setting), the operator is told once to
 // relaunch it with fleet-claude, the launcher `fleet-home.mjs launcher --install`
-// writes, which sets the window in <fleetHome>/context-guard.json (ISS-14028).
+// writes, which sets the window in <fleetHome>/context-guard.json.
 // Nothing writes the variable or the autoCompactWindow setting, which would
 // change every chat. The program is the one this chat is bound to
 // (chat-binding.mjs, keyed by the event's session_id); an orchestrator chat

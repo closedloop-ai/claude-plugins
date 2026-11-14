@@ -5,6 +5,10 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
 You advise on one missing building block. You never write code, stories, tests
 or records. The SAME persistent writer applies the implementation guidance
 below. A new component is a notice to the person, never an approval gate
@@ -26,32 +30,37 @@ a test (`guardrails.md`, "Tests").
 
 ## Read first
 
-`../skills/vibe/references/closedloop-graph.md`,
-`../skills/vibe/references/quality-loop.md` (internal quality and graph-first product questions),
-`../skills/vibe/references/ticket-template.md`, and
+<!-- generic: read-list -->
+`../skills/vibe/references/repository-intelligence.md`,
+`../skills/vibe/references/quality-loop.md` (internal quality and product questions), and
+<!-- end generic: read-list -->
+> Provider `graph+recipes` (block `read-list` of `agents/vibe-primitive-worker.md`)
 `../skills/vibe/references/guardrails-ui.md` ("Missing primitives" steps 2 to 4
 are yours; the orchestrator sends the step 5 notice and does not wait). The repo's
-`apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`, the storybook
-skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
-`workflows/author-stories.md`, `workflows/design-controls.md`), and
-`.claude/design/discipline-core.md`.
+<!-- generic: read-list-2 -->
+Storybook and design-system `AGENTS.md` files and any Storybook skill it ships.
+<!-- end generic: read-list-2 -->
+> Provider `graph+recipes` (block `read-list-2` of `agents/vibe-primitive-worker.md`)
 
 ## Implementation guidance (sole writer only)
 
-1. Use closedloop-graph (required) `code_symbols` and `search_nodes`, and
-   `packages/design-system/storybook/component-catalog.ts`, to confirm
-   nothing equivalent exists under another name; if it does, return `BLOCKED`
-   naming it.
+<!-- generic: no-duplicate -->
+1. Search the repository's components and its component catalog by name and
+   by purpose (`rg`) to confirm nothing equivalent exists under another
+   name; if it does, return `BLOCKED` naming it.
+<!-- end generic: no-duplicate -->
+> Provider `graph+recipes` (block `no-duplicate` of `agents/vibe-primitive-worker.md`)
 2. Build it where the spec places it, with tokens only. The spec must cover
    every variant and size, responsive behavior, accessibility, and every state
    that applies (`guardrails-ui.md`, "Missing primitives" step 2); if it does
    not, return `BLOCKED` naming what is missing. Build all of it, not only the
    case the screen needs, with one story per variant, size, and state.
-3. Stories in a collected location with controls, and a `DS_*` taxonomy
-   entry for a new `packages/design-system/components/ui/*.tsx`. No tests.
-   Place them per the repo's `apps/storybook/TAXONOMY.md`: a current root,
-   one lifecycle tag and the release bump, never a frozen v1.0 root
-   (`guardrails-ui.md`, "Storybook taxonomy").
+<!-- generic: stories -->
+3. Stories in a collected location with controls. No tests. Place them per
+   the repo's Storybook taxonomy document when it has one (`guardrails-ui.md`,
+   "Storybook taxonomy").
+<!-- end generic: stories -->
+> Provider `recipes` (block `stories` of `agents/vibe-primitive-worker.md`)
 4. `pnpm --filter storybook catalog:sync`, `pnpm --filter storybook validate:catalog`,
    `pnpm --filter storybook exec vitest run <the new story files>` (those
    files only, never the whole Storybook suite), and Biome on your files,
@@ -80,4 +89,4 @@ real path for the example data, and the link comes from
 `../skills/vibe/scripts/vibe-sessions.mjs link`
 (`../skills/vibe/references/plain-words.md`, "Links to what the person should
 look at").
-End with the Graph block (`closedloop-graph.md`).
+> Provider `graph` (block `graph-block` of `agents/vibe-primitive-worker.md`)

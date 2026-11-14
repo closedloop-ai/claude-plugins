@@ -1,4 +1,4 @@
-// Lane-evidence cache (ISS-13354, PRD-823, WS4 R3): a lane result is reused
+// Lane-evidence cache: a lane result is reused
 // only when the tree, the base, the config and the scope all match, and a
 // reused result is recorded and reported as `cached`, never as a fresh pass.
 //

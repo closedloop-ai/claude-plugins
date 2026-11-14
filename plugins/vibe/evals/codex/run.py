@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import functools
+import http.server
 import importlib.util
 import json
 import hashlib
@@ -54,9 +58,126 @@ def default_codex_model() -> str:
     return model
 
 
-def payload_plugins(plugins: Path) -> list[str]:
-    """The plugins a payload installs: vibe and closedloop-core, and vibe-core where the payload has it (older ones do not)."""
-    return ["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
+ARMS = ("provider", "generic", "provider-installed")
+# The arms that install the provider. `provider` installs vibe text with the provider stubs already resolved;
+# `provider-installed` installs the raw text and binds the provider through the real version check, as a session does.
+PROVIDER_ARMS = ("provider", "provider-installed")
+PROVIDER_PLUGIN = "vibe-closedloop-provider"
+EVAL_MARKETPLACE = "vibe-eval"
+PROVIDER_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def payload_plugins(plugins: Path, arm: str = "provider") -> list[str]:
+    """The plugins a payload installs: vibe and closedloop-core, vibe-core and (in a provider arm) the provider
+    where the payload has them (older ones do not). The generic arm installs no provider, as in a repository
+    vibe has no provider for."""
+    if arm not in ARMS:
+        raise ValueError(f"unknown eval arm {arm}")
+    return (["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
+            + ([PROVIDER_PLUGIN] if arm in PROVIDER_ARMS and (plugins / PROVIDER_PLUGIN).is_dir() else []))
+
+
+ASSEMBLE_PROVIDER_TEXT = r"""
+import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const [plugins] = process.argv.slice(1);
+const { assembleProviderText, readContract } = await import(join(plugins, "vibe-core/lib/vibe/scripts/provider.mjs"));
+const root = join(plugins, "vibe-closedloop-provider");
+const contract = readContract(root);
+if (!contract) throw new Error("the provider snapshot has no contract vibe speaks");
+const binding = { state: "bound", name: contract.name, root, capabilities: Object.keys(contract.capabilities) };
+const walk = (dir) => readdirSync(dir).flatMap((name) => {
+  const path = join(dir, name);
+  return statSync(path).isDirectory() ? walk(path) : path.endsWith(".md") ? [path] : [];
+});
+for (const file of walk(join(plugins, "vibe"))) {
+  const text = readFileSync(file, "utf8");
+  const assembled = assembleProviderText(text, binding);
+  if (assembled !== text) writeFileSync(file, assembled);
+}
+"""
+
+
+def assemble_provider_text(plugins: Path, budget: Budget) -> None:
+    """The provider arm models a session bound to the provider: the installed vibe text has its provider stubs resolved,
+    as the bound session reads them, since a rehearsal cannot run the provider script itself."""
+    subprocess.check_output(
+        ["node", "--input-type=module", "-e", ASSEMBLE_PROVIDER_TEXT, str(plugins)],
+        text=True, timeout=min(60, budget.remaining()),
+    )
+
+
+def case_arm(case: dict[str, Any]) -> str:
+    """A case tagged `generic` runs in the generic arm; every other case models the provider's repository."""
+    return "generic" if "generic" in case["meta"].get("tags", []) else "provider"
+
+
+def runs_case(arm: str, case: dict[str, Any]) -> bool:
+    """Whether `arm` runs `case`: the provider-installed arm runs the provider arm's cases."""
+    return case_arm(case) == ("provider" if arm == "provider-installed" else arm)
+
+
+def provider_skill_id(provider: Path) -> str:
+    """The provider's skill as a harness lists it, `<plugin>:<skill>`, from its own provider.json."""
+    contract = json.loads((provider / "provider.json").read_text())
+    name, skill = contract.get("name"), contract.get("skill")
+    if not isinstance(name, str) or not isinstance(skill, str) or not PROVIDER_NAME.fullmatch(name) \
+            or not PROVIDER_NAME.fullmatch(skill):
+        raise ValueError("the provider snapshot's provider.json names no skill")
+    return f"{name}:{skill}"
+
+
+
+def installed_version_script(codex_home: Path, market: Path) -> Path:
+    """The version check of the vibe Codex installed from the eval marketplace (the copy the model's session runs, so
+    the bind-time text names that vibe), or the marketplace copy when Codex keeps none of its own."""
+    installed = sorted(codex_home.glob(f"plugins/cache/{EVAL_MARKETPLACE}/vibe/*/skills/vibe/scripts/plugin-version.mjs"))
+    return installed[0] if len(installed) == 1 else market / "plugins/vibe/skills/vibe/scripts/plugin-version.mjs"
+
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: Any) -> None:
+        return None
+
+
+@contextmanager
+def served(folder: Path) -> Iterator[str]:
+    """`folder` over HTTP on the loopback, for as long as the block runs: the version check reads its release catalog
+    from the eval marketplace instead of GitHub."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(QuietHandler, directory=str(folder)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def bind_installed_provider(
+    name: str, work: Path, output: Path, env: dict[str, str], budget: Budget, codex_binary: str = "codex",
+) -> dict[str, Any]:
+    """The provider-installed arm binds as a session does: the real version check, once, in the case's folder before
+    the model starts, with every provider connection answered and the provider's skill listed. It runs under the
+    HOME and CODEX_HOME the model's shell sees, so its binding and bind-time provider text are where the session
+    reads them. Its output is kept with the run's evidence; a check that did not bind fails the case."""
+    market = output / "market"
+    checks = output / "provider-checks"
+    checks.mkdir(exist_ok=True)
+    record = checks / f"{name}.json"
+    with served(market) as base:
+        command(
+            ["node", str(installed_version_script(Path(env["CODEX_HOME"]), market)), "check", "--runtime", "codex",
+             "--codex", codex_binary, "--closedloop", "connected", "--graph", "connected",
+             "--skill-listed", provider_skill_id(market / "plugins" / PROVIDER_PLUGIN), "--latest-base", base],
+            work, env, budget, 90, record,
+        )
+    checked = json.loads(record.read_text())
+    provider = checked.get("provider") or {}
+    if provider.get("state") != "bound":
+        raise RuntimeError(f"the version check did not bind the provider: {provider.get('reason') or provider.get('state')}")
+    return checked
 
 
 def snapshot_metadata(output: Path) -> dict[str, Any]:
@@ -235,7 +356,7 @@ def command(
 
 def install(
     output: Path, plugin: Path, env: dict[str, str], budget: Budget,
-    codex_binary: str = "codex",
+    codex_binary: str = "codex", arm: str = "provider",
 ) -> dict[str, str]:
     """Install worktree snapshots in a private CODEX_HOME, never the user's live install."""
     home = Path(tempfile.mkdtemp(prefix="vibe-codex-home-"))
@@ -247,12 +368,17 @@ def install(
         # disposable link, so a hard kill cannot strand a copied credential.
         (home / "auth.json").symlink_to(auth.resolve())
     env = {**env, "CODEX_HOME": str(home)}
+    if arm == "provider-installed":
+        # The model's shell inherits this HOME, so the version check run before each case writes where it reads.
+        user_home = home / "home"
+        user_home.mkdir(mode=0o700)
+        env["HOME"] = str(user_home)
     try:
         market = output / "market"
         catalog = market / ".agents/plugins"
         catalog.mkdir(parents=True)
         entries = []
-        for name in payload_plugins(plugin.parent):
+        for name in payload_plugins(plugin.parent, arm):
             source = plugin if name == "vibe" else plugin.parent / name
             target = market / "plugins" / name
             target.parent.mkdir(exist_ok=True)
@@ -270,8 +396,10 @@ def install(
                 )
             )
         (catalog / "marketplace.json").write_text(
-            json.dumps({"name": "vibe-eval", "plugins": entries})
+            json.dumps({"name": EVAL_MARKETPLACE, "plugins": entries})
         )
+        if arm == "provider" and (market / "plugins" / PROVIDER_PLUGIN).is_dir():
+            assemble_provider_text(market / "plugins", budget)
         subprocess.check_output(
             ["node", str(IDENTITY), "copy", str(plugin / "evals"), str(output / "suite")],
             text=True, timeout=min(60, budget.remaining()),
@@ -290,9 +418,9 @@ def install(
             60,
             output / "marketplace.json",
         )
-        for name in payload_plugins(market / "plugins"):
+        for name in payload_plugins(market / "plugins", arm):
             command(
-                [codex_binary, "plugin", "add", name + "@vibe-eval", "--json"],
+                [codex_binary, "plugin", "add", f"{name}@{EVAL_MARKETPLACE}", "--json"],
                 output,
                 env,
                 budget,
@@ -620,6 +748,7 @@ def run_case(
     grader_model: str,
     deterministic_only: bool = False,
     codex_binary: str = "codex",
+    arm: str = "provider",
 ) -> dict[str, Any]:
     """Run one case, optionally omitting only paid wording, and keep evidence."""
     started = time.monotonic()
@@ -639,6 +768,8 @@ def run_case(
                 30,
                 work / "scaffold.log",
             )
+        if arm == "provider-installed":
+            bind_installed_provider(case["name"], work, output, env, budget, codex_binary)
         skill = next(name for name in SKILLS if "vibe:" + name in case["prompt"] or name == "vibe")
         # The source's Claude-only Skill instruction maps to the installed Codex skill.
         prompt = case["prompt"].replace(
@@ -792,13 +923,17 @@ def main() -> int:
         "--deterministic-only", action="store_true",
         help="Skip paid wording grading while retaining every deterministic check",
     )
+    parser.add_argument("--arm", choices=ARMS, default="provider",
+                        help="provider: install the provider with its text resolved and run its cases; generic: no "
+                             "provider, the generic cases; provider-installed: install the provider and the raw vibe "
+                             "text, bind it through the real version check before each case, and run the provider cases")
     parser.add_argument("--concurrency", type=int, choices=[1, 2], default=2)
     parser.add_argument("--max-seconds", type=int, default=1800)
     args = parser.parse_args()
     subject_plugin = args.plugin.resolve()
     selected = [
         c for c in cases(subject_plugin / "evals")
-        if not args.case or c["name"] in args.case
+        if runs_case(args.arm, c) and (not args.case or c["name"] in args.case)
     ]
     if not selected or any(n not in [c["name"] for c in selected] for n in args.case):
         parser.error("unknown or empty case selection")
@@ -835,7 +970,7 @@ def main() -> int:
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
             prior_handlers[signum] = signal.signal(signum, interrupt)
-        env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin)
+        env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin, args.arm)
         private_home = Path(env["CODEX_HOME"])
         identity_script = IDENTITY
         snapshot = json.loads((output / "snapshot.json").read_text())
@@ -872,7 +1007,7 @@ def main() -> int:
                 pool.map(
                     lambda c: run_case(
                         c, output, env, budget, args.model, args.grader_model,
-                        args.deterministic_only, args.codex_bin,
+                        args.deterministic_only, args.codex_bin, args.arm,
                     ),
                     selected,
                 )

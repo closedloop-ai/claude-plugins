@@ -4,9 +4,16 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify, parsePathList, pathKind, switchOn, validateManifest } from "./vibe-triage.mjs";
+import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify as classifyIn, parsePathList, pathKind as kindIn, switchOn, validateManifest } from "./vibe-triage.mjs";
+import { repositoryAreas } from "./area-paths.mjs";
+import { bindProvider, bindProviderInProcess, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+
+// The repository the ClosedLoop provider serves, whose areas these cases name.
+const AREAS = repositoryAreas(PROVIDER_BINDING);
+const classify = (input) => classifyIn({ areas: AREAS, ...input });
+const pathKind = (file) => kindIn(file, AREAS);
 import { chooseDispatch } from "../../fleet-orchestrator/scripts/dispatch-route.mjs";
 import { recordHandoffGate } from "../../handoff/scripts/handoff-gate.mjs";
 import { prEvidenceValidationProblems } from "../../handoff/scripts/pr-facts.mjs";
@@ -20,8 +27,15 @@ const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
+// The in-process cloud dispatch cases name tracker tickets, which need a tracker bound.
+bindProviderInProcess(after);
+
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-triage.mjs");
-const run = (args, env = {}) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, [SWITCH_ENV]: "", ...env } });
+// The command line runs as a session the ClosedLoop provider is bound to, under a throwaway home.
+const FIXTURE = makeHome("vibe-triage-");
+after(FIXTURE.cleanup);
+const BOUND = { HOME: FIXTURE.home, ...bindProvider(FIXTURE.home) };
+const run = (args, env = {}) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, ...BOUND, [SWITCH_ENV]: "", ...env } });
 
 const BACKEND_PATHS = ["apps/api/app/documents/route.ts", "apps/api/app/documents/route.test.ts", "packages/api/src/types/audit.ts"];
 const WEB_UI_PATHS = ["apps/app/components/header.tsx", "apps/app/components/footer.tsx"];
@@ -760,3 +774,12 @@ function claudeReviewReceipts(worktree, gitDir) {
     return outFile;
   });
 }
+
+test("with no provider bound, a file in no known area is unknown and Desktop relevance stays unknown", () => {
+  const generic = classifyIn({ paths: ["apps/api/lib/x.ts", "packages/app/x.ts"] });
+  assert.equal(generic.class, CLASSES.Unknown);
+  assert.equal(generic.evidence.desktopRelevant, null);
+  assert.equal(kindIn("src/components/header.tsx"), "ui", "a UI file is still known by its extension");
+  assert.equal(kindIn("db/migrations/001.sql"), "backend");
+  assert.equal(kindIn("apps/prototypes/a/page.ts"), "other");
+});

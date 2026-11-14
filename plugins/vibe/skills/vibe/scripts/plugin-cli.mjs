@@ -1,4 +1,4 @@
-// Finding the Claude Code and Codex CLIs and reading which closedloop-ai plugins each lists.
+// Finding the Claude Code and Codex CLIs and reading which plugins from vibe's marketplace each lists.
 // It loads nothing from vibe-core, so plugin-version.mjs can still report a missing vibe-core.
 
 import { accessSync, constants, statSync } from "node:fs";
@@ -18,7 +18,7 @@ export function findCli(harness, env = process.env, home = os.homedir()) {
   return onPath(harness, env) ?? fallbacks.find(isExecutable) ?? null;
 }
 
-/** The enabled closedloop-ai plugins one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
+/** The enabled plugins from vibe's marketplace one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
 export function installedPlugins(harness, listing) {
   const parsed = typeof listing === "string" ? JSON.parse(listing) : listing;
   if (harness === CLAUDE) {

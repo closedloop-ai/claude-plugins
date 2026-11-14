@@ -42,13 +42,18 @@ export async function writeBenchmarkSessionRecord(
   }
 }
 
-/** Real plugin version check, charged to each measured Claude conversation. */
+/**
+ * Real plugin version check, charged to each measured Claude conversation. With the snapshot's provider
+ * (`providerDir`), the check sees its skill listed, as a session with the provider installed does, so the
+ * conversation binds it through the check's own probe.
+ */
 export function checkVibeVersion(
   vibeDir: string,
   checkout: string,
   runDir: string,
   sessionId: string,
   claudeExecutable: string,
+  providerDir?: string,
 ): { status: "current" | "unknown" | "outdated"; choice: "proceed" | null } {
   if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(sessionId)) throw new Error("benchmark-session-id-invalid");
   // The plugin's CLI main guard compares import.meta.url with argv[1]. macOS
@@ -58,6 +63,7 @@ export function checkVibeVersion(
   const args = [script, "check", "--runtime", "claude", "--conversation", sessionId,
     "--state", state, "--claude", claudeExecutable,
     "--closedloop", "not-connected", "--graph", "not-connected"];
+  if (providerDir) args.push("--skill-listed", providerSkillId(providerDir));
   const output = execFileSync(process.execPath, args, {
     cwd: checkout, encoding: "utf8", timeout: 90_000,
   });
@@ -97,4 +103,16 @@ export function vibeHelper(vibeDir: string, name: string): string {
   const coreRoot = siblingPluginRootOrNull("vibe-core", { from: join(vibeDir, ".claude-plugin", "plugin.json") });
   const core = coreRoot ? join(coreRoot, "lib", "vibe", "scripts", name) : null;
   return core && existsSync(core) ? core : join(vibeDir, "skills", "vibe", "scripts", name);
+}
+
+const PROVIDER_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+/** The provider's skill as a harness lists it, `<plugin>:<skill>`, from its own provider.json. */
+export function providerSkillId(providerDir: string): string {
+  const contract = JSON.parse(readFileSync(join(providerDir, "provider.json"), "utf8")) as { name?: unknown; skill?: unknown };
+  if (typeof contract.name !== "string" || typeof contract.skill !== "string"
+    || !PROVIDER_NAME.test(contract.name) || !PROVIDER_NAME.test(contract.skill)) {
+    throw new Error("benchmark-provider-contract-invalid");
+  }
+  return `${contract.name}:${contract.skill}`;
 }

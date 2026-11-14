@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-// The mechanical checks of `vibe-guardrails-reviewer` (PRD-823, WS3 D4,
-// ISS-13346), run before any model reads the diff, as one findings JSON the
-// consolidated reviewer (WS4 R1) reads instead of re-deriving them. It WRAPS the
+// The mechanical checks of `vibe-guardrails-reviewer`, run before any model reads the diff, as one findings JSON the
+// consolidated reviewer reads instead of re-deriving them. It WRAPS the
 // target repository's own gates and `diff-rules.mjs`; it re-implements neither:
 //
 //   biome         `pnpm exec biome check` on the changed files
-//   source-gates  `pnpm check:source-gates`
+//   source-gates  the repository's source gates (the provider verify recipe's `source-gates` check)
 //   diff-rules    `runDiffRules` (diff-rules.mjs), the same findings handoff-inventory reports
 //
 // and adds the added-line scans the reviewer's prose asked a model to do:
@@ -36,8 +35,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { execCommand, stdoutOf, tailLines, toolDidNotRun } from "../../vibe/scripts/ws3-exec.mjs";
+import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const FINDINGS_SCHEMA = "vibe.guardrails-findings/1";
 export const Severity = Object.freeze({ High: "high", Medium: "medium", Low: "low" });
@@ -56,7 +60,6 @@ const REVIEWER_CHECK_NAMES = new Set(REVIEWER_CHECKS.map((entry) => entry.name))
 const UI_FILE = /\.(?:tsx|jsx|css|scss)$/;
 const SOURCE = /\.(?:tsx?|jsx?|mjs|cjs)$/;
 const TS_FILE = /\.tsx?$/;
-const BIOME_FILE = /\.(?:tsx?|jsx?|mjs|cjs|json|jsonc|css)$/;
 const COMMENT = /^\s*(?:\/\/|\/\*|\*|\{\/\*)/;
 const HEX_COLOR = /(?<=["'`\s(:,=])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b(?![\w-])/;
 const CUSTOM_PROPERTY = /^\s*--[\w-]+\s*:/;
@@ -271,10 +274,10 @@ export function createGuardrailsGate({
 } = {}) {
   const git = (worktree, args) => run("git", ["-C", worktree, ...args]);
 
-  function wrappedGate({ name, script, args, worktree, changed, scripts, report }) {
+  function wrappedGate({ name, script, program = "pnpm", args, worktree, changed, scripts, report }) {
     if (script && !(script in scripts)) return report.skip(name, `the repository defines no "${script}" script`);
     if (!exists(path.join(worktree, "node_modules"))) return report.skip(name, "dependencies are not installed in the worktree (no node_modules), so the repository's gate cannot run");
-    const result = run("pnpm", args, { cwd: worktree, timeoutMs: 600_000 });
+    const result = run(program, args, { cwd: worktree, timeoutMs: 600_000 });
     if (result.status === 124) return report.skip(name, "stopped after 600s on this machine");
     const missing = toolDidNotRun(result);
     if (missing) return report.skip(name, missing);
@@ -330,14 +333,20 @@ export function createGuardrailsGate({
       return report;
     }
     const diffText = git(worktree, ["diff", "--no-color", "--unified=0", "-M", baseSha]).stdout;
-    const files = parseUnifiedDiff(diffText);
+    const files = parseUnifiedDiff(diffText, sessionLocalPlanPrefix(worktree));
     const changedPaths = new Set(files.filter((file) => file.status !== "D").map((file) => file.path));
     const scripts = exists(path.join(worktree, "package.json")) ? (JSON.parse(read(path.join(worktree, "package.json")))?.scripts ?? {}) : {};
 
-    const biomeTargets = [...changedPaths].filter((file) => BIOME_FILE.test(file));
-    if (biomeTargets.length === 0) handle.skip(Check.Biome, "no changed file is one Biome checks");
-    else wrappedGate({ name: Check.Biome, args: ["exec", "biome", "check", ...biomeTargets], worktree, changed: changedPaths, scripts, report: handle });
-    wrappedGate({ name: Check.SourceGates, script: "check:source-gates", args: ["check:source-gates"], worktree, changed: new Set(), scripts, report: handle });
+    // The repository's formatter and source gates are its verify recipe's; without one neither runs here.
+    const verify = providerDataOr(sessionBinding(worktree), "recipes", "verify", null);
+    const formatter = verify?.formatter;
+    const formatterTargets = formatter ? [...changedPaths].filter((file) => new RegExp(formatter.files).test(file)) : [];
+    if (!formatter) handle.skip(Check.Biome, "the repository's recipe names no formatter");
+    else if (formatterTargets.length === 0) handle.skip(Check.Biome, formatter.noFiles);
+    else wrappedGate({ name: Check.Biome, program: formatter.command[0], args: [...formatter.command.slice(1), ...formatterTargets], worktree, changed: changedPaths, scripts, report: handle });
+    const sourceGates = (verify?.checks ?? []).find((check) => check.name === Check.SourceGates);
+    if (sourceGates) wrappedGate({ name: Check.SourceGates, script: sourceGates.script, args: [sourceGates.script], worktree, changed: new Set(), scripts, report: handle });
+    else handle.skip(Check.SourceGates, "the repository's recipe names no source gates");
 
     try {
       const rules = diffRulesFn({ worktree, base: baseSha, phase: "handoff" });
@@ -399,7 +408,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

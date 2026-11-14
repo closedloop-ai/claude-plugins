@@ -6,7 +6,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 - Claude Code: invoke as `/vibe:vibe`; plugin agents are available as
   `vibe:<name>`. Launch every worker through `scripts/dist/claude-worker.mjs`,
   never through the native Agent tool: a plugin agent dispatched natively gets
-  only the built-in tools its file lists, with no ClosedLoop or closedloop-graph
+  only the built-in tools its file lists, with no tracker or graph MCP
   tools, so a natively dispatched ticket worker comes back `BLOCKED` and a
   verify worker cannot reach the graph. The only
   native dispatch is the bootstrap in section 1. Send the launcher one JSON
@@ -26,11 +26,12 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
   or a resumed writer's recorded root, so a guessed or
   remembered path can never point it at the wrong place (a supplied
   `<root>/agents` is read as `<root>`; another release's root is refused as
-  `STALE_PLUGIN_ROOT`). `capabilities` lists every closedloop-graph read and
-  every ClosedLoop read the parent can see (`{name, service: "graph" |
-  "closedloop", operation, access: "read"}`), plus only the writes the
-  record action allows; the requirements and ticket workers are refused
-  (`MISSING_CAPABILITIES`) without the ClosedLoop reads they need. Before any
+  `STALE_PLUGIN_ROOT`). `capabilities` lists every graph read and every
+  tracker read the parent can see (`{name, service: "graph" | "tracker",
+  operation, access: "read"}`), plus only the writes the record action
+  allows; a role the bound provider names reads for is refused
+  (`MISSING_CAPABILITIES`) without them. With no provider bound there are
+  none to pass. Before any
   work the launcher checks the Claude sign-in and that every granted
   connection loaded in the worker. Its refusals:
   - `CLAUDE_SIGN_IN_NEEDED`: send the person its `personAction` once, word

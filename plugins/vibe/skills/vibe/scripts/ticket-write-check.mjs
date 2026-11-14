@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks a ClosedLoop issue write before it is made (operator rulings,
+// Checks a tracker issue write before it is made (operator rulings,
 // 2026-10-21): a new or follow-up ticket goes in the current sprint project,
 // never a past one, and is never linked under a parent that is already
 // EXECUTED, OBSOLETE, DONE or CANCELED; an issue moves to IN_REVIEW only with the pull request

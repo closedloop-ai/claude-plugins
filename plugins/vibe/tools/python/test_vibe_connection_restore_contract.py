@@ -20,9 +20,14 @@ label, and they could not find it. The fix:
 
 from __future__ import annotations
 
+import json
+
 import re
 from pathlib import Path
 
+import yaml
+
+from skill_split import raw
 from vibe_contract_text import agent, flat, section
 
 
@@ -221,20 +226,26 @@ def test_the_terminal_guard_rejects_the_reported_github_step() -> None:
 
 def test_vibe_and_the_fleet_show_the_setup_check_once_per_conversation() -> None:
     # ISS-13315: the connection states ride on the version check itself, one escalated command in Codex.
+    # The connections are the bound provider's (operator rulings, 2026-11-11: vibe runs without one), so the
+    # calls come from `plugin-version.mjs provider` and the provider's contract still names the same two.
     version = section((VIBE / "SKILL.md").read_text(), "### Plugin version")
     for phrase in (
-        "Call ClosedLoop `get-me` and closedloop-graph `sync_status` yourself first",
-        "`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`",
+        "first run `node scripts/plugin-version.mjs provider`",
+        "make each call its `connections` entries' `check` names yourself",
+        "`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]... [--skill-listed <skill>]`",
         "`connected` only when that call answered in this conversation",
         "never assume either",
     ):
         assert phrase in version, phrase
+    contract = json.loads((PLUGIN_ROOT.parent / "vibe-closedloop-provider" / "provider.json").read_text())
+    assert "Call ClosedLoop `get-me`" in contract["connections"]["tracker"]["check"]
+    assert "Call closedloop-graph `sync_status`" in contract["connections"]["graph"]["check"]
     check = section((VIBE / "SKILL.md").read_text(), "### Setup check")
     for phrase in (
         "When the check prints `\"print\":true`",
         "opens your first reply word for word, before the version question or the endings line",
         "`\"print\":false` means this conversation already showed it",
-        "`node scripts/plugin-version.mjs status --closedloop <state> --graph <state>` prints the same block from the versions installed here",
+        "`node scripts/plugin-version.mjs status [--connection <name>=<state>]...` prints the same block from the versions installed here",
         "A `not connected` line starts \"Restoring a connection\" at once",
     ):
         assert phrase in check, phrase
@@ -242,9 +253,67 @@ def test_vibe_and_the_fleet_show_the_setup_check_once_per_conversation() -> None
     fleet = section((PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "SKILL.md").read_text(), "## Setup")
     for phrase in (
         "Setup check, once per chat, from that same check run",
-        "with the two connection flags added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says",
+        "with the connection flags added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says",
         "never handed to the operator",
     ):
         assert phrase in fleet, phrase
     new_chat = section((PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "references" / "state.md").read_text(), "## A new chat")
     assert "Then show the setup check block (SKILL.md, Setup) once." in new_chat
+
+
+PROVIDER_SKILL = PLUGIN_ROOT.parent / "vibe-closedloop-provider" / "skills" / "closedloop-provider" / "SKILL.md"
+FIRST_SENTENCE = re.compile(r"^(.+?\.)(?=\s|$)")
+# Codex cuts skill descriptions to about 150 characters when many skills are installed.
+START_SENTENCE_LIMIT = 140
+
+
+def test_the_provider_skill_description_opens_with_the_start_calls_and_flags() -> None:
+    # The provider skill's description repeats the start calls and check flags as a hint, so they lead it and fit
+    # before Codex cuts it short.
+    description = yaml.safe_load(PROVIDER_SKILL.read_text().split("---", 2)[1])["description"]
+    first = FIRST_SENTENCE.match(description)
+    assert first, description
+    sentence = first.group(1)
+    assert len(sentence) < START_SENTENCE_LIMIT, (len(sentence), sentence)
+    for word in ("get-me", "sync_status", "--closedloop", "--graph"):
+        assert word in sentence, (word, sentence)
+
+
+GENERIC_REGION = r"<!-- generic: %s -->\n(.*?)\n<!-- end generic: %s -->"
+RULE_REGION = re.compile(r"<!-- provider-rule -->\n(.*?)\n<!-- end provider-rule -->", re.DOTALL)
+
+
+def generic_region(path: Path, region: str) -> str:
+    """A generic region of the raw file; `read_text` would hand back the provider-assembled text without it."""
+    found = re.search(GENERIC_REGION % (region, region), raw(path), re.DOTALL)
+    assert found, (path, region)
+    return flat(found.group(1))
+
+
+def test_a_start_asks_the_installed_plugins_and_restores_any_missing_connection() -> None:
+    # Operator ruling: a listed provider skill's description gives the start calls, and in every other case the provider
+    # probe runs first, since a skill list never proves there is none,
+    # and a binding with any connection missing (one capability withheld) restores it as a disconnected one does.
+    version = section((VIBE / "SKILL.md").read_text(), "### Plugin version")
+    assert ("When your list of available skills shows a vibe provider skill whose description names its start calls, make those calls "
+            "yourself and run the check with the flags that description names") in version
+    assert "In every other case (no provider skill listed, or its description cut short or missing), first run" in version
+    assert "your skill list never decides that there is no provider" in version
+    assert "A check printing `\"state\":\"unprobed\"` had no states for an installed provider and bound nothing" in version
+    for path, region in ((VIBE / "SKILL.md", "connectors"), (PREFLIGHT, "restore"), (PLUGIN_ROOT / "agents" / "vibe-setup-worker.md", "connection")):
+        text = generic_region(path, region)
+        assert "under `missing`" in text, (path, region)
+        assert "`bound` with a capability withheld" in text, (path, region)
+
+
+def test_a_bound_session_reads_the_text_the_check_assembled_and_never_falls_back_to_generic() -> None:
+    found = RULE_REGION.search(raw(VIBE / "SKILL.md"))
+    assert found, "vibe SKILL.md has no provider-rule region"
+    rule = flat(found.group(1))
+    for phrase in ("`node scripts/provider.mjs tree` prints it", "`~/.codex/vibe/provider-text/index.json`", "`binding.json` has that `repoRoot`",
+                   "this session's repository main checkout, or its working folder when it is not in a checkout",
+                   "`vibeRoot`", "`SKILL.blocks.md`", "run the check again", "never follow the generic text in its place"):
+        assert phrase in rule, phrase
+    text = flat((VIBE / "references" / "provider-text.md").read_text())
+    assert "Never follow the generic text in its place; only an unbound session does." in text
+    assert "When `tree` exits 3 or the folder does not match, run the plugin version check again" in text

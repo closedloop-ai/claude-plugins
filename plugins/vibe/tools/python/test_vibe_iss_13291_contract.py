@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -64,7 +64,7 @@ def test_frozen_renders_use_the_shipped_driver_and_base_failures_do_not_block() 
     assert "never a capture of your own" in decomposer
     assert "`story-play-verdict.mjs`" in decomposer
     assert "A `same-failure` story fails the same way on the base" in decomposer
-    template = flat((REFERENCES / "ticket-template.md").read_text())
+    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
     assert "`- [ ] Known main failure: frozen story <story ID>; fails the same way on base <base>; evidence: <its reason>`" in template
 
 

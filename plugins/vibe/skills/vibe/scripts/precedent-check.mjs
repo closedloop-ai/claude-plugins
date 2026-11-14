@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // The precedent check before a product question (operator ruling,
 // 2026-10-16; `references/quality-loop.md`, "Precedent before asking"): how
-// Asana, or another established app with the same flow, handles the
-// situation the question is about. The research brief and its safety rules
+// an established app with the same flow handles the situation the question is
+// about. The bound provider's rule (`data.memory.precedent`) can name the one
+// app to check; with or without one, only a live look settles it, and public
+// help centers and documentation are never precedent. The research brief and its safety rules
 // live here once, for both harnesses.
 //
 // Usage:
@@ -28,7 +30,7 @@
 //       report.
 //   precedent-check.mjs check --report <file> [--behavior <text>]...
 //       Refuses (exit 1) a report not settled by a live look: an `undocumented`
-//       answer or a public-material source. Precedent means live Asana in the
+//       answer or a public-material source. Precedent means the app observed live in the
 //       operator's signed-in browser; public help centers are never precedent.
 //       When this actor has no browser, it returns NEEDS_PERSON to the actor that
 //       does instead of accepting public material. It also refuses a report missing a line
@@ -47,6 +49,8 @@ import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { escalation, isSandboxRefusal } = await vibeCore("lib/vibe/scripts/sandbox-refusal.mjs");
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const TEMP_PROJECT = "zz vibe precedent check (temp)";
 export const TASK_PREFIX = "zz test";
@@ -60,7 +64,7 @@ const UNDOCUMENTED = /^undocumented\b/i;
 const CHECKLIST_FILE = "checklist.json";
 
 /** The research brief for one product question. */
-export function precedentPrompt({ question, situation, codeEvidence, behaviors = [], today = new Date() }) {
+export function precedentPrompt({ question, situation, codeEvidence, behaviors = [], today = new Date(), rule = precedentRule() }) {
   requireText("question", question);
   if (!/^\S.*:\d+(?:-\d+)?$/.test(codeEvidence ?? "")) {
     throw new Error("--code-evidence <file:line> is required before precedent research");
@@ -77,7 +81,7 @@ Situation to reproduce: ${situation || question}
 Code/data-model check: ${codeEvidence}
 ${disputed}
 Order:
-1. Asana, in Chrome, with the account already signed in there. Never sign in, create an account or type a credential.
+1. ${rule.product ?? "An established app with the same flow"}, in Chrome, with the account already signed in there. Never sign in, create an account or type a credential.
 2. If this actor cannot use that signed-in browser, stop with NEEDS_PERSON so the orchestrator or browser-holder can run the live check. Never use a public help center or documentation page as precedent.
 
 Safety, in every app:
@@ -94,9 +98,9 @@ Evidence:
 
 Reply with only this report:
 Answer: <the behavior, in one plain line, or "undocumented">
-Source: Asana, observed ${date} | undocumented
+Source: ${rule.product ?? "<app>"}, observed ${date} | undocumented
 Observed directly: <what you saw, with quoted wording>
-Asana lacks this situation: <what was checked, or none>
+${rule.product ?? "The app"} lacks this situation: <what was checked, or none>
 Cleanup: <what you created and deleted, confirmed gone, or "nothing created">
 ${behaviors.map((_, index) => `B${index + 1}: observed: <what happened>; screenshot: <capture file> | B${index + 1}: needs a write to test: <why>`).join("\n")}
 `;
@@ -104,7 +108,7 @@ ${behaviors.map((_, index) => `B${index + 1}: observed: <what happened>; screens
 
 /**
  * The headless Claude Code arguments for the look. It is never resumed and its report goes to a file, so it
- * saves no session: a saved one is imported into the Codex app's sidebar as a stray chat (ISS-13279).
+ * saves no session: a saved one is imported into the Codex app's sidebar as a stray chat.
  */
 export function claudeArgs() {
   return ["-p", "--no-session-persistence", "--chrome", "--allowedTools", CLAUDE_TOOLS];
@@ -283,7 +287,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.stdout.write(`${JSON.stringify(await main())}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, ...(isSandboxRefusal(error) ? escalation(error, ESCALATION_JUSTIFICATION) : { error: error.message }) })}\n`);
-    process.exitCode = 1;
+    process.exitCode = scriptExitCode(error, 1);
   }
 }
 
@@ -306,4 +310,10 @@ function savedBehaviors(reportFile) {
   } catch {
     return [];
   }
+}
+
+/** The bound provider's precedent rule (`data.memory.precedent`): the one app it names, or any established app. */
+export function precedentRule(binding = sessionBinding()) {
+  const rule = providerDataOr(binding, "memory", "precedent", null);
+  return { product: typeof rule?.product === "string" ? rule.product : null };
 }

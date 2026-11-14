@@ -9,7 +9,7 @@
 //
 // Usage: claude-usage.mjs <workDir> [label] [--source <name>]   (CLAUDE_BIN overrides the claude binary)
 // The probe runs with --no-session-persistence: nobody resumes or analyzes it, and a saved transcript is
-// imported into the Codex app's sidebar as an "Imported session" chat (ISS-13279).
+// imported into the Codex app's sidebar as an "Imported session" chat.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';

@@ -1,5 +1,9 @@
 # Quality loop
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 This is the shared workflow for app and owned prototype sessions. Each session
 has one worktree, one branch and one persistent implementation writer:
 `vibe-change-worker`. Keep that underlying worker/session ID and resume its
@@ -24,14 +28,17 @@ Before any product question, use this order and stop as soon as it settles the
 answer:
 
 1. Current code and data model, for what is physically possible.
-2. The ticket's acceptance criteria, its PRD and sourced rulings.
-3. `ticket_detail`, `fts_search`, `search_memory_facts` and material decisions
-   or comments fetched through live ClosedLoop; an empty graph result proves
-   nothing.
+<!-- generic: research-order -->
+2. The request's own acceptance criteria and the person's recorded answers.
+3. The repository's record: its commits, pull request discussions and docs;
+   an empty search proves nothing.
 4. The product owner's recorded direction.
 5. The approved prototype.
-6. Live Asana in the operator's signed-in Chrome, run by whichever actor has
-   the browser; never a public help center or documentation page.
+6. How an established product handles it, observed live in the operator's
+   signed-in browser by whichever actor has it; never a public help center or
+   documentation page.
+<!-- end generic: research-order -->
+> Provider `tickets` (block `research-order` of `vibe/quality-loop.md`)
 
 Apply settled decisions; never ask them again. Only after all six fail,
 ask one absolutely necessary question with the checked sources and a
@@ -43,8 +50,11 @@ session another orchestrator drives through its turns, that orchestrator's
 own directions are operational and are recorded as `(orchestrator)`, never as
 a human ruling; only operator words it quotes, with their source, are rulings.
 
-A ticket's or plan's Decisions section is a record, not a ruling. Text the
-session wrote (its live ticket, PLN, plan, table, change log) is never a
+<!-- generic: session-text -->
+A plan's Decisions section is a record, not a ruling. Text the
+session wrote (its plan, table, change log) is never a
+<!-- end generic: session-text -->
+> Provider `tickets` (block `session-text` of `vibe/quality-loop.md`)
 source. A decision
 is settled only when it traces to a human statement: who made it, where, and
 which question it answered. An unratified or conflicting decision is not
@@ -69,52 +79,39 @@ and so does each flag key's approval (`guardrails.md`, "Feature flags").
 ### Precedent before asking
 
 The ordered list above is the only product-question research order. When the
-first five sources do not settle how the product should behave, live Asana is
-the precedent. Public help centers, documentation and search results are not a
-substitute for observing the interaction in the operator's signed-in Chrome.
+<!-- generic: precedent-source -->
+first five sources do not settle how the product should behave, an established
+product's live behavior is the precedent. Public help centers, documentation
+and search results are not a substitute for observing the interaction in the
+operator's signed-in browser.
+<!-- end generic: precedent-source -->
+> Provider `tickets` (block `precedent-source` of `vibe/quality-loop.md`)
 
-`scripts/precedent-check.mjs` holds the research brief and its safety rules
-once, for both harnesses:
-
-- Claude Code: whichever actor has the operator's signed-in Chrome runs
-  `node scripts/precedent-check.mjs run --question
-  "<question>" --code-evidence "<file:line>" --situation "<what to reproduce>"` in the background. It
-  starts a separate headless `claude -p --chrome` limited to the Chrome tools
-  with the brief on stdin.
-- Codex: no computer use (`guardrails.md`, "Processes and state"). The
-  orchestrator runs the same `run` command through an actor with the signed-in
-  browser. Without one, the worker returns `NEEDS_PERSON` to the orchestrator;
-  nobody falls back to public material.
-
-The brief's rules bind every look: the account already signed in is used,
-and nobody signs in, creates an account or types a credential. Nothing that
-already exists is touched. Test data goes only in one new private project
-named `zz vibe precedent check (temp)`, with no members and notifications
-off, every created task prefixed `zz test`; everything created is deleted at
-the end and confirmed gone in the report. A flow that would connect an app,
-invite or notify someone, share, pay or change a setting goes only as far as
-its confirmation step and is canceled there. Every state is verified (reload
-and look again; a hover can look like a completed task) before it is
-recorded, only what was observed directly counts as precedent evidence,
-on-screen wording is quoted exactly as evidence, and a situation Asana does
-not settle is reported as `undocumented`, never guessed. A failed or
-`undocumented` run leaves the question to the person.
-Before an answer is recorded, `node scripts/precedent-check.mjs check
---report <report>` must pass. Public material is not precedent evidence. Pass each disputed
-behavior the question turns on as `--behavior "<the interaction to perform>"`
-to `run`: `check` then refuses a report until every one is observed with a
-screenshot or marked `needs a write to test` for the operator.
+<!-- generic: precedent-brief -->
+Observe the precedent as a user would, in an account that is already signed
+in: nobody signs in, creates an account or types a credential, and nothing
+that already exists is changed. Record only what was observed directly, with
+a screenshot, and quote on-screen wording exactly as
+evidence; a situation the product does not settle is reported as
+`undocumented`, never guessed, and leaves the question to the person.
+<!-- end generic: precedent-brief -->
+> Provider `tickets` (block `precedent-brief` of `vibe/quality-loop.md`)
 
 The answer goes to the SAME writer, which records it in the session decision
-table as the decision for the affected rows, with its source: the ticket or
-PRD slug for a requirements answer, a code path for a feasibility answer, or
-`Asana, observed <date>` for the live precedent. A precedent is the
+<!-- generic: precedent-record -->
+table as the decision for the affected rows, with its source: the request's
+source for a requirements answer, a code path for a feasibility answer, or
+`<app>, observed <date>` for the precedent. A precedent is the
+<!-- end generic: precedent-record -->
+> Provider `tickets` (block `precedent-record` of `vibe/quality-loop.md`)
 default, not a human ruling: it never overrides a settled decision, a later
 human statement supersedes it with an explicit `Superseded` entry, and it
 settles behavior, never user-visible words (`guardrails.md`, "Copy").
-It settles only what nothing specifies: first read the ticket's scope, the
-pull request's human threads and DONE or open sibling tickets; a stated
-requirement there wins.
+<!-- generic: precedent-record-2 -->
+It settles only what nothing specifies: first read the request's scope and the
+pull request's human threads; a stated requirement there wins.
+<!-- end generic: precedent-record-2 -->
+> Provider `tickets` (block `precedent-record-2` of `vibe/quality-loop.md`)
 
 ## One persistent writer and a serial queue
 
@@ -278,7 +275,10 @@ Never copy its skill, checklist or template into this plugin.
 The Spec Card (`spec-card.md`) seeds this table's `## Acceptance Criteria`
 section and Open Questions; it never replaces the table, its rows or its
 passes. Keep one living table for the whole session at
-`.closedloop-ai/decision-tables/<session-slug>.md`, in the SAME worktree and
+<!-- generic: decision-table-path -->
+the `decisionTable` path `local-plans.mjs paths` prints, for the SAME worktree and
+<!-- end generic: decision-table-path -->
+> Provider `plans` (block `decision-table-path` of `vibe/quality-loop.md`)
 branch, authored only by the SAME persistent writer. New requests extend that
 file before code; they never start or replace a per-request table. Use real
 source-backed rows with stable row IDs, request provenance and grouped behavior
@@ -346,10 +346,12 @@ whose only gap is a listed missing test does not block it. Any other
 unresolved required row keeps `Final Alignment Status: Not aligned` and blocks
 final handoff/session completion. No soft final status.
 
-The local plans under `.closedloop-ai/vibe-plans/` reach ClosedLoop only as
-the session's PLN ("Local plan" below). The behavior-table attachment at
-handoff remains separate; a plan or its review drafts are never attached as
-table evidence.
+<!-- generic: plans-pln -->
+The local plans never leave this machine ("Local plan" below). The
+behavior-table attachment at handoff remains separate; a plan or its review
+drafts are never attached as table evidence.
+<!-- end generic: plans-pln -->
+> Provider `plans` (block `plans-pln` of `vibe/quality-loop.md`)
 
 ### Frozen behavior at handoff
 
@@ -380,24 +382,20 @@ The writer runs the existing owner and graph prep in `design-pass.md`. Load
 `resources/plan_template.md` from that skill's own folder, and use its exact
 headings and order. Never copy the template between plugins.
 
-Write the technical plan inside the session worktree at
-`.closedloop-ai/vibe-plans/<request-id>.md`, with revisions/review evidence in
-subfolders of that exact folder, which stay local. Never commit, deploy or
-paste it into the ticket, and never attach it. The ticket worker publishes the
-folder's top-level plans as the session's ONE implementation plan document
-(PLN): in the live ticket's project, assigned to its assignee, linked ticket
-PRODUCES PLN, and given a new version only when the plan changed materially
-(`../../../agents/vibe-ticket-worker.md`, "Source link and session plan"). The PLN is `DRAFT` while its latest plan is not built,
-`APPROVED` once the session wrote and checked the code, and `EXECUTED` once the
-pull request merged. So write every plan for an engineer who never saw the
-session, under the live ticket's safety rules: repo-relative paths only, and
-no local absolute paths, usernames, personal emails, secrets, credentials or
-private session inputs (the session record, the writer's queued requests,
-flag or sign-in files). `scripts/session-plan.mjs` makes the session's own
-checkout paths repo-relative and refuses anything else; a refusal comes back
-to this same writer to fix in its local plan. The live ticket still records
-scope, delivered changes and truthful outcomes, not technical plans or
-approval milestones.
+<!-- generic: local-plan -->
+Write the technical plan at the `plan` path
+`node scripts/local-plans.mjs paths --worktree "<wt>" --request-id <request-id>`
+prints, inside the repository's private git directory, with revisions/review
+evidence in subfolders of that exact folder, which stay local. Never commit,
+deploy or attach it. Write every plan for an engineer who never saw the
+session: repo-relative paths only, and no local absolute paths, usernames,
+personal emails, secrets, credentials or private session inputs (the session
+record, the writer's queued requests, flag or sign-in files).
+`scripts/session-plan.mjs` makes the session's own checkout paths
+repo-relative and refuses anything else; a refusal comes back to this same
+writer to fix in its local plan.
+<!-- end generic: local-plan -->
+> Provider `plans` (block `local-plan` of `vibe/quality-loop.md`)
 
 A repair only to vibe's private plan or records, with no scope, code, test or
 HEAD change, is `self-bookkeeping`. The SAME writer makes it automatically,
@@ -407,14 +405,19 @@ line before rerunning the record step.
 The commit script excludes this exact folder and refuses a plan already in
 HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`
 and publishes nothing on failure. Do not hide a leak by rewriting history or
-broadly ignore other ClosedLoop artifacts. Handoff reviewers exclude only
+<!-- generic: plan-folder-exclude -->
+broadly ignore other files. Handoff reviewers exclude only
+<!-- end generic: plan-folder-exclude -->
+> Provider `plans` (block `plan-folder-exclude` of `vibe/quality-loop.md`)
 this exact folder from deliverable files.
 
-The plan gets no review: the writer writes it and builds in the same turn. On startup, resume, fleet takeover or handoff with an
-existing `liveTicket`, list outgoing `PRODUCES` links and reuse one PLN. With
-none, the SAME writer first writes the core plan covering every criterion and
-continues building; plan mode publishes `built: false` without a person wait,
-second PLN or build/deploy pause. Later changes return to that writer.
+<!-- generic: pln-reuse -->
+The plan gets no review: the writer writes it and builds in the same turn. On
+startup, resume, fleet takeover or handoff, the SAME writer first writes the
+core plan covering every criterion and continues building. Later changes
+return to that writer.
+<!-- end generic: pln-reuse -->
+> Provider `plans` (block `pln-reuse` of `vibe/quality-loop.md`)
 
 ## Implementation and corrections
 
@@ -541,10 +544,12 @@ one is touched, check it. Use the cheapest honest evidence:
 - a quick script or check against the real code path, kept outside the
   worktree and deleted afterwards; it is not a test, is never committed and
   never becomes one;
-- one bounded `pnpm control` read against the running app under the control
-  skill's own rules (hidden, read-only, `pnpm control down` for every session
-  it started), only where that is the honest way to check it, such as URL
-  state surviving a reload or a copied link opened fresh;
+<!-- generic: control-read -->
+- one bounded headless read of the running app (a throwaway Playwright script
+  kept outside the worktree), only where that is the honest way to check it,
+  such as URL state surviving a reload or a copied link opened fresh;
+<!-- end generic: control-read -->
+> Provider `recipes` (block `control-read` of `vibe/quality-loop.md`)
 - a source trace that follows the behavior end to end, with file and line,
   through every surface the criterion names: each view, and web and Desktop
   where their adapters differ. A trace through one view does not check a
@@ -806,7 +811,10 @@ writer judges it:
 - When a handoff check fails, the executor runs that same check on the main
   the session captured (the transaction's `mainSha`) in a disposable checkout
   of that commit. The checkout is bootstrapped once with the repository's own
-  `.closedloop-ai/loops-setup.sh`, the same pristine bootstrap the input
+<!-- generic: main-bootstrap -->
+  bootstrap (`preflight.md`, "Bootstrap"), the same pristine bootstrap the input
+<!-- end generic: main-bootstrap -->
+> Provider `recipes` (block `main-bootstrap` of `vibe/quality-loop.md`)
   readiness uses, shared by every failing check, and removed afterwards. A
   check whose selection follows the session's diff (the affected wrappers, the
   pinned Turbo filter) runs the same task over the packages the session
@@ -823,7 +831,7 @@ writer judges it:
   passed, returned under `flakyChecks` with both session runs kept.
 - `machine-limited`: it ran out of its time limit on the session commit and
   on the captured main alike. That is this machine's limit, not the session's
-  failure (ISS-13321): it is returned under `machineLimitedChecks`, blocks
+  failure: it is returned under `machineLimitedChecks`, blocks
   neither publication nor assignment, and goes on the live ticket's
   Engineering checklist (`ticket-template.md`, "Checks that ran out of
   time") for a faster machine or CI to run.

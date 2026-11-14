@@ -27,7 +27,7 @@ Moved out of `quality-loop.md`, which says when to read it; later edits to that 
       "capabilities": <exact parent-discovered capabilities> }`.
    For Codex add `"workerId": "<new held native ID>"`; omit it for Claude.
    Leave `capabilities` out to keep the recorded binding's capabilities. When
-   given, it is at most 48 ClosedLoop graph reads, ClosedLoop live reads and
+   given, it is at most 48 graph reads, tracker reads and
    the five record writes (`writer-state.mjs help` lists the bindable
    operations); anything else is refused.
    The command independently reads the current definition from its own plugin

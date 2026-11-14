@@ -20,8 +20,8 @@
 //        fleet-home.mjs migrate --from <flat work dir> --program <slug> [--home <fleetHome, default --from>] [--dry-run]
 //        fleet-home.mjs launcher [--install] [--bin <dir, default ~/.local/bin>] [--home <fleetHome>]
 //
-// Each orchestrator chat is bound to its own program (chat-binding.mjs,
-// ISS-14028): `start`, `resume` and `migrate` bind the chat that runs them, and
+// Each orchestrator chat is bound to its own program (chat-binding.mjs):
+// `start`, `resume` and `migrate` bind the chat that runs them, and
 // every vibe hook and script in that chat resolves that program with no
 // environment variable. --home defaults to FLEET_HOME (an explicit override),
 // else the chat's bound home, else ~/fleet-orchestrator. `current` is the

@@ -3,8 +3,8 @@ import { createRequire as __vibeRequire } from 'node:module'; import {fileURLToP
 
 // src/scope-intake.ts
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -23,25 +23,253 @@ function runWhenMain(metaUrl, main2) {
   );
 }
 
+// ../../plugins/vibe/shared/vibe-core.mjs
+import path2 from "node:path";
+import { pathToFileURL as pathToFileURL2 } from "node:url";
+
+// ../../plugins/vibe/shared/plugin-roots.mjs
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
+var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
+var CODEX_LOCAL_VERSION = "local";
+var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
+var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+var NUMERIC = /^\d+$/;
+var SCOPE_FALLBACK = "user";
+var PROJECT_SCOPES = Object.freeze(["local", "project"]);
+function pluginManifest(root) {
+  for (const relative of MANIFESTS) {
+    try {
+      const manifest = JSON.parse(readFileSync(path.join(root, relative), "utf8"));
+      if (typeof manifest?.name === "string") {
+        return { name: manifest.name, version: typeof manifest.version === "string" ? manifest.version : null };
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+function ownPluginRoot(from) {
+  const file = String(from).startsWith("file:") ? fileURLToPath(from) : String(from);
+  let dir = path.dirname(realpathSync(file));
+  for (; ; ) {
+    const manifest = pluginManifest(dir);
+    if (manifest) return { root: dir, name: manifest.name, version: manifest.version };
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error(`${file} is not inside a plugin`);
+    dir = parent;
+  }
+}
+function comparePluginVersions(left, right) {
+  const a = SEMVER.exec(left);
+  const b = SEMVER.exec(right);
+  if (!a || !b) return compareText(left, right);
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(a[index]) - Number(b[index]);
+    if (difference !== 0) return Math.sign(difference);
+  }
+  if (a[4] === void 0 || b[4] === void 0) {
+    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
+  } else {
+    const order = compareIdentifiers(a[4], b[4]);
+    if (order !== 0) return order;
+  }
+  if (a[5] === b[5]) return 0;
+  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
+  return compareIdentifiers(a[5], b[5]);
+}
+function activeCodexVersion(versions) {
+  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
+  if (valid.length === 0) return null;
+  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
+  return [...valid].sort(comparePluginVersions).at(-1);
+}
+function pluginInstall(from) {
+  const self = ownPluginRoot(from);
+  const parent = path.dirname(self.root);
+  if (path.basename(parent) === "plugins") return { ...self, layout: Layout.Checkout, plugins: parent };
+  const marketplaceDir = path.dirname(parent);
+  const cacheDir = path.dirname(marketplaceDir);
+  const pluginsDir = path.dirname(cacheDir);
+  if (path.basename(cacheDir) !== "cache" || path.basename(pluginsDir) !== "plugins") return { ...self, layout: null };
+  const registry = path.join(pluginsDir, "installed_plugins.json");
+  return {
+    ...self,
+    layout: isFile(registry) ? Layout.Claude : Layout.Codex,
+    home: path.dirname(pluginsDir),
+    marketplace: path.basename(marketplaceDir),
+    cacheDir,
+    registry
+  };
+}
+function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
+  const self = pluginInstall(from);
+  if (self.layout === Layout.Checkout) {
+    const candidate = path.join(self.plugins, name);
+    if (pluginManifest(candidate)?.name === name) return { root: realpathSync(candidate), layout: Layout.Checkout };
+    throw missing(name, self, Layout.Checkout);
+  }
+  if (self.layout === null) {
+    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
+  }
+  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
+  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
+  return {
+    root: realpathSync(found.installPath),
+    layout: self.layout,
+    home: self.home,
+    marketplace: self.marketplace,
+    ...found.scope ? { scope: found.scope } : {},
+    ...found.projectPath ? { projectPath: found.projectPath } : {}
+  };
+}
+function siblingPluginRoot(name, options) {
+  return siblingPluginInstall(name, options).root;
+}
+function claudeEntry(registry, name, self, cwd) {
+  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
+  const here = realOrSame(path.resolve(cwd));
+  const holds = (project) => {
+    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
+    const root = realOrSame(project);
+    return here === root || here.startsWith(`${root}${path.sep}`);
+  };
+  for (const scope of PROJECT_SCOPES) {
+    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
+    if (matching.length > 0) return matching[0];
+  }
+  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
+  if (user.length === 1) return user[0];
+  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
+  throw missing(name, self, Layout.Claude);
+}
+function codexRoot(base, name, self) {
+  let versions;
+  try {
+    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
+  } catch {
+    throw missing(name, self, Layout.Codex);
+  }
+  const version = activeCodexVersion(versions);
+  if (!version) throw missing(name, self, Layout.Codex);
+  return path.join(base, version);
+}
+function missing(name, self, layout) {
+  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${name}@closedloop-ai\` in Claude Code or \`codex plugin add ${name}@closedloop-ai\` in Codex`);
+}
+function readRegistry(file) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function realOrSame(file) {
+  try {
+    return realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+function isFile(file) {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+function isDirectory(file) {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function compareText(left, right) {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+function compareIdentifiers(left, right) {
+  const a = left.split(".");
+  const b = right.split(".");
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    const order = compareIdentifier(a[index], b[index]);
+    if (order !== 0) return order;
+  }
+  return Math.sign(a.length - b.length);
+}
+function compareIdentifier(left, right) {
+  const leftNumeric = NUMERIC.test(left);
+  const rightNumeric = NUMERIC.test(right);
+  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
+  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+  return compareText(left, right);
+}
+
+// ../../plugins/vibe/shared/vibe-core.mjs
+var VIBE_CORE_MIN = "1.0.10";
+var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
+var cachedRoot = null;
+function vibeCoreRoot() {
+  if (cachedRoot) return cachedRoot;
+  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
+  const installed = pluginManifest(root)?.version ?? null;
+  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
+    const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
+    throw Object.assign(
+      new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
+      { outdated: true, installed, minimum: VIBE_CORE_MIN }
+    );
+  }
+  cachedRoot = root;
+  return root;
+}
+function vibeCorePath(relative) {
+  return path2.join(vibeCoreRoot(), relative);
+}
+function vibeCore(relative) {
+  return import(pathToFileURL2(vibeCorePath(relative)).href);
+}
+
+// vibe-core:lib/vibe/scripts/provider.mjs
+var module = await vibeCore("lib/vibe/scripts/provider.mjs");
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, blocksFileName, boundWith, clearProviderTree, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerTextDirectory, providerTextRoot, providerTree, providerTreeKey, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, skillNameListed, syncProviderTree, ticketReference, unprobedBinding, unreadableProviders, useLeadBinding, useSessionWorktree, writeProviderTree } = module;
+
+// src/cli.ts
+function providerAware(main2) {
+  return async (argv) => {
+    try {
+      return await main2(argv);
+    } catch (error) {
+      if (!isProviderBroken(error)) throw error;
+      process.stdout.write(`provider-broken: ${error.message}
+`);
+      return 4;
+    }
+  };
+}
+
 // src/scope-intake.ts
-var DEFAULT_INVENTORY = fileURLToPath(new URL("../../../handoff/scripts/handoff-inventory.mjs", import.meta.url));
+var DEFAULT_INVENTORY = fileURLToPath2(new URL("../../../handoff/scripts/handoff-inventory.mjs", import.meta.url));
 var PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
-var PROTOTYPE_CHECKER = "apps/prototypes/scripts/check-catalog-imports.mjs";
+var DEFAULT_POLICY_SOURCE = "built-in-default";
 async function intakeScope(input) {
   if (!input.worktree) throw new Error("--worktree is required");
   if (!Array.isArray(input.plannedPaths) || input.plannedPaths.length === 0) throw new Error("at least one --path is required");
   const worktree = resolve(input.worktree);
   const planned = [...new Set(input.plannedPaths.map(plannedPath))].sort();
   const loaded = loadPathPolicy(worktree, input.phase, input.inventoryScript ?? DEFAULT_INVENTORY);
-  const classify = await pathClassifierContract();
+  const { classify, defaultPolicy } = await pathClassifierContract();
   const classifications = await Promise.all(planned.map(async (file) => ({ file, classification: classify({
     file: { path: file, status: plannedStatus(worktree, loaded.inventory.baseCommit, file) },
     phase: input.phase,
-    policy: loaded.policy,
+    policy: loaded.policy ?? defaultPolicy,
     prototype: { owned: loaded.inventory.ownedPrototype === true, slug: loaded.inventory.sessionSlug },
     portableSurfaceAllowed: await portableSurfaceEditAllowed(worktree, loaded.inventory, file)
   }) })));
-  return classifyPlannedPaths({ worktree, planned, loaded, classifications });
+  return classifyPlannedPaths({ worktree, planned, loaded: { ...loaded, policy: loaded.policy ?? defaultPolicy }, classifications });
 }
 function classifyPlannedPaths(input) {
   const dispositions = new Map(input.classifications.map((entry) => [entry.file, entry.classification.disposition]));
@@ -65,7 +293,7 @@ function classifyPlannedPaths(input) {
 async function pathClassifierContract() {
   const moduleUrl = new URL("../../../handoff/scripts/path-classifier.mjs", import.meta.url).href;
   const runtime = await import(moduleUrl);
-  return runtime.classifyHandoffPath;
+  return { classify: runtime.classifyHandoffPath, defaultPolicy: runtime.DEFAULT_PATH_POLICY };
 }
 function plannedStatus(worktree, baseCommit, file) {
   const result = spawnSync("git", ["-C", worktree, "cat-file", "-e", `${baseCommit}:${file}`], {
@@ -75,13 +303,16 @@ function plannedStatus(worktree, baseCommit, file) {
   return result.status === 0 ? "M" : "A";
 }
 async function portableSurfaceEditAllowed(worktree, inventory, file) {
-  if (!inventory.ownedPrototype || file !== PROTOTYPE_CHECKER || !inventory.baseCommit) return false;
+  if (!inventory.ownedPrototype || !inventory.baseCommit) return false;
   try {
     const moduleUrl = new URL("../../../handoff/scripts/prototype-allowlist.mjs", import.meta.url).href;
     const runtime = await import(moduleUrl);
+    const areasUrl = new URL("../area-paths.mjs", import.meta.url).href;
+    const recipe = (await import(areasUrl)).prototypeRecipe();
+    if (!recipe || file !== runtime.portableSurfaceChecker()) return false;
     const base = execFileSync("git", ["-C", worktree, "show", `${inventory.baseCommit}:${file}`], { encoding: "utf8" });
-    const current = readFileSync(resolve(worktree, file), "utf8");
-    return runtime.isPortableSurfaceAllowlistEdit(base, current, (specifier) => [".ts", ".tsx", ".mjs"].some((extension) => existsSync(resolve(worktree, "packages/app", `${specifier.slice("@repo/app/".length)}${extension}`))));
+    const current = readFileSync2(resolve(worktree, file), "utf8");
+    return runtime.isPortableSurfaceAllowlistEdit(base, current, (specifier) => [".ts", ".tsx", ".mjs"].some((extension) => existsSync(resolve(worktree, recipe.portableModuleRoot, `${specifier.slice(recipe.portableModulePrefix.length)}${extension}`))));
   } catch {
     return false;
   }
@@ -101,6 +332,9 @@ function loadPathPolicy(worktree, _phase, inventoryScript) {
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
   const file = inventory.pathPolicyFile;
+  if (source?.kind === DEFAULT_POLICY_SOURCE && source.commit && inventory.baseCommit && file === null) {
+    return { inventory, policy: null };
+  }
   if (!source?.commit || !inventory.baseCommit || file !== PATH_POLICY_BASENAME) {
     throw new Error("handoff inventory did not return one validated root path policy and base commit");
   }
@@ -131,4 +365,4 @@ async function main(argv) {
     return 2;
   }
 }
-runWhenMain(import.meta.url, main);
+runWhenMain(import.meta.url, providerAware(main));

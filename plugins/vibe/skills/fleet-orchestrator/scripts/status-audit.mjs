@@ -11,7 +11,7 @@
 // member is judged against that PR alone, found by number among the members'
 // pullRequests: IN_PROGRESS while the writer has no PR, IN_REVIEW while it is
 // open, DONE once it merges and the member's own criteria are checked. The
-// orchestrator makes those moves with update-document; this audit finds the
+// orchestrator makes those moves through the tracker; this audit finds the
 // drift. A member missing from the snapshot prints `UNREAD-MEMBER <slug>`
 // (put a member with no PRD under `{"slug": null}`). `UNIT-PR-UNREAD <unit>`,
 // with the unit's members left unjudged, means the writer's PR is in no
@@ -33,8 +33,8 @@
 //     "body": "<the ticket's latest text>", "plans": [{"slug", "status"}],
 //     "absorbedBy": {"slug", "status"} (the umbrella ticket that absorbed it)}]}],
 //    "outOfScope": [{"slug", "reason": "<who ruled it out, and where>"}],
-//    "programRulings": "<current rulings.md>", "pullRequestTickets": {"123": "ISS-1"},
-//    "artifactLinks": [{"source": "ISS-1", "target": "ISS-2", "linkType": "BLOCKS"}]}
+//    "programRulings": "<current rulings.md>", "pullRequestTickets": {"123": "<slug>"},
+//    "artifactLinks": [{"source": "<slug>", "target": "<slug>", "linkType": "BLOCKS"}]}
 // For each child: a merged pull request means DONE; an open pull request or an
 // assigned writer means IN_PROGRESS or IN_REVIEW; not DONE or CANCELED with
 // neither means UNOWNED. A merged pull request is not DONE on its own: a child
@@ -68,6 +68,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
@@ -250,7 +251,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

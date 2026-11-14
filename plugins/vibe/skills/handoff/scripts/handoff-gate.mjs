@@ -2,7 +2,7 @@
 // A pull request may open only for the exact source that passed the final
 // pull-request inventory, including its body and verifier run evidence. This
 // records that witness; vibe-core's handoff-gate-check.mjs reads it.
-// A fleet unit's member tickets (`--member <slug>=<body>`, ISS-13924) are
+// A fleet unit's member tickets (`--member <slug>=<body>`) are
 // audited with the session's ticket and bound into the witness the same way.
 // With members recorded on the session, the gate needs `--title`, and the
 // title and body must name every member; the witness keeps the member list,
@@ -29,6 +29,7 @@ const { sameSource, sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-h
 const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { reviewReceiptProblems } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { EVIDENCE_KEYS, checkedMergeProblem, gatePath, memberNameProblems, mergeTargets, readReviewReceipts, reviewFindingProblems, sessionMembers } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 /** Refresh the actual main branch before a publication witness can be recorded. */
 function fetchCurrentMain(worktree) {
@@ -93,6 +94,7 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  exitOnProviderBroken();
   const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, rulings: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, title: { type: "string" } } });
   if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file> [--member <slug>=<file> ...] [--prd <slug>=<file> ...] [--plan <slug>=<file> ...] [--review <review.json>] [--title <PR title>]] [--rulings <program rulings file>]");
   values.receipts = values.receipt;

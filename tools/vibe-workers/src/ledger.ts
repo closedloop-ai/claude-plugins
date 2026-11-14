@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { actionSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { installedPluginRoot, readPluginManifest } from "./plugin-root.js";
 import { readReferenceImages } from "./reference-images.js";
@@ -46,7 +47,7 @@ export function readWriterSummary(worktree: string) {
 /**
  * Whether the writer can run under this installed release: `removed` (a plugin update deleted its root) and
  * `changed` (the recorded or proven newer installed definition differs) need migration before launch
- * (ISS-13321: a launch failed after three minutes and a setup worker migrated four minutes later).
+ * (a launch failed after three minutes and a setup worker migrated four minutes later).
  */
 function recordedDefinitionState(ledger: Ledger): "present" | "removed" | "changed" | "unreadable" {
   try {
@@ -118,6 +119,7 @@ export function takeWriterInput(input: unknown) {
 /** Atomically binds the one persistent writer to its runtime, canonical definition and exact session. */
 export function registerWriter(input: unknown) {
   const data = registerSchema.parse(input);
+  requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const definition = readDefinition(data.agentRoot, data.agentName, data.capabilities);
   if (data.agentName !== "vibe-change-worker") throw new Error("Session writer must be vibe-change-worker");
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
@@ -151,6 +153,7 @@ export type StrandedRecordVerifier = (lock: string, ledger: Ledger, retained: Re
  */
 export function migrateWriter(input: unknown, currentPluginRoot: string, verifyRetained?: StrandedRecordVerifier) {
   const data = migrateSchema.parse(input);
+  if (data.capabilities) requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const currentDefinition = (capabilities: Capability[]) => {
     const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
     if (realpathSync(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {
@@ -231,7 +234,7 @@ function provenDefinitionChange(evidence: ReturnType<typeof definitionUpgradeEvi
  * definition, is the mechanical proof of that cause.
  * Any other BLOCKED request migrates only when the recorded definition is absent: the old writer can never run
  * again to settle it, so it moves unchanged, still the active request, to the new writer, and `claim` lets that
- * writer take nothing else until it continues it (ISS-13291). While the old writer can still run, the refusal stays.
+ * writer take nothing else until it continues it. While the old writer can still run, the refusal stays.
  */
 function migratableBlock(ledger: Ledger, observedDigest: string | null,
   releasedRecord: ReturnType<StrandedRecordVerifier> | undefined) {
@@ -281,14 +284,14 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
       }
       if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
       // A stopped or rejected turn finishes FAILED. A new request supersedes it
-      // instead of waiting on a continuation nobody sends (ISS-13043, ISS-13051).
+      // instead of waiting on a continuation nobody sends.
       if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
       if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
         // The writer's last request returned DONE and its follow-up step (the main-sync validation after the
-        // input step) continues it: reopen that request rather than fail the continuation (ISS-13321).
+        // input step) continues it: reopen that request rather than fail the continuation.
         ledger.completed = ledger.completed.slice(0, -1);
         ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
       } else if (ledger.active) {

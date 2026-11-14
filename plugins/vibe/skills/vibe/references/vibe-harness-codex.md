@@ -6,7 +6,10 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 - Codex: invoke as `$vibe`. Workers are this plugin's agents in `agents/`
   (`../../agents/<name>.md` from this file). Codex cannot load them as
   registered agents, so spawn a subagent with the file's body as its
-  instructions plus the inputs below, and set the spawn's `model` and
+  instructions plus the inputs below (the body as
+  `node scripts/provider.mjs assemble --worktree "<wt>" <agent file>` writes
+  it, with the line "Open every other vibe file through that command, as
+  `provider-text.md` says"), and set the spawn's `model` and
   `reasoning_effort` to what `node scripts/worker-model.mjs codex <name>`
   prints: by default explorers (requirements, backend, primitive and Storybook
   advice, the handoff summary) run on `gpt-5.6-terra`, every other role on

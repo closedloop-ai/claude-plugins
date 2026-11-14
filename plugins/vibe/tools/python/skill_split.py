@@ -3,6 +3,12 @@
 A stub is one line, ``> Read `references/x.md` (block `id`) ...``; the block it names lives in that file
 between ``<!-- block: id -->`` and ``<!-- end: id -->`` and is the original text, moved without change.
 The path is relative to the skill folder (the nearest folder above the file that holds a SKILL.md).
+
+A provider stub, ``> Provider `<capability>` (block `id` of `file`)``, names a block of the same form in the
+optional provider plugin's references folder: text vibe follows only when a provider with that capability is
+bound. The generic text it replaces, when there is any, sits just above it between
+``<!-- generic: id -->`` and ``<!-- end generic: id -->``. Assembled for the provider, a file reads as it did
+before the text moved; assembled without one, it reads as a generic session sees it.
 """
 
 from __future__ import annotations
@@ -11,6 +17,15 @@ import re
 from pathlib import Path
 
 STUB = re.compile(r"^> Read `([^`]+)` \(block `([^`]+)`\)[^\n]*$", re.MULTILINE)
+PROVIDER_STUB = re.compile(r"^> Provider `([a-z+]+)` \(block `([a-z0-9-]+)` of `([^`]+)`\)[^\n]*$", re.MULTILINE)
+GENERIC = re.compile(r"^<!-- generic: ([a-z0-9-]+) -->\n(.*?)\n<!-- end generic: \1 -->\n", re.MULTILINE | re.DOTALL)
+# The rule region a file with provider stubs adds for a reader of the raw file (or the one line it replaced);
+# assembled text needs no such pointer. The same pattern as vibe-core's provider.mjs PROVIDER_RULE.
+PROVIDER_RULE = re.compile(r"^(?:<!-- provider-rule -->\n.*?\n<!-- end provider-rule -->\n"
+                           r"|Lines that start `> Provider` follow `[^`]*provider-text\.md`\.(?: [^\n]*)?\n)\n?",
+                           re.MULTILINE | re.DOTALL)
+PROVIDER_REFERENCES = (Path(__file__).resolve().parents[3] / "vibe-closedloop-provider" / "skills" / "closedloop-provider"
+                       / "references")
 _raw_read_text = Path.read_text
 
 
@@ -31,10 +46,28 @@ def block_text(root: Path, reference: str, block: str) -> str:
     return found.group(1)
 
 
-def assembled(path: Path) -> str:
-    """The file's text with every stub replaced by the block it names."""
+def provider_block(reference: str, block: str) -> str:
+    """Block `block` of provider reference `reference` (relative to the provider's references folder)."""
+    text = raw(PROVIDER_REFERENCES / reference)
+    found = re.search(r"<!-- block: %s -->\n(.*?)\n<!-- end: %s -->" % (re.escape(block), re.escape(block)), text, re.DOTALL)
+    if found is None:
+        raise AssertionError(f"provider {reference} has no block {block}")
+    return found.group(1)
+
+
+def has_stubs(text: str) -> bool:
+    return STUB.search(text) is not None or PROVIDER_STUB.search(text) is not None
+
+
+def assembled(path: Path, provider: bool = True) -> str:
+    """The file's text with every stub replaced by the block it names; `provider` decides the provider stubs."""
     text = raw(path)
-    if STUB.search(text) is None:
-        return text
-    root = skill_root(path)
-    return STUB.sub(lambda stub: block_text(root, stub.group(1), stub.group(2)), text)
+    if STUB.search(text) is not None:
+        root = skill_root(path)
+        text = STUB.sub(lambda stub: block_text(root, stub.group(1), stub.group(2)), text)
+    text = PROVIDER_RULE.sub("", text) if has_stubs(text) else text
+    if provider:
+        text = GENERIC.sub("", text)
+        return PROVIDER_STUB.sub(lambda stub: provider_block(stub.group(3), stub.group(2)), text)
+    text = GENERIC.sub(lambda region: region.group(2) + "\n", text)
+    return re.sub(PROVIDER_STUB.pattern + r"\n?", "", text, flags=re.MULTILINE)

@@ -5,6 +5,10 @@ model: sonnet
 tools: Read, Write, Grep, Glob, Bash, Skill
 ---
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
 ## Standalone boundary
 
 Modes are `advice` (read-only) or `share` (operational publication only). Never
@@ -13,8 +17,11 @@ Build/iterate/fix/plan/handoff-source requests belong to the SAME persistent
 `vibe-change-worker`, not a new prototype writer. Never commit, stash, create
 a worktree/branch or run a source-generating step to unblock publication.
 
-Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,
-`guardrails.md`, `ticket-template.md`, the owning AGENTS.md and canonical
+<!-- generic: read-list -->
+Read `../skills/vibe/references/quality-loop.md`, `repository-intelligence.md`,
+`guardrails.md`, the owning AGENTS.md and canonical
+<!-- end generic: read-list -->
+> Provider `graph+tickets` (block `read-list` of `agents/vibe-prototype-worker.md`)
 `<repo-root>/.claude/skills/prototype/SKILL.md`. Preserve exact private session
 ownership, worktree, `prototype/<slug>` branch and slug. An arbitrary prototype
 branch without its private session record is not admitted.
@@ -30,7 +37,10 @@ and iteration guidance in the existing session worktree. It does not follow
 steps that create another worktree, source writer or technical-plan approval.
 It reads canonical role instructions and applies ALL source changes itself,
 including registry, shared surface/stories and local ReadyForReview metadata.
-Keep canonical mock-data, catalog, validation, single design-review and tag
+<!-- generic: design-approval -->
+Keep canonical mock-data, catalog, validation, single design review and tag
+<!-- end generic: design-approval -->
+> Provider `recipes` (block `design-approval` of `agents/vibe-prototype-worker.md`)
 semantics. Preserve genuine visual/product approval, not technical ownership
 or structural-plan confirmations. Root prototype-approve still owns
 PrototypeStatus.HandedOff; the vibe session marker does not approve it.
@@ -98,12 +108,10 @@ as JSON in existing private Git metadata and call
 It verifies owned branch, slug, immutable URL and full current HEAD. Never
 record a failed/pending deployment or report an old preview as current.
 
-Refresh the truthful owned ticket through its authorized serial record helper:
-prototype publication replaces app/API/Storybook fields, flag snapshot is
-`None.`, and Backend built is `None.` for mock data. Keep canonical review
-evidence and unresolved real promotion work. Never publish a local technical
-plan (the ticket helper publishes the session's PLN) or fabricate endpoints.
-The ticket helper owns next-owner assignment.
+<!-- generic: ticket-refresh -->
+Never publish a local technical plan or fabricate endpoints.
+<!-- end generic: ticket-refresh -->
+> Provider `tickets` (block `ticket-refresh` of `agents/vibe-prototype-worker.md`)
 
 ## Return
 

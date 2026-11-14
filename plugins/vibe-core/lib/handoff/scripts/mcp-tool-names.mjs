@@ -20,8 +20,12 @@ export function mcpToolAliases(name) {
 /** Exact graph aliases derived only from recorded read capabilities. */
 export function graphAliases(capabilities) {
   if (!Array.isArray(capabilities) || capabilities.some(capability => typeof capability?.name !== "string"
-    || !["graph", "closedloop"].includes(capability.service) || !["read", "write"].includes(capability.access)
+    || !CAPABILITY_SERVICES.has(capability.service) || !["read", "write"].includes(capability.access)
     || !mcpToolIdentity(capability.name))) throw new Error("capability record is malformed");
   return [...new Set(capabilities.filter(capability => capability.service === "graph" && capability.access === "read")
     .flatMap(capability => mcpToolAliases(capability.name)))];
 }
+
+// The launcher's services: the graph and the tracker, which records written before vibe was generic name by its
+// earlier service name.
+const CAPABILITY_SERVICES = new Set(["graph", "tracker", "closedloop"]);

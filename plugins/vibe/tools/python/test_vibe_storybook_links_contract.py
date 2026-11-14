@@ -14,14 +14,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from vibe_contract_text import flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 AGENTS = PLUGIN_ROOT / "agents"
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 ENVIRONMENT = VIBE / "references" / "environment.md"
-TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 VIBE_SKILL = VIBE / "SKILL.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 FULL_UI = "`<storybook-base>/?path=/story/<story-id>`"

@@ -11,7 +11,7 @@
 // --repo, then GH_REPO, then the directory the command runs in after its cd,
 // pushd and env -C, and only then the session's. A directory it cannot prove
 // is refused with a request for -R; guessing the session's repository once
-// checked claude-plugins #413 against symphony-alpha #413 (ISS-13886).
+// checked one repository's #413 against another's.
 //
 // Runs from pre-tool-use.mjs. MERGE_GUARD_GH overrides the gh binary.
 

@@ -1,5 +1,9 @@
 # Guardrails: UI rules
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 Moved out of `guardrails.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: ui-rules -->
@@ -9,40 +13,37 @@ When nothing in the catalog fits:
 
 1. Add the missing building block to the local plan; the person hears of it
    only through the new-components notice in step 5.
-2. Run the repo agent `design-system-steward` (`.claude/agents/design-system-steward.md`)
-   with the need. Follow its answer, which is one of three:
+<!-- generic: missing-primitive-steps -->
+2. Decide reuse, extend or create from the repository's component catalog and
+   its design-system docs (or a design-system agent or skill the repository
+   ships, given the need):
+<!-- end generic: missing-primitive-steps -->
+> Provider `recipes` (block `missing-primitive-steps` of `vibe/guardrails-ui.md`)
    - Reuse: an existing component covers it. Use it and continue.
    - Extend: add a variant or prop to an existing component. Never change an
      existing default; add the new behavior beside it.
-   - Create: a new component, placed where the steward says. Generic and
-     domain-free goes in `packages/design-system/components/ui/`; domain UI
-     goes in its feature slice under `packages/app/<feature>/components/`.
+<!-- generic: missing-primitive-steps-2 -->
+   - Create: a new component, placed where the repository's docs put shared,
+     domain-free UI and where they put its feature UI.
+<!-- end generic: missing-primitive-steps-2 -->
+> Provider `recipes` (block `missing-primitive-steps-2` of `vibe/guardrails-ui.md`)
 
    For Extend and Create, the spec covers the whole component: every variant
    and size, phone and desktop widths, accessibility (name, keyboard, focus,
    ARIA state) and every state (default, hover, focus, disabled, loading,
-   empty, error). Ask the steward for what its answer leaves out. State text
-   follows the Copy rules below.
-3. Build it to the repo's Storybook and design-system rules
-   (`apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`), using the
-   repo skill `.claude/skills/storybook` (`workflows/author-stories.md`,
-   `workflows/design-controls.md`):
-   - Stories follow "Storybook taxonomy" below: a current root, the page
-     tree and a lifecycle tag, never a v1.0 root.
-   - Stories go where Storybook collects them. For `packages/design-system`
-     that is `apps/storybook/stories/` (a story next to the component is
-     never picked up); `packages/app/*/components/` stories may sit beside the
-     component.
-   - A new `packages/design-system/components/ui/*.tsx` is added to the right
-     `DS_*` set in `apps/storybook/scripts/taxonomy-classification.mjs`. Its
-     tests are not written in the session; handoff lists them for engineering
-     (Tests, below).
-   - Register it by running `pnpm --filter storybook catalog:sync` and
-     `pnpm --filter storybook validate:catalog`. Never hand-edit
-     `component-catalog.ts`.
-4. Run the Storybook tests for the new or changed story files only
-   (`pnpm --filter storybook exec vitest run <story files>`), never the whole
-   `pnpm --filter storybook test` suite, and confirm the new stories pass.
+<!-- generic: missing-primitive-steps-3 -->
+   empty, error). State text follows the Copy rules below.
+3. Build it to the repository's Storybook and design-system rules (their
+   `AGENTS.md` files and any Storybook skill it ships): stories go where
+   Storybook collects them and follow "Storybook taxonomy" below, and a
+   catalog the repository generates is refreshed with its own command, never
+   edited by hand. Its tests are not written in the session; handoff lists
+   them for engineering (Tests, below).
+4. Run the Storybook tests for the new or changed story files only, with the
+   repository's own Storybook test command, never the whole suite, and
+   confirm the new stories pass.
+<!-- end generic: missing-primitive-steps-3 -->
+> Provider `recipes` (block `missing-primitive-steps-3` of `vibe/guardrails-ui.md`)
    A story or play that requests a viewport uses a MINIMAL_VIEWPORTS name
    (`mobile1`, `mobile2`, `tablet`, or `desktop`) or a name actually registered
    in `parameters.viewport.options`. Handoff's Storybook diff rule blocks an
@@ -55,7 +56,10 @@ When nothing in the catalog fits:
 
 ## Storybook taxonomy
 
-Read the repo's `apps/storybook/TAXONOMY.md` and follow it for every story
+<!-- generic: taxonomy-doc -->
+Read the repo's Storybook taxonomy document (when it has one) and follow it for every story
+<!-- end generic: taxonomy-doc -->
+> Provider `recipes` (block `taxonomy-doc` of `vibe/guardrails-ui.md`)
 the session adds, moves, renames or touches; that doc is the authority, so its
 rules are not copied here. The bare minimum:
 
@@ -95,7 +99,10 @@ rules are not copied here. The bare minimum:
 - Adding, moving or renaming stories is a Storybook release: the version bump
   and Version History entry the doc names, in the same change. A session is
   one release: exactly one new Version History entry, at the next version
-  after the `version` in `apps/storybook/package.json` on the main it last
+<!-- generic: version-history -->
+  after the `version` in the Storybook package's `package.json` on the main it last
+<!-- end generic: version-history -->
+> Provider `recipes` (block `version-history` of `vibe/guardrails-ui.md`)
   synced, describing only what the session changed, with `package.json` bumped
   to match. Never add an entry for a version main does not have beyond that
   one, renumber or reword main's entries, or special-case a validator, test or
@@ -130,7 +137,10 @@ block: the repo docs where they say how, otherwise the structure a sibling
 entity's precedent set, never its root or version. The "existing story files
 in the same area" that the repo skill's `workflows/author-stories.md` step 1
 says to match are the stories for the same capability that block reports, read with
-`apps/storybook/TAXONOMY.md`, never the neighbors in the same folder.
+<!-- generic: precedent-stories -->
+Storybook taxonomy document, never the neighbors in the same folder.
+<!-- end generic: precedent-stories -->
+> Provider `recipes` (block `precedent-stories` of `vibe/guardrails-ui.md`)
 
 ## Tokens and styling
 
@@ -146,7 +156,10 @@ guardrails reviewer point at it.
 - Before writing or accepting any hardcoded color, shadow or dark-mode
   override, read the tokens the touched surface actually bundles: each
   stylesheet it loads or inlines (for app and Desktop screens,
-  `packages/design-system/styles/globals.css`; for a static or generated page,
+<!-- generic: bundled-tokens -->
+  the design system's global stylesheet; for a static or generated page,
+<!-- end generic: bundled-tokens -->
+> Provider `recipes` (block `bundled-tokens` of `vibe/guardrails-ui.md`)
   the CSS its generator writes or inlines) and, in each, its `:root` block and
   its `.dark` (or `prefers-color-scheme: dark`) block. Search them for the
   property's token family (`--shadow-`, `--color-`, `--radius`, and so on).

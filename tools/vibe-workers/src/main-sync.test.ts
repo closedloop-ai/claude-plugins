@@ -6,12 +6,23 @@ import { finalMerge, generatedBiomeFixture, invokeSync, syncFixture, validateFix
 import { bundleDirectory, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
 import { inspectInputInventory } from "./main-sync-checks.js";
+import { syncLocation } from "./main-sync-state.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup(source?: string) { const value = syncFixture(source); fixtures.push(value); return value; }
 
 describe("production main-sync publication CLIs", () => {
+  it("admits a vibe session with no hosted environment and no data mode, and refuses a mode-less one with an environment", () => {
+    const value = setup();
+    const recordFile = join(value.metadata, "vibe-session.json");
+    const record = JSON.parse(readFileSync(recordFile, "utf8"));
+    writeFileSync(recordFile, JSON.stringify({ ...record, mode: null, vercel: null }));
+    expect(syncLocation(value.worktree).session.mode).toBeNull();
+    writeFileSync(recordFile, JSON.stringify({ ...record, mode: null }));
+    expect(() => syncLocation(value.worktree)).toThrow(/exact active owned session branch and mode/);
+  });
+
   it("admits only the real canonical committed-input Biome derivative without trimming raw trailing bytes or rewriting it", () => {
     const value = setup();
     const generated = generatedBiomeFixture(value);

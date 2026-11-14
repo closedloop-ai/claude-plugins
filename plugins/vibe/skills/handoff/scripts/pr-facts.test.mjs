@@ -3,18 +3,27 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
+import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, prRulesFor, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
-import { git, gitEnv, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, gitEnv, makeCheckout, makeHome, PROVIDER_BINDING, runNode, SYMPHONY_PATH_POLICY, bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { GENERIC_AREAS, repositoryAreas } from "../../vibe/scripts/area-paths.mjs";
 import { workflowLaneDefinitions } from "./ci-job-shape.mjs";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { qaImpact, qaImpactRequest } from "./qa-impact.mjs";
 import { RULING_ID, RULINGS, TICKET } from "./targeted-tests-ruling-test-fixture.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
+// The repository the ClosedLoop provider serves, whose areas these cases name.
+const AREAS = repositoryAreas(PROVIDER_BINDING);
+
 const { sourceIdentity, committedSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+
+// The PR evidence rules of the repository the ClosedLoop provider serves.
+// In-process checks resolve the session's binding through this conversation, bound like the repository they model.
+bindProviderInProcess(after);
+const selectionProblemsBound = (runsFile, files, required, commit) => selectionProblems(runsFile, files, required, commit, prRulesFor(PROVIDER_BINDING));
 
 test('dirty precommit evidence cannot bind unchanged HEAD and binds only after the candidate is committed', t => {
   const { root, home, cleanup } = makeHome('precommit-evidence-binding-');
@@ -266,14 +275,22 @@ test("S3 DT-08: lint CI claim is unrelated to the pending E2E lane", (t) => {
   assert.match(facts(s, { body: pronoun, runs }).prBodyProblems.join("\n"), /CI coverage claim for not-run web E2E lane/);
 });
 
+test("with no areas recipe a UI file is known by its extension, so a UI diff is never server-only", () => {
+  assert.deepEqual(requiredLanes(["src/Button.tsx"], [], GENERIC_AREAS), ["web-host"]);
+  assert.deepEqual(requiredLanes(["web/page.vue", "src/Card.stories.tsx"], [], GENERIC_AREAS), ["web-host", "storybook-plays"]);
+  assert.deepEqual(requiredLanes(["src/server.ts", "README.md"], [], GENERIC_AREAS), []);
+  assert.deepEqual(requiredLanes(["apps/app/page.tsx"], [], AREAS), ["web-host"], "a recipe's prefixes still decide when bound");
+  assert.deepEqual(requiredLanes(["scripts/build.tsx"], [], AREAS), [], "and only they do");
+});
+
 test("evidence: lanes follow the diff, and unfinished, missing or stale runs block", () => {
   const changed = ["packages/app/list.tsx", "packages/app/list.stories.tsx"];
-  assert.deepEqual(requiredLanes([ROUTE]), []);
-  assert.deepEqual(["e2e/a.spec.ts", "e2e-web-smoke/b.spec.ts", "apps/desktop/test/e2e/c.spec.ts"].map((file) => requiredLanes([file])), [["e2e"], ["e2e"], ["e2e"]]);
-  assert.deepEqual(requiredLanes(changed, ["card select"]), ["web-host", "desktop-host", "webkit-iphone", "chromium-pixel", "storybook-plays"]);
+  assert.deepEqual(requiredLanes([ROUTE], [], AREAS), []);
+  assert.deepEqual(["e2e/a.spec.ts", "e2e-web-smoke/b.spec.ts", "apps/desktop/test/e2e/c.spec.ts"].map((file) => requiredLanes([file], [], AREAS)), [["e2e"], ["e2e"], ["e2e"]]);
+  assert.deepEqual(requiredLanes(changed, ["card select"], AREAS), ["web-host", "desktop-host", "webkit-iphone", "chromium-pixel", "storybook-plays"]);
   const commit = "a".repeat(40);
   const laneKey = "1".repeat(16);
-  const runs = requiredLanes(changed, ["card select"]).map((lane) => ({ lane, status: "passed", command: "run", commit, laneKey, outcome: "selected",
+  const runs = requiredLanes(changed, ["card select"], AREAS).map((lane) => ({ lane, status: "passed", command: "run", commit, laneKey, outcome: "selected",
     ...(lane === "storybook-plays" ? { playVerdicts: [{ storyId: "cards--select", verdict: "PASS" }] } : {}) }));
   const file = { touchFlows: ["card select"], runs, qaImpact: { laneKey } };
   assert.deepEqual(evidenceProblems(file, changed, commit), []);
@@ -413,14 +430,14 @@ test("test selection covers the whole branch diff, and every selected, required 
   assert.match(gate(SELECTED, [{ path: "e2e/links.spec.ts", reason: "names the endpoint" }]).join(), /e2e\/links\.spec\.ts: selected but no passing/);
   assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], commit: "b".repeat(40) }] }).join(), /links\.test\.ts: selected but no passing/);
   assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], status: "skipped" }] }).join(), /links\.test\.ts: selected but no passing/);
-  assert.match(selectionProblems({ testSelection: [{ file: ROUTE, selector: "guess", tests: [] }] }, [], [], commit).join(), /selector "guess"/);
+  assert.match(selectionProblemsBound({ testSelection: [{ file: ROUTE, selector: "guess", tests: [] }] }, [], [], commit).join(), /selector "guess"/);
 });
 
 test("a required test with flag states needs a passing run with the flag on and with it off", () => {
   const commit = "c".repeat(40);
   const required = [{ path: "apps/a/sessions.test.tsx", reason: "shared", flagStates: ["on", "off"] }];
   const run = (flag) => ({ path: "apps/a/sessions.test.tsx", status: "passed", commit, ...(flag ? { flag } : {}) });
-  const problems = (testRuns) => selectionProblems({ testSelection: [], testRuns }, [], required, commit);
+  const problems = (testRuns) => selectionProblemsBound({ testSelection: [], testRuns }, [], required, commit);
   assert.deepEqual(problems([run("on")]), [`apps/a/sessions.test.tsx: no passing run with the flag off for ${commit} (testRuns entry with flag: "off")`]);
   assert.equal(problems([run()]).length, 2, "a run that names no flag state counts for neither");
   assert.deepEqual(problems([run("on"), run("off")]), []);
@@ -465,8 +482,8 @@ test("the verifier's object-shaped selection and path-only inventory fail closed
 
 test("selection evidence never silently drops a nonarray or malformed test list", () => {
   const commit = "d".repeat(40);
-  assert.match(selectionProblems({ testSelection: { codeTestsFor: { [ROUTE]: [TEST] } } }, [], [], commit).join(), /testSelection must be an array/);
-  assert.match(selectionProblems({ testSelection: [{ file: ROUTE, selector: "code_tests_for", tests: { path: TEST } }] }, [], [], commit).join(), /tests must be an array/);
+  assert.match(selectionProblemsBound({ testSelection: { codeTestsFor: { [ROUTE]: [TEST] } } }, [], [], commit).join(), /testSelection must be an array/);
+  assert.match(selectionProblemsBound({ testSelection: [{ file: ROUTE, selector: "code_tests_for", tests: { path: TEST } }] }, [], [], commit).join(), /tests must be an array/);
 });
 
 test("edited web and Desktop e2e specs can be carried only by exact not-run CI evidence", () => {
@@ -492,8 +509,10 @@ test("edited web and Desktop e2e specs can be carried only by exact not-run CI e
       native: { available: false }, remote: { available: false }, unavailableSpecs: [web, desktop], ciCoverage: Object.values(ciOwner) },
   };
   const changed = [web, desktop].map((path) => ({ path, status: "M" }));
-  const check = (candidate) => selectionProblems(candidate, changed, [], commit);
+  const check = (candidate) => selectionProblemsBound(candidate, changed, [], commit);
   assert.deepEqual(check(evidence), []);
+  assert.equal(selectionProblems(evidence, changed, [], commit).length, 2,
+    "with no provider's E2E CI owners neither spec is left for CI; each must pass locally");
   assert.deepEqual(targetedEvidenceProblems({ ...evidence, rerunCycles: [] }, commit), []);
   const typedCommand = structuredClone(evidence);
   typedCommand.targetedInventory.laneReport.source = { kind: "command", command: "pnpm test:lanes" };
@@ -558,10 +577,10 @@ test("Tier A Docker can be ready while five selected specs lack required identit
     e2eCapability: capability,
   };
   const changed = specs.map((path) => ({ path, status: "M" }));
-  assert.deepEqual(selectionProblems(evidence, changed, [], commit), []);
+  assert.deepEqual(selectionProblemsBound(evidence, changed, [], commit), []);
   assert.deepEqual(targetedEvidenceProblems(evidence, commit), []);
   assert.deepEqual(evidenceProblems(evidence, specs, commit), []);
-  const rejects = (candidate) => assert.match(selectionProblems(candidate, changed, [], commit).join(), /selected but no passing or carried run/);
+  const rejects = (candidate) => assert.match(selectionProblemsBound(candidate, changed, [], commit).join(), /selected but no passing or carried run/);
   rejects({ ...evidence, testRuns: runs.filter((run) => run.path !== web[0]) });
   rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, commit: "a".repeat(40) } : run) });
   rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, selectedTier: null } : run) });
@@ -702,15 +721,15 @@ test("a run that also fails on captured main does not block, and the body lists 
   const mainSha = "9".repeat(40);
   const red = (extra) => ({ status: "main-preexisting", mainSha, commit, ...extra });
   const required = [{ path: "scripts/deploy/deploy-guards.test.ts", reason: "path gate" }];
-  assert.deepEqual(selectionProblems({ testSelection: [], testRuns: [red({ path: required[0].path })] }, [], required, commit), []);
-  assert.match(selectionProblems({ testSelection: [], testRuns: [red({ path: required[0].path, mainSha: undefined })] }, [], required, commit).join(), /selected but no passing/,
+  assert.deepEqual(selectionProblemsBound({ testSelection: [], testRuns: [red({ path: required[0].path })] }, [], required, commit), []);
+  assert.match(selectionProblemsBound({ testSelection: [], testRuns: [red({ path: required[0].path, mainSha: undefined })] }, [], required, commit).join(), /selected but no passing/,
     "main-preexisting names the main it failed on");
   const lane = { name: "deploy-guards", command: "pnpm test:deploy-guards" };
   const lanes = { testSelection: [], targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
     testRuns: [red({ lane: lane.name, command: lane.command })], rerunCycles: [] };
   assert.deepEqual(targetedEvidenceProblems(lanes, commit), []);
   const changed = ["packages/app/list.tsx"];
-  const runs = requiredLanes(changed).map((name) => (name === "web-host" ? red({ lane: name, command: "control", outcome: "fails on main too" })
+  const runs = requiredLanes(changed, [], AREAS).map((name) => (name === "web-host" ? red({ lane: name, command: "control", outcome: "fails on main too" })
     : { lane: name, status: "passed", command: "control", outcome: "ok", commit }));
   assert.deepEqual(evidenceProblems({ touchFlows: [], touchFlowsReason: "none", runs }, changed, commit), []);
   const runsFile = { testRuns: lanes.testRuns };

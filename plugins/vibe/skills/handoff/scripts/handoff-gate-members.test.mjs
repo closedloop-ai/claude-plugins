@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { recordHandoffGate } from "./handoff-gate.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -11,6 +11,10 @@ const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scrip
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { gatePath, handoffGateProblem } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// These read live tracker tickets, so they run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const passingInventory = { ok: true, blocking: { prBody: true, prEvidence: true } };
 const TITLE = "ISS-123, ISS-124: Group header counts";

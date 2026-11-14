@@ -1,5 +1,8 @@
 """Contract tests read the prompt files whole: a stub a split left behind reads as the block it names.
 
+Provider stubs read as the provider's text, so a contract written before that text moved still reads it; a test
+of the generic session reads `skill_split.assembled(path, provider=False)`.
+
 This applies to every pytest in the repo, so a contract test passes whether a rule is always loaded or sits behind a
 stub. The exact SPLIT set in test_vibe_prompt_split_contract.py is the only guard on what is split; a placement test
 must read `skill_split.raw`, never `read_text`, or it cannot tell the two apart.
@@ -20,7 +23,7 @@ import skill_split  # noqa: E402  # pyright: ignore[reportMissingImports]
 
 def _read_text(self: Path, *args: object, **kwargs: object) -> str:
     text = skill_split._raw_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
-    if self.suffix == ".md" and skill_split.STUB.search(text) is not None:
+    if self.suffix == ".md" and skill_split.has_stubs(text):
         return skill_split.assembled(self)
     return text
 

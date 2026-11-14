@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Decides whether a vibe session's handoff review is one consolidated read of
 // the final diff over the precomputed guardrails findings, or the full
-// reviewer fleet handoff runs today (ISS-13352, PRD-823). Changes nothing.
+// reviewer fleet handoff runs today. Changes nothing.
 //
 // Usage: review-scope.mjs --worktree <path> [--findings <file>] [--inventory <handoff-inventory.mjs output>]
 //          [--base <sha>] [--config <json file>] [--manifest <triage manifest>] [--enable]
@@ -27,10 +27,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { REVIEW_EFFECTIVE, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const FINDINGS_SCHEMA = "vibe.guardrails-findings/1";
 export const REVIEW_SCOPE_SCHEMA = "vibe.review-scope/1";
@@ -46,19 +49,19 @@ export const PARTIAL_REASON_PREFIX = "partial:";
 // (WS4 R1 names "diff size, backend change or shared-component change" and no
 // numbers), so they are defaults for the owner to rule on, overridable per run
 // with `--config <json file>` or VIBE_REVIEW_SCOPE_MAX_FILES / _MAX_LINES.
-// `sharedPrefixes` mirrors the UI roots `pr-facts.mjs` already treats as
-// shared packages (the shared app package and the design system).
+// `sharedPrefixes` are the repository's shared packages, from the bound
+// provider's layout recipe; none without one.
 export const REVIEW_SCOPE_DEFAULTS = Object.freeze({
   maxFiles: 15,
   maxChangedLines: 400,
   escalateOnBackend: true,
   escalateOnSharedComponent: true,
-  sharedPrefixes: Object.freeze(["packages/app/", "packages/design-system/"]),
+  sharedPrefixes: Object.freeze([]),
 });
 
 /** Defaults, then a config file's keys, then the environment's numbers. */
 export function resolveThresholds({ config = {}, env = process.env } = {}) {
-  const merged = { ...REVIEW_SCOPE_DEFAULTS, ...config };
+  const merged = { ...REVIEW_SCOPE_DEFAULTS, ...(repositoryLayout().sharedPrefixes ? { sharedPrefixes: repositoryLayout().sharedPrefixes } : {}), ...config };
   for (const [key, name] of [["maxFiles", "VIBE_REVIEW_SCOPE_MAX_FILES"], ["maxChangedLines", "VIBE_REVIEW_SCOPE_MAX_LINES"]]) {
     const value = Number(env[name]);
     if (env[name] !== undefined && env[name] !== "" && Number.isInteger(value) && value >= 0) merged[key] = value;
@@ -137,7 +140,8 @@ export function measureDiff(worktree, base, sharedPrefixes) {
     files.push(rest.join("\t"));
     changedLines += (Number.parseInt(added, 10) || 0) + (Number.parseInt(removed, 10) || 0) || (added === "-" ? 1 : 0);
   }
-  const paths = files.filter((file) => !file.startsWith(".closedloop-ai/vibe-plans/"));
+  const planPrefix = sessionLocalPlanPrefix(worktree);
+  const paths = files.filter((file) => !isLocalPlanPath(file, planPrefix));
   return { files: paths.length, changedLines, sharedFiles: paths.filter((file) => sharedPrefixes.some((prefix) => file.startsWith(prefix))) };
 }
 
@@ -218,7 +222,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 import { backendGroups, blastBundle, buildInventoryBundle, flagKeys, flagModuleLookup, guardPredicates, resolveConstant, storybookLinks } from "./inventory-bundle.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");

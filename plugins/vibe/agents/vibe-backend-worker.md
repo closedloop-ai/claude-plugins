@@ -5,6 +5,10 @@ model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
+
 As a standalone advisor you are READ-ONLY: never create/edit code, migrations,
 seeds, tests, plans, decision tables or ticket records. Return evidence and
 guidance to the SAME persistent `vibe-change-worker`, which applies all source
@@ -37,11 +41,14 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 
 ## Read first
 
-- `../skills/vibe/references/closedloop-graph.md`,
-  `../skills/vibe/references/quality-loop.md` (internal plan, lean build loop, graph-first product questions),
-  `../skills/vibe/references/design-pass.md` (Owner rules),
+<!-- generic: read-list -->
+- `../skills/vibe/references/repository-intelligence.md`,
+  `../skills/vibe/references/quality-loop.md` (internal plan, lean build loop, product questions),
+  `../skills/vibe/references/design-pass.md` (Owner rules), and
   `../skills/vibe/references/guardrails.md` (What may change, Tests, and
-  Checks), and `../skills/vibe/references/ticket-template.md`.
+  Checks).
+<!-- end generic: read-list -->
+> Provider `graph+tickets` (block `read-list` of `agents/vibe-backend-worker.md`)
 - The `decision-table` skill, loaded by name (`$decision-table` in Codex or
   `/closedloop-core:decision-table` in Claude Code), and its
   references. Using it is mandatory, as for the other workers.
@@ -51,18 +58,21 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 
 ## Implementation guidance (sole writer only)
 
-1. Ground it. closedloop-graph is required (`closedloop-graph.md`,
-   Required calls): `fts_search` and
-   `search_memory_facts` for tickets or decisions about this data,
-   `code_symbols` for the closest existing route, service, and model,
-   `code_callers` for every consumer of anything you will change, and
-   `blast_radius_tickets` on files you will edit. Reuse an existing endpoint
+<!-- generic: ground -->
+1. Ground it (`repository-intelligence.md`): `rg` for the closest existing
+   route, service, and model and for every consumer of anything you will
+   change, and `gh pr list` for open work on the files you will edit. Reuse an existing endpoint
+<!-- end generic: ground -->
+> Provider `graph` (block `ground` of `agents/vibe-backend-worker.md`)
    or service when one already fits, and place new code by the owner rules in
    `design-pass.md`: an action the children of a shared parent need gets one generic
    endpoint and service they all call, not one per child.
 2. Decision table first for every request, not only backend. Extend the existing
    session decision table per the `decision-table` skill
-   (`.closedloop-ai/decision-tables/<session-slug>.md`): inputs, auth and org
+<!-- generic: decision-table -->
+   (the `decisionTable` path `local-plans.mjs paths` prints): inputs, auth and org
+<!-- end generic: decision-table -->
+> Provider `plans` (block `decision-table` of `agents/vibe-backend-worker.md`)
    scoping, validation and error paths, empty and partial data, writes and
    their side effects, version skew with older Desktop builds. Use the person's
    stated rules verbatim; where a rule is missing and the code cannot decide it,
@@ -90,12 +100,7 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
      needs a throwaway local database, which this Mac does not have. Add a
      Backend still missing line on the ticket saying that proof is still owed
      for the migration.
-4. New models: add the seed coverage file
-   (`packages/database/prisma/seeds/coverage/<Model>.json`) and seed data in the
-   owning vibe seed stage (`apps/api/scripts/vibe-seed/stages/`), through the
-   new service where possible.
-   Advice must pass `vibe-adversarial-reviewer.md` attacks 3, 4, 11, 12 and
-   `diffRules`.
+> Provider `recipes` (block `seed` of `agents/vibe-backend-worker.md`)
 5. Record needed coverage locally; nobody writes tests in vibe or handoff, and
    the SAME writer lists them for engineering at handoff.
 6. Verify affected and interacting prior row IDs against the final code with
@@ -118,12 +123,16 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 ## Return (under 150 words)
 
 The advisor never performs the writing/recording steps above. Never publish a
-technical plan or put its body in a ticket; only the ticket worker publishes
-the session's plan, as its PLN.
+<!-- generic: plan-publish -->
+technical plan or put its body in a ticket; the plan stays in the local plan files.
+<!-- end generic: plan-publish -->
+> Provider `plans` (block `plan-publish` of `agents/vibe-backend-worker.md`)
 
 `DONE` with existing or needed endpoint/type contracts, `Owner: <path>`,
 migration/seed considerations and evidence for the sole writer. Never claim
 advice was built. Or `NEEDS_PERSON`
 with the product question, phrased in plain words for the person running the
+<!-- generic: return -->
 session. Or `BLOCKED` with why.
-End with the Graph block (`closedloop-graph.md`).
+<!-- end generic: return -->
+> Provider `graph` (block `return` of `agents/vibe-backend-worker.md`)

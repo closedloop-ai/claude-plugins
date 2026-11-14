@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createVerifyRun, strictlySerial, evidenceOk, parseLaneCheck, Status, summarize, TIME_LIMITS, turboReplay, uncoveredPaths } from "./verify-run.mjs";
+
+// The ClosedLoop provider's verify recipe, as a session in the repository it serves reads it.
+const RECIPE = JSON.parse(readFileSync(new URL("../../../../vibe-closedloop-provider/provider.json", import.meta.url), "utf8")).data.recipes.verify;
 
 const HEAD = "a".repeat(40);
 const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
@@ -38,6 +42,7 @@ function harness({ installed = true, extra = [], files = { "package.json": PACKA
     ["pre-pr-lanes.mjs run", ok("recorded pass")],
   ];
   const controller = createVerifyRun({
+    recipeFor: () => RECIPE,
     run: router(routes, calls),
     read: (file) => { if (file in files) return files[file]; throw new Error(`no file ${file}`); },
     write: (file, text) => { written[file] = text; },
@@ -402,4 +407,13 @@ test("an unreadable lane report is blocked on the pooled path just as on the ser
   const evidence = await harnessed.controller.verifyPooled({ worktree: "/wt", head: HEAD, useCache: false });
   assert.equal(find(evidence, "lanes").status, Status.Blocked);
   assert.equal(evidence.ok, false);
+});
+
+test("with no verify recipe nothing runs and every check is blocked with the reason", () => {
+  const { controller, calls } = harness({ files: { "/wt/package.json": PACKAGE }, controllerOptions: { recipeFor: () => null } });
+  const evidence = controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.deepEqual(evidence.checks.map((check) => [check.name, check.status]), [["verify", Status.Blocked]]);
+  assert.match(evidence.checks[0].reason, /no verify recipe/);
+  assert.equal(evidence.ok, false);
+  assert.ok(!calls.some((call) => call.line.includes("run-bounded.mjs")), "no repository command ran");
 });

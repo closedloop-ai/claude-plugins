@@ -12,6 +12,7 @@ import { premiseProblems } from "./review-premises.mjs";
 import { finalMarker, finalReportProblem } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
 import { readCodexReviewTurn } from "./codex-review-runtime.mjs";
+import { exitOnProviderBroken } from "../../vibe/scripts/provider.mjs";
 
 export const REVIEW_ROLES = Object.freeze([
   "vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker",
@@ -217,6 +218,7 @@ function takeoverBinding(role, result, worktree, current, expected) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  exitOnProviderBroken();
   const { values } = parseArgs({ options: { worktree: { type: "string" }, result: { type: "string" }, out: { type: "string" }, role: { type: "string" }, native: { type: "boolean" }, "orch-dir": { type: "string" }, helper: { type: "string" }, "pr-url": { type: "string" }, head: { type: "string" } } });
   if (!values.worktree || !values.out || !values.role || Boolean(values["pr-url"]) !== Boolean(values.head)) throw new Error("Usage: review-receipts.mjs --worktree <wt> --role <role> --out <receipt.json> (--result <launcher-output.json> [--pr-url <url> --head <sha>] | --native --orch-dir <dir> --helper <name>)");
   const takeover = values.head ? { prUrl: values["pr-url"], headSha: values.head } : undefined;

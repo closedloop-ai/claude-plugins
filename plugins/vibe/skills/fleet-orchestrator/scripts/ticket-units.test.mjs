@@ -3,9 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { freeUnitName, groupLines, groupTickets, joinReasons, prNameProblems } from './ticket-units.mjs';
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tickets exist only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL('./ticket-units.mjs', import.meta.url));
 const APP = 'acme/app';
@@ -157,7 +161,7 @@ test('a PRD ticket in another repository is that repository\'s own unit for the 
     'UNIT ISS-1 ISS-1, ISS-2: ISS-1~ISS-2 same PRD PRD-7; PRD-7 also has ISS-3 in acme/plugins, a unit of its own: a PR cannot span repositories',
     `UNIT ISS-3 ISS-3 alone: different repository from ISS-1, ISS-2; PRD-7 also has ISS-1, ISS-2 in ${APP}, a unit of its own: a PR cannot span repositories`,
   ]);
-  assert.throws(() => groupTickets({ tickets: [ticket('ISS-1', { prd: 'prd seven' })] }), /not a PRD slug/);
+  assert.throws(() => groupTickets({ tickets: [ticket('ISS-1', { prd: 'prd seven' })] }), /not a requirements document key/);
 });
 
 test('a closed unit is finished: a new related ticket starts a new unit instead of folding into its writer', (t) => {
@@ -182,7 +186,7 @@ test('a closed unit is finished: a new related ticket starts a new unit instead 
 test('a prd without operatorAssigned, and malformed fields, are refused rather than guessed at', () => {
   const refuses = (extra, pattern) => assert.throws(() => groupTickets({ tickets: [ticket('ISS-1', extra)] }), pattern, JSON.stringify(extra));
   refuses({ prd: 'PRD-7' }, /names a prd, so it needs operatorAssigned/);
-  refuses({ prd: 'ISS-9', operatorAssigned: true }, /not a PRD slug/);
+  refuses({ prd: 'ISS-9', operatorAssigned: true }, /not a requirements document key/);
   refuses({ files: 'a.ts' }, /files as an array of strings/);
   refuses({ surfaces: [3] }, /surfaces as an array of strings/);
   refuses({ blockers: [{ met: false }] }, /blockers as an array/);

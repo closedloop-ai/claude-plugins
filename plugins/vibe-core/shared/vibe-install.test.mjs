@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HookStandDown, hookStandDown, vibeRoot } from "./vibe-install.mjs";
+import { recordHookSkill } from "../hooks/hook-session-scope.mjs";
 
 const CORE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const IMPORT = /(?:^|[^\w.])(?:import|export)\s[^;]*?from\s*["']([^"']+)["']|(?:^|[^\w.])import\s*\(\s*["']([^"']+)["']\s*\)|^\s*import\s*["']([^"']+)["']/gm;
@@ -130,8 +131,10 @@ test("a hook entry point runs once: never beside a vibe that still runs its own 
   mkdirSync(path.join(vibe, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.71" }));
   const hook = path.join(plugins, "vibe-core", "hooks", "pre-tool-use.mjs");
+  // The force-push refusal acts only in a chat that activated vibe (hooks/activation.mjs).
+  recordHookSkill("stand-down-chat", "vibe:vibe", root);
   const run = () => spawnSync(process.execPath, [hook], { encoding: "utf8", env: { ...process.env, HOME: root },
-    input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", cwd: root, tool_input: { command: FORCE_PUSH } }) });
+    input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", session_id: "stand-down-chat", cwd: root, tool_input: { command: FORCE_PUSH } }) });
   const decision = (result) => (result.stdout ? JSON.parse(result.stdout).hookSpecificOutput.permissionDecision : null);
   assert.equal(decision(run()), "deny", "beside a split vibe the hook runs");
   mkdirSync(path.join(vibe, "hooks"));

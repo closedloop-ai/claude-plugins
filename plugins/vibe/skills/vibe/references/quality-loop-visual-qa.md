@@ -1,5 +1,9 @@
 # Quality loop: visual QA during the session
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 Moved out of `quality-loop.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: visual-qa-body -->
@@ -11,36 +15,30 @@ against the same basis.
 
 ### What it checks
 
-Visual QA uses the repository's own design pack: its read-only visual
-QA skill (`/visual-qa` in Claude Code, `$visual-qa` in Codex), which `/design`
-and `$design` route production review through.
+<!-- generic: what-it-checks -->
+Visual QA uses the repository's own visual QA skill when it ships one, run
+the way handoff runs it (the handoff skill, "Browser E2E and the repository's
+QA passes"); otherwise the orchestrator looks at each touched screen in the
+app tab itself.
 
-- When the linked ticket or its PRD has acceptance criteria, visual QA checks
-  the change against them: the run gets the session decision table's
-  `## Acceptance Criteria` list (those criteria, plus any the person's
-  requests added) and reports each visual and UX criterion as met or not,
-  with what it saw. For shared scope it compares each consumer page against
-  that page's approved prototype route, flags every control present in the
-  prototype but missing in production, and inventories rendered controls for
-  any with no requirement naming that control on that surface.
+- It checks the change against the session decision table's `## Acceptance
+  Criteria` list and reports each visual and UX criterion as met or not, with
+  what it saw.
 - On a metric, summary, or card surface, it compares the card's owning
-  container, width, order and responsive placement with the established grid
-  or the page's official prototype story. A matching element count alone is
-  not a layout result.
-- When neither has any, it falls back to the design pack's best-practice
-  review, against `.claude/design/soul.md`, as the skill does when there is
-  no spec.
+  container, width, order and responsive placement with the established
+  grid. A matching element count alone is not a layout result.
+- With no criteria, it reviews against the repository's own design docs, and
+  `guardrails-ui.md` when the repository has none.
 
-Run it the way handoff runs its visual QA (the handoff skill, "Browser E2E
-and the repository's QA passes"): the skill dispatches its own read-only
-agents on the session's last deployed commit, with the session's app link
-and the screens the change touched. It changes no code. Its confirmed
-findings go to the SAME writer as one fix request in the queue, under the
-usual rules: design tokens and catalog components,
-never new user-visible words (`guardrails.md`, "Copy"), and a finding that
-needs a product choice goes through the research and necessity gate above.
-That fix deploys like any other request, and the ready message names what
-the check found and changed, in the person's terms. Owned prototype sessions
+It changes no code. Its confirmed findings go to the SAME writer as one fix
+request in the queue, under the usual rules: design tokens and catalog
+components, never new user-visible words (`guardrails.md`, "Copy"), and a
+finding that needs a product choice goes through the research and necessity
+gate above. The ready message names what the check found and changed, in the
+person's terms. Owned prototype sessions keep their canonical single design
+review at handoff instead.
+<!-- end generic: what-it-checks -->
+> Provider `recipes` (block `what-it-checks` of `vibe/quality-loop-visual-qa.md`)
 keep their canonical single design review at handoff instead.
 
 ### When it is offered

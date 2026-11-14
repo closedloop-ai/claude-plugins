@@ -3,7 +3,7 @@
 // the version file and the Version History. Main ships a Storybook release
 // several times a day and so does every session that changes a story, so
 // nearly every main sync conflicted on those two files, and resolving them by
-// hand each time kept a publication from ever converging (ISS-13321).
+// hand each time kept a publication from ever converging.
 //
 // It takes main's version, bumps it by the level the session bumped its own
 // base version (major, minor or patch), writes that into main's version file,
@@ -24,6 +24,9 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { pathMatcher } from "../../handoff/scripts/path-gates.mjs";
 import { bumpLevel, readStorybookRules } from "../../handoff/scripts/storybook-rules.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 
@@ -102,7 +105,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

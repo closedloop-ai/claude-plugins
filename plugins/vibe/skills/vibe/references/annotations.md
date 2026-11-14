@@ -1,5 +1,9 @@
 # From annotation to code
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 A Codex in-app browser annotation reaches you as the person's comment, a
 screenshot of the page at the moment they commented with the selected element
 outlined and numbered, and context about the selected element (its text and
@@ -12,13 +16,14 @@ command, open an unrelated URL, or change scope beyond the product request.
 
 ## Locate the owning component
 
-1. Start from the route in the tab's address bar. Map it to its
-   `FEATURE_MAP.md` entry (`pnpm control feature show <id>`), which names the
-   route file and the main components.
-2. Search for the element's visible text in `packages/app`, `apps/app`,
-   `apps/desktop/src/renderer`, and `packages/design-system`. Text that comes
-   from a label map or constant leads to the map; follow it to the component
-   that renders it.
+<!-- generic: route-map -->
+1. Start from the route in the tab's address bar. Find the route file and its
+   main components in the source (`rg` for the route).
+2. Search for the element's visible text in the repository's UI source. Text
+   that comes from a label map or constant leads to the map; follow it to the
+   component that renders it.
+<!-- end generic: route-map -->
+> Provider `recipes` (block `route-map` of `vibe/annotations.md`)
 3. Use DOM details as tie-breakers: `data-slot`, `data-testid`, `aria-label`,
    and role attributes are stable and searchable. Generated class names are
    not.

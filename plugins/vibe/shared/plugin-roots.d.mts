@@ -8,3 +8,4 @@ export declare function siblingPluginRoot(name: string, options: { from: string;
 export declare function siblingPluginRootOrNull(name: string, options: { from: string; cwd?: string }): string | null;
 export declare function pluginInstall(from: string): { root: string; name: string; version: string | null; layout: "checkout" | "claude" | "codex" | null; home?: string; marketplace?: string };
 export declare function siblingPluginInstall(name: string, options: { from: string; cwd?: string }): { root: string; layout: "checkout" | "claude" | "codex"; home?: string; marketplace?: string; scope?: string; projectPath?: string };
+export declare function siblingPluginNames(options: { from: string }): string[];

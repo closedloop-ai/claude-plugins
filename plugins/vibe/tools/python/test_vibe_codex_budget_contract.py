@@ -14,10 +14,11 @@ accounts' weekly Codex limits.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -66,7 +67,7 @@ def test_no_vibe_text_asks_for_a_whole_suite() -> None:
     sources = {
         "guardrails": (REFERENCES / "guardrails.md").read_text(),
         "quality-loop": (REFERENCES / "quality-loop.md").read_text(),
-        "closedloop-graph": (REFERENCES / "closedloop-graph.md").read_text(),
+        "closedloop-graph": (PROVIDER_REFERENCES / "closedloop-graph.md").read_text(),
         "handoff": HANDOFF_SKILL.read_text(),
         "primitive": agent("vibe-primitive-worker"),
         "decomposer": agent("vibe-storybook-decomposer"),
@@ -87,7 +88,13 @@ def test_handoff_recipe_runs_no_test_suite() -> None:
     for command in ('"test:affected"', '"turbo", "test"', '["pnpm", "verify"]', '["pnpm", "test"]', '"test:lint"',
                     '"test:skills"', '"test:renderer"', '"storybook", "test"', "lanes.commands"):
         assert command not in recipe, command
-    assert '"typecheck:affected"' in recipe
+    # The matrix itself is the provider repository's recipe; its handoff steps run no suite either.
+    contract = json.loads((PROVIDER_REFERENCES.parents[2] / "provider.json").read_text())
+    checks = contract["data"]["recipes"]["mainSync"]["checks"]
+    handoff = [" ".join(step["argv"]) for purpose in ("handoff", "final") for step in checks[purpose] if "argv" in step]
+    for command in ("test:affected", "turbo test", "pnpm verify", "pnpm test", "test:lint", "test:skills", "test:renderer", "storybook test"):
+        assert not any(command in line.split("--")[0] for line in handoff if line != "pnpm typecheck:affected"), command
+    assert "pnpm typecheck:affected" in handoff
 
 
 def test_e2e_uses_a_capability_tier_and_only_needed_specs() -> None:

@@ -1,5 +1,9 @@
 # Triage manifest
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 `scripts/vibe-triage.mjs` classifies the request into one class and prints the
 step manifest the orchestrator follows. It is deterministic: the same request
 text and touched paths give the same manifest. The shared rules every class
@@ -32,7 +36,10 @@ touches other files (mid-run upgrade rules are not part of this release).
 | `backend` | backend files only, or a request that names backend work and no UI | `vibe-pipeline-backend` |
 | `docs-config` | docs, scripts or config files only | `vibe-pipeline-docs-config` |
 | `data-metric` | a metric or cost surface, or a request about a number the product shows | `vibe-pipeline-ui-feature`, plus the extra gate |
-| `mockup` | every touched file is under `apps/prototypes`, or the request asks for a mockup | the existing "Mockup sessions" flow |
+<!-- generic: mockup-row -->
+| `mockup` | every touched file is under the repository's prototypes folder, or the request asks for a mockup | the existing "Mockup sessions" flow |
+<!-- end generic: mockup-row -->
+> Provider `recipes` (block `mockup-row` of `vibe/triage.md`)
 | `unknown` | the evidence does not decide one area | none: the vibe skill's flow |
 
 The brief's likely files decide once they are known; request and ticket text
@@ -55,7 +62,10 @@ Each step in `steps` is `required (policy)` with an `effective` value. Only
   the app, UI evidence is requested, or the writer asks) instead of at session
   start. It is never skipped.
 - `desktop`: `skip` means leave Desktop out; the evidence names no Desktop-relevant
-  surface (`apps/desktop`, `packages/app`, or a request that names Desktop).
+<!-- generic: desktop-surface -->
+  surface (a desktop app, a package a desktop app mounts, or a request that names Desktop).
+<!-- end generic: desktop-surface -->
+> Provider `recipes` (block `desktop-surface` of `vibe/triage.md`)
 - A `defer` or `skip` is only recommended when likely files are known. A class
   that rests on request text alone recommends nothing to leave out.
 
@@ -64,8 +74,11 @@ action, reason, evidence and whether it was applied. `check` fails when a
 recommendation is missing from the log or has no reason or evidence.
 
 `review.scope` names who reads the final diff and `extraGates` lists what a
-class adds (`workflow-code-review` for `backend`, `logical-qa` for
-`data-metric`). `e2e.source` is always `pnpm test:lanes and the e2e path filter`.
+<!-- generic: extra-gates -->
+class adds (`workflow-code-review` for `backend`, and a repository gate the provider's
+recipes add for a class). `e2e.source` is the repository's lane source.
+<!-- end generic: extra-gates -->
+> Provider `recipes` (block `extra-gates` of `vibe/triage.md`)
 Both review steps carry an `effective` value, `apply` with the switch on and
 `as-today` with it off, which the handoff reads (below).
 
@@ -80,8 +93,11 @@ an error. When both steps say `effective: apply`:
 - `review.scope` `consolidated-adversarial` adds `vibe-adversarial-reviewer`
   beside the consolidated reviewer when the diff-derived decision is
   `consolidated`. Every other scope adds no review of its own.
-- each `extraGates` entry the handoff knows (`workflow-code-review`,
-  `logical-qa`) runs as an additional gate; an unknown name is ignored.
+<!-- generic: known-gates -->
+- each `extraGates` entry the handoff knows (`workflow-code-review`, and
+  any gate the provider's recipes name) runs as an additional gate; an unknown name is ignored.
+<!-- end generic: known-gates -->
+> Provider `recipes` (block `known-gates` of `vibe/triage.md`)
 
 The manifest may add review work and never removes a review the diff-derived
 `mode` already requires: `mode` and `reasons` in the output are the same with or
@@ -105,4 +121,4 @@ The orchestrator never reads the variable; it reads `effective`:
 
 Turning the switch on relaxes "Start Desktop for every session" and the
 expectation that an environment exists from the start. Both await the owner's
-ruling (ISS-13333, ISS-13334), so the switch stays off in shipped use.
+ruling, so the switch stays off in shipped use.

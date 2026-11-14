@@ -1,5 +1,9 @@
 # Design pass
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 Vibe keeps the lean build loop internal, with independent reviews at handoff.
 Existing tests run at handoff; no tests are authored in vibe or handoff unless
 the person asks for a pull request, and the writer only repairs existing tests
@@ -15,11 +19,14 @@ Nobody asks the person where code goes.
 1. Behavior that the children of a shared parent share goes into that parent
    as a generic, domain-free slot or extension point, and each child opts in
    (one prop or one hook call) instead of reimplementing it. When the parent
-   is in `packages/design-system`, the slot is typed without domain nouns,
-   because design-system code cannot import `packages/app`, `@repo/api`, or
-   `@repo/database`. The domain wiring (data hooks, API calls, nouns, labels)
-   stays in the owning feature package in `packages/app`, or
-   `packages/app/shared` when more than one feature uses it, and is passed
+<!-- generic: owner-slot -->
+   is in the shared design-system package, the slot is typed without domain
+   nouns, because design-system code cannot import domain packages. The domain
+   wiring (data hooks, API calls, nouns, labels) stays in the owning feature
+   package, or its shared feature folder when more than one feature uses it,
+   and is passed
+<!-- end generic: owner-slot -->
+> Provider `recipes` (block `owner-slot` of `vibe/design-pass.md`)
    in. A slot alone is not an owner: the shared state and its handlers
    (selection, grouping, collapse, paging) live in the parent or in one
    shared hook the parent calls, and a child passes only its domain wiring.
@@ -32,7 +39,10 @@ Nobody asks the person where code goes.
 3. Something a shared component already renders is extended there (a new
    prop or variant beside the existing default), never copied.
 4. Behavior specific to one child stays in that child, in its feature package
-   in `packages/app` (route shells stay thin), on the surface that already
+<!-- generic: owner-surface -->
+   in its feature package (route shells stay thin), on the surface that already
+<!-- end generic: owner-surface -->
+> Provider `recipes` (block `owner-surface` of `vibe/design-pass.md`)
    owns the entity (`guardrails.md`, "Where code goes").
 
 An opt-in slot changes nothing for children that do not pass it; only altering
@@ -43,32 +53,34 @@ what they show raises the "everywhere or just here" question.
 The change worker does this lookup before editing. It is not a design session:
 no second design, no questions, no approval.
 
-1. Screens and gates: the FEATURE_MAP entry for each screen the request
-   touches (`pnpm control feature show <id>`, or the entry in
-   `.claude/skills/control/feature-map.json`) gives its web route, Desktop
-   hash, flag gates, and code paths. A screen in `packages/app` has a web
-   host (`apps/app`) and a Desktop host (`apps/desktop/src/renderer`).
-2. The shared parent and its other children: the required closedloop-graph
-   calls (`closedloop-graph.md`, Required calls) on each component you will
-   touch, what it composes or inherits from, and what else builds on that
-   parent.
-   This session's earlier work is not in the graph, so read the change log
-   and `rg` the worktree for it too.
-3. Existing components: `packages/design-system/storybook/component-catalog.ts`,
-   the `packages/app` feature packages, and `packages/app/shared` for
-   anything that already renders the concept, plus the paved paths and
-   shared-surface rules in `packages/app/AGENTS.md` and the nearest
+<!-- generic: prep-screens -->
+1. Screens and gates: each screen the request touches, its route, and the
+   flag gates on it, found in the source (`rg` for the route and the gate). A
+   screen a shared package renders has a host in each app that mounts it.
+<!-- end generic: prep-screens -->
+> Provider `recipes` (block `prep-screens` of `vibe/design-pass.md`)
+<!-- generic: prep-parent -->
+2. The shared parent and its other children: the definition, importers and
+   callers (`repository-intelligence.md`) of each component you will touch,
+   what it composes or inherits from, and what else builds on that parent.
+   Include this session's earlier work, from the change log and the worktree.
+<!-- end generic: prep-parent -->
+> Provider `graph` (block `prep-parent` of `vibe/design-pass.md`)
+<!-- generic: prep-components -->
+3. Existing components: the repository's component catalog, its feature
+   packages and shared helpers, for anything that already renders the
+   concept, plus the paved paths and shared-surface rules in the nearest
+<!-- end generic: prep-components -->
+> Provider `recipes` (block `prep-components` of `vibe/design-pass.md`)
    `AGENTS.md` of each directory involved.
-4. Known pitfalls, when the `workflow-memory` command exists on this Mac.
-   Run one query, where `<repo>` is the repository's name, adding
-   `--env-file ~/.workflow/.env` when that file exists:
-   `workflow-memory query --summary-only --repo <repo> --query "<screen and behavior keywords>"`
-   Treat what it returns as hints to verify. Skip it when the command is not
-   installed.
+> Provider `memory` (block `prep-memory` of `vibe/design-pass.md`)
 5. Precedent: where the same capability already exists for a sibling
    entity (another entity's list or detail surface): the component that
    provides it, how its hosts consume it, and where its stories live
-   (`code_symbols` on the capability's names, `code_importers` on that
+<!-- generic: prep-precedent -->
+   (`rg` on the capability's names and on imports of that
+<!-- end generic: prep-precedent -->
+> Provider `graph` (block `prep-precedent` of `vibe/design-pass.md`)
    component). Where the owner rules, the repo's `AGENTS.md` ("Shared behavior
    belongs in the shared parent") and its docs already say how, follow them;
    where they do not, mirror the precedent's ownership, component and
@@ -92,14 +104,20 @@ dispatch gets them verbatim:
 
 ```
 Prep:
-- Screens: <each screen and host, with its FEATURE_MAP id>
-- Gates: <flag gates the FEATURE_MAP lists for those screens, or none>
+<!-- generic: plan-screens -->
+- Screens: <each screen and host, with its route>
+- Gates: <flag gates on those screens, or none>
+<!-- end generic: plan-screens -->
+> Provider `recipes` (block `plan-screens` of `vibe/design-pass.md`)
 - Shared parent: <path and component, or none>
 - Shared capability: <sourced behavior or none>
 - Owner: <one parent path and component>
 - Consumers: <every inheriting adapter>
 - Prototype routes: <each consumer -> approved route/component, or none>
-- Existing components: <catalog or packages/app components and helpers to reuse, or none>
+<!-- generic: plan-components -->
+- Existing components: <catalog or feature package components and helpers to reuse, or none>
+<!-- end generic: plan-components -->
+> Provider `recipes` (block `plan-components` of `vibe/design-pass.md`)
 - Earlier work: <what this session already built for it, or none>
 - Memory: <pitfalls found, none found, or not installed>
 - Precedent: <the sibling entity, providing component and how hosts consume it, or none found>
@@ -166,9 +184,11 @@ A fix that moves behavior to its owner works through, in its own reasoning:
 - Stories at the owning level: the slot's stories live where the owner's
   stories are collected, and each child's story only shows it opted in.
 - Sibling sweep: after the fix, look for the same shape or defect at sibling
-  sites (the other children of the owner through `code_importers` and
-  `code_callers`, repeated strings or calls through `code_grep`, then `rg` in
-  the worktree for the session's own code) and consolidate repeats in the
+<!-- generic: sibling-sweep -->
+  sites (the other children of the owner through its importers and
+  callers, and repeated strings or calls through `rg` in the worktree) and consolidate repeats in the
+<!-- end generic: sibling-sweep -->
+> Provider `graph` (block `sibling-sweep` of `vibe/design-pass.md`)
   session's own code. Do not opt in children the person did not name; list
   them.
 - Tests and checks: no tests are authored; an existing test the restructure

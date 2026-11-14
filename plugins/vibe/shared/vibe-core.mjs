@@ -1,4 +1,4 @@
-// How vibe loads the code that lives in the vibe-core plugin (ISS-13869):
+// How vibe loads the code that lives in the vibe-core plugin:
 // vibe-core holds the hooks and every module they run, so a vibe release that
 // does not touch them leaves vibe-core's bundle, and Codex's approval of its
 // hooks, unchanged. Every vibe script that uses one of those modules imports
@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { comparePluginVersions, ownPluginRoot, pluginManifest, siblingPluginRoot } from "./plugin-roots.mjs";
 
 /** The oldest vibe-core release this vibe works with; raise it when vibe starts using something newer. */
-export const VIBE_CORE_MIN = "1.0.7";
+export const VIBE_CORE_MIN = "1.0.10";
 /** The commands that add vibe-core beside this vibe in each harness. */
 export const VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
 

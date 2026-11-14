@@ -11417,15 +11417,229 @@ var coerce = {
 var NEVER = INVALID;
 
 // src/cli.ts
-import { realpathSync } from "node:fs";
-import { fileURLToPath, pathToFileURL as pathToFileURL2 } from "node:url";
+import { realpathSync as realpathSync2 } from "node:fs";
+import { fileURLToPath as fileURLToPath2, pathToFileURL as pathToFileURL3 } from "node:url";
+
+// ../../plugins/vibe/shared/vibe-core.mjs
+import path2 from "node:path";
+import { pathToFileURL } from "node:url";
+
+// ../../plugins/vibe/shared/plugin-roots.mjs
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
+var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
+var CODEX_LOCAL_VERSION = "local";
+var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
+var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+var NUMERIC = /^\d+$/;
+var SCOPE_FALLBACK = "user";
+var PROJECT_SCOPES = Object.freeze(["local", "project"]);
+function pluginManifest(root) {
+  for (const relative of MANIFESTS) {
+    try {
+      const manifest = JSON.parse(readFileSync(path.join(root, relative), "utf8"));
+      if (typeof manifest?.name === "string") {
+        return { name: manifest.name, version: typeof manifest.version === "string" ? manifest.version : null };
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+function ownPluginRoot(from) {
+  const file = String(from).startsWith("file:") ? fileURLToPath(from) : String(from);
+  let dir = path.dirname(realpathSync(file));
+  for (; ; ) {
+    const manifest = pluginManifest(dir);
+    if (manifest) return { root: dir, name: manifest.name, version: manifest.version };
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error(`${file} is not inside a plugin`);
+    dir = parent;
+  }
+}
+function comparePluginVersions(left, right) {
+  const a = SEMVER.exec(left);
+  const b = SEMVER.exec(right);
+  if (!a || !b) return compareText(left, right);
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(a[index]) - Number(b[index]);
+    if (difference !== 0) return Math.sign(difference);
+  }
+  if (a[4] === void 0 || b[4] === void 0) {
+    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
+  } else {
+    const order = compareIdentifiers(a[4], b[4]);
+    if (order !== 0) return order;
+  }
+  if (a[5] === b[5]) return 0;
+  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
+  return compareIdentifiers(a[5], b[5]);
+}
+function activeCodexVersion(versions) {
+  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
+  if (valid.length === 0) return null;
+  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
+  return [...valid].sort(comparePluginVersions).at(-1);
+}
+function pluginInstall(from) {
+  const self = ownPluginRoot(from);
+  const parent = path.dirname(self.root);
+  if (path.basename(parent) === "plugins") return { ...self, layout: Layout.Checkout, plugins: parent };
+  const marketplaceDir = path.dirname(parent);
+  const cacheDir = path.dirname(marketplaceDir);
+  const pluginsDir = path.dirname(cacheDir);
+  if (path.basename(cacheDir) !== "cache" || path.basename(pluginsDir) !== "plugins") return { ...self, layout: null };
+  const registry = path.join(pluginsDir, "installed_plugins.json");
+  return {
+    ...self,
+    layout: isFile(registry) ? Layout.Claude : Layout.Codex,
+    home: path.dirname(pluginsDir),
+    marketplace: path.basename(marketplaceDir),
+    cacheDir,
+    registry
+  };
+}
+function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
+  const self = pluginInstall(from);
+  if (self.layout === Layout.Checkout) {
+    const candidate = path.join(self.plugins, name);
+    if (pluginManifest(candidate)?.name === name) return { root: realpathSync(candidate), layout: Layout.Checkout };
+    throw missing(name, self, Layout.Checkout);
+  }
+  if (self.layout === null) {
+    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
+  }
+  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
+  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
+  return {
+    root: realpathSync(found.installPath),
+    layout: self.layout,
+    home: self.home,
+    marketplace: self.marketplace,
+    ...found.scope ? { scope: found.scope } : {},
+    ...found.projectPath ? { projectPath: found.projectPath } : {}
+  };
+}
+function siblingPluginRoot(name, options) {
+  return siblingPluginInstall(name, options).root;
+}
+function claudeEntry(registry, name, self, cwd) {
+  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
+  const here = realOrSame(path.resolve(cwd));
+  const holds = (project) => {
+    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
+    const root = realOrSame(project);
+    return here === root || here.startsWith(`${root}${path.sep}`);
+  };
+  for (const scope of PROJECT_SCOPES) {
+    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
+    if (matching.length > 0) return matching[0];
+  }
+  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
+  if (user.length === 1) return user[0];
+  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
+  throw missing(name, self, Layout.Claude);
+}
+function codexRoot(base, name, self) {
+  let versions;
+  try {
+    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
+  } catch {
+    throw missing(name, self, Layout.Codex);
+  }
+  const version = activeCodexVersion(versions);
+  if (!version) throw missing(name, self, Layout.Codex);
+  return path.join(base, version);
+}
+function missing(name, self, layout) {
+  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${name}@closedloop-ai\` in Claude Code or \`codex plugin add ${name}@closedloop-ai\` in Codex`);
+}
+function readRegistry(file) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function realOrSame(file) {
+  try {
+    return realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+function isFile(file) {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+function isDirectory(file) {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function compareText(left, right) {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+function compareIdentifiers(left, right) {
+  const a = left.split(".");
+  const b = right.split(".");
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    const order = compareIdentifier(a[index], b[index]);
+    if (order !== 0) return order;
+  }
+  return Math.sign(a.length - b.length);
+}
+function compareIdentifier(left, right) {
+  const leftNumeric = NUMERIC.test(left);
+  const rightNumeric = NUMERIC.test(right);
+  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
+  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+  return compareText(left, right);
+}
+
+// ../../plugins/vibe/shared/vibe-core.mjs
+var VIBE_CORE_MIN = "1.0.10";
+var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
+var cachedRoot = null;
+function vibeCoreRoot() {
+  if (cachedRoot) return cachedRoot;
+  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
+  const installed = pluginManifest(root)?.version ?? null;
+  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
+    const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
+    throw Object.assign(
+      new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
+      { outdated: true, installed, minimum: VIBE_CORE_MIN }
+    );
+  }
+  cachedRoot = root;
+  return root;
+}
+function vibeCorePath(relative) {
+  return path2.join(vibeCoreRoot(), relative);
+}
+function vibeCore(relative) {
+  return import(pathToFileURL(vibeCorePath(relative)).href);
+}
+
+// vibe-core:lib/vibe/scripts/provider.mjs
+var module = await vibeCore("lib/vibe/scripts/provider.mjs");
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, blocksFileName, boundWith, clearProviderTree, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerTextDirectory, providerTextRoot, providerTree, providerTreeKey, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, skillNameListed, syncProviderTree, ticketReference, unprobedBinding, unreadableProviders, useLeadBinding, useSessionWorktree, writeProviderTree } = module;
 
 // ../shared/cli.ts
-import { pathToFileURL } from "node:url";
+import { pathToFileURL as pathToFileURL2 } from "node:url";
 function runWhenMain(metaUrl, main2) {
   const entry = process.argv[1];
   if (!entry) return;
-  if (metaUrl !== pathToFileURL(entry).href) return;
+  if (metaUrl !== pathToFileURL2(entry).href) return;
   Promise.resolve(main2(process.argv.slice(2))).then(
     (code) => process.exit(code),
     (err) => {
@@ -11438,57 +11652,33 @@ function runWhenMain(metaUrl, main2) {
 // src/cli.ts
 function runFromCanonicalEntry(metaUrl, main2) {
   const entry = process.argv[1];
-  if (!entry || realpathSync(fileURLToPath(metaUrl)) !== realpathSync(entry)) return;
-  runWhenMain(pathToFileURL2(entry).href, main2);
+  if (!entry || realpathSync2(fileURLToPath2(metaUrl)) !== realpathSync2(entry)) return;
+  runWhenMain(pathToFileURL3(entry).href, providerAware(main2));
+}
+function providerAware(main2) {
+  return async (argv) => {
+    try {
+      return await main2(argv);
+    } catch (error) {
+      if (!isProviderBroken(error)) throw error;
+      process.stdout.write(`provider-broken: ${error.message}
+`);
+      return 4;
+    }
+  };
 }
 
 // src/contracts.ts
-var graphOperations = /* @__PURE__ */ new Set([
-  "blast_radius_tickets",
-  "code_architecture",
-  "code_callers",
-  "code_grep",
-  "code_importers",
-  "code_projects",
-  "code_snippet",
-  "code_symbols",
-  "code_tests_for",
-  "fts_search",
-  "get_entity_edge",
-  "get_routing_protocol",
-  "graph_query",
-  "query_collisions",
-  "query_shipped",
-  "query_wip",
-  "readonly_sql",
-  "search_memory_facts",
-  "search_nodes",
-  "sync_status",
-  "ticket_detail"
-]);
-var recordOperations = /* @__PURE__ */ new Set([
-  "create_document",
-  "create_document_version",
-  "update_document",
-  "upload_attachment",
-  "create_artifact_link"
-]);
-var liveReadOperations = /* @__PURE__ */ new Set([
-  "get_document",
-  "get_document_version",
-  "get_document_content",
-  "get_document_comments",
-  "search",
-  "list_documents",
-  "list_document_versions",
-  "list_users",
-  "get_me",
-  "list_projects",
-  "get_project",
-  "list_artifact_links",
-  "list_templates",
-  "get_template"
-]);
+function capabilityOperations(binding = sessionBinding()) {
+  const operations = (capability, key) => new Set(providerDataOr(binding, capability, key, []));
+  return {
+    graph: operations("graph", "operations"),
+    read: operations("tickets", "readOperations"),
+    record: operations("tickets", "recordOperations")
+  };
+}
+var TRACKER_SERVICE = "tracker";
+var LEGACY_TRACKER_SERVICE = "closedloop";
 var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
 function mcpToolIdentity(name) {
   if (!capabilityName.test(name)) return null;
@@ -11497,15 +11687,24 @@ function mcpToolIdentity(name) {
 }
 var capabilitySchema = external_exports.object({
   name: external_exports.string().regex(capabilityName),
-  service: external_exports.enum(["graph", "closedloop"]),
+  service: external_exports.enum(["graph", TRACKER_SERVICE, LEGACY_TRACKER_SERVICE]).transform((service) => service === LEGACY_TRACKER_SERVICE ? TRACKER_SERVICE : service),
   operation: external_exports.string(),
   access: external_exports.enum(["read", "write"])
 }).strict().superRefine((value, ctx) => {
-  const validOperation = value.service === "graph" ? value.access === "read" && graphOperations.has(value.operation) : value.access === "read" ? liveReadOperations.has(value.operation) : recordOperations.has(value.operation);
-  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
+  if (mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation || value.service === "graph" && value.access !== "read") {
     ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
+function unsupportedCapabilities(capabilities, binding) {
+  const operations = capabilityOperations(binding);
+  return capabilities.filter((value) => !(value.service === "graph" ? operations.graph.has(value.operation) : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation)));
+}
+function requireSupportedCapabilities(capabilities, binding) {
+  const unsupported = unsupportedCapabilities(capabilities, binding);
+  if (unsupported.length) {
+    throw new external_exports.ZodError([{ code: external_exports.ZodIssueCode.custom, path: ["capabilities"], message: "Unsupported capability binding" }]);
+  }
+}
 var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine(
   (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,
   "Duplicate capability binding"
@@ -11633,19 +11832,19 @@ async function readInput(stream = process.stdin) {
 // src/ledger.ts
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync4, realpathSync as realpathSync4, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync5, realpathSync as realpathSync5, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename as basename2, dirname as dirname3, isAbsolute, join as join4 } from "node:path";
 
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync2, realpathSync as realpathSync3 } from "node:fs";
+import { readFileSync as readFileSync3, realpathSync as realpathSync4 } from "node:fs";
 import { join as join2 } from "node:path";
 
 // src/plugin-root.ts
-import { existsSync, readFileSync, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync, readFileSync as readFileSync2, realpathSync as realpathSync3 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 var AgentRootError = class extends Error {
   constructor(code, message) {
     super(message);
@@ -11657,7 +11856,7 @@ var manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
 function readPluginManifest(root) {
   for (const relative of manifestPaths) {
     try {
-      return JSON.parse(readFileSync(join(root, relative), "utf8"));
+      return JSON.parse(readFileSync2(join(root, relative), "utf8"));
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
@@ -11665,10 +11864,10 @@ function readPluginManifest(root) {
   throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
 }
 function installedPluginRoot(metaUrl) {
-  const entry = dirname(fileURLToPath2(metaUrl));
+  const entry = dirname(fileURLToPath3(metaUrl));
   for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
     try {
-      const root = realpathSync2(candidate);
+      const root = realpathSync3(candidate);
       if (isPluginRoot(root)) return root;
     } catch {
     }
@@ -11680,7 +11879,7 @@ function resolveAgentRoot(supplied, installed, recorded) {
   if (supplied === void 0) return fallback;
   let root;
   try {
-    root = realpathSync2(supplied);
+    root = realpathSync3(supplied);
   } catch {
     throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
   }
@@ -11741,13 +11940,13 @@ var builtins = /* @__PURE__ */ new Set([
 ]);
 function readDefinition(agentRoot, agentName, capabilityInput) {
   if (!/^vibe-[a-z0-9-]+$/.test(agentName)) throw new Error("Only own-plugin vibe agents are supported");
-  const root = realpathSync3(agentRoot);
-  const file = realpathSync3(join2(root, "agents", `${agentName}.md`));
+  const root = realpathSync4(agentRoot);
+  const file = realpathSync4(join2(root, "agents", `${agentName}.md`));
   if (file !== join2(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
   const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
     readPluginManifest(root)
   );
-  const source = readFileSync2(file, "utf8");
+  const source = readFileSync3(file, "utf8");
   const match = source.match(frontmatter);
   if (!match) throw new Error("Agent has no canonical frontmatter");
   const metadata = metadataSchema.parse((0, import_yaml.parse)(match[1] ?? ""));
@@ -11781,7 +11980,7 @@ function observeDefinitionDigest(agentRoot, agentName, capabilities) {
 }
 
 // src/reference-images.ts
-import { existsSync as existsSync2, readFileSync as readFileSync3, statSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
 import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
 var REFERENCE_DIR = "vibe-reference-images";
 var referenceSchema = external_exports.object({
@@ -11793,7 +11992,7 @@ var recordSchema = external_exports.object({ referenceImages: external_exports.a
 function readReferenceImages(metadataDir) {
   const file = join3(metadataDir, "vibe-session.json");
   if (!existsSync2(file)) return [];
-  const record = recordSchema.safeParse(JSON.parse(readFileSync3(file, "utf8")));
+  const record = recordSchema.safeParse(JSON.parse(readFileSync4(file, "utf8")));
   if (!record.success) return [];
   const owned = join3(metadataDir, REFERENCE_DIR);
   const images = [];
@@ -11801,7 +12000,7 @@ function readReferenceImages(metadataDir) {
     const entry = referenceSchema.safeParse(raw);
     if (!entry.success) continue;
     const path3 = resolve2(entry.data.path);
-    if (dirname2(path3) !== owned || !existsSync2(path3) || !statSync(path3).isFile()) continue;
+    if (dirname2(path3) !== owned || !existsSync2(path3) || !statSync2(path3).isFile()) continue;
     images.push({ path: path3, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
   }
   return images;
@@ -11809,8 +12008,8 @@ function readReferenceImages(metadataDir) {
 
 // src/ledger.ts
 function checkoutLocation(worktree) {
-  const root = realpathSync4(git(worktree, ["rev-parse", "--show-toplevel"]));
-  if (realpathSync4(worktree) !== root) throw new Error("Use the session's exact worktree root");
+  const root = realpathSync5(git(worktree, ["rev-parse", "--show-toplevel"]));
+  if (realpathSync5(worktree) !== root) throw new Error("Use the session's exact worktree root");
   const metadata = git(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
   const separator = metadata.lastIndexOf("\n");
   if (separator < 0) throw new Error("Missing native checkout metadata boundary");
@@ -11822,9 +12021,9 @@ function location(worktree) {
 }
 function sessionPlace(place) {
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync4(join4(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync5(join4(place.dir, "vibe-session.json"), "utf8"))
   );
-  if (record.worktree && realpathSync4(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
+  if (record.worktree && realpathSync5(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
 }
 function readWriterSummary(worktree) {
@@ -11888,6 +12087,7 @@ function takeWriterInput(input) {
 }
 function registerWriter(input) {
   const data = registerSchema.parse(input);
+  requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const definition = readDefinition(data.agentRoot, data.agentName, data.capabilities);
   if (data.agentName !== "vibe-change-worker") throw new Error("Session writer must be vibe-change-worker");
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
@@ -11918,9 +12118,10 @@ function registerWriter(input) {
 }
 function migrateWriter(input, currentPluginRoot, verifyRetained) {
   const data = migrateSchema.parse(input);
+  if (data.capabilities) requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const currentDefinition = (capabilities) => {
     const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
-    if (realpathSync4(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {
+    if (realpathSync5(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {
       throw new Error("Migration must use this command's current canonical plugin definition");
     }
     const version = found.version;
@@ -12126,7 +12327,7 @@ function git(cwd, args) {
   }).trim();
 }
 function readLedger(place) {
-  const ledger = ledgerSchema.parse(JSON.parse(readFileSync4(place.file, "utf8")));
+  const ledger = ledgerSchema.parse(JSON.parse(readFileSync5(place.file, "utf8")));
   if (ledger.worktree !== place.root || ledger.branch !== place.branch) throw new Error("Writer ledger does not belong to this session");
   return ledger;
 }
@@ -12207,8 +12408,8 @@ function writerLocation(worktree) {
   const place = checkoutLocation(worktree);
   const file = join4(place.dir, TAKEOVER_RECORD);
   if (existsSync3(join4(place.dir, "vibe-session.json")) || !existsSync3(file)) return sessionPlace(place);
-  const record = takeoverRecordSchema.parse(JSON.parse(readFileSync4(file, "utf8")));
-  if (realpathSync4(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Takeover worktree or branch changed");
+  const record = takeoverRecordSchema.parse(JSON.parse(readFileSync5(file, "utf8")));
+  if (realpathSync5(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Takeover worktree or branch changed");
   return place;
 }
 
@@ -12221,219 +12422,9 @@ import { join as join6 } from "node:path";
 import { existsSync as existsSync4, readFileSync as readFileSync6, realpathSync as realpathSync6 } from "node:fs";
 import { join as join5, sep } from "node:path";
 
-// ../../plugins/vibe/shared/vibe-core.mjs
-import path2 from "node:path";
-import { pathToFileURL as pathToFileURL3 } from "node:url";
-
-// ../../plugins/vibe/shared/plugin-roots.mjs
-import { readFileSync as readFileSync5, readdirSync, realpathSync as realpathSync5, statSync as statSync2 } from "node:fs";
-import path from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
-var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
-var CODEX_LOCAL_VERSION = "local";
-var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
-var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-var NUMERIC = /^\d+$/;
-var SCOPE_FALLBACK = "user";
-var PROJECT_SCOPES = Object.freeze(["local", "project"]);
-function pluginManifest(root) {
-  for (const relative of MANIFESTS) {
-    try {
-      const manifest = JSON.parse(readFileSync5(path.join(root, relative), "utf8"));
-      if (typeof manifest?.name === "string") {
-        return { name: manifest.name, version: typeof manifest.version === "string" ? manifest.version : null };
-      }
-    } catch {
-    }
-  }
-  return null;
-}
-function ownPluginRoot(from) {
-  const file = String(from).startsWith("file:") ? fileURLToPath3(from) : String(from);
-  let dir = path.dirname(realpathSync5(file));
-  for (; ; ) {
-    const manifest = pluginManifest(dir);
-    if (manifest) return { root: dir, name: manifest.name, version: manifest.version };
-    const parent = path.dirname(dir);
-    if (parent === dir) throw new Error(`${file} is not inside a plugin`);
-    dir = parent;
-  }
-}
-function comparePluginVersions(left, right) {
-  const a = SEMVER.exec(left);
-  const b = SEMVER.exec(right);
-  if (!a || !b) return compareText(left, right);
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(a[index]) - Number(b[index]);
-    if (difference !== 0) return Math.sign(difference);
-  }
-  if (a[4] === void 0 || b[4] === void 0) {
-    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
-  } else {
-    const order = compareIdentifiers(a[4], b[4]);
-    if (order !== 0) return order;
-  }
-  if (a[5] === b[5]) return 0;
-  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
-  return compareIdentifiers(a[5], b[5]);
-}
-function activeCodexVersion(versions) {
-  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
-  if (valid.length === 0) return null;
-  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
-  return [...valid].sort(comparePluginVersions).at(-1);
-}
-function pluginInstall(from) {
-  const self = ownPluginRoot(from);
-  const parent = path.dirname(self.root);
-  if (path.basename(parent) === "plugins") return { ...self, layout: Layout.Checkout, plugins: parent };
-  const marketplaceDir = path.dirname(parent);
-  const cacheDir = path.dirname(marketplaceDir);
-  const pluginsDir = path.dirname(cacheDir);
-  if (path.basename(cacheDir) !== "cache" || path.basename(pluginsDir) !== "plugins") return { ...self, layout: null };
-  const registry = path.join(pluginsDir, "installed_plugins.json");
-  return {
-    ...self,
-    layout: isFile(registry) ? Layout.Claude : Layout.Codex,
-    home: path.dirname(pluginsDir),
-    marketplace: path.basename(marketplaceDir),
-    cacheDir,
-    registry
-  };
-}
-function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
-  const self = pluginInstall(from);
-  if (self.layout === Layout.Checkout) {
-    const candidate = path.join(self.plugins, name);
-    if (pluginManifest(candidate)?.name === name) return { root: realpathSync5(candidate), layout: Layout.Checkout };
-    throw missing(name, self, Layout.Checkout);
-  }
-  if (self.layout === null) {
-    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
-  }
-  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
-  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
-  return {
-    root: realpathSync5(found.installPath),
-    layout: self.layout,
-    home: self.home,
-    marketplace: self.marketplace,
-    ...found.scope ? { scope: found.scope } : {},
-    ...found.projectPath ? { projectPath: found.projectPath } : {}
-  };
-}
-function siblingPluginRoot(name, options) {
-  return siblingPluginInstall(name, options).root;
-}
-function claudeEntry(registry, name, self, cwd) {
-  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const here = realOrSame(path.resolve(cwd));
-  const holds = (project) => {
-    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
-    const root = realOrSame(project);
-    return here === root || here.startsWith(`${root}${path.sep}`);
-  };
-  for (const scope of PROJECT_SCOPES) {
-    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
-    if (matching.length > 0) return matching[0];
-  }
-  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  if (user.length === 1) return user[0];
-  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
-  throw missing(name, self, Layout.Claude);
-}
-function codexRoot(base, name, self) {
-  let versions;
-  try {
-    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
-  } catch {
-    throw missing(name, self, Layout.Codex);
-  }
-  const version = activeCodexVersion(versions);
-  if (!version) throw missing(name, self, Layout.Codex);
-  return path.join(base, version);
-}
-function missing(name, self, layout) {
-  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${name}@closedloop-ai\` in Claude Code or \`codex plugin add ${name}@closedloop-ai\` in Codex`);
-}
-function readRegistry(file) {
-  try {
-    return JSON.parse(readFileSync5(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function realOrSame(file) {
-  try {
-    return realpathSync5(file);
-  } catch {
-    return file;
-  }
-}
-function isFile(file) {
-  try {
-    return statSync2(file).isFile();
-  } catch {
-    return false;
-  }
-}
-function isDirectory(file) {
-  try {
-    return statSync2(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function compareText(left, right) {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
-}
-function compareIdentifiers(left, right) {
-  const a = left.split(".");
-  const b = right.split(".");
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const order = compareIdentifier(a[index], b[index]);
-    if (order !== 0) return order;
-  }
-  return Math.sign(a.length - b.length);
-}
-function compareIdentifier(left, right) {
-  const leftNumeric = NUMERIC.test(left);
-  const rightNumeric = NUMERIC.test(right);
-  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
-  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
-  return compareText(left, right);
-}
-
-// ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.7";
-var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
-var cachedRoot = null;
-function vibeCoreRoot() {
-  if (cachedRoot) return cachedRoot;
-  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
-  const installed = pluginManifest(root)?.version ?? null;
-  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
-    const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
-    throw Object.assign(
-      new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
-      { outdated: true, installed, minimum: VIBE_CORE_MIN }
-    );
-  }
-  cachedRoot = root;
-  return root;
-}
-function vibeCorePath(relative) {
-  return path2.join(vibeCoreRoot(), relative);
-}
-function vibeCore(relative) {
-  return import(pathToFileURL3(vibeCorePath(relative)).href);
-}
-
 // vibe-core:lib/vibe/scripts/session-record.mjs
-var module = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, writeSessionRecord } = module;
+var module2 = await vibeCore("lib/vibe/scripts/session-record.mjs");
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module2;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -12473,26 +12464,18 @@ var storedValidationRecipeSchema = external_exports.object({
 }).strict();
 
 // src/record-context.ts
-var recordModes = {
-  "vibe-setup-worker": { create: ["create_document"], progress: ["create_document_version"], discard: [] },
-  "vibe-change-worker": { progress: ["create_document_version"] },
-  "vibe-ticket-worker": {
-    create: ["create_document", "create_artifact_link"],
-    plan: ["create_document", "create_document_version", "create_artifact_link", "update_document"],
-    handoff: ["create_document", "create_document_version", "create_artifact_link", "update_document", "upload_attachment"],
-    assign: ["update_document"],
-    cancel: ["create_document_version", "update_document"]
-  },
-  "vibe-environment-worker": {
-    create: ["create_document_version"],
-    redeploy: ["create_document_version"],
-    flags: ["create_document_version"],
-    desktop: ["create_document_version"],
-    handover: ["create_document_version"],
-    "pull-request": []
-  },
-  "vibe-prototype-worker": { share: ["create_document_version"] }
+var RECORD_ACTIONS = {
+  "vibe-setup-worker": ["create", "progress", "discard"],
+  "vibe-change-worker": ["progress"],
+  "vibe-ticket-worker": ["create", "plan", "handoff", "assign", "cancel"],
+  "vibe-environment-worker": ["create", "redeploy", "flags", "desktop", "handover", "pull-request"],
+  "vibe-prototype-worker": ["share"]
 };
+function recordModes(binding = sessionBinding()) {
+  const writes = providerDataOr(binding, "tickets", "recordWrites", {});
+  return Object.fromEntries(Object.entries(RECORD_ACTIONS).map(([role, actions]) => [role, Object.fromEntries(actions.map((action) => [action, writes[role]?.[action] ?? []]))]));
+}
+var liveTicketSchema = external_exports.string().refine((ticket) => new RegExp(`^(?:${providerDataOr(sessionBinding(), "tickets", "keyPattern", "(?!)")})$`).test(ticket), "not a ticket of the bound tracker");
 var recordActionSchema = external_exports.enum([
   "progress",
   "create",
@@ -12532,7 +12515,7 @@ var recordContextSchema = external_exports.object({
     worktree: external_exports.string().min(1),
     confirmed: external_exports.literal(true),
     branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
-    liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/).optional(),
+    liveTicket: liveTicketSchema.optional(),
     liveTicketCreatedBySession: external_exports.boolean(),
     operatorId: external_exports.string().min(1),
     operatorEmail: external_exports.string().email()
@@ -12542,7 +12525,7 @@ var recordContextSchema = external_exports.object({
     external_exports.object({ kind: external_exports.literal("discarded"), evidence: external_exports.object({
       discarded: external_exports.literal(true),
       branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
-      liveTicket: external_exports.string().regex(/^[A-Z]+-\d+$/),
+      liveTicket: liveTicketSchema,
       liveTicketCreatedBySession: external_exports.literal(true),
       operatorId: external_exports.string().min(1),
       operatorEmail: external_exports.string().email()
@@ -12652,7 +12635,7 @@ var nativeRecordOwnerSchema = external_exports.object({ grant: grantSchema, leas
 var ownerFile = "native-owner.json";
 function acquireNativeRecord(input) {
   const grant = grantSchema.parse(input);
-  if (grant.mode !== "record" || !grant.exclusiveRecordTurn || !grant.recordAction || !recordModes[grant.agentName]?.[grant.recordAction]) throw new Error("Native record grant requires an exclusive canonical role/action");
+  if (grant.mode !== "record" || !grant.exclusiveRecordTurn || !grant.recordAction || !recordModes(sessionBinding(grant.worktree))[grant.agentName]?.[grant.recordAction]) throw new Error("Native record grant requires an exclusive canonical role/action");
   const definition = readDefinition(grant.agentRoot, grant.agentName, []);
   grant.agentRoot = definition.root;
   if (grant.primaryOwner && (grant.agentName !== "vibe-change-worker" || grant.primaryOwner.workerId !== grant.workerId)) {
@@ -12721,13 +12704,14 @@ function asksForUsage(argv) {
   return argv.length === 1 && ["help", "--help", "-h"].includes(argv[0]);
 }
 function capabilityUsage() {
-  const list = (values) => [...values].sort().join(", ");
+  const list = (values) => [...values].sort().join(", ") || "none (no provider bound)";
+  const operations = capabilityOperations();
   return [
     "Capabilities: a JSON array of at most 48 { name, service, access, operation } entries, one per MCP tool, no duplicates.",
     "  name       the tool as the harness lists it: mcp__<server>__<operation> (underscores or hyphens)",
-    `  graph      service "graph", access "read": ${list(graphOperations)}`,
-    `  live read  service "closedloop", access "read": ${list(liveReadOperations)}`,
-    `  record     service "closedloop", access "write": ${list(recordOperations)}`,
+    `  graph      service "graph", access "read": ${list(operations.graph)}`,
+    `  live read  service "${TRACKER_SERVICE}", access "read": ${list(operations.read)}`,
+    `  record     service "${TRACKER_SERVICE}", access "write": ${list(operations.record)}`,
     "  Any other tool is refused as an unsupported capability binding."
   ].join("\n");
 }

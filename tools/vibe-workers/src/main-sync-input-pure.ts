@@ -10,7 +10,10 @@ import { producerPackage, type InputProducer } from "./main-sync-input-catalog.j
 import { type OriginFile } from "./main-sync-input-files.js";
 import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
+import { mainSyncRecipe } from "./main-sync-recipe.js";
 
+// The pure renderers of the bound provider's repository. Provider-only machinery: it runs only for a
+// producer the bound provider's mainSync recipe declares, so it never runs in another repository.
 const PURE_OWNER_PROBE = String.raw`
 import {readFileSync,lstatSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
@@ -44,6 +47,8 @@ if(input.id==='desktop-build') {
 if(typeof body!=='string'||Buffer.byteLength(body)>128*1024*1024) throw new Error('Invalid complete pure body');
 process.stdout.write(JSON.stringify({path:input.output,bytes:Buffer.byteLength(body),sha256:createHash('sha256').update(body).digest('hex'),mode:'100644',...(input.emit?{body}:{})}));
 `;
+
+
 const pureResultSchema = z.array(originFileSchema).length(1);
 const pureBodySchema = z.object({ body: z.string() }).passthrough();
 
@@ -55,7 +60,7 @@ export function pureOriginFiles(root: string, producer: InputProducer, head: str
 
 /**
  * Rewrites a stale gitignored output of a pure renderer with the repository's own renderer, so a generated file left
- * from an earlier merge (build-info's old commit hash) never refuses publication (ISS-13321). Husky's support
+ * from an earlier merge (build-info's old commit hash) never refuses publication. Husky's support
  * literal is installed, not rendered, and is never rewritten.
  */
 export function refreshPureOutput(root: string, producer: InputProducer, head: string) {
@@ -67,22 +72,24 @@ export function refreshPureOutput(root: string, producer: InputProducer, head: s
 }
 
 /**
- * The Desktop prebuild outputs (build info, migrations manifest, docs bundle manifest, auth handoff assets): the
- * repository rewrites them on every Desktop build, so one left from an earlier merge is stale, not an edit, and its
- * own producer rewrites it. Every other generated input (the Prisma clients, Next's route types, Husky) still
+ * Whether the repository rewrites this pure output on every build (its recipe marks it `refreshable`), so one left
+ * from an earlier merge is stale, not an edit, and its own producer rewrites it. Every other generated input still
  * refuses a difference, since there it can be a hand edit.
  */
 export function isRefreshable(producer: InputProducer) {
-  return PREBUILD_OUTPUTS.has(producer.id);
+  return producer.refreshable === true;
 }
 
-const PREBUILD_OUTPUTS: ReadonlySet<string> = new Set(["desktop-build", "desktop-migrations", "desktop-docs", "desktop-auth"]);
-
+/** Runs the repository's own pure renderers through the probe above, under the recipe's runner, for a declared producer only. */
 function runPureOwner(root: string, producer: InputProducer, head: string, emit: boolean): unknown {
+  const { runner, producers } = mainSyncRecipe(root);
+  if (!runner || !producers.some((declared) => declared.id === producer.id && declared.strategy === "pure")) {
+    throw new MainSyncError(`The repository's recipe declares no pure renderer for ${producer.id}`, "NEEDS_CHANGE");
+  }
+  const argv = [...runner, PURE_OWNER_PROBE];
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Pure, producer.inputs);
-  verifyReportExecution(root, root, ReportExecutionOwner.Pure,
-    ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE]);
-  const result = spawnSync("pnpm", ["exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE], {
+  verifyReportExecution(root, root, ReportExecutionOwner.Pure, argv);
+  const result = spawnSync(argv[0]!, argv.slice(1), {
     cwd: root, encoding: "utf8", input: JSON.stringify({ id: producer.id, head, output: producer.roots[0], ...(emit ? { emit } : {}) }),
     timeout: 10000, maxBuffer: emit ? 256 * 1024 * 1024 : 1024 * 1024,
   });

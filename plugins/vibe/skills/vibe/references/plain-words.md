@@ -1,5 +1,9 @@
 # Plain words for the person
 
+<!-- provider-rule -->
+Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
+
 The person running a vibe session may be an executive, a designer, a product
 manager or an engineer. Some describe the work and pass it on; others bring
 screenshots and may open the pull request themselves. Nobody should have to
@@ -20,7 +24,10 @@ say what it means for the person, or leave it out.
 | commit, push, deploy, redeploy | save; update your copy of the app |
 | worktree, checkout, repo, repository | (leave it out) |
 | session slug | the name of this work (the session summary) |
-| MCP, MCP server, connector | the ClosedLoop connection |
+<!-- generic: connection-word -->
+| MCP, MCP server, connector | the connection |
+<!-- end generic: connection-word -->
+> Provider `tickets` (block `connection-word` of `vibe/plain-words.md`)
 | Storybook, storybook server, story | the component gallery; a component |
 | seeded, seed, blank mode | example data; empty |
 | environment, Vercel environment, preview deployment | your copy of the app |
@@ -28,11 +35,14 @@ say what it means for the person, or leave it out.
 | worker, subagent, agent, launcher | (leave it out; say "I") |
 | CLI, OAuth, token, `/login` | your Claude sign-in; the Terminal app |
 | lint, typecheck, test suite, CI | the automatic checks |
-| Clerk, org id, admin role | your organization; you can manage it |
+> Provider `recipes` (block `auth-words` of `vibe/plain-words.md`)
 | feature flag, flag snapshot | the settings that switch features on and off |
 | a story id, file path, component name or route pattern to look at | a link to that exact thing ("Links to what the person should look at") |
 
-A product or app name the person signs in to (Vercel, GitHub, ClosedLoop)
+<!-- generic: sign-in-names -->
+A product or app name the person signs in to (Vercel, GitHub)
+<!-- end generic: sign-in-names -->
+> Provider `tickets` (block `sign-in-names` of `vibe/plain-words.md`)
 stays. "Pull request", "review", "merge", "design" and "engineering" are the
 approved plain names for how a session ends (`SKILL.md`, section 8). Names the
 person passes on at the end, such as the ticket link, the branch name and the
@@ -55,7 +65,7 @@ sign-in, a choice between endings, or an answer to a product question. Every
 other remedy is the session's own work, or engineering's on the live ticket's
 Engineering checklist. A check's or a script's suggested fix, a worker's
 remedy and a stop's reason are written for the writer or for engineering,
-never relayed to the person as a step, even in plain words (ISS-13321: a
+never relayed to the person as a step, even in plain words (a
 person who asked "what should I do first" was told to pause an animation in
 a component, which only engineering could do).
 

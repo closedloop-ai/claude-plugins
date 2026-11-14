@@ -41,16 +41,19 @@ export interface ClaudeTaskEvidence {
   versionCheck: "current" | "unknown" | "outdated";
 }
 
-/** Accept only the two inline snapshot plugins plus Claude's built-ins. */
+/** Accept only the inline snapshot plugins (vibe, closedloop-core, and vibe-core and the provider when the snapshot has them) plus Claude's built-ins. */
 export function exactSnapshotPlugins(plugins: unknown, snapshot: PluginSnapshot): boolean {
   if (!Array.isArray(plugins)) return false;
   const custom = plugins.filter((value): value is Record<string, unknown> =>
     typeof value === "object" && value !== null && (value as Record<string, unknown>).path !== "builtin");
-  return custom.length === 2 && [
-    { name: "closedloop-core", source: "closedloop-core@inline", path: snapshot.coreDir },
-    { name: "vibe", source: "vibe@inline", path: snapshot.vibeDir },
-  ].every((expected) => custom.some((plugin) => plugin.name === expected.name &&
-    plugin.source === expected.source && plugin.path === expected.path));
+  const expected = [
+    { name: "closedloop-core", path: snapshot.coreDir },
+    { name: "vibe", path: snapshot.vibeDir },
+    ...(snapshot.hooksDir ? [{ name: "vibe-core", path: snapshot.hooksDir }] : []),
+    ...(snapshot.providerDir ? [{ name: "vibe-closedloop-provider", path: snapshot.providerDir }] : []),
+  ];
+  return custom.length === expected.length && expected.every((item) => custom.some((plugin) => plugin.name === item.name &&
+    plugin.source === `${item.name}@inline` && plugin.path === item.path));
 }
 
 /** Launch a canonical shape with only local file, skill and agent tools. */
@@ -71,11 +74,12 @@ export async function runClaudeTask(
   const prompt = shapePrompt(shape);
   const baseArgs = claudeArgs(snapshot.vibeDir, launch.mcpConfigFile, launch.settingsFile, prompt).slice(0, -1);
   baseArgs.splice(baseArgs.indexOf("--plugin-dir"), 0, "--plugin-dir", snapshot.coreDir,
-    ...(snapshot.hooksDir ? ["--plugin-dir", snapshot.hooksDir] : []));
+    ...(snapshot.hooksDir ? ["--plugin-dir", snapshot.hooksDir] : []),
+    ...(snapshot.providerDir ? ["--plugin-dir", snapshot.providerDir] : []));
   const requestedSessionId = randomUUID();
   const started = Date.now();
   const checked = checkVibeVersion(snapshot.vibeDir, fixture.agentCheckout,
-    runDir, requestedSessionId, claudeExecutable);
+    runDir, requestedSessionId, claudeExecutable, snapshot.providerDir);
   await writeBenchmarkSessionRecord(snapshot.vibeDir, fixture.agentCheckout,
     `benchmark/${fixture.taskId}`, "seeded", fixture.baseSha);
   const args = [
