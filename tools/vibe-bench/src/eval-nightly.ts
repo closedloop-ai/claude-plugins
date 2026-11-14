@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SlackNightlyRegressionReporter } from "./eval-slack.ts";
+import { KEPT_SANDBOX_LINE_PREFIX, SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 
 const NIGHTLY_DEADLINE_MS = 3 * 60 * 60_000;
@@ -14,7 +14,12 @@ export interface EvalNightlyCommands {
   now(): Date;
 }
 
-class SystemNightlyCommands implements EvalNightlyCommands {
+/** The real scheduler boundary: git on the clean checkout and one owned child process. */
+export class SystemNightlyCommands implements EvalNightlyCommands {
+  private readonly writeOutput: (text: string) => unknown;
+  constructor(writeOutput: (text: string) => unknown = (text) => process.stdout.write(text)) {
+    this.writeOutput = writeOutput;
+  }
   git(repo: string, args: string[]): string {
     return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"], timeout: 90_000, maxBuffer: 4 * 1024 * 1024 }).trim();
@@ -25,6 +30,12 @@ class SystemNightlyCommands implements EvalNightlyCommands {
       maxBuffer: 16 * 1024 * 1024,
     });
     if (result.exitCode !== 0) {
+      // A failed child's stdout is dropped, yet its kept-sandbox lines belong
+      // in the machine log. They stay on stdout: on stderr a claude-eval-<id>
+      // path would be read as the failure reason below.
+      for (const line of result.stdout.split(/\r?\n/)) {
+        if (line.startsWith(KEPT_SANDBOX_LINE_PREFIX)) this.writeOutput(`${line}\n`);
+      }
       const reason = result.stderr.match(/(?:eval|benchmark)-[a-z0-9:-]+/)?.[0] ??
         "eval-nightly-child-failed";
       throw new Error(reason);
@@ -86,6 +97,22 @@ export async function main(args: string[],
   }
 }
 
+/**
+ * Publish a finished nightly and print its output once. The kept-sandbox lines
+ * are printed before publishing, so a failed publish still leaves them in the log.
+ */
+export async function finishNightly(output: string, args: string[], runAt: string,
+  publish: (output: string, args: string[], runAt: string) => Promise<string> = publishCompletedNightly,
+  writeOutput: (text: string) => unknown = (text) => process.stdout.write(text)): Promise<void> {
+  const lines = output.split(/\r?\n/);
+  for (const line of lines.filter((item) => item.startsWith(KEPT_SANDBOX_LINE_PREFIX))) {
+    writeOutput(`${line}\n`);
+  }
+  const publication = await publish(output, args, runAt);
+  const rest = lines.filter((item) => !item.startsWith(KEPT_SANDBOX_LINE_PREFIX)).join("\n");
+  writeOutput(`${publication}\n${rest}\n`);
+}
+
 /** Use a newly loaded child after fast-forward; SKIPPED only recovers prior durable RAN work. */
 export async function publishCompletedNightly(output: string, args: string[], runAt: string,
   invoke: (args: string[]) => Promise<string> = (command) =>
@@ -120,10 +147,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     });
   } else {
     main(args).then(
-      async (output) => {
-        const publication = await publishCompletedNightly(output, args, runAt);
-        process.stdout.write(`${publication}\n${output}\n`);
-      },
+      async (output) => { await finishNightly(output, args, runAt); },
       async (error) => {
         const claude = args.length === 7 ? args[3] : "claude";
         await reportNightlyInfrastructureFailure(errorReason(error),

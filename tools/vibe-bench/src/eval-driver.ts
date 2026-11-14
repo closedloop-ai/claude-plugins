@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync,
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync,
   renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import type { Stats } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLocalEvalReport, codexCaseId, collectClaudeEval, collectCodexEval,
   finalizeLocalEval } from "./eval-collector.ts";
-import type { EvalRuntimeRecord, EvalSuiteResult, LocalEvalResult } from "./eval-collector.ts";
+import type { EvalRuntimeRecord, EvalSuiteResult, ExpectedEvalPlugin,
+  LocalEvalResult } from "./eval-collector.ts";
 import { EVAL_POLICY, requireDeveloperMachine } from "./eval-policy.ts";
 import type { EvalRuntime } from "./eval-policy.ts";
 import { snapshotPluginsAtHead, snapshotPluginsAtWorktree } from "./plugin-snapshot.ts";
@@ -18,7 +20,7 @@ import type { EvalBaselineArtifact, EvalQuarantineEntry } from "./eval-baseline.
 import { evalCaseCatalog } from "./eval-selection.ts";
 import type { EvalCaseDefinition } from "./eval-selection.ts";
 import { classifyVibeChangeScopeBetween } from "./vibe-change-scope.ts";
-import { isRetrySafeSlackFailure, nightlyChangesSince,
+import { isRetrySafeSlackFailure, KEPT_SANDBOX_LINE_PREFIX, nightlyChangesSince,
   SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionCase, NightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
@@ -48,6 +50,8 @@ export interface LocalEvalOptions {
   signal?: AbortSignal;
   statefulRunner?: UpgradeResumeRunner;
   statefulTargetRef?: string;
+  /** Told what became of the Claude process's kept sandboxes, also when the run then throws. */
+  onClaudeKeptFolders?: (kept: ClaudeKeptFolders) => void;
 }
 
 /** Process boundary injected by tests so no model command is launched there. */
@@ -130,13 +134,137 @@ function manifestVersion(pluginDir: string): string {
   return manifest.version;
 }
 
-function claudeReplyText(tracePath: string, allowedTempParent: string): string {
-  const canonicalTrace = realpathSync(tracePath);
+/** What became of the sandbox folders one finished Claude eval process said it kept. */
+interface ClaudeKeptFolders {
+  /** Kept folders the process reported. */
+  reported: number;
+  /** Reported folders this run proved its own and removed. */
+  removed: number;
+  /** Proven folders that could not be removed. A folder the run cannot prove is never named. */
+  remaining: string[];
+}
+
+// The Claude eval process prints one notice per kept sandbox on stderr. On
+// macOS it creates the sandbox under /tmp whatever TMPDIR says, so the run's
+// own temp folder cannot be the only accepted parent.
+const CLAUDE_KEPT_NOTICE = /^\u26A0 kept (\/[^\s:]+): /;
+
+/**
+ * Whether a folder name is one the Claude eval process gives its sandbox on
+ * this platform: e-<id> on macOS and claude-eval-<id> elsewhere, the id being
+ * the six characters a temp folder gets.
+ */
+export function isClaudeSandboxName(name: string,
+  platform: NodeJS.Platform = process.platform): boolean {
+  return (platform === "darwin" ? /^e-[a-zA-Z0-9]{6}$/ : /^claude-eval-[a-zA-Z0-9]{6}$/).test(name);
+}
+
+function sumClaudeKeptFolders(runs: readonly ClaudeKeptFolders[]): ClaudeKeptFolders {
+  return {
+    reported: runs.reduce((sum, item) => sum + item.reported, 0),
+    removed: runs.reduce((sum, item) => sum + item.removed, 0),
+    remaining: runs.flatMap((item) => item.remaining),
+  };
+}
+
+/** Scheduler log lines for one nightly's kept sandboxes. Only proven folders are named. */
+export function keptSandboxLogLines(kept: ClaudeKeptFolders): string[] {
+  return [
+    `${KEPT_SANDBOX_LINE_PREFIX}SANDBOXES runtime=claude reported=${kept.reported} ` +
+      `removed=${kept.removed} remaining=${kept.remaining.length}`,
+    ...kept.remaining.map((path) => `${KEPT_SANDBOX_LINE_PREFIX}SANDBOX_REMAINING path=${path}`),
+  ];
+}
+
+function createdMs(stat: Stats): number {
+  return stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.ctimeMs;
+}
+
+/** List the kept sandbox paths a Claude eval process reported, exactly as printed. */
+function reportedClaudeKeptRoots(stderr: string): string[] {
+  return [...new Set(stderr.split(/\r?\n/).flatMap((line) => {
+    const root = CLAUDE_KEPT_NOTICE.exec(line)?.[1];
+    return root ? [root] : [];
+  }))];
+}
+
+/**
+ * Keep only the reported sandboxes this run can prove are its own.
+ *
+ * A printed line proves nothing alone. The folder must also be a real
+ * directory at its canonical path, carry a sandbox name, belong to this user
+ * and be no older than the temp folder this run made before the launch.
+ */
+function provenClaudeKeptRoots(stderr: string, createdNotBeforeMs: number): string[] {
+  const uid = process.getuid?.();
+  if (uid === undefined) return [];
+  return reportedClaudeKeptRoots(stderr).filter((root) => {
+    try {
+      const stat = lstatSync(root);
+      return stat.isDirectory() && !stat.isSymbolicLink() && realpathSync(root) === root &&
+        isClaudeSandboxName(basename(root)) && stat.uid === uid &&
+        createdMs(stat) >= createdNotBeforeMs;
+    } catch { return false; }
+  });
+}
+
+function isRealDirectoryWithin(path: string, provenRoot: string): boolean {
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+  const canonical = realpathSync(path);
+  return canonical === provenRoot || canonical.startsWith(`${provenRoot}${sep}`);
+}
+
+/** Give the owner access to the real directories of one proven sandbox, never through a link. */
+function restoreOwnerAccess(path: string, provenRoot: string): void {
+  if (!isRealDirectoryWithin(path, provenRoot)) return;
+  chmodSync(path, 0o700);
+  for (const entry of readdirSync(path)) restoreOwnerAccess(join(path, entry), provenRoot);
+}
+
+/** Remove the proven sandboxes; report the proven ones that are still there. */
+function removeClaudeKeptRoots(stderr: string, createdNotBeforeMs: number): ClaudeKeptFolders {
+  const reported = reportedClaudeKeptRoots(stderr);
+  const proven = provenClaudeKeptRoots(stderr, createdNotBeforeMs);
+  for (const root of proven) {
+    try {
+      // The process leaves the folder read-only and its sealed tree unreadable.
+      // Removal unlinks a link it meets; it never descends through one.
+      restoreOwnerAccess(root, root);
+      rmSync(root, { recursive: true, force: true });
+    } catch { /* still there, so listed as remaining */ }
+  }
+  const remaining = proven.filter((root) => {
+    try { lstatSync(root); return true; }
+    catch { return false; }
+  });
+  return { reported: reported.length, removed: proven.length - remaining.length, remaining };
+}
+
+function traceIsUnderRunTemp(tracePath: string, canonicalTrace: string,
+  allowedTempParent: string): boolean {
   const outputDir = dirname(canonicalTrace);
   const tempRoot = dirname(outputDir);
-  if (lstatSync(tracePath).isSymbolicLink() || basename(canonicalTrace) !== "trace.jsonl" ||
-      basename(outputDir) !== "out" || !/^e-[a-zA-Z0-9_-]+$/.test(basename(tempRoot)) ||
-      realpathSync(dirname(tempRoot)) !== realpathSync(allowedTempParent)) {
+  return !lstatSync(tracePath).isSymbolicLink() && basename(canonicalTrace) === "trace.jsonl" &&
+    basename(outputDir) === "out" && /^e-[a-zA-Z0-9_-]+$/.test(basename(tempRoot)) &&
+    realpathSync(dirname(tempRoot)) === realpathSync(allowedTempParent);
+}
+
+function traceIsUnderKeptRoot(tracePath: string, canonicalTrace: string,
+  provenKeptRoots: readonly string[]): boolean {
+  if (canonicalTrace !== tracePath ||
+      !provenKeptRoots.some((root) => tracePath === join(root, "out", "trace.jsonl"))) return false;
+  const outputStat = lstatSync(dirname(tracePath));
+  const traceStat = lstatSync(tracePath);
+  return outputStat.isDirectory() && !outputStat.isSymbolicLink() &&
+    traceStat.isFile() && !traceStat.isSymbolicLink();
+}
+
+function claudeReplyText(tracePath: string, allowedTempParent: string,
+  provenKeptRoots: readonly string[] = []): string {
+  const canonicalTrace = realpathSync(tracePath);
+  if (!traceIsUnderRunTemp(tracePath, canonicalTrace, allowedTempParent) &&
+      !traceIsUnderKeptRoot(tracePath, canonicalTrace, provenKeptRoots)) {
     throw new Error("eval-claude-reply-trace-path-invalid");
   }
   let reply = "";
@@ -163,7 +291,8 @@ function claudeReplyText(tracePath: string, allowedTempParent: string): string {
 
 /** Materialize every validated Claude final reply in the same private case shape as Codex. */
 export function preserveClaudeReplies(raw: unknown, outputDir: string,
-  expectedCases: string[], allowedTempParent: string): Map<string, string> {
+  expectedCases: string[], allowedTempParent: string,
+  provenKeptRoots: readonly string[] = []): Map<string, string> {
   const root = nativeObject(raw, "eval-claude-json-invalid");
   const cases = nativeArray(root.cases, "eval-claude-cases-invalid");
   const actual = cases.map((rawCase) => {
@@ -182,7 +311,7 @@ export function preserveClaudeReplies(raw: unknown, outputDir: string,
     if (typeof run.tracePath !== "string") throw new Error("eval-claude-reply-trace-missing");
     if (typeof item.name !== "string") throw new Error("eval-claude-case-invalid");
     const caseId = codexCaseId(item.name);
-    const reply = claudeReplyText(run.tracePath, allowedTempParent);
+    const reply = claudeReplyText(run.tracePath, allowedTempParent, provenKeptRoots);
     if (privateTextProblem(reply)) throw new Error("eval-private-reply-private-data");
     return { caseId: item.name,
       destination: privateReplyDestination(outputDir, caseId), reply };
@@ -252,11 +381,78 @@ export function codexEvalBudgetSeconds(caseCount: number): number {
 }
 
 /**
+ * A plugin and every plugin it depends on, transitively, read from the
+ * manifests under one plugins folder. Each plugin is visited once, so a
+ * dependency cycle ends; a dependency the folder lacks is refused.
+ */
+function evalPluginClosure(pluginsRoot: string, plugin: string): ExpectedEvalPlugin[] {
+  const closure = new Map<string, ExpectedEvalPlugin>();
+  const pending = [plugin];
+  while (pending.length) {
+    const name = pending.shift()!;
+    if (closure.has(name)) continue;
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new Error("eval-plugin-dependency-invalid");
+    const manifestFile = join(pluginsRoot, name, ".claude-plugin", "plugin.json");
+    if (!existsSync(manifestFile)) throw new Error("eval-plugin-dependency-missing");
+    let manifest: Record<string, unknown>;
+    try { manifest = nativeObject(JSON.parse(readFileSync(manifestFile, "utf8")), "eval-plugin-manifest-invalid"); }
+    catch { throw new Error("eval-plugin-manifest-invalid"); }
+    if (manifest.name !== name || typeof manifest.version !== "string") {
+      throw new Error("eval-plugin-manifest-invalid");
+    }
+    const dependencies = manifest.dependencies === undefined ? []
+      : nativeArray(manifest.dependencies, "eval-plugin-dependency-invalid");
+    closure.set(name, { name, version: manifest.version,
+      path: realpathSync(join(pluginsRoot, name)) });
+    for (const dependency of dependencies) {
+      if (typeof dependency !== "string") throw new Error("eval-plugin-dependency-invalid");
+      pending.push(dependency);
+    }
+  }
+  return [...closure.values()];
+}
+
+const CASE_PLUGINS_LINE = /^plugins:[ \t]*(.*)$/;
+
+/**
+ * Give one staged case manifest every plugin of the closure it does not list.
+ *
+ * The Claude eval process loads exactly the plugin folders a case's front
+ * matter lists, so a dependency missing there is an unmet dependency. A case
+ * without a plugins list is left as it is; the collector then refuses the
+ * suite unless the loaded set is the whole closure.
+ */
+function addClosureToStagedCase(caseDir: string, closureDirs: () => string[]): void {
+  const file = join(caseDir, "prompt.md");
+  const lines = readFileSync(file, "utf8").split("\n");
+  const end = lines[0] === "---" ? lines.indexOf("---", 1) : -1;
+  if (end < 0) return;
+  const at = lines.slice(1, end).flatMap((line, index) => CASE_PLUGINS_LINE.test(line) ? [index + 1] : []);
+  if (at.length === 0) return;
+  if (at.length > 1) throw new Error("eval-focused-case-plugins-invalid");
+  let listed: unknown;
+  try { listed = JSON.parse(CASE_PLUGINS_LINE.exec(lines[at[0]!]!)![1]!); }
+  catch { throw new Error("eval-focused-case-plugins-invalid"); }
+  if (!Array.isArray(listed) || listed.some((entry) => typeof entry !== "string" || !entry)) {
+    throw new Error("eval-focused-case-plugins-invalid");
+  }
+  const entries = listed as string[];
+  const present = new Set(entries.map((entry) => resolve(caseDir, entry)));
+  for (const dir of closureDirs()) {
+    if (!present.has(resolve(dir))) entries.push(relative(caseDir, dir));
+  }
+  lines[at[0]!] = `plugins: [${entries.map((entry) => JSON.stringify(entry)).join(", ")}]`;
+  writeFileSync(file, lines.join("\n"));
+}
+
+/**
  * Copy a focused Claude corpus into the run-owned plugin snapshot.
  *
  * Claude Code accepts only one case glob and does not expand brace unions, so
  * a copied suite is the only exact multi-case selection that also preserves
  * each case's relative sibling-plugin paths and shared fixture directory.
+ * Each staged case manifest also lists every plugin vibe depends on,
+ * transitively; the source manifests are never changed.
  */
 export function stageFocusedClaudeEvalCases(vibeDir: string, selectedCases: string[]): string {
   if (selectedCases.length === 0) return "vibe/evals";
@@ -267,10 +463,15 @@ export function stageFocusedClaudeEvalCases(vibeDir: string, selectedCases: stri
   if (existsSync(shared)) {
     cpSync(shared, join(focused, "shared"), { recursive: true, errorOnExist: true, force: false });
   }
+  // Read only when a staged case lists plugins, from the same plugins folder those entries name.
+  let closure: string[] | null = null;
+  const closureDirs = () => closure ??= evalPluginClosure(dirname(vibeDir), basename(vibeDir))
+    .map((plugin) => join(dirname(vibeDir), plugin.name));
   for (const id of [...selectedCases].sort()) {
     const source = join(vibeDir, "evals", id);
     if (!existsSync(join(source, "prompt.md"))) throw new Error("eval-focused-case-missing");
     cpSync(source, join(focused, id), { recursive: true, errorOnExist: true, force: false });
+    addClosureToStagedCase(join(focused, id), closureDirs);
   }
   return "vibe/evals-focused";
 }
@@ -305,6 +506,7 @@ function writeProcessLog(path: string, result: { status: number; stdout: string;
 export async function runLocalEvals(options: LocalEvalOptions,
   commands: EvalCommands = new SystemEvalCommands()): Promise<{
     result: LocalEvalResult; jsonFile: string; reportFile: string;
+    claudeKeptFolders: ClaudeKeptFolders;
   }> {
   if (commands.localModelExecution) requireDeveloperMachine();
   if (existsSync(options.runRoot)) throw new Error("eval-run-root-exists");
@@ -338,15 +540,22 @@ export async function runLocalEvals(options: LocalEvalOptions,
   const claudeOutput = join(options.runRoot, "claude");
   const claudeTemp = join(options.runRoot, "claude-temp");
   const codexOutput = join(options.runRoot, "codex");
+  // Made before the launch, so no sandbox of this run can be older than it.
+  let claudeSandboxFloorMs = Number.POSITIVE_INFINITY;
+  let claudeKeptFolders: ClaudeKeptFolders = { reported: 0, removed: 0, remaining: [] };
   if (runtimes.includes("claude") && partition.ordinary.length) {
     mkdirSync(claudeOutput);
     mkdirSync(claudeTemp, { mode: 0o700 });
+    claudeSandboxFloorMs = createdMs(lstatSync(claudeTemp));
   }
   const claudeJson = join(claudeOutput, "result.json");
   const claudeEvalDir = runtimes.includes("claude") && partition.ordinary.length
     ? stageFocusedClaudeEvalCases(snapshot.vibeDir, partition.ordinary) : null;
-  // The case manifests load vibe and its sibling closedloop-core snapshot. Use
-  // their shared parent as the containment root while selecting vibe's suite.
+  // The exact plugin set the staged suite must load: vibe and its dependency closure.
+  const claudePlugins = claudeEvalDir ? evalPluginClosure(dirname(snapshot.vibeDir), "vibe") : [];
+  // The staged case manifests load vibe and its dependency closure, all
+  // siblings in the snapshot's one plugins folder. That folder is the
+  // containment root while selecting vibe's suite.
   const concurrency = options.concurrency ?? EVAL_POLICY.concurrency;
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
     throw new Error("eval-concurrency-invalid");
@@ -394,10 +603,12 @@ export async function runLocalEvals(options: LocalEvalOptions,
       throw error;
     }));
     const settled = await Promise.allSettled(launches);
+    // A process that finished keeps its result when its sibling was rejected,
+    // so the cleanup below still removes and counts the sandboxes it kept.
+    [claudeProcess, codexProcess] = settled.map((item) =>
+      item.status === "fulfilled" ? item.value : null);
     const failure = settled.find((item): item is PromiseRejectedResult => item.status === "rejected");
     if (failure) throw failure.reason;
-    [claudeProcess, codexProcess] = settled.map((item) =>
-      (item as PromiseFulfilledResult<{ status: number; stdout: string; stderr: string } | null>).value);
     if (claudeProcess) writeProcessLog(join(options.runRoot, "claude-process.log"), claudeProcess);
     if (codexProcess) writeProcessLog(join(options.runRoot, "codex-process.log"), codexProcess);
     if (claudeProcess && claudeVersion) {
@@ -405,7 +616,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
       const expected = {
         version: vibeVersion, coreVersion, cliVersion: claudeVersion,
         vibePath: snapshot.vibeDir, corePath: snapshot.coreDir,
-        model: EVAL_POLICY.claudeModel, runs: 1,
+        model: EVAL_POLICY.claudeModel, runs: 1, plugins: claudePlugins,
       };
       const nativeRecord = record("claude", claudeProcess.status, () => {
         claudeNative = json(claudeJson);
@@ -417,7 +628,8 @@ export async function runLocalEvals(options: LocalEvalOptions,
         try {
           const mapped = hasMappedReplyCheckers(partition.ordinary);
           const replies = commands.providesClaudeTraceArtifacts || mapped
-            ? preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp)
+            ? preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp,
+              provenClaudeKeptRoots(claudeProcess.stderr, claudeSandboxFloorMs))
             : new Map<string, string>();
           if (!mapped) {
             ordinaryRecords.push(nativeRecord);
@@ -444,6 +656,10 @@ export async function runLocalEvals(options: LocalEvalOptions,
     // parent independently removes it so an interrupt cannot retain a credential file.
     rmSync(join(codexOutput, "home/auth.json"), { force: true });
     rmSync(claudeTemp, { recursive: true, force: true });
+    // Only folders this run's own process reported and this run can prove,
+    // never a sweep of the shared temp parent.
+    claudeKeptFolders = removeClaudeKeptRoots(claudeProcess?.stderr ?? "", claudeSandboxFloorMs);
+    options.onClaudeKeptFolders?.(claudeKeptFolders);
   }
   const statefulSuites = partition.stateful.length ? await (options.statefulRunner ??
     new SystemUpgradeResumeRunner()).run({ repo: options.repo, pluginSha: options.pluginSha,
@@ -477,7 +693,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
   const reportFile = join(options.outputDir, `${stem}.md`);
   writeFileSync(jsonFile, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx" });
   writeFileSync(reportFile, buildLocalEvalReport(result), { flag: "wx" });
-  return { result, jsonFile, reportFile };
+  return { result, jsonFile, reportFile, claudeKeptFolders };
 }
 
 /** Select retryable case failures while excluding invalid infrastructure runtimes. */
@@ -699,8 +915,10 @@ export async function deliverPendingRegressionReports(store: string,
 export async function runT2Evals(input: Omit<LocalEvalOptions, "selectedCases" | "deterministicOnly" |
   "snapshotMode" | "runtimes"> & { ghExecutable: string },
 commands: EvalCommands = new SystemEvalCommands(),
-reporter?: NightlyRegressionReporter): Promise<{
+reporter?: NightlyRegressionReporter,
+writeOutput: (text: string) => unknown = (text) => process.stdout.write(text)): Promise<{
     result: EvalBaselineArtifact; jsonFile: string; skipped: boolean;
+    claudeKeptFolders: ClaudeKeptFolders;
     regressionReportFile: string | null;
     lineageReset: boolean;
     lineageReason: string | null;
@@ -751,6 +969,7 @@ reporter?: NightlyRegressionReporter): Promise<{
           ghExecutable: input.ghExecutable }, deliveryReporter);
       }
       return { result: reconciled, jsonFile, skipped: true,
+        claudeKeptFolders: { reported: 0, removed: 0, remaining: [] },
         regressionReportFile: null, lineageReset: false, lineageReason: null };
     }
   }
@@ -759,27 +978,44 @@ reporter?: NightlyRegressionReporter): Promise<{
     { encoding: "utf8" }).stdout.trim();
   if (!/^[a-f0-9]{40}$/.test(pluginTreeSha)) throw new Error("eval-t2-tree-invalid");
   const previous = currentModels ? existing?.artifact : undefined;
-  const initial = (await runLocalEvals({ ...input, runRoot: join(input.runRoot, "run-1"),
-    deterministicOnly: false, snapshotMode: "head", runtimes: ["claude", "codex"],
-    concurrency: EVAL_POLICY.concurrency }, commands)).result;
-  const results: LocalEvalResult[] = [initial];
-  const pending = new Map<EvalRuntime, string[]>((['claude', 'codex'] as EvalRuntime[]).map((runtime) =>
-    [runtime, failedCases(initial, runtime)]));
-  for (let wave = 0; wave < EVAL_POLICY.failureReruns &&
-      [...pending.values()].some((ids) => ids.length > 0); wave += 1) {
-    const launches = (["claude", "codex"] as const).flatMap((runtime) => {
-      const selected = pending.get(runtime) ?? [];
-      return selected.length ? [runLocalEvals({ ...input,
-        runRoot: join(input.runRoot, `retry-${wave + 1}-${runtime}`), selectedCases: selected,
-        deterministicOnly: false, snapshotMode: "head", runtimes: [runtime],
-        concurrency: EVAL_POLICY.concurrency }, commands).then((output) => ({ runtime,
-        result: output.result }))] : [];
-    });
-    const reruns = await Promise.all(launches);
-    for (const rerun of reruns) {
-      results.push(rerun.result);
-      pending.set(rerun.runtime, failedCases(rerun.result, rerun.runtime));
+  const results: LocalEvalResult[] = [];
+  // Each run reports its kept sandboxes here, so a run that throws is still counted.
+  const keptByRun: ClaudeKeptFolders[] = [];
+  const runInput = { ...input,
+    onClaudeKeptFolders: (kept: ClaudeKeptFolders) => { keptByRun.push(kept); } };
+  let claudeKeptFolders: ClaudeKeptFolders = sumClaudeKeptFolders([]);
+  try {
+    const initial = (await runLocalEvals({ ...runInput, runRoot: join(input.runRoot, "run-1"),
+      deterministicOnly: false, snapshotMode: "head", runtimes: ["claude", "codex"],
+      concurrency: EVAL_POLICY.concurrency }, commands)).result;
+    results.push(initial);
+    const pending = new Map<EvalRuntime, string[]>((['claude', 'codex'] as EvalRuntime[]).map((runtime) =>
+      [runtime, failedCases(initial, runtime)]));
+    for (let wave = 0; wave < EVAL_POLICY.failureReruns &&
+        [...pending.values()].some((ids) => ids.length > 0); wave += 1) {
+      const launches = (["claude", "codex"] as const).flatMap((runtime) => {
+        const selected = pending.get(runtime) ?? [];
+        return selected.length ? [runLocalEvals({ ...runInput,
+          runRoot: join(input.runRoot, `retry-${wave + 1}-${runtime}`), selectedCases: selected,
+          deterministicOnly: false, snapshotMode: "head", runtimes: [runtime],
+          concurrency: EVAL_POLICY.concurrency }, commands).then((output) => ({ runtime,
+          result: output.result }))] : [];
+      });
+      // Wait for every retry before failing, so a Claude retry still running
+      // when its sibling is rejected has its kept sandboxes counted.
+      const reruns = await Promise.allSettled(launches);
+      const rejected = reruns.find((item): item is PromiseRejectedResult => item.status === "rejected");
+      if (rejected) throw rejected.reason;
+      for (const rerun of reruns) {
+        if (rerun.status !== "fulfilled") continue;
+        results.push(rerun.value.result);
+        pending.set(rerun.value.runtime, failedCases(rerun.value.result, rerun.value.runtime));
+      }
     }
+  } finally {
+    // Printed once, before the baseline is built and also when a run threw.
+    claudeKeptFolders = sumClaudeKeptFolders(keptByRun);
+    for (const line of keptSandboxLogLines(claudeKeptFolders)) writeOutput(`${line}\n`);
   }
   requireCleanT2Snapshot(input.repo, input.pluginSha);
   const result = buildEvalBaseline({ results, catalog, pluginVersion, pluginTreeSha, previous });
@@ -805,7 +1041,7 @@ reporter?: NightlyRegressionReporter): Promise<{
   const jsonFile = join(input.outputDir, evalBaselineFileName(result));
   const regressionReportFile = regressions.length || quarantineStatus.expired.length
     ? join(input.outputDir, `eval-t2-regression-${input.pluginSha.slice(0, 12)}.json`) : null;
-  return { result, jsonFile, skipped: false, regressionReportFile,
+  return { result, jsonFile, skipped: false, claudeKeptFolders, regressionReportFile,
     lineageReset: !currentModels,
     lineageReason: currentModels ? null :
       `model-policy-changed:` +
