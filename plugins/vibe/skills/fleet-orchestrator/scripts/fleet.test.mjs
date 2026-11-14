@@ -843,3 +843,39 @@ test('a remote capture whose command ignores the stop and exits 0 is recorded ok
   assert.equal(code, 0, 'the real remote exit is recorded, not an assumed failure');
   assert.deepEqual(f.entries().map((entry) => entry.status), ['ok']);
 });
+
+test('a --capture spec that is missing or unreadable is a usage error before any slot or command', TIMEOUT, () => {
+  const f = captureFixture();
+  const ran = join(f.wt, 'spec-ran');
+  // A load over the gate makes any slot path that runs first exit 4 with a load-check line instead of the usage error.
+  const missing = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', join(f.root, 'no-such-spec.json'), 'bash', '-c', `touch ${ran}`],
+    { FLEET_TEST_LOAD: '1000' });
+  assert.equal(missing.status, 2, missing.stderr);
+  assert.match(missing.stderr, /slot <lockName> <owner> <dir> \[--containerized-e2e-build\] \[--capture <spec\.json>\] <command\.\.\.>/);
+  assert.doesNotMatch(missing.stderr, /load-check|slot-lock/, 'a missing spec is refused before the load check and the slot');
+  const unreadable = f.spec({});
+  chmodSync(unreadable, 0o000);
+  const locked = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', unreadable, 'bash', '-c', `touch ${ran}`],
+    { FLEET_TEST_LOAD: '1000' });
+  chmodSync(unreadable, 0o600);
+  assert.equal(locked.status, 2, locked.stderr);
+  assert.match(locked.stderr, /^capture-guard: invalid spec$/m);
+  assert.doesNotMatch(locked.stderr, /load-check|slot-lock/, 'an unreadable spec is refused before the load check and the slot');
+  assert.equal(existsSync(ran), false, 'no command runs');
+  assert.equal(existsSync(join(f.root, 'locks')), false, 'slot-lock never started: it creates the lock root on every start');
+  assert.equal(existsSync(join(f.orch, 'captures', 'ISS-1.json')), false, 'nothing is recorded');
+});
+
+test('--capture and --containerized-e2e-build are accepted in either order', TIMEOUT, () => {
+  for (const flags of [['--capture', null, '--containerized-e2e-build'], ['--containerized-e2e-build', '--capture', null]]) {
+    const f = captureFixture();
+    const spec = f.spec({});
+    const args = flags.map((flag) => flag ?? spec);
+    const ran = join(f.wt, 'ordered-ran');
+    const result = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, ...args, 'bash', '-c', `touch ${ran}`]);
+    assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
+    assert.ok(existsSync(ran), `${args.join(' ')}: the command ran`);
+    assert.ok(f.argv(result).some((arg) => arg.endsWith('e2e-lock.mjs')), `${args.join(' ')}: the disk preflight ran`);
+    assert.deepEqual(f.entries().map((entry) => [entry.status, entry.main]), [['ok', true]], `${args.join(' ')}: the guard admitted and recorded it`);
+  }
+});
