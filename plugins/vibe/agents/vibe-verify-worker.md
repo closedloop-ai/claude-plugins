@@ -470,17 +470,23 @@ session touched:
    runs displayless under the supported displayless harness. Never pass
    `--allow-write`, and never use `eval` or `eval-main`.
 3. For each screen: `pnpm control goto <id>`, `pnpm control wait --settled`,
-   `pnpm control capture --name <id>-after`, `pnpm control console --level error`,
+   `pnpm control capture --name <id>-after` when the session has a reference
+   image for that screen, or when
+   `../skills/vibe/references/quality-loop-visual-qa.md`, "When to capture
+   screenshots", calls for one, after `capture-guard.mjs begin` admits it and
+   with `capture-guard.mjs end` after it,
+   `pnpm control console --level error`,
    `pnpm control console --level pageerror` and `pnpm control network`. Add
    `pnpm control api GET <path>` for the record the screen shows, and
    `pnpm control ipc <namespace.method>` read calls for a Desktop screen,
-   where relevant. For shared scope, compare each consumer page against that
-   page's approved prototype route; report every control present in the
-   prototype but missing in production, and report every control with no
-   source on that surface.
-4. When a baseline exists (an earlier control capture of the same entry on
-   the merge-base or current main, never a commit that is not an ancestor),
-   return its artifact paths beside the new ones and say what changed. When the session recorded reference images
+   where relevant. For shared scope (`../skills/vibe/references/quality-loop.md`,
+   "Visual QA during the session", "What it checks"), report every control
+   with no source on that surface.
+4. When a baseline exists (the ticket's one main baseline from
+   `../skills/vibe/scripts/capture-guard.mjs status`, never a commit that is
+   not an ancestor), return its artifact paths beside the new ones and say
+   what changed; a difference on a state the ticket's diff does not reach
+   comes from main and is not the ticket's. When the session recorded reference images
    (`referenceImages`), open each as an image (`Read` in Claude Code,
    `view_image` in Codex) beside the matching capture and report every
    visible difference in shadow, elevation, font size, weight, color,
@@ -491,7 +497,7 @@ session touched:
 
 For a shared component, capture every surface it reaches with the flag off
 at 390, 412, 1024 and 1280 px wide, rendering the exact shipped story or route
-and main's render of the same one; a difference is a finding.
+and the ticket's one main baseline of the same one; a difference is a finding.
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is still

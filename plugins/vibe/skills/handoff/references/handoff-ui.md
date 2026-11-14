@@ -51,8 +51,7 @@ what each proves.
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is
 rendered directly instead: the verify worker
-produces its HTML with the repo's own generator, opens it headless and
-captures it in light and dark wherever it supports both. "Could not drive" is
+produces its HTML with the repo's own generator. "Could not drive" is
 not accepted for such a page. Any other surface it can neither drive nor
 render comes back with the exact control command and the reason, never as
 verified. A console error, page error, failed request or
