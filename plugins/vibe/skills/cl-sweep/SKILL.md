@@ -160,7 +160,7 @@ identity and callback ownership, not ticket-domain policy or surface selection.
 - Every ticket-owned planning/review/VQA/logical-QA/audit/search/status, or
   validation-artifact support request must follow the
   [Read-Only Support-Lane Contract](references/execution-surfaces.md). That
-  reference owns `fork_turns: "none"`, role-bounded `gpt-6-sol` /
+  reference owns `fork_turns: "none"`, role-bounded `gpt-5.6-sol` /
   `gpt-5.6-terra` / `gpt-6-luna` selection, reasoning effort tiers,
   self-contained packet requirements, visual-QA repo-memory preflight, result
   artifact handoff, and root-owned fallback limits.
@@ -370,7 +370,7 @@ identity and callback ownership, not ticket-domain policy or surface selection.
   error when setup fails. visual_qa_web and visual_qa_desktop lanes must carry
   repo_memory_preflight.
 - Support lane model selection is role-bounded, never a fallback, and comes
-  from `scripts/model-policy.mjs`. Use `model: "gpt-6-sol"` at
+  from `scripts/model-policy.mjs`. Use `model: "gpt-5.6-sol"` at
   `reasoning_effort: "high"` for planning, correctness-sensitive review,
   synthesis, or any other intelligent work where mistakes matter; `xhigh` only
   when raised explicitly. Explorer lanes (code/evidence exploration, graph
@@ -596,11 +596,12 @@ remains unchanged when Desktop is complete.
 3. Use a managed App Server thread when its generated start/resume/turn/steer
    schemas prove exact thread, turn, worktree-cwd, and model binding. Initialize
    and operate it with `scripts/app-server-worker-session.mjs`; new sessions
-   persist `requestedModel: gpt-6-sol`, the generated protocol schema hash
-   proof, and the ticket-owner reasoning effort. An already-active persisted
-   `gpt-5.5` or `gpt-5.6-*` turn remains recoverable under its exact stored
-   binding; never rewrite the session file or interrupt the turn. At its next
-   authoritative idle boundary, replace its owner/session under the CLI lease
+   persist the resolved model as `requestedModel`, the generated protocol schema hash
+   proof, and the ticket-owner reasoning effort. A saved session is never
+   refused for its model: its already-active turn remains recoverable under its
+   exact stored binding; never rewrite the session file or interrupt the turn.
+   When its model differs from the model resolved for that session (an explicitly requested model, else this machine's override, else the default), replace its
+   owner/session at its next authoritative idle boundary under the CLI lease
    replacement protocol before any new turn. Pass the exact persisted model to
    thread resume during recovery; pass the session's persisted
    `requestedReasoningEffort` on every turn. New ticket-owner sessions persist
@@ -609,7 +610,7 @@ remains unchanged when Desktop is complete.
    only for explicitly classified deterministic narrow continuations. `turn/steer` has no model
    field and is valid only for an already-active turn under the proven binding.
    Reject missing, unproven, incompatible, or rerouted model bindings before
-   starting or resuming work. Never create a new legacy-model session, and allow
+   starting or resuming work. Allow
    no implicit fallback or model-family reroute. Stream its turn
    events, steer active work directly, and reconcile the stored thread/turn
    after daemon or client interruption before any new turn. When a stored turn
@@ -617,7 +618,7 @@ remains unchanged when Desktop is complete.
    authoritative idle/no-active-turn proof, active lease validation, and
    detached-runner fencing; do not replace the worker before that recovery
    finishes. Use `scripts/cli-worker-session.mjs` and root-owned
-   `codex exec -C <worktree> -m gpt-6-sol` only after a
+   `codex exec -C <worktree> -m <resolved model>` only after a
    complete native App Server capability or daemon probe genuinely fails.
    Acquire a distinct lease for every selected nonterminal shipping execution
    member into its randomized
@@ -659,9 +660,9 @@ remains unchanged when Desktop is complete.
    For a malformed event from a completed turn, keep parsing fail closed,
    reconcile the exact session, clear only its stale completed `activeTurnId`,
    consume the runtime-generated `CHECKPOINT_READY` /
-   `CALLBACK_CORRECTION_REQUIRED` parent event. On a `gpt-6-sol` binding, run
+   `CALLBACK_CORRECTION_REQUIRED` parent event. On the resolved model, run
    one correction turn on the same thread/session and worktree without replacing
-   its lease or ticket generation. On a legacy model binding, first replace at
+   its lease or ticket generation. On any other saved model, first replace at
    the verified idle boundary, then issue the correction from the new session.
    A second malformed callback
    exhausts the one-turn correction budget. The worker-session runtime must

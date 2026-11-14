@@ -3,8 +3,11 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
-import { endSession, initializeSession, startThread, startTurn } from './native-app-server-orchestrator.mjs';
+import { DEFAULT_WORKER_MODEL, endSession, initializeSession, startThread, startTurn } from './native-app-server-orchestrator.mjs';
 import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { withoutModelOverrides } from './core-client-fixture.mjs';
+
+withoutModelOverrides();
 
 class FakeClient {
   constructor(handler) {
@@ -165,4 +168,47 @@ test('a turn on an ended worker unarchives its thread before resuming it', async
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
   assert.equal(saved.ended, undefined);
   assert.equal(saved.archivedAt, undefined);
+});
+
+test('AC-2: a new session with no model takes this machine\'s Codex writer model, else the default gpt-5.6-sol', (t) => {
+  const root = realpathSync(mkdtempSync(resolve(tmpdir(), 'orchestrator-model-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const previous = process.env.VIBE_MODELS_FILE;
+  t.after(() => { if (previous === undefined) delete process.env.VIBE_MODELS_FILE; else process.env.VIBE_MODELS_FILE = previous; });
+  const models = resolve(root, 'models.json');
+  process.env.VIBE_MODELS_FILE = resolve(root, 'none.json');
+  const model = (name, options = {}) => initializeSession({ stateFile: resolve(root, `${name}.json`), cwd: root, ...options }).options.model;
+  assert.equal(DEFAULT_WORKER_MODEL, 'gpt-5.6-sol');
+  assert.equal(model('default'), 'gpt-5.6-sol');
+  process.env.VIBE_MODELS_FILE = models;
+  writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'gpt-writer-choice', reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } }));
+  assert.equal(model('chosen'), 'gpt-writer-choice');
+  assert.equal(model('explicit', { model: 'gpt-explicit-choice' }), 'gpt-explicit-choice');
+  writeFileSync(models, JSON.stringify({ codex: { roles: { reviewer: 'gpt-reviewer-choice' } } }));
+  assert.equal(model('other-role'), 'gpt-5.6-sol');
+  // Operator ruling 2026-11-13 (ISS-14112): a new session on gpt-5.5 is no longer refused here.
+  assert.equal(model('legacy', { model: 'gpt-5.5' }), 'gpt-5.5');
+  writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'gpt-5.5' } } }));
+  assert.equal(model('legacy-override'), 'gpt-5.5');
+});
+
+test('AC-2: a new native session with an explicit gpt-5.5 model starts its thread and runs its turn on gpt-5.5', async (t) => {
+  const fresh = freshSession(t, { model: 'gpt-5.5' });
+  assert.equal(JSON.parse(readFileSync(fresh.stateFile, 'utf8')).options.model, 'gpt-5.5');
+  const starter = new FakeClient(starting(fresh.root, { sidebar: false }));
+  await startThread({ stateFile: fresh.stateFile }, { client: starter, ...initialized });
+  assert.equal(starter.calls.find((call) => call.method === 'thread/start').params.model, 'gpt-5.5');
+
+  // The same session, its first turn done and its thread idle: the next turn keeps the model it was started on.
+  const { root, stateFile } = fresh;
+  const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
+  // thread-start leaves its first-turn operation pending until the first turn lands; that turn is done here.
+  assert.equal(saved.pendingOperation?.kind, 'thread_start');
+  delete saved.pendingOperation;
+  Object.assign(saved, { threadId: 'thread-1', threadMaterialized: true, state: 'IDLE', activeTurnId: null });
+  writeFileSync(stateFile, `${JSON.stringify(saved, null, 2)}\n`, { mode: 0o600 });
+  const runner = new FakeClient(thread(root, 'idle', [{ id: 'turn-1', status: 'completed', items: [] }]));
+  const started = await startTurn({ stateFile, prompt: 'next' }, { client: runner, ...initialized, ...liveRead(root, 'idle') });
+  assert.equal(started.turnId, 'turn-2');
+  assert.equal(runner.calls.find((call) => call.method === 'turn/start').params.model, 'gpt-5.5');
 });

@@ -4,7 +4,9 @@
 // exploration", "the user can override the model to whatever they want" and
 // "the models should be defaults, not mandatory"). Claude Code takes the
 // default from the agent file's `model:` frontmatter, Codex from the role
-// binding in `../../cl-sweep/scripts/model-policy.mjs`.
+// binding in `../../cl-sweep/scripts/model-policy.mjs`. That policy reads its
+// role names and this machine's choices from here, so this module imports
+// nothing from it and the Claude launcher bundle carries no Codex default.
 //
 // A person's overrides live in one file per machine, ~/.codex/vibe/models.json
 // (VIBE_MODELS_FILE names another file), by role or by agent, per harness:
@@ -19,7 +21,16 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CodexWorkerRole } from "../../cl-sweep/scripts/model-policy.mjs";
+
+/** The roles a Codex worker can have; `../../cl-sweep/scripts/model-policy.mjs` binds each to a model and effort. */
+export const CodexWorkerRole = Object.freeze({
+  Writer: "writer",
+  Operational: "operational",
+  Reviewer: "reviewer",
+  Verifier: "verifier",
+  Explorer: "explorer",
+  Mechanical: "mechanical",
+});
 
 /**
  * Each vibe agent's role. A writer edits product code; an operational worker runs setup, records, environments and
@@ -132,10 +143,19 @@ export function resolveWorkerModel(runtime, agentName, defaultModel, { launchMod
   if (Object.hasOwn(chosen.agents ?? {}, agent)) {
     return { model: chosen.agents[agent], source: ModelSource.Agent };
   }
-  if (Object.hasOwn(chosen.roles ?? {}, role)) {
-    return { model: chosen.roles[role], source: ModelSource.Role };
+  return resolveRoleModel(runtime, role, defaultModel, options);
+}
+
+/**
+ * The model a worker of `role` runs on when no agent names it (a cl-sweep ticket owner is a Codex writer): this
+ * launch's own model, the person's override for the role, else `defaultModel`.
+ */
+export function resolveRoleModel(runtime, role, defaultModel, { launchModel, ...options } = {}) {
+  if (launchModel) {
+    return { model: launchModel, source: ModelSource.Launch };
   }
-  return { model: defaultModel, source: ModelSource.Default };
+  const roles = readModelOverrides(options)[runtime]?.roles ?? {};
+  return Object.hasOwn(roles, role) ? { model: roles[role], source: ModelSource.Role } : { model: defaultModel, source: ModelSource.Default };
 }
 
 /** Saves (or, with no `model`, removes) the override for a role or an agent on one harness; returns the saved overrides. */

@@ -7,13 +7,14 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import test, { before, after } from 'node:test';
 import { decodeWebSocketFrames, monitorScript } from './core-client-process.mjs';
-import { registryFixtureCode, installRegistryFixture } from './core-client-fixture.mjs';
+import { registryFixtureCode, installRegistryFixture, withoutModelOverrides } from './core-client-fixture.mjs';
 
 let restoreRegistry;
 before(() => { restoreRegistry = installRegistryFixture(); });
 after(() => restoreRegistry?.());
 
 const execFileAsync = promisify(execFile);
+withoutModelOverrides();
 const rootCli = resolve(import.meta.dirname, 'sweep-root-state.mjs');
 const workerCli = resolve(import.meta.dirname, 'app-server-worker-session.mjs');
 const projectId = '019d54c6-d099-74a5-87d0-0a0d4cbdc599';
@@ -85,7 +86,7 @@ function startFixtureServer(socketPath, workerCwd, parentCwd) {
         return send({ id, result: { data: state.workerCreated ? [thread('worker-thread', workerCwd)] : [], nextCursor: null } });
       }
       if (method === 'thread/start') {
-        assert.equal(params.model, 'gpt-6-sol');
+        assert.equal(params.model, 'gpt-5.6-sol');
         state.workerCreated = true;
         return send({ id, result: { thread: thread('worker-thread', workerCwd) } });
       }
@@ -97,12 +98,12 @@ function startFixtureServer(socketPath, workerCwd, parentCwd) {
         return send({ id, result: { thread: thread(params.threadId, cwd, Boolean(params.includeTurns)) } });
       }
       if (method === 'thread/resume') {
-        if (params.threadId === 'worker-thread') assert.equal(params.model, 'gpt-6-sol');
+        if (params.threadId === 'worker-thread') assert.equal(params.model, 'gpt-5.6-sol');
         const cwd = params.threadId === 'worker-thread' ? workerCwd : parentCwd;
         return send({ id, result: { thread: thread(params.threadId, cwd) } });
       }
       if (method === 'turn/start' && params.threadId === 'worker-thread') {
-        assert.equal(params.model, 'gpt-6-sol');
+        assert.equal(params.model, 'gpt-5.6-sol');
         assert.equal(params.effort, 'high');
         state.workerMaterialized = true;
         send({ id, result: { turn: { id: 'worker-turn', status: 'inProgress' } } });

@@ -265,14 +265,19 @@ test('no skill carries one-off exceptions for merged tickets (ISS-9294 / PR #705
   }
 });
 
-test('new sweep ticket workers use gpt-6-sol and replace legacy owners after recovery', () => {
+test('AC-4: new sweep ticket workers use gpt-5.6-sol, and a saved session on another model is replaced at idle, never refused', () => {
   const surfaces = read('cl-sweep/references/execution-surfaces.md');
   const sweep = read('cl-sweep/SKILL.md');
   const protocol = read('cl-sweep/references/cli-worker-protocol.md');
   for (const source of [surfaces, sweep, protocol]) {
-    assert.match(source, /gpt-6-sol/i);
-    assert.match(source, /gpt-5\.5/i);
-    assert.match(source, /gpt-5\.6-\*/i);
+    assert.match(source, /gpt-5\.6-sol/i);
+    assert.doesNotMatch(source, /gpt-6-sol/i);
+    // One rule for every saved model: never refused, replaced at idle when it is not this machine's resolved model.
+    assert.doesNotMatch(source, /gpt-5\.5|gpt-5\.6-\*|legacy[- ]model|legacy (?:binding|turn|fallback)/i);
+    assert.match(source, /never\s+refused\s+for\s+its\s+model/i);
+    assert.match(source, /differs\s+from\s+the\s+model\s+resolved\s+for\s+that\s+session\s+\(an\s+explicitly\s+requested\s+model,\s+else\s+this\s+machine's\s+override,\s+else\s+the\s+default\)/i);
+    // A session keeps an explicitly requested model, so the rule is never stated against this machine's model alone.
+    assert.doesNotMatch(source, /resolved\s+for\s+this\s+machine/i);
     assert.match(source, /idle/i);
     assert.match(source, /replace/i);
   }
@@ -330,13 +335,13 @@ test('sweep support model routing reserves luna for bounded deterministic lower-
   const protocol = read('cl-sweep/references/cli-worker-protocol.md');
   const sweep = read('cl-sweep/SKILL.md');
   for (const source of [surfaces, protocol, sweep]) {
-    assert.match(source, /gpt-6-sol/i);
+    assert.match(source, /gpt-5\.6-sol/i);
     assert.match(source, /gpt-6-luna/i);
     assert.match(source, /bounded[\s\S]{0,100}deterministic|deterministic[\s\S]{0,100}lower-risk/i);
   }
   for (const source of [surfaces, protocol]) {
     assert.match(source, /gpt-6-luna[\s\S]{0,140}(?:low|deterministic)|(?:deterministic|inventory)[\s\S]{0,180}gpt-6-luna/i);
-    assert.match(source, /gpt-6-sol[\s\S]{0,220}(?:high|xhigh|planning|correctness)|(?:planning|correctness)[\s\S]{0,220}gpt-6-sol/i);
+    assert.match(source, /gpt-5\.6-sol[\s\S]{0,220}(?:high|xhigh|planning|correctness)|(?:planning|correctness)[\s\S]{0,220}gpt-5\.6-sol/i);
     assert.match(source, /never own[\s\S]{0,160}(?:orchestration|ticket work|coding\/planning|final judgment|mutation)/i);
   }
   assert.match(surfaces, /token-savings claim/i);
@@ -1168,14 +1173,14 @@ test('a new data direction needs a traced decision in cl-execute and cl-analyze'
   assert.match(gateResult, /^- Data direction: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
 });
 
-test('Codex lanes take models from the one policy: high by default, explorers on gpt-5.6-terra', async () => {
+test('AC-4: Codex lanes take models from the one policy: high by default, explorers on gpt-5.6-terra', async () => {
   const policy = await import('./model-policy.mjs');
   const known = new Set([
-    policy.TICKET_OWNER_MODEL, policy.EXPLORER_MODEL, policy.MECHANICAL_SUPPORT_MODEL, policy.LEGACY_UNVERSIONED_MODEL,
+    policy.TICKET_OWNER_MODEL, policy.EXPLORER_MODEL, policy.MECHANICAL_SUPPORT_MODEL,
   ]);
   assert.equal(policy.DEFAULT_REASONING_EFFORT, 'high');
   assert.equal(policy.codexBindingForRole('explorer').model, 'gpt-5.6-terra');
-  assert.equal(policy.codexBindingForRole('writer').model, 'gpt-6-sol');
+  assert.equal(policy.codexBindingForRole('writer').model, 'gpt-5.6-sol');
   const sources = {
     surfaces: read('cl-sweep/references/execution-surfaces.md'),
     protocol: read('cl-sweep/references/cli-worker-protocol.md'),

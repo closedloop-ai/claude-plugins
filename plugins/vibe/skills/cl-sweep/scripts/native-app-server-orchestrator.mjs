@@ -25,7 +25,9 @@ import {
   readThreadState,
   sendInput,
 } from './core-client-process.mjs';
-import { LEGACY_UNVERSIONED_MODEL, MECHANICAL_SUPPORT_MODEL, TICKET_OWNER_MODEL } from './model-policy.mjs';
+import {
+  MECHANICAL_SUPPORT_MODEL, TICKET_OWNER_MODEL, ticketOwnerModel, validateModelName,
+} from './model-policy.mjs';
 import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
@@ -34,7 +36,6 @@ export const SESSION_SCHEMA = 'APP_SERVER_ORCHESTRATOR_SESSION v1';
 export const EVENT_SCHEMA = 'APP_SERVER_ORCHESTRATOR_EVENT v1';
 export const EVENT_PREFIX = `${EVENT_SCHEMA} `;
 export const DEFAULT_WORKER_MODEL = TICKET_OWNER_MODEL;
-export const LEGACY_WORKER_MODEL = LEGACY_UNVERSIONED_MODEL;
 export const BOUNDED_EXPLORATION_MODELS = Object.freeze([MECHANICAL_SUPPORT_MODEL]);
 
 const STARTABLE_STATES = new Set(['READY', 'AWAITING_FIRST_TURN', 'IDLE', 'FAILED', 'INTERRUPTED', 'DISCONNECTED']);
@@ -221,18 +222,12 @@ function turnOptions(session) {
 
 function validateModelOption(value, label = 'model') {
   if (value === null || value === undefined) return null;
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value)) {
-    fail(`${label} must be a compact model identifier`);
-  }
-  return value;
+  return validateModelName(value, label);
 }
 
 function validateNewSessionModel(value) {
-  const model = validateModelOption(value ?? DEFAULT_WORKER_MODEL);
-  if (model === LEGACY_WORKER_MODEL) {
-    fail(`New worker sessions cannot use legacy model ${LEGACY_WORKER_MODEL}; use ${DEFAULT_WORKER_MODEL}`);
-  }
-  return model;
+  // An explicit model is the caller's choice; with none, the session takes the ticket-owner default or this machine's.
+  return validateModelOption(value ?? ticketOwnerModel());
 }
 
 function validateThreadName(value) {

@@ -4,6 +4,33 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.87
+
+#### Added
+- `skills/cl-sweep/scripts/model-policy.d.mts` types the Codex model policy for TypeScript readers.
+- `model-policy.mjs` exports `validateModelName` (the one model-name check the three cl-sweep session scripts share), `ticketOwnerModel`, `ticketOwnerNeedsReplacement`, `assertNoReplacementNeeded` and `ticketOwnerReplacementStatus`.
+- `skills/vibe/scripts/agent-models.mjs` exports `CodexWorkerRole` and `resolveRoleModel`, which resolves a role's model when no agent is named.
+- `status` on both ticket-owner session scripts reports a new `modelReplacementError` field: null, or the message of the error when this machine's model overrides file cannot be read, in which case `modelReplacement` is null and `status` still answers.
+- A session started with `--requested-model` carries `requestedModelExplicit: true` in its session file (`app-server-worker-session.mjs`).
+- `withoutModelOverrides` in `skills/cl-sweep/scripts/core-client-fixture.mjs` points the cl-sweep session tests at an overrides file that never exists.
+
+#### Changed
+- The default Codex model for vibe's writer, operational, reviewer and verifier workers and for cl-sweep ticket owners is `gpt-5.6-sol`, in place of `gpt-6-sol` (ISS-14112). Explorers stay on `gpt-5.6-terra` and mechanical support on `gpt-6-luna`.
+- That default has one source, `codexModel` in `evals/codex/model-policy.json`, the file the evals runner already reads. `model-policy.mjs` reads it when it loads instead of carrying its own literal, so `worker-model.mjs codex <name>` and the cl-sweep session scripts follow it. A missing, unreadable or unusable file is refused with `eval-codex-model-policy-invalid`; no model is built in. `tools/vibe-bench/src/eval-policy.ts` takes the model from `model-policy.mjs` instead of reading the file itself.
+- cl-sweep ticket-owner sessions honour the per-machine model override. A new App Server session starts on `--requested-model`, else the Codex `writer` model in `~/.codex/vibe/models.json`, else the default. The CLI fallback (`cli-worker-session.mjs`), which has no init model option, and the generic orchestrator (`native-app-server-orchestrator.mjs`), when no model is given, start on the override, else the default. `--requested-model` accepts any compact model identifier; it used to accept only the one required model.
+- The model a new App Server or CLI fallback session resolves is checked before the session file is written, so a model the session cannot store is refused at init with the existing "must be a compact model identifier" message.
+- A saved ticket-owner session is never refused for its model. A turn in flight finishes on the saved model and the session file is not rewritten. When the saved model differs from the model that resolves for that session, the session is replaced at its next idle boundary before another turn, on the path `gpt-5.5` sessions already used. A session with `requestedModelExplicit: true` resolves to its own model; every other session, including every session saved before the marker existed, resolves to the override, else the default. A lease generation re-attached to an earlier thread is initialized with that thread's model as `--requested-model`, so it keeps it. This replaces the rule that treated `gpt-5.5` and every `gpt-5.6-*` model as legacy and refused any other saved model.
+- The generic orchestrator no longer refuses a new `gpt-5.5` session, so an explicit or override model works the same on all three transports (ISS-14112).
+- The CLI fallback refuses a session that must be replaced before it marks a pending callback correction, so the session file is left as saved.
+- `app-server-worker-session.mjs` exports `DEFAULT_WORKER_MODEL` in place of `REQUIRED_WORKER_MODEL`, and its probe output names the field `defaultWorkerModel` in place of `requiredWorkerModel`.
+- `CodexWorkerRole` moves from `model-policy.mjs` to `agent-models.mjs`, and the Claude launcher bundle (`claude-worker.mjs`) is rebuilt without the Codex model policy.
+- The cl-sweep skill and its `execution-surfaces.md` and `cli-worker-protocol.md` references, the cl-execute plan-review and support-lane references, the Codex harness notes and the README name `gpt-5.6-sol` as the default, say "the resolved model" where a ticket-owner session's model is meant, and state the saved-session rule in place of the legacy model list. The README says cl-sweep ticket-owner sessions use the Codex writer model, including an override.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.87.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 121 words longer than in 1.1.86 (origin/main at this update, 8a858bb4).
+
+#### Removed
+- `isLegacyTicketOwnerModel` and `LEGACY_UNVERSIONED_MODEL` from `model-policy.mjs`, `LEGACY_COMPATIBLE_WORKER_MODEL` from `app-server-worker-session.mjs`, and `LEGACY_WORKER_MODEL` from `native-app-server-orchestrator.mjs`.
+
 ### vibe-core v1.0.9
 
 #### Changed

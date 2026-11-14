@@ -90,8 +90,10 @@ fields. Current App Server schema uses `model` on `thread/start`,
 `thread/resume`, and `turn/start`; `turn/steer` has no model field because it
 targets the already-active turn. Preserve `requestedModel`,
 `requestedReasoningEffort`, the generated protocol schema SHA-256 proof, and the
-field-level binding in a pre-existing legacy session. New ticket-owner sessions
-persist `requestedModel: gpt-6-sol`. Pass the exact real worktree and the
+field-level binding in a pre-existing session. New ticket-owner sessions
+persist the model resolved for that session as `requestedModel`. A model explicitly requested at init is
+kept: that session runs on it and is not replaced for its model. A session
+re-attached to an earlier thread requests that thread's saved model. Pass the exact real worktree and the
 session's exact persisted model to start/resume during recovery; pass the
 session's persisted ticket-owner `requestedReasoningEffort` on turn start
 (`high` for new sessions, `xhigh` only when raised explicitly at session
@@ -101,11 +103,10 @@ before mutation. Keep the App Server thread id and active turn id in the private
 session manifest. Stream notifications until the bounded turn completes, fail
 on any reroute away from that persisted model, validate its callback, append the
 event, and use the same daemon to steer or start the parent root turn with that
-event. Never create a new `gpt-5.5` or `gpt-5.6-*` ticket-owner session
-(read-only explorer support lanes on `gpt-5.6-terra` are not ticket-owner
-sessions). An already-active
-legacy turn is recoverable under its exact stored binding. Once it reaches an
-authoritatively verified idle/no-active-turn boundary, replace its owner/session
+event. A saved session is never refused for its model: an already-active
+turn is recoverable under its exact stored binding. When its model differs from
+the model resolved for that session (an explicitly requested model, else this machine's override, else the default), replace its owner/session once it reaches an
+authoritatively verified idle/no-active-turn boundary,
 before another turn; never rewrite its model field in place. No implicit
 fallback or model-family reroute is allowed.
 
@@ -170,7 +171,7 @@ Only when the complete native App Server schema or daemon probe fails:
    id, generation, lease id/hash, exact parent `CODEX_THREAD_ID`, and canonical
    parent cwd. New compatibility sessions without `parentCwd` are invalid for
    cross-root adoption.
-3. Launch through `codex exec -C <real-worktree> -m gpt-6-sol` and capture the
+3. Launch through `codex exec -C <real-worktree> -m <resolved model>` and capture the
    explicit session id plus final callback.
 4. Resume only that id through `codex exec resume -m <persisted-model>`, with
    process cwd set to the same real worktree. Older fallback receipts without
@@ -242,10 +243,10 @@ Append accepted events before acting. If a completed App Server turn has a
 malformed final event, reconcile that exact thread and cwd. The session records
 the rejected turn and message hash, clears only the stale completed
 `activeTurnId`, remains `INTERRUPTED`, and durably emits a runtime-generated
-`CHECKPOINT_READY` / `CALLBACK_CORRECTION_REQUIRED` event. On a `gpt-6-sol`
-binding, the root starts one correction turn on the same thread/session and
+`CHECKPOINT_READY` / `CALLBACK_CORRECTION_REQUIRED` event. On the resolved
+model, the root starts one correction turn on the same thread/session and
 worktree; the compatibility fallback likewise resumes its exact stored Codex
-session id. On a legacy model, first replace at the verified idle boundary and
+session id. On any other saved model, first replace at the verified idle boundary and
 issue the correction from the new session. Exactly one correction turn is
 allowed. If that turn also fails callback validation, the runtime atomically
 records `FAILED` plus `replacementRequired`, appends a runtime-generated
@@ -281,7 +282,7 @@ consume it exactly like the native event: run the one correction for
 
 The ticket worker launches and manages direct read-only support agents with
 `fork_turns: "none"`, an explicit role-bounded model, and an explicit reasoning
-effort, taken from `../scripts/model-policy.mjs`. Use `model: "gpt-6-sol"`
+effort, taken from `../scripts/model-policy.mjs`. Use `model: "gpt-5.6-sol"`
 with `reasoning_effort: "high"` (`"xhigh"` only when raised explicitly) for
 planning review, correctness-sensitive code review or QA, synthesis, and
 high-judgment architecture, security/privacy, database/migration, or ambiguous
@@ -326,11 +327,12 @@ contain only lease id/hash. The root never gives workers the raw token or secret
 path. Renew only after a valid callback or verified bounded liveness.
 
 Replace only after proving the tracked CLI turn exited or session is inactive.
-For persisted `gpt-5.5` and `gpt-5.6-*` owners, recover any already-active turn
+For owners saved on a model that differs from the model resolved for that
+session, recover any already-active turn
 under its exact stored binding, then prove the exact thread/cwd is idle with no
 active turn. Preserve the old session receipt and checkpoint; never rewrite its
 model binding or start another turn on it. Rotate the lease and create a new
-`gpt-6-sol` session at the next generation.
+session on the resolved model at the next generation.
 Validate and checkpoint dirty work, rotate the private secret, increment the
 generation once, and create a new cwd-bound session manifest. Reconcile ticket,
 events, requirements, checkpoint, PR/head, review generations, validation, and

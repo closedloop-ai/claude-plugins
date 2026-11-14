@@ -3,7 +3,7 @@ accounts' weekly Codex limits.
 
 1. Codex workers default to reasoning effort `high`; `xhigh` only when raised explicitly.
 2. Model by role from one policy per harness: Codex explorers on `gpt-5.6-terra`, writers, reviewers and
-   verifiers on the existing `gpt-6-sol` (`skills/cl-sweep/scripts/model-policy.mjs`, read through
+   verifiers on `gpt-5.6-sol` (`skills/cl-sweep/scripts/model-policy.mjs`, read through
    `skills/vibe/scripts/worker-model.mjs`); Claude Code explorers on sonnet in agent frontmatter. Since
    ISS-14109 these are defaults a person can override (`skills/vibe/scripts/agent-models.mjs`).
 3. Targeted validation: the tests `code_tests_for` returns per changed file plus typecheck and lint, never a
@@ -37,7 +37,8 @@ def harness_notes() -> str:
 def test_codex_spawns_take_model_and_effort_from_the_policy() -> None:
     notes = harness_notes()
     assert "node scripts/worker-model.mjs codex <name>" in notes
-    assert "`gpt-5.6-terra`" in notes and "`gpt-6-sol`" in notes
+    assert "`gpt-5.6-terra`" in notes and "`gpt-5.6-sol`" in notes
+    assert "gpt-6-sol" not in notes
     assert "Never pass `xhigh` unless the person asked for it" in notes
     for skill in (HANDOFF_SKILL, SEED_SKILL):
         assert "worker-model.mjs codex <name>" in flat(skill.read_text()), skill.name

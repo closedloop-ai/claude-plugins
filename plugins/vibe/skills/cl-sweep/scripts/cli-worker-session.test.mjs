@@ -6,12 +6,14 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { withoutModelOverrides } from './core-client-fixture.mjs';
 
 const script = fileURLToPath(new URL('./cli-worker-session.mjs', import.meta.url));
 const checkpointScript = fileURLToPath(new URL('./checkpoint-worktree.mjs', import.meta.url));
 const ownershipScript = fileURLToPath(new URL('./ownership-lease.mjs', import.meta.url));
 const HASH_1 = 'a'.repeat(64);
 const HASH_2 = 'b'.repeat(64);
+withoutModelOverrides();
 
 function run(file, args, options = {}) {
   return execFileSync(file, args, { encoding: 'utf8', ...options }).trim();
@@ -69,7 +71,7 @@ function event({ id, worktree, generation = 1, rootGeneration = 1, parentThreadI
   })}\n`;
 }
 
-test('launches and resumes the same cwd-bound Codex exec session', () => {
+test('AC-1: launches and resumes the same cwd-bound Codex exec session on the default gpt-5.6-sol', () => {
   const { repo, state, fakeCodex, invocationLog } = setup();
   const session = join(state, 'session.json');
   const events = join(state, 'events.jsonl');
@@ -79,7 +81,8 @@ test('launches and resumes the same cwd-bound Codex exec session', () => {
   const ready = JSON.parse(run('node', [script, 'status', '--session-file', session]));
   assert.equal(ready.state, 'READY');
   assert.equal(ready.bindingValid, true);
-  assert.equal(ready.requestedModel, 'gpt-6-sol');
+  assert.equal(ready.requestedModel, 'gpt-5.6-sol');
+  assert.equal(ready.modelReplacement, null);
   assert.equal(ready.activeProcess, false);
 
   const firstPrompt = join(state, 'first.txt');
@@ -99,17 +102,128 @@ test('launches and resumes the same cwd-bound Codex exec session', () => {
   const canonicalRepo = realpathSync(repo);
   assert.equal(invocations[0].cwd, canonicalRepo);
   assert.deepEqual(invocations[0].args.slice(0, 3), ['exec', '-C', canonicalRepo]);
-  assert.deepEqual(invocations[0].args.slice(3, 5), ['-m', 'gpt-6-sol']);
+  assert.deepEqual(invocations[0].args.slice(3, 5), ['-m', 'gpt-5.6-sol']);
   assert.match(invocations[0].input, /validate-callback --session-file/);
   assert.match(invocations[0].input, /"parent_thread_id":"parent-1"/);
   assert.match(invocations[0].input, /parent_action at or below 512 characters/);
   assert.equal(invocations[1].cwd, canonicalRepo);
-  assert.deepEqual(invocations[1].args.slice(0, 4), ['exec', 'resume', '-m', 'gpt-6-sol']);
+  assert.deepEqual(invocations[1].args.slice(0, 4), ['exec', 'resume', '-m', 'gpt-5.6-sol']);
   assert.ok(invocations[1].args.includes('session-123'));
   assert.equal(readFileSync(events, 'utf8').trim().split('\n').length, 2);
 });
 
-test('compatibility fallback replaces a persisted legacy binding before another turn', () => {
+const INIT = ['--ticket', 'FEA-1', '--parent-thread-id', 'parent-1', '--owner-id', 'worker-1', '--generation', '1', '--lease-id', 'lease-1', '--lease-token-hash', HASH_1];
+
+test('AC-2: a new fallback session takes this machine\'s Codex writer model, else the default', () => {
+  const { repo, state, fakeCodex, invocationLog } = setup();
+  const models = join(state, 'models.json');
+  writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'gpt-writer-choice', reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } }));
+  const env = { ...process.env, VIBE_MODELS_FILE: models };
+  const session = join(state, 'chosen-session.json');
+  run('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT], { env });
+  assert.equal(JSON.parse(readFileSync(session, 'utf8')).requestedModel, 'gpt-writer-choice');
+  const prompt = join(state, 'prompt.txt');
+  writeFileSync(prompt, event({ id: randomUUID(), worktree: repo }));
+  // A session on the model this machine chose runs and is not replaced.
+  run('node', [script, 'run', '--session-file', session, '--prompt-file', prompt, '--events-file', join(state, 'events.jsonl'), '--codex', fakeCodex], { env });
+  const [launch] = readFileSync(invocationLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(launch.args.slice(3, 5), ['-m', 'gpt-writer-choice']);
+  const status = JSON.parse(run('node', [script, 'status', '--session-file', session], { env }));
+  assert.equal(status.bindingValid, true);
+  assert.equal(status.modelReplacement, null);
+  // Once this machine's model is another one, the same saved session is replaced at idle before another turn.
+  const changed = JSON.parse(run('node', [script, 'status', '--session-file', session]));
+  assert.equal(changed.bindingValid, true);
+  assert.deepEqual(changed.modelReplacement, { targetModel: 'gpt-5.6-sol', requiredBeforeNextTurn: true, idleCandidate: true });
+  const refused = spawnSync('node', [script, 'run', '--session-file', session, '--prompt-file', prompt, '--events-file', join(state, 'events.jsonl'), '--codex', fakeCodex], { encoding: 'utf8' });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Persisted gpt-writer-choice worker requires idle-boundary replacement with a new gpt-5\.6-sol session/);
+  assert.equal(readFileSync(invocationLog, 'utf8').trim().split('\n').length, 1);
+
+  writeFileSync(models, JSON.stringify({ codex: { roles: { reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } }));
+  const other = join(state, 'default-session.json');
+  run('node', [script, 'init', '--session-file', other, '--worktree', repo, '--parent-cwd', repo, ...INIT], { env });
+  assert.equal(JSON.parse(readFileSync(other, 'utf8')).requestedModel, 'gpt-5.6-sol');
+});
+
+test('AC-2: an override this machine chose that a fallback session cannot store is refused at init, before any session file', () => {
+  const { repo, state } = setup();
+  const models = join(state, 'models.json');
+  writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'ft:gpt-5.6-sol:org' } } }));
+  const session = join(state, 'refused-session.json');
+  const refused = spawnSync('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT],
+    { encoding: 'utf8', env: { ...process.env, VIBE_MODELS_FILE: models } });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /requestedModel must be a compact model identifier/);
+  assert.equal(existsSync(session), false);
+});
+
+test('AC-3: fallback status still answers when this machine\'s model overrides cannot be read', () => {
+  const { repo, state } = setup();
+  const session = join(state, 'status-session.json');
+  run('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT]);
+  const models = join(state, 'models.json');
+  writeFileSync(models, '{not json');
+  const status = JSON.parse(run('node', [script, 'status', '--session-file', session], { env: { ...process.env, VIBE_MODELS_FILE: models } }));
+  assert.equal(status.bindingValid, true);
+  assert.equal(status.requestedModel, 'gpt-5.6-sol');
+  assert.equal(status.modelReplacement, null);
+  assert.match(status.modelReplacementError, /Model overrides in .* could not be read/);
+  assert.equal(JSON.parse(run('node', [script, 'status', '--session-file', session])).modelReplacementError, null);
+});
+
+test('AC-3: a refused turn on a saved fallback session that must be replaced leaves its file byte for byte', () => {
+  const { repo, state, fakeCodex } = setup();
+  const session = join(state, 'correction-session.json');
+  run('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT]);
+  const stored = JSON.parse(readFileSync(session, 'utf8'));
+  stored.requestedModel = 'gpt-6-sol';
+  stored.codexSessionId = 'session-123';
+  stored.state = 'INTERRUPTED';
+  // A pending correction is what the turn would otherwise mark in progress before anything else.
+  stored.callbackCorrection = { status: 'required', attempts: 0 };
+  writeFileSync(session, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+  const before = readFileSync(session);
+  const prompt = join(state, 'prompt.txt');
+  writeFileSync(prompt, event({ id: randomUUID(), worktree: repo }));
+  const refused = spawnSync('node', [script, 'run', '--session-file', session, '--prompt-file', prompt, '--events-file', join(state, 'events.jsonl'), '--codex', fakeCodex], { encoding: 'utf8' });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Persisted gpt-6-sol worker requires idle-boundary replacement with a new gpt-5\.6-sol session/);
+  assert.equal(readFileSync(session).equals(before), true);
+});
+
+test('AC-3: a saved gpt-6-sol fallback session is never refused for its model and is replaced at idle', () => {
+  const { repo, state, fakeCodex, invocationLog } = setup();
+  const session = join(state, 'saved-session.json');
+  run('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT]);
+  const stored = JSON.parse(readFileSync(session, 'utf8'));
+  stored.requestedModel = 'gpt-6-sol';
+  stored.codexSessionId = 'session-123';
+  stored.state = 'WAITING';
+  writeFileSync(session, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+  const status = JSON.parse(run('node', [script, 'status', '--session-file', session]));
+  assert.equal(status.bindingValid, true);
+  assert.equal(status.requestedModel, 'gpt-6-sol');
+  assert.deepEqual(status.modelReplacement, { targetModel: 'gpt-5.6-sol', requiredBeforeNextTurn: true, idleCandidate: true });
+  const prompt = join(state, 'prompt.txt');
+  writeFileSync(prompt, event({ id: randomUUID(), worktree: repo, kind: 'EXECUTION_CHECKPOINT' }));
+  const runArgs = [script, 'run', '--session-file', session, '--prompt-file', prompt, '--events-file', join(state, 'events.jsonl'), '--codex', fakeCodex];
+  const refused = spawnSync('node', runArgs, { encoding: 'utf8' });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Persisted gpt-6-sol worker requires idle-boundary replacement with a new gpt-5\.6-sol session/);
+  assert.equal(existsSync(invocationLog), false);
+  assert.equal(JSON.parse(readFileSync(session, 'utf8')).requestedModel, 'gpt-6-sol');
+  // On a machine whose chosen model is the saved one, the same session resumes on it.
+  const models = join(state, 'models.json');
+  writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'gpt-6-sol' } } }));
+  const env = { ...process.env, VIBE_MODELS_FILE: models };
+  assert.equal(JSON.parse(run('node', [script, 'status', '--session-file', session], { env })).modelReplacement, null);
+  assert.equal(JSON.parse(run('node', runArgs, { env })).launch, false);
+  const [invocation] = readFileSync(invocationLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(invocation.args.slice(0, 4), ['exec', 'resume', '-m', 'gpt-6-sol']);
+});
+
+test('compatibility fallback replaces a saved binding on a model other than the resolved one before another turn', () => {
   const { repo, state, fakeCodex, invocationLog } = setup();
   const sessionFile = join(state, 'legacy-session.json');
   JSON.parse(run('node', [script, 'init', '--session-file', sessionFile, '--worktree', repo, '--ticket', 'FEA-1', '--parent-thread-id', 'parent-1', '--parent-cwd', repo, '--owner-id', 'worker-1', '--generation', '1', '--lease-id', 'lease-1', '--lease-token-hash', HASH_1]));
@@ -127,7 +241,7 @@ test('compatibility fallback replaces a persisted legacy binding before another 
   writeFileSync(prompt, event({ id: randomUUID(), worktree: repo }));
   const rejected = spawnSync('node', [script, 'run', '--session-file', sessionFile, '--prompt-file', prompt, '--events-file', join(state, 'events.jsonl'), '--codex', fakeCodex], { encoding: 'utf8' });
   assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /requires idle-boundary replacement with a new gpt-6-sol session/);
+  assert.match(rejected.stderr, /requires idle-boundary replacement with a new gpt-5\.6-sol session/);
   assert.equal(existsSync(invocationLog), false);
   assert.equal(JSON.parse(readFileSync(sessionFile, 'utf8')).requestedModel, 'gpt-5.5');
 });
@@ -350,7 +464,7 @@ test('recovers a malformed final event in the same fallback session and worktree
   assert.equal(recovered.worktree, realpathSync(repo));
   const invocations = readFileSync(invocationLog, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(invocations.length, 2);
-  assert.deepEqual(invocations[1].args.slice(0, 4), ['exec', 'resume', '-m', 'gpt-6-sol']);
+  assert.deepEqual(invocations[1].args.slice(0, 4), ['exec', 'resume', '-m', 'gpt-5.6-sol']);
   assert.equal(invocations[1].cwd, realpathSync(repo));
   assert.equal(readFileSync(events, 'utf8').trim().split('\n').length, 2);
   assert.equal(JSON.parse(readFileSync(session, 'utf8')).callbackCorrection.status, 'corrected');

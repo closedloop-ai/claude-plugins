@@ -17,17 +17,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { before, after } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { installRegistryFixture } from './core-client-fixture.mjs';
+import { installRegistryFixture, withoutModelOverrides } from './core-client-fixture.mjs';
 
 let restoreRegistry;
 before(() => { restoreRegistry = installRegistryFixture(); });
 after(() => restoreRegistry?.());
 
 import {
+  DEFAULT_WORKER_MODEL,
   EVENT_PREFIX,
-  LEGACY_COMPATIBLE_WORKER_MODEL,
   MAX_RESULT_ARTIFACT_BYTES,
-  REQUIRED_WORKER_MODEL,
   RESULT_SCHEMA,
   COMPACT_CALLBACK_REQUIRED_FIELDS,
   describeCompactCallbackRequiredFields,
@@ -53,6 +52,9 @@ import {
   validateCallbackFile,
   verifyResultArtifactReference,
 } from './app-server-worker-session.mjs';
+
+// A test that wants model overrides names its own file.
+const NO_MODEL_OVERRIDES = withoutModelOverrides();
 
 const workerScript = fileURLToPath(new URL('./app-server-worker-session.mjs', import.meta.url));
 const ownershipScript = fileURLToPath(new URL('./ownership-lease.mjs', import.meta.url));
@@ -302,7 +304,7 @@ function manuallyWriteArtifact(fixture, event, artifact) {
   };
 }
 
-test('new ticket sessions default to gpt-6-sol at high effort and capture a synchronous callback', async () => {
+test('AC-1: new ticket sessions default to gpt-5.6-sol at high effort and capture a synchronous callback', async () => {
   const fixture = initializeFixture();
   const event = {
     event_id: randomUUID(),
@@ -331,13 +333,13 @@ test('new ticket sessions default to gpt-6-sol at high effort and capture a sync
   const stored = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
   assert.equal(stored.state, 'WAITING');
   assert.equal(stored.appServerThreadId, 'worker-thread');
-  assert.equal(REQUIRED_WORKER_MODEL, 'gpt-6-sol');
-  assert.equal(stored.requestedModel, REQUIRED_WORKER_MODEL);
+  assert.equal(DEFAULT_WORKER_MODEL, 'gpt-5.6-sol');
+  assert.equal(stored.requestedModel, DEFAULT_WORKER_MODEL);
   assert.equal(stored.requestedReasoningEffort, 'high');
   assert.equal(stored.modelBinding.field, 'model');
   assert.match(readFileSync(fixture.eventsFile, 'utf8'), new RegExp(event.event_id));
   const threadStart = client.requests.find(({ method }) => method === 'thread/start');
-  assert.equal(threadStart.params.model, REQUIRED_WORKER_MODEL);
+  assert.equal(threadStart.params.model, DEFAULT_WORKER_MODEL);
   // ISS-13279: named and grouped right after thread/start, before the first turn.
   const methods = client.requests.map(({ method }) => method);
   assert.deepEqual(methods.slice(methods.indexOf('thread/start'), methods.indexOf('thread/start') + 5),
@@ -348,7 +350,7 @@ test('new ticket sessions default to gpt-6-sol at high effort and capture a sync
   assert.ok(client.requests.filter(({ method }) => method === 'thread/start').length === 1);
   assert.ok(client.requests.every(({ method, params }) => method === 'thread/start' || params?.threadSource === undefined));
   const start = client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread');
-  assert.equal(start.params.model, REQUIRED_WORKER_MODEL);
+  assert.equal(start.params.model, DEFAULT_WORKER_MODEL);
   assert.equal(start.params.effort, 'high');
   assert.equal(start.params.cwd, realpathSync(fixture.worktree));
   assert.deepEqual(start.params.sandboxPolicy, { type: 'dangerFullAccess' });
@@ -373,13 +375,176 @@ test('the rendered required-field list covers every enforced event kind', () => 
   }
 });
 
-test('new ticket sessions reject every legacy model without fallback', () => {
-  for (const model of [LEGACY_COMPATIBLE_WORKER_MODEL, 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-custom']) {
-    assert.throws(
-      () => initializeFixture({ 'requested-model': model }),
-      /--requested-model must be gpt-6-sol; no fallback model is allowed/,
-    );
+test('a new ticket session refuses a launch model that is not a model name', () => {
+  assert.throws(() => initializeFixture({ 'requested-model': 'two words' }), /--requested-model must be a compact model identifier/);
+});
+
+/** Runs `body` with this machine's model overrides set to `overrides`, then restores the no-override file. */
+async function withModelOverrides(overrides, body) {
+  const file = join(mkdtempSync(join(tmpdir(), 'cl-sweep-models-')), 'models.json');
+  writeFileSync(file, JSON.stringify(overrides));
+  process.env.VIBE_MODELS_FILE = file;
+  try {
+    return await body();
+  } finally {
+    process.env.VIBE_MODELS_FILE = NO_MODEL_OVERRIDES;
   }
+}
+
+async function firstTurnModels(fixture) {
+  const client = new FakeClient({ worktree: fixture.worktree, event: waitingCheckpointEvent(fixture.worktree) });
+  await runTurn({ 'session-file': fixture.sessionFile, 'prompt-file': fixture.promptFile, 'events-file': fixture.eventsFile }, { client });
+  return {
+    saved: JSON.parse(readFileSync(fixture.sessionFile, 'utf8')).requestedModel,
+    threadStart: client.requests.find(({ method }) => method === 'thread/start').params.model,
+    turnStart: client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread').params.model,
+  };
+}
+
+test('AC-2: a new ticket session takes the launch model, else this machine\'s Codex writer model, else the default', async () => {
+  const chosen = { codex: { roles: { writer: 'gpt-writer-choice', reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } };
+  await withModelOverrides(chosen, async () => {
+    const overridden = initializeFixture();
+    assert.equal(overridden.session.requestedModel, 'gpt-writer-choice');
+    assert.equal(overridden.session.modelBinding.requestedModel, 'gpt-writer-choice');
+    assert.deepEqual(await firstTurnModels(overridden),
+      { saved: 'gpt-writer-choice', threadStart: 'gpt-writer-choice', turnStart: 'gpt-writer-choice' });
+    assert.equal(initializeFixture({ 'requested-model': 'gpt-launch-choice' }).session.requestedModel, 'gpt-launch-choice');
+  });
+  assert.deepEqual(await firstTurnModels(initializeFixture()), { saved: 'gpt-5.6-sol', threadStart: 'gpt-5.6-sol', turnStart: 'gpt-5.6-sol' });
+  // Another role's or another harness's choice does not reach a ticket owner.
+  await withModelOverrides({ codex: { roles: { reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } }, async () => {
+    assert.equal(initializeFixture().session.requestedModel, 'gpt-5.6-sol');
+  });
+  await withModelOverrides({ codex: { roles: 'gpt-anything' } }, async () => {
+    assert.throws(() => initializeFixture(), (error) => error.code === 'MODEL_OVERRIDES_INVALID');
+  });
+});
+
+/** A saved WAITING session on `model` with a materialized idle thread. */
+function savedSession(model) {
+  const fixture = initializeFixture();
+  const stored = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
+  stored.requestedModel = model;
+  stored.modelBinding.requestedModel = model;
+  stored.appServerThreadId = 'worker-thread';
+  stored.appServerThreadMaterialized = true;
+  stored.activeTurnId = null;
+  stored.state = 'WAITING';
+  writeFileSync(fixture.sessionFile, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+  return fixture;
+}
+
+const turnArgs = (fixture) => ({ 'session-file': fixture.sessionFile, 'prompt-file': fixture.promptFile, 'events-file': fixture.eventsFile });
+const startedTurn = (client) => client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread');
+
+test('AC-3: a saved gpt-6-sol session is never refused for its model and is replaced at its next idle boundary', async () => {
+  const fixture = savedSession('gpt-6-sol');
+  // A session saved before the explicit-request marker existed carries none, and a read-only command leaves it byte for byte.
+  const saved = readFileSync(fixture.sessionFile);
+  assert.equal(Object.hasOwn(JSON.parse(saved), 'requestedModelExplicit'), false);
+  const client = new FakeClient({ worktree: fixture.worktree, event: waitingCheckpointEvent(fixture.worktree), materialized: true });
+  const status = await statusSession({ 'session-file': fixture.sessionFile }, { client });
+  assert.equal(readFileSync(fixture.sessionFile).equals(saved), true);
+  assert.equal(status.requestedModel, 'gpt-6-sol');
+  assert.deepEqual(status.modelBinding, { valid: true, error: null });
+  assert.deepEqual(status.modelReplacement, { targetModel: 'gpt-5.6-sol', requiredBeforeNextTurn: true, idleCandidate: true });
+  await assert.rejects(runTurn(turnArgs(fixture), { client }),
+    /Persisted gpt-6-sol worker requires idle-boundary replacement with a new gpt-5\.6-sol session before another turn/);
+  assert.equal(startedTurn(client), undefined);
+  const after = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
+  assert.equal(after.requestedModel, 'gpt-6-sol');
+  assert.equal(after.modelBinding.requestedModel, 'gpt-6-sol');
+});
+
+test('AC-2: a model explicitly requested at init runs turns and is not replaced, whatever this machine resolves', async () => {
+  await withModelOverrides({ codex: { roles: { writer: 'gpt-writer-choice' } } }, async () => {
+    const requested = initializeFixture({ 'requested-model': 'gpt-launch-choice' });
+    assert.equal(requested.session.requestedModel, 'gpt-launch-choice');
+    assert.equal(requested.session.requestedModelExplicit, true);
+    assert.deepEqual(await firstTurnModels(requested),
+      { saved: 'gpt-launch-choice', threadStart: 'gpt-launch-choice', turnStart: 'gpt-launch-choice' });
+    const status = await statusSession({ 'session-file': requested.sessionFile },
+      { client: new FakeClient({ worktree: requested.worktree, materialized: true }) });
+    assert.equal(status.modelReplacement, null);
+    assert.equal(status.modelReplacementError, null);
+    // A session started with no explicit request carries no marker and follows this machine's model.
+    assert.equal(Object.hasOwn(initializeFixture().session, 'requestedModelExplicit'), false);
+  });
+});
+
+test('AC-2: an override this machine chose that a session cannot store is refused at init, before any session file', async () => {
+  await withModelOverrides({ codex: { roles: { writer: 'ft:gpt-5.6-sol:org' } } }, async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'cl-sweep-app-server-refused-'));
+    const sessionFile = join(directory, 'session.json');
+    assert.throws(() => initializeFixture({ 'session-file': sessionFile }), /requestedModel must be a compact model identifier/);
+    assert.throws(() => statSync(sessionFile), /ENOENT/);
+  });
+});
+
+test('AC-3: status still answers when this machine\'s model overrides cannot be read', async () => {
+  const fixture = savedSession('gpt-6-sol');
+  const client = new FakeClient({ worktree: fixture.worktree, materialized: true });
+  const file = join(mkdtempSync(join(tmpdir(), 'cl-sweep-models-')), 'models.json');
+  writeFileSync(file, '{not json');
+  process.env.VIBE_MODELS_FILE = file;
+  try {
+    const status = await statusSession({ 'session-file': fixture.sessionFile }, { client });
+    assert.equal(status.requestedModel, 'gpt-6-sol');
+    assert.deepEqual(status.modelBinding, { valid: true, error: null });
+    assert.equal(status.modelReplacement, null);
+    assert.match(status.modelReplacementError, /Model overrides in .* could not be read/);
+  } finally {
+    process.env.VIBE_MODELS_FILE = NO_MODEL_OVERRIDES;
+  }
+  const readable = await statusSession({ 'session-file': fixture.sessionFile }, { client });
+  assert.equal(readable.modelReplacementError, null);
+  assert.equal(readable.modelReplacement.targetModel, 'gpt-5.6-sol');
+});
+
+test('AC-3: detached launch supervises an active turn on a saved model other than the resolved one, and refuses a new turn on it', () => {
+  const launch = (fixture) => spawnSync(process.execPath, [workerScript, 'launch',
+    '--socket', join(fixture.directory, 'no-daemon.sock'), '--session-file', fixture.sessionFile, '--events-file', fixture.eventsFile,
+    '--prompt-file', fixture.promptFile, '--log-file', join(fixture.directory, 'runner.log'), '--runner-file', join(fixture.directory, 'runner.json'),
+    '--activity-phase', 'coding', '--codex', join(fixture.directory, 'no-codex')], { encoding: 'utf8' });
+  const idle = savedSession('gpt-6-sol');
+  const refused = launch(idle);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Persisted gpt-6-sol worker requires idle-boundary replacement with a new gpt-5\.6-sol session before another turn/);
+  assert.throws(() => statSync(join(idle.directory, 'runner.json')), /ENOENT/);
+
+  const active = savedSession('gpt-6-sol');
+  const stored = JSON.parse(readFileSync(active.sessionFile, 'utf8'));
+  stored.activeTurnId = 'worker-turn';
+  stored.state = 'RUNNING';
+  writeFileSync(active.sessionFile, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+  const supervised = launch(active);
+  assert.equal(supervised.status, 0, supervised.stderr);
+  // The supervising child finds no daemon at this socket and exits on its own; the launch itself was admitted.
+  assert.equal(JSON.parse(supervised.stdout).mode, 'supervise');
+  assert.equal(JSON.parse(readFileSync(active.sessionFile, 'utf8')).requestedModel, 'gpt-6-sol');
+});
+
+test('AC-3: a saved session on the model this machine chose is not replaced, and one on another model is', async () => {
+  await withModelOverrides({ codex: { roles: { writer: 'gpt-5.6-terra' } } }, async () => {
+    const same = savedSession('gpt-5.6-terra');
+    const sameClient = new FakeClient({ worktree: same.worktree, event: waitingCheckpointEvent(same.worktree), materialized: true });
+    assert.equal((await statusSession({ 'session-file': same.sessionFile }, { client: sameClient })).modelReplacement, null);
+    await runTurn(turnArgs(same), { client: sameClient });
+    assert.equal(startedTurn(sameClient).params.model, 'gpt-5.6-terra');
+
+    // The default is not this machine's model any more, so a session saved on it is replaced at idle too.
+    for (const model of ['gpt-5.6-sol', 'gpt-6-sol']) {
+      const other = savedSession(model);
+      const otherClient = new FakeClient({ worktree: other.worktree, event: waitingCheckpointEvent(other.worktree), materialized: true });
+      assert.deepEqual((await statusSession({ 'session-file': other.sessionFile }, { client: otherClient })).modelReplacement,
+        { targetModel: 'gpt-5.6-terra', requiredBeforeNextTurn: true, idleCandidate: true }, model);
+      await assert.rejects(runTurn(turnArgs(other), { client: otherClient }),
+        new RegExp(`Persisted ${model.replaceAll('.', '\\.')} worker requires idle-boundary replacement with a new gpt-5\\.6-terra session`));
+      assert.equal(startedTurn(otherClient), undefined, model);
+      assert.equal(JSON.parse(readFileSync(other.sessionFile, 'utf8')).requestedModel, model);
+    }
+  });
 });
 
 test('resumes an existing WAITING session with the bound callback preflight', async () => {
@@ -409,15 +574,15 @@ test('resumes an existing WAITING session with the bound callback preflight', as
   const resume = resumedClient.requests.find(({ method, params }) => (
     method === 'thread/resume' && params.threadId === 'worker-thread'
   ));
-  assert.equal(resume.params.model, REQUIRED_WORKER_MODEL);
-  assert.equal(start.params.model, REQUIRED_WORKER_MODEL);
+  assert.equal(resume.params.model, DEFAULT_WORKER_MODEL);
+  assert.equal(start.params.model, DEFAULT_WORKER_MODEL);
   assert.equal(start.params.effort, 'high');
   assert.match(start.params.input[0].text, /"parent_thread_id":"parent-thread"/);
   assert.match(start.params.input[0].text, /validate-callback --session-file/);
 });
 
-test('legacy persisted sessions block new turns without rewriting their model binding', async () => {
-  for (const model of [LEGACY_COMPATIBLE_WORKER_MODEL, 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-custom']) {
+test('saved sessions on a model other than the resolved one block new turns without rewriting their model binding', async () => {
+  for (const model of ['gpt-5.5', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-custom']) {
   const fixture = initializeFixture();
   const stored = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
   stored.requestedModel = model;
@@ -431,7 +596,7 @@ test('legacy persisted sessions block new turns without rewriting their model bi
   const client = new FakeClient({ worktree: fixture.worktree, materialized: true });
   const status = await statusSession({ 'session-file': fixture.sessionFile }, { client });
   assert.deepEqual(status.modelReplacement, {
-    targetModel: REQUIRED_WORKER_MODEL,
+    targetModel: DEFAULT_WORKER_MODEL,
     requiredBeforeNextTurn: true,
     idleCandidate: true,
   });
@@ -439,7 +604,7 @@ test('legacy persisted sessions block new turns without rewriting their model bi
     'session-file': fixture.sessionFile,
     'prompt-file': fixture.promptFile,
     'events-file': fixture.eventsFile,
-  }, { client }), /requires idle-boundary replacement with a new gpt-6-sol session/);
+  }, { client }), /requires idle-boundary replacement with a new gpt-5\.6-sol session/);
   assert.equal(client.requests.some(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread'), false);
   assert.equal(JSON.parse(readFileSync(fixture.sessionFile, 'utf8')).requestedModel, model);
   }
@@ -456,13 +621,13 @@ test('fails closed before a worker turn when model proof is missing or incompati
     'events-file': fixture.eventsFile,
   }, { client: new FakeClient({ worktree: fixture.worktree }) }), /missing proven App Server model binding field/);
 
-  const incompatible = { ...unproven, requestedModel: 'gpt-5.6', modelBinding: { field: 'model', requestedModel: 'gpt-5.6', protocolSchemaSha256: 'c'.repeat(64) } };
+  const incompatible = { ...unproven, requestedModel: 'two words', modelBinding: { field: 'model', requestedModel: 'two words', protocolSchemaSha256: 'c'.repeat(64) } };
   writeFileSync(fixture.sessionFile, `${JSON.stringify(incompatible, null, 2)}\n`, { mode: 0o600 });
   await assert.rejects(runTurn({
     'session-file': fixture.sessionFile,
     'prompt-file': fixture.promptFile,
     'events-file': fixture.eventsFile,
-  }, { client: new FakeClient({ worktree: fixture.worktree }) }), /requestedModel must be gpt-6-sol or a persisted legacy gpt-5\.5\/gpt-5\.6-\* binding/);
+  }, { client: new FakeClient({ worktree: fixture.worktree }) }), /requestedModel must be a compact model identifier/);
 });
 
 test('an explicitly raised or already persisted xhigh effort is kept on every turn', async () => {
@@ -479,10 +644,10 @@ test('an explicitly raised or already persisted xhigh effort is kept on every tu
   assert.equal(JSON.parse(readFileSync(fixture.sessionFile, 'utf8')).requestedReasoningEffort, 'xhigh');
 });
 
-test('status validates the persisted gpt-6-sol model binding without starting a turn', async () => {
+test('status validates the persisted model binding without starting a turn', async () => {
   const fixture = initializeFixture();
   const status = await statusSession({ 'session-file': fixture.sessionFile }, { client: new FakeClient({ worktree: fixture.worktree }) });
-  assert.equal(status.requestedModel, REQUIRED_WORKER_MODEL);
+  assert.equal(status.requestedModel, DEFAULT_WORKER_MODEL);
   assert.equal(status.requestedReasoningEffort, 'high');
   assert.deepEqual(status.modelBinding, { valid: true, error: null });
 
@@ -505,7 +670,7 @@ test('server-side model reroutes fail the worker turn and remain visible in stat
       client.emit('model/rerouted', {
         threadId: 'worker-thread',
         turnId: 'worker-turn',
-        fromModel: REQUIRED_WORKER_MODEL,
+        fromModel: DEFAULT_WORKER_MODEL,
         toModel: 'gpt-6-luna',
         reason: 'test',
       });
@@ -527,7 +692,7 @@ test('server-side model reroutes fail the worker turn and remain visible in stat
     'session-file': fixture.sessionFile,
     'prompt-file': fixture.promptFile,
     'events-file': fixture.eventsFile,
-  }, { client }), /rerouted turn worker-turn from requested model gpt-6-sol to gpt-6-luna/);
+  }, { client }), /rerouted turn worker-turn from requested model gpt-5\.6-sol to gpt-6-luna/);
   const status = await statusSession({ 'session-file': fixture.sessionFile }, { client: new FakeClient({ worktree: fixture.worktree }) });
   assert.equal(status.modelBinding.valid, false);
   assert.match(status.modelBinding.error, /incompatible model reroute to gpt-6-luna/);
@@ -1309,8 +1474,8 @@ test('repairs an accepted callback misclassified after parent delivery failure',
   assert.equal(repaired.lastAcceptedCallbackDeliveryRepair.runtimeFailureEventId, runtimeEvent.event_id);
 });
 
-test('supervises an already-completed legacy turn under its stored model, then requires replacement', async () => {
-  for (const model of [LEGACY_COMPATIBLE_WORKER_MODEL, 'gpt-5.6-sol']) {
+test('supervises an already-completed turn under a saved model other than the resolved one, then requires replacement', async () => {
+  for (const model of ['gpt-5.5', 'gpt-5.6-terra', 'gpt-6-sol']) {
   const fixture = initializeFixture();
   const event = {
     event_id: randomUUID(),
@@ -1758,7 +1923,9 @@ test('feature ownership rejects a manifest changed after session initialization'
   assert.throws(() => validateBinding(fixture.session), /frozen session binding/);
 });
 
-test('an original idle thread can be restored only after the outgoing thread is idle', async () => {
+/** Restores an original idle thread onto a new lease generation; `savedModel` is the model the old thread was saved on. */
+async function restoreOriginalThread(savedModel) {
+  const requested = savedModel ? { 'requested-model': savedModel } : {};
   const worktree = createRepo();
   const directory = mkdtempSync(join(tmpdir(), 'cl-sweep-original-thread-'));
   const ledger = join(directory, 'ownership.jsonl');
@@ -1790,6 +1957,10 @@ test('an original idle thread can be restored only after the outgoing thread is 
     session.appServerThreadId = threadId;
     session.appServerThreadMaterialized = true;
     session.state = 'WAITING';
+    if (savedModel) {
+      session.requestedModel = savedModel;
+      session.modelBinding.requestedModel = savedModel;
+    }
     writeFileSync(path, `${JSON.stringify(session)}\n`, { mode: 0o600 });
   }
   const targetLease = lease('replace', 4, 'original-worker');
@@ -1802,7 +1973,7 @@ test('an original idle thread can be restored only after the outgoing thread is 
     'parent-thread-id': 'parent-thread', 'parent-cwd': worktree,
     'owner-id': 'original-worker', generation: '4', 'lease-id': targetLease.leaseId,
     'lease-token-hash': targetLease.leaseTokenHash, 'protocol-schema-sha256': 'c'.repeat(64),
-    'replacement-of': 'replacement-worker:3', 'cutover-checkpoint': checkpoint });
+    'replacement-of': 'replacement-worker:3', 'cutover-checkpoint': checkpoint, ...requested });
   const args = { 'session-file': targetFile, 'source-session-file': sourceFile,
     'outgoing-session-file': outgoingFile, 'ownership-ledger': ledger,
     'expected-source-thread-id': 'source-thread', 'expected-outgoing-thread-id': 'outgoing-thread',
@@ -1819,6 +1990,28 @@ test('an original idle thread can be restored only after the outgoing thread is 
   }) });
   assert.equal(restored.threadId, 'source-thread');
   assert.equal(JSON.parse(readFileSync(targetFile, 'utf8')).appServerThreadId, 'source-thread');
+  return { targetFile, worktree };
+}
+
+test('an original idle thread can be restored only after the outgoing thread is idle', async () => {
+  await restoreOriginalThread();
+});
+
+test('AC-3: a thread saved on gpt-6-sol re-attaches to a session that requests its model, and that session is not replaced', async () => {
+  const { targetFile, worktree } = await restoreOriginalThread('gpt-6-sol');
+  const attached = JSON.parse(readFileSync(targetFile, 'utf8'));
+  assert.equal(attached.requestedModel, 'gpt-6-sol');
+  assert.equal(attached.requestedModelExplicit, true);
+  // The fake daemon names every worker thread 'worker-thread'; this session is bound to the re-attached one.
+  const client = new FakeClient({ worktree, materialized: true });
+  const request = client.request.bind(client);
+  client.request = async (method, params) => (method === 'thread/read' && params.threadId === 'source-thread'
+    ? { thread: { id: 'source-thread', cwd: worktree, status: { type: 'idle' } } }
+    : request(method, params));
+  const status = await statusSession({ 'session-file': targetFile }, { client });
+  assert.equal(status.appServerThreadId, 'source-thread');
+  assert.deepEqual(status.modelBinding, { valid: true, error: null });
+  assert.equal(status.modelReplacement, null);
 });
 
 function waitingCheckpointEvent(worktree) {
