@@ -20,7 +20,8 @@
 // (vibe/references/spec-card.md, "Audit rows"). Every criterion needs a MET row
 // whose type is test, script, screenshot, api-read or source-trace and whose ref names the
 // evidence; a criterion with no such row blocks "done", and so does any
-// PARTIAL or MISSED row. A test ref must name a file that exists: in the worktree
+// PARTIAL or MISSED row. Checkboxes that read as criteria outside that checklist are a problem, never
+// skipped (criteria-list.mjs). A test ref must name a file that exists: in the worktree
 // for a candidate audit (the writer's new tests are not committed yet), at HEAD with `--at head`, which handoff-gate.mjs passes. Later work is classified by qa-impact.mjs, which reruns this
 // audit only when its affected scope changed.
 // The matrix: {"surfaces": [...], "inputs": [...], "flags": ["on", "off"] or [],
@@ -34,7 +35,9 @@
 // Desktop") is never MET by typecheck, unit-test or source evidence alone: it
 // needs a MET screenshot row, or a test or script row whose ref is an e2e spec
 // or a control run. A PR once claimed such a criterion met by tests and
-// typecheck only. When the person chose passing the work on instead of a pull
+// typecheck only. A reviewer may mark such a criterion as having no surface, with a reason and a named
+// test (`No surface: <id>: <reason>`, criterion-surface.mjs); the audit then asks for that test instead
+// of an app run and prints each accepted mark under `noSurface`. When the person chose passing the work on instead of a pull
 // request (`--passing-on`), a criterion whose only gap is another ticket's
 // work may carry a PARTIAL row whose ref is `not met yet: waits on <ticket>`;
 // it is accepted when `--ticket-status <ticket>=<STATUS>` shows that ticket
@@ -46,33 +49,29 @@
 // and surface it names, and its GAP lines join the problems.
 // Prints {"ok","problems"}; exits 1 on any problem.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
-import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
+import { criteriaStates, memberCriteria, ticketCriteria, unreadCriteriaProblems } from "./criteria-list.mjs";
+import { auditRows, EvidenceAt, missingTestProblem, needsRunningSurface, noSurfaceLine, noSurfaceMarks, testFileExists, testRef } from "./criterion-surface.mjs";
 import { reviewUnit } from "./unit-review.mjs";
 
 export { criteriaStates, memberCriteria, ticketCriteria };
 
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
-export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
 
-const AUDIT_ROW = /^\|\s*((?:[A-Z]+-\d+:)?AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
 const WAITS_REF = /^not met yet: waits on(?:\s+([A-Z]+-\d+)\b)?/;
 const CLOSED_TICKET = new Set(["DONE", "CANCELED"]);
-const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
 const RUNTIME_REF = /\be2e\b|\.spec\.[cm]?[jt]sx?\b|\bplaywright\b|\bcontrol\b/i;
 
 /** Criteria with no valid MET row, rows that are not MET or are unproven, and rows for criteria the ticket does not list. */
-export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree, { passingOn = false, statuses = {}, waiting = [] } = {}) {
-  const rows = [...audit.matchAll(AUDIT_ROW)].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
+export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree, { passingOn = false, statuses = {}, waiting = [], marks = new Map() } = {}) {
+  const rows = auditRows(audit);
   const problems = [];
   for (const { id, text } of criteria) {
     const entries = rows.filter((row) => row.criterion === id);
@@ -89,7 +88,7 @@ export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.
       continue;
     }
     if (rowProblems.length === 0 && !entries.some((row) => row.verdict === "MET")) problems.push(`${id}: no MET audit row`);
-    else if (rowProblems.length === 0 && RUNTIME_CRITERION.test(text ?? "") && !entries.some((row) => row.verdict === "MET" && isRuntimeRow(row))) {
+    else if (rowProblems.length === 0 && needsRunningSurface({ id, text }, marks) && !entries.some((row) => row.verdict === "MET" && isRuntimeRow(row))) {
       problems.push(`${id}: it needs the product running on a surface, so typecheck, unit-test or source evidence alone does not meet it; add a screenshot, e2e or control row`);
     }
   }
@@ -156,32 +155,10 @@ function auditRowProblems(id, row, worktree, at) {
   if (!EVIDENCE_TYPES.includes(row.type)) return [`${id}: evidence type must be one of ${EVIDENCE_TYPES.join(", ")}`];
   if (row.ref.trim() === "") return [`${id}: MET needs a ref naming the ${row.type}`];
   if (row.type === "test" && worktree !== null) {
-    const file = row.ref.split(/::|#/)[0].trim();
-    if (!testFileExists(worktree, file, at)) return [`${id}: the test ${file} does not exist ${at === EvidenceAt.Head ? "at HEAD" : "in the worktree"}; a planned test is not evidence`];
+    const { file } = testRef(row.ref);
+    if (!testFileExists(worktree, file, at)) return [missingTestProblem(id, file, at)];
   }
   return [];
-}
-
-function testFileExists(worktree, file, at) {
-  return at === EvidenceAt.Head ? existsAtHead(worktree, file) : existsSync(path.join(worktree, file)) || existsInIndex(worktree, file);
-}
-
-function existsInIndex(worktree, file) {
-  try {
-    execFileSync("git", ["-C", worktree, "cat-file", "-e", `:${file}`], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function existsAtHead(worktree, file) {
-  try {
-    execFileSync("git", ["-C", worktree, "cat-file", "-e", `HEAD:${file}`], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** The member tickets the session recorded; none when the worktree has no session record. */
@@ -195,22 +172,28 @@ function main(argv) {
   if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
     throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--review <review.json>] [--slug <ticket slug>] [--passing-on --ticket-status <slug>=<STATUS> ...]");
   }
-  const own = ticketCriteria(readFileSync(values.ticket, "utf8"));
+  const ticket = readFileSync(values.ticket, "utf8");
+  const own = ticketCriteria(ticket);
   const recorded = recordedMembers(values.worktree);
   const members = memberCriteria(values.member ?? [], recorded);
   const criteria = [...own, ...members.criteria];
   const at = values.at === EvidenceAt.Head ? EvidenceAt.Head : EvidenceAt.Worktree;
   const waiting = [];
+  const audit = readFileSync(values.audit, "utf8");
+  const surface = noSurfaceMarks(audit, criteria, { worktree: values.worktree, at, rowsAudited: true });
   const problems = [
     ...(own.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
+    ...unreadCriteriaProblems(ticket),
     ...members.problems,
-    ...auditProblems(readFileSync(values.audit, "utf8"), criteria, values.worktree, at, { passingOn: values["passing-on"] === true, statuses: ticketStatuses(values["ticket-status"] ?? []), waiting }),
+    ...auditProblems(audit, criteria, values.worktree, at, { passingOn: values["passing-on"] === true, statuses: ticketStatuses(values["ticket-status"] ?? []), waiting, marks: surface.marks }),
+    ...surface.problems,
     ...matrixProblems(JSON.parse(readFileSync(values.matrix, "utf8")), criteria),
   ];
-  const unit = unitReview(values, recorded, at);
+  const unit = unitReview(values, recorded, at, surface.marks);
   problems.push(...unit.problems);
+  const noSurface = [...surface.marks].map(([id, mark]) => noSurfaceLine(id, mark.reason, values.slug));
   const exemptions = unit.notVisible.length ? { notVisible: unit.notVisible.map((entry) => `NOT-VISIBLE ${entry.ticket} ${entry.criterion}: ${entry.reason}`) } : {};
-  process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, criteria: criteria.map(({ id }) => id), problems, ...exemptions, ...(waiting.length ? { waiting } : {}) }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, criteria: criteria.map(({ id }) => id), problems, ...exemptions, ...(noSurface.length ? { noSurface } : {}), ...(waiting.length ? { waiting } : {}) }, null, 2)}\n`);
   return problems.length === 0 ? 0 : 1;
 }
 
@@ -224,12 +207,12 @@ function ticketStatuses(entries) {
 }
 
 /** A unit (member tickets, recorded or given, or a PRD) needs its review of the completed work: code and visual QA per criterion, page and surface. */
-function unitReview(values, recorded, at) {
+function unitReview(values, recorded, at, marks) {
   const isUnit = recorded.length > 0 || (values.member ?? []).length > 0 || (values.prd ?? []).length > 0;
   if (!values.review) {
     return { notVisible: [], problems: isUnit ? ["this session delivers a unit (member tickets or a PRD); pass --review <review.json> and --prd <slug>=<body> for its PRD, so every member and PRD criterion is reviewed in code and in visual QA (unit-review.mjs)"] : [] };
   }
-  const result = reviewUnit({ worktree: values.worktree, ticket: values.ticket, review: values.review, slug: values.slug, members: values.member ?? [], prds: values.prd ?? [], plans: values.plan ?? [], at });
+  const result = reviewUnit({ worktree: values.worktree, ticket: values.ticket, review: values.review, slug: values.slug, members: values.member ?? [], prds: values.prd ?? [], plans: values.plan ?? [], at, marks });
   const problems = result.ok ? [] : result.lines.filter((line) => /^(?:GAP|PROBLEM) /.test(line)).map((line) => line.replace(/^PROBLEM /, "unit review: "));
   return { notVisible: result.notVisible, problems };
 }
