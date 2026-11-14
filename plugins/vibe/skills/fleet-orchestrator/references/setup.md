@@ -1,6 +1,8 @@
 # Setup
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 ## Prerequisites
 

@@ -59,7 +59,7 @@ def test_the_shape_is_recorded_and_enforced_by_the_scripts() -> None:
 def test_every_fleet_chat_starts_with_the_plugin_version_check() -> None:
     setup = section(FLEET_SKILL.read_text(), "## Setup")
     for phrase in (
-        "Plugin version, first in every chat: run `node ../vibe/scripts/plugin-version.mjs provider` and make each connection call it names, then run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
+        "Plugin version, first in every chat: when your skill list shows a vibe provider skill whose description names its start calls, make those calls; otherwise run `node ../vibe/scripts/plugin-version.mjs provider` and make each connection call it names (your skill list never decides that there is no provider). Then run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
         "\"A newer version of the plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results.\"",
         "`plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log",
         "run `plugin-version.mjs update --choice update --state <same file>`, `--choice update` only because the operator said update; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them",

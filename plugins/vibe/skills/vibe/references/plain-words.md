@@ -1,6 +1,8 @@
 # Plain words for the person
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 The person running a vibe session may be an executive, a designer, a product
 manager or an engineer. Some describe the work and pass it on; others bring

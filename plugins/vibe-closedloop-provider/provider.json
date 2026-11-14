@@ -824,8 +824,15 @@
     },
     "memory": {
       "precedent": {
-        "product": "Asana",
-        "liveOnly": true
+        "product": "Asana"
+      },
+      "repository": {
+        "remote": "[:/]closedloop-ai/symphony-alpha(\\.git)?/?$",
+        "repoFlagRemotes": [
+          "[:/]closedloop-ai/symphony-alpha(\\.git)?/?$",
+          "[:/]closedloop-ai/claude-plugins(\\.git)?/?$"
+        ],
+        "repoFlagRefusal": "is not a symphony-alpha or claude-plugins checkout"
       }
     }
   }

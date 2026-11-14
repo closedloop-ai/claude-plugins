@@ -11632,7 +11632,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, blocksFileName, boundWith, clearProviderTree, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerTextDirectory, providerTextRoot, providerTree, providerTreeKey, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, skillNameListed, syncProviderTree, ticketReference, unprobedBinding, unreadableProviders, useLeadBinding, useSessionWorktree, writeProviderTree } = module;
 
 // ../shared/cli.ts
 import { pathToFileURL as pathToFileURL2 } from "node:url";

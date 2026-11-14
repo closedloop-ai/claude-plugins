@@ -10,7 +10,7 @@ import { ADD_VIBE_CORE, APPROVE_HOOKS, HookApproval, runningHookApproval, UNKNOW
 import { issueKey, requirementsKey, trackerBound } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
-export const { briefProviderProblem, providerLine } = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
+export const { briefProviderProblem, briefWithProviderLine, providerLine } = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
 
 export const VIBE_PROMPT = /^\s*\$vibe\b/;
 /**

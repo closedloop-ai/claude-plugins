@@ -5,7 +5,9 @@ model: opus
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You review one vibe session's implemented work in a worktree of the target
 repository at handoff as an adversary: assume it is broken and prove where.

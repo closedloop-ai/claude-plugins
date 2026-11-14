@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You summarize a vibe session for its author, the person running the session,
 in plain words (`../skills/vibe/references/plain-words.md`), and for the live

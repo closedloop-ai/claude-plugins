@@ -1,6 +1,8 @@
 # Preflight fixes
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 The preflight uses the checkout `--repo` names, else the one the command runs
 in, else the one remembered in `~/.codex/vibe/config.json`, and remembers the
@@ -51,7 +53,10 @@ installing <thing>; type it in the prompt" and wait.
 | `claude-auth-login` | Claude Code only: the `claude` command that runs this session's workers is signed out. Return `NEEDS_PERSON` with exactly: "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done." Never give `claude /login` instead: it opens a full Claude session in the Terminal that prints the project's permission rules and asks about project connections. Re-run the preflight once they say they're done. |
 | `claude-protected-hook-version` | Claude Code only: the headless writer requires Claude Code 2.1.295 or newer for a failure-blocking protected-write hook. Check the installed CLI version and that the installed vibe guard is a regular file. Update the standalone Claude CLI through its supported updater when needed, without changing any plugin, then rerun the writer preflight. If the guard is missing, diagnose the installed release internally. Preserve the same request and writer; ask the person nothing. |
 | `gh-auth-login` | You run it; the person only finishes the GitHub page in the browser. Follow "Signing in to GitHub" below. Never send the person to the Terminal app for it. |
-| `ask-for-repo-path` | No git checkout was named, the command does not run in one and none is remembered, or the folder given with `--repo` is not a git checkout. Resolve the active workspace or recorded session internally first. If none is found, ask the person in plain words which project folder to work in ("Which folder holds the project you want to change?"), then rerun with `--repo "<their folder>"`; never clone a copy or guess. |
+| `ask-for-repo-path` | No git checkout was named, the command does not run in one and none is remembered (with the bound provider naming its repository: none of those, nor any found under the home folder, is a checkout of it), or the folder given with `--repo` is not a git checkout. Resolve the active workspace or recorded session internally first. If none is found, ask the person in plain words which project folder to work in ("Which folder holds the project you want to change?"), then rerun with `--repo "<their folder>"`; never clone a copy or guess. |
+| `choose-repo` | The bound provider names its repository and more than one checkout of it was found under the home folder (the `detail` lists them, separated by a vertical bar). Resolve the active workspace or recorded session through current evidence, then rerun with `--repo "<chosen folder>"`. If it remains ambiguous, return `BLOCKED` internally rather than asking the person a technical checkout question or guessing. |
+| `allow-folder-access` | macOS did not let Codex look inside the folders in `detail` while searching for the bound provider's repository. Return `NEEDS_PERSON`: "Your Mac is asking whether Codex can open your <folder> folder; click Allow." If no prompt appears, they allow it in System Settings, Privacy & Security, Files & Folders, under ChatGPT. Then re-run the preflight. Never clone while this is unresolved; the checkout may be in that folder. |
+| `provider-broken` | The session's bound provider cannot be read; the `detail` is its reason and names its fix (usually reinstall or update that provider plugin, then start a new chat). Return `BLOCKED` with the detail; never continue on the generic text. |
 > Provider `tickets` (block `clone-app` of `vibe/preflight.md`)
 > Provider `recipes` (block `posthog-row` of `vibe/preflight.md`)
 <!-- generic: bootstrap-row -->
@@ -148,8 +153,9 @@ words.
 
 <!-- generic: restore -->
 A connection belongs to the bound provider: its text says how to restore
-each one (`plugin-version.mjs` printed `bound-disconnected`). With no provider
-bound there is nothing to restore.
+each one (the check's `provider` lists it under `missing`, whether the provider
+is `bound` with a capability withheld or `bound-disconnected`). With no
+provider there is nothing to restore.
 <!-- end generic: restore -->
 > Provider `tickets` (block `restore` of `vibe/preflight.md`)
 

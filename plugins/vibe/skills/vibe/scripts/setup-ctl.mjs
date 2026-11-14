@@ -43,6 +43,8 @@ const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 export const Status = Object.freeze({ Ok: "OK", NeedsPerson: "NEEDS_PERSON", Blocked: "BLOCKED", NeedsAgent: "NEEDS_AGENT" });
 // references/preflight.md, the `claude-auth-login` row, word for word.
 export const CLAUDE_SIGN_IN_WORDS = "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done.";
+// references/preflight.md, the `allow-folder-access` row; `<folder>` is the preflight's own detail.
+export const folderAccessWords = (folder) => `Your Mac is asking whether Codex can open your ${folder} folder; click Allow.`;
 // references/environment.md, "Desktop": the sentence for a Desktop that cannot start.
 export const DESKTOP_UNAVAILABLE = "DESKTOP_UNAVAILABLE";
 export const STORYBOOK_PORTS = Object.freeze({ first: 6100, last: 6999 });
@@ -58,12 +60,15 @@ export const AUTO_FIXES = Object.freeze({
 // Fixes that need the person at the Mac or a sign-in the script must not drive.
 const PERSON_FIXES = Object.freeze({
   "claude-auth-login": () => ({ message: CLAUDE_SIGN_IN_WORDS, reference: "preflight.md, claude-auth-login" }),
+  "allow-folder-access": (check) => ({ message: folderAccessWords(check.detail), reference: "preflight.md, allow-folder-access" }),
   "install-xcode-clt": () => ({ message: null, reference: "preflight.md, install-xcode-clt" }),
   "install-homebrew": () => ({ message: null, reference: "preflight.md, install-homebrew (asks for the Mac password through sudo)" }),
 });
 // Fixes the preflight says stop, or that are the worker's judgment.
 const BLOCKED_FIXES = Object.freeze({
   "unsupported-os": "this flow supports macOS only",
+  "choose-repo": "more than one checkout; resolve it from the active workspace or recorded session",
+  "provider-broken": "the bound provider cannot be read; the detail names its fix",
   "ask-for-repo-path": "no git checkout to use; resolve it from the active workspace or recorded session, else ask which folder",
   "posthog-key-missing": "the public analytics key could not be found; see preflight.md",
 });

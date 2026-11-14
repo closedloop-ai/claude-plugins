@@ -4,17 +4,24 @@
 # reads the failures and runs the fixes in references/preflight.md. Exit code
 # is 0 when every check passes, 1 otherwise.
 #
-# Any git checkout is accepted (operator ruling, 2026-11-10: nothing is tied
-# to one organization's repositories). The checkout is, in order: the one
-# --repo names, the one this command runs in, else the one remembered in
-# ~/.codex/vibe/config.json ({"repo": "<path>"}); a worktree resolves to the
-# checkout that owns it. The one thing it writes is that remembered checkout.
-# vibe-sessions.mjs records the checkout on each session, so a later session
-# elsewhere never reads another one's.
+# With no provider naming a repository, any git checkout is accepted (operator
+# ruling, 2026-11-10: nothing is tied to one organization's repositories), in
+# order: the one --repo names, the one this command runs in, else the one
+# remembered in ~/.codex/vibe/config.json ({"repo": "<path>"}). When the
+# conversation's bound provider names its repository's git remote
+# (`data.memory.repository.remote`, provider.mjs), the order is the app
+# preflight's before vibe became generic, with no working-folder step: --repo
+# (only a checkout of a remote the provider lists in `repoFlagRemotes`), the
+# remembered checkout if its remote matches, else the only checkout of that
+# remote under the home folder. A worktree resolves to the checkout that owns it. The one
+# thing it writes is that remembered checkout. vibe-sessions.mjs records the
+# checkout on each session, so a later session elsewhere never reads another
+# one's.
 #
 # Repository-specific checks (a bootstrap marker, the analytics key a hosted
 # environment's flag snapshot needs) run only when the conversation's bound
-# provider has recipes for the repository (provider.mjs).
+# provider has recipes for the repository (provider.mjs). A bound provider that
+# cannot be read fails the `provider` check with its reason.
 #
 # Usage: vibe-preflight.sh [--runtime codex|claude] [--codex <CLI>] [--repo <checkout>] [--prototype]
 
@@ -43,6 +50,7 @@ CONFIG_FILE="$CONFIG_DIR/config.json"
 # What vibe's own scripts need until the checkout is found; the checkout's
 # package.json `engines.node` wins after.
 DEFAULT_NODE_RANGE=">=22"
+SEARCH_DEPTH=6
 
 failures=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -142,6 +150,85 @@ is_checkout() {
   [[ -n "$1" ]] && git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
 
+# Whether checkout $1 has a git remote whose URL matches the extended regex $2.
+has_remote() {
+  git -C "$1" config --get-regexp '^remote\..*\.url$' 2>/dev/null | grep -qiE "$2"
+}
+
+# Whether the remembered checkout $1 may be used: any checkout, or, when the
+# bound provider names its repository's remote, a checkout of that remote.
+wanted_checkout() {
+  is_checkout "$1" && { [[ -z "$REPO_REMOTE" ]] || has_remote "$1" "$REPO_REMOTE"; }
+}
+
+# Fails the `provider` check once with the bound provider's own reason (its
+# provider.mjs `provider-broken:` line), so a broken provider never reads as none.
+PROVIDER_BROKEN=0
+provider_broken() {
+  if [[ "$PROVIDER_BROKEN" == 0 ]]; then
+    PROVIDER_BROKEN=1
+    emit provider false "${1#provider-broken: }" "provider-broken"
+  fi
+}
+
+# Sets REPLY to provider.mjs's JSON answer for `data <capability> <key>` ($1,
+# $2; any further arguments go to provider.mjs), or to nothing when no provider
+# with that capability is bound or it holds no such value.
+provider_data() {
+  local output status
+  output="$(node "$SCRIPT_DIR/provider.mjs" data "$@" 2>/dev/null)"
+  status=$?
+  REPLY=""
+  if [[ "$status" == 0 && "$output" != "null" ]]; then
+    REPLY="$output"
+  elif [[ "$status" == 4 ]]; then
+    provider_broken "$output"
+  fi
+}
+
+# The bound provider's repository remote pattern, or nothing.
+# With it, the remotes a --repo checkout must have (`repoFlagRemotes`; any but
+# `remote` is used for this run only) and the words that refuse one that has
+# none of them (`repoFlagRefusal`).
+REPO_REMOTE=""
+REPO_FLAG_REFUSAL=""
+REPO_FLAG_REMOTES=()
+if have node; then
+  provider_data memory repository
+  if [[ -n "$REPLY" ]]; then
+    repository_lines="$(printf '%s' "$REPLY" | node -e '
+      let s = "";
+      process.stdin.on("data", c => s += c).on("end", () => {
+        try {
+          const r = JSON.parse(s);
+          const text = (value) => typeof value === "string" && !value.includes("\n") ? value : "";
+          const remotes = Array.isArray(r.repoFlagRemotes) ? r.repoFlagRemotes.map(text).filter(Boolean) : [];
+          process.stdout.write([text(r.remote), text(r.repoFlagRefusal), ...remotes].join("\n") + "\n");
+        } catch {}
+      });' 2>/dev/null)"
+    line_number=0
+    while IFS= read -r line; do
+      line_number=$((line_number + 1))
+      if [[ "$line_number" == 1 ]]; then REPO_REMOTE="$line"
+      elif [[ "$line_number" == 2 ]]; then REPO_FLAG_REFUSAL="$line"
+      elif [[ -n "$line" ]]; then REPO_FLAG_REMOTES+=("$line")
+      fi
+    done <<<"$repository_lines"
+  fi
+fi
+
+# Whether --repo may name checkout $1: any checkout, or, when the bound
+# provider lists the remotes --repo accepts, a checkout of one of them.
+repo_flag_accepts() {
+  local pattern
+  is_checkout "$1" || return 1
+  [[ ${#REPO_FLAG_REMOTES[@]} -eq 0 ]] && return 0
+  for pattern in "${REPO_FLAG_REMOTES[@]}"; do
+    has_remote "$1" "$pattern" && return 0
+  done
+  return 1
+}
+
 # A worktree resolves to the checkout that owns it, so sessions always start
 # from the main checkout.
 main_checkout_of() {
@@ -167,39 +254,89 @@ remember_repo() {
   fi
 }
 
+# Every checkout of the provider's repository under the home folder, one per
+# line. Folders macOS refused to let us read go to the file named by $1.
+find_checkouts() {
+  local denied_file="$1" git_entry dir main
+  while IFS= read -r git_entry; do
+    dir="$(dirname "$git_entry")"
+    if has_remote "$dir" "$REPO_REMOTE"; then
+      main="$(main_checkout_of "$dir")" || main="$dir"
+      printf '%s\n' "$main"
+    fi
+  done < <(
+    find "$HOME" -maxdepth "$SEARCH_DEPTH" \
+      \( -name .git -print -prune \) -o \
+      \( -type d \( -name '.*' -o -name node_modules -o -name Library \
+        -o -name Applications -o -name Pictures -o -name Music -o -name Movies \) -prune \) \
+      2>"$denied_file"
+  ) | sort -u
+}
+
 repo=""
 repo_detail=""
 repo_fix=""
 
+# A --repo checkout of a listed remote other than the provider's repository is
+# used for this run only: never remembered, and the repository's own checks
+# (dependencies, the analytics key) do not apply to it.
+RUN_ONLY=0
 if [[ -n "$REPO_ARG" ]]; then
-  if is_checkout "$REPO_ARG"; then
+  if repo_flag_accepts "$REPO_ARG"; then
     repo="$(main_checkout_of "$REPO_ARG")" || repo="$REPO_ARG"
+    if [[ ${#REPO_FLAG_REMOTES[@]} -gt 0 && -n "$REPO_REMOTE" ]] && ! has_remote "$REPO_ARG" "$REPO_REMOTE"; then
+      RUN_ONLY=1
+    fi
+  elif [[ ${#REPO_FLAG_REMOTES[@]} -gt 0 ]]; then
+    repo_detail="$REPO_ARG ${REPO_FLAG_REFUSAL:-has none of the remotes the provider accepts for --repo}"
+    repo_fix="ask-for-repo-path"
   else
     repo_detail="$REPO_ARG is not a git checkout"
     repo_fix="ask-for-repo-path"
   fi
-elif is_checkout "$PWD"; then
+elif [[ -z "$REPO_REMOTE" ]] && is_checkout "$PWD"; then
   repo="$(main_checkout_of "$PWD")" || repo="$(git -C "$PWD" rev-parse --show-toplevel)"
+elif remembered="$(json_field "$CONFIG_FILE" repo)" && wanted_checkout "$remembered"; then
+  repo="$(main_checkout_of "$remembered")" || repo="$remembered"
 else
-  remembered="$(json_field "$CONFIG_FILE" repo)" || remembered=""
-  if is_checkout "$remembered"; then
-    repo="$(main_checkout_of "$remembered")" || repo="$remembered"
+  checkouts=()
+  denied=""
+  if [[ -n "$REPO_REMOTE" ]]; then
+    denied_file="$(mktemp)"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && checkouts+=("$line")
+    done < <(find_checkouts "$denied_file")
+    denied="$(grep -i 'operation not permitted' "$denied_file" | sed -E 's/^find: //; s/: Operation not permitted.*$//' | sort -u | paste -sd '|' - | sed 's/|/ | /g')"
+    rm -f "$denied_file"
+  fi
+  if [[ ${#checkouts[@]} -eq 1 ]]; then
+    repo="${checkouts[0]}"
+  elif [[ ${#checkouts[@]} -gt 1 ]]; then
+    repo_detail="$(printf '%s\n' "${checkouts[@]}" | paste -sd '|' - | sed 's/|/ | /g')"
+    repo_fix="choose-repo"
+  elif [[ -n "$denied" ]]; then
+    repo_detail="macOS blocked searching: $denied"
+    repo_fix="allow-folder-access"
+  elif [[ -n "$REPO_REMOTE" ]]; then
+    repo_detail="no checkout whose git remote matches $REPO_REMOTE was named, found under $HOME or remembered"
+    repo_fix="ask-for-repo-path"
   else
     repo_detail="no git checkout was named, this command does not run in one, and none is remembered"
     repo_fix="ask-for-repo-path"
   fi
 fi
 
-if [[ -n "$repo" ]]; then
+if [[ -n "$repo" && "$RUN_ONLY" == 0 ]]; then
   remembered="$(json_field "$CONFIG_FILE" repo)" || remembered=""
   if [[ "$remembered" != "$repo" ]]; then
     remember_repo "$repo"
   fi
 fi
 
-# A value of the bound provider's recipes for this conversation, as JSON, or nothing when none is bound.
+# Sets REPLY to a value of the bound provider's recipes for the checkout, as
+# JSON, or to nothing when none is bound.
 provider_recipe() {
-  node "$SCRIPT_DIR/provider.mjs" data recipes "$1" --worktree "$repo" 2>/dev/null | grep -v '^provider: ' | grep -v '^null$'
+  provider_data recipes "$1" --worktree "$repo"
 }
 
 # The package manager the checkout's lockfile names, or nothing.
@@ -416,9 +553,12 @@ if [[ "$RUNTIME" == "claude" ]] && have claude; then
   fi
 fi
 
-if [[ -n "$repo" ]]; then
+if [[ -n "$repo" && "$RUN_ONLY" == 1 ]]; then
   emit repo true "$repo" ""
-  bootstrap="$(provider_recipe bootstrap)"
+elif [[ -n "$repo" ]]; then
+  emit repo true "$repo" ""
+  provider_recipe bootstrap
+  bootstrap="$REPLY"
   if [[ -n "$manager" ]]; then
     if [[ -d "$repo/node_modules" ]]; then
       emit repo-bootstrap true "node_modules present" ""
@@ -429,7 +569,12 @@ if [[ -n "$repo" ]]; then
   fi
   # The public PostHog key a hosted environment's flag snapshot needs, when the
   # provider's recipes name where it lives. The key itself is never printed here.
-  if [[ "$PROTOTYPE_ONLY" == 0 && -n "$(provider_recipe posthog)" ]]; then
+  posthog_recipe=""
+  if [[ "$PROTOTYPE_ONLY" == 0 ]]; then
+    provider_recipe posthog
+    posthog_recipe="$REPLY"
+  fi
+  if [[ -n "$posthog_recipe" ]]; then
     posthog_output="$(node "$SCRIPT_DIR/posthog-key.mjs" --checkout "$repo" 2>/dev/null)"
     if [[ "$posthog_output" == *'"ok":true'* ]]; then
       posthog_host="$(printf '%s' "$posthog_output" | sed -n 's/.*"host":"\([^"]*\)".*/\1/p')"

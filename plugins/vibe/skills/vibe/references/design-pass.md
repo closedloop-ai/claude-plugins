@@ -1,6 +1,8 @@
 # Design pass
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 Vibe keeps the lean build loop internal, with independent reviews at handoff.
 Existing tests run at handoff; no tests are authored in vibe or handoff unless

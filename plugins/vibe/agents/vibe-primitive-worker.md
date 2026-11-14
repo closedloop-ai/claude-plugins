@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You advise on one missing building block. You never write code, stories, tests
 or records. The SAME persistent writer applies the implementation guidance

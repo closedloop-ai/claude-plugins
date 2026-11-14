@@ -11634,7 +11634,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, blocksFileName, boundWith, clearProviderTree, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerTextDirectory, providerTextRoot, providerTree, providerTreeKey, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, skillNameListed, syncProviderTree, ticketReference, unprobedBinding, unreadableProviders, useLeadBinding, useSessionWorktree, writeProviderTree } = module;
 
 // src/contracts.ts
 function capabilityOperations(binding = sessionBinding()) {
@@ -12477,7 +12477,7 @@ var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScri
 
 // vibe-core:lib/vibe/scripts/provider-brief.mjs
 var module3 = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
-var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, providerLine } = module3;
+var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, briefWithProviderLine, providerLine } = module3;
 
 // ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
@@ -13329,7 +13329,7 @@ function reviewSourceIdentity(pluginRoot, worktree) {
 function boundDefinition(definition, input) {
   const binding = sessionBinding(input.worktree);
   requireSupportedCapabilities(input.capabilities, binding);
-  const inherited = briefProviderProblem(input.input ?? "", binding, { required: false });
+  const inherited = briefProviderProblem(input.input ?? "", binding);
   if (inherited) throw new Error(inherited);
   const modes = recordModes(binding);
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
@@ -13372,7 +13372,7 @@ function boundDefinition(definition, input) {
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${assembleProviderText(definition.prompt, binding)}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. Open every other vibe file that has provider stubs through \`node ${join8(definition.root, "skills/vibe/scripts/provider.mjs")} assemble --worktree "${input.worktree}" <file>\` and read only the file it names (skills/vibe/references/provider-text.md). ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. ` + providerTextPolicy(join8(definition.root, "skills/vibe/scripts/provider.mjs"), input.worktree) + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -13980,6 +13980,9 @@ function workerSessionName(agentName, branch, requestId) {
 }
 function checkoutHead(root) {
   return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+}
+function providerTextPolicy(script, worktree) {
+  return `Read every other vibe file that has provider stubs from the folder \`node ${script} tree --worktree "${worktree}"\` prints, at the same relative path, and a file with no copy there as it is; when it exits 3, run \`node ${script} assemble --worktree "${worktree}" <file>\` and read only the file it names (skills/vibe/references/provider-text.md). In a session bound to a provider, a \`provider:\` or \`provider-broken:\` answer from assemble, block or path stops that step; never follow the generic text in its place. `;
 }
 export {
   armMcpInitWatchdog,

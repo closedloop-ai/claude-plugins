@@ -203,5 +203,15 @@
   "path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.mjs",
   "text": "const LAUNCHER_MARK = \"# Written by vibe fleet-home.mjs launcher (ISS-14028).\";",
   "reason": "Compatibility: the exact mark already written into installed fleet launchers; `launcher --install` overwrites only a file that carries it."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "//                               [--closedloop <state>] [--graph <state>]   (aliases of --connection tracker=<state>, graph=<state>)",
+  "reason": "Compatibility alias: the 1.1.86 check flags, still passed by provider text, older chats and vibe-bench."
+ },
+ {
+  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
+  "text": "const CONNECTION_ALIASES = Object.freeze({ closedloop: \"tracker\", graph: \"graph\" });",
+  "reason": "Compatibility alias: the 1.1.86 check flags, still passed by provider text, older chats and vibe-bench."
  }
 ]

@@ -145,8 +145,10 @@ def test_setup_ctl_returns_only_sentences_preflight_md_writes_and_runs_only_the_
     code = source("setup-ctl.mjs")
     claude = re.search(r'export const CLAUDE_SIGN_IN_WORDS = "([^"]+)";', code)
     assert claude is not None and claude.group(1) in preflight
-    # The folder-access sentence went with the home-folder search (operator ruling, 2026-11-10: any checkout).
-    assert "folderAccessWords" not in code
+    # The folder-access sentence came back with the home-folder search a provider naming its repository runs.
+    folder = re.search(r"folderAccessWords = \(folder\) => `([^`]+)`", code)
+    assert folder is not None
+    assert folder.group(1).replace("${folder}", "<folder>") in preflight
     auto = re.search(r"export const AUTO_FIXES = Object.freeze\(\{(.*?)\n\}\);", code, re.DOTALL)
     assert auto is not None
     assert set(re.findall(r'^  "([a-z-]+)":', auto.group(1), re.MULTILINE)) == {"install-pnpm", "install-yarn", "brew-install-jq", "brew-install-gh"}
@@ -330,3 +332,23 @@ def test_a_wrapped_gate_that_did_not_run_is_skipped_or_blocked_never_run_or_pass
     assert gate.index("toolDidNotRun(result)") < gate.index("report.ran(name);")
     verify = source("verify-run.mjs")
     assert "toolDidNotRun(result)" in verify and "no node_modules" in verify
+
+
+PREFLIGHT_ROW = r"^\| `%s` \| ([^\n]*) \|$"
+
+
+def test_the_preflight_table_names_a_step_for_each_repository_and_provider_fix() -> None:
+    # The fixes vibe-preflight.sh emits while it finds the bound provider's repository, or meets a broken provider.
+    table = (REFERENCES / "preflight.md").read_text()
+    rows = {}
+    for fix in ("ask-for-repo-path", "choose-repo", "allow-folder-access", "provider-broken"):
+        found = re.search(PREFLIGHT_ROW % fix, table, re.MULTILINE)
+        assert found, fix
+        rows[fix] = found.group(1)
+    assert rows["ask-for-repo-path"].startswith("No git checkout was named, the command does not run in one and none is remembered (with the bound "
+                                                 "provider naming its repository: none of those, nor any found under the home folder, is a checkout of it)")
+    assert "return `BLOCKED` internally rather than asking the person a technical checkout question or guessing" in rows["choose-repo"]
+    assert "Never clone while this is unresolved" in rows["allow-folder-access"]
+    assert "Return `BLOCKED` with the detail; never continue on the generic text." in rows["provider-broken"]
+    for fix in ("choose-repo", "allow-folder-access", "provider-broken"):
+        assert f'"{fix}"' in (SCRIPTS / "vibe-preflight.sh").read_text(), fix

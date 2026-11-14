@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 <!-- generic: intro -->
 You do the push and GitHub side of a vibe session so the orchestrator never

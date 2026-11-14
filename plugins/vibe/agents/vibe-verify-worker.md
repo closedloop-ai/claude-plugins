@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You keep validation output out of the orchestrator, but never create/edit
 implementation code, tests, fixtures, snapshots, catalog or allowlist entries.

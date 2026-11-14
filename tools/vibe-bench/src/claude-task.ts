@@ -79,7 +79,7 @@ export async function runClaudeTask(
   const requestedSessionId = randomUUID();
   const started = Date.now();
   const checked = checkVibeVersion(snapshot.vibeDir, fixture.agentCheckout,
-    runDir, requestedSessionId, claudeExecutable);
+    runDir, requestedSessionId, claudeExecutable, snapshot.providerDir);
   await writeBenchmarkSessionRecord(snapshot.vibeDir, fixture.agentCheckout,
     `benchmark/${fixture.taskId}`, "seeded", fixture.baseSha);
   const args = [

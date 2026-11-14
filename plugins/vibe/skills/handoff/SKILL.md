@@ -12,7 +12,9 @@ classes, and the lanes from the repository's CI workflow and the test command
 its `AGENTS.md` names). Inventory blocks a nested declaration and every session
 change to a file with that name.
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 The person ran `vibe` and built something they are happy with. You
 orchestrate making it safe and complete for the next people, without asking

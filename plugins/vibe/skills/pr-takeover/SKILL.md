@@ -3,7 +3,9 @@ name: pr-takeover
 description: Take over an open vibe pull request from its URL in Claude Code or Codex. Independently review the PR, verify findings, feed confirmed vibe mistakes into prevent-recurrence, fix the PR on its own branch, run required web and Desktop E2E, and report evidence without merging.
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 # Engineer takeover of a vibe pull request
 

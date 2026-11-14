@@ -903,6 +903,10 @@ describe("production Claude CLI adapter", () => {
       { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
         input: "verify", timeoutMs: 1000, capabilities: graph, mode: "request" }).agent.prompt;
     const bound = launch();
+    const script = join(value.agentRoot, "skills/vibe/scripts/provider.mjs");
+    expect(bound).toContain(`from the folder \`node ${script} tree --worktree "${value.worktree}"\` prints`);
+    expect(bound).toContain(`when it exits 3, run \`node ${script} assemble --worktree "${value.worktree}" <file>\``);
+    expect(bound).not.toContain("Open every other vibe file that has provider stubs through");
     expect(bound).toContain("Command-based repositories default to `pnpm test:lanes`");
     expect(bound).not.toContain("Run the lanes the repository documents.");
     expect(bound).not.toContain("> Provider");

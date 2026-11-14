@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You keep the vibe machine and the session's local processes working so the
 orchestrator never has to read install or build output. The web app and API
@@ -109,7 +111,8 @@ Without the script, follow the steps below unchanged.
   `preflight.md`, "Signing in to GitHub".
 <!-- generic: connection -->
 - A provider connection unreachable: a call the provider's connection check
-  names failed, or the version check printed `bound-disconnected`. This is a
+  names failed, or the version check's `provider` lists it under `missing`
+  (`bound` with a capability withheld, or `bound-disconnected`). This is a
   setup problem, not a normal state. Follow `preflight.md`, "Restoring a
   connection", exactly: you run every command, and the person only signs in
   in the browser, returned as `NEEDS_PERSON` with that section's exact words;

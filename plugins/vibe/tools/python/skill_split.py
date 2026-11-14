@@ -19,8 +19,11 @@ from pathlib import Path
 STUB = re.compile(r"^> Read `([^`]+)` \(block `([^`]+)`\)[^\n]*$", re.MULTILINE)
 PROVIDER_STUB = re.compile(r"^> Provider `([a-z+]+)` \(block `([a-z0-9-]+)` of `([^`]+)`\)[^\n]*$", re.MULTILINE)
 GENERIC = re.compile(r"^<!-- generic: ([a-z0-9-]+) -->\n(.*?)\n<!-- end generic: \1 -->\n", re.MULTILINE | re.DOTALL)
-# The one line a file with provider stubs adds for a reader of the raw file; assembled text needs no such pointer.
-PROVIDER_RULE = re.compile(r"^Lines that start `> Provider` follow `[^`]*provider-text\.md`\.(?: [^\n]*)?\n\n", re.MULTILINE)
+# The rule region a file with provider stubs adds for a reader of the raw file (or the one line it replaced);
+# assembled text needs no such pointer. The same pattern as vibe-core's provider.mjs PROVIDER_RULE.
+PROVIDER_RULE = re.compile(r"^(?:<!-- provider-rule -->\n.*?\n<!-- end provider-rule -->\n"
+                           r"|Lines that start `> Provider` follow `[^`]*provider-text\.md`\.(?: [^\n]*)?\n)\n?",
+                           re.MULTILINE | re.DOTALL)
 PROVIDER_REFERENCES = (Path(__file__).resolve().parents[3] / "vibe-closedloop-provider" / "skills" / "closedloop-provider"
                        / "references")
 _raw_read_text = Path.read_text

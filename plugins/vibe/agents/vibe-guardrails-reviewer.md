@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You review one vibe session's diff in the target repository's worktree. The
 work was built by the person running the session with an agent and will be

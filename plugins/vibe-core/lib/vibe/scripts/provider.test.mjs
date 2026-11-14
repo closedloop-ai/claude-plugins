@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   assembleProviderText, boundWith, Capability, installedProviders, probeProvider, providerBlock, providerData, providerDataOr, providerPath, servedProviderBlocks,
-  bindForRepository, ProviderBroken, ProviderState, ProviderUnavailable, readContract, recordedBinding, ticketReference,
+  bindForRepository, blocksFileName, clearProviderTree, ProviderBroken, ProviderState, ProviderUnavailable, providerTextDirectory, providerTreeKey, readContract,
+  providerTextRoot, recordedBinding, syncProviderTree, ticketReference, writeProviderTree,
 } from "./provider.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -117,7 +118,10 @@ test("the probe binds only one enabled, loaded provider whose needs this convers
   assert.deepEqual(probe([provider(acme)]).capabilities, ["tickets", "graph", "memory", "recipes"]);
   assert.equal(probe([provider(acme)]).withheld, undefined);
   const unanswered = probe([provider(acme)], { connections: { tracker: "connected" } });
-  assert.deepEqual([unanswered.state, unanswered.missing], [ProviderState.Disconnected, ["connection:graph"]]);
+  assert.deepEqual([unanswered.state, unanswered.capabilities, unanswered.missing], [ProviderState.Bound, ["tickets", "memory", "recipes"], ["connection:graph"]]);
+  assert.deepEqual(unanswered.withheld, [{ capability: "graph", reason: "not answered in this conversation: graph" }]);
+  const silent = probe([provider(acme)], { connections: {} });
+  assert.deepEqual([silent.state, silent.capabilities, silent.missing], [ProviderState.Disconnected, [], ["connection:tracker", "connection:graph"]]);
   const claude = probe([provider(acme)], { runtime: "claude" });
   assert.deepEqual([claude.state, claude.missing], [ProviderState.Disconnected, ["skill-listed"]], "Claude must have loaded its skill");
   assert.equal(probe([provider(acme)], { runtime: "claude", skillListed: "acme-provider:acme" }).state, ProviderState.Bound);
@@ -303,12 +307,13 @@ function runBound(home, binding, ...args) {
     env: { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "chat-b", CODEX_THREAD_ID: "" } });
 }
 
-test("only an unbound capability means the generic text; every failure in a bound session stops with the reason and fix", (t) => {
+test("a provider answer in a bound session never means the generic text; every failure stops with the reason", (t) => {
   const home = tree(t);
   const acme = plugin(path.join(home, "acme"), "acme-provider", "1.0.0", CONTRACT);
   const binding = { state: ProviderState.Bound, name: "acme-provider", root: acme, capabilities: ["tickets"] };
   const unbound = runBound(home, binding, "block", "graph", "vibe-skill.md", "intake");
-  assert.deepEqual([unbound.status, unbound.stdout], [3, "provider: no provider with graph is bound to this session\n"]);
+  assert.deepEqual([unbound.status, unbound.stdout], [3, "provider: no provider with graph is bound to this session"
+    + " (this session is bound to acme-provider with tickets: stop this step, never follow the generic text)\n"]);
   const fine = runBound(home, binding, "block", "tickets", "vibe-skill.md", "intake");
   assert.deepEqual([fine.status, fine.stdout], [0, "Ask for the ticket.\nThen read it.\n"]);
 
@@ -376,7 +381,7 @@ test("assemble --blocks prints every block the binding serves, in file order, ea
   const text = readFileSync(file, "utf8");
   const binding = { state: ProviderState.Bound, name: "vibe-closedloop-provider", root: REAL_PROVIDER, capabilities: ["tickets", "plans"] };
   const stubs = [...text.matchAll(/^> Provider `([a-z+]+)` \(block `([a-z0-9-]+)` of `([^`]+)`\)/gm)];
-  const expected = stubs.filter(([, capability]) => capability.split("+").every((one) => binding.capabilities.includes(one)))
+  const expected = stubs.filter(([, capability]) => capability.split("+").some((one) => binding.capabilities.includes(one)))
     .map(([, capability, id, reference]) => ({ id, text: providerBlock(binding, capability, reference, id) }));
   assert.ok(expected.length > 1 && expected.length < stubs.length, "the fixture serves some stubs and not others");
   assert.deepEqual(servedProviderBlocks(text, binding).map(({ id, text: body }) => ({ id, text: body })), expected);
@@ -430,4 +435,247 @@ test("a binding record that exists but cannot be read is a broken provider, neve
   spawnSync("git", ["init", "-q", worktree]);
   write(path.join(worktree, ".git", "vibe-session.json"), "{");
   assert.throws(() => recordedBinding({ worktree }), /vibe-session\.json cannot be read/);
+});
+
+const STUB_LINE = /^> Provider `[a-z+]+` \(block `[a-z0-9-]+` of `[^`]+`\)/m;
+const RULE_REGION = /^<!-- provider-rule -->\n[\s\S]*?\n<!-- end provider-rule -->\n/gm;
+
+/** Every Markdown file under `root` (relative paths), skipping evals, as the bind-time tree walks vibe. */
+function markdown(root, relative = "") {
+  return readdirSync(path.join(root, relative), { withFileTypes: true }).flatMap((entry) => {
+    const child = relative ? path.join(relative, entry.name) : entry.name;
+    if (entry.isDirectory()) return entry.name.startsWith(".") || entry.name === "node_modules" ? [] : markdown(root, child);
+    return entry.name.endsWith(".md") ? [child] : [];
+  });
+}
+
+/** A repository at `root/repo` and the real provider probed there with `connections`. */
+function realBinding(root, connections) {
+  const repo = path.join(root, "repo");
+  mkdirSync(path.join(repo, ".git"), { recursive: true });
+  const contract = readContract(REAL_PROVIDER);
+  const providers = [{ name: contract.name, root: REAL_PROVIDER, version: "1.0.0", enabled: true, contract }];
+  return { repo, binding: probeProvider({ runtime: "codex", cwd: repo, providers, connections }) };
+}
+
+test("in Claude Code the provider binds when its skill name is in the model's list, with or without the plugin prefix", (t) => {
+  const root = tree(t);
+  const repo = path.join(root, "repo");
+  mkdirSync(path.join(repo, ".git"), { recursive: true });
+  const acme = plugin(path.join(root, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const probe = (skillListed) => probeProvider({ runtime: "claude", cwd: repo, providers: [provider(acme)], skillListed,
+    connections: { tracker: "connected", graph: "connected" } });
+  for (const listed of ["acme-provider:acme", "acme"]) assert.equal(probe(listed).state, ProviderState.Bound, listed);
+  for (const listed of ["acme-provider:other", "other", null]) {
+    const refused = probe(listed);
+    assert.deepEqual([refused.state, refused.missing], [ProviderState.Disconnected, ["skill-listed"]], String(listed));
+  }
+});
+
+test("each capability binds on its own needs: graph down withholds only graph, and nothing answering binds nothing", (t) => {
+  const root = tree(t);
+  const { repo, binding: partial } = realBinding(root, { tracker: "connected", graph: "not-connected" });
+  assert.equal(partial.state, ProviderState.Bound);
+  assert.deepEqual(partial.capabilities, ["tickets", "plans", "memory"]);
+  assert.deepEqual(partial.missing, ["connection:graph"]);
+  assert.deepEqual(partial.withheld, [{ capability: "graph", reason: "not answered in this conversation: graph" },
+    { capability: "recipes", reason: ".closedloop-ai/vibe-recipes.json is not in this repository" }]);
+  write(path.join(repo, ".closedloop-ai", "vibe-recipes.json"), { schema: 1, provider: "vibe-closedloop-provider" });
+  const opted = realBinding(root, { tracker: "connected" }).binding;
+  assert.deepEqual(opted.capabilities, ["tickets", "plans", "memory", "recipes"], "an opted-in repository keeps its recipes");
+  const graphOnly = realBinding(root, { graph: "connected" }).binding;
+  assert.deepEqual([graphOnly.state, graphOnly.capabilities, graphOnly.missing], [ProviderState.Bound, ["graph", "memory", "recipes"], ["connection:tracker"]]);
+  const none = realBinding(root, {}).binding;
+  assert.deepEqual([none.state, none.capabilities, none.missing], [ProviderState.Disconnected, [], ["connection:tracker", "connection:graph"]]);
+});
+
+test("a capability withheld for an unanswered connection stays withheld when the repository has its opt-in file", (t) => {
+  const root = tree(t);
+  const repo = path.join(root, "repo");
+  mkdirSync(path.join(repo, ".git"), { recursive: true });
+  write(path.join(repo, ".acme", "vibe-recipes.json"), { schema: 1, provider: "acme-provider" });
+  const both = { ...CONTRACT, capabilities: { ...CONTRACT.capabilities, recipes: { needs: ["connection:tracker", "repo-file:.acme/vibe-recipes.json"] } } };
+  const acme = plugin(path.join(root, "acme"), "acme-provider", "1.0.0", both);
+  const bound = probeProvider({ runtime: "codex", cwd: repo, providers: [provider(acme, both)], connections: { graph: "connected" } });
+  assert.deepEqual([bound.state, bound.capabilities], [ProviderState.Bound, ["graph", "memory"]]);
+  const session = bindForRepository(bound, repo);
+  assert.deepEqual(session.capabilities, ["graph", "memory"], "the opt-in file never stands in for the tracker's answer");
+  assert.ok(session.withheld.some((entry) => entry.capability === "recipes" && /not answered/.test(entry.reason)));
+});
+
+test("a bound check's tree holds every stubbed vibe file assembled for its binding, each SKILL.md's blocks and binding.json", (t) => {
+  const home = tree(t);
+  const { repo, binding } = realBinding(home, { tracker: "connected", graph: "not-connected" });
+  const now = new Date("2026-11-13T00:00:00Z");
+  const written = writeProviderTree({ binding, repoRoot: repo, vibeRoot: VIBE, home, now });
+  const directory = providerTextDirectory(home);
+  const folder = path.join(directory, providerTreeKey(realpathSync(repo), binding.name));
+  assert.equal(written.folder, folder);
+  const stubbed = markdown(VIBE).filter((file) => STUB_LINE.test(readFileSync(path.join(VIBE, file), "utf8")));
+  assert.ok(stubbed.length > 30);
+  for (const file of stubbed) {
+    const text = readFileSync(path.join(VIBE, file), "utf8");
+    assert.equal(readFileSync(path.join(folder, file), "utf8"), assembleProviderText(text, binding), file);
+  }
+  assert.ok(!existsSync(path.join(folder, "skills/vibe/references/provider-text.md")), "a file with no stubs has no copy");
+  const skill = readFileSync(path.join(VIBE, "skills/vibe/SKILL.md"), "utf8");
+  const blocks = servedProviderBlocks(skill, binding).map((block) => `<!-- block: ${block.id} -->\n${block.text}\n<!-- end: ${block.id} -->\n`).join("");
+  assert.ok(blocks.length > 0);
+  assert.equal(readFileSync(path.join(folder, blocksFileName("skills/vibe/SKILL.md")), "utf8"), blocks);
+  assert.doesNotMatch(blocks, /<!-- block: graph-required -->/, "graph is withheld, so its stub keeps the generic text");
+  assert.match(readFileSync(path.join(folder, "skills/vibe/SKILL.md"), "utf8"), /research with the repository's\n {2}own tools/);
+  const record = JSON.parse(readFileSync(path.join(folder, "binding.json"), "utf8"));
+  assert.deepEqual(record, { repoRoot: realpathSync(repo), provider: "vibe-closedloop-provider",
+    versions: { vibe: JSON.parse(readFileSync(path.join(VIBE, ".claude-plugin/plugin.json"), "utf8")).version,
+      "vibe-core": JSON.parse(readFileSync(path.resolve(HERE, "../../../.claude-plugin/plugin.json"), "utf8")).version, provider: "1.0.0" },
+    vibeRoot: realpathSync(VIBE), capabilities: ["tickets", "plans", "memory"], checkedAt: now.toISOString() });
+  assert.deepEqual(JSON.parse(readFileSync(path.join(directory, "index.json"), "utf8")), { [realpathSync(repo)]: path.basename(folder) });
+
+  write(path.join(folder, "stale.md"), "from an earlier binding");
+  writeProviderTree({ binding, repoRoot: repo, vibeRoot: VIBE, home, now });
+  assert.ok(!existsSync(path.join(folder, "stale.md")), "a rewrite replaces the whole folder");
+  assert.deepEqual(readdirSync(directory).filter((name) => name.startsWith(".")), [], "no temporary folder is left");
+  assert.equal(clearProviderTree({ repoRoot: repo, home }), true);
+  assert.ok(!existsSync(folder));
+  assert.deepEqual(JSON.parse(readFileSync(path.join(directory, "index.json"), "utf8")), {});
+});
+
+test("a check that binds nothing writes nothing, and a provider whose text cannot be assembled is reported broken", (t) => {
+  const home = tree(t);
+  const repo = path.join(home, "repo");
+  mkdirSync(path.join(repo, ".git"), { recursive: true });
+  assert.deepEqual(syncProviderTree({ binding: { state: ProviderState.None }, repoRoot: repo, vibeRoot: VIBE, home }), { cleared: false });
+  assert.ok(!existsSync(providerTextDirectory(home)), "no provider, no folder");
+  const acme = plugin(path.join(home, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const vibe = path.join(home, "vibe");
+  write(path.join(vibe, "skills/vibe/SKILL.md"), "<!-- generic: missing -->\nGeneric.\n<!-- end generic: missing -->\n> Provider `tickets` (block `missing` of `vibe-skill.md`)\n");
+  const broken = syncProviderTree({ binding: { state: ProviderState.Bound, name: "acme-provider", root: acme, capabilities: ["tickets"] }, repoRoot: repo, vibeRoot: vibe, home });
+  assert.equal(broken.broken, true);
+  assert.match(broken.error, /vibe-skill\.md in acme-provider has no block missing\. Fix: /);
+  assert.ok(!existsSync(providerTextDirectory(home)), "nothing half written");
+});
+
+test("tree prints the folder only for this repository and this vibe install; otherwise it says to run the check again", (t) => {
+  const home = tree(t);
+  const { repo, binding } = realBinding(home, { tracker: "connected", graph: "connected" });
+  const { folder } = writeProviderTree({ binding, repoRoot: repo, vibeRoot: VIBE, home });
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, "tree", ...args], { encoding: "utf8", cwd: home,
+    env: { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "chat-t", CODEX_THREAD_ID: "" } });
+  const found = run("--worktree", repo, "--vibe-root", VIBE);
+  assert.deepEqual([found.status, found.stdout], [0, `${folder}\n`]);
+  const otherVibe = path.join(home, "vibe-1.2.0");
+  mkdirSync(otherVibe);
+  const updated = run("--worktree", repo, "--vibe-root", otherVibe);
+  assert.equal(updated.status, 3);
+  assert.match(updated.stdout, /^provider: .* was written for vibe at .*; run the plugin version check again\n$/);
+  const other = path.join(home, "other");
+  mkdirSync(path.join(other, ".git"), { recursive: true });
+  assert.match(run("--worktree", other, "--vibe-root", VIBE).stdout, /^provider: no provider text was written for /);
+  const record = JSON.parse(readFileSync(path.join(folder, "binding.json"), "utf8"));
+  write(path.join(folder, "binding.json"), { ...record, repoRoot: realpathSync(other) });
+  const moved = run("--worktree", repo, "--vibe-root", VIBE);
+  assert.equal(moved.status, 3);
+  assert.match(moved.stdout, /was written for .*other, not /);
+});
+
+test("in a bound session assemble --blocks with no stub served is empty, never the unbound answer", (t) => {
+  const home = tree(t);
+  const acme = plugin(path.join(home, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const file = path.join(home, "SKILL.md");
+  write(file, "<!-- generic: intake -->\nSearch with rg.\n<!-- end generic: intake -->\n> Provider `graph` (block `intake` of `vibe-skill.md`)\n");
+  const bound = runIn(home, { state: ProviderState.Bound, name: "acme-provider", root: acme, capabilities: ["tickets"] }, "assemble", "--blocks", file);
+  assert.equal(bound.status, 0, bound.stdout + bound.stderr);
+  assert.equal(readFileSync(bound.stdout.trim(), "utf8"), "");
+  const unbound = runIn(home, { state: ProviderState.None }, "assemble", "--blocks", file);
+  assert.equal(unbound.status, 3);
+});
+
+test("every stubbed vibe file carries one rule region, and no assembled text keeps it or points at the provider text folder", () => {
+  for (const file of markdown(VIBE).filter((name) => STUB_LINE.test(readFileSync(path.join(VIBE, name), "utf8")))) {
+    const text = readFileSync(path.join(VIBE, file), "utf8");
+    assert.equal([...text.matchAll(RULE_REGION)].length, 1, file);
+    for (const binding of [{ state: ProviderState.None }, { state: ProviderState.Bound, name: "vibe-closedloop-provider", root: REAL_PROVIDER, capabilities: Object.values(Capability) }]) {
+      const assembled = assembleProviderText(text, binding);
+      assert.doesNotMatch(assembled, /provider-rule|Lines that start `> Provider`|provider-text\/index\.json/, `${file} ${binding.state}`);
+    }
+  }
+});
+
+test("pruning per-read files keeps the bind-time trees and their index", (t) => {
+  const home = tree(t);
+  const { repo, binding } = realBinding(home, { tracker: "connected", graph: "connected" });
+  const { folder } = writeProviderTree({ binding, repoRoot: repo, vibeRoot: VIBE, home });
+  const directory = providerTextDirectory(home);
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  write(path.join(directory, "0123456789abcdef-old.md"), "old per-read file");
+  for (const entry of ["index.json", path.basename(folder), "0123456789abcdef-old.md"]) utimesSync(path.join(directory, entry), old, old);
+  const file = path.join(home, "plain.md");
+  write(file, "<!-- generic: intake -->\nGeneric.\n<!-- end generic: intake -->\n> Provider `tickets` (block `intake` of `vibe-skill.md`)\n");
+  const run = runIn(home, { state: ProviderState.None }, "assemble", file);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.ok(existsSync(path.join(directory, "index.json")), "the index stays");
+  assert.ok(existsSync(path.join(folder, "binding.json")), "the tree stays");
+  assert.ok(!existsSync(path.join(directory, "0123456789abcdef-old.md")), "an old per-read file goes");
+});
+
+test("a stub naming several capabilities is served when any is bound, and a graph-only stub stays generic", (t) => {
+  const root = tree(t);
+  const acme = plugin(path.join(root, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const binding = { state: ProviderState.Bound, name: "acme-provider", root: acme, capabilities: ["tickets", "memory"], missing: ["connection:graph"] };
+  const text = "<!-- generic: intake -->\nGeneric both.\n<!-- end generic: intake -->\n> Provider `graph+tickets` (block `intake` of `vibe-skill.md`)\n"
+    + "<!-- generic: graph-only -->\nSearch with rg.\n<!-- end generic: graph-only -->\n> Provider `graph` (block `intake` of `vibe-skill.md`)\n";
+  assert.equal(assembleProviderText(text, binding), "Ask for the ticket.\nThen read it.\nSearch with rg.\n");
+  assert.deepEqual(servedProviderBlocks(text, binding).map((block) => block.capability), ["graph+tickets"]);
+  assert.equal(providerBlock(binding, "graph+tickets", "vibe-skill.md", "intake"), "Ask for the ticket.\nThen read it.");
+  const real = { state: ProviderState.Bound, name: "vibe-closedloop-provider", root: REAL_PROVIDER, capabilities: ["tickets", "plans", "memory"] };
+  const install = assembleProviderText(readFileSync(path.join(VIBE, "skills/vibe/INSTALL.md"), "utf8"), real);
+  assert.match(install, /mcp add closedloop --url/, "INSTALL.md's install-2 renders with graph down");
+  assert.match(install, /Have the vibe user sign in to ClosedLoop/, "INSTALL.md's connections renders with graph down");
+});
+
+test("every worktree of a repository shares the tree its main checkout keys, and another repository does not", (t) => {
+  const home = tree(t);
+  const main = path.join(home, "repo");
+  const git = (cwd, ...args) => {
+    const run = spawnSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+  };
+  mkdirSync(main);
+  git(main, "init", "--quiet", "--initial-branch=main");
+  git(main, "commit", "--quiet", "--allow-empty", "-m", "base");
+  const linked = path.join(home, "linked");
+  git(main, "worktree", "add", "--quiet", "-b", "vibe/x", linked);
+  assert.equal(providerTextRoot(linked), realpathSync(main));
+  assert.equal(providerTextRoot(path.join(main)), realpathSync(main));
+  const contract = readContract(REAL_PROVIDER);
+  const binding = probeProvider({ runtime: "codex", cwd: main, providers: [{ name: contract.name, root: REAL_PROVIDER, version: "1.0.0", enabled: true, contract }],
+    connections: { tracker: "connected", graph: "connected" } });
+  const { folder } = writeProviderTree({ binding, repoRoot: providerTextRoot(main), vibeRoot: VIBE, home });
+  const run = (worktree) => spawnSync(process.execPath, [SCRIPT, "tree", "--worktree", worktree, "--vibe-root", VIBE], { encoding: "utf8", cwd: home,
+    env: { ...process.env, HOME: home } });
+  assert.deepEqual([run(linked).status, run(linked).stdout], [0, `${folder}\n`], "the linked worktree finds the main checkout's tree");
+  const other = path.join(home, "other");
+  mkdirSync(other);
+  git(other, "init", "--quiet");
+  assert.equal(run(other).status, 3);
+});
+
+test("an unprobed binding is never generic: provider reads and scripts stop with the rerun instruction", (t) => {
+  const home = tree(t);
+  const unprobed = { state: ProviderState.Unprobed, name: "vibe-closedloop-provider", capabilities: [] };
+  const rerun = "the plugin version check ran without connection states. Fix: make the calls it named and run it again first";
+  assert.throws(() => boundWith(unprobed, "tickets"), (error) => error instanceof ProviderBroken && error.message === rerun);
+  assert.throws(() => ticketReference(unprobed), ProviderBroken);
+  assert.throws(() => assembleProviderText("> Provider `tickets` (block `intake` of `vibe-skill.md`)\n", unprobed), ProviderBroken);
+  const block = runBound(home, unprobed, "block", "tickets", "vibe-skill.md", "intake");
+  assert.deepEqual([block.status, block.stdout], [4, `provider-broken: ${rerun}\n`]);
+  const repo = path.join(home, "repo");
+  mkdirSync(repo);
+  for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "base"]]) {
+    assert.equal(spawnSync("git", ["-C", repo, ...args]).status, 0);
+  }
+  const script = path.resolve(HERE, "../../../../vibe/skills/handoff/scripts/comment-rules.mjs");
+  const run = spawnSync(process.execPath, [script, "--worktree", repo, "--base", "HEAD"], { encoding: "utf8", cwd: home,
+    env: { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "chat-b", CODEX_THREAD_ID: "" } });
+  assert.deepEqual([run.status, run.stdout], [4, `provider-broken: ${rerun}\n`], run.stderr);
 });

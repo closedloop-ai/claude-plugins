@@ -42,15 +42,15 @@ export function agentGuard(event, home) {
 }
 
 /**
- * A Claude writer started through the Agent tool (a fleet writer preamble that invokes vibe:vibe) carries the
- * binding of the chat that starts it, so it works under the lead's provider, as a Codex writer does.
+ * A Claude writer started through the Agent tool (a fleet writer preamble that invokes vibe:vibe) works under the
+ * binding of the chat that starts it, as a Codex writer does; only a `Provider:` line naming another binding is refused.
  */
 export function writerBindingProblem(event, home) {
   const prompt = event?.tool_input?.prompt;
   if (typeof prompt !== "string") return null;
   const binding = recordedBinding({ worktree: eventCwd(event), conversation: event?.session_id ?? null, ...(home ? { home } : {}) });
   const problem = briefProviderProblem(prompt, binding);
-  return problem ? `${problem}; add that line to the writer's brief` : null;
+  return problem ? `${problem}; name the lead's binding on that line or drop the line` : null;
 }
 
 function launcherRequest(subagent, mode, sessionless, worktree) {

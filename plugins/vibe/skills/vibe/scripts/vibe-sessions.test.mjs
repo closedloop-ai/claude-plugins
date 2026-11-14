@@ -1257,3 +1257,21 @@ test("a bound tracker still requires the operator from its user lookup", (t) => 
   assert.equal(refused.status, 1);
   assert.match(refused.json.error, /--operator-id and --operator-email are required: the person running the session, from the bound tracker's user lookup/);
 });
+
+test("new refuses while this chat's check left the installed provider unprobed, and starts once the check binds", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const env = bindProvider(home, { conversation: "conversation-unprobed" });
+  const startup = path.join(home, ".codex", "vibe", "plugin-version", "conversation-unprobed.json");
+  const bound = JSON.parse(readFileSync(startup, "utf8"));
+  writeJson(startup, { ...bound, provider: { state: "unprobed", name: "vibe-closedloop-provider", capabilities: [] } });
+  const args = ["new", "--slug", "unprobed-gate", "--summary", "x", "--mode", "blank", ...OPERATOR_ARGS];
+  const refused = runNode(SCRIPT, args, home, env);
+  assert.equal(refused.status, 1);
+  assert.equal(refused.json.error, "the plugin version check ran without connection states; make the calls it named and run it again first");
+  assert.equal(git(checkout, ["branch", "--list", "vibe/unprobed-gate"], home), "", "a refused start creates nothing");
+  writeJson(startup, bound);
+  const created = runNode(SCRIPT, args, home, env);
+  assert.equal(created.status, 0, created.stderr);
+  assert.equal(JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8")).provider.state, "bound");
+});

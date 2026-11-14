@@ -3,7 +3,9 @@ name: vibe-pipeline-backend
 description: Class pipeline for a vibe session whose triage manifest says backend; internal, loaded by the vibe skill.
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 # vibe-pipeline-backend
 

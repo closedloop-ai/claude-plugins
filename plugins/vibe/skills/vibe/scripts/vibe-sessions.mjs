@@ -143,7 +143,7 @@ const { git, readSessionRecord, sessionLiveTicket, writeSessionRecord } = await 
 // write keeps that name beside `environmentOrgId` while one is set.
 const writeRecord = (worktree, record) => writeSessionRecord(worktree,
   record.environmentOrgId ? { ...record, clerkOrgId: record.environmentOrgId } : record);
-const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { ProviderState, providerDataOr, sessionBinding, UNPROBED_REFUSAL } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 const { registerWorktreeRetirement, sweepOwnedCleanups } = await vibeCore("lib/vibe/scripts/owned-cleanup.mjs");
 
@@ -416,10 +416,12 @@ function newSession({ prototype = false } = {}) {
   if (prototype && (values.mode || !/^[a-z]/.test(slug))) {
     throw new Error("A prototype slug must start with a letter and has no seeded or blank mode.");
   }
-  const versionProblem = blockingProblem(readStartupRecord(conversationId()));
+  const startup = readStartupRecord(conversationId());
+  const versionProblem = blockingProblem(startup);
   if (versionProblem) {
     throw new Error(`${versionProblem}; ask the person and record the answer with plugin-version.mjs choose before starting a session.`);
   }
+  if (startup?.provider?.state === ProviderState.Unprobed) throw new Error(UNPROBED_REFUSAL);
   // Before the record exists the binding is this conversation's.
   const environment = prototype ? null : environmentRecipe(null);
   const mode = sessionMode(environment);

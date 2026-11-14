@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, checkReport, precedentPrompt, precedentRoot, summarize } from "./precedent-check.mjs";
+import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, checkReport, precedentPrompt, precedentRoot, precedentRule, summarize } from "./precedent-check.mjs";
 import { makeHome } from "./test-fixtures.mjs";
 import { bindProviderInProcess } from "./test-fixtures.mjs";
 
@@ -207,12 +207,17 @@ test("run saves the disputed behaviors beside the report, and check reads them",
   assert.match(JSON.parse(checked.stdout).error, /does not settle B1/);
 });
 
-test("with no provider rule any established app is checked, and its own documentation settles the answer", () => {
-  const generic = { product: null, liveOnly: false };
+test("with no provider rule any established app is checked, live only: documentation never settles the answer", () => {
+  const generic = precedentRule(null);
+  assert.deepEqual(generic, { product: null });
   const prompt = precedentPrompt({ question: "q", codeEvidence: "a.ts:1", rule: generic });
   assert.match(prompt, /^1\. An established app with the same flow, in Chrome/m);
-  assert.match(prompt, /read that app's own documentation and cite its URL/);
+  assert.match(prompt, /Never use a public help center or documentation page as precedent/);
+  assert.doesNotMatch(prompt, /documentation URL|own documentation/);
   const documented = "Answer: children are included\nSource: https://example.invalid/help/bulk-actions\n";
-  assert.equal(checkReport(documented, [], generic).ok, true);
-  assert.equal(checkReport(documented, [], { product: "Acme", liveOnly: true }).ok, false, "a live-only rule refuses documentation");
+  assert.equal(checkReport(documented).ok, false, "documentation is not a live look");
+  const observed = "Answer: children are included\nSource: Some app, observed 2026-10-16\n";
+  assert.equal(checkReport(observed).ok, true);
+  const named = precedentPrompt({ question: "q", codeEvidence: "a.ts:1", rule: { product: "Acme", liveOnly: false } });
+  assert.match(named, /Never use a public help center or documentation page as precedent/, "no rule key opens a documentation path");
 });

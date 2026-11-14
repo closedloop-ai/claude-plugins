@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 As a standalone advisor you are READ-ONLY: never create/edit code, migrations,
 seeds, tests, plans, decision tables or ticket records. Return evidence and

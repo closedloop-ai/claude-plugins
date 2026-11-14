@@ -28,7 +28,7 @@ import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
-import { briefProviderProblem, launchCwd, recoveryTurnProblem, threadCwd, vibeBriefTicket, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
+import { briefProviderProblem, briefWithProviderLine, launchCwd, recoveryTurnProblem, threadCwd, vibeBriefTicket, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, readThreadState, summarize } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
@@ -718,8 +718,10 @@ async function runControlled(client, options, { warn = (text) => console.error(`
   // A remote host has no chat of the lead's: the lead's binding comes with the launch, and binds this process.
   if (options.leadBinding) useLeadBinding(options.leadBinding);
   if (options.command === 'turn' && !saved) {
-    const inherited = briefProviderProblem(prompt, (dependencies.binding ?? (() => options.leadBinding ?? sessionBinding()))());
+    const lead = (dependencies.binding ?? (() => options.leadBinding ?? sessionBinding()))();
+    const inherited = briefProviderProblem(prompt, lead);
     if (inherited) throw new Error(inherited);
+    prompt = briefWithProviderLine(prompt, lead);
   }
   if (DONE_CLAIMS.test(prompt) && !REVERIFY.test(prompt)) {
     throw new Error(`${options.promptFile} hands over "Done:" claims with no "Re-verify:" line; the writer re-verifies each with a test or a measurement before building on it`);

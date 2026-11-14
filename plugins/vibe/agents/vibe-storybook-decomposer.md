@@ -5,7 +5,9 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You own Storybook placement for a vibe session in the target repository's
 worktree and finish its component side so

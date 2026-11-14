@@ -3,8 +3,8 @@
 // 2026-10-16; `references/quality-loop.md`, "Precedent before asking"): how
 // an established app with the same flow handles the situation the question is
 // about. The bound provider's rule (`data.memory.precedent`) can name the one
-// app to check and hold the check to a live look; without one, that app's own
-// documentation also settles it. The research brief and its safety rules
+// app to check; with or without one, only a live look settles it, and public
+// help centers and documentation are never precedent. The research brief and its safety rules
 // live here once, for both harnesses.
 //
 // Usage:
@@ -30,8 +30,8 @@
 //       report.
 //   precedent-check.mjs check --report <file> [--behavior <text>]...
 //       Refuses (exit 1) a report not settled by a live look: an `undocumented`
-//       answer, or, under a live-only rule, a public-material source: precedent then means
-//       the named app in the operator's signed-in browser, and public help centers are never precedent.
+//       answer or a public-material source. Precedent means the app observed live in the
+//       operator's signed-in browser; public help centers are never precedent.
 //       When this actor has no browser, it returns NEEDS_PERSON to the actor that
 //       does instead of accepting public material. It also refuses a report missing a line
 //       for any disputed behavior (--behavior, or else checklist.json beside the
@@ -82,9 +82,7 @@ Code/data-model check: ${codeEvidence}
 ${disputed}
 Order:
 1. ${rule.product ?? "An established app with the same flow"}, in Chrome, with the account already signed in there. Never sign in, create an account or type a credential.
-2. ${rule.liveOnly
-    ? "If this actor cannot use that signed-in browser, stop with NEEDS_PERSON so the orchestrator or browser-holder can run the live check. Never use a public help center or documentation page as precedent."
-    : "If this actor cannot use that signed-in browser, read that app's own documentation and cite its URL; stop with NEEDS_PERSON only when neither settles it."}
+2. If this actor cannot use that signed-in browser, stop with NEEDS_PERSON so the orchestrator or browser-holder can run the live check. Never use a public help center or documentation page as precedent.
 
 Safety, in every app:
 - Never touch anything that already exists: no edits, moves, completions, comments, invitations or setting changes.
@@ -100,7 +98,7 @@ Evidence:
 
 Reply with only this report:
 Answer: <the behavior, in one plain line, or "undocumented">
-Source: ${rule.product ?? "<app>"}, observed ${date}${rule.liveOnly ? "" : " | <documentation URL>"} | undocumented
+Source: ${rule.product ?? "<app>"}, observed ${date} | undocumented
 Observed directly: <what you saw, with quoted wording>
 ${rule.product ?? "The app"} lacks this situation: <what was checked, or none>
 Cleanup: <what you created and deleted, confirmed gone, or "nothing created">
@@ -135,8 +133,8 @@ export function missingBehaviors(report, behaviors) {
   });
 }
 
-/** Whether a report is settled: by a live look, or, unless `rule` is live-only, by the app's own documentation. */
-export function checkReport(report, behaviors = [], rule = precedentRule()) {
+/** Whether a report is settled by a live look. */
+export function checkReport(report, behaviors = []) {
   const { answer, source, sourceKind: kind } = summarize(report);
   if (!answer || !source) {
     return { ok: false, error: "the report has no Answer or Source line" };
@@ -152,8 +150,8 @@ export function checkReport(report, behaviors = [], rule = precedentRule()) {
       error: `the report does not settle ${missing.map(({ id }) => id).join(", ")}: each disputed behavior needs "observed: <what happened>; screenshot: <capture>", or "needs a write to test: <why>" for the operator`,
     };
   }
-  const settled = !UNDOCUMENTED.test(answer) && (kind === "observed" || (kind === "public" && !rule.liveOnly));
-  if (settled) {
+  const settledLive = kind === "observed" && !UNDOCUMENTED.test(answer);
+  if (settledLive) {
     return { ok: true, answer, source, sourceKind: kind };
   }
   return {
@@ -314,8 +312,8 @@ function savedBehaviors(reportFile) {
   }
 }
 
-/** The bound provider's precedent rule (`data.memory.precedent`), or any established app, documentation allowed. */
+/** The bound provider's precedent rule (`data.memory.precedent`): the one app it names, or any established app. */
 export function precedentRule(binding = sessionBinding()) {
   const rule = providerDataOr(binding, "memory", "precedent", null);
-  return { product: typeof rule?.product === "string" ? rule.product : null, liveOnly: rule?.liveOnly === true };
+  return { product: typeof rule?.product === "string" ? rule.product : null };
 }

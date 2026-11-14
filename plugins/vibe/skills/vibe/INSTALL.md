@@ -1,6 +1,8 @@
 # Installing vibe on a new Mac
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 For setting up a vibe user's laptop. About ten minutes of
 hands-on time; the `vibe` skill installs everything else on its first run.

@@ -1,6 +1,8 @@
 # Quality loop
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 This is the shared workflow for app and owned prototype sessions. Each session
 has one worktree, one branch and one persistent implementation writer:
@@ -32,9 +34,9 @@ answer:
    an empty search proves nothing.
 4. The product owner's recorded direction.
 5. The approved prototype.
-6. How an established product handles it: observed live in the operator's
-   signed-in browser when an actor here has it, otherwise from that product's
-   own documentation, cited.
+6. How an established product handles it, observed live in the operator's
+   signed-in browser by whichever actor has it; never a public help center or
+   documentation page.
 <!-- end generic: research-order -->
 > Provider `tickets` (block `research-order` of `vibe/quality-loop.md`)
 
@@ -79,7 +81,9 @@ and so does each flag key's approval (`guardrails.md`, "Feature flags").
 The ordered list above is the only product-question research order. When the
 <!-- generic: precedent-source -->
 first five sources do not settle how the product should behave, an established
-product's behavior is the precedent.
+product's live behavior is the precedent. Public help centers, documentation
+and search results are not a substitute for observing the interaction in the
+operator's signed-in browser.
 <!-- end generic: precedent-source -->
 > Provider `tickets` (block `precedent-source` of `vibe/quality-loop.md`)
 
@@ -87,7 +91,7 @@ product's behavior is the precedent.
 Observe the precedent as a user would, in an account that is already signed
 in: nobody signs in, creates an account or types a credential, and nothing
 that already exists is changed. Record only what was observed directly, with
-a screenshot or the documentation URL, and quote on-screen wording exactly as
+a screenshot, and quote on-screen wording exactly as
 evidence; a situation the product does not settle is reported as
 `undocumented`, never guessed, and leaves the question to the person.
 <!-- end generic: precedent-brief -->
@@ -97,7 +101,7 @@ The answer goes to the SAME writer, which records it in the session decision
 <!-- generic: precedent-record -->
 table as the decision for the affected rows, with its source: the request's
 source for a requirements answer, a code path for a feasibility answer, or
-`<app>, observed <date>` (or the documentation URL) for the precedent. A precedent is the
+`<app>, observed <date>` for the precedent. A precedent is the
 <!-- end generic: precedent-record -->
 > Provider `tickets` (block `precedent-record` of `vibe/quality-loop.md`)
 default, not a human ruling: it never overrides a settled decision, a later

@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, symlinkSync
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ALL_CAPABILITIES, bindProvider, git, gitEnv, makeCheckout, makeHome } from "./test-fixtures.mjs";
+import { ALL_CAPABILITIES, bindProvider, git, gitEnv, makeCheckout, makeHome, SYMPHONY_REMOTE } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-preflight.sh");
 const SPACED = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
@@ -345,4 +345,161 @@ test("a refused write of the remembered checkout asks for an escalated rerun and
   const escalation = stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.escalate);
   assert.equal(escalation?.justification, "Remember where your copy of the code is");
   assert.equal(remembered(env.home), null);
+});
+
+const OTHER_REMOTE = "git@github.com:someone/notes-app.git";
+
+function rememberRepo(home, repo) {
+  mkdirSync(path.join(home, ".codex", "vibe"), { recursive: true });
+  writeFileSync(path.join(home, ".codex", "vibe", "config.json"), `${JSON.stringify({ repo })}\n`);
+}
+
+// Restores the home-folder search the app's preflight ran before vibe became generic: the bound provider names its
+// repository's remote (provider.json `data.memory.repository.remote`), and only a checkout of that remote is used.
+test("with the provider naming its repository, its only checkout under the home folder is found and remembered", (t) => {
+  const env = setup(t);
+  const app = path.join(env.home, ...SPACED);
+  const other = path.join(env.home, "Source", "notes-app");
+  makeCheckout({ ...env, checkout: app });
+  makeCheckout({ ...env, checkout: other, remoteUrl: OTHER_REMOTE });
+  const generic = runPreflight(env);
+  assert.equal(generic.checks.repo.fix, "ask-for-repo-path", "a generic session never searches the home folder");
+  assert.equal(remembered(env.home), null);
+
+  const bound = boundProvider(env.home);
+  const found = runPreflight(env, [], bound);
+  assert.equal(found.checks.repo.ok, true, found.checks.repo.detail);
+  assert.equal(found.checks.repo.detail, app);
+  assert.equal(remembered(env.home), app);
+  assert.equal(runPreflight(env, [], bound, other).checks.repo.detail, app, "a working checkout of another remote is not the provider's repository");
+  assert.equal(runPreflight(env, [], {}, other).checks.repo.detail, other, "a generic session uses the working checkout, whatever its remote");
+  assert.equal(runPreflight(env, [], boundProvider(env.home, ["tickets"]), other).checks.repo.detail, other,
+    "a provider bound without the capability that names its repository leaves the working checkout in use");
+});
+
+// Main's precedence when the provider names its repository: --repo, the remembered clone, the home-folder search;
+// the folder the command runs in is never a step (8a858bb4 vibe-preflight.sh:205-238).
+test("with the provider naming its repository, the folder this runs in never picks between two clones of it", (t) => {
+  const env = setup(t);
+  const kept = path.join(env.home, "Source", "symphony-alpha");
+  const here = path.join(env.home, "work", "app-copy");
+  makeCheckout({ ...env, checkout: kept, remoteUrl: SYMPHONY_REMOTE });
+  makeCheckout({ ...env, checkout: here, remoteUrl: SYMPHONY_REMOTE });
+  const bound = boundProvider(env.home);
+  const ambiguous = runPreflight(env, [], bound, here);
+  assert.equal(ambiguous.checks.repo.fix, "choose-repo", "with none remembered, the working clone does not settle it");
+  assert.deepEqual(ambiguous.checks.repo.detail.split(" | ").sort(), [kept, here].sort());
+  assert.equal(remembered(env.home), null);
+  rememberRepo(env.home, kept);
+  assert.equal(runPreflight(env, [], bound, here).checks.repo.detail, kept, "the remembered clone is used, not the working one");
+  assert.equal(remembered(env.home), kept);
+  assert.equal(runPreflight(env, [], {}, here).checks.repo.detail, here, "with no provider the working clone is used");
+});
+
+test("with the provider naming its repository, --repo refuses a checkout of a remote it does not list", (t) => {
+  const env = setup(t);
+  const other = path.join(env.home, "Source", "notes-app");
+  makeCheckout({ ...env, checkout: other, remoteUrl: OTHER_REMOTE });
+  const plain = path.join(env.root, "plain");
+  mkdirSync(plain);
+  for (const folder of [other, plain]) {
+    const refused = runPreflight(env, ["--repo", folder], boundProvider(env.home));
+    assert.equal(refused.checks.repo.ok, false);
+    assert.equal(refused.checks.repo.fix, "ask-for-repo-path");
+    assert.equal(refused.checks.repo.detail, `${folder} is not a symphony-alpha or claude-plugins checkout`);
+  }
+  assert.equal(remembered(env.home), null);
+});
+
+test("with the provider naming its repository, --repo accepts a plugins checkout for that run only", (t) => {
+  const env = setup(t);
+  const app = path.join(env.home, "Source", "symphony-alpha");
+  makeCheckout({ ...env, checkout: app });
+  const bound = boundProvider(env.home);
+  assert.equal(runPreflight(env, [], bound).checks.repo.detail, app);
+  const plugins = path.join(env.home, "Source", "claude-plugins");
+  makeCheckout({ ...env, checkout: plugins, remoteUrl: "https://github.com/closedloop-ai/claude-plugins.git",
+    files: { "package.json": "{}\n", "pnpm-lock.yaml": "\n" } });
+  const worktree = path.join(plugins, ".claude", "worktrees", "vibe-x");
+  git(plugins, ["worktree", "add", "--quiet", "-b", "vibe/x", worktree], env.home);
+  const result = runPreflight(env, ["--repo", worktree], bound);
+  assert.equal(result.checks.repo.ok, true, result.stdout);
+  assert.equal(result.checks.repo.detail, plugins);
+  assert.equal(result.checks["repo-bootstrap"], undefined, "the app's dependency install is not a plugins prerequisite");
+  assert.equal(result.checks["posthog-key"], undefined, "the app flag snapshot key is not a plugins prerequisite");
+  assert.equal(remembered(env.home), app, "a plugins checkout is never remembered");
+  const lookalike = path.join(env.home, "Source", "elsewhere");
+  makeCheckout({ ...env, checkout: lookalike, remoteUrl: "git@github.com:someone/claude-plugins.git" });
+  assert.match(runPreflight(env, ["--repo", lookalike], bound).checks.repo.detail, /is not a symphony-alpha or claude-plugins checkout/);
+});
+
+test("with no provider, --repo accepts a checkout of any remote and remembers it", (t) => {
+  const env = setup(t);
+  const other = path.join(env.home, "Source", "notes-app");
+  makeCheckout({ ...env, checkout: other, remoteUrl: OTHER_REMOTE, files: { "package.json": "{}\n" } });
+  const result = runPreflight(env, ["--repo", other]);
+  assert.equal(result.checks.repo.ok, true, result.stdout);
+  assert.equal(result.checks.repo.detail, other);
+  assert.equal(remembered(env.home), other);
+  assert.equal(result.checks["repo-bootstrap"].fix, "install-dependencies", "its own checks still run");
+});
+
+// Main's precedence: the remembered checkout of the repository comes before the home-folder search.
+test("a remembered checkout of the provider's repository wins over the one the home-folder search would find", (t) => {
+  const env = setup(t);
+  const found = path.join(env.home, "Source", "symphony-alpha");
+  const kept = path.join(env.root, "elsewhere", "symphony-alpha");
+  makeCheckout({ ...env, checkout: found, remoteUrl: SYMPHONY_REMOTE });
+  makeCheckout({ ...env, checkout: kept, remoteUrl: SYMPHONY_REMOTE });
+  rememberRepo(env.home, kept);
+  const bound = boundProvider(env.home);
+  assert.equal(runPreflight(env, [], bound).checks.repo.detail, kept);
+});
+
+test("several checkouts of the provider's repository ask to choose unless one of them is remembered", (t) => {
+  const env = setup(t);
+  const first = path.join(env.home, "Source", "symphony-alpha");
+  const second = path.join(env.home, "work", "app-copy");
+  const other = path.join(env.home, "Source", "notes-app");
+  makeCheckout({ ...env, checkout: first, remoteUrl: SYMPHONY_REMOTE });
+  makeCheckout({ ...env, checkout: second, remoteUrl: SYMPHONY_REMOTE });
+  makeCheckout({ ...env, checkout: other, remoteUrl: OTHER_REMOTE });
+  const bound = boundProvider(env.home);
+  rememberRepo(env.home, other);
+  const ambiguous = runPreflight(env, [], bound);
+  assert.equal(ambiguous.checks.repo.ok, false);
+  assert.equal(ambiguous.checks.repo.fix, "choose-repo");
+  assert.deepEqual(ambiguous.checks.repo.detail.split(" | ").sort(), [first, second].sort());
+  rememberRepo(env.home, second);
+  assert.equal(runPreflight(env, [], bound).checks.repo.detail, second);
+});
+
+test("with the provider naming its repository and none found, a remembered checkout of another remote is not used", (t) => {
+  const env = setup(t);
+  const other = path.join(env.home, "Source", "notes-app");
+  makeCheckout({ ...env, checkout: other, remoteUrl: OTHER_REMOTE });
+  rememberRepo(env.home, other);
+  const none = runPreflight(env, [], boundProvider(env.home));
+  assert.equal(none.checks.repo.ok, false);
+  assert.equal(none.checks.repo.fix, "ask-for-repo-path");
+  assert.match(none.checks.repo.detail, /no checkout whose git remote matches .*symphony-alpha/);
+  assert.equal(runPreflight(env).checks.repo.detail, other, "a generic session uses the remembered checkout");
+});
+
+test("a bound provider that cannot be read fails the provider check once with its reason, never reads as unbound", (t) => {
+  const env = setup(t);
+  const checkout = path.join(env.home, ...SPACED);
+  makeCheckout({ ...env, checkout, files: { "package.json": "{}\n", "pnpm-lock.yaml": "\n" } });
+  const records = path.join(env.home, ".codex", "vibe", "plugin-version");
+  mkdirSync(records, { recursive: true });
+  writeFileSync(path.join(records, "gone-chat.json"), JSON.stringify({ conversation: "gone-chat", status: "current",
+    provider: { state: "bound", name: "gone-provider", root: path.join(env.root, "uninstalled"), capabilities: ALL_CAPABILITIES } }));
+  const result = runPreflight(env, ["--repo", checkout], { CLAUDE_CODE_SESSION_ID: "gone-chat", CODEX_THREAD_ID: "" });
+  assert.equal(result.checks.provider.ok, false);
+  assert.equal(result.checks.provider.fix, "provider-broken");
+  assert.match(result.checks.provider.detail, /^the provider gone-provider this session is bound to is no longer installed/);
+  assert.equal(result.stdout.split("\n").filter((line) => line.includes('"check":"provider"')).length, 1);
+  assert.equal(result.checks.repo.ok, true);
+  assert.equal(result.checks["repo-bootstrap"].fix, "install-dependencies");
+  assert.equal(result.checks["posthog-key"], undefined);
 });

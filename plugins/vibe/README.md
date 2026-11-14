@@ -1,6 +1,8 @@
 # vibe
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 <!-- generic: intro -->
 vibe lets a person change the product in any git repository by saying what
@@ -132,7 +134,8 @@ labels, empty states or error text. Product questions follow one research
 <!-- generic: no-invented -->
 order: the code and data model, the request and its sources, the repository's
 recorded decisions, and then how an established product behaves, observed
-live or from its own documentation. No agent adds a feature flag; the person
+live in the operator's signed-in browser. Public help centers and
+documentation are never precedent. No agent adds a feature flag; the person
 approves each key.
 <!-- end generic: no-invented -->
 > Provider `tickets+graph` (block `no-invented` of `readme.md`)
@@ -322,7 +325,7 @@ applies to other shared skills such as `decision-table`.
 | Agent | Default model | Responsibility |
 |---|---|---|
 | `vibe-setup-worker` | sonnet | Machine preflight, worktree bootstrap, owned local processes, and confirmed session discard |
-| `vibe-requirements-worker` | sonnet | Read-only requirements, overlap and owning-route discovery; reference mode (the behaviors and visual and UX requirements of a product the person named or showed in a screenshot); precedent mode (how an established product behaves, observed live in the operator's signed-in browser or from that product's own documentation) |
+| `vibe-requirements-worker` | sonnet | Read-only requirements, overlap and owning-route discovery; reference mode (the behaviors and visual and UX requirements of a product the person named or showed in a screenshot); precedent mode (how an established product behaves, observed live in the operator's signed-in browser, never public help centers or documentation) |
 | `vibe-ticket-worker` | sonnet | With a tracker provider bound: live ticket creation and source link, the session plan as a linked plan document, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
 | `vibe-change-worker` | opus | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
@@ -350,7 +353,7 @@ removes it. Any model name is accepted.
 
 ### Evals
 
-`evals/` holds 121 one-turn rehearsals plus two deterministic stateful
+`evals/` holds 125 one-turn rehearsals plus two deterministic stateful
 upgrade-resume cases. Each one-turn case carries the session state in its
 prompt, so it needs no target repository checkout. The stateful cases run only in
 the local nightly and drive real Claude and Codex root sessions across an

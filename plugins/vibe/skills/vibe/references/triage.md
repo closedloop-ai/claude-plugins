@@ -1,6 +1,8 @@
 # Triage manifest
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 `scripts/vibe-triage.mjs` classifies the request into one class and prints the
 step manifest the orchestrator follows. It is deterministic: the same request

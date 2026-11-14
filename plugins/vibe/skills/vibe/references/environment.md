@@ -1,6 +1,8 @@
 # The vibe environment
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 <!-- generic: intro -->
 The app runs on this Mac: `vibe-setup-worker` starts it from the session

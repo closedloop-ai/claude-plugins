@@ -1,6 +1,8 @@
 # Guardrails
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 Vibe work is reviewed by design and engineering, so it follows the team's
 patterns and they extend it rather than rewrite it. The repo's `AGENTS.md`

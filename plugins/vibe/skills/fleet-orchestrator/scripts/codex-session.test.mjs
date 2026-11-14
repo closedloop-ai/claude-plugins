@@ -197,15 +197,26 @@ test('a failed turn/start leaves the state file unchanged', async () => {
   assert.equal(loadState(dir, 'w1'), null);
 });
 
-test("a new writer whose brief lacks the lead's binding, or names another, is refused before any request", async () => {
+test("a new writer whose brief names another binding is refused before any request", async () => {
   const { dir } = workDir();
   const brief = join(dir, 'brief.md');
   const client = stubClient({});
-  writeFileSync(brief, '$vibe ISS-1 build it\n');
-  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', 'ISS-1'])), /carries the lead's binding on its own line: "Provider: none"/);
   writeFileSync(brief, '$vibe ISS-1 build it\nProvider: example-provider\n');
   await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', 'ISS-1'])), /this lead is bound as "Provider: none"/);
   assert.deepEqual(client.calls, []);
+});
+
+test("a new writer whose brief has no Provider line is started under the lead's binding, the line added for it", async () => {
+  const { dir } = workDir();
+  const brief = join(dir, 'brief.md');
+  writeFileSync(brief, '$vibe #1 build it\n');
+  const lead = { state: 'bound', name: 'example-provider', capabilities: ['tickets'] };
+  const client = stubClient({ ...SIDEBAR, 'thread/start': { thread: { id: 'T1' } }, 'turn/start': {} });
+  const turn = parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', '#1', '--model', 'm', '--effort', 'high']);
+  await assert.rejects(run(client, turn, { binding: () => lead }), /no turn id/, 'the brief is not refused and the turn is requested');
+  const sent = client.calls.find(({ method }) => method === 'turn/start').params.input[0].text;
+  assert.match(sent, /^\$vibe #1 build it\nProvider: example-provider\n/);
+  assert.equal(readFileSync(brief, 'utf8'), '$vibe #1 build it\n', 'the brief file is left as written');
 });
 
 test("a writer started on another host takes the lead's binding from --lead-provider, having no chat of the lead's", async () => {
@@ -1198,14 +1209,17 @@ test('an ended actor cannot reopen a reload behind its released fence', async (t
   assert.equal(ownership.reloadFenceStatus(f.dir, { ...f.lockDirs, identityOf: () => null }).held, true);
 });
 
-test("a new writer's $vibe brief carries the lead's binding, and one naming another binding is refused", async () => {
-  const { briefProviderProblem, providerLine } = await import("./writer-launch.mjs");
+test("a new writer's $vibe brief inherits the lead's binding, and one naming another binding is refused", async () => {
+  const { briefProviderProblem, briefWithProviderLine, providerLine } = await import("./writer-launch.mjs");
   const bound = { state: "bound", name: "example-provider" };
   assert.equal(providerLine(bound), "Provider: example-provider");
   assert.equal(providerLine(null), "Provider: none");
   assert.equal(briefProviderProblem("$vibe #12 fix it\nProvider: none\n", null), null);
   assert.equal(briefProviderProblem("$vibe ISS-1 fix it\nProvider: example-provider\n", bound), null);
-  assert.match(briefProviderProblem("$vibe ISS-1 fix it\n", bound), /carries the lead's binding on its own line: "Provider: example-provider"/);
+  assert.equal(briefProviderProblem("$vibe ISS-1 fix it\n", bound), null, "a brief with no line inherits the lead's binding");
   assert.match(briefProviderProblem("$vibe #12 fix it\nProvider: example-provider\n", null), /this lead is bound as "Provider: none"/);
   assert.equal(briefProviderProblem("continue the work", bound), null, "only a $vibe brief starts a writer");
+  assert.equal(briefWithProviderLine("$vibe ISS-1 fix it\n\n", bound), "$vibe ISS-1 fix it\nProvider: example-provider\n");
+  assert.equal(briefWithProviderLine("$vibe #12 fix it\nProvider: none\n", bound), "$vibe #12 fix it\nProvider: none\n", "a named line is kept as written");
+  assert.equal(briefWithProviderLine("continue the work", bound), "continue the work", "a prompt that starts no writer is untouched");
 });

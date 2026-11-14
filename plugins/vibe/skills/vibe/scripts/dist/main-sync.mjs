@@ -224208,7 +224208,7 @@ function deploymentHost(host) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module2 = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding: sessionBinding2, ticketReference, unreadableProviders, useLeadBinding, useSessionWorktree } = module2;
+var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, blocksFileName, boundWith, clearProviderTree, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, providerTextDirectory, providerTextRoot, providerTree, providerTreeKey, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding: sessionBinding2, skillNameListed, syncProviderTree, ticketReference, unprobedBinding, unreadableProviders, useLeadBinding, useSessionWorktree, writeProviderTree } = module2;
 
 // src/contracts.ts
 var TRACKER_SERVICE = "tracker";

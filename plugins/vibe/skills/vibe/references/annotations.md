@@ -1,6 +1,8 @@
 # From annotation to code
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 A Codex in-app browser annotation reaches you as the person's comment, a
 screenshot of the page at the moment they commented with the selected element

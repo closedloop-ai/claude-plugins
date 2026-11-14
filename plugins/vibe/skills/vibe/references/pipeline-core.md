@@ -1,6 +1,8 @@
 # Class pipeline core
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 The rules every class pipeline shares, each written once, here. A class
 pipeline skill (`vibe-pipeline-trivial-ui`, `-ui-feature`, `-backend`,

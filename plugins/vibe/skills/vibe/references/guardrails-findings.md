@@ -1,6 +1,8 @@
 # The guardrails findings file
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `references/provider-text.md`.
+<!-- end provider-rule -->
 
 `../../handoff/scripts/guardrails-gate.mjs` runs the guardrails checks a script
 can run, before any model reads the diff, and writes one JSON file. The

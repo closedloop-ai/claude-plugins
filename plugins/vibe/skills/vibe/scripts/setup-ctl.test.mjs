@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  AUTO_FIXES, classifyChecks, CLAUDE_SIGN_IN_WORDS, createSetupCtl, DESKTOP_UNAVAILABLE, freePort, parsePreflight, Status, STORYBOOK_PORTS,
+  AUTO_FIXES, classifyChecks, CLAUDE_SIGN_IN_WORDS, createSetupCtl, DESKTOP_UNAVAILABLE, folderAccessWords, freePort, parsePreflight, Status, STORYBOOK_PORTS,
 } from "./setup-ctl.mjs";
 
 const ok = (stdout = "") => ({ status: 0, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr: "" });
@@ -37,6 +37,19 @@ test("preflight lines are parsed and every failed check is classified by its fix
   assert.deepEqual(plan.blocked.map((item) => item.fix), ["ask-for-repo-path", "codex plugin add closedloop-core@closedloop-ai"]);
   assert.deepEqual(plan.delegated.map((item) => item.fix), ["gh-auth-login"]);
   assert.deepEqual(plan.unknown.map((item) => item.fix), ["something-new"]);
+});
+
+test("the provider's repository search fixes are classified: more than one checkout and a broken provider stop, a blocked folder asks the person", () => {
+  const plan = classifyChecks([
+    { check: "repo", ok: false, detail: "/a | /b", fix: "choose-repo" },
+    { check: "provider", ok: false, detail: "the provider is gone. Fix: reinstall it", fix: "provider-broken" },
+    { check: "repo", ok: false, detail: "Documents", fix: "allow-folder-access" },
+  ]);
+  assert.deepEqual(plan.blocked.map((item) => item.fix), ["choose-repo", "provider-broken"]);
+  assert.equal(plan.blocked[1].detail, "the provider is gone. Fix: reinstall it");
+  assert.deepEqual(plan.needsPerson.map((item) => item.fix), ["allow-folder-access"]);
+  assert.equal(plan.needsPerson[0].message, folderAccessWords("Documents"));
+  assert.deepEqual(plan.unknown, []);
 });
 
 test("a person's exit carries only the sentence preflight.md writes; one with no written sentence has message null and a reference", () => {

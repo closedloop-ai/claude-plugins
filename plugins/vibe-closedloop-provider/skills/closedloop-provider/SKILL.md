@@ -1,15 +1,18 @@
 ---
 name: closedloop-provider
-description: The ClosedLoop and symphony-alpha knowledge vibe and fleet-orchestrator follow while this plugin is enabled (ClosedLoop tickets and plans, closedloop-graph, repository memory, and the symphony-alpha recipes). vibe and fleet read it themselves; never start it on its own. Disable the plugin to run vibe and fleet generically.
+description: At vibe start, call ClosedLoop get-me and closedloop-graph sync_status first, then add --closedloop <state> --graph <state> to the check. The ClosedLoop and symphony-alpha knowledge vibe and fleet-orchestrator follow while this plugin is enabled (ClosedLoop tickets and plans, closedloop-graph, repository memory, and the symphony-alpha recipes). vibe and fleet read it themselves; never start it on its own. Disable the plugin to run vibe and fleet generically.
 ---
 
 # ClosedLoop provider for vibe and fleet
 
 This plugin is vibe's optional provider. vibe and fleet-orchestrator run in any
-repository without it. While it is enabled, a vibe or fleet start binds it
-(`plugin-version.mjs check` records the binding for the conversation and the
-session), and from then on they follow its text and data in place of their
-generic steps.
+repository without it. While it is enabled, a vibe or fleet start binds it: the
+start runs `plugin-version.mjs provider`, makes the two calls it names (the ones
+this skill's description names), then runs `plugin-version.mjs check` with their
+states, which records the binding for the conversation and the session and
+writes the vibe text assembled for it. Each capability binds when its own needs
+hold, so a connection that did not answer withholds only what needs it. From
+then on they follow its text and data in place of their generic steps.
 
 Nothing here runs on its own. vibe reads it only through
 `skills/vibe/scripts/provider.mjs` in the vibe plugin, which answers only for a
@@ -18,6 +21,9 @@ bound session:
 - `provider.mjs block <capability> <file> <id>` prints one block of a file in
   `references/`. A line in a vibe skill, reference or agent of the form
   ``> Provider `<capability>` (block `<id>` of `<file>`)`` stands for that block.
+- `provider.mjs tree` prints the folder of vibe text the check assembled for
+  this repository when it bound the provider (`references/provider-text.md` in
+  the vibe skill).
 - `provider.mjs assemble <file>` writes a vibe file with every block it serves
   in place, and `assemble --blocks <file>` only those blocks, for a file already
   read; each prints the path it wrote.

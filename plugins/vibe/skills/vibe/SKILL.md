@@ -128,21 +128,28 @@ statement (`references/quality-loop.md`, "Communication and product questions").
 This skill works in any git checkout. The repository's `AGENTS.md` and docs say
 how to set it up, run it, check it and preview it (`references/preflight.md`).
 
+<!-- provider-rule -->
 Lines of the form ``> Provider `<capability>` (block `<id>` of `<file>`)`` stand
-for an optional provider's text, read as `references/provider-text.md` says
-(add `--worktree "<wt>"` to each command once the session exists). When the
-plugin version check bound a provider (its output's `provider.capabilities`,
-or `node scripts/provider.mjs show`), run
-`node scripts/provider.mjs assemble --blocks <this file>` once and read the
-file whose path it prints: each block there replaces the generic region of the
-same id, and every other stub keeps its generic text. Open each reference and
-worker file through `node scripts/provider.mjs assemble <file>` and read only
-the file whose path it prints. `provider: ...` (exit 3) means no provider with
-that capability is bound: follow the generic text. `provider-broken: ...`
-(exit 4) or any other failure: never follow the generic text; stop that step
-and tell the person what it printed. In provider text, a file named
-`provider:<file>` is one of the provider's references:
-`node scripts/provider.mjs path <capability> provider:<file>` prints where it is.
+for an optional provider's text (`references/provider-text.md`). With no
+provider bound, follow the generic text. When this conversation's check bound a
+provider (its `provider.state` is `bound`), read vibe files from the folder it
+wrote: `node scripts/provider.mjs tree` prints it, or read
+`~/.codex/vibe/provider-text/index.json` for the folder of this session's
+repository main checkout, or its working folder when it is not in a checkout
+(as `node scripts/provider.mjs tree --worktree "<wt>"` resolves it), and use it
+only when its `binding.json` has that `repoRoot`
+and, as `vibeRoot`, the vibe plugin folder this file was loaded from. Read each
+file at the same relative path there, and for this SKILL.md its `SKILL.blocks.md`, whose
+blocks replace the generic regions of the same id. When `tree` exits 3 or the
+folder does not match, run the check again, and as a last resort
+`node scripts/provider.mjs assemble <file>` (add `--worktree "<wt>"` once the
+session exists). In a bound session a `provider: ...` (exit 3),
+`provider-broken: ...` (exit 4) or any other failure from `assemble`, `block`
+or `path` is a stop: tell the person what it printed and never follow the
+generic text in its place. `provider:<file>` in provider text names
+a provider reference: `node scripts/provider.mjs path <capability> provider:<file>`
+prints where it is.
+<!-- end provider-rule -->
 
 ## Harness notes
 
@@ -294,17 +301,25 @@ person is asked to do").
 Every `$vibe` start, new or resume, first checks whether the plugins from
 vibe's marketplace installed on this machine, in Claude Code and in Codex, are
 the latest release, binds the optional provider, and shows the setup check, in
-one command. First run `node scripts/plugin-version.mjs provider`. When it
-prints `"state":"candidate"`, make each call its `connections` entries' `check`
-names yourself, and look for its `skill` in your own list of available skills.
-Then run
+one command:
 `node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]... [--skill-listed <skill>]`
-in Codex, or `--runtime claude` in Claude Code, with one `--connection` per
-`connections` entry, where each `<state>` is `connected` only when that call
-answered in this conversation, otherwise `not-connected`; never assume either.
-Pass `--skill-listed` only when your skill list shows that skill. With no
-candidate, run the check with neither. When `provider` instead prints an
-`offer`, make the call its `check` names; only when it answered, run
+in Codex, or `--runtime claude` in Claude Code. Each `<state>` is `connected`
+only when that call answered in this conversation, otherwise
+`not-connected`; never assume either. When your list of available skills shows
+a vibe provider skill whose description names its start calls, make those
+calls yourself and run the check with the flags that description names, plus
+`--skill-listed` with that skill's name as your list shows it. In every other
+case (no provider skill listed, or its description cut short or missing), first
+run `node scripts/plugin-version.mjs provider`: it reads the plugins installed
+here and writes nothing, and your skill list never decides that there is no
+provider. When it prints `"state":"candidate"`, make each call its
+`connections` entries' `check` names yourself, look for its skill name in your
+list, and run the check with one `--connection` per `connections` entry (and
+`--skill-listed` only when your list shows the skill); with no candidate, run
+the check with neither. A check printing `"state":"unprobed"` had no states for
+an installed provider and bound nothing: make each call its `connectionsNeeded`
+names and run the check once more with them before you reply. When the check's
+output carries an `offer`, make the call its `check` names; only when it answered, run
 `node scripts/plugin-version.mjs provider-install --connection <offer connection>=connected`,
 which installs that provider for the person once and never again, and tell
 the person in one line that it takes effect in a new chat. This session stays
@@ -448,12 +463,14 @@ As soon as Node, Git and the exact checkout validate, use the owned launcher for
 every normal call. No other launcher failure permits this native bootstrap.
 
 <!-- generic: connectors -->
-When the check's `provider` is `bound-disconnected` (a connection the provider
-needs did not answer, or its skill is not loaded in this session), dispatch
-`vibe-setup-worker` to restore it (`references/preflight.md`, "Restoring a
-connection"), and run the check again when it returns `DONE`. If the person
-says to carry on without it, carry on as a session with no provider and say
-nothing more about it. With no provider at all there is nothing to confirm.
+When the check's `provider` lists anything under `missing` (a connection the
+provider needs did not answer, or its skill is not loaded in this session),
+whether it is `bound` with a capability withheld or `bound-disconnected`,
+dispatch `vibe-setup-worker` to restore it (`references/preflight.md`,
+"Restoring a connection"), and run the check again when it returns `DONE`. If
+the person says to carry on without it, carry on with what bound (with nothing
+bound, as a session with no provider) and say nothing more about it. With no
+provider at all there is nothing to confirm.
 <!-- end generic: connectors -->
 > Provider `tickets` (block `connectors` of `vibe-skill.md`)
 

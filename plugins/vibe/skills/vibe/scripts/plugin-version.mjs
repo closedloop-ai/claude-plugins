@@ -9,6 +9,7 @@
 //   plugin-version.mjs [check]  [--runtime codex|claude] [state] [--claude <CLI>] [--codex <CLI>]
 //                               [--latest-base <url>] [--timeout-ms <n>]
 //                               [--connection <name>=connected|not-connected]... [--skill-listed <plugin>:<skill>]
+//                               [--closedloop <state>] [--graph <state>]   (aliases of --connection tracker=<state>, graph=<state>)
 //   plugin-version.mjs choose   --choice update|proceed [--by person|opening-message] [state]
 //   plugin-version.mjs update   [state] [--claude <CLI>] [--codex <CLI>]
 //   plugin-version.mjs loaded   --runtime codex|claude [state]
@@ -59,9 +60,10 @@
 // block is never shown twice. `check` given --connection does the same in the
 // same run, so startup is one command after the provider's connection calls.
 // `check` also binds the optional provider for the conversation (vibe-core
-// lib/vibe/scripts/provider.mjs `probeProvider`) and saves the binding in the
-// record as `provider`; `provider` prints what a start would bind first, so the
-// model knows which connection calls to make and which skill to look for.
+// lib/vibe/scripts/provider.mjs `probeProvider`), saves the binding in the
+// record as `provider`, and carries the provider install `offer` when one
+// stands. `provider` prints what a start would bind, its connection calls and
+// skill, for a model whose skill list cuts the provider skill's description short.
 // In Codex's default sandbox (CODEX_SANDBOX_NETWORK_DISABLED=1) main cannot be
 // read and the startup record cannot be saved: `check` then adds
 // {"escalate":true,"justification"}, and the orchestrator runs the same
@@ -83,6 +85,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { ownPluginRoot } from "../../../shared/plugin-roots.mjs";
 import { vibeCore, vibeCoreProblem } from "../../../shared/vibe-core.mjs";
 import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine } from "./vibe-core-hooks.mjs";
 import { BUNDLED_CODEX, findCli, installedPlugins, MARKETPLACE } from "./plugin-cli.mjs";
@@ -98,7 +101,8 @@ if (missingCore && process.argv[1] && import.meta.url === pathToFileURL(path.res
 const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const startupRecord = await vibeCore("lib/vibe/scripts/startup-record.mjs");
-const { bindForRepository, probeProvider, providerCandidate, scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { bindForRepository, isProviderBroken, probeProvider, providerCandidate, providerTextRoot, ProviderState, scriptExitCode, syncProviderTree,
+  UNPROBED_REFUSAL, unprobedBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { RELEASE_VERSION: VERSION, readJson, startupDir, writeJson } = startupRecord;
 export const { VersionStatus, blockingProblem, compareVersions, installedVibeVersion, loadedSkillProblem, markPending,
   readStartupRecord, startupFile } = startupRecord;
@@ -114,6 +118,9 @@ const CATALOG = Object.freeze({ claude: ".claude-plugin/marketplace.json", codex
 const CHOOSERS = Object.freeze(["person", "opening-message"]);
 const COMMANDS = Object.freeze(["check", "choose", "update", "loaded", "pending", "adopt", "status", "show", "provider", "provider-install", "provider-match"]);
 const CONNECTION_ARG = /^([a-z][a-z0-9-]{0,40})=(.+)$/;
+/** The 1.1.86 check flags, each still accepted as `--connection <name>=<state>` for the connection it named. */
+const CONNECTION_ALIASES = Object.freeze({ closedloop: "tracker", graph: "graph" });
+const VIBE_ROOT = ownPluginRoot(import.meta.url).root;
 const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
 const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe", "vibe-core"]);
 /**
@@ -327,6 +334,7 @@ export function adoptStartupRecord(worktree, { env = process.env, home = os.home
   if (problem) {
     throw new Error(`${problem}; run plugin-version.mjs check, ask the person, and record the answer with plugin-version.mjs choose first`);
   }
+  if (record.provider?.state === ProviderState.Unprobed) throw new Error(UNPROBED_REFUSAL);
   const session = readSessionRecord(worktree);
   if (!session) {
     throw new Error(`No vibe session record in ${worktree}.`);
@@ -364,7 +372,13 @@ export function statusBlock(record, connections, labels = {}) {
     if (approval) lines.push(`- ${label}: ${approval}`);
   }
   const word = (value) => (value === Connection.Connected ? "connected" : "not connected");
-  for (const [name, spec] of Object.entries(labels)) lines.push(`- ${spec.label} connection: ${word(connections[name])}`);
+  const unprobed = record?.provider?.state === ProviderState.Unprobed;
+  for (const [name, spec] of Object.entries(labels)) {
+    lines.push(unprobed ? `- ${spec.label} connection: not checked yet (${spec.check})` : `- ${spec.label} connection: ${word(connections[name])}`);
+  }
+  const text = record?.providerText;
+  if (text?.broken) lines.push(`- Provider${record.provider?.name ? ` ${record.provider.name}` : ""}: ${text.error}`);
+  else if (text?.error) lines.push(`- Provider text: not saved (${text.error})`);
   return lines.join("\n");
 }
 
@@ -593,6 +607,7 @@ async function main(argv, env, home) {
       choice: { type: "string" },
       by: { type: "string" },
       connection: { type: "string", multiple: true },
+      ...Object.fromEntries(Object.keys(CONNECTION_ALIASES).map((flag) => [flag, { type: "string" }])),
       "skill-listed": { type: "string" },
       "latest-base": { type: "string" },
       "timeout-ms": { type: "string" },
@@ -613,14 +628,13 @@ async function main(argv, env, home) {
     return { code: 0, output: { ok: true, pluginVersion: adoptStartupRecord(values.worktree, { env, home }) } };
   }
   const store = stateStore(values, env, home);
-  const connections = parseConnections(values.connection ?? []);
-  const withConnections = values.connection !== undefined || command === "status";
+  const connectionArgs = [...(values.connection ?? []), ...aliasedConnections(values)];
+  const connections = parseConnections(connectionArgs);
   // The labels of the connections the enabled provider names; none when no provider is enabled.
   const candidate = providerCandidate({ cwd: process.cwd() });
   const labels = candidate.connections ?? {};
   if (command === "provider") {
-    // A provider seen installed here once (enabled or not) is never offered again, so removing it by hand stays.
-    if (candidate.state === "candidate" || candidate.reason !== "no provider is installed") markProviderSeen(home, now);
+    // Read-only: a start may run it inside a sandbox that refuses writes, so a provider seen here is recorded by the check.
     const offer = providerOffer(candidate, readProviderInstall(home));
     return { code: 0, output: { ...candidate, ...(offer ? { offer } : {}) } };
   }
@@ -666,7 +680,16 @@ async function main(argv, env, home) {
     const conversation = values.conversation ?? conversationId(env);
     const previous = store.read();
     const record = { ...result, conversation, checkedAt: now.toISOString(), ...(runtime ? { runtime } : {}),
-      provider: probeProvider({ runtime, cwd: process.cwd(), connections, skillListed: values["skill-listed"] ?? null, now }) };
+      provider: (connectionArgs.length ? null : unprobedBinding(candidate, { runtime, now }))
+        ?? probeProvider({ runtime, cwd: process.cwd(), connections, skillListed: values["skill-listed"] ?? null, now }) };
+    const unprobed = record.provider.state === ProviderState.Unprobed;
+    // An unprobed check binds nothing and leaves the provider text as it is until the check runs with the states.
+    if (!unprobed) {
+      const binding = values.worktree ? bindForRepository(record.provider, values.worktree) : record.provider;
+      const text = syncProviderTree({ binding, repoRoot: providerTextRoot(values.worktree ?? process.cwd()), vibeRoot: VIBE_ROOT, home, now });
+      if (text.error) record.providerText = text;
+      else if (text.folder) record.providerText = { folder: text.folder };
+    }
     // Load evidence is enforced only where a hook has recorded this conversation; without one
     // (Codex hooks not trusted yet) the check behaves as it did before loaded-skill evidence.
     if (runtime && hookRecordExists(conversation, home)) {
@@ -683,10 +706,12 @@ async function main(argv, env, home) {
     if (previous?.statusShown?.conversation === conversation) {
       record.statusShown = previous.statusShown;
     }
-    const shown = withConnections ? setupCheck(record, record, connections, conversation, now, labels) : null;
+    const shown = setupCheck(record, record, connections, conversation, now, labels);
+    // The block of an unprobed check is not the one the person keeps: the rerun with the states shows it again.
+    if (unprobed) shown.next = null;
     let recordError;
     try {
-      store.write(shown?.next ?? record);
+      store.write(shown.next ?? record);
       if (!values.worktree && !values.state) {
         sweepStartup(home, now);
       }
@@ -697,7 +722,7 @@ async function main(argv, env, home) {
     // orchestrator reruns this same command with escalated permissions (one "Allow once"),
     // and that run's block is the one the person sees.
     const escalating = blockedBySandbox(record, recordError, env);
-    if (escalating && shown?.next && !recordError) {
+    if (escalating && shown.next && !recordError) {
       try {
         store.write(record);
       } catch {
@@ -705,7 +730,12 @@ async function main(argv, env, home) {
       }
     }
     const escalate = escalating ? { escalate: true, justification: ESCALATION_JUSTIFICATION } : {};
-    return { code: 0, output: { ...record, ...(shown?.output ?? {}), ...(recordError ? { recordError } : {}), ...escalate, state: store.where } };
+    const offer = startOffer(candidate, home, now);
+    // The record's own `reason` (why the versions are unknown) wins over the already-shown note.
+    const block = shown.output.print ? shown.output : { print: false };
+    const needed = unprobed ? { connectionsNeeded: record.provider.connectionsNeeded } : {};
+    return { code: 0, output: { ...record, ...block, ...needed, ...(offer ? { offer } : {}), ...(recordError ? { recordError } : {}), ...escalate,
+      state: store.where } };
   }
   if (command === "status") {
     const conversation = values.conversation ?? conversationId(env);
@@ -772,6 +802,14 @@ async function main(argv, env, home) {
 // (mode, Vercel, the environment's org under its old and new names) and its flag snapshot. A generic session has none.
 const LEGACY_PROVIDER_FIELDS = ["liveTicket", "handoffTicket", "livePlan", "mode", "vercel", "clerkOrgId", "environmentOrgId", "flagSnapshot"];
 
+/**
+ * The one provider vibe installs for the person (operator ruling on the install default): only when no provider was
+ * ever installed here, vibe never installed it before (so an uninstall stays), and the provider's tracker connection
+ * answered in this conversation. vibe never re-enables a disabled provider and never reinstalls a removed one.
+ */
+export const OFFERED_PROVIDER = Object.freeze({ name: "vibe-closedloop-provider", connection: "tracker",
+  label: "ClosedLoop", check: "Call ClosedLoop `get-me`; connected only when it answered in this conversation." });
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const { code, output } = await main(process.argv.slice(2), process.env, os.homedir());
@@ -779,10 +817,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exitCode = code;
   } catch (error) {
     const command = process.argv.slice(2).find((word) => COMMANDS.includes(word)) ?? "check";
-    // The check itself never fails a session; the other commands report a refusal.
-    process.stdout.write(`${JSON.stringify(command === "check" ? { status: VersionStatus.Unknown, reason: error.message } : { ok: false, error: error.message })}\n`);
-    // A broken bound provider is the exception: every command, the check included, stops with its reason and fix.
-    process.exitCode = scriptExitCode(error, command === "check" ? 0 : 1);
+    // The check never fails a start, a broken provider included: it shows the setup check with the reason, and only a
+    // later step that needs the provider stops. Every other command reports its refusal, a broken provider with exit 4.
+    const failed = { status: VersionStatus.Unknown, reason: error.message };
+    const providerText = isProviderBroken(error) ? { error: error.message, broken: true } : undefined;
+    process.stdout.write(`${JSON.stringify(command === "check" ? { ...failed, print: true, block: statusBlock({ ...failed, providerText }, {}) }
+      : { ok: false, error: error.message })}\n`);
+    process.exitCode = command === "check" ? 0 : scriptExitCode(error, 1);
   }
 }
 
@@ -924,6 +965,11 @@ function afterUpdate(record, result, harness) {
     ? { ...plugin, version: reached.get(plugin.name), missing: false } : plugin) };
 }
 
+/** The `--connection` arguments the alias flags given stand for. */
+function aliasedConnections(values) {
+  return Object.entries(CONNECTION_ALIASES).filter(([flag]) => values[flag] !== undefined).map(([flag, name]) => `${name}=${values[flag]}`);
+}
+
 /** `--connection <name>=<state>` arguments as `{ name: state }`; a state is connected or not-connected. */
 function parseConnections(args) {
   const connections = {};
@@ -937,14 +983,6 @@ function parseConnections(args) {
   return connections;
 }
 
-/**
- * The one provider vibe installs for the person (operator ruling on the install default): only when no provider was
- * ever installed here, vibe never installed it before (so an uninstall stays), and the provider's tracker connection
- * answered in this conversation. vibe never re-enables a disabled provider and never reinstalls a removed one.
- */
-export const OFFERED_PROVIDER = Object.freeze({ name: "vibe-closedloop-provider", connection: "tracker",
-  label: "ClosedLoop", check: "Call ClosedLoop `get-me`; connected only when it answered in this conversation." });
-
 /** Where vibe records the provider install it ran, so a later start never repeats it. */
 export function providerInstallFile(home = os.homedir()) {
   return path.join(home, ".codex", "vibe", "provider-install.json");
@@ -953,6 +991,12 @@ export function providerInstallFile(home = os.homedir()) {
 /** vibe's own recorded provider install, or null. */
 export function readProviderInstall(home = os.homedir()) {
   try { return readJson(providerInstallFile(home)); } catch { return null; }
+}
+
+/** The install offer a start shows, or null; a provider seen installed here (enabled or not) is recorded so it is never offered. */
+function startOffer(candidate, home, now) {
+  if (candidate.state === "candidate" || candidate.reason !== "no provider is installed") markProviderSeen(home, now);
+  return providerOffer(candidate, readProviderInstall(home));
 }
 
 /** Records that a provider was installed here, once; vibe's own install record already counts. */
@@ -1005,15 +1049,18 @@ export function installOfferedProvider({ candidate, connections, clis = {}, env 
 
 /**
  * The binding a session keeps when a chat adopts it. A session keeps the binding it has (a generic session stays
- * generic, a bound one stays bound), except that a provider that was bound but disconnected rebinds when this chat
- * bound the same provider. A session with none takes this chat's, unless it is a provider session from before
+ * generic, a bound one stays bound), except that a provider that was bound but disconnected, or bound with a connection
+ * missing, rebinds when this chat bound the same provider with more capabilities. A session with none takes this chat's, unless it is a provider session from before
  * bindings were recorded and this chat bound nothing: it then waits for a chat that binds, and is never written as
  * generic.
  */
 export function adoptedProvider(session, chat) {
   const current = session?.provider;
+  if (current?.state === ProviderState.Unprobed && chat) return chat;
   if (current) {
-    const rebinds = current.state === "bound-disconnected" && chat?.state === "bound" && chat.name === current.name;
+    const more = (chat?.capabilities?.length ?? 0) > (current.capabilities?.length ?? 0);
+    const partial = current.state === "bound-disconnected" || (current.state === "bound" && (current.missing?.length ?? 0) > 0 && more);
+    const rebinds = partial && chat?.state === "bound" && chat.name === current.name;
     return rebinds ? chat : current;
   }
   if (!chat) return null;

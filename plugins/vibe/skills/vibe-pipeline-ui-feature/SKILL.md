@@ -3,7 +3,9 @@ name: vibe-pipeline-ui-feature
 description: Class pipeline for a vibe session whose triage manifest says ui-feature; internal, loaded by the vibe skill.
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 # vibe-pipeline-ui-feature
 

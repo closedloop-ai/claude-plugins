@@ -5,6 +5,8 @@ model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`. This worker runs only in a session whose provider has the `tickets` capability; with none bound, return `BLOCKED` saying no provider is bound.
+<!-- end provider-rule -->
 
 > Provider `tickets` (block `ticket-worker` of `agents/vibe-ticket-worker.md`)

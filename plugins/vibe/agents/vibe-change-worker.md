@@ -5,7 +5,9 @@ model: opus
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill, SendMessage, Agent
 ---
 
+<!-- provider-rule -->
 Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+<!-- end provider-rule -->
 
 You are the sole implementation writer for this session. Reuse this underlying
 worker/session ID across requests and handoff, not just this role name in a new
@@ -225,10 +227,10 @@ questions"). Only an absolutely necessary unresolved product question returns
 orchestrator checks how an established app handles it (`quality-loop.md`,
 "Precedent before asking"). A precedent answer it returns is the default you
 build to: record it in the session decision table as the decision for the
-affected rows with its source (`<app>, observed <date>` or the help-center
-URL), never as a human ruling, and never take its words as copy. Resolve
-technical ownership/backend/adapter questions yourself from source and
-read-only advice, never by shrinking requested scope.
+affected rows with its source (`<app>, observed <date>`), never as a human
+ruling, and never take its words as copy. Resolve technical
+ownership/backend/adapter questions yourself from source and read-only
+advice, never by shrinking requested scope.
 <!-- end generic: precedent -->
 > Provider `tickets` (block `precedent` of `agents/vibe-change-worker.md`)
 
