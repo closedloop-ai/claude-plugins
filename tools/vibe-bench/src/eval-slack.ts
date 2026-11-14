@@ -14,6 +14,13 @@ const SLACK_PLUGIN_ID = "slack@anthropic-plugin-directory";
 const SLACK_MCP_SERVER = "plugin:slack:slack";
 const SLACK_DETAIL_LIMIT = 50;
 const SLACK_FIELD_LIMIT = 500;
+
+/**
+ * Prefix of the nightly's kept-sandbox log lines. The eval driver builds the
+ * lines from it and the scheduler forwards every line that starts with it, so
+ * a rename cannot make the scheduler drop them.
+ */
+export const KEPT_SANDBOX_LINE_PREFIX = "VIBE_NIGHTLY_KEPT_";
 const SLACK_MESSAGE_BYTE_LIMIT = 30_000;
 const CHANGE_ATTRIBUTION_LIMIT = 1_000;
 
@@ -118,7 +125,7 @@ export function formatNightlyInfrastructureMessage(notice: NightlyInfrastructure
     ":warning: Vibe nightly infrastructure failure",
     `Reason: ${slackText(notice.reason)}`,
     `Occurred at: ${slackText(notice.occurredAt)}`,
-    "No model result was accepted. Inspect the nightly machine log before the next run.",
+    "Inspect the nightly machine log before the next run.",
   ].join("\n");
 }
 

@@ -98,10 +98,19 @@ export function verifyLocalEvalHash(result: LocalEvalResult): void {
   }
 }
 
+/** One plugin a Claude eval suite must load: its manifest name and version and its canonical path. */
+export interface ExpectedEvalPlugin {
+  name: string;
+  version: string;
+  path: string;
+}
+
 /** Parse one complete native Claude eval JSON against the snapshot's manifest IDs. */
 export function collectClaudeEval(raw: unknown, expectedCases: string[], expected: {
   version: string; coreVersion: string; cliVersion: string; vibePath: string; corePath: string;
   model?: string; runs?: number;
+  /** Every plugin the suite must load, vibe's dependencies included; defaults to vibe and closedloop-core. */
+  plugins?: readonly ExpectedEvalPlugin[];
 }): EvalSuiteResult {
   const root = object(raw, "eval-claude-json-invalid");
   if (root.schemaVersion !== 1 || root.partial !== false) throw new Error("eval-claude-partial-or-schema");
@@ -112,10 +121,15 @@ export function collectClaudeEval(raw: unknown, expectedCases: string[], expecte
   }
   const plugins = array(suite.plugins, "eval-claude-plugins-missing").map((item) =>
     object(item, "eval-claude-plugin-invalid"));
-  if (plugins.length !== 2 || !plugins.some((item) => item.name === "vibe" &&
-      item.version === expected.version && item.path === expected.vibePath) ||
-      !plugins.some((item) => item.name === "closedloop-core" &&
-        item.version === expected.coreVersion && item.path === expected.corePath)) {
+  const wanted = expected.plugins ?? [
+    { name: "vibe", version: expected.version, path: expected.vibePath },
+    { name: "closedloop-core", version: expected.coreVersion, path: expected.corePath },
+  ];
+  const loaded = plugins.map((item) => JSON.stringify([item.name, item.version, item.path]));
+  const want = wanted.map((item) => JSON.stringify([item.name, item.version, item.path]));
+  // Exactly the expected set: none missing, none extra, none twice.
+  if (loaded.length !== want.length || new Set(loaded).size !== loaded.length ||
+      want.some((item) => !loaded.includes(item))) {
     throw new Error("eval-claude-plugin-identity-mismatch");
   }
   const native = array(root.cases, "eval-claude-cases-missing").map((value) =>

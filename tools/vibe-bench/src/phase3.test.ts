@@ -26,7 +26,8 @@ import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegression
   preserveClaudeReplies, recoverPendingNightlyPublications,
   runLocalEvals, runT2Evals,
   stageFocusedClaudeEvalCases, unavailableNightlyCases } from "./eval-driver.ts";
-import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
+import { finishNightly, main as runEvalNightly, reportNightlyInfrastructureFailure,
+  SystemNightlyCommands } from "./eval-nightly.ts";
 import { formatNightlyInfrastructureMessage, formatNightlyRegressionMessage, nightlyChangesSince,
   isRetrySafeSlackFailure, SLACK_DELIVERY_TEST_MESSAGE, SlackDeliveryError,
   SlackNightlyRegressionReporter } from "./eval-slack.ts";
@@ -1053,6 +1054,20 @@ test("focused Claude evals stage selected cases with their shared fixtures", () 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+/** The plugins a case manifest's front matter lists, with each one's manifest name, version and real path. */
+function caseManifestPlugins(caseDir: string): Array<{ name: string; version: string; path: string }> | null {
+  const front = readFileSync(join(caseDir, "prompt.md"), "utf8").match(/^---\n([\s\S]*?)\n---/)?.[1];
+  const line = front?.match(/^plugins:[ \t]*(.*)$/m)?.[1];
+  if (line === undefined) return null;
+  return (JSON.parse(line) as string[]).map((entry) => {
+    const path = realpathSync(join(caseDir, entry));
+    const manifest = JSON.parse(readFileSync(join(path, ".claude-plugin/plugin.json"), "utf8")) as {
+      name: string; version: string;
+    };
+    return { name: manifest.name, version: manifest.version, path };
+  });
+}
+
 function claudeNative(vibePath = "/snapshot/vibe", corePath = "/snapshot/core", passed = true,
   caseIds: string[] = [CASE], version = "1.2.3", coreVersion = "1.5.3") {
   return {
@@ -1210,6 +1225,9 @@ class FakeCommands implements EvalCommands {
       }
       const native = claudeNative(vibePath, join(dirname(vibePath),
         "closedloop-core"), true, caseIds, version, coreVersion);
+      // Report what the Claude eval process loads: the plugins the staged case manifest lists.
+      const listed = caseManifestPlugins(join(evalRoot, caseIds[0]!));
+      if (listed) native.suite.plugins = listed;
       if (this.claudeMode === "schema") native.partial = true;
       if (this.claudeMode === "case") native.cases[0]!.name = "pm-substituted-case";
       if (this.writeReplyTraces) {
@@ -1415,55 +1433,70 @@ class DriftingCommands extends FakeCommands {
   }
 }
 
+/**
+ * A committed fixture checkout on main with one ordinary and one stateful case.
+ * With vibeCore, vibe also depends on a vibe-core plugin and the ordinary case
+ * lists the two plugins every real case manifest lists.
+ */
+function createEvalFixtureRepo(root: string, options: { vibeCore?: boolean } = {}): {
+  repo: string; sha: string;
+} {
+  const repo = join(root, "repo");
+  mkdirSync(join(repo, "plugins/vibe/.claude-plugin"), { recursive: true });
+  mkdirSync(join(repo, "plugins/vibe/.codex-plugin"), { recursive: true });
+  mkdirSync(join(repo, "plugins/vibe/agents"), { recursive: true });
+  mkdirSync(join(repo, "plugins/vibe/skills/vibe"), { recursive: true });
+  mkdirSync(join(repo, "plugins/vibe/skills/vibe/scripts"), { recursive: true });
+  mkdirSync(join(repo, `plugins/vibe/evals/${CASE}`), { recursive: true });
+  mkdirSync(join(repo, "plugins/vibe/evals/upgrade-resume-unchanged-definition"), { recursive: true });
+  mkdirSync(join(repo, "plugins/vibe/evals/codex"), { recursive: true });
+  mkdirSync(join(repo, "plugins/closedloop-core/.claude-plugin"), { recursive: true });
+  writeFileSync(join(repo, "plugins/vibe/.claude-plugin/plugin.json"), JSON.stringify({
+    name: "vibe", version: "1.2.3",
+    dependencies: options.vibeCore ? ["closedloop-core", "vibe-core"] : ["closedloop-core"],
+  }));
+  if (options.vibeCore) writeFixturePlugin(join(repo, "plugins"), "vibe-core", "1.0.0");
+  writeFileSync(join(repo, "plugins/vibe/.codex-plugin/plugin.json"), JSON.stringify({
+    name: "vibe", version: "1.2.3", skills: "./skills/",
+  }));
+  writeFileSync(join(repo, "plugins/closedloop-core/.claude-plugin/plugin.json"), JSON.stringify({
+    name: "closedloop-core", version: "1.5.3",
+  }));
+  writeFileSync(join(repo, "plugins/vibe/agents/vibe-change-worker.md"),
+    "---\nname: vibe-change-worker\nmodel: opus\n---\n");
+  writeFileSync(join(repo, "plugins/vibe/skills/vibe/SKILL.md"), "fixture skill\n");
+  for (const name of ["tested-head.mjs", "session-record.mjs"]) {
+    // The identity helper's code lives in vibe-core; the fixture places its bytes where the driver runs it.
+    cpSync(join(import.meta.dirname, `../../../plugins/vibe-core/lib/vibe/scripts/${name}`),
+      join(repo, `plugins/vibe/skills/vibe/scripts/${name}`));
+  }
+  writeFileSync(join(repo, `plugins/vibe/evals/${CASE}/prompt.md`), options.vibeCore
+    ? "---\nplugins: [\"../..\", \"../../../closedloop-core\"]\ntags: []\n---\n/vibe:vibe\nfixture\n"
+    : "---\ntags: []\n---\n/vibe:vibe\nfixture\n");
+  writeFileSync(join(repo, "plugins/vibe/evals/upgrade-resume-unchanged-definition/case.yaml"),
+    JSON.stringify({ schemaVersion: 1, kind: "upgrade-resume", skill: "vibe", deterministic: true,
+      definition: "unchanged", nightlyPrior: { version: "1.1.24", ref: "b".repeat(40),
+        writerDigestSha256: "c".repeat(64) },
+      transitions: [
+        { target: { version: "1.1.23", ref: "c".repeat(40) },
+          prior: { version: "1.1.22", ref: "d".repeat(40) } },
+        { target: { version: "1.1.25", ref: "a".repeat(40) },
+          prior: { version: "1.1.24", ref: "b".repeat(40) } },
+      ] }));
+  writeFileSync(join(repo, "plugins/vibe/evals/codex/run.py"), "# fixture\n");
+  execFileSync("git", ["init", "-b", "main", repo], { stdio: "ignore" });
+  execFileSync("git", ["-C", repo, "add", "."]);
+  execFileSync("git", ["-C", repo, "-c", "user.name=fixture", "-c",
+    "user.email=fixture@invalid.local", "commit", "-m", "fixture"], { stdio: "ignore" });
+  const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", sha]);
+  return { repo, sha };
+}
+
 test("local driver snapshots one committed tree and writes one immutable dual-runtime result", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-eval-driver-")));
   try {
-    const repo = join(root, "repo");
-    mkdirSync(join(repo, "plugins/vibe/.claude-plugin"), { recursive: true });
-    mkdirSync(join(repo, "plugins/vibe/.codex-plugin"), { recursive: true });
-    mkdirSync(join(repo, "plugins/vibe/agents"), { recursive: true });
-    mkdirSync(join(repo, "plugins/vibe/skills/vibe"), { recursive: true });
-    mkdirSync(join(repo, "plugins/vibe/skills/vibe/scripts"), { recursive: true });
-    mkdirSync(join(repo, `plugins/vibe/evals/${CASE}`), { recursive: true });
-    mkdirSync(join(repo, "plugins/vibe/evals/upgrade-resume-unchanged-definition"), { recursive: true });
-    mkdirSync(join(repo, "plugins/vibe/evals/codex"), { recursive: true });
-    mkdirSync(join(repo, "plugins/closedloop-core/.claude-plugin"), { recursive: true });
-    writeFileSync(join(repo, "plugins/vibe/.claude-plugin/plugin.json"), JSON.stringify({
-      name: "vibe", version: "1.2.3", dependencies: ["closedloop-core"],
-    }));
-    writeFileSync(join(repo, "plugins/vibe/.codex-plugin/plugin.json"), JSON.stringify({
-      name: "vibe", version: "1.2.3", skills: "./skills/",
-    }));
-    writeFileSync(join(repo, "plugins/closedloop-core/.claude-plugin/plugin.json"), JSON.stringify({
-      name: "closedloop-core", version: "1.5.3",
-    }));
-    writeFileSync(join(repo, "plugins/vibe/agents/vibe-change-worker.md"),
-      "---\nname: vibe-change-worker\nmodel: opus\n---\n");
-    writeFileSync(join(repo, "plugins/vibe/skills/vibe/SKILL.md"), "fixture skill\n");
-    for (const name of ["tested-head.mjs", "session-record.mjs"]) {
-      // The identity helper's code lives in vibe-core; the fixture places its bytes where the driver runs it.
-      cpSync(join(import.meta.dirname, `../../../plugins/vibe-core/lib/vibe/scripts/${name}`),
-        join(repo, `plugins/vibe/skills/vibe/scripts/${name}`));
-    }
-    writeFileSync(join(repo, `plugins/vibe/evals/${CASE}/prompt.md`),
-      "---\ntags: []\n---\n/vibe:vibe\nfixture\n");
-    writeFileSync(join(repo, "plugins/vibe/evals/upgrade-resume-unchanged-definition/case.yaml"),
-      JSON.stringify({ schemaVersion: 1, kind: "upgrade-resume", skill: "vibe", deterministic: true,
-        definition: "unchanged", nightlyPrior: { version: "1.1.24", ref: "b".repeat(40),
-          writerDigestSha256: "c".repeat(64) },
-        transitions: [
-          { target: { version: "1.1.23", ref: "c".repeat(40) },
-            prior: { version: "1.1.22", ref: "d".repeat(40) } },
-          { target: { version: "1.1.25", ref: "a".repeat(40) },
-            prior: { version: "1.1.24", ref: "b".repeat(40) } },
-        ] }));
-    writeFileSync(join(repo, "plugins/vibe/evals/codex/run.py"), "# fixture\n");
-    execFileSync("git", ["init", "-b", "main", repo], { stdio: "ignore" });
-    execFileSync("git", ["-C", repo, "add", "."]);
-    execFileSync("git", ["-C", repo, "-c", "user.name=fixture", "-c",
-      "user.email=fixture@invalid.local", "commit", "-m", "fixture"], { stdio: "ignore" });
-    const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", sha]);
+    const { repo, sha } = createEvalFixtureRepo(root);
     const commands = new FakeCommands(true);
     const statefulRunner = new FakeStatefulRunner();
     const output = await runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "run"),
@@ -1645,4 +1678,740 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     /benchmark-plugin-checkout-dirty|eval-t2-main-snapshot-invalid/);
     assert.equal(existsSync(join(driftStore, "eval-t2-latest.json")), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+/**
+ * Driver exports that the base driver of the today-code proof lacks. That proof
+ * runs this file against the base eval-driver.ts; a static import of these names
+ * would stop the whole file loading there, so these tests load them on use.
+ */
+async function laterDriverExports() {
+  return await import("./eval-driver.ts");
+}
+
+// The Claude eval process names its sandbox e-<id> on macOS and claude-eval-<id> elsewhere.
+const SANDBOX_PREFIX = process.platform === "darwin" ? "e-" : "claude-eval-";
+const OTHER_PLATFORM_SANDBOX_PREFIX = process.platform === "darwin" ? "claude-eval-" : "e-";
+
+/** One line of the Claude eval process's real kept-sandbox notice. */
+function keptSandboxNotice(root: string): string {
+  return `\u26A0 kept ${root}: home/ and tmp/ in it were written by the plugin under test and are ` +
+    `sealed in ${root}/sealed (mode 000; the kept directory is read-only) \u2014 open them with ` +
+    `\`chmod 700 ${root} ${root}/sealed\` to inspect, and do not run git (or anything that loads ` +
+    "configuration from its working directory) anywhere inside the kept directory";
+}
+
+/** Build a kept sandbox the way the Claude eval process leaves one: read-only, with a sealed tree. */
+function sealKeptSandbox(root: string): void {
+  mkdirSync(join(root, "out"), { recursive: true });
+  writeFileSync(join(root, "out", "trace.jsonl"),
+    `${JSON.stringify({ type: "result", result: "fixture final reply" })}\n`);
+  mkdirSync(join(root, "sealed", "home"), { recursive: true });
+  writeFileSync(join(root, "sealed", "home", "written-by-plugin"), "fixture\n");
+  chmodSync(join(root, "sealed"), 0o000);
+  chmodSync(root, 0o500);
+}
+
+/** Remove a test root whose kept-parent folder may still hold read-only sandboxes. */
+function removeKeptSandboxFixture(root: string): void {
+  const parent = join(root, "kept-parent");
+  if (existsSync(parent)) chmodSync(parent, 0o700);
+  if (existsSync(join(root, "outside-target"))) chmodSync(join(root, "outside-target"), 0o700);
+  const entries = existsSync(parent) ? readdirSync(parent, { withFileTypes: true }) : [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    chmodSync(join(parent, entry.name), 0o700);
+    if (existsSync(join(parent, entry.name, "sealed"))) {
+      chmodSync(join(parent, entry.name, "sealed"), 0o700);
+    }
+  }
+  rmSync(root, { recursive: true, force: true });
+}
+
+type KeptSandboxMode = "reported" | "unreported" | "older" | "symlink" | "mid-line" |
+  "other-platform-name" | "link-to-outside" | "cannot-remove";
+
+/** A Claude eval process that keeps its sandboxes outside the TMPDIR it was given. */
+class KeptSandboxCommands extends FakeCommands {
+  override readonly providesClaudeTraceArtifacts = true;
+  readonly sandboxes: string[] = [];
+  passedTmpdir: string | null = null;
+  private readonly parent: string;
+  private readonly mode: KeptSandboxMode;
+  private readonly olderSandbox: string | null;
+  constructor(parent: string, mode: KeptSandboxMode, olderSandbox: string | null = null) {
+    super();
+    this.parent = parent;
+    this.mode = mode;
+    this.olderSandbox = olderSandbox;
+  }
+  override async run(command: string, args: string[], cwd?: string, options?: {
+    deadline: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv;
+  }): Promise<{ status: number; stdout: string; stderr: string }> {
+    const result = await super.run(command, args, cwd, options);
+    if (!command.includes("claude") || !args.includes("--json")) return result;
+    this.passedTmpdir = options?.env?.TMPDIR ?? null;
+    const resultFile = args[args.indexOf("--json") + 1]!;
+    const native = JSON.parse(readFileSync(resultFile, "utf8")) as {
+      cases: Array<{ arms: { with: Array<{ tracePath: string }> } }>;
+    };
+    const notices: string[] = [];
+    for (const item of native.cases) {
+      let root: string;
+      if (this.mode === "older") {
+        root = this.olderSandbox!;
+      } else if (this.mode === "symlink") {
+        const target = mkdtempSync(join(this.parent, "target-"));
+        sealKeptSandbox(target);
+        root = join(this.parent, `${SANDBOX_PREFIX}linked`);
+        symlinkSync(target, root);
+      } else if (this.mode === "link-to-outside") {
+        const outside = join(dirname(this.parent), "outside-target");
+        mkdirSync(outside);
+        writeFileSync(join(outside, "keep"), "outside content\n");
+        chmodSync(join(outside, "keep"), 0o400);
+        chmodSync(outside, 0o500);
+        root = mkdtempSync(join(this.parent, SANDBOX_PREFIX));
+        mkdirSync(join(root, "out"));
+        symlinkSync(outside, join(root, "out", "escape"));
+        sealKeptSandbox(root);
+      } else {
+        root = mkdtempSync(join(this.parent, this.mode === "other-platform-name"
+          ? OTHER_PLATFORM_SANDBOX_PREFIX : SANDBOX_PREFIX));
+        sealKeptSandbox(root);
+        // A parent that refuses changes keeps even a proven sandbox in place.
+        if (this.mode === "cannot-remove") chmodSync(this.parent, 0o500);
+      }
+      this.sandboxes.push(root);
+      item.arms.with[0]!.tracePath = join(root, "out", "trace.jsonl");
+      if (this.mode === "mid-line") notices.push(`note: ${keptSandboxNotice(root)}`);
+      else if (this.mode !== "unreported") notices.push(keptSandboxNotice(root));
+    }
+    writeFileSync(resultFile, JSON.stringify(native));
+    return { ...result, stderr: notices.map((line) => `${line}\n`).join("") };
+  }
+}
+
+async function runWithKeptSandboxes(root: string, mode: KeptSandboxMode,
+  olderSandbox: string | null = null) {
+  const sha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const parent = join(root, "kept-parent");
+  if (!existsSync(parent)) mkdirSync(parent);
+  const commands = new KeptSandboxCommands(parent, mode, olderSandbox);
+  const runRoot = join(root, "run");
+  const output = await runLocalEvals({ repo: REPO_ROOT, pluginSha: sha, runRoot,
+    outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
+    codexExecutable: "fixture-codex", uvExecutable: "fixture-uv", snapshotMode: "worktree",
+    selectedCases: [CASE], runtimes: ["claude", "codex"] }, commands);
+  return { output, commands, runRoot,
+    claude: output.result.runtimes.find((item) => item.runtime === "claude")! };
+}
+
+test("ISS-14142 AC-1 AC-2 AC-3 a kept sandbox the Claude process reported outside TMPDIR is accepted, then removed", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-reported-")));
+  try {
+    const { output, commands, runRoot, claude } = await runWithKeptSandboxes(root, "reported");
+    assert.equal(commands.sandboxes.length, 1);
+    const sandbox = commands.sandboxes[0]!;
+    assert.equal(commands.passedTmpdir, join(runRoot, "claude-temp"));
+    assert.equal(sandbox.startsWith(`${commands.passedTmpdir}/`), false,
+      "the real layout keeps the sandbox outside the TMPDIR the driver passed");
+    assert.equal(claude.invalidReason, null);
+    assert.ok(claude.result, "the Claude runtime result is accepted");
+    assert.equal(readFileSync(join(runRoot, "claude", codexCaseId(CASE), "reply.txt"), "utf8"),
+      "fixture final reply\n");
+    assert.equal(existsSync(sandbox), false, "the proven kept sandbox is removed");
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 1, remaining: [] });
+    assert.equal(existsSync(join(runRoot, "claude-temp")), false);
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 AC-3 a sandbox the Claude process did not report is refused and left in place", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-unreported-")));
+  try {
+    const { output, commands, runRoot, claude } = await runWithKeptSandboxes(root, "unreported");
+    const sandbox = commands.sandboxes[0]!;
+    assert.equal(claude.invalidReason, "eval-claude-reply-trace-path-invalid");
+    assert.equal(claude.result, null);
+    assert.equal(existsSync(join(runRoot, "claude", codexCaseId(CASE), "reply.txt")), false);
+    assert.equal(statSync(sandbox).isDirectory(), true, "an unreported folder is never removed");
+    assert.deepEqual(output.claudeKeptFolders, { reported: 0, removed: 0, remaining: [] });
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 AC-3 a kept notice that does not start its line reports nothing", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-mid-line-")));
+  try {
+    const { output, commands, claude } = await runWithKeptSandboxes(root, "mid-line");
+    assert.equal(claude.invalidReason, "eval-claude-reply-trace-path-invalid");
+    assert.equal(statSync(commands.sandboxes[0]!).isDirectory(), true);
+    assert.deepEqual(output.claudeKeptFolders, { reported: 0, removed: 0, remaining: [] });
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 AC-3 a reported sandbox older than the run is refused, kept and never named", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-older-")));
+  try {
+    mkdirSync(join(root, "kept-parent"));
+    const older = mkdtempSync(join(root, "kept-parent", SANDBOX_PREFIX));
+    sealKeptSandbox(older);
+    // The run's own temp folder must be measurably newer than this sandbox.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const { output, claude } = await runWithKeptSandboxes(root, "older", older);
+    assert.equal(claude.invalidReason, "eval-claude-reply-trace-path-invalid");
+    assert.equal(statSync(older).isDirectory(), true, "a folder from before the run is never removed");
+    assert.equal(statSync(older).mode & 0o777, 0o500, "an unproven folder keeps its modes");
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 0, remaining: [] });
+    const { keptSandboxLogLines } = await laterDriverExports();
+    assert.deepEqual(keptSandboxLogLines(output.claudeKeptFolders),
+      ["VIBE_NIGHTLY_KEPT_SANDBOXES runtime=claude reported=1 removed=0 remaining=0"],
+      "a folder the run cannot prove is counted as reported and its path is not printed");
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 AC-3 a reported symlink to a sandbox is refused and neither link nor target is removed", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-symlink-")));
+  try {
+    const { output, commands, claude } = await runWithKeptSandboxes(root, "symlink");
+    const link = commands.sandboxes[0]!;
+    const target = realpathSync(link);
+    assert.notEqual(target, link);
+    assert.equal(claude.invalidReason, "eval-claude-reply-trace-path-invalid");
+    assert.equal(statSync(target).mode & 0o777, 0o500, "the link's target keeps its modes");
+    assert.equal(existsSync(join(target, "out", "trace.jsonl")), true);
+    assert.equal(realpathSync(link), target, "the link itself is left in place");
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 0, remaining: [] });
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 AC-3 a sandbox named for the other platform is refused and left in place", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-other-name-")));
+  try {
+    const { output, commands, claude } = await runWithKeptSandboxes(root, "other-platform-name");
+    assert.equal(claude.invalidReason, "eval-claude-reply-trace-path-invalid");
+    assert.equal(statSync(commands.sandboxes[0]!).mode & 0o777, 0o500);
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 0, remaining: [] });
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 the sandbox name is e-<id> on macOS and claude-eval-<id> elsewhere", async () => {
+  const { isClaudeSandboxName } = await laterDriverExports();
+  assert.equal(isClaudeSandboxName("e-2NfSlf", "darwin"), true);
+  assert.equal(isClaudeSandboxName("claude-eval-2NfSlf", "darwin"), false);
+  assert.equal(isClaudeSandboxName("claude-eval-2NfSlf", "linux"), true);
+  assert.equal(isClaudeSandboxName("e-2NfSlf", "linux"), false);
+  for (const platform of ["darwin", "linux"] as const) {
+    const prefix = platform === "darwin" ? "e-" : "claude-eval-";
+    for (const id of ["2NfSl", "2NfSlf7", "2Nf_lf", "2Nf-lf", "", "2NfSlf/x"]) {
+      assert.equal(isClaudeSandboxName(`${prefix}${id}`, platform), false, `${platform} ${id}`);
+    }
+    assert.equal(isClaudeSandboxName(`x${prefix}2NfSlf`, platform), false);
+  }
+});
+
+test("ISS-14142 AC-3 removal does not follow a link inside a proven sandbox that points outside it", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-link-outside-")));
+  try {
+    const { output, commands, claude } = await runWithKeptSandboxes(root, "link-to-outside");
+    const outside = join(root, "outside-target");
+    assert.equal(claude.invalidReason, null);
+    assert.equal(existsSync(commands.sandboxes[0]!), false, "the proven sandbox and its link are removed");
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 1, remaining: [] });
+    assert.equal(statSync(outside).mode & 0o777, 0o500, "the link's target keeps its mode");
+    assert.equal(statSync(join(outside, "keep")).mode & 0o777, 0o400);
+    assert.equal(readFileSync(join(outside, "keep"), "utf8"), "outside content\n");
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-3 a proven sandbox that cannot be removed is counted and named as remaining", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-cannot-remove-")));
+  try {
+    const { output, commands, claude } = await runWithKeptSandboxes(root, "cannot-remove");
+    const sandbox = commands.sandboxes[0]!;
+    assert.equal(claude.invalidReason, null);
+    assert.equal(statSync(sandbox).isDirectory(), true);
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 0, remaining: [sandbox] });
+    const { keptSandboxLogLines } = await laterDriverExports();
+    assert.deepEqual(keptSandboxLogLines(output.claudeKeptFolders), [
+      "VIBE_NIGHTLY_KEPT_SANDBOXES runtime=claude reported=1 removed=0 remaining=1",
+      `VIBE_NIGHTLY_KEPT_SANDBOX_REMAINING path=${sandbox}`,
+    ]);
+    assert.deepEqual(keptSandboxLogLines({ reported: 121, removed: 121, remaining: [] }),
+      ["VIBE_NIGHTLY_KEPT_SANDBOXES runtime=claude reported=121 removed=121 remaining=0"]);
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 a kept sandbox trace is read only at its exact path under a proven folder", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-exact-")));
+  const reply = { type: "result", result: "kept reply" };
+  const item = (name: string, tracePath: string) => ({ name, arms: { with: [{ tracePath }] } });
+  const write = (file: string): string => {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(reply)}\n`);
+    return file;
+  };
+  try {
+    const runTemp = join(root, "claude-temp");
+    mkdirSync(runTemp);
+    const kept = join(root, "elsewhere", "e-kept");
+    const exact = write(join(kept, "out", "trace.jsonl"));
+    for (const name of ["accepted", "unlisted", "nested", "sibling", "linked"]) {
+      mkdirSync(join(root, name));
+    }
+    preserveClaudeReplies({ cases: [item("pm-missing-tests-host-adapters", exact)] },
+      join(root, "accepted"), ["pm-missing-tests-host-adapters"], runTemp, [kept]);
+    assert.equal(readFileSync(join(root, "accepted",
+      "product-manager-missing-tests-host-adapters", "reply.txt"), "utf8"), "kept reply\n");
+
+    assert.throws(() => preserveClaudeReplies({
+      cases: [item("pm-missing-tests-host-adapters", exact)],
+    }, join(root, "unlisted"), ["pm-missing-tests-host-adapters"], runTemp, []),
+    /^Error: eval-claude-reply-trace-path-invalid$/);
+
+    const nested = write(join(kept, "extra", "out", "trace.jsonl"));
+    assert.throws(() => preserveClaudeReplies({
+      cases: [item("pm-missing-tests-host-adapters", nested)],
+    }, join(root, "nested"), ["pm-missing-tests-host-adapters"], runTemp, [kept]),
+    /^Error: eval-claude-reply-trace-path-invalid$/);
+
+    const sibling = write(join(root, "elsewhere", "e-kept-other", "out", "trace.jsonl"));
+    assert.throws(() => preserveClaudeReplies({
+      cases: [item("pm-missing-tests-host-adapters", sibling)],
+    }, join(root, "sibling"), ["pm-missing-tests-host-adapters"], runTemp, [kept]),
+    /^Error: eval-claude-reply-trace-path-invalid$/);
+
+    const linkedRoot = join(root, "elsewhere", "e-linked");
+    mkdirSync(join(linkedRoot, "out"), { recursive: true });
+    symlinkSync(exact, join(linkedRoot, "out", "trace.jsonl"));
+    assert.throws(() => preserveClaudeReplies({
+      cases: [item("pm-missing-tests-host-adapters", join(linkedRoot, "out", "trace.jsonl"))],
+    }, join(root, "linked"), ["pm-missing-tests-host-adapters"], runTemp, [linkedRoot]),
+    /^Error: eval-claude-reply-trace-path-invalid$/);
+    for (const name of ["unlisted", "nested", "sibling", "linked"]) {
+      assert.deepEqual(readdirSync(join(root, name)), [], `${name} wrote no reply`);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-14142 AC-4 the baseline reason and the alert name the rejected runtime and its reason", () => {
+  const sha = "a".repeat(40);
+  const catalog = [{ id: "case-a", skill: "vibe" as const, contentHash: "a".repeat(64) }];
+  const complete = comparisonEval(sha, { "case-a": true });
+  const rejecting = (runtime: EvalRuntime, invalidReason: string, keepResult = false) =>
+    finalizeLocalEval({ pluginSha: sha, createdAt: complete.createdAt, wallMs: complete.wallMs,
+      deterministicOnly: false, selectedCases: complete.selectedCases,
+      runtimes: complete.runtimes.map((item) => item.runtime !== runtime ? item
+        : { runtime, exitCode: 1, result: keepResult ? item.result : null, invalidReason }) });
+  const reasonOf = (result: LocalEvalResult): string => {
+    try { buildEvalBaseline({ results: [result], catalog, pluginVersion: "1.2.3" }); }
+    catch (error) { return error instanceof Error ? error.message : String(error); }
+    return "no error";
+  };
+  assert.equal(reasonOf(complete), "no error");
+  assert.equal(reasonOf(rejecting("claude", "eval-claude-reply-trace-path-invalid")),
+    "eval-baseline-runtime-incomplete:claude:eval-claude-reply-trace-path-invalid");
+  assert.equal(reasonOf(rejecting("codex", "eval-codex-artifact-invalid")),
+    "eval-baseline-runtime-incomplete:codex:eval-codex-artifact-invalid");
+  assert.equal(reasonOf(rejecting("claude", "eval-stateful-infrastructure:AUTH_UNAVAILABLE:case-a", true)),
+    "eval-baseline-runtime-incomplete:claude:eval-stateful-infrastructure:auth-unavailable:case-a",
+    "a stateful infrastructure reason is folded to one forwardable token, code included");
+  assert.equal(reasonOf(rejecting("claude", "eval-claude-x\nReason: injected <!here>")),
+    "eval-baseline-runtime-incomplete:claude",
+    "a reason with any other character is left out, the runtime stays");
+  const forwarded = /(?:eval|benchmark)-[a-z0-9:-]+/.exec(
+    `Error: ${reasonOf(rejecting("claude", "eval-claude-reply-trace-path-invalid"))}\n    at stack`)?.[0];
+  assert.equal(forwarded, "eval-baseline-runtime-incomplete:claude:eval-claude-reply-trace-path-invalid");
+  assert.equal(formatNightlyInfrastructureMessage({ reason: forwarded!,
+    occurredAt: "2026-11-13T00:00:00Z" }), [
+    ":warning: Vibe nightly infrastructure failure",
+    "Reason: eval-baseline-runtime-incomplete:claude:eval-claude-reply-trace-path-invalid",
+    "Occurred at: 2026-11-13T00:00:00Z",
+    "Inspect the nightly machine log before the next run.",
+  ].join("\n"));
+});
+
+/** The Codex launch is rejected only after the Claude process has returned. */
+class CodexRejectedAfterClaudeCommands extends KeptSandboxCommands {
+  private releaseCodex: () => void = () => {};
+  private readonly claudeReturned = new Promise<void>((resolve) => { this.releaseCodex = resolve; });
+  constructor(parent: string) { super(parent, "reported"); }
+  override async run(command: string, args: string[], cwd?: string, options?: {
+    deadline: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv;
+  }): Promise<{ status: number; stdout: string; stderr: string }> {
+    if (args.length === 1 && args[0] === "--version") return await super.run(command, args, cwd, options);
+    if (command.includes("claude")) {
+      const result = await super.run(command, args, cwd, options);
+      this.releaseCodex();
+      return result;
+    }
+    await this.claudeReturned;
+    throw new Error("fixture codex launch rejected after claude returned");
+  }
+}
+
+test("ISS-14142 AC-3 kept sandboxes of a finished Claude process are removed and counted when the Codex launch is rejected", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-codex-rejected-")));
+  try {
+    const sha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    mkdirSync(join(root, "kept-parent"));
+    const commands = new CodexRejectedAfterClaudeCommands(join(root, "kept-parent"));
+    const kept: Array<{ reported: number; removed: number; remaining: string[] }> = [];
+    await assert.rejects(() => runLocalEvals({ repo: REPO_ROOT, pluginSha: sha,
+      runRoot: join(root, "run"), outputDir: join(root, "results"),
+      claudeExecutable: "fixture-claude", codexExecutable: "fixture-codex",
+      uvExecutable: "fixture-uv", snapshotMode: "worktree", selectedCases: [CASE],
+      runtimes: ["claude", "codex"],
+      onClaudeKeptFolders: (item) => { kept.push(item); } }, commands),
+    /fixture codex launch rejected after claude returned/);
+    assert.equal(commands.sandboxes.length, 1, "the Claude process returned and kept one sandbox");
+    assert.equal(existsSync(commands.sandboxes[0]!), false, "its proven sandbox is still removed");
+    assert.deepEqual(kept, [{ reported: 1, removed: 1, remaining: [] }]);
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+/** The first Claude eval fails its case, so the nightly runs one Claude retry; each keeps one sandbox. */
+class FailFirstClaudeKeptCommands extends KeptSandboxCommands {
+  private claudeEvals = 0;
+  constructor(parent: string) { super(parent, "reported"); }
+  override async run(command: string, args: string[], cwd?: string, options?: {
+    deadline: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv;
+  }): Promise<{ status: number; stdout: string; stderr: string }> {
+    const result = await super.run(command, args, cwd, options);
+    if (!command.includes("claude") || !args.includes("--json")) return result;
+    this.claudeEvals += 1;
+    if (this.claudeEvals !== 1) return result;
+    const resultFile = args[args.indexOf("--json") + 1]!;
+    const native = JSON.parse(readFileSync(resultFile, "utf8")) as {
+      cases: Array<{ arms: { with: Array<{ passed: boolean; graders: Array<{ passed: boolean }> }> } }>;
+      aggregates: { casesPassed: number };
+    };
+    for (const item of native.cases) {
+      item.arms.with[0]!.passed = false;
+      item.arms.with[0]!.graders[0]!.passed = false;
+    }
+    native.aggregates.casesPassed = 0;
+    writeFileSync(resultFile, JSON.stringify(native));
+    return { ...result, status: 1 };
+  }
+}
+
+test("ISS-14142 AC-3 the nightly prints the kept sandbox lines once, summed across its runs", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-nightly-")));
+  try {
+    const { repo, sha } = createEvalFixtureRepo(root);
+    mkdirSync(join(root, "kept-parent"));
+    const commands = new FailFirstClaudeKeptCommands(join(root, "kept-parent"));
+    const written: string[] = [];
+    const nightly = await runT2Evals({ repo, pluginSha: sha, runRoot: join(root, "t2"),
+      outputDir: join(root, "store"), claudeExecutable: "fixture-claude",
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv", ghExecutable: "fixture-gh",
+      statefulRunner: new FakeStatefulRunner() }, commands, { report: async () => {} },
+    (text) => { written.push(text); });
+    assert.equal(commands.calls.filter((call) => call.args.includes("--eval-dir")).length, 2,
+      "the failed case ran once more, so two Claude evals each kept a sandbox");
+    assert.equal(commands.sandboxes.length, 2);
+    assert.deepEqual(commands.sandboxes.map((sandbox) => existsSync(sandbox)), [false, false]);
+    assert.deepEqual(written,
+      ["VIBE_NIGHTLY_KEPT_SANDBOXES runtime=claude reported=2 removed=2 remaining=0\n"]);
+    assert.deepEqual(nightly.claudeKeptFolders, { reported: 2, removed: 2, remaining: [] });
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-3 a failed nightly child still gets its kept sandbox lines into the log and keeps its reason", async () => {
+  const kept = "VIBE_NIGHTLY_KEPT_SANDBOXES runtime=claude reported=2 removed=1 remaining=1";
+  const remaining = "VIBE_NIGHTLY_KEPT_SANDBOX_REMAINING path=/tmp/claude-eval-abc123";
+  const reason = "eval-baseline-runtime-incomplete:claude:eval-claude-reply-trace-path-invalid";
+  const child = (exitCode: number) => [
+    `process.stdout.write(${JSON.stringify(`${kept}\n${remaining}\nanother stdout line\n/store/eval-t2.json\n`)});`,
+    `process.stderr.write(${JSON.stringify(`Error: ${reason}\n`)});`,
+    `process.exitCode = ${exitCode};`,
+  ].join("\n");
+  const forwarded: string[] = [];
+  const commands = new SystemNightlyCommands((text) => { forwarded.push(text); });
+  await assert.rejects(() => commands.node(["-e", child(1)]),
+    (error: unknown) => error instanceof Error && error.message === reason);
+  assert.deepEqual(forwarded, [`${kept}\n`, `${remaining}\n`],
+    "only the kept sandbox lines are forwarded, each once, unchanged");
+  forwarded.length = 0;
+  assert.equal(await commands.node(["-e", child(0)]),
+    `${kept}\n${remaining}\nanother stdout line\n/store/eval-t2.json`);
+  assert.deepEqual(forwarded, [],
+    "a child that succeeded returns its output whole; nothing is printed a second time");
+});
+
+test("ISS-14142 AC-4 a stateful infrastructure rejection reaches the alert with its code", async () => {
+  const sha = "a".repeat(40);
+  const catalog = [{ id: "case-a", skill: "vibe" as const, contentHash: "a".repeat(64) }];
+  const complete = comparisonEval(sha, { "case-a": true });
+  const rejected = finalizeLocalEval({ pluginSha: sha, createdAt: complete.createdAt,
+    wallMs: complete.wallMs, deterministicOnly: false, selectedCases: complete.selectedCases,
+    runtimes: complete.runtimes.map((item) => item.runtime !== "claude" ? item
+      : { ...item, exitCode: 1, invalidReason: "eval-stateful-infrastructure:TIMEOUT:case-a" }) });
+  let message = "no error";
+  try { buildEvalBaseline({ results: [rejected], catalog, pluginVersion: "1.2.3" }); }
+  catch (error) { message = error instanceof Error ? error.message : String(error); }
+  // The scheduler reads the reason from a failed child's stderr through its real forwarder.
+  const child = [`process.stderr.write(${JSON.stringify(`Error: ${message}\n    at stack\n`)});`,
+    "process.exitCode = 1;"].join("\n");
+  let forwarded = "";
+  await assert.rejects(() => new SystemNightlyCommands(() => {}).node(["-e", child]),
+    (error: unknown) => { forwarded = error instanceof Error ? error.message : ""; return true; });
+  assert.equal(forwarded,
+    "eval-baseline-runtime-incomplete:claude:eval-stateful-infrastructure:timeout:case-a");
+  assert.match(formatNightlyInfrastructureMessage({ reason: forwarded,
+    occurredAt: "2026-11-13T00:00:00Z" }),
+  /^Reason: eval-baseline-runtime-incomplete:claude:eval-stateful-infrastructure:timeout:case-a$/m);
+});
+
+test("ISS-14142 AC-3 a nightly whose publish step fails still logs its kept sandbox lines once", async () => {
+  const kept = "VIBE_NIGHTLY_KEPT_SANDBOXES runtime=claude reported=2 removed=1 remaining=1";
+  const remaining = "VIBE_NIGHTLY_KEPT_SANDBOX_REMAINING path=/tmp/claude-eval-abc123";
+  const output = `VIBE_NIGHTLY_CASE_UNAVAILABLE runtime=codex case=c reason=r\n${kept}\n${remaining}\n` +
+    "/store/eval-t2-1.2.3-aaaaaaaaaaaa-bbbbbbbbbbbb.json";
+  const args = ["/repo", "/runs", "/store", "/claude", "/codex", "/uv", "/gh"];
+  const written: string[] = [];
+  const published: string[] = [];
+  await assert.rejects(() => finishNightly(output, args, "2026-11-13T00:00:00Z",
+    async (received) => { published.push(received); throw new Error("eval-publish-gh-failed"); },
+    (text) => { written.push(text); }),
+  (error: unknown) => error instanceof Error && error.message === "eval-publish-gh-failed");
+  assert.deepEqual(published, [output], "the publish step reads the child's output unchanged");
+  assert.deepEqual(written, [`${kept}\n`, `${remaining}\n`]);
+
+  written.length = 0;
+  await finishNightly(output, args, "2026-11-13T00:00:00Z", async () => "VIBE_NIGHTLY_PUBLISH_NONE",
+    (text) => { written.push(text); });
+  assert.deepEqual(written, [`${kept}\n`, `${remaining}\n`,
+    "VIBE_NIGHTLY_PUBLISH_NONE\nVIBE_NIGHTLY_CASE_UNAVAILABLE runtime=codex case=c reason=r\n" +
+      "/store/eval-t2-1.2.3-aaaaaaaaaaaa-bbbbbbbbbbbb.json\n"],
+  "on success each kept line is printed once and the rest of the output follows the publication");
+});
+
+/**
+ * Both runtimes fail their first eval, so both retry. The Codex retry is
+ * rejected while the Claude retry is still running.
+ *
+ * Between the Codex retry's rejection and a driver that stops waiting
+ * printing its count, the driver does only synchronous work and promise
+ * steps, so one turn of the event loop (setImmediate) is enough for such a
+ * driver to have printed. No fixed sleep is needed in either direction.
+ */
+function nextEventLoopTurn(): Promise<void> {
+  return new Promise((resolve) => { setImmediate(resolve); });
+}
+
+class SiblingRetryRejectedCommands extends FailFirstClaudeKeptCommands {
+  private claudeEvalCalls = 0;
+  private codexEvalCalls = 0;
+  private codexRetryRejected: () => void = () => {};
+  private readonly codexRejected = new Promise<void>((resolve) => { this.codexRetryRejected = resolve; });
+  private claudeRetryEnded: () => void = () => {};
+  readonly claudeRetryDone = new Promise<void>((resolve) => { this.claudeRetryEnded = resolve; });
+  override async run(command: string, args: string[], cwd?: string, options?: {
+    deadline: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv;
+  }): Promise<{ status: number; stdout: string; stderr: string }> {
+    const isEval = !(args.length === 1 && args[0] === "--version");
+    if (isEval && command.includes("claude")) {
+      const call = ++this.claudeEvalCalls;
+      if (call !== 2) return await super.run(command, args, cwd, options);
+      await this.codexRejected;
+      await nextEventLoopTurn();
+      try { return await super.run(command, args, cwd, options); }
+      finally { this.claudeRetryEnded(); }
+    }
+    if (isEval && command.endsWith("fixture-uv")) {
+      const call = ++this.codexEvalCalls;
+      if (call === 2) {
+        this.codexRetryRejected();
+        throw new Error("fixture codex retry rejected");
+      }
+      const result = await super.run(command, args, cwd, options);
+      const resultsFile = join(args[args.indexOf("--output") + 1]!, "results.json");
+      const native = JSON.parse(readFileSync(resultsFile, "utf8")) as {
+        cases: Array<{ passed: boolean; checks: Array<{ passed: boolean }> }>;
+      };
+      for (const item of native.cases) {
+        item.passed = false;
+        for (const check of item.checks) check.passed = false;
+      }
+      writeFileSync(resultsFile, JSON.stringify(native));
+      return { ...result, status: 1 };
+    }
+    return await super.run(command, args, cwd, options);
+  }
+}
+
+test("ISS-14142 AC-3 a Claude retry still running when its sibling retry is rejected is counted", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-sibling-retry-")));
+  const { repo, sha } = createEvalFixtureRepo(root);
+  mkdirSync(join(root, "kept-parent"));
+  const commands = new SiblingRetryRejectedCommands(join(root, "kept-parent"));
+  try {
+    const written: string[] = [];
+    await assert.rejects(() => runT2Evals({ repo, pluginSha: sha, runRoot: join(root, "t2"),
+      outputDir: join(root, "store"), claudeExecutable: "fixture-claude",
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv", ghExecutable: "fixture-gh",
+      statefulRunner: new FakeStatefulRunner() }, commands, { report: async () => {} },
+    (text) => { written.push(text); }), /fixture codex retry rejected/);
+    assert.equal(commands.sandboxes.length, 2, "the first Claude eval and its retry each kept a sandbox");
+    assert.deepEqual(commands.sandboxes.map((sandbox) => existsSync(sandbox)), [false, false]);
+    assert.deepEqual(written,
+      ["VIBE_NIGHTLY_KEPT_SANDBOXES runtime=claude reported=2 removed=2 remaining=0\n"]);
+  } finally {
+    // A driver that stops waiting would leave the Claude retry running. Its
+    // run ends with synchronous cleanup once the fake Claude process returns.
+    await commands.claudeRetryDone;
+    await nextEventLoopTurn();
+    removeKeptSandboxFixture(root);
+  }
+});
+
+/** Write one fixture plugin manifest under a plugins folder. */
+function writeFixturePlugin(pluginsRoot: string, name: string, version: string, dependencies?: string[]): void {
+  mkdirSync(join(pluginsRoot, name, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(pluginsRoot, name, ".claude-plugin/plugin.json"),
+    JSON.stringify({ name, version, ...(dependencies ? { dependencies } : {}) }));
+}
+
+test("ISS-14142 AC-1 staged Claude cases list every plugin vibe depends on, transitively, and the sources stay unchanged", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-eval-closure-"));
+  try {
+    const plugins = join(root, "plugins");
+    writeFixturePlugin(plugins, "vibe", "1.2.3", ["closedloop-core", "vibe-core"]);
+    writeFixturePlugin(plugins, "closedloop-core", "1.5.3");
+    writeFixturePlugin(plugins, "vibe-core", "1.0.0", ["chain-a"]);
+    writeFixturePlugin(plugins, "chain-a", "1.0.0", ["chain-b"]);
+    // chain-b leads back to chain-a and vibe: a cycle the closure must end.
+    writeFixturePlugin(plugins, "chain-b", "1.0.0", ["chain-a", "vibe"]);
+    const vibeDir = join(plugins, "vibe");
+    const listedSource = "---\nruns: 1\nplugins: [\"../..\", \"../../../closedloop-core\"]\nmax_turns: 8\n---\n" +
+      "/vibe:vibe\nplugins: [\"body text, not front matter\"]\n";
+    const unlistedSource = "---\ntags: []\n---\n/vibe:vibe\n";
+    for (const [id, text] of [["case-listed", listedSource], ["case-unlisted", unlistedSource]] as const) {
+      mkdirSync(join(vibeDir, "evals", id), { recursive: true });
+      writeFileSync(join(vibeDir, "evals", id, "prompt.md"), text);
+    }
+    assert.equal(stageFocusedClaudeEvalCases(vibeDir, ["case-listed", "case-unlisted"]), "vibe/evals-focused");
+    assert.equal(readFileSync(join(vibeDir, "evals-focused/case-listed/prompt.md"), "utf8"),
+      "---\nruns: 1\nplugins: [\"../..\", \"../../../closedloop-core\", \"../../../vibe-core\", " +
+      "\"../../../chain-a\", \"../../../chain-b\"]\nmax_turns: 8\n---\n" +
+      "/vibe:vibe\nplugins: [\"body text, not front matter\"]\n");
+    assert.equal(readFileSync(join(vibeDir, "evals-focused/case-unlisted/prompt.md"), "utf8"), unlistedSource,
+      "a case without a plugins list is staged as it is");
+    assert.equal(readFileSync(join(vibeDir, "evals/case-listed/prompt.md"), "utf8"), listedSource,
+      "the source case manifest is byte-unchanged");
+    assert.equal(readFileSync(join(vibeDir, "evals/case-unlisted/prompt.md"), "utf8"), unlistedSource);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-14142 AC-1 staging refuses a dependency the snapshot lacks", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-eval-closure-missing-"));
+  try {
+    const plugins = join(root, "plugins");
+    writeFixturePlugin(plugins, "vibe", "1.2.3", ["closedloop-core", "vibe-core"]);
+    writeFixturePlugin(plugins, "closedloop-core", "1.5.3");
+    const vibeDir = join(plugins, "vibe");
+    mkdirSync(join(vibeDir, "evals/case-listed"), { recursive: true });
+    writeFileSync(join(vibeDir, "evals/case-listed/prompt.md"),
+      "---\nplugins: [\"../..\", \"../../../closedloop-core\"]\n---\n/vibe:vibe\n");
+    assert.throws(() => stageFocusedClaudeEvalCases(vibeDir, ["case-listed"]),
+      /^Error: eval-plugin-dependency-missing$/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-14142 AC-1 the Claude collector accepts exactly the expected plugin closure", () => {
+  const closure = [
+    { name: "vibe", version: "1.2.3", path: "/snapshot/vibe" },
+    { name: "closedloop-core", version: "1.5.3", path: "/snapshot/core" },
+    { name: "vibe-core", version: "1.0.0", path: "/snapshot/vibe-core" },
+  ];
+  const expected = { version: "1.2.3", coreVersion: "1.5.3", cliVersion: "2.1.311",
+    vibePath: "/snapshot/vibe", corePath: "/snapshot/core", model: "claude-sonnet-5-5", plugins: closure };
+  const loading = (plugins: Array<{ name: string; version: string; path: string }>) => {
+    const raw = claudeNative();
+    raw.suite.plugins = plugins;
+    return raw;
+  };
+  assert.equal(collectClaudeEval(loading([...closure].reverse()), [CASE], expected).passed, 1,
+    "the exact closure is accepted in any order");
+  assert.throws(() => collectClaudeEval(loading(closure.slice(0, 2)), [CASE], expected),
+    /eval-claude-plugin-identity-mismatch/, "vibe-core missing is refused");
+  assert.throws(() => collectClaudeEval(loading([...closure,
+    { name: "other", version: "1.0.0", path: "/snapshot/other" }]), [CASE], expected),
+  /eval-claude-plugin-identity-mismatch/, "an extra plugin is refused");
+  assert.throws(() => collectClaudeEval(loading([closure[0]!, closure[1]!,
+    { name: "vibe-core", version: "0.9.0", path: "/snapshot/vibe-core" }]), [CASE], expected),
+  /eval-claude-plugin-identity-mismatch/, "a dependency at another version is refused");
+});
+
+test("ISS-14142 AC-1 the driver accepts a Claude suite that loads vibe with its whole dependency closure", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-eval-closure-driver-")));
+  try {
+    const { repo, sha } = createEvalFixtureRepo(root, { vibeCore: true });
+    const runRoot = join(root, "run");
+    const output = await runLocalEvals({ repo, pluginSha: sha, runRoot,
+      outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
+      deterministicOnly: true, selectedCases: [CASE], runtimes: ["claude", "codex"] },
+    new FakeCommands(true));
+    const claude = output.result.runtimes.find((item) => item.runtime === "claude")!;
+    assert.equal(claude.invalidReason, null);
+    assert.ok(claude.result, "the Claude record is accepted");
+    const native = JSON.parse(readFileSync(join(runRoot, "claude", "result.json"), "utf8")) as {
+      suite: { plugins: Array<{ name: string }> };
+    };
+    assert.deepEqual(native.suite.plugins.map((item) => item.name).sort(),
+      ["closedloop-core", "vibe", "vibe-core"], "the staged case made the suite load all three");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+/** A Claude eval process whose kept sandbox belongs to a user other than the one the run expects. */
+class OtherOwnerKeptCommands extends KeptSandboxCommands {
+  readonly sandboxOwnerUid = (process.getuid?.() ?? 0) + 1;
+  constructor(parent: string) { super(parent, "reported"); }
+}
+
+test("ISS-14142 AC-1 AC-3 a reported sandbox owned by another user is refused, kept and never named", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-other-owner-")));
+  try {
+    const sha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    mkdirSync(join(root, "kept-parent"));
+    const commands = new OtherOwnerKeptCommands(join(root, "kept-parent"));
+    const output = await runLocalEvals({ repo: REPO_ROOT, pluginSha: sha, runRoot: join(root, "run"),
+      outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv", snapshotMode: "worktree",
+      selectedCases: [CASE], runtimes: ["claude", "codex"] }, commands);
+    const claude = output.result.runtimes.find((item) => item.runtime === "claude")!;
+    const sandbox = commands.sandboxes[0]!;
+    assert.notEqual(statSync(sandbox).uid, commands.sandboxOwnerUid,
+      "the sandbox's real owner differs from the user the run expects");
+    assert.equal(claude.invalidReason, "eval-claude-reply-trace-path-invalid");
+    assert.equal(statSync(sandbox).mode & 0o777, 0o500, "the folder is left in place, modes unchanged");
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 0, remaining: [] },
+      "counted as reported, never removed or named");
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 staging refuses a case manifest with two plugins lines or a value that is not a list of strings", () => {
+  const manifests = {
+    "two-lines": "---\nplugins: [\"../..\"]\nplugins: [\"../..\", \"../../../closedloop-core\"]\n---\n/vibe:vibe\n",
+    "not-strings": "---\nplugins: [\"../..\", 7]\n---\n/vibe:vibe\n",
+    "not-a-list": "---\nplugins: ../..\n---\n/vibe:vibe\n",
+    "json-not-a-list": "---\nplugins: \"../..\"\n---\n/vibe:vibe\n",
+  };
+  for (const [name, text] of Object.entries(manifests)) {
+    const root = mkdtempSync(join(tmpdir(), `vibe-eval-plugins-${name}-`));
+    try {
+      const plugins = join(root, "plugins");
+      // Valid manifests, so only the plugins line itself can be the reason.
+      writeFixturePlugin(plugins, "vibe", "1.2.3", ["closedloop-core"]);
+      writeFixturePlugin(plugins, "closedloop-core", "1.5.3");
+      const vibeDir = join(plugins, "vibe");
+      mkdirSync(join(vibeDir, "evals/case-listed"), { recursive: true });
+      writeFileSync(join(vibeDir, "evals/case-listed/prompt.md"), text);
+      assert.throws(() => stageFocusedClaudeEvalCases(vibeDir, ["case-listed"]),
+        /^Error: eval-focused-case-plugins-invalid$/, name);
+      assert.equal(readFileSync(join(vibeDir, "evals/case-listed/prompt.md"), "utf8"), text);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
 });
