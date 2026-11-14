@@ -2364,3 +2364,53 @@ test("ISS-14142 AC-1 the driver accepts a Claude suite that loads vibe with its 
       ["closedloop-core", "vibe", "vibe-core"], "the staged case made the suite load all three");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+/** A Claude eval process whose kept sandbox belongs to a user other than the one the run expects. */
+class OtherOwnerKeptCommands extends KeptSandboxCommands {
+  readonly sandboxOwnerUid = (process.getuid?.() ?? 0) + 1;
+  constructor(parent: string) { super(parent, "reported"); }
+}
+
+test("ISS-14142 AC-1 AC-3 a reported sandbox owned by another user is refused, kept and never named", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-kept-other-owner-")));
+  try {
+    const sha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    mkdirSync(join(root, "kept-parent"));
+    const commands = new OtherOwnerKeptCommands(join(root, "kept-parent"));
+    const output = await runLocalEvals({ repo: REPO_ROOT, pluginSha: sha, runRoot: join(root, "run"),
+      outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv", snapshotMode: "worktree",
+      selectedCases: [CASE], runtimes: ["claude", "codex"] }, commands);
+    const claude = output.result.runtimes.find((item) => item.runtime === "claude")!;
+    const sandbox = commands.sandboxes[0]!;
+    assert.notEqual(statSync(sandbox).uid, commands.sandboxOwnerUid,
+      "the sandbox's real owner differs from the user the run expects");
+    assert.equal(claude.invalidReason, "eval-claude-reply-trace-path-invalid");
+    assert.equal(statSync(sandbox).mode & 0o777, 0o500, "the folder is left in place, modes unchanged");
+    assert.deepEqual(output.claudeKeptFolders, { reported: 1, removed: 0, remaining: [] },
+      "counted as reported, never removed or named");
+  } finally { removeKeptSandboxFixture(root); }
+});
+
+test("ISS-14142 AC-1 staging refuses a case manifest with two plugins lines or a value that is not a list of strings", () => {
+  const manifests = {
+    "two-lines": "---\nplugins: [\"../..\"]\nplugins: [\"../..\", \"../../../closedloop-core\"]\n---\n/vibe:vibe\n",
+    "not-strings": "---\nplugins: [\"../..\", 7]\n---\n/vibe:vibe\n",
+    "not-a-list": "---\nplugins: ../..\n---\n/vibe:vibe\n",
+  };
+  for (const [name, text] of Object.entries(manifests)) {
+    const root = mkdtempSync(join(tmpdir(), `vibe-eval-plugins-${name}-`));
+    try {
+      const plugins = join(root, "plugins");
+      // Valid manifests, so only the plugins line itself can be the reason.
+      writeFixturePlugin(plugins, "vibe", "1.2.3", ["closedloop-core"]);
+      writeFixturePlugin(plugins, "closedloop-core", "1.5.3");
+      const vibeDir = join(plugins, "vibe");
+      mkdirSync(join(vibeDir, "evals/case-listed"), { recursive: true });
+      writeFileSync(join(vibeDir, "evals/case-listed/prompt.md"), text);
+      assert.throws(() => stageFocusedClaudeEvalCases(vibeDir, ["case-listed"]),
+        /^Error: eval-focused-case-plugins-invalid$/, name);
+      assert.equal(readFileSync(join(vibeDir, "evals/case-listed/prompt.md"), "utf8"), text);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});

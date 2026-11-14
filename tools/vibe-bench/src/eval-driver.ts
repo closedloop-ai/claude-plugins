@@ -58,6 +58,8 @@ export interface LocalEvalOptions {
 export interface EvalCommands {
   readonly localModelExecution: boolean;
   readonly providesClaudeTraceArtifacts: boolean;
+  /** The user a kept sandbox must belong to; the running process's user when absent. */
+  readonly sandboxOwnerUid?: number;
   run(command: string, args: string[], cwd: string, options: {
     deadline: number;
     signal?: AbortSignal;
@@ -195,8 +197,8 @@ function reportedClaudeKeptRoots(stderr: string): string[] {
  * directory at its canonical path, carry a sandbox name, belong to this user
  * and be no older than the temp folder this run made before the launch.
  */
-function provenClaudeKeptRoots(stderr: string, createdNotBeforeMs: number): string[] {
-  const uid = process.getuid?.();
+function provenClaudeKeptRoots(stderr: string, createdNotBeforeMs: number,
+  uid: number | undefined): string[] {
   if (uid === undefined) return [];
   return reportedClaudeKeptRoots(stderr).filter((root) => {
     try {
@@ -223,9 +225,10 @@ function restoreOwnerAccess(path: string, provenRoot: string): void {
 }
 
 /** Remove the proven sandboxes; report the proven ones that are still there. */
-function removeClaudeKeptRoots(stderr: string, createdNotBeforeMs: number): ClaudeKeptFolders {
+function removeClaudeKeptRoots(stderr: string, createdNotBeforeMs: number,
+  uid: number | undefined): ClaudeKeptFolders {
   const reported = reportedClaudeKeptRoots(stderr);
-  const proven = provenClaudeKeptRoots(stderr, createdNotBeforeMs);
+  const proven = provenClaudeKeptRoots(stderr, createdNotBeforeMs, uid);
   for (const root of proven) {
     try {
       // The process leaves the folder read-only and its sealed tree unreadable.
@@ -540,6 +543,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
   const claudeOutput = join(options.runRoot, "claude");
   const claudeTemp = join(options.runRoot, "claude-temp");
   const codexOutput = join(options.runRoot, "codex");
+  const sandboxOwnerUid = commands.sandboxOwnerUid ?? process.getuid?.();
   // Made before the launch, so no sandbox of this run can be older than it.
   let claudeSandboxFloorMs = Number.POSITIVE_INFINITY;
   let claudeKeptFolders: ClaudeKeptFolders = { reported: 0, removed: 0, remaining: [] };
@@ -629,7 +633,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
           const mapped = hasMappedReplyCheckers(partition.ordinary);
           const replies = commands.providesClaudeTraceArtifacts || mapped
             ? preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp,
-              provenClaudeKeptRoots(claudeProcess.stderr, claudeSandboxFloorMs))
+              provenClaudeKeptRoots(claudeProcess.stderr, claudeSandboxFloorMs, sandboxOwnerUid))
             : new Map<string, string>();
           if (!mapped) {
             ordinaryRecords.push(nativeRecord);
@@ -658,7 +662,8 @@ export async function runLocalEvals(options: LocalEvalOptions,
     rmSync(claudeTemp, { recursive: true, force: true });
     // Only folders this run's own process reported and this run can prove,
     // never a sweep of the shared temp parent.
-    claudeKeptFolders = removeClaudeKeptRoots(claudeProcess?.stderr ?? "", claudeSandboxFloorMs);
+    claudeKeptFolders = removeClaudeKeptRoots(claudeProcess?.stderr ?? "", claudeSandboxFloorMs,
+      sandboxOwnerUid);
     options.onClaudeKeptFolders?.(claudeKeptFolders);
   }
   const statefulSuites = partition.stateful.length ? await (options.statefulRunner ??
