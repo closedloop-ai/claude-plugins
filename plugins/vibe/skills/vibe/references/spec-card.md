@@ -218,7 +218,11 @@ type and a `ref`, or with any `PARTIAL` or `MISSED` row, blocks done; on a
 that needs the product running on a surface (it names Web, Desktop, the browser
 or the running app) needs a `MET` screenshot row, or a test or script row whose
 ref is an e2e spec or a control run; typecheck, unit-test and source evidence
-alone never meet it. When the person chose passing the work on instead of a
+alone never meet it. When such a criterion has no screen to run (a contract, a
+command, a statement that nothing is added), the reviewer adds the line
+`No surface: AC-n: <reason>` to the audit and a `MET` `test` row whose ref is
+`<file>::<test name>`; the audit then asks for that test instead of an app run,
+and refuses the mark without a reason or without a test that exists. When the person chose passing the work on instead of a
 pull request, a criterion whose only gap is another ticket's work takes a
 `PARTIAL` row whose ref is `not met yet: waits on <ticket>`, run with
 `--passing-on --ticket-status <ticket>=<status>`; it is listed as waiting while

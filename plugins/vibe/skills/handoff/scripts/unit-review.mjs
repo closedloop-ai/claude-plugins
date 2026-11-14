@@ -14,7 +14,7 @@
 //
 // Usage: unit-review.mjs --worktree <wt> --ticket <body .md> --review <review.json>
 //          [--slug <ticket slug>] [--member <slug>=<body .md> ...] [--prd <slug>=<body .md> ...] [--plan <slug>=<body .md> ...]
-//          [--at head] [--json] [--record <orchDir> --unit <name>]
+//          [--at head] [--json] [--record <orchDir> --unit <name>] [--audit <audit .md>]
 //
 // Criteria: the ticket's checklist as <slug>:AC-n (`--slug`, else the
 // session's ticket), each member's as <member>:AC-n, and each PRD's as
@@ -45,7 +45,10 @@
 // behaviour inside a UI unit ("the API rejects X") may instead have one
 // visual row with verdict NOT-VISIBLE and its reason; it is refused for a
 // criterion that names a page or surface or uses cross-page or cross-surface
-// wording, and every accepted one prints `NOT-VISIBLE <ticket> <criterion>: <reason>`. A criterion that states a load time
+// wording, and every accepted one prints `NOT-VISIBLE <ticket> <criterion>: <reason>`. A ticket or member
+// criterion the audit marks `No surface:` with a reason and a named test (criterion-surface.mjs; `--audit`
+// here, or the marks criteria-audit.mjs passes) needs no capture whatever its words name, and prints
+// `NO-SURFACE <ticket> <criterion>: <reason>`; its code row is still required. A criterion that states a load time
 // also needs a measured row within it, and every listed list query needs such
 // a criterion naming its page and kind.
 //
@@ -61,7 +64,8 @@ import { existsSync, mkdirSync, openSync, readFileSync, readSync, closeSync, wri
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
+import { criteriaStates, memberCriteria, ticketCriteria, unreadCriteriaProblems } from "./criteria-list.mjs";
+import { ACROSS_PAGES, ACROSS_SURFACES, KNOWN_SURFACES, namedSurfaces, namesIn, noSurfaceLine, noSurfaceMarks } from "./criterion-surface.mjs";
 import { listQueryGaps, listQueryShapeProblems, measuredMissing } from "./list-query-performance.mjs";
 import { readBoard } from "../../fleet-orchestrator/scripts/ticket-units.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -76,9 +80,6 @@ export const Origin = Object.freeze({ Ticket: "ticket", Prd: "prd" });
 const SLUG = /^[A-Z]+-\d+$/;
 const DOCUMENT_PREFIX = /^(?:ISS|FEA|PRD|PLN|DOC|PRO)-/;
 const ID_LINE = /^\s*(?:[-*]\s+(?:\[[ xX]\]\s*)?)?(?:\*\*)?([A-Z]{1,6}-\d+(?:[-.]\d+)*)\.?(?:\*\*)?[.:]?\s+(\S.*)$/;
-const ACROSS_PAGES = /\b(?:every|each|all|across)(?: the| all)?(?: \w+)? pages?\b|\bwhere(?:ver)? (?:it is |they are )?available\b/i;
-const ACROSS_SURFACES = /\bboth (?:surfaces|hosts|shells|platforms|apps)\b|\b(?:every|each|all) (?:surfaces?|hosts?|shells?|platforms?)\b/i;
-const KNOWN_SURFACES = Object.freeze(["Web", "Desktop"]);
 export const NOT_VISIBLE = "NOT-VISIBLE";
 const CODE_REF = /^(.+?):(\d+)(?:-(\d+))?$/;
 const IMAGE_MAGIC = [[0x89, 0x50, 0x4e, 0x47], [0xff, 0xd8, 0xff], [0x47, 0x49, 0x46, 0x38], [0x52, 0x49, 0x46, 0x46]];
@@ -99,14 +100,6 @@ export function prdCriteria(slug, body) {
   return [...found.values()];
 }
 
-/** Names from `names` that `text` mentions as a word, singular or plural. */
-export function namesIn(text, names) {
-  return names.filter((name) => {
-    const variants = [name, name.replace(/e?s$/i, ""), name.replace(/s$/i, "")].filter(Boolean).map(escapeRegex);
-    return new RegExp(`(^|[^A-Za-z0-9])(?:${[...new Set(variants)].join("|")})s?(?![A-Za-z0-9])`, "i").test(text);
-  });
-}
-
 /** The pages and surfaces a criterion needs a capture for, or null when a PRD criterion is out of the unit's scope. */
 export function requiredCells(criterion, review) {
   const pages = review.pages;
@@ -124,18 +117,18 @@ export function requiredCells(criterion, review) {
   }
   const declared = review.surfaces;
   const surfaceNames = [...declared, ...KNOWN_SURFACES.filter((surface) => !includesName(declared, surface))];
-  const namedSurfaces = namesIn(criterion.text, surfaceNames);
-  const surfaces = ACROSS_SURFACES.test(criterion.text) || namedSurfaces.length === 0
-    ? [...new Set([...declared, ...namedSurfaces])]
-    : namedSurfaces;
+  const surfacesNamed = namesIn(criterion.text, surfaceNames);
+  const surfaces = ACROSS_SURFACES.test(criterion.text) || surfacesNamed.length === 0
+    ? [...new Set([...declared, ...surfacesNamed])]
+    : surfacesNamed;
   return { pages: [...new Set(required)], surfaces };
 }
 
 /** Every criterion's gaps against the review rows; `capture` and `codeRef` check one row's evidence. */
-export function reviewGaps(criteria, review, { codeRef = () => null, capture = () => ({ problem: null, sha256: null }), anchor = "unit" } = {}) {
+export function reviewGaps(criteria, review, { codeRef = () => null, capture = () => ({ problem: null, sha256: null }), anchor = "unit", marks = new Map() } = {}) {
   const gaps = [];
   const problems = shapeProblems(review);
-  if (problems.length > 0) return { gaps, problems, outOfScope: [] };
+  if (problems.length > 0) return { gaps, problems, outOfScope: [], notVisible: [] };
   const known = new Set(criteria.map(({ id }) => id));
   const rows = review.rows;
   for (const row of rows) {
@@ -144,6 +137,7 @@ export function reviewGaps(criteria, review, { codeRef = () => null, capture = (
   problems.push(...captureReuse(rows, capture));
   const outOfScope = [];
   const notVisible = [];
+  const noSurface = [];
   for (const criterion of criteria) {
     const cells = requiredCells(criterion, review);
     if (cells === null) {
@@ -152,16 +146,18 @@ export function reviewGaps(criteria, review, { codeRef = () => null, capture = (
     }
     const own = rows.filter((row) => row?.criterion === criterion.id);
     const missing = [];
-    const visible = review.pages.length === 0 ? userVisibleNames(criterion.text, review) : [];
+    const marked = marks.get(criterion.id);
+    const visible = review.pages.length === 0 ? namedSurfaces(criterion, [...review.otherPages, ...KNOWN_SURFACES], marks) : [];
     if (visible.length > 0) missing.push(`names ${visible.join(", ")}, so it is user-visible and needs visual QA, but the review declares no pages or surfaces`);
-    const exempt = notVisibleRow(criterion, own, review, missing);
+    const exempt = marked ? null : notVisibleRow(criterion, own, review, missing);
+    if (marked) noSurface.push({ ...splitId(criterion.id), reason: marked.reason });
     if (exempt) notVisible.push({ ...splitId(criterion.id), reason: exempt.reason.trim() });
     for (const row of own.filter((entry) => entry.verdict !== "MET" && entry.verdict !== NOT_VISIBLE)) missing.push(`${row.part} ${row.verdict ?? "with no verdict"}${row.note ? ` (${row.note})` : ""}`);
     const code = own.filter((row) => row.part === Part.Code && row.verdict === "MET");
     const codeProblems = code.map((row) => codeRef(row.ref)).filter(Boolean);
     if (code.length === 0) missing.push("no code review row (file:line)");
     else if (codeProblems.length === code.length) missing.push(...codeProblems);
-    for (const page of exempt ? [] : cells.pages) {
+    for (const page of exempt || marked ? [] : cells.pages) {
       for (const surface of cells.surfaces) {
         const visual = own.filter((row) => row.part === Part.Visual && row.verdict === "MET" && sameName(row.page, page) && sameName(row.surface, surface));
         const checked = visual.map((row) => capture(row.capture).problem);
@@ -175,17 +171,18 @@ export function reviewGaps(criteria, review, { codeRef = () => null, capture = (
   const inScope = criteria.filter((criterion) => !outOfScope.includes(criterion));
   const namesPage = (text, page) => namesIn(text, [page]).length > 0 || ACROSS_PAGES.test(text);
   gaps.push(...listQueryGaps(review.listQueries, inScope, { anchor, namesPage, codeRef }));
-  return { gaps, problems, outOfScope, notVisible };
+  return { gaps, problems, outOfScope, notVisible, ...(noSurface.length > 0 ? { noSurface } : {}) };
 }
 
 /** One line per gap, by ticket then criterion number, for the operator. */
-export function gapLines({ gaps, problems, outOfScope, notVisible = [] }) {
+export function gapLines({ gaps, problems, outOfScope, notVisible = [], noSurface = [] }) {
   const order = (id) => id.split(/[^0-9]+/).filter(Boolean).map(Number);
   const sorted = [...gaps].sort((a, b) => a.ticket.localeCompare(b.ticket) || compareNumbers(order(a.criterion), order(b.criterion)) || a.criterion.localeCompare(b.criterion));
   return [
     ...problems.map((problem) => `PROBLEM ${problem}`),
     ...sorted.map((gap) => `GAP ${gap.ticket} ${gap.criterion}: ${gap.missing.join("; ")}`),
     ...notVisible.map((entry) => `NOT-VISIBLE ${entry.ticket} ${entry.criterion}: ${entry.reason}`),
+    ...noSurface.map((entry) => noSurfaceLine(`${entry.ticket}:${entry.criterion}`, entry.reason)),
     ...outOfScope.map((criterion) => `OUT-OF-SCOPE ${criterion.id.replace(":", " ")}: names only pages the unit does not touch`),
   ];
 }
@@ -194,7 +191,7 @@ export function gapLines({ gaps, problems, outOfScope, notVisible = [] }) {
 export function unitCriteria({ slug, ticket, members = [], prds = [], plans = [], recorded = [] }) {
   const own = ticketCriteria(ticket).map(({ id, text }) => ({ id: `${slug}:${id}`, text, origin: Origin.Ticket }));
   const memberSet = memberCriteria(members, recorded);
-  const problems = [...(own.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []), ...memberSet.problems];
+  const problems = [...(own.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []), ...unreadCriteriaProblems(ticket), ...memberSet.problems];
   const documentCriteria = (entries, flag, kind, origin) => entries.flatMap((entry) => {
     const at = entry.indexOf("=");
     const document = entry.slice(0, at);
@@ -254,9 +251,7 @@ function notVisibleRow(criterion, own, review, missing) {
     missing.push("a NOT-VISIBLE row needs its reason");
     return null;
   }
-  const named = [...namesIn(criterion.text, [...review.pages, ...review.otherPages, ...review.surfaces, ...KNOWN_SURFACES])];
-  if (ACROSS_PAGES.test(criterion.text)) named.push("every page");
-  if (ACROSS_SURFACES.test(criterion.text)) named.push("every surface");
+  const named = namedSurfaces(criterion, [...review.pages, ...review.otherPages, ...review.surfaces, ...KNOWN_SURFACES]);
   if (named.length > 0) {
     missing.push(`NOT-VISIBLE is refused: it names ${[...new Set(named)].join(", ")}, so it needs visual QA`);
     return null;
@@ -266,14 +261,6 @@ function notVisibleRow(criterion, own, review, missing) {
 
 function splitId(id) {
   return { ticket: id.slice(0, id.indexOf(":")), criterion: id.slice(id.indexOf(":") + 1) };
-}
-
-/** In a review that declares no user interface: the pages, surfaces or cross-page wording a criterion still names. */
-function userVisibleNames(text, review) {
-  const named = [...namesIn(text, [...review.otherPages, ...KNOWN_SURFACES])];
-  if (ACROSS_PAGES.test(text)) named.push("every page");
-  if (ACROSS_SURFACES.test(text)) named.push("every surface");
-  return named;
 }
 
 function compareNumbers(a, b) {
@@ -290,10 +277,6 @@ function includesName(list, name) {
 
 function sameName(a, b) {
   return typeof a === "string" && typeof b === "string" && a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
-function escapeRegex(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Checks a `file:line` ref against the worktree or HEAD. */
@@ -348,32 +331,41 @@ function anchorSlug(worktree) {
 }
 
 /** Reviews a unit's completed work from files: the criteria, the gaps and the operator's lines. */
-export function reviewUnit({ worktree, ticket, review, slug, members = [], prds = [], plans = [], at, unitTickets }) {
+export function reviewUnit({ worktree, ticket, review, slug, members = [], prds = [], plans = [], at, unitTickets, marks, audit }) {
   const session = anchorSlug(worktree);
   const anchor = slug ?? session.slug;
   if (!anchor || !SLUG.test(anchor)) throw new Error("name the ticket with --slug <slug>; the worktree has no session ticket");
   const { criteria, problems: criteriaProblems } = unitCriteria({ slug: anchor, ticket: readFileSync(ticket, "utf8"), members, prds, plans, recorded: session.members });
   const parsed = JSON.parse(readFileSync(review, "utf8"));
   if (Array.isArray(parsed?.rows)) parsed.rows = parsed.rows.map((row) => (/^AC-\d+$/.test(row?.criterion ?? "") ? { ...row, criterion: `${anchor}:${row.criterion}` } : row));
-  const result = reviewGaps(criteria, parsed, { codeRef: codeRefChecker(worktree, at), capture: captureChecker(path.dirname(path.resolve(review))), anchor });
-  result.problems.unshift(...criteriaProblems);
   const tickets = [anchor, ...members.map((entry) => entry.slice(0, entry.indexOf("=")))];
+  const surface = audit ? noSurfaceMarks(readFileSync(audit, "utf8"), auditCriteria(criteria, anchor, tickets), { worktree, at }) : { marks: marks ?? new Map(), problems: [] };
+  const unitMarks = new Map([...surface.marks].map(([id, mark]) => [/^AC-\d+$/.test(id) ? `${anchor}:${id}` : id, mark]));
+  const result = reviewGaps(criteria, parsed, { codeRef: codeRefChecker(worktree, at), capture: captureChecker(path.dirname(path.resolve(review))), anchor, marks: unitMarks });
+  result.problems.unshift(...criteriaProblems, ...surface.problems);
   for (const missing of (unitTickets ?? []).filter((entry) => !tickets.includes(entry))) result.problems.push(`unit ticket ${missing} has no criteria in this review; pass --member ${missing}=<its body>`);
   const ok = result.gaps.length === 0 && result.problems.length === 0;
   const headRead = spawnSync("git", ["-C", worktree, "rev-parse", "--verify", "HEAD"], { encoding: "utf8" });
   const head = headRead.status === 0 ? headRead.stdout.trim() : null;
   const lines = [...gapLines(result), `unit review: ${criteria.length - result.outOfScope.length} criteria, ${result.gaps.length} with gaps, ${result.problems.length} problems, ${result.outOfScope.length} out of scope`];
-  return { ok, head, tickets, criteria: criteria.map(({ id }) => id), outOfScope: result.outOfScope.map(({ id }) => id), notVisible: result.notVisible, gaps: result.gaps, problems: result.problems, lines };
+  return { ok, head, tickets, criteria: criteria.map(({ id }) => id), outOfScope: result.outOfScope.map(({ id }) => id), notVisible: result.notVisible, noSurface: result.noSurface ?? [], gaps: result.gaps, problems: result.problems, lines };
+}
+
+/** The ticket and member criteria under the ids the audit file uses: `AC-n` for the unit's own ticket, `<member>:AC-n` for a member. */
+function auditCriteria(criteria, anchor, tickets) {
+  return criteria
+    .filter((criterion) => criterion.origin === Origin.Ticket && tickets.includes(splitId(criterion.id).ticket))
+    .map((criterion) => ({ id: criterion.id.startsWith(`${anchor}:`) ? criterion.id.slice(anchor.length + 1) : criterion.id, text: criterion.text }));
 }
 
 function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
-    worktree: { type: "string" }, ticket: { type: "string" }, review: { type: "string" }, slug: { type: "string" },
+    worktree: { type: "string" }, ticket: { type: "string" }, review: { type: "string" }, slug: { type: "string" }, audit: { type: "string" },
     member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, at: { type: "string" },
     json: { type: "boolean" }, record: { type: "string" }, unit: { type: "string" },
   } });
   if (!values.worktree || !values.ticket || !values.review || Boolean(values.record) !== Boolean(values.unit)) {
-    throw new Error("Usage: unit-review.mjs --worktree <wt> --ticket <body> --review <review.json> [--slug <ticket>] [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--at head] [--json] [--record <orchDir> --unit <name>]");
+    throw new Error("Usage: unit-review.mjs --worktree <wt> --ticket <body> --review <review.json> [--slug <ticket>] [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--at head] [--json] [--record <orchDir> --unit <name>] [--audit <audit .md>]");
   }
   let unitTickets;
   if (values.record) {

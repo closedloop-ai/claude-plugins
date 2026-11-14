@@ -15,6 +15,67 @@ const INITIAL_SUBPROCESS_BASELINE = Object.freeze([
   "plugins/vibe/skills/handoff/scripts/e2e-capability-probe.mjs:info-stdout",
 ]);
 const INITIAL_DEFAULT_ON_BASELINE = Object.freeze([]);
+// Shrink-only (ISS-14136): to add a bare-word classifier, list it here and give its reason in review-class-guard-baseline.json.
+const INITIAL_BARE_WORD_BASELINE = Object.freeze([
+  "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:EXCUSE",
+  "plugins/vibe/skills/handoff/scripts/criteria-audit.mjs:RUNTIME_REF",
+  "plugins/vibe/skills/handoff/scripts/criteria-list.mjs:NAMES_CRITERIA",
+  "plugins/vibe/skills/handoff/scripts/criterion-surface.mjs:ACROSS_PAGES",
+  "plugins/vibe/skills/handoff/scripts/criterion-surface.mjs:ACROSS_SURFACES",
+  "plugins/vibe/skills/handoff/scripts/criterion-surface.mjs:RUNTIME_CRITERION",
+  "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:BREADCRUMB_SIGNAL",
+  "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:CAPABILITY_COMPONENT",
+  "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:CONTROL_TERM",
+  "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:HARNESS_NAME",
+  "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:SYNC_TABLE",
+  "plugins/vibe/skills/handoff/scripts/inventory-bundle.mjs:FLAG_NAME",
+  "plugins/vibe/skills/handoff/scripts/live-ticket-check.mjs:UNFINISHED",
+  "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:CI_CLAIM",
+  "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:OTHER_TEST_FAMILY",
+  "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:PENDING_HOST",
+  "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:UNIVERSAL",
+  "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:UNRESOLVED_PRONOUN",
+  "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs:FLAG",
+  "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs:FLAG_READ",
+  "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs:ROLLOUT",
+  "plugins/vibe/skills/handoff/scripts/rulings-check.mjs:EXCLUSION_PHRASE",
+  "plugins/vibe/skills/handoff/scripts/targeted-tests-ruling.mjs:TARGETED",
+  "plugins/vibe/skills/handoff/scripts/targeted-tests-ruling.mjs:WITHDRAWN",
+  "plugins/vibe/skills/handoff/scripts/targeted-tests-ruling.mjs:WITHDRAWN_HEADING",
+  "plugins/vibe/skills/handoff/scripts/test-integrity.mjs:BUSY_STATE",
+  "plugins/vibe/skills/handoff/scripts/test-integrity.mjs:LAYOUT_SURFACE",
+  "plugins/vibe/skills/handoff/scripts/test-integrity.mjs:RESPONSIVE_NAME",
+  "plugins/vibe/skills/vibe/scripts/load-admission.mjs:OUT_OF_MEMORY",
+  "plugins/vibe/skills/vibe/scripts/migration-publish.mjs:PER_ROW_WORK",
+  "plugins/vibe/skills/vibe/scripts/pr-preflight.mjs:CHECK_WORD",
+  "plugins/vibe/skills/vibe/scripts/pr-preflight.mjs:CLAIM",
+  "plugins/vibe/skills/vibe/scripts/pr-preflight.mjs:DESKTOP_WORD",
+  "plugins/vibe/skills/vibe/scripts/pr-preflight.mjs:E2E_TERM",
+  "plugins/vibe/skills/vibe/scripts/pr-preflight.mjs:PASS_WORD",
+  "plugins/vibe/skills/vibe/scripts/pr-preflight.mjs:WEB_WORD",
+  "plugins/vibe/skills/vibe/scripts/pre-pr-lanes.mjs:DESKTOP",
+  "plugins/vibe/skills/vibe/scripts/pre-pr-lanes.mjs:NOTHING",
+  "plugins/vibe/skills/vibe/scripts/session-questions.mjs:ASKS_LEAVE",
+  "plugins/vibe/skills/vibe/scripts/session-questions.mjs:HUMAN_ONLY",
+  "plugins/vibe/skills/vibe/scripts/session-questions.mjs:IN_SCOPE_WORK",
+  "plugins/vibe/skills/vibe/scripts/session-questions.mjs:WAITS_FOR_PERSON",
+  "plugins/vibe/skills/vibe/scripts/vibe-core-hooks.mjs:UNKNOWN_METHOD",
+  "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs:BACKEND_WORDS",
+  "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs:BIG_WORDS",
+  "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs:DESKTOP_WORDS",
+  "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs:METRIC_WORDS",
+  "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs:PROTOTYPE_WORDS",
+  "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs:TRIVIAL_WORDS",
+  "plugins/vibe/skills/vibe/scripts/vibe-triage.mjs:UI_WORDS",
+]);
+// The gate script directories the bare-word classifier guard protects (ISS-14136).
+const GATE_SCRIPT_DIRECTORIES = Object.freeze(["plugins/vibe/skills/handoff/scripts/", "plugins/vibe/skills/vibe/scripts/"]);
+const REGEX_CONSTANT = /^(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*=\s*\/((?:[^/\\\n]|\\.)+)\/([a-z]*);/gm;
+const WORD_GLUE = /\\b|\\w[*+]|\(\?:/g;
+// Whitespace classes (`\s`, `\s+`, `\s*`) and an escaped punctuation mark each read as a space.
+const WORD_SPACE = /\\s[+*?]?/g;
+const ESCAPED_MARK = /\\([./:'"-])/g;
+const ONLY_WORDS = /^[A-Za-z0-9 |()?[\]-]+$/;
 
 /** Return tracked runtime source files of vibe and vibe-core (where its hook modules live) without tests, fixtures, or generated bundles. */
 export function runtimeFiles(root) {
@@ -219,6 +280,38 @@ export async function realPathClassifierFindings(root, fixture) {
   return findings.sort();
 }
 
+/**
+ * Find module-level regular expression constants in the gate script directories that are nothing but
+ * plain words matched in any letter case: alternations, word boundaries, optional letters and spaces,
+ * with no anchor, separator or other structure. An exact-case pattern names identifiers of a fixed
+ * grammar and is left alone. A gate that decides from such a constant classifies by a bare word: a criterion
+ * that says "Desktop" was sent to visual QA although it had no screen (ISS-14136). IDs are `<file>:<NAME>`.
+ */
+export function bareWordClassifierFindings(root) {
+  const findings = [];
+  for (const relative of runtimeFiles(root).filter((file) => GATE_SCRIPT_DIRECTORIES.some((directory) => file.startsWith(directory)))) {
+    const text = readFileSync(path.join(root, relative), "utf8");
+    for (const match of text.matchAll(REGEX_CONSTANT)) {
+      const words = match[2].replace(WORD_GLUE, "").replace(WORD_SPACE, " ").replace(ESCAPED_MARK, " ");
+      if (match[3].includes("i") && ONLY_WORDS.test(words) && /[A-Za-z]{3}/.test(words)) findings.push(`${relative}:${match[1]}`);
+    }
+  }
+  return [...new Set(findings)].sort();
+}
+
+/**
+ * The bare-word classifiers against the baseline, the way the sibling baselines work: a new one fails as
+ * new, a gone one as stale, and a JSON key outside the list frozen in code as baseline-grew. Each entry
+ * keeps its reason in the JSON, and a blank reason fails.
+ */
+export function bareWordClassifierProblems(actual, baseline = {}, initial = INITIAL_BARE_WORD_BASELINE) {
+  const problems = shrinkOnlyProblems("bare-word-classifier", actual, Object.keys(baseline), initial);
+  for (const [item, reason] of Object.entries(baseline)) {
+    if (typeof reason !== "string" || !reason.trim()) problems.push(`bare-word-classifier:no-reason:${item}`);
+  }
+  return problems;
+}
+
 export const ALWAYS_LOADED_RULES = Object.freeze([
   { id: "writer-acceptance-gate", file: "plugins/vibe/skills/fleet-orchestrator/SKILL.md", pattern: /A writer starts only once its plan holds a numbered acceptance-criteria list/ },
   { id: "running-app-check", file: "plugins/vibe/skills/handoff/SKILL.md", pattern: /^### Running app verification$/m },
@@ -261,14 +354,16 @@ export async function reviewClassGuard(root, options = {}) {
   const environment = environmentInventory(root, baseline);
   const classifiers = await realPathClassifierFindings(root, fixture);
   const rules = alwaysLoadedRuleFindings(root);
+  const bareWords = bareWordClassifierFindings(root);
   const problems = [
     ...shrinkOnlyProblems("subprocess-status", subprocess, baseline.subprocessStatus, INITIAL_SUBPROCESS_BASELINE),
     ...shrinkOnlyProblems("default-on-switch", environment.filter((entry) => entry.classification === "known-default-on").map((entry) => entry.name), baseline.defaultOnSwitches, INITIAL_DEFAULT_ON_BASELINE),
     ...environment.filter((entry) => entry.classification === "unreviewed-default-on").map((entry) => `default-on-switch:unreviewed:${entry.name}:${entry.locations.join(",")}`),
     ...classifiers.map((entry) => `real-path:${entry}`),
     ...rules.map((entry) => `always-loaded:${entry}`),
+    ...bareWordClassifierProblems(bareWords, baseline.bareWordClassifiers),
   ];
-  return { ok: problems.length === 0, problems, inventory: { environment, subprocess, classifiers, rules } };
+  return { ok: problems.length === 0, problems, inventory: { environment, subprocess, classifiers, rules, bareWords } };
 }
 
 async function main() {

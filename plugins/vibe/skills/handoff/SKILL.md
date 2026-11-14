@@ -579,9 +579,9 @@ Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
 `scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
 (add `--member <slug>=<body>` for each of the session's `memberTickets`, the other tickets a fleet unit delivers in this PR; their rows are `<slug>:AC-n`, and run rulings-check and rollout-gate for each member too)
-(a unit, meaning member tickets or a PRD, also passes `--prd <slug>=<PRD body>` and `--review <review.json>`: the review of the completed work in `scripts/unit-review.mjs`. Every member criterion and every PRD criterion for the touched pages needs a code review row (`file:line`) AND a visual QA capture for each page and each surface (Web, Desktop) it names, from the visual QA pass below; one page or surface never stands in for another. Every grouped, sorted or paginated list query the unit touches is listed in `listQueries` and needs a criterion naming its page, kind and a load time, met by a `measured` row (command, dataset rows, timing). Send its `GAP <ticket> <criterion>` lines to the SAME writer, and to the person before anything is called ready)
-(every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
-`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
+(a unit, meaning member tickets or a PRD, also passes `--prd <slug>=<PRD body>` and `--review <review.json>` for `scripts/unit-review.mjs`; `../fleet-orchestrator/references/ticket-units.md`, step 4, says what the review holds: a code review row and a visual QA capture per page and surface, from the visual QA pass below, and a `measured` row per list query. Send its `GAP <ticket> <criterion>` lines to the SAME writer, and to the person before anything is called ready)
+(audit rows: `../vibe/references/spec-card.md`, "Audit rows";
+`../vibe/scripts/spec-card.mjs audit-skeleton` prints them)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
 Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific

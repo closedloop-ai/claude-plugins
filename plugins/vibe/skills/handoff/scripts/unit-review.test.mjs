@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { gapLines, namesIn, Origin, prdCriteria, requiredCells, reviewGaps, unitCriteria } from "./unit-review.mjs";
+import { namesIn } from "./criterion-surface.mjs";
+import { gapLines, Origin, prdCriteria, requiredCells, reviewGaps, unitCriteria } from "./unit-review.mjs";
 import { budgetMs } from "./list-query-performance.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -252,4 +253,47 @@ test("a NOT-VISIBLE row stands in for visual QA only on a criterion naming no pa
   const blank = refused("The API rejects a malformed batch", notVisible("ISS-1:AC-1", "  "));
   assert.equal(blank.gaps[0].missing[0], "a NOT-VISIBLE row needs its reason");
   assert.deepEqual(gapLines(blank).filter((line) => line.startsWith("NOT-VISIBLE")), [], "a refused exemption is never printed as one");
+});
+
+test("ISS-14136 AC-1: a criterion the audit marks no-surface needs no capture and no NOT-VISIBLE row, keeps its code row, and is printed", () => {
+  const criteria = [{ id: "ISS-1:AC-1", text: "The API rejects a malformed batch on Desktop", origin: Origin.Ticket }];
+  const marks = new Map([["ISS-1:AC-1", { reason: "Desktop is the client process here", test: { file: "api.test.ts", name: "rejects a malformed batch" } }]]);
+  const unmarked = reviewGaps(criteria, review([code("ISS-1:AC-1")]), passing);
+  assert.deepEqual(unmarked.gaps[0].missing, ["no visual QA capture for Sessions on Desktop", "no visual QA capture for Branches on Desktop"], "unmarked, the unit with pages still asks for its captures");
+  const marked = reviewGaps(criteria, review([code("ISS-1:AC-1")]), { ...passing, marks });
+  assert.deepEqual([marked.gaps, marked.notVisible], [[], []]);
+  assert.deepEqual(gapLines(marked), ["NO-SURFACE ISS-1 AC-1: Desktop is the client process here"]);
+  assert.deepEqual(reviewGaps(criteria, review([]), { ...passing, marks }).gaps, [{ ticket: "ISS-1", criterion: "AC-1", missing: ["no code review row (file:line)"] }], "the mark removes the capture, never the code review");
+  const withRow = reviewGaps(criteria, review([code("ISS-1:AC-1"), { criterion: "ISS-1:AC-1", part: "visual", verdict: "NOT-VISIBLE", reason: "nothing to see" }]), { ...passing, marks });
+  assert.deepEqual([withRow.gaps, withRow.notVisible], [[], []], "the mark decides; the NOT-VISIBLE row is not judged");
+  const other = reviewGaps(criteria, review([code("ISS-1:AC-1")]), { ...passing, marks: new Map([["ISS-2:AC-1", marks.get("ISS-1:AC-1")]]) });
+  assert.equal(other.gaps.length, 1, "a mark on another criterion covers nothing here");
+});
+
+test("ISS-14136 AC-1 AC-2: unit-review.mjs reads the marks from --audit, for its own ticket and a member, and reports a refused one", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "unit-review-audit-"));
+  try {
+    mkdirSync(path.join(dir, "src"));
+    writeFileSync(path.join(dir, "src", "api.test.mjs"), 'test("rejects a malformed batch", () => {});\ntest.skip("a skipped one", () => {});\n');
+    execFileSync("git", ["init", "-q", dir]);
+    const file = (name, content) => { writeFileSync(path.join(dir, name), content); return path.join(dir, name); };
+    const ticket = file("ticket.md", "## Acceptance criteria\n\n- [ ] A publish command with a misspelled field is an error on Desktop\n");
+    const member = file("member.md", "## Acceptance criteria\n\n- [ ] An older Desktop build that ignores the new fields still works\n");
+    const review = file("review.json", JSON.stringify({ pages: [], surfaces: [], listQueries: [], rows: ["AC-1", "ISS-2:AC-1"].map((criterion) => ({ criterion, part: "code", verdict: "MET", ref: "src/api.test.mjs:1" })) }));
+    const run = (...extra) => spawnSync(process.execPath, [SCRIPT, "--worktree", dir, "--slug", "ISS-1", "--ticket", ticket, "--member", `ISS-2=${member}`, "--review", review, ...extra], { encoding: "utf8" });
+    const row = (id, name = "rejects a malformed batch") => `No surface: ${id}: the client process, not a screen\n| ${id} | MET | test | src/api.test.mjs::${name} |\n`;
+    const none = run();
+    assert.equal(none.status, 1, "without --audit nothing is marked");
+    assert.match(none.stdout, /^GAP ISS-1 AC-1: names Desktop, so it is user-visible and needs visual QA, but the review declares no pages or surfaces$/m);
+    assert.match(none.stdout, /^GAP ISS-2 AC-1: names Desktop, /m);
+    const both = run("--audit", file("audit.md", row("AC-1") + row("ISS-2:AC-1")));
+    assert.equal(both.status, 0, both.stdout + both.stderr);
+    assert.match(both.stdout, /^NO-SURFACE ISS-1 AC-1: the client process, not a screen$/m);
+    assert.match(both.stdout, /^NO-SURFACE ISS-2 AC-1: the client process, not a screen$/m);
+    const skipped = run("--audit", file("audit.md", row("AC-1") + row("ISS-2:AC-1", "a skipped one")));
+    assert.equal(skipped.status, 1);
+    assert.match(skipped.stdout, /^PROBLEM ISS-2:AC-1: src\/api\.test\.mjs has no test named "a skipped one"$/m);
+    assert.match(skipped.stdout, /^GAP ISS-2 AC-1: names Desktop, /m);
+    assert.doesNotMatch(skipped.stdout, /^GAP ISS-1 AC-1/m);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
