@@ -25,6 +25,8 @@ SPLIT = {
     ("vibe/SKILL.md", "references/vibe-mockup.md", "mockup-flow"),
     ("vibe/references/quality-loop.md", "references/quality-loop-recovery.md", "migration-steps"),
     ("vibe/references/quality-loop.md", "references/quality-loop-visual-qa.md", "visual-qa-body"),
+    ("vibe/references/quality-loop.md", "references/quality-loop-visual-qa.md", "when-to-capture"),
+    ("fleet-orchestrator/references/fleet-qa-gate.md", "../vibe/references/quality-loop-visual-qa.md", "when-to-capture"),
     ("vibe/references/guardrails.md", "references/guardrails-ui.md", "ui-rules"),
     ("fleet-orchestrator/SKILL.md", "references/fleet-qa-gate.md", "qa-gate-rules"),
     ("fleet-orchestrator/SKILL.md", "references/fleet-recovery.md", "recovery-rules"),

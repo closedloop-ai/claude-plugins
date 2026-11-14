@@ -535,18 +535,15 @@ change, against the session's acceptance criteria when the ticket or its PRD
 has them and otherwise as the design pack's best-practice review
 (`../vibe/references/quality-loop.md`, "Visual QA during the session",
 "What it checks"); its rendered-control inventory flags anything with no
-sourced requirement. For shared scope it compares each consumer page against
-that page's approved prototype route and flags every control present in the
-prototype but missing in production. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
+sourced requirement. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
-evidence is visible. Each skill dispatches its own read-only agents. For every
-touched metric, summary, or card surface, visual QA compares the card's
-container, width, order and responsive placement with the established grid or
-that page's official prototype story. Counting cards is never layout evidence.
+evidence is visible. Each skill dispatches its own read-only agents.
 Confirmed findings resume the SAME writer in fix mode for every touched surface, even when
 they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
-steps 3 to 6 run again on the result. Before handoff, the findings file must pass
+steps 3 to 6 run again on the result, with visual QA as one pass scoped to
+the changes since the last reviewed capture
+(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). Before handoff, the findings file must pass
 `node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings
 <findings.json> --require-disposition`; every finding on a touched surface has
 `fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
