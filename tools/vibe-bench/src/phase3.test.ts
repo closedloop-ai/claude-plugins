@@ -2397,6 +2397,7 @@ test("ISS-14142 AC-1 staging refuses a case manifest with two plugins lines or a
     "two-lines": "---\nplugins: [\"../..\"]\nplugins: [\"../..\", \"../../../closedloop-core\"]\n---\n/vibe:vibe\n",
     "not-strings": "---\nplugins: [\"../..\", 7]\n---\n/vibe:vibe\n",
     "not-a-list": "---\nplugins: ../..\n---\n/vibe:vibe\n",
+    "json-not-a-list": "---\nplugins: \"../..\"\n---\n/vibe:vibe\n",
   };
   for (const [name, text] of Object.entries(manifests)) {
     const root = mkdtempSync(join(tmpdir(), `vibe-eval-plugins-${name}-`));
