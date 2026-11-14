@@ -30,7 +30,6 @@ function policyModel() {
 }
 
 export const TICKET_OWNER_MODEL = policyModel();
-export const LEGACY_UNVERSIONED_MODEL = 'gpt-5.5';
 export const EXPLORER_MODEL = 'gpt-5.6-terra';
 export const MECHANICAL_SUPPORT_MODEL = 'gpt-6-luna';
 

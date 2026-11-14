@@ -1,7 +1,6 @@
 import type { ModelOverrideOptions } from "../../vibe/scripts/agent-models.mjs";
 
 export const TICKET_OWNER_MODEL: string;
-export const LEGACY_UNVERSIONED_MODEL: string;
 export const EXPLORER_MODEL: string;
 export const MECHANICAL_SUPPORT_MODEL: string;
 export const DEFAULT_REASONING_EFFORT: string;

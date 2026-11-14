@@ -1176,7 +1176,7 @@ test('a new data direction needs a traced decision in cl-execute and cl-analyze'
 test('AC-4: Codex lanes take models from the one policy: high by default, explorers on gpt-5.6-terra', async () => {
   const policy = await import('./model-policy.mjs');
   const known = new Set([
-    policy.TICKET_OWNER_MODEL, policy.EXPLORER_MODEL, policy.MECHANICAL_SUPPORT_MODEL, policy.LEGACY_UNVERSIONED_MODEL,
+    policy.TICKET_OWNER_MODEL, policy.EXPLORER_MODEL, policy.MECHANICAL_SUPPORT_MODEL,
   ]);
   assert.equal(policy.DEFAULT_REASONING_EFFORT, 'high');
   assert.equal(policy.codexBindingForRole('explorer').model, 'gpt-5.6-terra');
