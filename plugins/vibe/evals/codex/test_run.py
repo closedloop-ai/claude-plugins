@@ -248,6 +248,34 @@ def test_install_freezes_receipt_helper_without_modifying_older_model_payload(tm
     assert receipt["identity_helper"]["sha256"] == hashlib.sha256(receipt_helper.read_bytes()).hexdigest()
 
 
+def test_private_dirs_are_real_paths_when_the_temp_root_is_a_symlink(tmp_path: Path, monkeypatch) -> None:
+    """macOS's temp root is under the /var symlink; node and Codex report real paths, so the run's dirs must be real."""
+    real = tmp_path / "private-var"
+    real.mkdir()
+    linked = tmp_path / "var"
+    linked.symlink_to(real, target_is_directory=True)
+    monkeypatch.setattr(runner.tempfile, "tempdir", str(linked))
+    plugins = tmp_path / "source/plugins"
+    for name in ("vibe", "closedloop-core"):
+        (plugins / name).mkdir(parents=True)
+        (plugins / name / "input.md").write_text("payload")
+    (plugins / "vibe/evals/example").mkdir(parents=True)
+    (plugins / "vibe/evals/example/prompt.md").write_text("---\ntags: []\n---\nfixture\n")
+    subprocess.run(["git", "init", "--quiet", str(plugins.parent)], check=True)
+    subprocess.run(["git", "-C", str(plugins.parent), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(plugins.parent), "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"], check=True)
+    monkeypatch.setattr(runner, "command", lambda *args: None)
+    monkeypatch.setattr(runner, "snapshot_metadata", lambda *args: {})
+    output = tmp_path / "output"
+    output.mkdir()
+    env = runner.install(output, plugins / "vibe", {"CODEX_HOME": str(tmp_path / "auth")}, runner.Budget(60))
+    home = Path(env["CODEX_HOME"])
+    assert home.parent == real.resolve(), "CODEX_HOME is named by its real path, not through the link"
+    assert str(home) == os.path.realpath(home)
+    output_dir = runner.private_dir("vibe-codex-eval-")
+    assert output_dir.parent == real.resolve(), "the default output dir is named by its real path too"
+
+
 @pytest.mark.parametrize("escape", ["absolute", "parent", "ignored"])
 def test_codex_install_uses_selected_safe_snapshot_inputs(tmp_path: Path, monkeypatch, escape: str) -> None:
     plugins = tmp_path / "source/plugins"
@@ -973,15 +1001,14 @@ def test_tool_use_counts_each_batched_command(tmp_path: Path) -> None:
     assert not graded["renders-dark"]
 
 
-def test_arms_install_the_provider_only_in_the_provider_arm(tmp_path: Path) -> None:
+def test_no_payload_installs_a_separate_provider_plugin(tmp_path: Path) -> None:
     for name in ("vibe", "closedloop-core", "vibe-core", "vibe-closedloop-provider"):
         (tmp_path / name).mkdir()
-    assert runner.payload_plugins(tmp_path) == ["vibe", "closedloop-core", "vibe-core", "vibe-closedloop-provider"]
-    assert runner.payload_plugins(tmp_path, "generic") == ["vibe", "closedloop-core", "vibe-core"]
-    (tmp_path / "vibe-closedloop-provider").rmdir()
-    assert runner.payload_plugins(tmp_path, "provider") == ["vibe", "closedloop-core", "vibe-core"], "an older payload has no provider"
+    assert runner.payload_plugins(tmp_path) == ["vibe", "closedloop-core", "vibe-core"], "an older payload's provider stays out"
+    (tmp_path / "vibe-core").rmdir()
+    assert runner.payload_plugins(tmp_path) == ["vibe", "closedloop-core"], "an older payload has no vibe-core"
     with pytest.raises(ValueError):
-        runner.payload_plugins(tmp_path, "other")
+        runner.install(tmp_path, tmp_path / "vibe", {}, runner.Budget(60), arm="other")
 
 
 def test_generic_cases_cover_the_walk_and_load_no_provider() -> None:
@@ -995,56 +1022,125 @@ def test_generic_cases_cover_the_walk_and_load_no_provider() -> None:
     assert any(runner.case_arm(case) == "provider" for case in runner.cases())
 
 
-def test_the_provider_arm_installs_vibe_text_with_its_provider_stubs_resolved(tmp_path: Path) -> None:
-    import shutil
-    plugins = runner.PLUGIN.parent
-    for name in ("vibe-core", "vibe-closedloop-provider"):
-        shutil.copytree(plugins / name, tmp_path / name, ignore=shutil.ignore_patterns("node_modules", "*.test.mjs"))
-    agent = tmp_path / "vibe" / "agents" / "vibe-verify-worker.md"
-    agent.parent.mkdir(parents=True)
-    agent.write_text("Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.\n\n"
-                     "<!-- generic: lane-default -->\nRun the lanes the repository documents.\n<!-- end generic: lane-default -->\n"
-                     "> Provider `recipes` (block `lane-default` of `agents/vibe-verify-worker.md`)\n")
-    import skill_split  # pyright: ignore[reportMissingImports]
-    assert "> Provider" in skill_split.raw(agent), "the raw file holds the stub before the arm resolves it"
-    runner.assemble_provider_text(tmp_path, runner.Budget(120))
-    # Read raw: the repository's conftest would otherwise resolve the stub on read and hide what the arm wrote.
-    text = skill_split.raw(agent)
-    assert "Command-based repositories default to `pnpm test:lanes`" in text
-    assert "Run the lanes the repository documents." not in text and "> Provider" not in text
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
 
 
-def test_the_provider_installed_arm_installs_the_provider_with_raw_text_under_a_run_home(tmp_path: Path, monkeypatch) -> None:
-    plugins = tmp_path / "source/plugins"
-    for name in ("vibe", "closedloop-core", "vibe-core", "vibe-closedloop-provider"):
+def _source_payload(plugins: Path, vibe_name: str = "vibe") -> None:
+    """A committed source tree with the generic vibe, the built folder, and an older payload's provider plugin."""
+    for name in ("vibe", "vibe-closedloop", "closedloop-core", "vibe-core", "vibe-closedloop-provider"):
         (plugins / name).mkdir(parents=True)
-        (plugins / name / "input.md").write_text("> Provider `recipes` (block `x` of `y.md`)\n")
+        (plugins / name / "input.md").write_text(f"{name} text\n> Provider `recipes` (block `x` of `y.md`)\n")
+    for relative in runner.MANIFESTS:
+        manifest = plugins / "vibe" / relative
+        manifest.parent.mkdir()
+        manifest.write_text('{"name": "%s", "version": "9.9.9"}' % vibe_name)
+        built = plugins / "vibe-closedloop" / relative
+        built.parent.mkdir()
+        built.write_text('{ "name": "vibe",\n  "version": "9.9.9" }')
+    (plugins / "vibe-closedloop/provider").mkdir()
+    (plugins / "vibe-closedloop/provider/provider.json").write_text('{"name": "vibe-closedloop-provider"}')
     (plugins / "vibe/evals/example").mkdir(parents=True)
     (plugins / "vibe/evals/example/prompt.md").write_text("---\ntags: []\n---\nfixture\n")
     subprocess.run(["git", "init", "--quiet", str(plugins.parent)], check=True)
     subprocess.run(["git", "-C", str(plugins.parent), "add", "."], check=True)
     subprocess.run(["git", "-C", str(plugins.parent), "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"], check=True)
+
+
+def _install_recording(tmp_path: Path, monkeypatch, plugins: Path, arm: str) -> tuple[Path, dict[str, str], list[str], list[list[str]]]:
     added: list[str] = []
     monkeypatch.setattr(runner, "command", lambda args, *rest: added.append(args[3]) if args[1:3] == ["plugin", "add"] else None)
     monkeypatch.setattr(runner, "snapshot_metadata", lambda *args: {})
-    assembled: list[Path] = []
-    monkeypatch.setattr(runner, "assemble_provider_text", lambda plugins_dir, budget: assembled.append(plugins_dir))
-    assert runner.payload_plugins(plugins, "provider-installed") == ["vibe", "closedloop-core", "vibe-core", "vibe-closedloop-provider"]
-    output = tmp_path / "installed"
+    spawned: list[list[str]] = []
+    real_check_output = subprocess.check_output
+
+    def recording(args, *rest, **kwargs):
+        spawned.append(list(args))
+        return real_check_output(args, *rest, **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "check_output", recording)
+    output = tmp_path / ("installed-" + arm)
     output.mkdir()
     env = runner.install(output, plugins / "vibe", {"CODEX_HOME": str(tmp_path / "auth"), "HOME": "/the-person"},
-                         runner.Budget(60), arm="provider-installed")
-    assert assembled == [], "the realistic arm installs the raw vibe text"
-    # Bytes, not text: the repository's conftest resolves a stub on read_text and would hide what was installed.
-    assert (output / "market/plugins/vibe/input.md").read_bytes().startswith(b"> Provider"), "vibe's stubs stay unresolved"
-    assert (output / "market/plugins/vibe-closedloop-provider/input.md").is_file()
-    assert added == [f"{name}@vibe-eval" for name in ("vibe", "closedloop-core", "vibe-core", "vibe-closedloop-provider")]
-    assert Path(env["HOME"]) == Path(env["CODEX_HOME"]) / "home" and Path(env["HOME"]).is_dir()
-    provider = tmp_path / "provider"
-    provider.mkdir()
-    env = runner.install(provider, plugins / "vibe", {"CODEX_HOME": str(tmp_path / "auth"), "HOME": "/the-person"}, runner.Budget(60))
-    assert assembled == [provider / "market/plugins"], "the provider arm still resolves the text at install"
-    assert env["HOME"] == "/the-person", "only the realistic arm moves HOME"
+                         runner.Budget(60), arm=arm)
+    return output, env, added, spawned
+
+
+@pytest.mark.parametrize("arm", ["provider", "provider-installed"])
+def test_a_provider_arm_installs_the_committed_built_folder_as_vibe_untouched(tmp_path: Path, monkeypatch, arm: str) -> None:
+    plugins = tmp_path / "source/plugins"
+    _source_payload(plugins)
+    output, env, added, spawned = _install_recording(tmp_path, monkeypatch, plugins, arm)
+    assert _tree_bytes(output / "market/plugins/vibe") == _tree_bytes(plugins / "vibe-closedloop"), \
+        "the market's vibe is the built folder, byte for byte, with nothing the harness wrote"
+    assert added == [f"{name}@vibe-eval" for name in ("vibe", "closedloop-core", "vibe-core")], "no provider plugin is installed"
+    assert not (output / "market/plugins/vibe-closedloop-provider").exists()
+    catalog = json.loads((output / "market/.agents/plugins/marketplace.json").read_text())
+    assert [entry["name"] for entry in catalog["plugins"]] == ["vibe", "closedloop-core", "vibe-core"]
+    assert all(args[:2] == ["node", str(runner.IDENTITY)] and args[2] == "copy" for args in spawned), \
+        f"the harness assembles nothing: {spawned}"
+    if arm == "provider-installed":
+        assert Path(env["HOME"]) == Path(env["CODEX_HOME"]) / "home" and Path(env["HOME"]).is_dir()
+    else:
+        assert env["HOME"] == "/the-person", "only the realistic arm moves HOME"
+
+
+def test_an_older_payload_without_a_built_folder_installs_its_own_vibe(tmp_path: Path, monkeypatch) -> None:
+    plugins = tmp_path / "source/plugins"
+    _source_payload(plugins)
+    subprocess.run(["git", "-C", str(plugins.parent), "rm", "-rq", "plugins/vibe-closedloop"], check=True)
+    output, _, added, _ = _install_recording(tmp_path, monkeypatch, plugins, "provider")
+    assert _tree_bytes(output / "market/plugins/vibe") == _tree_bytes(plugins / "vibe")
+    assert added == [f"{name}@vibe-eval" for name in ("vibe", "closedloop-core", "vibe-core")]
+
+
+@pytest.mark.parametrize("source_name", ["vibe", "vibe-generic"])
+def test_the_generic_arm_installs_plugins_vibe_named_vibe(tmp_path: Path, monkeypatch, source_name: str) -> None:
+    plugins = tmp_path / "source/plugins"
+    _source_payload(plugins, source_name)
+    source_manifests = {relative: (plugins / "vibe" / relative).read_bytes() for relative in runner.MANIFESTS}
+    output, env, added, spawned = _install_recording(tmp_path, monkeypatch, plugins, "generic")
+    market_vibe = output / "market/plugins/vibe"
+    installed, source = _tree_bytes(market_vibe), _tree_bytes(plugins / "vibe")
+    assert installed.keys() == source.keys()
+    for relative in runner.MANIFESTS:
+        manifest = json.loads(installed.pop(relative))
+        assert manifest == {**json.loads(source.pop(relative)), "name": "vibe"}, "Codex needs the entry's name in the manifest"
+    assert installed == source, "everything but the manifest names is plugins/vibe as committed"
+    assert {relative: (plugins / "vibe" / relative).read_bytes() for relative in runner.MANIFESTS} == source_manifests, \
+        "only the snapshot is renamed, never the source"
+    if source_name == "vibe":
+        assert _tree_bytes(market_vibe) == _tree_bytes(plugins / "vibe"), "a manifest already named vibe is left byte for byte"
+    assert added == [f"{name}@vibe-eval" for name in ("vibe", "closedloop-core", "vibe-core")]
+    assert all(args[2] == "copy" for args in spawned) and env["HOME"] == "/the-person"
+
+
+@pytest.mark.parametrize("arm", ["provider", "provider-installed", "generic"])
+def test_a_provider_arm_case_folder_holds_the_opt_in_before_the_bind_and_the_model(tmp_path: Path, monkeypatch, arm: str) -> None:
+    case = next(c for c in runner.cases() if c["name"] == (
+        "executive-generic-repo-start-describes-change" if arm == "generic" else "executive-done-asks-two-way"))
+    _eval_market(tmp_path)
+    codex_home = tmp_path / "codex-home"
+    env = {"CODEX_HOME": str(codex_home), "HOME": str(codex_home / "home")}
+    work = tmp_path / case["name"]
+    seen: list[tuple[str, str | None]] = []
+
+    def fake_command(args, cwd, env, budget, seconds, output):
+        opt_in = work / runner.OPT_IN_FILE
+        seen.append(("check" if "--latest-base" in args else "model", opt_in.read_bytes().decode() if opt_in.exists() else None))
+        if "--latest-base" in args:
+            output.write_text(json.dumps({"provider": {"state": "bound"}}))
+        else:
+            Path(args[args.index("-o") + 1]).write_text("reply")
+            output.write_text("")
+
+    monkeypatch.setattr(runner, "command", fake_command)
+    monkeypatch.setattr(runner, "trace_for", lambda *args: [])
+    runner.run_case(case, tmp_path, env, runner.Budget(60), "subject", "cheap", deterministic_only=True, arm=arm)
+    expected = None if arm == "generic" else '{ "schema": 1, "provider": "vibe-closedloop-provider" }\n'
+    assert seen[0] == ("check" if arm == "provider-installed" else "model", expected), seen
+    assert all(opt_in == expected for _, opt_in in seen)
+    assert not (case["source"] / ".closedloop-ai").exists(), "the source case folder is never written"
 
 
 def test_the_provider_installed_arm_runs_the_provider_cases() -> None:
@@ -1055,9 +1151,6 @@ def test_the_provider_installed_arm_runs_the_provider_cases() -> None:
 
 
 def _eval_market(output: Path) -> None:
-    provider = output / "market/plugins/vibe-closedloop-provider"
-    provider.mkdir(parents=True)
-    (provider / "provider.json").write_text(json.dumps({"name": "vibe-closedloop-provider", "skill": "closedloop-provider"}))
     catalog = output / "market/.agents/plugins/marketplace.json"
     catalog.parent.mkdir(parents=True)
     catalog.write_text(json.dumps({"name": "vibe-eval", "plugins": []}))
@@ -1093,7 +1186,7 @@ def test_the_provider_installed_arm_binds_through_the_real_check_before_the_mode
     check_args, check_cwd, check_env, catalog = calls[0]
     assert check_args[0] == "node" and check_args[1].endswith("/market/plugins/vibe/skills/vibe/scripts/plugin-version.mjs")
     assert check_args[2:] == ["check", "--runtime", "codex", "--codex", "/bin/codex-fixture", "--closedloop", "connected",
-                              "--graph", "connected", "--skill-listed", "vibe-closedloop-provider:closedloop-provider",
+                              "--graph", "connected",
                               "--latest-base", check_args[-1]]
     assert check_cwd == tmp_path / case["name"], "the check runs in the folder the model works in"
     assert check_env == env, "under the HOME and CODEX_HOME the model's shell sees"
@@ -1123,8 +1216,8 @@ def test_the_real_check_binds_the_provider_and_writes_under_the_run_home(tmp_pat
     output = tmp_path / "run"
     market = output / "market/plugins"
     ignore = shutil.ignore_patterns("node_modules", "evals", "*.test.mjs", "__pycache__", "tools")
-    for name in ("vibe", "vibe-core", "vibe-closedloop-provider"):
-        shutil.copytree(plugins / name, market / name, ignore=ignore)
+    shutil.copytree(plugins / "vibe-closedloop", market / "vibe", ignore=ignore)
+    shutil.copytree(plugins / "vibe-core", market / "vibe-core", ignore=ignore)
     (output / "market/.agents/plugins").mkdir(parents=True)
     (output / "market/.agents/plugins/marketplace.json").write_text(json.dumps({"name": "vibe-eval", "plugins": []}))
     codex = tmp_path / "codex"
@@ -1136,11 +1229,13 @@ def test_the_real_check_binds_the_provider_and_writes_under_the_run_home(tmp_pat
     work = tmp_path / "case"
     work.mkdir()
     subprocess.run(["git", "init", "--quiet", str(work)], check=True)
+    runner.write_opt_in(work)
     env = {**{key: value for key, value in os.environ.items() if key not in ("CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID")},
            "CODEX_HOME": str(codex_home), "HOME": str(home)}
     checked = runner.bind_installed_provider("case", work, output, env, runner.Budget(120), str(codex))
     assert checked["provider"]["state"] == "bound", checked["provider"]
     assert checked["provider"]["name"] == "vibe-closedloop-provider"
+    assert checked["provider"].get("bundled") or checked["provider"]["root"].endswith("/market/plugins/vibe/provider"), \
+        "the built folder's own provider binds, not a separate plugin"
+    assert "recipes" in checked["provider"]["capabilities"], "the arm's opt-in file is the one the provider accepts"
     assert (home / ".codex/vibe/plugin-version").is_dir(), "the binding is recorded under the HOME the model sees"
-    index = json.loads((home / ".codex/vibe/provider-text/index.json").read_text())
-    assert str(work.resolve()) in index, "the bind-time text is keyed by the case folder's repository root"

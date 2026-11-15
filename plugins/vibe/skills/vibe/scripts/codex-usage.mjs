@@ -26,13 +26,12 @@
 // (ISO time or null), `primary` and `secondary` window usage, and
 // `ordinaryUsageAllowed` as the App Server reported them.
 
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { classifyUsage, rateLimitReading, readRateLimits, UsageState, UsageTransport } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
 import { defaultUsageWorkDir, recordUsageReading } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { BUNDLED_CODEX, findCli, Harness } from "./plugin-version.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
@@ -130,7 +129,7 @@ async function main(argv) {
   return decision.status === UsageStatus.Stop ? STOP_EXIT : 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {

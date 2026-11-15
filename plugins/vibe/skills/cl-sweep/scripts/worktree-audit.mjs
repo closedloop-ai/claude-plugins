@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, relative, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 const TERMINAL_ROOT_EVENTS = new Set(['TERMINAL', 'ABANDONED']);
 const TEMP_PREFIXES = ['/tmp/', '/private/tmp/', '/var/folders/', '/private/var/folders/'];
@@ -272,6 +272,6 @@ function main(argv) {
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

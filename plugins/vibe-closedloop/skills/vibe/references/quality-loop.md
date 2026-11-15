@@ -1,0 +1,843 @@
+# Quality loop
+
+Steps in this file written for symphony-alpha apply only in a repository that commits `.closedloop-ai/vibe-recipes.json`.
+
+This is the shared workflow for app and owned prototype sessions. Each session
+has one worktree, one branch and one persistent implementation writer:
+`vibe-change-worker`. Keep that underlying worker/session ID and resume its
+context for every request, correction and handoff. Never create feature-unit
+branches, worktrees or replacement source writers outside the recorded definition
+migration below. After migration, SAME writer means the ledger's current writer.
+
+## Communication and product questions
+
+Do not show or ask the person to approve a technical plan, ask a technical
+question, or give an upfront summary. When the person explicitly asks for the
+plan, files, diff or commands, that one reply gives them, and approval is
+still never asked (`plain-words.md`, "When the person asks for technical
+detail"). Updates say only which requested feature
+is complete, which of its acceptance criteria are not done yet ("Acceptance
+criteria before ready"), and what is being worked on next, using the person's
+own words; after visual QA they also say what it found and changed ("Visual QA
+during the session").
+Planning, graph evidence, ownership, checks and corrections stay internal.
+
+Before any product question, use this order and stop as soon as it settles the
+answer:
+
+1. Current code and data model, for what is physically possible.
+2. The ticket's acceptance criteria, its PRD and sourced rulings.
+3. `ticket_detail`, `fts_search`, `search_memory_facts` and material decisions
+   or comments fetched through live ClosedLoop; an empty graph result proves
+   nothing.
+4. The product owner's recorded direction.
+5. The approved prototype.
+6. Live Asana in the operator's signed-in Chrome, run by whichever actor has
+   the browser; never a public help center or documentation page.
+
+Apply settled decisions; never ask them again. Only after all six fail,
+ask one absolutely necessary question with the checked sources and a
+recommendation. The Spec Card (`spec-card.md`, "Fork checkpoint") names which
+unresolved items may stop code, with 2 to 3 options and a recommendation; it
+adds no question this section would not allow. Under fleet orchestration a writer returns `NEEDS_PERSON` to
+the orchestrator, which finishes the remaining steps before asking. In a
+session another orchestrator drives through its turns, that orchestrator's
+own directions are operational and are recorded as `(orchestrator)`, never as
+a human ruling; only operator words it quotes, with their source, are rulings.
+
+A ticket's or plan's Decisions section is a record, not a ruling. Text the
+session wrote (its live ticket, PLN, plan, table, change log) is never a
+source. A decision
+is settled only when it traces to a human statement: who made it, where, and
+which question it answered. An unratified or conflicting decision is not
+settled: a product one goes through this section's research and necessity
+gate, and a technical one becomes an `Engineering decision` item
+(`ticket-template.md`, "Engineering decisions"). Never resolve a conflict by
+recency or by assuming one author meant to change an earlier record. Every
+"settled" in this skill means this.
+
+The orchestrator sends an unresearched question back, and runs the precedent
+check below before asking any question it can settle. Interrupt the person
+only for an absolutely necessary unresolved product question, one at a time
+with full context. Technical choices are resolved internally. Preserve existing
+visual/product approvals, such as canonical prototype design approval, not a
+new technical-plan milestone. A reference product's behavior list, a
+request's new Storybook components and the endings line in a new session's
+first reply are notices the person may interrupt, never approval gates
+(`SKILL.md`, section 5, "Notices that never wait"). Human
+sign-in, credential entry and OS permission actions remain with the person,
+and so does each flag key's approval (`guardrails.md`, "Feature flags").
+
+### Precedent before asking
+
+The ordered list above is the only product-question research order. When the
+first five sources do not settle how the product should behave, live Asana is
+the precedent. Public help centers, documentation and search results are not a
+substitute for observing the interaction in the operator's signed-in Chrome.
+
+`scripts/precedent-check.mjs` holds the research brief and its safety rules
+once, for both harnesses:
+
+- Claude Code: whichever actor has the operator's signed-in Chrome runs
+  `node scripts/precedent-check.mjs run --question
+  "<question>" --code-evidence "<file:line>" --situation "<what to reproduce>"` in the background. It
+  starts a separate headless `claude -p --chrome` limited to the Chrome tools
+  with the brief on stdin.
+- Codex: no computer use (`guardrails.md`, "Processes and state"). The
+  orchestrator runs the same `run` command through an actor with the signed-in
+  browser. Without one, the worker returns `NEEDS_PERSON` to the orchestrator;
+  nobody falls back to public material.
+
+The brief's rules bind every look: the account already signed in is used,
+and nobody signs in, creates an account or types a credential. Nothing that
+already exists is touched. Test data goes only in one new private project
+named `zz vibe precedent check (temp)`, with no members and notifications
+off, every created task prefixed `zz test`; everything created is deleted at
+the end and confirmed gone in the report. A flow that would connect an app,
+invite or notify someone, share, pay or change a setting goes only as far as
+its confirmation step and is canceled there. Every state is verified (reload
+and look again; a hover can look like a completed task) before it is
+recorded, only what was observed directly counts as precedent evidence,
+on-screen wording is quoted exactly as evidence, and a situation Asana does
+not settle is reported as `undocumented`, never guessed. A failed or
+`undocumented` run leaves the question to the person.
+Before an answer is recorded, `node scripts/precedent-check.mjs check
+--report <report>` must pass. Public material is not precedent evidence. Pass each disputed
+behavior the question turns on as `--behavior "<the interaction to perform>"`
+to `run`: `check` then refuses a report until every one is observed with a
+screenshot or marked `needs a write to test` for the operator.
+
+The answer goes to the SAME writer, which records it in the session decision
+table as the decision for the affected rows, with its source: the ticket or
+PRD slug for a requirements answer, a code path for a feasibility answer, or
+`Asana, observed <date>` for the live precedent. A precedent is the
+default, not a human ruling: it never overrides a settled decision, a later
+human statement supersedes it with an explicit `Superseded` entry, and it
+settles behavior, never user-visible words (`guardrails.md`, "Copy").
+It settles only what nothing specifies: first read the ticket's scope, the
+pull request's human threads and DONE or open sibling tickets; a stated
+requirement there wins.
+
+## One persistent writer and a serial queue
+
+Queue requests to the same writer in order through `scripts/dist/writer-state.mjs`. Register one actual
+Codex ID or launcher-managed Claude ID, bound to private Git metadata,
+worktree and branch.
+
+Keep one active request. Plans, findings, answers and commit waits continue it;
+this does not authorize starting the next queued request or a fresh writer. Use the owned state API and block on
+unverifiable identity, branch or resume.
+
+Fleet may assign a helper outside this session only on a separate branch and
+worktree with an exclusive file allowlist disjoint from this writer's concurrent
+files and every other helper. The helper may own authorized proof tests or a
+whole new disjoint module or file set, but cannot edit this ticket branch,
+repair a defect in this writer's code, integrate, or take this session's ticket
+and plan records. This session keeps its one persistent writer and serial queue;
+that writer alone reviews and integrates a helper's returned commit or proof.
+Reviewers stay independent and read-only.
+
+During a requested pull-request writer turn, run
+`node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`.
+Draft the targeted inventory from the live
+diff, prebuild app images, and bind results to covered-file hashes. Its
+read-only lanes never edit product source or tests; visual QA overlaps tests.
+After QA, `qa-impact.mjs` alone selects any repeated lane or screen.
+
+Codex: hold, register and resume one canonical writer. Claude Code: launch and
+resume the canonical `vibe:vibe-change-worker` with parent-discovered
+capabilities. Briefs use stdin. Preserve model, role and binding.
+
+Retain the recorded writer ID, `binding.agentRoot`, role, exact
+`binding.capabilities` and original definition. Recover from registration or
+bounded read-only ledger inspection. If present and matching, verify its digest
+and resume it. Never return queued inputs or credentials.
+
+### Recorded definition migration
+
+When the recorded definition is missing (`ENOENT`), or its digest differs and
+the current release is provably newer than the recorded `vibe/<version>` cache
+root, ROOT uses the current installed plugin's command in BOTH harnesses:
+`node <current-plugin-root>/skills/vibe/scripts/dist/writer-state.mjs migrate`.
+This is supported recovery, handled internally without asking the person running the session, and only
+after a human or the engineering orchestrator installed that release
+(`guardrails.md`, "Plugins and tooling").
+Never use `register` to replace a writer or copy old agent definitions.
+
+> Read `references/quality-loop-recovery.md` (block `migration-steps`) when the recorded writer definition is missing or its digest differs, a turn was stranded by a plugin upgrade, or a Codex writer stopped on its usage limit.
+
+The persistent system binding is phase-neutral because Claude retains it on
+resume. Each root-controlled turn envelope supplies `mode` and derived
+`authority.testAuthoringAuthorized` and `authority.testRepairAuthorized`,
+separately from raw person/request text. A `pull-request` turn, which the
+orchestrator sends after the person explicitly asks for a pull request
+(plain-language intent counts, `guardrails.md`, "Tests"), or an explicit
+top-level `testsRequired` grant on a request, fix or handoff turn permits this
+same writer to author tests. Raw text alone cannot elevate a turn. Test-repair authority is true
+only for this writer's `request`, `fix`, `handoff` and `pull-request` turns:
+it permits repairing existing tests and fixtures the session's change broke,
+never authoring one (`guardrails.md`, "Repair, don't author"). Plan, record
+and every other role's turns carry neither.
+The typed grant changes the worker's review envelope only. Handoff inventory
+continues to admit authored tests only in the pull-request phase; a grant in a
+request, fix or handoff turn does not widen that path gate. Raw brief text
+cannot grant authority in either place.
+Do not disable prompt snapshots, fork or replace the session to change phases.
+
+Exactly four helper paths can run without a private session. Before session
+creation, requirements (read-only) and setup (operational only) use the exact
+remembered Git checkout and `sessionless: {kind: "startup"}`. Setup's existing
+bug-ticket writes require mode `record`, exclusive record ownership and action
+`create` or `progress`; setup never authors the workaround itself. Once the
+session exists, use its strict owned context instead.
+
+Setup's confirmed `discard` action keeps `worktree` as the validated
+checkout and passes the target separately (`discardTarget`: worktree,
+branch, operator, optional live ticket, `confirmed: true`). The launcher
+verifies the target session in the same repository and locks target and
+stable records until the turn finishes; the setup worker rechecks ownership
+and confirmation and deletes only the target. Never use the target as
+execution root or claim success after partial deletion.
+
+After confirmed discard, ticket cancel alone uses a stable existing checkout,
+mode `record`, action `cancel`, exclusive record ownership and
+`sessionless: {kind: "discarded", evidence: {discarded: true, branch,
+liveTicket, operatorId, operatorEmail}}`, facts retained from the confirmed
+discard result, never invented; it verifies the live ticket and operator
+before canceling.
+
+An engineer pull request takeover ([pr-takeover](../../pr-takeover/SKILL.md)) has no vibe
+session at all. Its read-only adversarial and guardrails reviewers use the
+takeover checkout at the fetched PR head, mode `pull-request` and
+`sessionless: {kind: "takeover", evidence: {prUrl, headSha}}`; the launcher
+returns the binding with the result so `review-receipts.mjs --pr-url --head`
+records it. Its one repair writer, `vibe-change-worker` alone, adds
+`sourceBranch` to that evidence and never takes a plan or record turn. Its
+first launch writes the worktree's takeover record, which stands in for the
+session record of its writer ledger and nothing else; a writer for another PR
+or source branch is refused. The launcher refuses another head or a checkout
+holding a session. No sessionless path fabricates a session; every other
+writer, prototypes and environment publication have no sessionless fallback.
+
+Main-sync readiness (`main-sync-inputs`, once, after the Root-owned merge/fix
+commit) runs in the SAME registered actor's exclusive progress turn; its
+`validationWitness` becomes the next grant's `mainSyncValidation`
+(environment.md). It is not test authority or PASS.
+
+Researchers and independent reviewers may run in parallel, read-only. Backend,
+primitive, prototype, Storybook and verify roles provide read-only guidance or
+checks; the sole writer reads their canonical own-plugin instructions and
+applies every source fix itself. Never dispatch another source or test writer.
+Operational bootstrap/build/deploy/ticket helpers retain their non-implementation
+duties but never patch implementation code, including a local setup workaround.
+For a repo bug that blocks local startup, setup diagnoses and files/reuses its
+ticket; the SAME persistent writer makes the smallest managed local workaround
+in this session worktree and records every changed file with `local-fix` during
+its exclusive record turn. Preserve the existing exclusion and restore rules:
+neither redeploy nor handoff commits these files. Existing `localFixes` remain
+protected, and the bug's owning ticket retains the permanent correction.
+
+The writer alone updates its local plan and code. Serialize session JSON,
+ticket and change-log mutations with operational helpers through one granted
+record turn. For a new Codex helper, first spawn its canonical role with a
+read-only hold brief that forbids source and record mutations. Once the native
+spawn returns its actual ID, acquire the grant below, then resume that SAME
+helper for the declared operation. For an existing helper, acquire before its
+next follow-up. Never invent an ID or start its mutation in the initial brief.
+
+Before starting a native helper mutation, the coordinator
+runs `scripts/dist/writer-state.mjs acquire-record` with stdin JSON containing
+the exact `worktree`, `agentRoot`, `agentName`, actual native `workerId`,
+`requestId`, mode `record`, canonical `recordAction`, `exclusiveRecordTurn: true`
+and the startup/discard context above when applicable. Keep its returned lease;
+give only that role/action's parent-discovered capabilities to the native helper.
+If acquisition fails, do not run the helper or mutate records. A primary-writer
+record continuation additionally supplies its exact `primaryOwner` worker ID
+and active source lease, preserving the same registered native writer.
+
+After observing that exact native turn completed, failed or was canceled and
+stopped, run `writer-state.mjs release-record` with the identical grant, returned
+lease and `stoppedTurn: {runtime: "codex", workerId, requestId, lease, state}`.
+The short-lived coordinator CLI exiting is never completion evidence. If the
+helper is still running or its termination is unproven, retain the lock and
+resolve the owned turn; never auto-release it or start another record author.
+Claude's owned launcher acquires/releases the same mutex around its actual
+child group and retains unsafe locks when group cleanup is unproven.
+
+Deployment waits for the writer's quick checks and the orchestrator's
+commit; PR review and verification finish before PR creation. A read-only specialist cannot apply its own
+findings.
+
+## Session decision table before code
+
+The named core decision-table workflow is mandatory for every Vibe request,
+including frontend-only, backend, primitive, Storybook, owned prototype and
+trivial edits, before the first line of code. Load `$decision-table` in Codex
+or `/closedloop-core:decision-table` in Claude Code and use that skill's actual
+artifact format, edge-case expansion, review-prevention and adversarial rules.
+Never copy its skill, checklist or template into this plugin.
+
+The Spec Card (`spec-card.md`) seeds this table's `## Acceptance Criteria`
+section and Open Questions; it never replaces the table, its rows or its
+passes. Keep one living table for the whole session at
+`.closedloop-ai/decision-tables/<session-slug>.md`, in the SAME worktree and
+branch, authored only by the SAME persistent writer. New requests extend that
+file before code; they never start or replace a per-request table. Use real
+source-backed rows with stable row IDs, request provenance and grouped behavior
+sections. Inventory actual callers, contracts, gates and host capabilities;
+read visibility does not prove a write path works on every host. Model the
+request's applicable cases and cross-request interactions with prior rows.
+
+Preserve frozen `Current Code` and `Intended Change` blocks once their request's
+implementation starts. Append a later request's sourced baseline/target rows
+or behavior sections without rewriting earlier expectations. A changed human
+decision gets an explicit `Superseded` entry: source, prior row IDs and new row
+IDs. Never retarget history to agree with the implementation. On a legacy
+session without a table, use the current registered writer/continuation rule above,
+reconstruct current behavior and prior sources honestly, and identify missing
+historical evidence; a table made now is not proof it existed before.
+
+Once the writer has begun a scoped request, every session-scoped worker brief
+includes the same path, current request, affected and interacting prior row IDs,
+and current findings; operational helpers do not author its rows.
+Read the actual table before code, advice or review; a returned path, checkbox
+or placeholder is not evidence that it exists or represents the behavior.
+Only the writer authors/extends it. Before session creation, requirements and
+operational setup collect sources or restore prerequisites, not a fictional
+table; initial bootstrap/ticket creation can precede the first scoped writer
+turn. This gate blocks implementation, not legitimate bootstrap.
+Every post-table worker result names that artifact and read row IDs, with
+role-appropriate source/check evidence or unresolved findings. Advice and
+operational results never claim the writer applied a fix or tests ran.
+
+After implementation and every correction, the SAME writer compares actual
+code and observable behavior with the affected and interacting prior row IDs.
+Apply the named skill's applicable edge-case and review-prevention passes;
+fix source gaps now, append findings/fixes and reverify. At handoff,
+independent reviewers read the same table and source evidence. A reviewer
+proposal is not a product ruling: verify it, record its disposition, and never
+expand scope or remove a live capability because a hypothetical fix suggests it.
+A finding that a mechanism, a one-way door, or an unratified or conflicting
+decision needs a human decision is never the writer's to resolve, downgrade
+or absorb: it becomes an `Engineering decision` item on the live ticket's
+Engineering checklist (`ticket-template.md`, "Engineering decisions"), never
+a question for the person.
+
+Keep implementation evidence, executed existing-test evidence and missing
+tests separate: planned tests are not coverage. `Required Tests` maps stable
+row IDs to the invariant, positive control, wrong-input/mixed-state negative
+case and real production boundary. Vibe and handoff never author tests,
+fixtures or snapshots without a top-level pull-request or `testsRequired` grant; the writer
+only repairs existing ones its change broke (`guardrails.md`, "Tests"), and
+existing tests run at handoff. A
+required test that does not exist yet stays planned and becomes a Missing
+tests entry for engineering at handoff. Per-request `DONE` reports built
+implementation/quick-check completion, not final session coverage or core
+alignment; retain the pending rows and test plans for the same writer.
+
+At handoff use the whole table, all requests and cross-request interactions
+for final verification. A `Covered` disposition needs a named executed
+existing test and its fail-closed negative case through the claimed boundary;
+`not applicable` needs source evidence. A required test that does not exist
+gets the `Missing test (engineering)` disposition with its row ID, behavior
+and files to cover, and the ticket lists it under Missing tests; it is never
+counted as coverage. Run the canonical internal consistency, review-prevention
+and independent adversarial passes. Never claim `Final Alignment Status:
+Aligned` while source, existing-test, review or evidence gaps remain; a row
+whose only gap is a listed missing test does not block it. Any other
+unresolved required row keeps `Final Alignment Status: Not aligned` and blocks
+final handoff/session completion. No soft final status.
+
+The local plans under `.closedloop-ai/vibe-plans/` reach ClosedLoop only as
+the session's PLN ("Local plan" below). The behavior-table attachment at
+handoff remains separate; a plan or its review drafts are never attached as
+table evidence.
+
+### Frozen behavior at handoff
+
+The person running the session does not re-test after design and engineering,
+so the behavior they
+accepted travels with the ticket. At handoff, once the whole table is
+`Aligned`, the SAME writer adds a `## Frozen Behavior` section to the table
+listing the stable row ID of every row the person accepted, each with its
+request provenance. A row is accepted when it describes behavior the person
+saw delivered in this session and is handing off, or behavior a handoff
+behavior answer settled (`built` or `already met`). Superseded rows and rows
+behind a remaining Open Question are not frozen. Frozen rows describe
+user-visible behavior, never mechanism: no intervals, transports or storage
+choices. The writer rewrites this one
+section whenever a later handoff answer changes the table, so it always names
+the final accepted set; every other section keeps the rules above.
+
+The table file stays local to the session worktree; its attachment on the
+live ticket is what travels. `cl-execute` reads that attachment, keeps every
+frozen row passing with tests in its pull request, and changes a frozen row
+only with the explicit OK of the person who ran the session.
+
+## Local plan
+
+The writer runs the existing owner and graph prep in `design-pass.md`. Load
+`plan-structure` by name (`$plan-structure` in Codex or
+`/closedloop-core:plan-structure` in Claude Code), read
+`resources/plan_template.md` from that skill's own folder, and use its exact
+headings and order. Never copy the template between plugins.
+
+Write the technical plan inside the session worktree at
+`.closedloop-ai/vibe-plans/<request-id>.md`, with revisions/review evidence in
+subfolders of that exact folder, which stay local. Never commit, deploy or
+paste it into the ticket, and never attach it. The ticket worker publishes the
+folder's top-level plans as the session's ONE implementation plan document
+(PLN): in the live ticket's project, assigned to its assignee, linked ticket
+PRODUCES PLN, and given a new version only when the plan changed materially
+(`../../../agents/vibe-ticket-worker.md`, "Source link and session plan"). The PLN is `DRAFT` while its latest plan is not built,
+`APPROVED` once the session wrote and checked the code, and `EXECUTED` once the
+pull request merged. So write every plan for an engineer who never saw the
+session, under the live ticket's safety rules: repo-relative paths only, and
+no local absolute paths, usernames, personal emails, secrets, credentials or
+private session inputs (the session record, the writer's queued requests,
+flag or sign-in files). `scripts/session-plan.mjs` makes the session's own
+checkout paths repo-relative and refuses anything else; a refusal comes back
+to this same writer to fix in its local plan. The live ticket still records
+scope, delivered changes and truthful outcomes, not technical plans or
+approval milestones.
+
+A repair only to vibe's private plan or records, with no scope, code, test or
+HEAD change, is `self-bookkeeping`. The SAME writer makes it automatically,
+it is never `NEEDS_PERSON`, and Root reports the completed repair in one
+line before rerunning the record step.
+
+The commit script excludes this exact folder and refuses a plan already in
+HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`
+and publishes nothing on failure. Do not hide a leak by rewriting history or
+broadly ignore other ClosedLoop artifacts. Handoff reviewers exclude only
+this exact folder from deliverable files.
+
+The plan gets no review: the writer writes it and builds in the same turn. On startup, resume, fleet takeover or handoff with an
+existing `liveTicket`, list outgoing `PRODUCES` links and reuse one PLN. With
+none, the SAME writer first writes the core plan covering every criterion and
+continues building; plan mode publishes `built: false` without a person wait,
+second PLN or build/deploy pause. Later changes return to that writer.
+
+## Implementation and corrections
+
+After the local plan identifies every planned file, the SAME writer runs
+`dist/scope-intake.mjs` against that complete list before implementation. The
+command uses handoff inventory's validated repository declaration. If no
+planned file is allowed, the writer makes no source edit and routes the whole
+request to engineering with the returned reason. With a mixed plan it builds
+only allowed files and records every excluded path for engineering.
+
+The same writer implements frontend, backend, primitives, canonical prototype
+code and metadata, and Storybook work in dependency order. It may read a named
+role's own-plugin guidance, but that does not spawn another author. Override a
+canonical procedure's writer/worktree creation or technical-plan confirmation
+with this single-writer boundary; preserve its real app/prototype contracts,
+visual/product approvals, validation and publication semantics.
+
+No worker commits; the orchestrator still uses the owned commit script.
+Iterate uncommitted through grader fixes, selected checks, independent review
+and verification before declaring push-ready. Evidence uses
+`tested-head.mjs source <worktree>` (HEAD, diff/tree hashes).
+Claude evals use `tested-head.mjs claude-eval <plugins dir> <empty output dir>
+<eval flags>`; Codex uses `evals/codex/run.py`. Both hash copied payloads and
+reject snapshot mutation. Vibe
+and handoff open no PR unless the person asks for one; then handoff opens it
+at its end ("Tests: repair, don't author"). Operational publishing uses this
+same session branch.
+
+**A dependency on an open pull request never idles the session**. Never
+pause, wait for the merge, or ask the person to restart anything.
+
+- The writer develops and checks independent changes uncommitted; only the
+  dependent import waits. Compilation alone never declares readiness.
+- ROOT reads `gh pr view <number> --json state,mergedAt,headRefOid` at every
+  resume until a main sync brings it in.
+- Never base or merge the session on that unmerged head; the inventory would
+  count its files as the session's.
+- Merged work completes the selected tests, review and verification before
+  the orchestrator declares it push-ready and commits.
+- A publish-helper failure is reported at once with its command and error.
+
+## Lean build loop
+
+The build loop is quick prep, build and checks on uncommitted inputs, then
+the orchestrator's push-ready commit, deploy and showing the person.
+
+- Quick prep: the bounded lookup in `design-pass.md`, the local plan and the
+  session decision table rows, with no plan review. Before a story is
+  created, retitled or moved or a shared component is added, it includes
+  read-only `vibe-storybook-decomposer` placement advice (`SKILL.md`,
+  section 5), a lookup rather than a review.
+- Build: the SAME writer implements in dependency order.
+- Quick checks: only what the repository's commit and push hooks run on this
+  change, so the orchestrator's commit and the deploy push pass: Biome on the
+  changed files, the affected typecheck and the source gates. When they fail
+  on an existing test or fixture the change broke, the writer repairs it
+  (`guardrails.md`, "Repair, don't author").
+- Acceptance check: before `DONE`, the writer checks every acceptance
+  criterion the change touches with concrete, cheap evidence and records the
+  result ("Acceptance criteria before ready" below).
+- Reference check: only when the person gave a reference image, before
+  `DONE` on a UI change the writer screenshots the touched screen, in light
+  and in dark wherever it supports both, and compares it with that image
+  ("Visual references", "The reference check before ready" below).
+- Commit, deploy and show: after the complete change is push-ready the orchestrator
+  commits with its script and deploys through the existing publication gate
+  without being asked (`SKILL.md`, section 6), batching changes that arrive
+  while a deploy runs into the next one, then tells the person it's ready to
+  look at. That gate's own fixed validation
+  (`environment.md`, "Main-sync before publication") is unchanged.
+
+Browser E2E, visual QA, logical QA, product-contract QA, the guardrails and
+adversarial reviews, `workflow-code-review`, the targeted existing tests,
+Storybook footprint, running app checks and any other heavy validation run
+at `$handoff`, never during the loop, even where a repository protocol
+asks for them before a change is done: handoff runs them. The acceptance
+check's single test, script or control read per criterion is not one of them.
+The reference check before ready is the one exception to this rule, and it
+runs only with a reference image.
+Visual QA can also run between requests, outside the loop, when the person
+accepts the offer at a visible milestone or asks for polish ("Visual QA
+during the session"): after a deploy, never
+inside a request's build, and it never holds a deploy back.
+The reference-product
+and new Storybook components notices (`SKILL.md`, section 5, "Notices that
+never wait") stay as they are.
+
+## Acceptance criteria before ready
+
+Nothing is called ready until every acceptance criterion the change touches
+has been checked against the code, on every view it names. Heavy QA still
+waits for handoff. This section is the rule's one canonical statement; the skills and
+workers point at it.
+
+The list lives in the session decision table, not a new artifact: one
+`## Acceptance Criteria` section, authored only by the SAME writer. Each
+criterion has a stable ID (`AC-1`, `AC-2`, ...), its exact words quoted, its
+source and the row IDs that implement it. The sources are every acceptance
+criterion of the linked ticket and its PRD, which `vibe-requirements-worker`
+quotes and the orchestrator forwards with the first request; each concrete
+requirement in the person's requests and annotations, in their own words,
+added when the request arrives (source: the request ID); and each behavior
+answer at handoff. Never invent a criterion or narrow its words. Never
+strengthen them either. Each clause of an operator's direction that names
+visible content is its own criterion; a seam no surface's adapter fills is
+not met. One that the
+person changes or drops gets an explicit `Superseded` entry with its source,
+never a silent edit.
+
+Each criterion also carries a `Surfaces:` line mapping it to every surface it
+names: each view (a list and a board are two), web and Desktop where their
+adapters differ, and the mechanism its words require (a URL, a saved view, a
+reload, a shared link, Back). A criterion is met only when every surface on
+that line has its own `met` check; a check on one surface never stands in for
+another.
+
+After each build or fix and its quick checks, before returning `DONE`, the
+writer checks every unsuperseded criterion the change touches, including
+earlier requests' criteria its files or rows could break; when unsure whether
+one is touched, check it. Use the cheapest honest evidence:
+
+- an existing test that exercises it, run alone by file or test name, never
+  the suite;
+- a quick script or check against the real code path, kept outside the
+  worktree and deleted afterwards; it is not a test, is never committed and
+  never becomes one;
+- one bounded `pnpm control` read against the running app under the control
+  skill's own rules (hidden, read-only, `pnpm control down` for every session
+  it started), only where that is the honest way to check it, such as URL
+  state surviving a reload or a copied link opened fresh;
+- a source trace that follows the behavior end to end, with file and line,
+  through every surface the criterion names: each view, and web and Desktop
+  where their adapters differ. A trace through one view does not check a
+  criterion that covers several.
+
+Append one line per check to the section's `### Checks` log: request ID,
+criterion ID, the surface from its `Surfaces:` line, the check (test name,
+command or trace) and the result, `met` or `not met yet`, with its evidence.
+The newest line per criterion and surface is its current result; earlier
+lines stay.
+
+A criterion not met yet is fixed in the same request and checked again.
+When it cannot be finished now (it waits on a product answer through the
+research gate above, or on backend or engineering work), its result stays
+`not met yet` with the reason, and the orchestrator's ready message says
+plainly, in the person's terms, that this part is not done yet. It is never
+claimed, silently dropped or turned into an engineering question for the
+person, and no test is authored for it (`guardrails.md`, "Tests").
+
+`DONE` carries an Acceptance criteria block: each touched criterion's ID,
+quoted words, check and current result. A `DONE` without that block, or with
+a touched criterion that has no check, is incomplete: the orchestrator
+resumes the SAME writer to finish it before committing, deploying or saying
+ready.
+
+Keep it light. It is not a QA pass: no browser E2E, test suite, visual or
+logical QA, product-contract QA or review runs for it, and no long-running command
+joins the loop.
+
+At handoff the whole-table alignment above starts from this list: the SAME
+writer first checks every unsuperseded criterion against the final code the
+same way, and the verify worker and reviewers start from those results. A
+criterion still not met is a source gap the writer fixes or a product
+question routed through the handoff skill's "Answers from the person"; it
+never counts as met.
+
+## Visual references
+
+A reference the person gives reaches the writer as an image it reads, and
+every visual and UX property it shows becomes an acceptance criterion (a
+drop shadow, a larger text size, bold type). This
+section is the rule's one canonical statement; the skills and workers point
+at it. The build loop stays lean: the reference check below is the one
+exception to its no-automated-visual-QA rule, and it runs only when there is
+a reference image.
+
+It serves every person running a session, and nobody is asked which kind
+they are. Someone who works from references (a screenshot or image, a
+prototype or Storybook link, an existing page or screen, "make it look like
+X") gets the reference saved, read, turned into criteria and checked against
+a screenshot before ready. Someone who describes what they want in words gets
+criteria from their words, checked as before, with no render or compare.
+
+### Recording it in the table
+
+The rules below leave their evidence in the session decision table, one line
+each, in these shapes. Criterion lines sit under `## Acceptance Criteria`,
+above `### Checks`; only check lines go below it.
+
+- `### Checks`: `Reference read <request ID>: <image path>: <what it shows>`,
+  one per reference image on the session, every one the person gave and not
+  only the one the latest request names (a screenshot of our page as it is
+  now included), before any criterion or code for that request, a correction
+  included.
+- `## Acceptance Criteria`: `AC-n (source: <request ID>, reference <image
+  path>): <one property as the reference shows it>; <the design token or
+  catalog component that delivers it>`. One property per criterion: a shadow,
+  a type size and a type weight are three criteria, never one "match the
+  reference". A correction ("it still doesn't look like it") adds a criterion
+  for each property the reference shows that no criterion names yet, even
+  when a broad one such as "make ours like the second one" exists, before it
+  fixes anything.
+- `### Checks`: `<request ID>, AC-n, AC-m: reference check (<light|dark>),
+  compared <screenshot path> with <image path> after the last edit:
+  <differences found and fixed>; met`, or `not met yet` with the difference
+  that remains, one line per theme the surface supports.
+
+With no reference image, a criterion from the person's words quotes them,
+`AC-n (source: <request ID>): "<their words>"`, and is checked with the
+cheapest honest evidence ("Acceptance criteria before ready"), never a
+render.
+
+### Saving the reference
+
+The writer is a separate context that receives text, so an image the person
+attaches in chat reaches it only as a saved file it opens itself. When the
+person attaches an image, before forwarding the request the orchestrator runs
+`node scripts/reference-images.mjs attached --worktree "<wt>" --request-id <id>`,
+which decodes the images on their latest message from this harness's own
+transcript, or `save --file <path>` for an image they gave as a file path or
+one the harness already saved to a file.
+Both store the image in the session's private Git metadata and record it on
+the session as `referenceImages`, so later turns and handoff reuse it. The
+request to the writer names every saved path. The orchestrator never
+replaces the image with its own description as the only reference; its words
+may go alongside the path, never instead of it.
+
+Claude Code's owned launcher adds the recorded `referenceImages` to every
+writer, requirements and verify turn. In Codex, `writer-state.mjs take-input`
+returns them with the claimed input; forward each path with it, also as a
+`local_image` input item when the native follow-up accepts input items. The
+writer opens each path as an image: `Read` in Claude Code, `view_image` in
+Codex. A reference given as a link, a page or screen, or "make it look like
+X" (a screen in our own product) is captured as an image before building
+(`environment.md`, "Capturing a reference") and saved with `save --file`.
+
+Reading the reference is a required step with a recorded result. Before it
+plans or builds, including a correction such as "it still doesn't look like
+it", the writer opens every reference image and appends a
+`Reference read` line per image to the `### Checks` log: the path and what it
+shows (shadow and elevation, type sizes and weights, colors, spacing, radius,
+borders, alignment, icons, and the visible states). A plan or criterion
+written before that line exists is incomplete, and so is a `DONE` whose
+request had a reference image and no `Reference read` line for it. The
+orchestrator's text description of an image never stands in for that read,
+however detailed.
+
+### Requirements from a reference
+
+A reference image of an outside product goes through the reference-product
+notice (`SKILL.md`, section 5, "Notices that never wait") with its saved
+paths, whether or not the person named the product. `vibe-requirements-worker`
+reads the image itself and researches the product when it is named or
+identifiable. It returns two lists:
+
+- Visual: elevation and shadow, type hierarchy (size and weight), color roles,
+  spacing, radius, borders, iconography and density.
+- UX: layout and hierarchy, what is emphasized, the interactive affordances
+  and states visible or implied (hover, selected, disabled, empty, loading,
+  overflow), grouping, labels, and the behavior a user would expect from that
+  pattern.
+
+The orchestrator never scopes the visual list out: a brief that asks only for
+layout, behaviors or hierarchy still gets the visual requirements, and
+"behaviors, not wording" is about copy only. Each requirement is mapped to
+the existing catalog component and design token that delivers it. Build to
+the design system; never copy pixel values or another product's markup. A
+requirement with no design-system equivalent goes to the existing
+missing-primitive path (`NEEDS_PRIMITIVE`, built by the writer from the
+read-only design-system steward's spec). Before any raw value, the writer
+reads the tokens the touched surface actually bundles, in each stylesheet's
+`:root` and `.dark` blocks (`guardrails-ui.md`, "Check the bundled tokens
+first").
+
+- A bundled token is always used.
+- Only a token the surface genuinely lacks (a page generated outside the app
+  shell can lack some) is logged, one line per token, naming the stylesheets
+  and blocks searched.
+- That property alone uses the token's exact value with the token cited
+  beside it; it never invents a value no token defines.
+
+The log line:
+`Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`
+
+Never copy the outside product's words; user copy follows `guardrails.md`,
+"Copy".
+
+The writer adds each requirement to the session's `## Acceptance Criteria`
+as a criterion (source: the request ID and the reference image path), naming
+its token or component. A correction adds each property the reference shows
+that the list still lacks, before it fixes anything. The same applies to a reference in our own product:
+each visible property becomes a criterion. A visual criterion with a
+reference image is met by the reference check below, never by a source trace
+alone. UX criteria, and visual criteria with no reference image, are checked
+like every other criterion ("Acceptance criteria before ready"), with the
+cheapest honest evidence that list allows, a source trace included.
+
+### The reference check before ready
+
+Only when the person gave a reference image (a screenshot or image, or a
+link or page captured as one) and the change renders UI. With no reference image there is no render and no compare.
+
+Before returning `DONE`, the writer takes one screenshot of each touched
+screen or component at the reference's viewport (`environment.md`,
+"Capturing for the reference check") and opens it beside the reference
+image. It renders that final state in both light and dark wherever the
+surface supports both and compares each theme's
+screenshot: the reference's properties in the reference's own theme, and in
+the other theme the same properties delivered by the same tokens, none lost,
+unreadable or turned back into a raw value. It looks only at the properties
+the reference shows (shadow and elevation, font size, weight, color,
+spacing, radius, borders, alignment and icons, as the reference shows them),
+plus regressions on the touched element: properties that were right before
+this change and are not now, such as a removed tap-target minimum height or
+button text turned too bold by a font change. It fixes each difference with
+design tokens, never arbitrary values, and takes the screenshots again until
+no difference remains in either theme. Each comparison is a line in the
+`### Checks` log: request ID, criterion IDs, the theme, both image paths and
+the result. `DONE` on such a change carries a Reference check line per
+touched screen and theme (the screenshot path, the reference path and the
+differences found and fixed); without them the `DONE` is incomplete. When
+the writer cannot screenshot a touched screen locally, it says so in that
+line and the orchestrator's look after the deploy is the comparison
+(`SKILL.md`, section 6, step 5).
+
+The result gates the ready message. A difference still visible is not ready:
+it goes back to the SAME writer in the same request and is deployed again
+first.
+
+It is not a design review: no critique of craft or hierarchy beyond the
+reference, and no full design pass; those stay at handoff. Never ask the
+person to confirm the comparison, and never show them the screenshots or
+their paths unless a real difference cannot be resolved: a product choice becomes one plain
+question through the research gate above, and anything else is logged as an
+engineering note under the existing rules.
+
+### What the orchestrator says
+
+The orchestrator never tells the person the result matches the reference,
+or that a visible property is done, when it has seen a gap, in a screenshot
+or anywhere else: the gap goes back to the SAME writer in the same request
+and the ready message names it as not done yet.
+
+## Visual QA during the session
+
+> Read `references/quality-loop-visual-qa.md` (block `visual-qa-body`) when a user-visible change is ready to look at or the person asks for polish; skip it when the change shows nothing visible.
+
+## Tests: repair, don't author
+
+No test authoring in the build loop or at handoff without an explicit top-level grant, including new
+fixtures/snapshots (`guardrails.md`, "Tests"). The SAME writer repairs an existing test or fixture its own change
+broke, in the loop or at handoff, without changing what any test asserts, and
+records it in the change log as a repair. It may delete a test file or case
+that covers only code the request retires, recorded with `retired-tests.mjs`
+and the ticket or PRD that retires it (`guardrails.md`, "Retired-only tests
+may be deleted"); a test of live behavior is only repaired. Stories remain part of component
+work. Needed new-test coverage is recorded locally as it is found, not an
+early-authoring gate. Failures of existing live contracts remain implementation
+findings. Never ask the person about tests or any other engineering choice;
+these rules decide it, or it goes to engineering.
+
+At handoff the SAME writer runs the existing affected tests and fixes the
+session's own code when one fails, never what a test asserts. A failure
+`main-sync-validate` classifies `main-preexisting` is not the session's to fix:
+it is recorded for engineering ("Failures already on main" below). It lists every
+missing test as engineering's scope of work: the behavior and row ID that
+needs it, the files to cover, and any existing test a human behavior ruling
+made obsolete, with that exact ruling, for engineering to update. Verify
+helpers and reviewers remain read-only. Preserve valid evidence when resuming
+an interrupted handoff.
+
+The exception is the person explicitly asking for a pull request to be
+raised, in any plain words that say they will take it through review and
+merge themselves (`guardrails.md`, "Tests"), or an explicit top-level
+`testsRequired` grant from the orchestrator. Then the SAME writer writes full
+tests for every change in the session, records their paths, criteria and
+rulings in the change log, runs them and fixes implementation defects, and
+independent reviewers examine that coverage before the pull request opens.
+Its own test expecting behavior no ticket, PRD or request names is a wrong
+test, never a reason to build that behavior (for example, wiring an ungated
+status write so the session's own e2e test passes).
+
+## Failures already on main
+
+This applies to handoff in Codex and Claude Code alike. A handoff check can
+fail because it is already red on main. `main-sync-validate` settles which, so neither the orchestrator nor the
+writer judges it:
+
+- When a handoff check fails, the executor runs that same check on the main
+  the session captured (the transaction's `mainSha`) in a disposable checkout
+  of that commit. The checkout is bootstrapped once with the repository's own
+  `.closedloop-ai/loops-setup.sh`, the same pristine bootstrap the input
+  readiness uses, shared by every failing check, and removed afterwards. A
+  check whose selection follows the session's diff (the affected wrappers, the
+  pinned Turbo filter) runs the same task over the packages the session
+  selected. A check that passed is never rerun. Each run is bounded by that
+  check's own time limit through `scripts/run-bounded.mjs`.
+- `main-preexisting`: it fails on the captured main too. The session did not
+  cause it, and it blocks neither publication nor assignment. The executor
+  returns it under `mainPreexistingFailures` and its receipt keeps the session
+  run and the main run.
+- `session-caused`: it passes on the captured main and fails again on one
+  rerun of the session's commit. It blocks, and the SAME writer fixes the
+  session's own code as before. The receipt keeps all three runs.
+- `flaky`: it passes on the captured main and on that one rerun. It counts as
+  passed, returned under `flakyChecks` with both session runs kept.
+- `machine-limited`: it ran out of its time limit on the session commit and
+  on the captured main alike. That is this machine's limit, not the session's
+  failure: it is returned under `machineLimitedChecks`, blocks
+  neither publication nor assignment, and goes on the live ticket's
+  Engineering checklist (`ticket-template.md`, "Checks that ran out of
+  time") for a faster machine or CI to run.
+- Any other check that cannot run on the captured main (no bootstrap, a
+  failed or timed out bootstrap, a time limit on main only, a checked file
+  main does not have) is `session-caused`, the conservative reading, and
+  blocks.
+- Each `main-preexisting` failure goes once on the live ticket's Engineering
+  checklist as a Known main failure (`ticket-template.md`, "Known main
+  failures"). It is not a needed tooling fix (`guardrails.md`, "Plugins and
+  tooling"), never a reason to stop the handoff and never a question for the
+  person. What the person hears stays in plain words (`plain-words.md`) and
+  never presents it as a stop.
+- The build loop's quick checks are unchanged: a failure there still blocks
+  that deploy.

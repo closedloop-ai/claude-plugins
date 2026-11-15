@@ -929,7 +929,7 @@ function multiProofCarry(t) {
   const f = makeHome("multi-proof-carry-"); t.after(f.cleanup);
   const wt = path.join(f.root, "wt"); const workflowPath = ".github/workflows/ci.yml";
   const workflow = readFileSync(new URL("../../../../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const lanes = workflowLaneDefinitions(workflow); assert.equal(lanes.length, 12);
+  const lanes = workflowLaneDefinitions(workflow); assert.equal(lanes.length, 13);
   const worker = lanes.find(lane => lane.job === "tools-ts" && lane.matrix.tool === "vibe-workers").name;
   makeCheckout({ ...f, checkout: wt, files: { [workflowPath]: workflow,
     "vibe-handoff-paths.json": JSON.stringify({ ...JSON.parse(SYMPHONY_PATH_POLICY), laneSource: { kind: "github-workflow", path: workflowPath } }),
@@ -948,7 +948,7 @@ function multiProofCarry(t) {
   const published = g("commit-tree", g("write-tree"), "-p", interim, "-m", "final publication"); g("reset", "--hard", published);
   const point = (commit, ref) => ({ ref, commit, gitTree: g("rev-parse", `${commit}^{tree}`), source: committedSourceIdentity(wt, commit) });
   const finalLanes = ["lint", "typecheck", "test"]; const scopedLanes = ["node-tests", worker];
-  const stableLanes = lanes.filter(lane => ![...finalLanes, ...scopedLanes].includes(lane.name)).map(lane => lane.name); assert.equal(stableLanes.length, 7);
+  const stableLanes = lanes.filter(lane => ![...finalLanes, ...scopedLanes].includes(lane.name)).map(lane => lane.name); assert.equal(stableLanes.length, 8);
   const request = { lastQa: { boundary: scoped }, evidence: { screens: [] }, featureMap: { entries: [] }, graphImporters: { importers: {} },
     laneSelections: { files: { "node.mjs": ["node-tests"], "worker.ts": [worker], "contract.py": finalLanes, "stable.txt": stableLanes } }, config: { docs: [] } };
   const impact = qaImpact({ worktree: wt, since: scoped, ...request });
@@ -969,17 +969,17 @@ function multiProofCarry(t) {
   const evidence = { source: sourceIdentity(wt), testSelection: [], qaImpact: impact, qaImpactRequest: request, treeEquivalentCarry: carry,
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit: published, impactKey: impact.laneKey,
       laneReport: { source: { kind: "github-workflow", path: workflowPath, commit: published, sha256: createHash("sha256").update(workflow).digest("hex") },
-        matches: lanes.map(({ name, command }) => ({ name, command })) }, entries: [], noTestsReason: "all twelve declared workflow recipes" },
+        matches: lanes.map(({ name, command }) => ({ name, command })) }, entries: [], noTestsReason: "all thirteen declared workflow recipes" },
     testRuns: [...history, ...records.map(record => record.result)], rerunCycles: [] };
   return { wt, g, evidence: JSON.parse(JSON.stringify(evidence)), published, full, repaired, scoped, final, finalLanes, scopedLanes, stableLanes };
 }
 
-test("all twelve recipes survive the real multi-proof sibling chain without another full sweep", t => {
+test("all thirteen recipes survive the real multi-proof sibling chain without another full sweep", t => {
   const f = multiProofCarry(t);
   assert.throws(() => qaImpactRequest(f.wt, f.evidence.qaImpactRequest), /ancestor/);
   assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
   const origins = f.evidence.treeEquivalentCarry.runs.map(record => record.result.commit);
-  assert.equal(origins.filter(commit => commit === f.full).length, 7);
+  assert.equal(origins.filter(commit => commit === f.full).length, 8);
   assert.equal(origins.filter(commit => commit === f.scoped).length, 2);
   assert.equal(origins.filter(commit => commit === f.final).length, 3);
 });
@@ -998,7 +998,7 @@ for (const [name, mutate] of [
   ["ordinary sibling evidence", f => { delete f.evidence.treeEquivalentCarry; }],
 ]) test(`multi-proof carry fails closed on ${name}`, t => {
   const f=multiProofCarry(t);
-  assert.deepEqual(targetedEvidenceProblems(f.evidence,f.published,f.wt),[],"all twelve positive control");
+  assert.deepEqual(targetedEvidenceProblems(f.evidence,f.published,f.wt),[],"all thirteen positive control");
   mutate(f);
   assert.notDeepEqual(targetedEvidenceProblems(f.evidence,f.published,f.wt),[]);
 });

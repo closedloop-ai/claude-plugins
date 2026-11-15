@@ -32,13 +32,13 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { execCommand, stdoutOf, tailLines, toolDidNotRun } from "../../vibe/scripts/ws3-exec.mjs";
 import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -404,7 +404,7 @@ export function exitCodeFor(report) {
   return report.checks_skipped.some((entry) => !REVIEWER_CHECK_NAMES.has(entry.name)) ? 3 : 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

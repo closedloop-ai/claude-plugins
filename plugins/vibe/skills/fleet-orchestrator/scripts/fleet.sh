@@ -20,6 +20,10 @@ shift 3
 [ -d "$orch" ] || { echo "fleet: no orchestration dir $orch" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 skills=$(cd "$here/../.." && pwd)
+# The remote host runs the vibe of this one's own name (vibe or vibe-generic), as its Codex lists it.
+own_plugin=$(jq -er '.name' "$skills/../.codex-plugin/plugin.json") || exit 2
+[[ "$own_plugin" =~ ^[a-z0-9-]+$ ]] || { echo "fleet: unexpected plugin name $own_plugin" >&2; exit 2; }
+remote_vibe_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "'"$own_plugin"'" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
 env_lines=$(node "$skills/codex-fleet-monitor/scripts/work-dir.mjs" sh "$orch") || exit 2
 eval "$env_lines"
 orch=$W
@@ -200,7 +204,7 @@ session() {
   # both whenever work is sent to another host.
   if [ -f "$orch/rulings.md" ]; then extra+=("-C" "$orch" "rulings.md"); fi
   if [ -n "$FLEET_HOME" ] && [ -f "$FLEET_HOME/standing-rulings.md" ]; then extra+=("-C" "$FLEET_HOME" "standing-rulings.md"); fi
-  local remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
+  local remote_root=$remote_vibe_root
   # Check the target shell before its plugin lookup, so a missing CLI cannot be
   # hidden by a later mocked or successful node command.
   local codex_check="command -v codex >/dev/null 2>&1 || { printf 'fleet: codex CLI is missing on remote host %s (PATH=%s); install Codex CLI on that host and make it available in REMOTE_SHELL\\n' $(printf %q "$REMOTE_HOST") \"\$PATH\" >&2; exit 127; }; "
@@ -337,7 +341,7 @@ slot() {
   if [ -n "$preflight" ]; then
     local expected_version remote_root remote_gate
     expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
-    remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
+    remote_root=$remote_vibe_root
     remote_gate="command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") || { printf 'fleet: remote vibe plugin is missing or not version %s; heavy build not started\\n' $(printf %q "$expected_version") >&2; exit 78; }; "
     run_remote "${remote_gate}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
   else
@@ -354,7 +358,7 @@ cleanup() {
   extra+=("-C" "$orch" "board.json")
   local expected_version remote_root
   expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
-  remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
+  remote_root=$remote_vibe_root
   run_remote "command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") && node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" cleanup-sweep sweep --orch-dir $(printf %q "$remote_dir") --where remote --state-dir $(printf %q "$REMOTE_STATE_DIR")"
 }
 

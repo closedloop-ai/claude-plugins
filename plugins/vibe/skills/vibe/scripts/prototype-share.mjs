@@ -24,10 +24,11 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { execCommand, parseJson, printedStdout, stdoutOf, tailLines } from "./ws3-exec.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 export const READY = "success";
@@ -156,7 +157,7 @@ async function main(argv) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (result) => {
       process.stdout.write(`${JSON.stringify(result)}\n`);

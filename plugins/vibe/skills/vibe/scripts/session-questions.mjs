@@ -40,9 +40,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { escalation, isSandboxRefusal } = await vibeCore("lib/vibe/scripts/sandbox-refusal.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -233,7 +233,7 @@ function run(argv, home = os.homedir()) {
 
 export const ESCALATION_JUSTIFICATION = "Save the questions for this vibe session";
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.stdout.write(`${JSON.stringify({ ok: true, ...run(process.argv.slice(2)) })}\n`);
   } catch (error) {

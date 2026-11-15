@@ -19,3 +19,29 @@ export function failScript(error: unknown, fallback: number): number;
 export class ProviderBroken extends Error {
   constructor(reason: string, name?: string | null, fix?: string | null);
 }
+/** The folder of vibe's own install that holds a provider built into it. */
+export const BUNDLED_PROVIDER_DIR: string;
+/** A provider contract as provider.json declares it. */
+export interface ProviderContract {
+  vibeProvider: number;
+  name: string;
+  references: string;
+  capabilities: Record<string, { needs: string[] }>;
+  connections?: Record<string, { label: string; check: string }>;
+  data?: Record<string, Record<string, unknown>>;
+}
+/** The provider built into vibe's install. */
+export interface InstalledProvider { name: string; root: string; version: string | null; contract: ProviderContract }
+/** The contract at a provider `root`, or null when it is not one vibe can speak to. */
+export function readContract(root: string): ProviderContract | null;
+/** The provider built into vibe's install, as a list of none or one, found from `from` (a file URL or path inside vibe or vibe-core). */
+export function installedProviders(options?: { cwd?: string; from?: string }): InstalledProvider[];
+/** The binding for a conversation in `cwd`. */
+export function probeProvider(options?: { runtime?: string; cwd?: string; connections?: Record<string, string>; now?: Date;
+  providers?: InstalledProvider[] }): { state: string; name?: string; version?: string | null; root?: string; capabilities?: string[]; reason?: string; [key: string]: unknown };
+/** The absolute path of the bound provider's whole reference `file`. */
+export function providerPath(binding: unknown, capability: string, file: string): string;
+/** The block `id` of provider reference `file`, unchanged. */
+export function providerBlock(binding: unknown, capability: string, file: string, id: string): string;
+/** Every `> Provider` stub of `text`, in file order. */
+export function providerStubs(text: string): { capability: string; id: string; file: string }[];

@@ -16,8 +16,8 @@
 // pull request's head: any commit after the handoff review is unreviewed, so a
 // missing, malformed or different head is `full-chain`.
 
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const REVIEW_CHAIN_SCHEMA = "vibe.fleet-review-chain/1";
 export const ReviewChain = { Full: "full-chain", VerifyFixesOnly: "verify-fixes-only" };
@@ -48,7 +48,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

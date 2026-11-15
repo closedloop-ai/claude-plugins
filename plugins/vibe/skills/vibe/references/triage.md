@@ -1,7 +1,7 @@
 # Triage manifest
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 `scripts/vibe-triage.mjs` classifies the request into one class and prints the

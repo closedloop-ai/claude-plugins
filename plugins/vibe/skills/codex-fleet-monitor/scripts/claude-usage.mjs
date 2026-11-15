@@ -18,8 +18,8 @@ import { parseArgs } from 'node:util';
 import { highUsagePercent, usageBand } from './ratelimit.mjs';
 import { recordUsageReading } from './usage-state.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
-const { isEntryPoint } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 const LINE = /^\s*Current (session|week \(all models\)):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s+(.+?))?\s*$/gim;

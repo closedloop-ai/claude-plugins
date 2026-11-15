@@ -30,11 +30,12 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import { execCommand, parseJson, printedStdout, stdoutOf, tailLines } from "./ws3-exec.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { LOCKFILE_INSTALLS } = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
@@ -343,7 +344,7 @@ async function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (result) => {
       process.stdout.write(`${JSON.stringify(result)}\n`);

@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +33,7 @@ SEARCH = "vibe-sessions.mjs list"
 
 
 def start_section() -> str:
-    return section(VIBE_SKILL.read_text(), START)
+    return section(skill_split.read(VIBE_SKILL), START)
 
 
 def decision() -> str:
@@ -86,7 +87,7 @@ def test_a_new_session_skips_the_search_entirely() -> None:
 
 
 def test_the_search_runs_only_after_resume_was_chosen() -> None:
-    skill = VIBE_SKILL.read_text()
+    skill = skill_split.read(VIBE_SKILL)
     resume = section(skill, RESUME)
     assert resume.index("Only after the person chose resume") < resume.index(f"run `node scripts/{SEARCH}`")
     assert "Never resume on a guess" in resume
@@ -99,5 +100,5 @@ def test_the_search_runs_only_after_resume_was_chosen() -> None:
 
 
 def test_handoff_still_uses_the_unchanged_list_command() -> None:
-    assert f"node ../vibe/scripts/{SEARCH}" in HANDOFF_SKILL.read_text()
-    assert 'case "list":' in SESSIONS_SCRIPT.read_text()
+    assert f"node ../vibe/scripts/{SEARCH}" in skill_split.read(HANDOFF_SKILL)
+    assert 'case "list":' in skill_split.read(SESSIONS_SCRIPT)

@@ -68,10 +68,10 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { requirementsKey, trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { missingTicketNames } = await vibeCore("lib/handoff/scripts/ticket-names.mjs");
@@ -373,7 +373,7 @@ function main(argv) {
   throw new Error("Usage: ticket-units.mjs group --candidates <file> [--board <orchDir>] | pr-check --board <orchDir> --unit <name> --title <title> --body-file <file>");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

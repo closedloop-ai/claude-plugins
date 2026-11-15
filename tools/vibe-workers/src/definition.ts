@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { capabilitiesSchema, type Capability } from "./contracts.js";
+import { isVibePlugin } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 import { readPluginManifest } from "./plugin-root.js";
 
 const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
@@ -20,7 +21,7 @@ export function readDefinition(agentRoot: string, agentName: string, capabilityI
   const root = realpathSync(agentRoot);
   const file = realpathSync(join(root, "agents", `${agentName}.md`));
   if (file !== join(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
-  const manifest = z.object({ name: z.literal("vibe"), version: z.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
+  const manifest = z.object({ name: z.string().refine(isVibePlugin, "not a vibe plugin"), version: z.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
     readPluginManifest(root),
   );
   const source = readFileSync(file, "utf8");

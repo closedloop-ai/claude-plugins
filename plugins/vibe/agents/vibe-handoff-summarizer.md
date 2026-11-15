@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash
 ---
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 You summarize a vibe session for its author, the person running the session,
@@ -28,11 +28,11 @@ the verified final diff/commit, not a prior summary or the private technical pla
 
 Read `../skills/vibe/references/quality-loop.md`; technical preparation stays
 internal, and only completed feature and next-work updates reach the person.
-With a tracker bound, read the provider's ticket template
-(`node ../skills/vibe/scripts/provider.mjs path tickets provider:ticket-template.md`
-prints where it is) for the canonical final Production impact, Flag changes
-and gates, and Open Questions fields; without one, the same three fields go in
-the handoff summary. Contribute
+<!-- generic: ticket-template -->
+The canonical final Production impact, Flag changes and gates, and Open
+Questions fields go in the handoff summary. Contribute
+<!-- end generic: ticket-template -->
+> Provider `tickets` (block `ticket-template` of `agents/vibe-handoff-summarizer.md`)
 source facts and research/evidence references to the SAME writer's detailed
 packet; a preliminary summary is refreshed against the final delivered diff.
 

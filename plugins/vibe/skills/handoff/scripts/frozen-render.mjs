@@ -66,7 +66,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
 import { withVerifyStorybook } from "../../vibe/scripts/verify-storybook-process.mjs";
@@ -77,6 +77,7 @@ import { createImportClosure, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -629,7 +630,7 @@ async function main(argv) {
   { launch: () => chromium.launch({ args: [...DETERMINISTIC_CHROMIUM_ARGS], handleSIGINT: false, handleSIGTERM: false }) });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const summary = await main(process.argv.slice(2));
     process.stdout.write(`${[...summary.lines, ...(summary.changeLogLine ? [summary.changeLogLine] : [])].join("\n")}\n`);

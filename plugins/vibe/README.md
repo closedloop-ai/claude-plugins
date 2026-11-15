@@ -1,7 +1,7 @@
 # vibe
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `skills/vibe/references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 <!-- generic: intro -->
@@ -14,10 +14,11 @@ in it, ask for more, and when they are done vibe either opens a pull request
 they take through review and merge, or passes the work to the next owner,
 usually design and then engineering.
 
-A provider plugin from vibe's marketplace can add one tracker's, organization's
-or repository's knowledge to a session (its tickets, plans, code graph,
-repository memory and repository recipes). vibe runs without one; with one
-bound it also follows that provider's text and data.
+A provider can add one tracker's, organization's or repository's knowledge to
+a session (its tickets, plans, code graph, repository memory and repository
+recipes). A provider is never a plugin of its own: a build of vibe that has one
+carries it inside. This plugin carries none, so its sessions follow the generic
+text.
 <!-- end generic: intro -->
 > Provider `tickets+recipes` (block `intro` of `readme.md`)
 
@@ -54,7 +55,7 @@ runs one run at a time per machine under a lock.
 
 ## What a session looks like
 
-1. **Start.** The person types `$vibe` in Codex (`/vibe:vibe` in Claude Code)
+1. **Start.** The person types `$vibe` in Codex (`/vibe-generic:vibe` in Claude Code)
 <!-- generic: session-steps -->
    in the repository's checkout and describes the change. vibe checks its own
    version, shows a short setup check (the installed vibe versions for each
@@ -301,19 +302,19 @@ internal parts of `$vibe`, not separate entry points.
 
 ### Installation
 
-Codex installs both `vibe@closedloop-ai` and `closedloop-core@closedloop-ai`.
-Claude Code installs `vibe@closedloop-ai`; its dependency installs core
-automatically. The [Mac installation guide](skills/vibe/INSTALL.md) sets up a
-vibe user's laptop; the `vibe` skill installs everything else on its first
-run. A provider plugin is optional and installed on its own; vibe never
-depends on one.
+Codex installs both `vibe-generic@closedloop-ai` and
+`closedloop-core@closedloop-ai`. Claude Code installs
+`vibe-generic@closedloop-ai`; its dependency installs core automatically. The
+[Mac installation guide](skills/vibe/INSTALL.md) sets up a vibe user's laptop;
+the `vibe` skill installs everything else on its first run. No provider is
+installed on its own; a release that has one carries it inside the plugin.
 
 ### Invocation names
 
-Skills use `$<name>` in Codex and `/vibe:<name>` in Claude Code, so a person
-types `$vibe` and `$handoff` (or `/vibe:vibe` and `/vibe:handoff`). Codex
-workers read `agents/<name>.md` in this plugin; Claude workers use
-`vibe:<name>`. Shared utilities belong to `closedloop-core` and are invoked by
+Skills use `$<name>` in Codex and `/vibe-generic:<name>` in Claude Code, so a
+person types `$vibe` and `$handoff` (or `/vibe-generic:vibe` and
+`/vibe-generic:handoff`). Codex workers read `agents/<name>.md` in this plugin;
+Claude workers use `vibe-generic:<name>`. Shared utilities belong to `closedloop-core` and are invoked by
 name, not by reading another plugin's files: `$gh-monitor-pr`,
 `$guided-manual-qa` or `$measurement-discipline` in Codex, and
 `/closedloop-core:gh-monitor-pr`, `/closedloop-core:guided-manual-qa` or
@@ -409,8 +410,9 @@ declares as a dependency. vibe loads those modules from vibe-core through
 `shared/vibe-core.mjs`, and the commands among them keep thin wrappers at
 their vibe paths. It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
-skill-contract test modules, `vibe_contract_text.py` and `skill_split.py`, the text
-helpers they share, and the `conftest.py` that applies the second. Runtime helpers and tests live alongside their owning skills, or under
+skill-contract test modules, the generic scan (`vibe_generic_scan.py` and its
+JSON data), and `vibe_contract_text.py` and `skill_split.py`, the text helpers
+they share. Runtime helpers and tests live alongside their owning skills, or under
 `shared/` when reused across skills. They include vibe session and prototype records, the triage classifier and its manifest (recommendations off by default), local-plan publication guards, bundled
 persistent writer state, Claude launch/resume and shared main-sync publication
 helpers, handoff checks, sweep ownership and worker recovery, and the

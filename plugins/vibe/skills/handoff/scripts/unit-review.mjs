@@ -59,13 +59,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, readSync, closeSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
 import { listQueryGaps, listQueryShapeProblems, measuredMissing } from "./list-query-performance.mjs";
 import { readBoard } from "../../fleet-orchestrator/scripts/ticket-units.mjs";
 import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -394,7 +394,7 @@ function main(argv) {
   return summary.ok ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

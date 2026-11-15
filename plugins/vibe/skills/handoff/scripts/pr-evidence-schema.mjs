@@ -4,10 +4,10 @@
 
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { proofSourceAt, testIntegrityProofShapeProblems } from "./test-integrity.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { validSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -158,7 +158,7 @@ export function treeEquivalentCarryShapeProblems(carry) {
   return problems;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   exitOnProviderBroken();
   const { values } = parseArgs({ options: { file: { type: "string" }, worktree: { type: "string" } } });
   if (!values.file) throw new Error("Usage: pr-evidence-schema.mjs --file <private vibe-pr-evidence.json>");

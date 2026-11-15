@@ -7,6 +7,8 @@ import os
 import re
 from pathlib import Path
 
+from skill_split import read
+
 
 AGENTS = Path(__file__).resolve().parents[2] / "agents"
 # The optional provider's references: text moved out of vibe that a provider-bound session still follows.
@@ -46,8 +48,8 @@ def paragraph(text: str, marker: str) -> str:
 
 
 def agent(name: str) -> str:
-    """The raw text of the vibe agent definition `name`."""
-    return (AGENTS / f"{name}.md").read_text()
+    """The text of the vibe agent definition `name` as the ClosedLoop vibe carries it (skill_split.read)."""
+    return read(AGENTS / f"{name}.md")
 
 
 def hook_guard_routed(plugin: Path, event: str, guard: str, tool: str | None = None) -> bool:

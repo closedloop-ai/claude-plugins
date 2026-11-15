@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { blockingProblem, conversationRuntime, installOfferedProvider, loadedSkillForCheck, loadedSkillProblem, OFFERED_PROVIDER, providerInstallCommands,
-  providerOffer, readProviderInstall, updateCommands, versionsText } from "./plugin-version.mjs";
-import { makeHome } from "./test-fixtures.mjs";
+import { blockingProblem, conversationRuntime, loadedSkillForCheck, loadedSkillProblem, updateCommands, versionsText } from "./plugin-version.mjs";
+import { copyVibe, makeHome } from "./test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -17,6 +16,15 @@ const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/load
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "plugin-version.mjs");
 const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..", "..");
 const loaded = (actor = CONVERSATION, runtime = "claude") => loadedSkillEvidence(actor, runtime, PLUGIN_ROOT, "vibe", LoadBasis.HookObserved);
+/** The plugin-version script of `copyVibe(root, options)`. */
+function copiedVibe(root, options) {
+  return path.join(copyVibe(root, options), "skills", "vibe", "scripts", "plugin-version.mjs");
+}
+
+// The check as a vibe release built with the ClosedLoop provider runs it; this checkout's own vibe carries no provider.
+const BUNDLED_ROOT = realpathSync(mkdtempSync(path.join(os.tmpdir(), "vibe-plugin-version-bundled-")));
+process.on("exit", () => rmSync(BUNDLED_ROOT, { recursive: true, force: true }));
+const BUNDLED_SCRIPT = copiedVibe(BUNDLED_ROOT, { provider: true });
 // Nothing listens here, so the check can never reach a real marketplace.
 const UNREACHABLE = "http://127.0.0.1:9";
 const CONVERSATION = "conversation-1";
@@ -132,7 +140,7 @@ function sandbox(t) {
   return { ...fixture, bin };
 }
 
-function run(home, args, env = {}, script = SCRIPT, cwd = undefined) {
+function run(home, args, env = {}, script = BUNDLED_SCRIPT, cwd = undefined) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { cwd,
       env: { PATH: SYSTEM_PATH, HOME: home, CLAUDE_CODE_SESSION_ID: CONVERSATION, CODEX_THREAD_ID: "", ...env },
@@ -875,43 +883,6 @@ test("a Codex writer that inherited a Claude session id is checked as its own th
   assert.deepEqual([observed.code, observed.result.enforced, observed.result.loadedSkill.actorId], [0, true, codexThread]);
 });
 
-test("the provider install is offered only when nothing was ever installed and vibe never installed it", (t) => {
-  const home = mkdtempSync(path.join(os.tmpdir(), "vibe-provider-offer-"));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const none = { state: "none", reason: "no provider is installed" };
-  assert.equal(providerOffer(none, null)?.name, "vibe-closedloop-provider");
-  assert.equal(providerOffer({ state: "none", reason: "the provider is disabled" }, null), null, "a disabled provider is never re-enabled");
-  assert.equal(providerOffer({ state: "candidate", name: "vibe-closedloop-provider" }, null), null, "an enabled provider needs no install");
-  assert.equal(providerOffer(none, { name: "vibe-closedloop-provider" }), null, "an uninstall after vibe's own install stays");
-  assert.equal(providerOffer(none, { seenAt: "2026-11-11T00:00:00.000Z" }), null, "a provider once seen installed is never offered again");
-  const harnesses = [
-    { harness: "claude", cli: "/bin/claude", installed: true, plugins: [{ name: "vibe", scope: "user" }] },
-    { harness: "codex", cli: "/bin/codex", installed: true, plugins: [{ name: "vibe" }] },
-    { harness: "codex", cli: "/bin/other", installed: true, plugins: [{ name: "closedloop-core" }] },
-    { harness: "claude", installed: false },
-  ];
-  assert.deepEqual(providerInstallCommands(harnesses), [
-    ["/bin/claude", "plugin", "install", "vibe-closedloop-provider@closedloop-ai", "--scope", "user"],
-    ["/bin/codex", "plugin", "add", "vibe-closedloop-provider@closedloop-ai"]]);
-
-  const ran = [];
-  const run = (argv) => { ran.push(argv); };
-  const disabled = installOfferedProvider({ candidate: { state: "none", reason: "the provider is disabled" }, connections: { tracker: "connected" }, home, harnesses, run });
-  assert.equal(disabled.output.installed, false);
-  assert.deepEqual(ran, [], "a disabled row produces no install command");
-  const unanswered = installOfferedProvider({ candidate: none, connections: { tracker: "not-connected" }, home, harnesses, run });
-  assert.match(unanswered.output.reason, /ClosedLoop connection did not answer/);
-  assert.deepEqual(ran, []);
-  const installed = installOfferedProvider({ candidate: none, connections: { tracker: "connected" }, home, harnesses, run });
-  assert.equal(installed.code, 0);
-  assert.equal(ran.length, 2);
-  assert.equal(readProviderInstall(home)?.name, "vibe-closedloop-provider");
-  ran.length = 0;
-  const again = installOfferedProvider({ candidate: none, connections: { tracker: "connected" }, home, harnesses, run });
-  assert.equal(again.output.installed, false);
-  assert.deepEqual(ran, [], "vibe never reinstalls a provider it installed once");
-});
-
 test("adopting keeps a session's binding: generic stays generic, bound stays bound, a disconnected one rebinds", async () => {
   const { adoptedProvider } = await import("./plugin-version.mjs");
   const bound = { state: "bound", name: "vibe-closedloop-provider", capabilities: ["tickets"] };
@@ -932,35 +903,8 @@ test("adopting keeps a session's binding: generic stays generic, bound stays bou
   assert.deepEqual(adoptedProvider({ mode: null, vercel: null, livePlan: null }, none), none, "a generic record's empty fields are no marker");
 });
 
-test("a provider seen installed is recorded once, so removing it by hand is never undone by an offer", async (t) => {
-  const { markProviderSeen, readProviderInstall } = await import("./plugin-version.mjs");
-  const home = mkdtempSync(path.join(os.tmpdir(), "vibe-provider-seen-"));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  assert.equal(markProviderSeen(home, new Date("2026-11-11T00:00:00Z")), true);
-  assert.deepEqual(readProviderInstall(home), { seenAt: "2026-11-11T00:00:00.000Z" });
-  assert.equal(markProviderSeen(home), false, "the first record stays");
-});
-
-test("a writer works only under the lead's binding: provider-match refuses any other", async () => {
-  const { providerMatch } = await import("./plugin-version.mjs");
-  const bound = { state: "bound", name: "vibe-closedloop-provider" };
-  assert.equal(providerMatch("vibe-closedloop-provider", bound).code, 0);
-  assert.equal(providerMatch("none", null).code, 0);
-  assert.equal(providerMatch("none", { state: "none" }).code, 0);
-  const mismatch = providerMatch("vibe-closedloop-provider", { ...bound, state: "bound-disconnected" });
-  assert.equal(mismatch.code, 1);
-  assert.match(mismatch.output.reason, /lead was bound as vibe-closedloop-provider and this chat is bound as none/);
-  assert.equal(providerMatch("none", bound).code, 1, "a generic lead's writer never works bound");
-  assert.equal(providerMatch(undefined, bound).code, 1);
-});
-
-const TEST_FILE = /\.test\.mjs$/;
 const PROVIDER = "vibe-closedloop-provider";
 const BOTH = ["--runtime", "codex", "--latest-base", UNREACHABLE];
-const textIndex = (home) => path.join(home, ".codex", "vibe", "provider-text", "index.json");
-// The bind-time tree is keyed by the repository's main checkout, which this worktree's git common dir names.
-const REPO_ROOT = realpathSync(path.dirname(execFileSync("git", ["-C", PLUGIN_ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-  { encoding: "utf8" }).trim()));
 
 test("the 1.1.86 check flags still set the provider's connections, merged with --connection", async (t) => {
   const { home } = sandbox(t);
@@ -992,108 +936,41 @@ test("a check flag alias with a state it was not told is refused like --connecti
   assert.match(status.result.error, /give <name>=connected or <name>=not-connected/);
 });
 
-const COPY_SKIPPED = new Set(["evals", "tools", "node_modules", "dist"]);
-
-/**
- * vibe (its scripts, manifests and Markdown) and vibe-core copied into a plugins folder, with the provider beside them
- * only when `provider`; returns the copied plugin-version script.
- */
-function withoutProvider(root, { provider = false } = {}) {
-  const plugins = path.join(root, "plugins");
-  const keep = (source) => {
-    if (COPY_SKIPPED.has(path.basename(source))) return false;
-    if (statSync(source).isDirectory()) return true;
-    return source.endsWith(".md") || source.endsWith(".json") || (source.endsWith(".mjs") && !TEST_FILE.test(source));
-  };
-  cpSync(PLUGIN_ROOT, path.join(plugins, "vibe"), { recursive: true, filter: keep });
-  cpSync(path.join(PLUGIN_ROOT, "..", "vibe-core"), path.join(plugins, "vibe-core"), { recursive: true });
-  if (provider) cpSync(path.join(PLUGIN_ROOT, "..", PROVIDER), path.join(plugins, PROVIDER), { recursive: true });
-  return path.join(plugins, "vibe", "skills", "vibe", "scripts", "plugin-version.mjs");
-}
-
-test("the check carries the provider install offer itself, and a provider it sees installed is never offered", async (t) => {
+test("the check offers no install and writes nothing for a provider, and only the provider built into vibe binds", async (t) => {
   const { root, home } = sandbox(t);
-  const script = withoutProvider(root);
-  const expected = { name: OFFERED_PROVIDER.name, connection: OFFERED_PROVIDER.connection, label: OFFERED_PROVIDER.label, check: OFFERED_PROVIDER.check };
-  const check = await run(home, ["check", "--runtime", "codex", "--latest-base", UNREACHABLE], {}, script);
-  assert.equal(check.code, 0);
-  assert.deepEqual(check.result.offer, expected, JSON.stringify(check.result));
-  const provider = await run(home, ["provider"], {}, script);
-  assert.deepEqual(provider.result.offer, expected, JSON.stringify(provider.result));
-  assert.equal(readProviderInstall(home), null, "nothing is recorded while no provider is installed");
-
-  const installed = await run(home, ["check", "--runtime", "codex", "--latest-base", UNREACHABLE, "--closedloop", "not-connected", "--graph", "not-connected"]);
-  assert.equal(installed.result.offer, undefined);
-  assert.ok(readProviderInstall(home)?.seenAt, "the check records a provider it sees installed");
-  const removed = await run(home, ["check", "--runtime", "codex", "--latest-base", UNREACHABLE], { CLAUDE_CODE_SESSION_ID: "conversation-2" }, script);
-  assert.equal(removed.result.offer, undefined, "a provider seen installed and removed by hand is never offered");
-});
-
-test("provider reads the installed plugins and writes nothing, even where writes are refused", async (t) => {
-  const { home } = sandbox(t);
-  const first = await run(home, ["provider"]);
-  assert.equal(first.code, 0);
-  assert.equal(first.result.state, "candidate", JSON.stringify(first.result));
-  assert.ok(!existsSync(path.join(home, ".codex")), "nothing is written under the home folder");
-  const vibeHome = path.join(home, ".codex", "vibe");
-  mkdirSync(vibeHome, { recursive: true });
-  chmodSync(vibeHome, 0o500);
-  const refused = await run(home, ["provider"]);
-  chmodSync(vibeHome, 0o700);
-  assert.equal(refused.code, 0);
-  assert.equal(refused.result.state, "candidate");
-});
-
-test("the check shows the setup block in every state and writes the provider text only for a binding", async (t) => {
-  const { root, home } = sandbox(t);
-  const none = await run(home, ["check", ...BOTH], {}, withoutProvider(root));
+  const generic = path.join(root, "generic");
+  const script = copiedVibe(generic);
+  cpSync(path.join(PLUGIN_ROOT, "..", PROVIDER), path.join(generic, "plugins", PROVIDER), { recursive: true });
+  const none = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=connected"], {}, script);
   assert.equal(none.code, 0);
-  assert.equal(none.result.provider.state, "none");
-  assert.equal(none.result.print, true, "no provider at all still shows the block");
+  assert.deepEqual([none.result.provider.state, none.result.provider.reason], ["none", "no provider is installed"], "a provider plugin beside vibe is no provider");
+  assert.equal(none.result.offer, undefined);
+  assert.equal(none.result.providerText, undefined);
   assert.match(none.result.block, /^Setup check\n/);
-  assert.ok(!existsSync(path.join(home, ".codex", "vibe", "provider-text")), "no provider, no provider text");
+  assert.doesNotMatch(none.result.block, /connection/, "no provider, no connections to report");
+  assert.ok(!existsSync(path.join(home, ".codex", "vibe", "provider-install.json")), "nothing records a provider install");
+  assert.ok(!existsSync(path.join(home, ".codex", "vibe", "provider-text")), "nothing writes provider text");
 
   const bound = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=connected"], { CLAUDE_CODE_SESSION_ID: "conversation-2" });
-  assert.equal(bound.result.provider.state, "bound");
-  assert.equal(bound.result.print, true);
-  const folder = bound.result.providerText?.folder;
-  assert.ok(folder && existsSync(path.join(folder, "binding.json")), JSON.stringify(bound.result.providerText));
-  assert.deepEqual(JSON.parse(readFileSync(textIndex(home), "utf8")), { [REPO_ROOT]: path.basename(folder) });
-  assert.ok(existsSync(path.join(folder, "skills", "vibe", "SKILL.blocks.md")));
-
-  const partial = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=not-connected"], { CLAUDE_CODE_SESSION_ID: "conversation-3" });
-  assert.deepEqual([partial.result.provider.state, partial.result.provider.missing], ["bound", ["connection:graph"]]);
-  assert.match(partial.result.block, /- closedloop-graph connection: not connected/);
-  assert.deepEqual(JSON.parse(readFileSync(path.join(folder, "binding.json"), "utf8")).capabilities, ["tickets", "plans", "memory"]);
-
-  const silent = await run(home, ["check", ...BOTH, "--connection", "tracker=not-connected", "--connection", "graph=not-connected"], { CLAUDE_CODE_SESSION_ID: "conversation-4" });
-  assert.equal(silent.result.provider.state, "bound-disconnected");
-  assert.equal(silent.result.print, true);
-  assert.ok(!existsSync(folder), "a check that binds nothing removes this repository's tree");
-  assert.deepEqual(JSON.parse(readFileSync(textIndex(home), "utf8")), {});
+  assert.deepEqual([bound.result.provider.state, bound.result.provider.root], ["bound", path.join(BUNDLED_ROOT, "plugins", "vibe", "provider")]);
+  assert.equal(bound.result.offer, undefined);
+  assert.equal(bound.result.providerText, undefined);
+  assert.ok(!existsSync(path.join(home, ".codex", "vibe", "provider-text")), "a binding writes no provider text either");
 });
 
-test("a provider text the check cannot save never fails it: the reason is in its output and the setup block", async (t) => {
+test("the commands and flags an older vibe's text runs for a provider plugin are refused or ignored, never a crash", async (t) => {
   const { home } = sandbox(t);
-  mkdirSync(path.join(home, ".codex", "vibe"), { recursive: true });
-  writeFileSync(path.join(home, ".codex", "vibe", "provider-text"), "a file where the folder goes");
-  const check = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=connected"]);
+  for (const args of [["provider"], ["provider-install", "--connection", "tracker=connected"], ["provider-match", "--expect", PROVIDER],
+    ["provider-match", "--expect", "none", "--skill-listed", "x"]]) {
+    const refused = await run(home, args);
+    assert.deepEqual([refused.code, refused.result], [1, { ok: false, retired: args[0] }], args.join(" "));
+  }
+  assert.ok(!existsSync(path.join(home, ".codex", "vibe", "provider-install.json")), "the retired install records nothing");
+  const check = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=connected",
+    "--skill-listed", `${PROVIDER}:closedloop-provider`, "--expect", PROVIDER]);
   assert.equal(check.code, 0);
-  assert.equal(check.result.provider.state, "bound");
-  assert.match(check.result.providerText?.error ?? "", /EEXIST|ENOTDIR/);
-  assert.match(check.result.block, /\n- Provider text: not saved \(/);
-});
-
-test("a broken provider never fails the check: the setup block names its reason and fix", async (t) => {
-  const { root, home } = sandbox(t);
-  const script = withoutProvider(root, { provider: true });
-  const reference = path.join(root, "plugins", PROVIDER, "skills", "closedloop-provider", "references", "vibe-skill.md");
-  writeFileSync(reference, readFileSync(reference, "utf8").replace("<!-- block: connectors -->", "<!-- gone: connectors -->"));
-  const check = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=connected"], {}, script);
-  assert.equal(check.code, 0);
-  assert.equal(check.result.print, true);
-  assert.match(check.result.block, /\n- Provider vibe-closedloop-provider: vibe-skill\.md in vibe-closedloop-provider has no block connectors\. Fix: reinstall/);
-  assert.equal(check.result.providerText.broken, true);
+  assert.equal(check.result.provider.state, "bound", "the retired flags change nothing");
+  assert.doesNotMatch(check.result.reason ?? "", /option/i, "neither flag is an unknown option");
 });
 
 test("a session bound with a connection missing rebinds when a later chat binds the same provider with more", async () => {
@@ -1106,8 +983,6 @@ test("a session bound with a connection missing rebinds when a later chat binds 
   assert.deepEqual(adoptedProvider({ provider: full }, { ...full, capabilities: [...full.capabilities, "recipes"] }), full, "a complete binding stays as it is");
 });
 
-const PROVIDER_SCRIPT = path.resolve(PLUGIN_ROOT, "..", "vibe-core", "lib", "vibe", "scripts", "provider.mjs");
-
 test("a check with no connection states while a provider is installed binds nothing, names the calls and asks for a rerun", async (t) => {
   const { home } = sandbox(t);
   const first = await run(home, ["check", ...BOTH]);
@@ -1119,27 +994,11 @@ test("a check with no connection states while a provider is installed binds noth
     ["graph", "Call closedloop-graph `sync_status`; connected only when it answered in this conversation."]]);
   assert.match(first.result.block, /\n- ClosedLoop connection: not checked yet \(Call ClosedLoop `get-me`;/);
   assert.match(first.result.provider.reason, /run the check again with one --connection/);
-  assert.ok(!existsSync(path.join(home, ".codex", "vibe", "provider-text")), "no tree for a check that bound nothing");
   const rerun = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=connected"]);
   assert.equal(rerun.result.provider.state, "bound");
   assert.equal(rerun.result.print, true, "the rerun shows the setup check the person keeps");
-  assert.ok(existsSync(path.join(rerun.result.providerText.folder, "binding.json")));
   const { adoptedProvider } = await import("./plugin-version.mjs");
   assert.deepEqual(adoptedProvider({ provider: first.result.provider }, rerun.result.provider), rerun.result.provider, "an unprobed session takes the bound chat's");
-});
-
-test("a session in a folder that is no git checkout still gets its tree, keyed by that folder", async (t) => {
-  const { root, home } = sandbox(t);
-  const folder = path.join(root, "case");
-  const other = path.join(root, "other");
-  mkdirSync(folder);
-  mkdirSync(other);
-  const check = await run(home, ["check", ...BOTH, "--connection", "tracker=connected", "--connection", "graph=connected"], {}, SCRIPT, folder);
-  assert.equal(check.result.provider.state, "bound");
-  assert.deepEqual(JSON.parse(readFileSync(textIndex(home), "utf8")), { [realpathSync(folder)]: path.basename(check.result.providerText.folder) });
-  const tree = (cwd) => execFileSync(process.execPath, [PROVIDER_SCRIPT, "tree"], { cwd, encoding: "utf8", env: { PATH: SYSTEM_PATH, HOME: home } });
-  assert.equal(tree(folder), `${check.result.providerText.folder}\n`);
-  assert.throws(() => tree(other), (error) => error.status === 3 && /no provider text was written for /.test(error.stdout));
 });
 
 test("adopt refuses to carry an unprobed binding onto a session, and adopts once the check binds", async (t) => {
@@ -1156,4 +1015,61 @@ test("adopt refuses to carry an unprobed binding onto a session, and adopts once
   const adopted = await run(home, ["adopt", "--worktree", worktree]);
   assert.equal(adopted.code, 0, JSON.stringify(adopted.result));
   assert.equal(readSessionRecord(worktree).provider.state, "bound");
+});
+
+test("the command line runs when node reaches the script through a symlinked directory", (t) => {
+  const { root, home } = sandbox(t);
+  // macOS /var and a linked plugin cache name the script by a path node does not report as the module's own.
+  const linked = path.join(root, "linked-plugins");
+  symlinkSync(path.resolve(PLUGIN_ROOT, ".."), linked);
+  const stdout = execFileSync(process.execPath, [path.join(linked, "vibe", "skills", "vibe", "scripts", "plugin-version.mjs"), "show"],
+    { encoding: "utf8", env: { PATH: SYSTEM_PATH, HOME: home, CLAUDE_CODE_SESSION_ID: CONVERSATION } });
+  assert.notEqual(stdout, "", "the script printed nothing, so its main guard skipped the command");
+  assert.equal(typeof JSON.parse(stdout).state, "string");
+});
+
+/** A main branch whose catalogs list vibe as the ClosedLoop build and vibe-generic as plugins/vibe, each with its own version. */
+function namedMainFiles({ built, generic, core }) {
+  const entries = [["vibe", "vibe-closedloop", built], ["vibe-generic", "vibe", generic], ["vibe-core", "vibe-core", core]];
+  const files = {
+    "/.claude-plugin/marketplace.json": JSON.stringify({ name: "closedloop-ai", plugins: entries.map(([name, dir]) => ({ name, source: `./plugins/${dir}` })) }),
+    "/.agents/plugins/marketplace.json": JSON.stringify({ name: "closedloop-ai", plugins: entries.map(([name, dir]) => ({ name, source: { source: "local", path: `./plugins/${dir}` } })) }),
+  };
+  for (const [name, dir, version] of entries) {
+    for (const manifest of [".claude-plugin", ".codex-plugin"]) files[`/plugins/${dir}/${manifest}/plugin.json`] = JSON.stringify({ name, version });
+  }
+  return files;
+}
+
+test("vibe-generic is checked against its own catalog entry and needs vibe-core, as vibe does", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: namedMainFiles({ built: "1.1.89", generic: "1.1.90", core: "1.0.10" }) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe-generic", version: "1.1.88" }, { name: "vibe-core", version: "1.0.10" }] });
+  const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe-generic", version: "1.1.88" }] });
+  const { result } = await run(home, ["check", ...both(claude, codex, main.url), "--connection", "tracker=connected", "--connection", "graph=connected"]);
+  assert.deepEqual(result.outdated, [
+    { harness: "claude", plugin: "vibe-generic", installed: "1.1.88", latest: "1.1.90" },
+    { harness: "codex", plugin: "vibe-generic", installed: "1.1.88", latest: "1.1.90" },
+    { harness: "codex", plugin: "vibe-core", installed: null, latest: "1.0.10", missing: true },
+  ]);
+  assert.ok(main.requests.includes("/plugins/vibe/.codex-plugin/plugin.json") && !main.requests.some((url) => url.startsWith("/plugins/vibe-closedloop/")),
+    "vibe-generic's latest version is plugins/vibe's, never the ClosedLoop build's");
+  assert.equal(result.conflicts, undefined);
+  assert.match(result.block, /^- Claude Code: closedloop-core not installed, vibe-generic 1\.1\.88 \(1\.1\.90 available\), vibe-core 1\.0\.10 \(latest\)$/m);
+});
+
+test("vibe and vibe-generic installed in one harness are reported by a code, each checked against its own entry", async (t) => {
+  const main = await marketplace(t, { files: namedMainFiles({ built: "1.1.89", generic: "1.1.90", core: "1.0.10" }) });
+  const vibes = [{ name: "vibe", version: "1.1.89" }, { name: "vibe-generic", version: "1.1.90" }];
+  for (const listed of [vibes, [...vibes].reverse()]) {
+    const { home, bin } = sandbox(t);
+    const claude = fakeCli(bin, "claude", { installed: [...listed, { name: "vibe-core", version: "1.0.10" }] });
+    const codex = fakeCli(bin, "codex", { installed: [...listed, { name: "vibe-core", version: "1.0.10" }] });
+    const { result } = await run(home, ["check", ...both(claude, codex, main.url)]);
+    const order = listed.map((plugin) => plugin.name).join(" then ");
+    assert.equal(result.status, "current", order);
+    assert.deepEqual(result.conflicts, [{ harness: "claude", code: "both-installed" }, { harness: "codex", code: "both-installed" }], order);
+    assert.deepEqual(result.harnesses[0].plugins.map((plugin) => `${plugin.name} ${plugin.latest}`).sort(),
+      ["vibe 1.1.89", "vibe-core 1.0.10", "vibe-generic 1.1.90"], order);
+  }
 });

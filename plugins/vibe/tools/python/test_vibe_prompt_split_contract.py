@@ -95,7 +95,7 @@ def test_every_substantial_moved_line_lives_in_one_file() -> None:
 
 def test_assembling_a_split_file_keeps_every_heading_it_had() -> None:
     for source, headings in HEADINGS.items():
-        text = skill_split.assembled(SKILLS / source)
+        text = skill_split.built(SKILLS / source)
         for heading in headings:
             assert re.search(rf"^{re.escape(heading)}$", text, re.MULTILINE), (source, heading)
 
@@ -124,12 +124,13 @@ def test_the_loader_conditions_name_inventory_flags_and_classes_that_exist() -> 
 
 
 def test_server_only_work_keeps_the_ui_text_one_read_away() -> None:
-    assembled = flat(skill_split.assembled(SKILLS / "handoff" / "SKILL.md"))
-    assert "## 4. Storybook" in skill_split.assembled(SKILLS / "handoff" / "SKILL.md")
+    handoff = skill_split.built(SKILLS / "handoff" / "SKILL.md")
+    assembled = flat(handoff)
+    assert "## 4. Storybook" in handoff
     assert "Every new story follows the repo's `apps/storybook/TAXONOMY.md`" in assembled
 
 
 def test_the_split_files_are_smaller_than_the_text_they_replace() -> None:
     for source in {entry[0] for entry in SPLIT}:
         path = SKILLS / source
-        assert len(skill_split.raw(path)) < len(skill_split.assembled(path)), source
+        assert len(skill_split.raw(path)) < len(skill_split.built(path)), source

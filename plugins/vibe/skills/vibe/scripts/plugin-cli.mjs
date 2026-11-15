@@ -4,8 +4,13 @@
 import { accessSync, constants, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pluginInstall, pluginMarketplace } from "../../../shared/plugin-roots.mjs";
 
-export const MARKETPLACE = "closedloop-ai";
+const SELF = pluginInstall(import.meta.url);
+/** The marketplace this vibe was installed from, read from its install path. */
+export const MARKETPLACE = pluginMarketplace(SELF);
+/** The name this vibe is published under (vibe or vibe-generic), read from its own manifest. */
+export const OWN_PLUGIN = SELF.name;
 export const BUNDLED_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
 /** harness-identity.mjs's Harness values, the names a harness goes by on the wire. */
 const CLAUDE = "claude";

@@ -23,7 +23,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const NO_BUILD = /(?:^|[\s"'=])--no-build(?=$|[\s"'])/;
 const SHA = /^[0-9a-f]{7,40}$/i;
@@ -107,6 +107,6 @@ function main(argv) {
 
 export const ESCALATION_JUSTIFICATION = "Record which version the automatic checks' setup was built from";
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

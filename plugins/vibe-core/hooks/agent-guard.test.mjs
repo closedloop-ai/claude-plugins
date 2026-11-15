@@ -21,7 +21,7 @@ test("an orchestrator cannot launch a vibe worker directly outside a vibe sessio
     encoding: "utf8", env: chat.env,
   });
 
-  assert.match(agentLaunchProblem({ subagent_type: "vibe:vibe-change-worker" }), /invoke `vibe:vibe`/);
+  assert.match(agentLaunchProblem({ subagent_type: "vibe:vibe-change-worker" }), new RegExp(`invoke \`${INSTALLED}:vibe\``));
   const denied = JSON.parse(run("vibe:vibe-change-worker").stdout).hookSpecificOutput;
   assert.equal(denied.permissionDecision, "deny");
   assert.match(denied.permissionDecisionReason, /session record, environment setup, guardrails and adversarial review, PR preflight and SendMessage path/);
@@ -39,7 +39,9 @@ test("an orchestrator cannot launch a vibe worker directly outside a vibe sessio
   assert.ok(PRE_TOOL_USE_ROUTES.Agent.some((guard) => guard.run === agentGuard), "the Agent guard is routed");
 });
 
-const WRITER_REFUSAL = "do not launch vibe:vibe-change-worker through the native Agent tool: invoke `vibe:vibe` and use its capability-binding worker launcher so the writer gets its session record, environment setup, guardrails and adversarial review, PR preflight and SendMessage path";
+// The skill the refusal names is the installed vibe's: in this checkout, plugins/vibe, published as vibe-generic.
+const INSTALLED = "vibe-generic";
+const WRITER_REFUSAL = `do not launch vibe:vibe-change-worker through the native Agent tool: invoke \`${INSTALLED}:vibe\` and use its capability-binding worker launcher so the writer gets its session record, environment setup, guardrails and adversarial review, PR preflight and SendMessage path`;
 const PLUGIN_ROOT = vibeRoot();
 const LAUNCHER = path.join(PLUGIN_ROOT, "skills/vibe/scripts/dist/claude-worker.mjs");
 
@@ -51,7 +53,7 @@ test("a startup role's refusal names the shipped sessionless launcher route, not
     assert.ok(problem.includes(`"agentName": "vibe-${role}"`), problem);
     assert.ok(problem.includes(`"sessionless": {"kind": "startup"}`), problem);
     assert.ok(problem.includes(`"mode": "request"`), problem);
-    assert.doesNotMatch(problem, /invoke `vibe:vibe`|session record/, "a startup role needs no vibe session");
+    assert.doesNotMatch(problem, /invoke `[a-z-]+:vibe`|session record/, "a startup role needs no vibe session");
   }
 });
 
@@ -108,4 +110,20 @@ test("a Claude writer started through the Agent tool works under the starting ch
   assert.match(writer("Invoke vibe:vibe first: fix #12\nProvider: none\n"), /this lead is bound as "Provider: vibe-closedloop-provider"; a writer works under the lead.s binding; name the lead's binding on that line or drop the line/);
   assert.equal(writer("Invoke vibe:vibe first: fix #12\nProvider: none\n", "generic-chat"), null, "a generic lead's writer carries Provider: none");
   assert.equal(writer("Review this diff and report findings."), null, "a prompt that starts no writer is untouched");
+});
+
+test("a vibe-generic worker or reviewer launch is refused as a vibe one is, by its role", () => {
+  assert.equal(agentLaunchProblem({ subagent_type: "vibe-generic:vibe-change-worker" }),
+    WRITER_REFUSAL.replace("launch vibe:vibe-change-worker", "launch vibe-generic:vibe-change-worker"));
+  for (const role of ["adversarial-reviewer", "guardrails-reviewer"]) {
+    const problem = agentLaunchProblem({ subagent_type: `vibe-generic:vibe-${role}` });
+    assert.match(problem, /^do not launch vibe-generic:vibe-.+ through the native Agent tool: use the vibe capability-binding worker launcher/);
+    assert.ok(problem.includes(`"agentName": "vibe-${role}"`) && problem.includes(`--role vibe-${role} --result`), problem);
+  }
+  assert.match(agentLaunchProblem({ subagent_type: "vibe-generic:vibe-storybook-decomposer" }), /capability-binding worker launcher/);
+  assert.ok(agentLaunchProblem({ subagent_type: "vibe-generic:vibe-setup-worker" }).includes('"agentName": "vibe-setup-worker"'));
+  assert.match(agentLaunchProblem({ subagent_type: "vibe-generic:vibe-seed-check-worker" }), /vibe seed refresh runs in Codex/);
+  for (const other of ["vibe-core:vibe-change-worker", "general-purpose", "vibe-generic:handoff", undefined]) {
+    assert.equal(agentLaunchProblem({ subagent_type: other }), null, String(other));
+  }
 });

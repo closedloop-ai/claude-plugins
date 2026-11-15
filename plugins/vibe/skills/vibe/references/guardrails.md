@@ -1,7 +1,7 @@
 # Guardrails
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 Vibe work is reviewed by design and engineering, so it follows the team's

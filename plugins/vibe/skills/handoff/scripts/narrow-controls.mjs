@@ -18,8 +18,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const INTERACTIVE = new Set(["button", "checkbox", "combobox", "link", "menuitem", "menuitemcheckbox", "menuitemradio",
   "radio", "searchbox", "slider", "spinbutton", "switch", "tab", "textbox"]);
@@ -86,7 +86,7 @@ function changeLogText({ "change-log": file, worktree }) {
   return target && existsSync(target) ? readFileSync(target, "utf8") : "";
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: { wide: { type: "string" }, narrow: { type: "string" },
       "change-log": { type: "string" }, worktree: { type: "string" } } });

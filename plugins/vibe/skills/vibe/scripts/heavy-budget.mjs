@@ -27,7 +27,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 // Operational parameters nobody has specified yet (flagged for the owner in the pull request).
 export const DEFAULTS = Object.freeze({
@@ -201,7 +201,7 @@ export function createBudget({
   return { settings, snapshot, acquire, liveLeases };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   if (process.argv[2] !== "status") {
     process.stderr.write("Usage: heavy-budget.mjs status\n");
     process.exit(2);

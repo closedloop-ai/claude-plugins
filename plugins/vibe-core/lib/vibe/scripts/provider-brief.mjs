@@ -1,8 +1,10 @@
 // The lead's provider binding as a writer brief carries it, so a writer works under the binding of the lead that
 // briefed it. The Codex launcher (codex-session.mjs), the Claude launcher (claude-worker) and the Agent guard check it.
 
-/** A writer brief: a Codex `$vibe` prompt or a Claude writer preamble that invokes `vibe:vibe`. */
-export const WRITER_BRIEF = /^\s*\$vibe\b|\bInvoke vibe:vibe first\b|^\s*\/vibe:vibe\b/m;
+import { vibeSkillPattern } from "../../../shared/plugin-roots.mjs";
+
+/** A writer brief: a Codex `$vibe` prompt or a Claude writer preamble that invokes `vibe:vibe` (or `vibe-generic:vibe`). */
+export const WRITER_BRIEF = new RegExp(`^\\s*\\$vibe\\b|\\bInvoke ${vibeSkillPattern("vibe")} first\\b|^\\s*\\/${vibeSkillPattern("vibe")}\\b`, "m");
 const TRAILING_SPACE = /\s+$/;
 
 /** The line a writer brief carries: the lead's own binding, `Provider: <name>` or `Provider: none`. */

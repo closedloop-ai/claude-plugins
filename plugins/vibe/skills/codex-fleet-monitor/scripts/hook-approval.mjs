@@ -15,9 +15,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { comparePluginVersions } from "../../../shared/plugin-roots.mjs";
-import { findCli, installedPlugins } from "../../vibe/scripts/plugin-cli.mjs";
+import { comparePluginVersions, isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { findCli, installedPlugins, OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine } from "../../vibe/scripts/vibe-core-hooks.mjs";
 
 // Nothing here loads vibe-core, so a Codex host where it is missing still gets its line.
@@ -34,7 +33,7 @@ export function codexVersions(cli) {
     const plugins = installedPlugins(CODEX, execFileSync(cli, ["plugin", "list", "--json"],
       { encoding: "utf8", timeout: LIST_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] }));
     const version = (name) => plugins.find((plugin) => plugin.name === name)?.version ?? null;
-    return { vibe: version("vibe"), "vibe-core": version("vibe-core") };
+    return { vibe: version(OWN_PLUGIN), "vibe-core": version("vibe-core") };
   } catch {
     return null;
   }
@@ -88,6 +87,6 @@ async function main([machine, stateDir]) {
   if (line) process.stdout.write(`${line}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try { await main(process.argv.slice(2)); } catch (error) { process.stderr.write(`hook-approval: ${error.message}\n`); process.exitCode = 2; }
 }

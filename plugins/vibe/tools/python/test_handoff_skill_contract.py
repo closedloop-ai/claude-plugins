@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -25,14 +26,14 @@ FIXED_ASSIGNEE = re.compile(r"\bassign(?:s|ed)?\b[^.\n]{0,40}?\bto [A-Z][a-z]+ [
 
 
 def test_final_publication_keeps_input_readiness_distinct_from_coverage() -> None:
-    upload = section(HANDOFF_SKILL.read_text(), "## 7. Upload the last changes")
+    upload = section(skill_split.read(HANDOFF_SKILL), "## 7. Upload the last changes")
     for required in ("main-sync-inputs", "mainSyncValidation", "same actor", "retained reports",
                      "requiredE2eComplete", "not test authority"):
         assert required in upload, required
 
 
 def test_behavior_answers_go_to_the_change_worker_before_the_ticket() -> None:
-    answers = section(HANDOFF_SKILL.read_text(), "## Answers from the person")
+    answers = section(skill_split.read(HANDOFF_SKILL), "## Answers from the person")
 
     assert "**Behavior**" in answers
     assert "**Wording**" in answers
@@ -47,7 +48,7 @@ def test_behavior_answers_go_to_the_change_worker_before_the_ticket() -> None:
 
 
 def test_step_eight_routes_answers_and_blocks_finalizing_until_reruns_finish() -> None:
-    step_eight = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    step_eight = section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
 
     assert "`NEEDS_PERSON`" in step_eight
     assert "`NEEDS_CHANGE`" in step_eight
@@ -57,14 +58,14 @@ def test_step_eight_routes_answers_and_blocks_finalizing_until_reruns_finish() -
 
 
 def test_summary_corrections_that_change_behavior_are_routed_too() -> None:
-    step_two = section(HANDOFF_SKILL.read_text(), "## 2. Summarize internally")
+    step_two = section(skill_split.read(HANDOFF_SKILL), "## 2. Summarize internally")
 
     assert "Answers from the person" in step_two
     assert "goes to the change worker now" in step_two
 
 
 def test_ticket_worker_refuses_unbuilt_behavior_and_rederives_dependent_sections() -> None:
-    handoff = section(TICKET_WORKER.read_text(), "## Handoff mode")
+    handoff = section(skill_split.read(TICKET_WORKER), "## Handoff mode")
 
     assert "handoff-inventory.mjs --worktree" in handoff
     assert "it must be the inventory's `baseCommit`" in handoff
@@ -77,8 +78,8 @@ def test_ticket_worker_refuses_unbuilt_behavior_and_rederives_dependent_sections
 
 
 def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
-    worker = CHANGE_WORKER.read_text()
-    answers = section(HANDOFF_SKILL.read_text(), "## Answers from the person")
+    worker = skill_split.read(CHANGE_WORKER)
+    answers = section(skill_split.read(HANDOFF_SKILL), "## Answers from the person")
     assert "findings or product answer" in worker
     assert "same active request and writer ID" in worker
     assert "`already met`" in answers
@@ -87,7 +88,7 @@ def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
 
 
 def test_step_eight_reuses_a_named_owner_or_asks_without_defaulting() -> None:
-    step_eight = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    step_eight = section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
 
     assert "Who should I pass it to? A name or email is fine." in step_eight
     assert "`vibe-ticket-worker` in lookup mode" in step_eight
@@ -102,7 +103,7 @@ def test_step_eight_reuses_a_named_owner_or_asks_without_defaulting() -> None:
 
 
 def test_lookup_matches_through_the_script_and_assign_uses_its_user() -> None:
-    worker = TICKET_WORKER.read_text()
+    worker = skill_split.read(TICKET_WORKER)
     lookup = section(worker, "## Lookup mode")
     assign = section(worker, "## Assign mode")
 
@@ -116,14 +117,14 @@ def test_lookup_matches_through_the_script_and_assign_uses_its_user() -> None:
 
 
 def test_no_next_owner_is_hardcoded() -> None:
-    next_line = section(TICKET_TEMPLATE.read_text(), "## Handoff")
-    for text in (HANDOFF_SKILL.read_text(), TICKET_WORKER.read_text(), next_line):
+    next_line = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
+    for text in (skill_split.read(HANDOFF_SKILL), skill_split.read(TICKET_WORKER), next_line):
         assert not FIXED_ASSIGNEE.search(text), FIXED_ASSIGNEE.search(text)
     assert "- Next: <the next owner the person chose at handoff, by full name>" in next_line
 
 
 def test_template_grading_block_follows_handoff_with_the_seven_item_checklist() -> None:
-    template = TICKET_TEMPLATE.read_text()
+    template = skill_split.read(TICKET_TEMPLATE)
     grading = section(template, "## Grading")
 
     assert template.index("## Handoff") < template.index("## Grading") < template.index("## Engineering checklist")
@@ -143,7 +144,7 @@ def test_template_grading_block_follows_handoff_with_the_seven_item_checklist() 
 
 
 def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None:
-    worker = TICKET_WORKER.read_text()
+    worker = skill_split.read(TICKET_WORKER)
     create = section(worker, "## Create mode")
     handoff = section(worker, "## Handoff mode")
 
@@ -154,7 +155,7 @@ def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None
 
 
 def test_check_weight_follows_whether_the_session_changed_backend_code() -> None:
-    skill = HANDOFF_SKILL.read_text()
+    skill = skill_split.read(HANDOFF_SKILL)
     task_list = section(skill, "## 1. Internal checklist")
     checks = section(skill, "## 5. Checks and the missing tests list")
     reviews = section(skill, "## 6. Independent integrated review")
@@ -173,7 +174,7 @@ def test_check_weight_follows_whether_the_session_changed_backend_code() -> None
 
 def test_draft_scope_is_retired() -> None:
     for path in (HANDOFF_SKILL, VIBE_SKILL, TICKET_TEMPLATE, TICKET_WORKER, CHANGE_WORKER):
-        text = path.read_text()
+        text = skill_split.read(path)
         for retired in ("draft scope", "full scope", "--scope", "vibe-stub", "stubs.md", "api-requirements"):
             assert retired not in text.lower(), (path.name, retired)
     assert not (PLUGIN_ROOT / "skills" / "vibe" / "references" / "stubs.md").exists()
@@ -181,8 +182,8 @@ def test_draft_scope_is_retired() -> None:
 
 
 def test_vibe_sends_pure_mockups_to_prototype() -> None:
-    starting_new = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
-    build_loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    starting_new = section(skill_split.read(VIBE_SKILL), "## 2. Start or resume")
+    build_loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
 
     # Operator ruling: vibe invokes the canonical workflow itself.
     assert "`new-prototype`" in starting_new
@@ -195,8 +196,8 @@ def test_vibe_sends_pure_mockups_to_prototype() -> None:
 
 
 def test_owned_prototypes_keep_handoff_assignment_and_canonical_transitions() -> None:
-    skill = HANDOFF_SKILL.read_text()
-    worker = (PLUGIN_ROOT / "agents" / "vibe-prototype-worker.md").read_text()
+    skill = skill_split.read(HANDOFF_SKILL)
+    worker = skill_split.read(PLUGIN_ROOT / "agents" / "vibe-prototype-worker.md")
     assert "next-owner lookup and ticket assignment stay intact" in section(skill, "### Owned prototype sessions")
     assert "the missing tests list in its same context, writing no tests" in section(skill, "### Owned prototype sessions")
     assert "PrototypeStatus.HandedOff remains owned by prototype-approve" in skill
@@ -207,32 +208,32 @@ def test_owned_prototypes_keep_handoff_assignment_and_canonical_transitions() ->
 
 
 def test_prototype_preflight_mode_survives_setup_worker_repairs() -> None:
-    setup_worker = (PLUGIN_ROOT / "agents" / "vibe-setup-worker.md").read_text()
-    preflight = (PLUGIN_ROOT / "skills" / "vibe" / "references" / "preflight.md").read_text()
-    assert "selected preflight arguments" in VIBE_SKILL.read_text()
+    setup_worker = skill_split.read(PLUGIN_ROOT / "agents" / "vibe-setup-worker.md")
+    preflight = skill_split.read(PLUGIN_ROOT / "skills" / "vibe" / "references" / "preflight.md")
+    assert "selected preflight arguments" in skill_split.read(VIBE_SKILL)
     assert "Keep `--prototype` during common/prototype repair" in setup_worker
     assert "replace the `--repo` path but preserve `--prototype`" in preflight
 
 
 def test_handoff_verifies_coverage_from_the_whole_session_table() -> None:
-    checks = section(HANDOFF_SKILL.read_text(), "## 5. Checks and the missing tests list")
+    checks = section(skill_split.read(HANDOFF_SKILL), "## 5. Checks and the missing tests list")
     for required in ("whole session decision table", "all requests", "stable row IDs",
                      "Required Tests", "negative", "cross-request interactions"):
         assert required in checks, required
-    review = section(HANDOFF_SKILL.read_text(), "## 6. Independent integrated review")
+    review = section(skill_split.read(HANDOFF_SKILL), "## 6. Independent integrated review")
     assert "whole session decision table" in review
     assert "Final Alignment Status: Aligned" in review
     assert "blocks final handoff" in review
-    ticket = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    ticket = section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
     assert "required session decision table" in ticket
     assert "decision tables in `.closedloop-ai/decision-tables/` if any" not in ticket
-    worker = section(CHANGE_WORKER.read_text(), "## Tests: repair, don't author")
+    worker = section(skill_split.read(CHANGE_WORKER), "## Tests: repair, don't author")
     assert "whole session decision table" in worker and "row IDs" in worker
     assert "planned" in worker and "executed" in worker
 
 
 def test_table_attachments_preserve_private_plan_and_truthful_final_evidence() -> None:
-    ticket = section(TICKET_WORKER.read_text(), "## Handoff mode")
+    ticket = section(skill_split.read(TICKET_WORKER), "## Handoff mode")
     assert "required session decision table" in ticket
     assert "attach each decision table" in ticket
     assert "never include the local plan folder" in ticket
@@ -241,8 +242,8 @@ def test_table_attachments_preserve_private_plan_and_truthful_final_evidence() -
 
 
 def test_design_review_is_pending_at_creation_and_populated_at_handoff() -> None:
-    create = section(TICKET_WORKER.read_text(), "## Create mode")
-    handoff = section(TICKET_WORKER.read_text(), "## Handoff mode")
+    create = section(skill_split.read(TICKET_WORKER), "## Create mode")
+    handoff = section(skill_split.read(TICKET_WORKER), "## Handoff mode")
     assert "Design Review" in create and "Pending." in create
     assert "Design Review" in handoff and "verified final diff" in handoff
     assert "only at handoff" in handoff
@@ -250,7 +251,7 @@ def test_design_review_is_pending_at_creation_and_populated_at_handoff() -> None
 
 
 def test_design_review_template_contains_every_grading_evidence_family() -> None:
-    design = section(TICKET_TEMPLATE.read_text(), "## Design Review")
+    design = section(skill_split.read(TICKET_TEMPLATE), "## Design Review")
     for required in ("App and Storybook previews", "deployed commit", "protection",
                      "scope, screens, hosts and states", "added/changed/removed",
                      "IDs and direct links", "controls, Docs and plays",
@@ -262,54 +263,54 @@ def test_design_review_template_contains_every_grading_evidence_family() -> None
 
 
 def test_design_review_callers_preserve_actual_inspection_and_detailed_inventory() -> None:
-    handoff = HANDOFF_SKILL.read_text()
+    handoff = skill_split.read(HANDOFF_SKILL)
     for required in ("Design Review", "verified final diff", "detailed design evidence",
                      "looks good", "Storybook correct", "actual inspection",
                      "source-only", "unverified", "no technical approval"):
         assert required in handoff, required
     for name in ("vibe-handoff-summarizer", "vibe-verify-worker", "vibe-storybook-decomposer"):
-        text = (PLUGIN_ROOT / "agents" / f"{name}.md").read_text()
+        text = skill_split.read(PLUGIN_ROOT / "agents" / f"{name}.md")
         assert "Design Review" in text and "evidence" in text, name
-    summary = (PLUGIN_ROOT / "agents" / "vibe-handoff-summarizer.md").read_text()
+    summary = skill_split.read(PLUGIN_ROOT / "agents" / "vibe-handoff-summarizer.md")
     assert "detailed" in summary and "do not truncate" in summary
 
 
 def test_handoff_production_impact_is_conditional_and_production_only() -> None:
-    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    handoff = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
     for required in ("Production impact", "if merged", "production-only",
                      "added/changed/removed", "paths and effects", "shared parent",
                      "consumers", "web/Desktop", "not already shipped",
                      "story/test/prototype-only"):
         assert required in handoff, required
-    assert "Production impact" in section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    assert "Production impact" in section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
 
 
 def test_handoff_flags_separate_delta_gates_and_evidence_classes() -> None:
-    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    handoff = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
     for required in ("Flag changes and gates", "exact keys", "new", "existing modified",
                      "removed", "owning source paths", "entry points", "reads",
                      "mutations", "host gates", "source defaults", "verified production",
                      "timestamp", "evidence", "local QA", "No new flags",
                      "existing gates", "unavailable or stale", "never guess"):
         assert required in handoff, required
-    assert "Labs flag keys" not in (PLUGIN_ROOT / "agents" / "vibe-handoff-summarizer.md").read_text()
+    assert "Labs flag keys" not in skill_split.read(PLUGIN_ROOT / "agents" / "vibe-handoff-summarizer.md")
 
 
 def test_handoff_open_questions_require_research_and_exclude_settled_answers() -> None:
-    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    handoff = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
     for required in ("Open Questions", "graph", "live ClosedLoop", "sources checked",
                      "context", "decision needed", "Product/Design/Scope",
                      "answered or settled", "engineering limitations", "None",
                      "technical approval"):
         assert required in handoff, required
-    worker = section(TICKET_WORKER.read_text(), "## Handoff mode")
+    worker = section(skill_split.read(TICKET_WORKER), "## Handoff mode")
     assert "Open Questions" in worker
     assert "quality-loop.md" in worker
     assert "None" in worker
 
 
 def test_handoff_metadata_preserves_snapshot_headings_and_phase() -> None:
-    template = TICKET_TEMPLATE.read_text()
+    template = skill_split.read(TICKET_TEMPLATE)
     body = template.split("````markdown", 1)[1].split("````", 1)[0]
     assert re.findall(r"^## (.+)$", body, re.MULTILINE) == [
         "What this is", "Scope and acceptance criteria", "Environment", "Progress",
@@ -322,18 +323,18 @@ def test_handoff_metadata_preserves_snapshot_headings_and_phase() -> None:
     handoff = section(template, "## Handoff")
     assert "without overwriting the machine-generated snapshot" in handoff
     assert "Filled at handoff" in handoff
-    create = section(TICKET_WORKER.read_text(), "## Create mode")
+    create = section(skill_split.read(TICKET_WORKER), "## Create mode")
     assert "Handoff, Design Review, and Grading" in create and "Pending." in create
 
 
 def test_pull_request_body_and_evidence_are_gated_by_the_inventory() -> None:
-    hand_over = section(HANDOFF_SKILL.read_text(), "## 9. Hand it over")
+    hand_over = section(skill_split.read(HANDOFF_SKILL), "## 9. Hand it over")
     assert "`blocking.prBody` and `blocking.prEvidence`" in hand_over
-    mode = section((PLUGIN_ROOT / "agents" / "vibe-environment-worker.md").read_text(), "## Pull-request mode")
+    mode = section(skill_split.read(PLUGIN_ROOT / "agents" / "vibe-environment-worker.md"), "## Pull-request mode")
     for required in ("--phase pull-request --overlap --ticket", "`assertionChanges`", "`refusals`",
                      "false creates nothing (`NEEDS_CHANGE`)", "fresh PostHog evaluation"):
         assert required in mode, required
-    assert "`serverOnly` true skips step 4" in section(HANDOFF_SKILL.read_text(), "## 1. Internal checklist")
+    assert "`serverOnly` true skips step 4" in section(skill_split.read(HANDOFF_SKILL), "## 1. Internal checklist")
 
 
 def test_input_readiness_runs_once_after_the_committed_merge() -> None:
@@ -341,15 +342,15 @@ def test_input_readiness_runs_once_after_the_committed_merge() -> None:
     agents = PLUGIN_ROOT / "agents"
     docs = [HANDOFF_SKILL, VIBE_SKILL, *(PLUGIN_ROOT / "skills" / "vibe" / "references").glob("*.md"), *agents.glob("*.md")]
     for path in docs:
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         for stale in ("`main-sync-inputs` before", "main-sync-inputs` record turn as", "Run `main-sync-inputs` again",
                       "Before publisher preparation, resume the SAME registered source actor"):
             assert stale not in text, f"{path.name}: {stale}"
-    environment = flat((PLUGIN_ROOT / "skills" / "vibe" / "references" / "environment.md").read_text())
+    environment = flat(skill_split.read(PLUGIN_ROOT / "skills" / "vibe" / "references" / "environment.md"))
     assert "once, after this exact committed merge/fix result" in environment
     assert "no readiness pass precedes capture" in environment
     assert "fix that cause rather than rerunning into the same bound" in environment
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "`main-sync-inputs`" in handoff
     assert "`commit-worktree.mjs --worktree \"<wt>\" --amend`" in handoff
     assert "still-unpushed commit" in handoff

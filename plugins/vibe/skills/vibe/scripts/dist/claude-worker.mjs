@@ -11435,6 +11435,11 @@ var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
 var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 var NUMERIC = /^\d+$/;
 var SCOPE_FALLBACK = "user";
+var DEFAULT_MARKETPLACE = "closedloop-ai";
+var VIBE_PLUGIN_NAMES = Object.freeze(["vibe", "vibe-generic"]);
+var VIBE_LOOKUP_ORDER = Object.freeze({ checkout: Object.freeze(["vibe-generic", "vibe"]), installed: VIBE_PLUGIN_NAMES });
+var VIBE_NAME_PATTERN = `(?:${VIBE_PLUGIN_NAMES.join("|")})`;
+var VIBE_SKILL_ID = new RegExp(`^${VIBE_NAME_PATTERN}:([a-z0-9-]+)$`);
 var PROJECT_SCOPES = Object.freeze(["local", "project"]);
 function pluginManifest(root) {
   for (const relative of MANIFESTS) {
@@ -11458,6 +11463,15 @@ function ownPluginRoot(from) {
     if (parent === dir) throw new Error(`${file} is not inside a plugin`);
     dir = parent;
   }
+}
+function isVibePlugin(name) {
+  return VIBE_PLUGIN_NAMES.includes(name);
+}
+function vibeSkillOf(id) {
+  return typeof id === "string" ? VIBE_SKILL_ID.exec(id)?.[1] ?? null : null;
+}
+function pluginMarketplace(install) {
+  return install?.marketplace ?? DEFAULT_MARKETPLACE;
 }
 function comparePluginVersions(left, right) {
   const a = SEMVER.exec(left);
@@ -11504,8 +11518,8 @@ function pluginInstall(from) {
 function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
   const self = pluginInstall(from);
   if (self.layout === Layout.Checkout) {
-    const candidate = path.join(self.plugins, name);
-    if (pluginManifest(candidate)?.name === name) return { root: realpathSync(candidate), layout: Layout.Checkout };
+    const candidate = checkoutRoot(self.plugins, name);
+    if (candidate) return { root: realpathSync(candidate), layout: Layout.Checkout };
     throw missing(name, self, Layout.Checkout);
   }
   if (self.layout === null) {
@@ -11524,6 +11538,11 @@ function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
 }
 function siblingPluginRoot(name, options) {
   return siblingPluginInstall(name, options).root;
+}
+function checkoutRoot(plugins, name) {
+  const named = path.join(plugins, name);
+  if (pluginManifest(named)?.name === name) return named;
+  return listDirectories(plugins).sort().map((entry) => path.join(plugins, entry)).find((dir) => pluginManifest(dir)?.name === name) ?? null;
 }
 function claudeEntry(registry, name, self, cwd) {
   const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
@@ -11554,7 +11573,8 @@ function codexRoot(base, name, self) {
   return path.join(base, version);
 }
 function missing(name, self, layout) {
-  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${name}@closedloop-ai\` in Claude Code or \`codex plugin add ${name}@closedloop-ai\` in Codex`);
+  const id = `${name}@${pluginMarketplace(self)}`;
+  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${id}\` in Claude Code or \`codex plugin add ${id}\` in Codex`);
 }
 function readRegistry(file) {
   try {
@@ -11575,6 +11595,13 @@ function isFile(file) {
     return statSync(file).isFile();
   } catch {
     return false;
+  }
+}
+function listDirectories(dir) {
+  try {
+    return readdirSync(dir).filter((entry) => isDirectory(path.join(dir, entry)));
+  } catch {
+    return [];
   }
 }
 function isDirectory(file) {
@@ -11609,16 +11636,17 @@ function compareIdentifier(left, right) {
 import path2 from "node:path";
 import { pathToFileURL } from "node:url";
 var VIBE_CORE_MIN = "1.0.10";
-var VIBE_CORE_INSTALL = Object.freeze({ claude: "claude plugin install vibe-core@closedloop-ai", codex: "codex plugin add vibe-core@closedloop-ai" });
+var SELF = pluginInstall(import.meta.url);
+var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
+var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
 var cachedRoot = null;
 function vibeCoreRoot() {
   if (cachedRoot) return cachedRoot;
   const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
   const installed = pluginManifest(root)?.version ?? null;
   if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
-    const vibe = ownPluginRoot(import.meta.url).version ?? "unknown";
     throw Object.assign(
-      new Error(`vibe ${vibe} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update vibe-core@closedloop-ai\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
+      new Error(`${SELF.name} ${SELF.version ?? "unknown"} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update ${VIBE_CORE_ID}\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
       { outdated: true, installed, minimum: VIBE_CORE_MIN }
     );
   }
@@ -11634,7 +11662,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, blocksFileName, boundWith, clearProviderTree, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerTextDirectory, providerTextRoot, providerTree, providerTreeKey, readContract, recordedBinding, requireProvider, scriptExitCode, servedProviderBlocks, sessionBinding, skillNameListed, syncProviderTree, ticketReference, unprobedBinding, unreadableProviders, useLeadBinding, useSessionWorktree, writeProviderTree } = module;
+var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module;
 
 // src/contracts.ts
 function capabilityOperations(binding = sessionBinding()) {
@@ -12024,7 +12052,7 @@ function resolveAgentRoot(supplied, installed, recorded) {
 function isPluginRoot(root) {
   if (!existsSync(join2(root, "agents"))) return false;
   try {
-    return readPluginManifest(root).name === "vibe";
+    return isVibePlugin(readPluginManifest(root).name);
   } catch {
     return false;
   }
@@ -12066,7 +12094,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
   const root = realpathSync5(agentRoot);
   const file = realpathSync5(join3(root, "agents", `${agentName}.md`));
   if (file !== join3(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
-  const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
+  const manifest = external_exports.object({ name: external_exports.string().refine(isVibePlugin, "not a vibe plugin"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
     readPluginManifest(root)
   );
   const source = readFileSync3(file, "utf8");
@@ -12186,7 +12214,7 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
   const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
   const installed = readDefinition(installedRoot, agentName, capabilities);
   const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
-  const cacheVersion = basename2(dirname3(agentRoot)) === "vibe" ? basename2(agentRoot) : void 0;
+  const cacheVersion = isVibePlugin(basename2(dirname3(agentRoot))) ? basename2(agentRoot) : void 0;
   const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
   const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
   return {
@@ -12542,7 +12570,7 @@ function isModelName(value) {
   return typeof value === "string" && MODEL_NAME.test(value);
 }
 function agentRole(agentName) {
-  const agent = typeof agentName === "string" ? agentName.replace(/^vibe:/, "") : agentName;
+  const agent = typeof agentName === "string" ? vibeSkillOf(agentName) ?? agentName : agentName;
   const role = Object.hasOwn(VIBE_AGENT_ROLES, agent) ? VIBE_AGENT_ROLES[agent] : void 0;
   if (!role) {
     throw new Error(`Unknown vibe agent: ${agentName}`);
@@ -13372,7 +13400,7 @@ function boundDefinition(definition, input) {
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${assembleProviderText(definition.prompt, binding)}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. ` + providerTextPolicy(join8(definition.root, "skills/vibe/scripts/provider.mjs"), input.worktree) + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -13980,9 +14008,6 @@ function workerSessionName(agentName, branch, requestId) {
 }
 function checkoutHead(root) {
   return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-}
-function providerTextPolicy(script, worktree) {
-  return `Read every other vibe file that has provider stubs from the folder \`node ${script} tree --worktree "${worktree}"\` prints, at the same relative path, and a file with no copy there as it is; when it exits 3, run \`node ${script} assemble --worktree "${worktree}" <file>\` and read only the file it names (skills/vibe/references/provider-text.md). In a session bound to a provider, a \`provider:\` or \`provider-broken:\` answer from assemble, block or path stops that step; never follow the generic text in its place. `;
 }
 export {
   armMcpInitWatchdog,

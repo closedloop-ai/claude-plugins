@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASELINE_NAME = "review-class-guard-baseline.json";
@@ -285,4 +286,4 @@ async function main() {
   if (!result.ok) process.exitCode = 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+if (isEntryPoint(import.meta.url)) await main();

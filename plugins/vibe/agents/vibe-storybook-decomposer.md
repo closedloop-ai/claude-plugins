@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash
 ---
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 You own Storybook placement for a vibe session in the target repository's

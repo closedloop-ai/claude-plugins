@@ -17,7 +17,7 @@ import type { PrCommands } from "./github-pr.ts";
 import { snapshotMainPlugins } from "./plugin-snapshot.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 import { sourceMain } from "./phase2-driver.ts";
-import { checkVibeVersion, providerSkillId, writeBenchmarkSessionRecord } from "./session-preflight.ts";
+import { checkVibeVersion, writeBenchmarkSessionRecord } from "./session-preflight.ts";
 import type { PreparedFixture } from "./fixture.ts";
 import type { BenchmarkShape, ClaudeRunIdentity } from "./result-schema.ts";
 
@@ -108,7 +108,7 @@ test("version-check launcher uses a physical plugin path so its CLI main guard r
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("version check binds the snapshot's provider through its listed skill, read from the provider's own contract", () => {
+test("version check passes the connection states and no provider skill", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-bench-version-provider-"));
   try {
     const scriptDir = join(root, "plugin/skills/vibe/scripts");
@@ -126,24 +126,15 @@ test("version check binds the snapshot's provider through its listed skill, read
       '  process.stdout.write(JSON.stringify(result));',
       '}',
     ].join("\n"));
-    const providerDir = join(root, "provider");
-    mkdirSync(providerDir);
-    writeFileSync(join(providerDir, "provider.json"), JSON.stringify({ name: "example-provider", skill: "example-skill" }));
-    const argsOf = (provider?: string) => {
-      checkVibeVersion(join(root, "plugin"), root, root, "probe-123", process.execPath, provider);
-      return (JSON.parse(readFileSync(join(root, "plugin-version.json"), "utf8")) as { args: string[] }).args;
-    };
-    const bound = argsOf(providerDir);
-    assert.equal(bound[bound.indexOf("--skill-listed") + 1], "example-provider:example-skill");
-    assert.deepEqual(bound.slice(bound.indexOf("--closedloop"), bound.indexOf("--closedloop") + 4),
+    checkVibeVersion(join(root, "plugin"), root, root, "probe-123", process.execPath);
+    const args = (JSON.parse(readFileSync(join(root, "plugin-version.json"), "utf8")) as { args: string[] }).args;
+    assert.deepEqual(args.slice(args.indexOf("--closedloop"), args.indexOf("--closedloop") + 4),
       ["--closedloop", "not-connected", "--graph", "not-connected"]);
-    assert.equal(argsOf().includes("--skill-listed"), false, "a snapshot with no provider lists no provider skill");
-    assert.equal(providerSkillId(join(dirname(fileURLToPath(import.meta.url)), "../../../plugins/vibe-closedloop-provider")),
-      "vibe-closedloop-provider:closedloop-provider");
+    assert.equal(args.includes("--skill-listed"), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("the real version check records the snapshot's provider with its skill listed, never as unloaded", () => {
+test("the real version check binds no provider plugin beside the snapshot's vibe", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "vibe-bench-version-real-")));
   const saved = { HOME: process.env.HOME, VIBE_LATEST_BASE_URL: process.env.VIBE_LATEST_BASE_URL,
     CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID: process.env.CODEX_THREAD_ID };
@@ -154,18 +145,10 @@ test("the real version check records the snapshot's provider with its skill list
     execFileSync("git", ["init", "-q", checkout]);
     // A throwaway home, and a release source nothing answers, so the check reaches no network and writes nothing real.
     Object.assign(process.env, { HOME: join(root, "home"), VIBE_LATEST_BASE_URL: "http://127.0.0.1:9", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" });
-    const providerOf = (providerDir?: string) => {
-      const runDir = mkdtempSync(join(root, "run-"));
-      checkVibeVersion(join(plugins, "vibe"), checkout, runDir, "probe-real", process.execPath, providerDir);
-      return (JSON.parse(readFileSync(join(runDir, "plugin-version.json"), "utf8")) as
-        { provider: { name?: string; skill?: string; state?: string; missing?: string[] } }).provider;
-    };
-    const listed = providerOf(join(plugins, "vibe-closedloop-provider"));
-    assert.equal(listed.name, "vibe-closedloop-provider");
-    assert.equal(listed.skill, "vibe-closedloop-provider:closedloop-provider");
-    assert.equal(listed.missing?.includes("skill-listed"), false, JSON.stringify(listed));
-    assert.deepEqual(listed.missing, ["connection:tracker", "connection:graph"], "only the connections the bench reports as not connected are missing");
-    assert.deepEqual(providerOf().missing, ["skill-listed"], "without the listed skill the check sees the provider as not loaded");
+    const runDir = mkdtempSync(join(root, "run-"));
+    checkVibeVersion(join(plugins, "vibe"), checkout, runDir, "probe-real", process.execPath);
+    const { provider } = JSON.parse(readFileSync(join(runDir, "plugin-version.json"), "utf8")) as { provider: { state?: string; reason?: string } };
+    assert.deepEqual([provider.state, provider.reason], ["none", "no provider is installed"], "vibe-closedloop-provider beside vibe is no provider");
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) Reflect.deleteProperty(process.env, key);
@@ -338,6 +321,38 @@ test("accepted-nightly plugin snapshot archives exact Git objects and tolerates 
     assert.equal(second.sha, sha);
     assert.throws(() => snapshotMainPlugins(repo, "f".repeat(40), join(root, "third")),
       /nightly-not-on-main/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a snapshot holds plugins/vibe named vibe and the ClosedLoop build, and no separate provider plugin", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-bench-plugin-arms-"));
+  try {
+    const repo = join(root, "repo");
+    const manifest = (dir: string, value: Record<string, unknown>) => {
+      mkdirSync(join(repo, dir, ".claude-plugin"), { recursive: true });
+      writeFileSync(join(repo, dir, ".claude-plugin/plugin.json"), JSON.stringify(value));
+    };
+    manifest("plugins/vibe", { name: "vibe-generic", version: "1.1.88", dependencies: ["closedloop-core", "vibe-core"] });
+    manifest("plugins/vibe-closedloop", { name: "vibe", version: "1.1.88", dependencies: ["closedloop-core", "vibe-core"] });
+    manifest("plugins/vibe-closedloop-provider", { name: "vibe-closedloop-provider", version: "1.0.0" });
+    manifest("plugins/closedloop-core", { name: "closedloop-core", version: "1.0" });
+    for (const dir of ["plugins/vibe", "plugins/vibe-closedloop"]) {
+      mkdirSync(join(repo, dir, "agents"));
+      writeFileSync(join(repo, dir, "agents/vibe-change-worker.md"), "---\nname: vibe-change-worker\nmodel: opus\n---\n");
+    }
+    execFileSync("git", ["init", "-b", "main", repo], { stdio: "ignore" });
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", ["-C", repo, "-c", "user.name=fixture", "-c", "user.email=fixture@invalid.local",
+      "commit", "-m", "fixture"], { stdio: "ignore" });
+    const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", sha]);
+    const snapshot = snapshotMainPlugins(repo, sha, join(root, "out"));
+    assert.equal(JSON.parse(readFileSync(join(snapshot.vibeDir, ".claude-plugin/plugin.json"), "utf8")).name, "vibe",
+      "the generic arm runs plugins/vibe under the name the eval cases call it by");
+    assert.equal(JSON.parse(readFileSync(join(repo, "plugins/vibe/.claude-plugin/plugin.json"), "utf8")).name, "vibe-generic", "the source is untouched");
+    assert.equal(snapshot.builtDir, realpathSync(join(root, "out", "plugin-snapshot", "plugins", "vibe-closedloop")));
+    assert.equal(existsSync(join(root, "out", "plugin-snapshot", "plugins", "vibe-closedloop-provider")), false);
+    assert.deepEqual(Object.keys(snapshot).sort(), ["agentModels", "builtDir", "coreDir", "sha", "vibeDir"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -584,19 +599,20 @@ test("baseline allocation, noise, cached-input disclosure and hashes are exact",
     createdAt: "2026-10-29T18:00:00.000Z" }), /run-count/);
 });
 
-test("Claude loads vibe-core and the provider snapshots exactly when the snapshot has them", () => {
+test("Claude loads vibe-core and the provider arm's vibe: the ClosedLoop build when the snapshot has one", () => {
   const snapshot = { sha: "a".repeat(40), vibeDir: "/snapshot/vibe", coreDir: "/snapshot/core",
-    hooksDir: "/snapshot/vibe-core", providerDir: "/snapshot/provider", agentModels: {} };
-  const plugins = [
+    hooksDir: "/snapshot/vibe-core", builtDir: "/snapshot/vibe-closedloop", agentModels: {} };
+  const plugins = (vibePath: string) => [
     { name: "closedloop-core", source: "closedloop-core@inline", path: snapshot.coreDir },
-    { name: "vibe", source: "vibe@inline", path: snapshot.vibeDir },
+    { name: "vibe", source: "vibe@inline", path: vibePath },
     { name: "vibe-core", source: "vibe-core@inline", path: snapshot.hooksDir },
-    { name: "vibe-closedloop-provider", source: "vibe-closedloop-provider@inline", path: snapshot.providerDir },
     { name: "builtin", source: "builtin@builtin", path: "builtin" },
   ];
-  assert.equal(exactSnapshotPlugins(plugins, snapshot), true);
-  assert.equal(exactSnapshotPlugins(plugins.filter((plugin) => plugin.name !== "vibe-closedloop-provider"), snapshot), false,
-    "a snapshot with the provider must load it");
-  const { providerDir: _omitted, ...generic } = snapshot;
-  assert.equal(exactSnapshotPlugins(plugins, generic), false, "a snapshot without the provider never loads one");
+  assert.equal(exactSnapshotPlugins(plugins(snapshot.builtDir), snapshot), true);
+  assert.equal(exactSnapshotPlugins(plugins(snapshot.vibeDir), snapshot), false, "a snapshot with the build runs the build");
+  assert.equal(exactSnapshotPlugins([...plugins(snapshot.builtDir),
+    { name: "vibe-closedloop-provider", source: "vibe-closedloop-provider@inline", path: "/snapshot/provider" }], snapshot), false,
+  "no separate provider plugin loads");
+  const { builtDir: _omitted, ...older } = snapshot;
+  assert.equal(exactSnapshotPlugins(plugins(older.vibeDir), older), true, "an older tree with no build runs its plugins/vibe");
 });

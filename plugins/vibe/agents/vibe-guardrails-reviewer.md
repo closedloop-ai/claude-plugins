@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash, Skill
 ---
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 You review one vibe session's diff in the target repository's worktree. The

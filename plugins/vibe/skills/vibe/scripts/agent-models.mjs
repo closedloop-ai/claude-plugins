@@ -19,6 +19,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { vibeSkillOf } from "../../../shared/plugin-roots.mjs";
 import { CodexWorkerRole } from "../../cl-sweep/scripts/model-policy.mjs";
 
 /**
@@ -63,7 +64,7 @@ export function isModelName(value) {
 
 /** The agent's bare name and role; an unknown agent is refused rather than given a default. */
 export function agentRole(agentName) {
-  const agent = typeof agentName === "string" ? agentName.replace(/^vibe:/, "") : agentName;
+  const agent = typeof agentName === "string" ? vibeSkillOf(agentName) ?? agentName : agentName;
   const role = Object.hasOwn(VIBE_AGENT_ROLES, agent) ? VIBE_AGENT_ROLES[agent] : undefined;
   if (!role) {
     throw new Error(`Unknown vibe agent: ${agentName}`);

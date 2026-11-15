@@ -14,11 +14,10 @@
 // {"ok","root","plans","plan","decisionTable","inWorktree"}: `plan` is `<plans>/<request-id>.md` (only with
 // --request-id) and `decisionTable` is `<decision tables>/<session slug>.md`.
 
-import { realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { installedProviders, providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -42,8 +41,8 @@ export function localPlanPrefix(binding) {
 }
 
 /**
- * Every in-worktree plan folder a session could have used in this repository: the bound provider's, and that of any
- * provider installed here whether or not it is bound, so a plan written while bound stays private after it is not.
+ * Every in-worktree plan folder a session could have used in this repository: the bound provider's, and that of the
+ * provider this vibe carries whether or not it is bound, so a plan written while bound stays private after it is not.
  */
 export function knownLocalPlanPrefixes(binding) {
   const prefixes = new Set();
@@ -95,7 +94,7 @@ export function localPlanPaths(worktree, { requestId = null, binding = sessionBi
   };
 }
 
-if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { values, positionals } = parseArgs({ allowPositionals: true,
       options: { worktree: { type: "string" }, "request-id": { type: "string" } } });

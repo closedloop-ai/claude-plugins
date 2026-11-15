@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -53,7 +54,7 @@ def test_the_never_upload_the_plan_rule_is_gone_everywhere() -> None:
     files = [*PLUGIN_ROOT.joinpath("agents").glob("*.md"), *VIBE.rglob("*.md"),
              *PLUGIN_ROOT.joinpath("skills", "handoff").rglob("*.md"), README]
     for path in files:
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         for phrase in RETIRED_PHRASES:
             assert phrase not in text, f"{path.name}: {phrase}"
 
@@ -99,9 +100,9 @@ def test_the_plan_follows_the_ticket_safety_rules_and_a_refusal_goes_to_the_writ
         "publish nothing and return `NEEDS_CHANGE`",
         "for the SAME writer to fix its local plan",
     ))
-    template = flat(TICKET_TEMPLATE.read_text())
+    template = flat(skill_split.read(TICKET_TEMPLATE))
     assert "This body and the PLN follow the same safety rules" in template
-    planning = section(QUALITY.read_text(), "## Local plan")
+    planning = section(skill_split.read(QUALITY), "## Local plan")
     assert_all(planning, ("(`../../../agents/vibe-ticket-worker.md`, \"Source link and session plan\")", "repo-relative paths only", "`scripts/session-plan.mjs`",
                           "a refusal comes back to this same writer"))
     writer = flat(agent("vibe-change-worker"))
@@ -111,8 +112,8 @@ def test_the_plan_follows_the_ticket_safety_rules_and_a_refusal_goes_to_the_writ
 def test_citation_only_self_bookkeeping_is_fixed_without_asking_the_person() -> None:
     ticket = flat(agent("vibe-ticket-worker"))
     writer = flat(agent("vibe-change-worker"))
-    quality = flat(QUALITY.read_text())
-    skill = flat(VIBE_SKILL.read_text())
+    quality = flat(skill_split.read(QUALITY))
+    skill = flat(skill_split.read(VIBE_SKILL))
     required = (
         "self-bookkeeping",
         "no scope, code, test or HEAD change",
@@ -155,7 +156,7 @@ def test_handoff_verifies_and_repairs_both_links_and_leaves_the_pln_approved() -
         "repair whatever is missing or stale here",
     ))
     assert handoff.index("Source link and session plan\" A to F") < handoff.index("live-ticket-check.mjs")
-    skill = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    skill = section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
     assert_all(skill, ("verifies the source link (source PRODUCES ticket)", "its link (ticket PRODUCES PLN)",
                        "leaves the PLN `APPROVED` before a pull request opens",
                        "refuses a session with local plans and no `APPROVED` PLN recorded"))
@@ -168,7 +169,7 @@ def test_assign_mode_hands_over_the_pln_with_the_ticket() -> None:
 
 
 def test_the_vibe_skill_publishes_the_plan_after_each_request_and_links_the_source_at_start() -> None:
-    skill = flat(VIBE_SKILL.read_text())
+    skill = flat(skill_split.read(VIBE_SKILL))
     assert "links the originating document (a PRD, an ISS or another document) to the ticket" in skill
     assert "dispatch `vibe-ticket-worker` in plan mode in its own record turn, with `built: true`" in skill
     assert "with `mergeCheck: true`" in skill
@@ -176,7 +177,7 @@ def test_the_vibe_skill_publishes_the_plan_after_each_request_and_links_the_sour
 
 
 def test_resume_and_takeover_publish_or_reuse_one_existing_ticket_plan_without_pausing_build() -> None:
-    quality = section(QUALITY.read_text(), "## Local plan")
+    quality = section(skill_split.read(QUALITY), "## Local plan")
     assert_all(quality, (
         "startup, resume, fleet takeover or handoff",
         "list outgoing `PRODUCES` links and reuse one PLN",
@@ -184,9 +185,9 @@ def test_resume_and_takeover_publish_or_reuse_one_existing_ticket_plan_without_p
         "continues building",
         "without a person wait, second PLN or build/deploy pause",
     ))
-    skill = flat(VIBE_SKILL.read_text())
+    skill = flat(skill_split.read(VIBE_SKILL))
     assert "Before its first request or fleet takeover, apply `references/quality-loop.md`, \"Local plan\"" in skill
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "Existing tickets apply `../vibe/references/quality-loop.md`, \"Local plan\"" in handoff
     rules = plan_rules()
     assert "step C reuses one linked PLN or publishes" in rules

@@ -28,6 +28,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import flat, section
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 AGENTS = PLUGIN_ROOT / "agents"
@@ -41,15 +42,15 @@ PER_TOKEN = "`Engineering needed (token not bundled): <surface>; <token>; checke
 
 
 def agent(name: str) -> str:
-    return flat((AGENTS / f"{name}.md").read_text())
+    return flat(skill_split.read(AGENTS / f"{name}.md"))
 
 
 def tokens_rule() -> str:
-    return section(GUARDRAILS.read_text(), "### Check the bundled tokens first")
+    return section(skill_split.read(GUARDRAILS), "### Check the bundled tokens first")
 
 
 def remediation() -> str:
-    return section(HANDOFF_SKILL.read_text(), "## 10. Changes on the open pull request")
+    return section(skill_split.read(HANDOFF_SKILL), "## 10. Changes on the open pull request")
 
 
 def assert_all(text: str, required: tuple[str, ...]) -> None:
@@ -82,10 +83,10 @@ def test_the_writer_checks_bundled_tokens_before_any_raw_value_and_logs_per_toke
         "so the surface's own CSS adds no `.dark` or `prefers-color-scheme` rule",
         PER_TOKEN,
     ))
-    quality = flat(QUALITY.read_text())
+    quality = flat(skill_split.read(QUALITY))
     assert "(`guardrails-ui.md`, \"Check the bundled tokens first\")" in quality
     assert "`Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`" in quality
-    for text in (writer, quality, flat(GUARDRAILS.read_text())):
+    for text in (writer, quality, flat(skill_split.read(GUARDRAILS))):
         assert "`Engineering needed (tokens not bundled): <surface>; uses <token> values`" not in text
 
 
@@ -102,15 +103,15 @@ def test_the_guardrails_reviewer_blocks_a_raw_value_where_a_bundled_token_exists
 
 
 def test_the_reference_check_renders_light_and_dark_but_never_without_a_reference() -> None:
-    check = section(QUALITY.read_text(), "### The reference check before ready")
+    check = section(skill_split.read(QUALITY), "### The reference check before ready")
     assert_all(check, (
         "With no reference image there is no render and no compare.",
         "renders that final state in both light and dark wherever the surface supports both and compares each theme's screenshot",
         "takes the screenshots again until no difference remains in either theme",
         "`DONE` on such a change carries a Reference check line per touched screen and theme",
     ))
-    assert "reference check (<light|dark>)" in flat(QUALITY.read_text())
-    capture = section(ENVIRONMENT.read_text(), "## Capturing for the reference check")
+    assert "reference check (<light|dark>)" in flat(skill_split.read(QUALITY))
+    capture = section(skill_split.read(ENVIRONMENT), "## Capturing for the reference check")
     assert_all(capture, (
         "Only when the session has a reference image",
         "with none, nothing here runs",
@@ -124,7 +125,7 @@ def test_the_reference_check_renders_light_and_dark_but_never_without_a_referenc
     assert "Render the final state in both light and dark wherever the surface supports both, and record a Reference check line for each theme" in writer
     assert "a Reference check line per touched screen and theme" in writer
     assert "With no reference image there is no render or compare." in writer
-    build = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    build = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert "one screenshot of each touched screen, in light and in dark wherever it supports both" in build
     assert "With no reference image there is no render or compare" in build
 
@@ -138,7 +139,7 @@ def test_handoff_verify_renders_a_static_page_it_cannot_drive() -> None:
         "\"Could not drive\" is never the result for such a page",
         "only a surface that is neither drivable nor directly renderable returns a limitation",
     ))
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert_all(handoff, (
         "is rendered directly instead: the verify worker produces its HTML with the repo's own generator",
         "\"Could not drive\" is not accepted for such a page.",
@@ -173,11 +174,11 @@ def test_changes_on_a_vibe_pull_request_use_impact_scoped_rechecks_under_iss_134
     ]
     positions = [path.index(marker) for marker in order]
     assert positions == sorted(positions)
-    assert "unless they are asking for changes on the pull request it opened: then follow section 10" in flat(HANDOFF_SKILL.read_text())
+    assert "unless they are asking for changes on the pull request it opened: then follow section 10" in flat(skill_split.read(HANDOFF_SKILL))
 
 
 def test_vibe_offers_a_handed_off_session_back_only_for_changes_on_its_pull_request() -> None:
-    start = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
+    start = section(skill_split.read(VIBE_SKILL), "## 2. Start or resume")
     assert_all(start, (
         "Asking for changes on the pull request vibe opened for them (\"please fix the review comments\") is a resume too.",
         "The one exception: the person asks for changes on the pull request vibe opened for them",
@@ -212,7 +213,7 @@ def test_the_same_writer_applies_review_fixes_in_its_pull_request_turn() -> None
 
 
 def test_desktop_scripts_sit_in_the_never_column_without_changing_behavior() -> None:
-    text = GUARDRAILS.read_text()
+    text = skill_split.read(GUARDRAILS)
     table = next(line for line in text.splitlines() if line.startswith("| `*.stories.tsx` anywhere above"))
     never = table.split("|")[2]
     assert "`apps/desktop/scripts/**`" in never
@@ -224,7 +225,7 @@ def test_desktop_scripts_sit_in_the_never_column_without_changing_behavior() -> 
 
 
 def test_review_soul_is_required_on_the_tests_a_pull_request_turn_wrote() -> None:
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert_all(handoff, (
         "the repo's `review-soul` critic is REQUIRED on the tests the writer wrote in its `pull-request` turn, not optional",
         "the pull request does not open, or take a new push, until its rerun on the corrected tests is clean",
@@ -244,7 +245,7 @@ def test_pull_request_mode_tests_pin_what_they_name_and_prefer_tokens_structure_
 
 
 def test_threads_are_read_on_every_look_and_resolved_only_by_the_verifying_script() -> None:
-    handoff = (PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md").read_text()
+    handoff = skill_split.read(PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md")
     step0 = section(handoff, "## 0. Pick the session")
     assert "on every look: any `awaitingReply` thread starts section 10" in step0
     assert "`$gh-monitor-pr`" in flat(handoff)

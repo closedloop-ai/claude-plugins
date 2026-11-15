@@ -1,5 +1,7 @@
 *.egg-info/
 dist/
+# The ClosedLoop vibe is generated with its bundles and committed whole (tools/vibe-closedloop-build).
+!plugins/vibe-closedloop/**/dist/
 build/
 node_modules/
 tools/design-inventory/node_modules/

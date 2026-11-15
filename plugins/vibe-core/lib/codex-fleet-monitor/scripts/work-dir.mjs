@@ -30,8 +30,8 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { ambiguousHome, canonicalHome, chatBinding, commandChat, takenOver } from "../../fleet-orchestrator/scripts/chat-binding.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const PER_PROGRAM_KEYS = ["LOCAL_STATE_DIR", "REQUESTS_DIR", "REMOTE_STATE_DIR", "REMOTE_REQUESTS_DIR"];
 
@@ -127,7 +127,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

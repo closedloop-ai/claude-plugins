@@ -8,7 +8,7 @@
 
 import { agentGuard } from "./agent-guard.mjs";
 import { foregroundGuard } from "./foreground-guard.mjs";
-import { deny, isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { deny, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
 import { killGuard } from "./kill-guard.mjs";
 import { mergeGuard } from "./merge-guard.mjs";
 import { pauseGuard } from "./pause-guard.mjs";
@@ -20,6 +20,7 @@ import { unitStatusGuard } from "./unit-status-guard.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import { commandSegments } from "./command-segments.mjs";
 import path from "node:path";
+import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 const WRITE_TOOL = /(?:^|[_-])(?:update|set|create|move|transition|edit)(?:[_-]|$)/i;
 
@@ -155,7 +156,7 @@ function scratchCreationGuard(event) {
   return problem ? deny(problem) : null;
 }
 
-if (isMain(import.meta.url)) runHookScript("pre-tool-use", preToolUse);
+if (isEntryPoint(import.meta.url)) runHookScript("pre-tool-use", preToolUse);
 
 /**
  * A status write, the action unit-status-guard guards: with its bound provider broken it cannot read which tool is the

@@ -35,11 +35,11 @@ import path from "node:path";
 import { resolveWorkDir } from "../lib/codex-fleet-monitor/scripts/work-dir.mjs";
 import { bindChat, programFor, unboundLine, validChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 import { COMPACT_WINDOW_RANGE, contextGuardConfig, defaultHome, FLEET_HOME_SCRIPT, PROGRAM_READING } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";
+import { vibeSkillOf } from "../shared/plugin-roots.mjs";
 import { vibeScriptPath } from "../shared/vibe-install.mjs";
 import { hookStatePath } from "./hook-session-scope.mjs";
 
 const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
-const ORCHESTRATOR_SKILL = "vibe:fleet-orchestrator";
 const ORCHESTRATOR_BASE_LINE = /^Base directory for this skill: [^\n]*\/skills\/fleet-orchestrator$/;
 const USAGE_WINDOWS = [256 * 1024, 2 * 1024 * 1024, 8 * 1024 * 1024];
 const WINDOW_VARIABLE = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
@@ -212,7 +212,7 @@ function isOrchestratorLoad(line) {
   if (entry?.isSidechain === true) return false;
   const content = entry?.message?.content;
   if (entry?.type === "assistant") {
-    return Array.isArray(content) && content.some((block) => block?.type === "tool_use" && block.name === "Skill" && block.input?.skill === ORCHESTRATOR_SKILL);
+    return Array.isArray(content) && content.some((block) => block?.type === "tool_use" && block.name === "Skill" && vibeSkillOf(block.input?.skill) === "fleet-orchestrator");
   }
   if (entry?.type !== "user" || entry.isMeta !== true) return false;
   return entryTexts(content).some((text) => ORCHESTRATOR_BASE_LINE.test(text.split("\n", 1)[0]));

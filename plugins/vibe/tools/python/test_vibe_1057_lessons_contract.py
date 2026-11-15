@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, section
+import skill_split
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -11,7 +12,7 @@ HANDOFF = PLUGIN / "skills" / "handoff"
 
 
 def test_precedent_clears_narrow_layout_obstructions_and_captures_both_states() -> None:
-    brief = (VIBE / "scripts" / "precedent-check.mjs").read_text()
+    brief = skill_split.read(VIBE / "scripts" / "precedent-check.mjs")
     requirements = section(agent("vibe-requirements-worker"), "## Precedent mode")
     for text in (brief, requirements):
         assert "close" in text
@@ -22,7 +23,7 @@ def test_precedent_clears_narrow_layout_obstructions_and_captures_both_states() 
 
 
 def test_frozen_stories_compare_dependency_closure_and_stable_output() -> None:
-    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    rules = skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs")
     decomposer = flat(agent("vibe-storybook-decomposer"))
     reviewer = flat(agent("vibe-guardrails-reviewer"))
     assert "rendered dependency closure" in rules
@@ -34,7 +35,7 @@ def test_frozen_stories_compare_dependency_closure_and_stable_output() -> None:
 
 
 def test_storybook_train_is_rechecked_against_pinned_base_before_pr() -> None:
-    handoff = flat((HANDOFF / "SKILL.md").read_text())
+    handoff = flat(skill_split.read(HANDOFF / "SKILL.md"))
     verify = flat(agent("vibe-verify-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
     for text in (verify, ticket):
@@ -48,10 +49,10 @@ def test_storybook_train_is_rechecked_against_pinned_base_before_pr() -> None:
 
 
 def test_inventory_fails_closed_for_every_outside_path() -> None:
-    inventory = (HANDOFF / "scripts" / "handoff-inventory.mjs").read_text()
+    inventory = skill_split.read(HANDOFF / "scripts" / "handoff-inventory.mjs")
     reviewer = section(agent("vibe-guardrails-reviewer"), "## Check, for added or changed lines only")
     writer = flat(agent("vibe-change-worker"))
-    handoff = section((HANDOFF / "SKILL.md").read_text(), "## 1. Internal checklist")
+    handoff = section(skill_split.read(HANDOFF / "SKILL.md"), "## 1. Internal checklist")
     assert "forbidden.length === 0 && outsideAllowed.length === 0" in inventory
     assert "Any entry under `forbidden` or `outsideAllowed` is blocking" in reviewer
     assert "shrinkOnlyAllowlists" in reviewer
@@ -71,7 +72,7 @@ def test_malformed_metadata_must_emit_the_monitored_corruption_event() -> None:
 def test_external_dependency_evidence_gates_criteria_and_plan_completion() -> None:
     writer = flat(agent("vibe-change-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
-    handoff = flat((HANDOFF / "SKILL.md").read_text())
+    handoff = flat(skill_split.read(HANDOFF / "SKILL.md"))
     for text in (writer, ticket, handoff):
         assert "external" in text
         assert "collector" in text
@@ -81,7 +82,7 @@ def test_external_dependency_evidence_gates_criteria_and_plan_completion() -> No
 
 
 def test_pr_creation_requires_real_host_and_two_touch_devices() -> None:
-    handoff = flat((HANDOFF / "SKILL.md").read_text())
+    handoff = flat(skill_split.read(HANDOFF / "SKILL.md"))
     verify = flat(agent("vibe-verify-worker"))
     for text in (handoff, verify):
         assert "real web host" in text or "real web-host" in text
@@ -103,7 +104,7 @@ def test_overlapping_live_children_require_explicit_reconciliation() -> None:
 
 
 def test_source_prd_children_are_scope_units_claimed_and_closed_with_evidence() -> None:
-    skill = flat((VIBE / "SKILL.md").read_text())
+    skill = flat(skill_split.read(VIBE / "SKILL.md"))
     ticket = flat(agent("vibe-ticket-worker"))
     requirements = flat(agent("vibe-requirements-worker"))
     assert "existing children are the scope units" in skill
@@ -129,7 +130,7 @@ def test_source_prd_children_are_scope_units_claimed_and_closed_with_evidence() 
 def test_outdated_version_does_not_stop_an_explicit_proceed() -> None:
     # Operator ruling 2026-10-27: a resumed session is asked too; only an
     # opening instruction to proceed carries on without the question.
-    version = flat(section((VIBE / "SKILL.md").read_text(), "### Plugin version"))
+    version = flat(section(skill_split.read(VIBE / "SKILL.md"), "### Plugin version"))
     assert "`outdated`, new or resumed, unless the opening message already says to proceed" in version
     assert "run `choose --choice proceed --by opening-message`" in version
     assert "continue in the same turn, without asking" in version
@@ -140,7 +141,7 @@ def test_outdated_version_does_not_stop_an_explicit_proceed() -> None:
 def test_existing_children_are_never_agent_superseded() -> None:
     requirements = flat(agent("vibe-requirements-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
-    gate = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
+    gate = skill_split.read(HANDOFF / "scripts" / "live-ticket-check.mjs")
     assert "never claimed, built, canceled or superseded" in requirements
     assert "any supersession that is not a human ruling outside this session's ticket and plan" in ticket
     assert "cites the session's own ticket, plan or table as the supersession ruling" in gate
@@ -157,7 +158,7 @@ def test_desktop_launch_requires_verified_build_output() -> None:
 
 def test_claimed_children_move_only_through_the_ticket_check_gate() -> None:
     ticket = section(agent("vibe-ticket-worker"), "## Handoff mode")
-    gate = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
+    gate = skill_split.read(HANDOFF / "scripts" / "live-ticket-check.mjs")
     assert "you are not the writer; its audit is never evidence" in ticket
     assert "move exactly `children.inReview` to `IN_REVIEW`" in ticket
     assert '"child-evidence": { type: "string" }' in gate
@@ -166,7 +167,7 @@ def test_claimed_children_move_only_through_the_ticket_check_gate() -> None:
 
 
 def test_session_text_is_never_provenance() -> None:
-    quality = (VIBE / "references" / "quality-loop.md").read_text()
+    quality = skill_split.read(VIBE / "references" / "quality-loop.md")
     assert "is never a source" in section(quality, "## Communication and product questions")
     assert "Never strengthen them either" in section(quality, "## Acceptance criteria before ready")
     assert "a stated requirement there wins" in section(quality, "### Precedent before asking")

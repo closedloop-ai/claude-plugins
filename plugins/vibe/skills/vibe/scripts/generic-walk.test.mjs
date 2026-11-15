@@ -1,6 +1,6 @@
 // The deterministic steps of a vibe and fleet walk in a repository with no provider: a personal GitHub repository
 // with npm, Playwright and an AGENTS.md naming `npm test` and `npm run dev`, no tracker, graph, seed, Storybook or
-// Desktop, with the provider absent or present and disabled. Each step either runs here against that repository or
+// Desktop, and no provider. Each step either runs here against that repository or
 // names the test, in the suite that runs it, that proves it; the ledger of steps that still block a generic session
 // must be empty.
 import assert from "node:assert/strict";
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { repositoryAreas } from "./area-paths.mjs";
 import { localPlanPaths } from "./local-plans.mjs";
-import { providerOffer, statusBlock } from "./plugin-version.mjs";
+import { statusBlock } from "./plugin-version.mjs";
 import { createSetupCtl } from "./setup-ctl.mjs";
 import { workItem } from "./tracker-key.mjs";
 import { CLASSES, classify } from "./vibe-triage.mjs";
@@ -91,24 +91,9 @@ test("the generic walk's deterministic steps leave an empty blocker ledger", asy
     const block = statusBlock({ harnesses: [] }, {}, candidate.connections ?? {});
     return PROVIDER_WORDS.test(block) ? `the setup check names a provider: ${block}` : null;
   });
-  await step("D4 a disabled provider binds nothing and is never offered", () => {
-    const disabled = { name: "vibe-closedloop-provider", root: "/nowhere", version: "1.0.0", enabled: false, contract: {} };
-    const candidate = providerCandidate({ cwd: root, providers: [disabled] });
-    if (candidate.state !== "none") return `a disabled provider is a candidate: ${JSON.stringify(candidate)}`;
-    return providerOffer(candidate, null) ? "a disabled provider is offered for install" : null;
-  });
-  await step("D4 an installed provider vibe cannot read is never offered for install over it", () => {
-    const candidate = providerCandidate({ cwd: root, providers: [], unreadable: ["vibe-closedloop-provider"] });
-    if (candidate.state !== "none" || candidate.reason === "no provider is installed") return `reason ${candidate.reason}`;
-    return providerOffer(candidate, null) ? "an unreadable installed provider is offered for install" : null;
-  });
   await step("D4 with no provider at all the reason is that none is installed", () => {
-    const candidate = providerCandidate({ cwd: root, providers: [], unreadable: [] });
+    const candidate = providerCandidate({ cwd: root, providers: [] });
     return candidate.reason === "no provider is installed" ? null : `reason ${candidate.reason}`;
-  });
-  await step("D4 install offer stays an offer", () => {
-    const offer = providerOffer({ state: "none", reason: "no provider is installed" }, null);
-    return offer?.connection ? null : "no install offer for a machine with no provider";
   });
   await step("D9 bootstrap from the lockfile", async () => {
     const ran = [];

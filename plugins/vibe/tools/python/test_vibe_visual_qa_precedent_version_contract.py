@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -39,15 +40,15 @@ OFFER_WITHOUT = "Want me to check how it looks against our design standards and 
 
 
 def visual_qa() -> str:
-    return section(QUALITY.read_text(), "## Visual QA during the session")
+    return section(skill_split.read(QUALITY), "## Visual QA during the session")
 
 
 def precedent() -> str:
-    return section(QUALITY.read_text(), "### Precedent before asking")
+    return section(skill_split.read(QUALITY), "### Precedent before asking")
 
 
 def plugin_version() -> str:
-    return section(VIBE_SKILL.read_text(), "### Plugin version")
+    return section(skill_split.read(VIBE_SKILL), "### Plugin version")
 
 
 def assert_all(text: str, required: tuple[str, ...]) -> None:
@@ -69,7 +70,7 @@ def test_visual_qa_checks_the_criteria_or_falls_back_to_the_design_pack() -> Non
         "Its confirmed findings go to the SAME writer as one fix request",
         "never new user-visible words",
     ))
-    qa = section(HANDOFF_SKILL.read_text(), "### Browser E2E and the repository's QA passes")
+    qa = section(skill_split.read(HANDOFF_SKILL), "### Browser E2E and the repository's QA passes")
     assert "against the session's acceptance criteria when the ticket or its PRD has them" in qa
     assert "otherwise as the design pack's best-practice review" in qa
     assert '"Visual QA during the session"' in qa
@@ -88,7 +89,7 @@ def test_visual_qa_is_offered_at_visible_milestones_and_never_on_a_small_edit() 
         OFFER_WITHOUT,
         "A no is recorded and declines visual QA for that version of the change, until the next visible milestone.",
     ))
-    deploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
+    deploy = section(skill_split.read(VIBE_SKILL), "## 6. Deploy each change")
     assert_all(deploy, (
         "When this deploy is a visible milestone",
         "never a small edit",
@@ -98,30 +99,30 @@ def test_visual_qa_is_offered_at_visible_milestones_and_never_on_a_small_edit() 
 
 
 def test_a_polish_request_runs_visual_qa_unless_nothing_is_visible_or_it_was_declined() -> None:
-    assert_all(section(QUALITY.read_text(), "### When the person asks for polish"), (
+    assert_all(section(skill_split.read(QUALITY), "### When the person asks for polish"), (
         "\"looks good, make it polished\"",
         "run visual QA before handoff without asking",
         "Skip it only when the change shows nothing visible, or when the person already declined visual QA for this version of the change",
         "an ordinary request under `guardrails-ui.md`, \"Making something look better\"",
     ))
-    deploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
+    deploy = section(skill_split.read(VIBE_SKILL), "## 6. Deploy each change")
     assert "wants it polished, run visual QA before handoff without asking" in deploy
     assert "already declined it for this version" in deploy
 
 
 def test_the_build_loop_is_otherwise_unchanged() -> None:
-    lean = section(QUALITY.read_text(), "## Lean build loop")
+    lean = section(skill_split.read(QUALITY), "## Lean build loop")
     assert "never during the loop" in lean
     assert "Visual QA can also run between requests, outside the loop" in lean
     assert "never inside a request's build, and it never holds a deploy back" in lean
     assert "The reference check before ready is the one exception to this rule" in lean
-    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert "Visual QA runs at handoff too, and during the session only when the person accepts the offer or asks for polish" in loop
     assert "No reviewer, browser E2E, visual QA, logical QA" in loop
     writer = flat(agent("vibe-change-worker"))
     assert "do not run or request them in the loop" in writer
     assert "its confirmed findings reach you as a fix request" in writer
-    guardrails = flat(GUARDRAILS.read_text())
+    guardrails = flat(skill_split.read(GUARDRAILS))
     assert "Outside the loop, visual QA also runs during the session when the person accepts it or asks for polish" in guardrails
     assert "Reviews and heavy validation run only at handoff" not in guardrails
 
@@ -133,12 +134,12 @@ def test_precedent_is_checked_in_order_before_any_question() -> None:
         "live Asana is the precedent",
         "Public help centers, documentation and search results are not a substitute",
     ))
-    communication = section(QUALITY.read_text(), "## Communication and product questions")
+    communication = section(skill_split.read(QUALITY), "## Communication and product questions")
     assert "runs the precedent check below before asking any question it can settle" in communication
-    skill = flat(VIBE_SKILL.read_text())
+    skill = flat(skill_split.read(VIBE_SKILL))
     assert "Research product questions in the single order" in skill
     assert "and the precedent check (`references/quality-loop.md`, \"Communication and product questions\")" in skill
-    assert 'then the precedent check ("Precedent before asking")' in flat(HANDOFF_SKILL.read_text())
+    assert 'then the precedent check ("Precedent before asking")' in flat(skill_split.read(HANDOFF_SKILL))
 
 
 def test_each_harness_has_its_precedent_path() -> None:
@@ -150,7 +151,7 @@ def test_each_harness_has_its_precedent_path() -> None:
         "Codex: no computer use",
         "returns `NEEDS_PERSON` to the orchestrator",
     ))
-    assert "`scripts/precedent-check.mjs`" in section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")
+    assert "`scripts/precedent-check.mjs`" in section(skill_split.read(VIBE_SKILL), "## Your role: orchestrate, never do the work")
     mode = section(agent("vibe-requirements-worker"), "## Precedent mode")
     assert_all(mode, (
         "live Asana in the operator's signed-in Chrome",
@@ -173,7 +174,7 @@ def test_precedent_research_never_touches_real_data() -> None:
         "only what was observed directly counts as precedent evidence",
         "reported as `undocumented`, never guessed",
     ))
-    brief = PRECEDENT.read_text()
+    brief = skill_split.read(PRECEDENT)
     assert 'TEMP_PROJECT = "zz vibe precedent check (temp)"' in brief
     assert 'TASK_PREFIX = "zz test"' in brief
 
@@ -197,7 +198,7 @@ def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
     assert_all(plugin_version(), (
         "Every `$vibe` start, new or resume, first checks whether the plugins from vibe's marketplace installed on this machine, in Claude Code and in Codex, are the latest release",
         "It runs once per conversation, so its question is never repeated and does not go through `session-questions.mjs`.",
-        "`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]... [--skill-listed <skill>]` in Codex, or `--runtime claude` in Claude Code",
+        "`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]...` in Codex, or `--runtime claude` in Claude Code",
         "In Codex, run it with escalated permissions from the first try (`sandbox_permissions: \"require_escalated\"`, justification \"Check whether vibe is up to date\")",
         "`current`: say nothing about it and continue.",
         "the check never blocks",
@@ -210,24 +211,24 @@ def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
         "the update is used only from a new session.",
         "never retry it another way",
     ))
-    asked_once = section(VIBE_SKILL.read_text(), "### Questions are asked once")
+    asked_once = section(skill_split.read(VIBE_SKILL), "### Questions are asked once")
     assert "except the startup version question, which runs once per conversation" in asked_once
 
 
 def test_the_person_chosen_update_is_the_one_plugin_change_allowed() -> None:
-    tooling = section(GUARDRAILS.read_text(), "## Plugins and tooling")
+    tooling = section(skill_split.read(GUARDRAILS), "## Plugins and tooling")
     assert_all(tooling, (
         "The one exception is the update the person chooses when the startup version check finds a newer release (`SKILL.md`, section 1, \"Plugin version\")",
         "the orchestrator runs `plugin-version.mjs update --choice update`, which refuses unless that choice is recorded (or, without vibe-core, given on its command line), and nothing else",
     ))
-    role = section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")
+    role = section(skill_split.read(VIBE_SKILL), "## Your role: orchestrate, never do the work")
     assert "apart from the update the person chooses at startup" in role
     assert "run `plugin-version.mjs update` only when the person chose to update" in role
 
 
 def test_the_update_commands_match_the_install_guide() -> None:
-    script = PLUGIN_VERSION.read_text()
-    install = flat(INSTALL.read_text())
+    script = skill_split.read(PLUGIN_VERSION)
+    install = flat(skill_split.read(INSTALL))
     for command in ("plugin marketplace upgrade closedloop-ai", "plugin add vibe@closedloop-ai",
                     "plugin add closedloop-core@closedloop-ai", "plugin add vibe-core@closedloop-ai"):
         assert command in install, command
@@ -243,10 +244,10 @@ def test_codex_uses_no_computer_use_and_visual_requests_name_the_pushed_head() -
     docs = [*(plugin / "agents").glob("*.md"), *(VIBE_SKILL.parent / "references").glob("*.md"), VIBE_SKILL,
             VIBE_SKILL.parent / "INSTALL.md", plugin / "skills" / "handoff" / "SKILL.md"]
     for path in docs:
-        for paragraph in re.split(r"\n\s*\n|\n(?=- )|\n(?=\| )", path.read_text()):
+        for paragraph in re.split(r"\n\s*\n|\n(?=- )|\n(?=\| )", skill_split.read(path)):
             if re.search("computer use", paragraph, re.IGNORECASE):
                 assert re.search(r"\b(?:never|not|no)\b", paragraph, re.IGNORECASE), f"{path.name}: {flat(paragraph)[:160]}"
-    rules = section((VIBE_SKILL.parent / "references" / "guardrails.md").read_text(), "## Processes and state")
+    rules = section(skill_split.read(VIBE_SKILL.parent / "references" / "guardrails.md"), "## Processes and state")
     for phrase in ("In Codex, no computer use", "GitHub only through `gh`", "owned Claude launcher",
                    "written request made after the push", "the pushed head (never a local SHA)"):
         assert phrase in rules, phrase

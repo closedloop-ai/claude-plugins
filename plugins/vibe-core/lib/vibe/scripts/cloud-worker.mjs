@@ -31,7 +31,6 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { decideCloudPlacement } from "../../fleet-orchestrator/scripts/cloud-placement.mjs";
 import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from "./session-record.mjs";
@@ -43,6 +42,7 @@ import { checkCloudSetup, createRefusal, resolveClaudeEnvironment, runNotCreated
 import { codexEnvironment, installInstruction, PROVENANCE_COMMAND, provenanceProblem, resolveRepository } from "./cloud-repository.mjs";
 import { connectionLabel, providerDataOr, sessionBinding } from "./provider.mjs";
 import { failScript } from "./provider.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const MAX_WALL_MS = 35 * 60 * 1000;
 const DEFAULT_WALL_MS = 35 * 60 * 1000;
@@ -709,7 +709,7 @@ export async function validateCommit(request, { remote = (name, input) => remote
   return { ...result, provider: "claude", taskId: finished.taskId, sessionId: finished.sessionId, wallMs: finished.wallMs, receipt: file };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`)).catch((error) => {
     process.exitCode = failScript(error, 2);
   });

@@ -13,13 +13,13 @@
 //                           --covers "<retired code it covered>" [--case "<test name>"]
 //   retired-tests.mjs list --worktree <wt>
 
-import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { isTestFile } from "./test-files.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { issueKey, requirementsKey } from "./tracker-key.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -79,7 +79,7 @@ function isText(value) {
   return typeof value === "string" && value.trim() !== "" && value.length <= MAX_TEXT;
 }
 
-if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { positionals, values } = parseArgs({
       allowPositionals: true,

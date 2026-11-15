@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 const protectedDirectories = new Set([
   ".git", ".claude", ".vscode", ".idea", ".husky", ".cargo",
@@ -227,7 +227,7 @@ export function protectedWriteDecision(event, root) {
   return null;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     if (!process.argv[2]) throw new Error("missing worktree");
     const root = path.resolve(process.argv[2]);

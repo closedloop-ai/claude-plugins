@@ -94,6 +94,11 @@ if [[ "$RUNTIME" == "codex" ]] && have node; then
     plugins_json="$("$codex_executable" plugin list --json 2>/dev/null)" || plugins_json=""
   fi
   missing_plugin=0
+  # The marketplace this vibe was installed from, as plugin-roots.mjs reads it from the install path.
+  marketplace="$(node --input-type=module -e '
+    const { pluginInstall, pluginMarketplace } = await import(process.argv[1]);
+    process.stdout.write(pluginMarketplace(pluginInstall(process.argv[1])));
+  ' "$SCRIPT_DIR/../../../shared/plugin-roots.mjs")"
   for required in closedloop-core vibe-core; do
     if printf '%s' "$plugins_json" | node -e '
         let input = "";
@@ -102,16 +107,16 @@ if [[ "$RUNTIME" == "codex" ]] && have node; then
           try {
             const result = JSON.parse(input);
             const enabled = Array.isArray(result.installed) && result.installed.some(
-              plugin => plugin.pluginId === `${process.argv[1]}@closedloop-ai` &&
+              plugin => plugin.pluginId === `${process.argv[1]}@${process.argv[2]}` &&
                 plugin.installed === true && plugin.enabled === true
             );
             process.exit(enabled ? 0 : 1);
           } catch { process.exit(1); }
         });
-      ' "$required"; then
+      ' "$required" "$marketplace"; then
       emit "$required" true "$required is installed and enabled" ''
     else
-      emit "$required" false "$required is not installed and enabled" "$(printf '%q plugin add %s@closedloop-ai' "$codex_executable" "$required")"
+      emit "$required" false "$required is not installed and enabled" "$(printf '%q plugin add %s@%s' "$codex_executable" "$required" "$marketplace")"
       missing_plugin=1
     fi
   done

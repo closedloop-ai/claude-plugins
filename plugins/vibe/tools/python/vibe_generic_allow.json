@@ -36,7 +36,7 @@
  },
  {
   "path": "plugins/vibe/skills/vibe/INSTALL.md",
-  "text": "\"$CODEX\" plugin list --marketplace closedloop-ai   # VERSION column of vibe@closedloop-ai",
+  "text": "\"$CODEX\" plugin list --marketplace closedloop-ai   # VERSION column of vibe-generic@closedloop-ai",
   "reason": "Publisher identity: the marketplace vibe installs from is named closedloop-ai."
  },
  {
@@ -55,9 +55,14 @@
   "reason": "Publisher identity: the marketplace vibe installs from is named closedloop-ai."
  },
  {
-  "path": "plugins/vibe/skills/vibe/scripts/plugin-cli.mjs",
-  "text": "export const MARKETPLACE = \"closedloop-ai\";",
-  "reason": "Publisher identity: the marketplace vibe and its plugins install from."
+  "path": "plugins/vibe-core/shared/plugin-roots.mjs",
+  "text": "export const DEFAULT_MARKETPLACE = \"closedloop-ai\";",
+  "reason": "Publisher identity: the marketplace vibe and its plugins install from, used when an install path names none."
+ },
+ {
+  "path": "plugins/vibe/shared/plugin-roots.mjs",
+  "text": "export const DEFAULT_MARKETPLACE = \"closedloop-ai\";",
+  "reason": "Publisher identity: the marketplace vibe and its plugins install from, used when an install path names none (byte-identical copy of vibe-core's)."
  },
  {
   "path": "plugins/vibe/skills/handoff/scripts/pr-evidence-schema.mjs",
@@ -76,8 +81,8 @@
  },
  {
   "path": ".claude-plugin/marketplace.json",
-  "text": "\"description\": \"ClosedLoop and symphony-alpha knowledge for vibe and fleet-orchestrator; disable it to run vibe and fleet generically\"",
-  "reason": "The provider's own description: it is the ClosedLoop provider by design."
+  "text": "\"description\": \"Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows\"",
+  "reason": "The closedloop-ai catalog's vibe entry is the ClosedLoop build (plugins/vibe-closedloop), whose description is main's by design."
  },
  {
   "path": ".claude-plugin/marketplace.json",
@@ -130,16 +135,6 @@
   "reason": "A guard id naming the fleet skill rule it checks, not a command vibe runs."
  },
  {
-  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
-  "text": "export const OFFERED_PROVIDER = Object.freeze({ name: \"vibe-closedloop-provider\", connection: \"tracker\",",
-  "reason": "The one provider vibe offers to install (operator ruling on the install default); it names no repository and runs only after its connection answered."
- },
- {
-  "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",
-  "text": "label: \"ClosedLoop\", check: \"Call ClosedLoop `get-me`; connected only when it answered in this conversation.\" });",
-  "reason": "The one provider vibe offers to install (operator ruling on the install default); it names no repository and runs only after its connection answered."
- },
- {
   "path": "tools/vibe-workers/src/main-sync-input-pure.ts",
   "text": "const owner=await load('apps/desktop/scripts/write-build-info-lib.mjs');",
   "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
@@ -178,11 +173,6 @@
   "path": "tools/vibe-workers/src/main-sync-lanes.ts",
   "text": "if (!step?.run || step['working-directory'] !== 'apps/desktop') throw new Error('Canonical displayless harness is unavailable');",
   "reason": "Provider-only machinery: runs only with a bound mainSync recipe that declares it, never in a generic repository."
- },
- {
-  "path": "plugins/vibe/skills/vibe/references/closedloop-graph.md",
-  "text": "`node <plugin-root>/skills/vibe/scripts/provider.mjs path graph provider:closedloop-graph.md`",
-  "reason": "Pointer kept at the path the byte-unchanged seed-refresh files (ruling Q5) read; it sends them to the provider's reference."
  },
  {
   "path": "plugins/vibe/skills/vibe/scripts/plugin-version.mjs",

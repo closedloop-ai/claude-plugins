@@ -12,6 +12,7 @@ import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-moni
 import * as sessions from './codex-session.mjs';
 import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
@@ -774,7 +775,7 @@ test('direct CLI refuses a caller old root against the verified host installatio
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /verified installed root/);
   assert.deepEqual(loadState(f.dir, 'w1'), saved);
-  assert.equal(sessions.verifiedPluginRoot(f.pluginRoot, { list: () => ({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: f.pluginRoot } }] }) }),
+  assert.equal(sessions.verifiedPluginRoot(f.pluginRoot, { list: () => ({ installed: [{ name: OWN_PLUGIN, installed: true, enabled: true, source: { path: f.pluginRoot } }] }) }),
     saved.loadedSkill.pluginRoot.replace(/old-root$/, 'plugin'), 'the legitimate internal binding remains accepted');
 });
 
@@ -1222,4 +1223,13 @@ test("a new writer's $vibe brief inherits the lead's binding, and one naming ano
   assert.equal(briefWithProviderLine("$vibe ISS-1 fix it\n\n", bound), "$vibe ISS-1 fix it\nProvider: example-provider\n");
   assert.equal(briefWithProviderLine("$vibe #12 fix it\nProvider: none\n", bound), "$vibe #12 fix it\nProvider: none\n", "a named line is kept as written");
   assert.equal(briefWithProviderLine("continue the work", bound), "continue the work", "a prompt that starts no writer is untouched");
+});
+
+test('a root is verified against the enabled install of this vibe\'s own name, never the other vibe\'s', (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'verified-root-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const row = (name) => ({ name, installed: true, enabled: true, source: { path: root } });
+  const other = OWN_PLUGIN === 'vibe' ? 'vibe-generic' : 'vibe';
+  assert.equal(sessions.verifiedPluginRoot(undefined, { list: () => ({ installed: [row(OWN_PLUGIN), row(other)] }) }), root);
+  assert.throws(() => sessions.verifiedPluginRoot(undefined, { list: () => ({ installed: [row(other)] }) }), /cannot establish one verified installed root/);
 });

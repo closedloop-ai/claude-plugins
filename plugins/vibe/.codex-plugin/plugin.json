@@ -1,5 +1,5 @@
 {
-  "name": "vibe",
+  "name": "vibe-generic",
   "version": "1.1.88",
   "description": "Vibe sessions and handoff in any git repository, with fleet orchestration, seed refresh and ticket workflows",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},

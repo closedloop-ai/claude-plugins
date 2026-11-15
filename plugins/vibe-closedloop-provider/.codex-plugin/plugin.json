@@ -1,7 +1,7 @@
 {
   "name": "vibe-closedloop-provider",
   "version": "1.0.0",
-  "description": "ClosedLoop and symphony-alpha knowledge for vibe and fleet-orchestrator: tickets, plans, the code graph, repository memory and the symphony-alpha recipes. Disable it to run vibe and fleet generically",
+  "description": "ClosedLoop and symphony-alpha knowledge for vibe and fleet-orchestrator: tickets, plans, the code graph, repository memory and the symphony-alpha recipes. Build input for the vibe plugin: tools/vibe-closedloop-build assembles it into plugins/vibe-closedloop",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
   "homepage": "https://github.com/closedloop-ai/claude-plugins",
   "repository": "https://github.com/closedloop-ai/claude-plugins",

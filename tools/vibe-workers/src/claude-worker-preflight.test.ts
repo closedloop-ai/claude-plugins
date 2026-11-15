@@ -7,6 +7,8 @@ import * as worker from "./claude-worker.js";
 import { bundleDirectory, fixture, graph, liveReads, readProof } from "./test-fixtures.js";
 
 const installedRoot = resolve(bundleDirectory, "../../../..");
+/** The name the installed plugin is published under: this source is vibe-generic, its ClosedLoop build vibe. */
+const installedName = (JSON.parse(readFileSync(join(installedRoot, ".claude-plugin", "plugin.json"), "utf8")) as { name: string }).name;
 const fixtures: ReturnType<typeof fixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup() { const value = fixture(); fixtures.push(value); return value; }
@@ -39,7 +41,8 @@ describe("launcher agent root (operator ruling, 2026-10-15)", () => {
     const result = launch(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" });
     expect(result.status, JSON.stringify(result.json)).toBe(0);
     const canonical = readFileSync(join(installedRoot, "agents", "vibe-guardrails-reviewer.md"), "utf8");
-    const prompt = readProof(value.metadata)[0]?.definition["vibe:vibe-guardrails-reviewer"]?.prompt ?? "";
+    expect(installedName).toBe("vibe-generic");
+    const prompt = readProof(value.metadata)[0]?.definition[`${installedName}:vibe-guardrails-reviewer`]?.prompt ?? "";
     expect(prompt.length).toBeGreaterThan(0);
     expect(canonical).toContain(prompt.split("\n\nRuntime binding:")[0]?.trim().slice(0, 200));
   }, 20000);

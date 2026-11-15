@@ -1,7 +1,7 @@
 # Setup
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 ## Prerequisites

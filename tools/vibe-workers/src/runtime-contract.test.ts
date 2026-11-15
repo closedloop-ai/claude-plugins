@@ -136,9 +136,10 @@ describe("vibe worker cross-runtime tool contract", () => {
       .map((file) => readFileSync(join(pluginRoot, "skills", "vibe", file), "utf8")).join("\n");
     const templateText = readFileSync(join(pluginRoot, "skills", "fleet-orchestrator", "references", "templates.md"), "utf8");
     expect(skillText).toContain("Codex: invoke as `$vibe`");
-    expect(skillText).toContain("Claude Code: invoke as `/vibe:vibe`");
+    // The source names its own plugin, vibe-generic; the ClosedLoop build names vibe.
+    expect(skillText).toContain("Claude Code: invoke as `/vibe-generic:vibe`");
     expect(templateText).toContain("A Codex writer's prompt starts with `$vibe");
-    expect(templateText).toContain("Invoke vibe:vibe first:");
+    expect(templateText).toContain("Invoke vibe-generic:vibe first:");
   });
   it("uses current ClosedLoop grants after sign-in and relocates owned control captures", () => {
     // Both roles' text here is the ClosedLoop provider's, assembled into each role as it runs bound.

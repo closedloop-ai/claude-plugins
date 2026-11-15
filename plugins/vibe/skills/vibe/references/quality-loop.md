@@ -1,7 +1,7 @@
 # Quality loop
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 This is the shared workflow for app and owned prototype sessions. Each session
@@ -140,7 +140,7 @@ read-only lanes never edit product source or tests; visual QA overlaps tests.
 After QA, `qa-impact.mjs` alone selects any repeated lane or screen.
 
 Codex: hold, register and resume one canonical writer. Claude Code: launch and
-resume the canonical `vibe:vibe-change-worker` with parent-discovered
+resume the canonical `vibe-generic:vibe-change-worker` with parent-discovered
 capabilities. Briefs use stdin. Preserve model, role and binding.
 
 Retain the recorded writer ID, `binding.agentRoot`, role, exact

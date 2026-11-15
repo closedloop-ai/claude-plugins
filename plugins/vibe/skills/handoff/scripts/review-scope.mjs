@@ -25,12 +25,12 @@
 // NOT checked, never that they were clean: the decision is `full-fleet`.
 
 import { existsSync, readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { REVIEW_EFFECTIVE, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -218,7 +218,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

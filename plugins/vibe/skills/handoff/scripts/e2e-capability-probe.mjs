@@ -5,11 +5,11 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statfsSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { NO_DISPLAYLESS_ELECTRON, requiredContainerIdentity } from "./e2e-tier.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -76,7 +76,7 @@ export function probeE2eCapability({ worktree, commit, run = command, diskGiB, p
   }, { head: commit });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: { worktree: { type: "string" }, head: { type: "string" } } });
     if (!values.worktree || !/^[a-f0-9]{40}$/.test(values.head ?? "")) {

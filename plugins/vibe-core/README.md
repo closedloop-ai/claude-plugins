@@ -13,7 +13,8 @@ now leaves this plugin, and Codex's approval of its hooks, unchanged.
 
 ## Installation
 
-Claude Code installs `vibe-core` through the `vibe` plugin's dependency.
+Claude Code installs `vibe-core` through the dependency of the `vibe` or
+`vibe-generic` plugin.
 Codex installs no plugin dependency, so install it explicitly, then open Codex
 once and approve vibe-core's hooks in /hooks:
 
@@ -41,5 +42,5 @@ each name the fix when vibe-core is missing or its hooks are not approved.
   version, skill definitions and scripts) as data. vibe-core never imports or
   runs a file from vibe's install.
 
-The hooks do nothing when vibe is not installed, or while the installed vibe
-still registers its own hooks (vibe 1.1.70 and older), so no guard runs twice.
+The hooks do nothing when neither `vibe` nor `vibe-generic` is installed, or
+while the installed vibe still registers its own hooks (vibe 1.1.70 and older), so no guard runs twice.

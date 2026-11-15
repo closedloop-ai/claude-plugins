@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -35,12 +36,12 @@ TAG = "`Engineering needed (forbidden path)`"
 
 
 def routing_rule() -> str:
-    return paragraph(GUARDRAILS.read_text(), "genuinely needs a change in a Never path")
+    return paragraph(skill_split.read(GUARDRAILS), "genuinely needs a change in a Never path")
 
 
 def test_the_guardrails_route_a_forbidden_path_need_to_engineering_without_stopping() -> None:
     rule = routing_rule()
-    assert rule in section(GUARDRAILS.read_text(), "## What may change")
+    assert rule in section(skill_split.read(GUARDRAILS), "## What may change")
     for required in (
         "(a source gate under `scripts/**`, a workflow under `.github/**`, a rule in an `AGENTS.md`), that part is engineering's.",
         "The writer never edits the path and never builds a substitute for it in an allowed path",
@@ -54,7 +55,7 @@ def test_the_guardrails_route_a_forbidden_path_need_to_engineering_without_stopp
 def test_the_tooling_defect_rule_keeps_allowed_work_moving() -> None:
     rule = routing_rule()
     assert "A vibe tooling defect follows \"Plugins and tooling\" above; it does not stop the allowed work by itself." in flat(rule)
-    tooling = flat(section(GUARDRAILS.read_text(), "## Plugins and tooling"))
+    tooling = flat(section(skill_split.read(GUARDRAILS), "## Plugins and tooling"))
     assert "A vibe tooling defect alone does not stop the person's work." in tooling
     assert "Never edit vibe's checker to force a pass, waive a check" in tooling
 
@@ -68,13 +69,13 @@ def test_the_writer_logs_the_need_builds_the_rest_and_never_blocks() -> None:
         "It is never `BLOCKED` or `NEEDS_PERSON`.",
     ):
         assert required in writer, required
-    skill = paragraph(VIBE_SKILL.read_text(), "A part that needs a path the writer may never edit")
+    skill = paragraph(skill_split.read(VIBE_SKILL), "A part that needs a path the writer may never edit")
     assert f"is logged as {TAG} for the live ticket's Engineering checklist while the writer builds the rest" in skill
     assert "it never stops the request and is never a question for the person." in skill
 
 
 def test_the_template_places_each_need_once_as_an_unchecked_engineering_item() -> None:
-    template = TICKET_TEMPLATE.read_text()
+    template = skill_split.read(TICKET_TEMPLATE)
     rule = paragraph(template, "- Engineering needed:")
     for required in (
         f"each {TAG} entry the change log records (`guardrails.md`, \"What may change\") goes once at the end of the Engineering checklist as {CHECKLIST_SHAPE}",
@@ -90,9 +91,9 @@ def test_the_ticket_worker_and_handoff_carry_each_need_to_the_checklist() -> Non
     ticket = flat(agent("vibe-ticket-worker"))
     assert (
         f"Place each {TAG} entry in the change log once, as an unchecked item at the end of the Engineering "
-        "checklist in its logged shape (`provider:ticket-template.md`, \"Engineering needed\")."
+        "checklist in its logged shape (`../provider/references/ticket-template.md`, \"Engineering needed\")."
     ) in ticket
-    guardrail = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
+    guardrail = section(skill_split.read(HANDOFF_SKILL), "## 3. Guardrail check")
     assert (
         f"A `forbidden` or outside-allowed path the request genuinely needed is removed and logged as {TAG} "
         "(`../vibe/references/guardrails.md`, \"What may change\"), and the ticket worker puts it on the Engineering checklist."
@@ -100,11 +101,11 @@ def test_the_ticket_worker_and_handoff_carry_each_need_to_the_checklist() -> Non
 
 
 def test_all_of_apps_storybook_is_explicitly_allowed() -> None:
-    allowed = section(GUARDRAILS.read_text(), "## What may change")
+    allowed = section(skill_split.read(GUARDRAILS), "## What may change")
     # operator ruling, 2026-10-16: the row's Never cell now names apps/desktop/scripts/** explicitly.
     assert "| `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | `apps/desktop/scripts/**`" in allowed
     assert "story wiring |" not in allowed
-    wiring = paragraph(GUARDRAILS.read_text(), "All of `apps/storybook/**` is Storybook wiring")
+    wiring = paragraph(skill_split.read(GUARDRAILS), "All of `apps/storybook/**` is Storybook wiring")
     for required in (
         "the `.storybook/` config (`main.ts`, `preview.tsx`, `manager.ts`, decorators, toolbar globals), `TAXONOMY.md`, and `apps/storybook/scripts/`",
         "(catalog sync and the taxonomy classification sets \"Missing primitives\" below has the writer edit)",
@@ -114,11 +115,11 @@ def test_all_of_apps_storybook_is_explicitly_allowed() -> None:
     ):
         assert required in wiring, required
     assert "| `packages/design-system/**` (primitives, tokens, stories) | `scripts/**` (one exception below) |" in allowed
-    assert "`apps/storybook/scripts/taxonomy-classification.mjs`" in section(GUARDRAILS.read_text(), "## Missing primitives")
+    assert "`apps/storybook/scripts/taxonomy-classification.mjs`" in section(skill_split.read(GUARDRAILS), "## Missing primitives")
 
 
 def test_the_readme_states_both_rules() -> None:
-    readme = paragraph(README.read_text(), "The writer may edit all of `apps/storybook/**`")
+    readme = paragraph(skill_split.read(README), "The writer may edit all of `apps/storybook/**`")
     for required in (
         "including its `.storybook/` config, `TAXONOMY.md` and `apps/storybook/scripts/`.",
         "such as the repo-root `scripts/**`, `.github/**` or an `AGENTS.md`",

@@ -49,13 +49,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { criteriaStates, memberCriteria, ticketCriteria } from "./criteria-list.mjs";
 import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 import { reviewUnit } from "./unit-review.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export { criteriaStates, memberCriteria, ticketCriteria };
 
@@ -237,7 +237,7 @@ function unitReview(values, recorded, at) {
   return { notVisible: result.notVisible, problems };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

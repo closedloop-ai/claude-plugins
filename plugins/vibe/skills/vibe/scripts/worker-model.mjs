@@ -19,9 +19,10 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { codexBindingForRole } from "../../cl-sweep/scripts/model-policy.mjs";
 import { agentRole, ModelRuntime, resolveWorkerModel, setModelOverride } from "./agent-models.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const AGENTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../agents");
 const FRONTMATTER_MODEL = /^---\n[\s\S]*?^model:[ \t]*(\S+)[ \t]*$[\s\S]*?^---/m;
@@ -58,7 +59,7 @@ function main(argv) {
   throw new Error(USAGE);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.stdout.write(`${JSON.stringify(main(process.argv.slice(2)))}\n`);
   } catch (error) {

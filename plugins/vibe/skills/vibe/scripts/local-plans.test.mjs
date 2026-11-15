@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { committedLocalPlans, knownLocalPlanPrefixes, localPlanPaths, localPlanPrefix } from "./local-plans.mjs";
-import { PROVIDER_BINDING } from "./test-fixtures.mjs";
+import { copyVibe, PROVIDER_BINDING } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "local-plans.mjs");
 
@@ -36,11 +36,12 @@ test("plans live in the private git directory without a provider recipe, and in 
   assert.equal(localPlanPaths(root, { binding: PROVIDER_BINDING }).inWorktree, true);
 });
 
-test("every installed provider's plan folder is known, bound or not, and a committed plan there blocks publication", (t) => {
+test("the plan folder of the provider vibe carries is known, bound or not, and a committed plan there blocks publication", (t) => {
   const { root, git } = repo(t);
-  // This checkout installs the ClosedLoop provider beside vibe-core, so its folder is known even with nothing bound.
-  assert.deepEqual(knownLocalPlanPrefixes(null), [".closedloop-ai/vibe-plans/"]);
+  // This checkout's vibe carries no provider, so only a bound one names a folder; a vibe built with one knows it unbound.
+  assert.deepEqual(knownLocalPlanPrefixes(null), []);
   assert.deepEqual(knownLocalPlanPrefixes(PROVIDER_BINDING), [".closedloop-ai/vibe-plans/"]);
+  const built = copyVibe(path.join(root, ".git", "built"), { provider: true });
   mkdirSync(path.join(root, ".closedloop-ai", "vibe-plans"), { recursive: true });
   writeFileSync(path.join(root, ".closedloop-ai", "vibe-plans", "plan.md"), "plan\n");
   git("add", "-f", ".");
@@ -48,7 +49,7 @@ test("every installed provider's plan folder is known, bound or not, and a commi
   assert.deepEqual(committedLocalPlans((args) => git(...args), ".closedloop-ai/vibe-plans/"), [".closedloop-ai/vibe-plans/plan.md"]);
   const check = (() => {
     try {
-      return { status: 0, out: execFileSync(process.execPath, [SCRIPT, "--worktree", root], { encoding: "utf8",
+      return { status: 0, out: execFileSync(process.execPath, [path.join(built, "skills", "vibe", "scripts", "local-plans.mjs"), "--worktree", root], { encoding: "utf8",
         env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" } }) };
     } catch (error) { return { status: error.status, out: error.stdout }; }
   })();

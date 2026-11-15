@@ -1,7 +1,7 @@
 # Guardrails: UI rules
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 Moved out of `guardrails.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 
@@ -55,7 +56,7 @@ export function successfulRemoteWriter(f, exitStatus = 0) {
 /** Install a fake remote Codex CLI for fleet shell tests without using the developer's CLI. */
 export function writeRemoteCodexStub(bin, pluginRoot) {
   const target = join(bin, 'codex');
-  writeFileSync(target, `#!${process.execPath}\nconst root=process.env.FAKE_REMOTE_PLUGIN_ROOT||${JSON.stringify(pluginRoot)}; console.log(JSON.stringify({installed:[{name:"vibe",installed:true,enabled:true,source:{path:root}}]}));\n`);
+  writeFileSync(target, `#!${process.execPath}\nconst root=process.env.FAKE_REMOTE_PLUGIN_ROOT||${JSON.stringify(pluginRoot)}; console.log(JSON.stringify({installed:[{name:${JSON.stringify(OWN_PLUGIN)},installed:true,enabled:true,source:{path:root}}]}));\n`);
   chmodSync(target, 0o755);
 }
 

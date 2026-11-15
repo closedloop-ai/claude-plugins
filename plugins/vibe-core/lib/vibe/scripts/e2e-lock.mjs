@@ -52,7 +52,6 @@ import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, open
 import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as pause } from 'node:timers/promises';
 import { imageProblem, recordImages } from "./image-head.mjs";
@@ -67,6 +66,7 @@ import { captureOwnedDockerResources, plannedLocalTags, reconcileGeneratedE2E, r
   removeOwnedDockerResources, reserveGeneratedE2E } from './owned-docker.mjs';
 import { e2eWaitersDir, readE2eWaiters, waitForReloadFence, writeAtomic } from './owned-state.mjs';
 import { failScript } from "./provider.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
 export { installOwnedBuildShim, ownedBuildEnvironment, prepareRunOwnedBuild, recordBuiltTags } from './owned-builder.mjs';
@@ -534,7 +534,7 @@ async function diskCommand([action, command, ...args]) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   const task = process.argv[2] === 'child-gate'
     ? runChildGate(process.argv.slice(3))
     : process.argv[2] === 'cleanup-sweep'

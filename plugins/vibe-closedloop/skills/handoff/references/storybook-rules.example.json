@@ -1,0 +1,42 @@
+{
+  "release": {
+    "versionFile": "storybook/package.json",
+    "versionField": "version",
+    "historyFiles": ["storybook/stories/version-history*"]
+  },
+  "frozenRoots": {
+    "titlePattern": "^(?:Components|Patterns) v1\\.0/",
+    "tags": ["deprecated"]
+  },
+  "tagRoots": {
+    "preview": "(?:^|/)Labs(?:/|$)"
+  },
+  "noOpHandler": {
+    "pattern": "\\bon(?:Update|Change|Edit|Rename|Save|Commit|Set|Toggle|Select)\\w*\\s*(?::|=\\{?)\\s*(?:async\\s*)?\\(\\s*\\)\\s*=>\\s*(?:undefined|null|void 0|\\{\\s*\\})",
+    "exemptPaths": ["src/legacy/**"]
+  },
+  "handRolledCells": {
+    "patterns": [
+      "<(?:table|thead|tbody|tr|td|th)\\b",
+      "\\srole=[\"'](?:grid|row|gridcell|rowheader|columnheader)[\"']"
+    ],
+    "canonical": "the design system's table component and its cell primitives"
+  },
+  "controlsDecision": {
+    "comment": "No controls:",
+    "exemptTags": ["deprecated"],
+    "allowlist": "storybook/controls-allowlist.json"
+  },
+  "literalOptions": true,
+  "storySupportPaths": [
+    "storybook/**",
+    "src/**/*story*"
+  ],
+  "checks": [
+    {
+      "name": "storybook-build",
+      "command": "npm run build-storybook",
+      "paths": ["storybook/**", "src/components/**"]
+    }
+  ]
+}

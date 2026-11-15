@@ -6,7 +6,7 @@ import { BENCHMARK_EFFORT, BENCHMARK_MODEL, BENCHMARK_TASK, claudeArgs,
 import type { BenchmarkShape } from "./result-schema.ts";
 import type { PreparedFixture } from "./fixture.ts";
 import { cleanupClaudeLaunch, prepareClaudeLaunch } from "./launch.ts";
-import type { PluginSnapshot } from "./plugin-snapshot.ts";
+import { providerVibeDir, type PluginSnapshot } from "./plugin-snapshot.ts";
 import { projectSearchOracle } from "../oracle/project-search-oracle.ts";
 import { checkVibeVersion, writeBenchmarkSessionRecord } from "./session-preflight.ts";
 import { runOwnedProcess } from "./owned-process.ts";
@@ -41,16 +41,15 @@ export interface ClaudeTaskEvidence {
   versionCheck: "current" | "unknown" | "outdated";
 }
 
-/** Accept only the inline snapshot plugins (vibe, closedloop-core, and vibe-core and the provider when the snapshot has them) plus Claude's built-ins. */
+/** Accept only the inline snapshot plugins (the provider arm's vibe, closedloop-core, and vibe-core when the snapshot has it) plus Claude's built-ins. */
 export function exactSnapshotPlugins(plugins: unknown, snapshot: PluginSnapshot): boolean {
   if (!Array.isArray(plugins)) return false;
   const custom = plugins.filter((value): value is Record<string, unknown> =>
     typeof value === "object" && value !== null && (value as Record<string, unknown>).path !== "builtin");
   const expected = [
     { name: "closedloop-core", path: snapshot.coreDir },
-    { name: "vibe", path: snapshot.vibeDir },
+    { name: "vibe", path: providerVibeDir(snapshot) },
     ...(snapshot.hooksDir ? [{ name: "vibe-core", path: snapshot.hooksDir }] : []),
-    ...(snapshot.providerDir ? [{ name: "vibe-closedloop-provider", path: snapshot.providerDir }] : []),
   ];
   return custom.length === expected.length && expected.every((item) => custom.some((plugin) => plugin.name === item.name &&
     plugin.source === `${item.name}@inline` && plugin.path === item.path));
@@ -69,18 +68,19 @@ export async function runClaudeTask(
   requirePinnedClaude({ model: BENCHMARK_MODEL, effort: BENCHMARK_EFFORT });
   const before = projectSearchOracle(fixture.agentCheckout);
   if (before.pass) throw new Error("benchmark-task-not-regressed");
-  const launch = prepareClaudeLaunch(fixture, snapshot.vibeDir, apiKey);
+  // The benchmark task runs in symphony-alpha, so it runs the provider (ClosedLoop) arm.
+  const vibeDir = providerVibeDir(snapshot);
+  const launch = prepareClaudeLaunch(fixture, vibeDir, apiKey);
   try {
   const prompt = shapePrompt(shape);
-  const baseArgs = claudeArgs(snapshot.vibeDir, launch.mcpConfigFile, launch.settingsFile, prompt).slice(0, -1);
+  const baseArgs = claudeArgs(vibeDir, launch.mcpConfigFile, launch.settingsFile, prompt).slice(0, -1);
   baseArgs.splice(baseArgs.indexOf("--plugin-dir"), 0, "--plugin-dir", snapshot.coreDir,
-    ...(snapshot.hooksDir ? ["--plugin-dir", snapshot.hooksDir] : []),
-    ...(snapshot.providerDir ? ["--plugin-dir", snapshot.providerDir] : []));
+    ...(snapshot.hooksDir ? ["--plugin-dir", snapshot.hooksDir] : []));
   const requestedSessionId = randomUUID();
   const started = Date.now();
-  const checked = checkVibeVersion(snapshot.vibeDir, fixture.agentCheckout,
-    runDir, requestedSessionId, claudeExecutable, snapshot.providerDir);
-  await writeBenchmarkSessionRecord(snapshot.vibeDir, fixture.agentCheckout,
+  const checked = checkVibeVersion(vibeDir, fixture.agentCheckout,
+    runDir, requestedSessionId, claudeExecutable);
+  await writeBenchmarkSessionRecord(vibeDir, fixture.agentCheckout,
     `benchmark/${fixture.taskId}`, "seeded", fixture.baseSha);
   const args = [
     ...baseArgs,

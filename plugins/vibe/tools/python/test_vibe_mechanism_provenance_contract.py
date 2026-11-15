@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -79,7 +80,7 @@ def test_periodic_or_cross_surface_plans_carry_a_cost_scaling_table() -> None:
     plan = section(agent("vibe-change-worker"), "## Plan before code")
     assert "When the plan adds periodic or cross-surface work" in plan
     assert "`../skills/cl-execute/references/planning-and-gates.md`, \"Cost Scaling\"" in plan
-    assert "## Cost Scaling" in CL_EXECUTE_GATES.read_text()
+    assert "## Cost Scaling" in skill_split.read(CL_EXECUTE_GATES)
 
 
 def test_requirements_tag_named_mechanisms_as_proposals() -> None:
@@ -94,7 +95,7 @@ def test_requirements_tag_named_mechanisms_as_proposals() -> None:
 
 
 def test_decision_findings_go_to_the_engineering_checklist_never_the_person() -> None:
-    review = section(HANDOFF_SKILL.read_text(), "## 6. Independent integrated review")
+    review = section(skill_split.read(HANDOFF_SKILL), "## 6. Independent integrated review")
     for required in (
         "that a mechanism, a one-way door, or an unratified or conflicting decision needs a human decision",
         "is never the writer's to resolve, downgrade or absorb, including after verification.",
@@ -102,14 +103,14 @@ def test_decision_findings_go_to_the_engineering_checklist_never_the_person() ->
         "never to the person.",
     ):
         assert required in review, required
-    assert "follows step 6's rule for decisions" in section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
-    loop = paragraph(QUALITY.read_text(), "A reviewer proposal is not a product ruling")
+    assert "follows step 6's rule for decisions" in section(skill_split.read(HANDOFF_SKILL), "## 3. Guardrail check")
+    loop = paragraph(skill_split.read(QUALITY), "A reviewer proposal is not a product ruling")
     assert "is never the writer's to resolve, downgrade or absorb" in loop
     assert "never a question for the person" in loop
 
 
 def test_the_template_and_ticket_worker_place_each_decision_once() -> None:
-    template = TICKET_TEMPLATE.read_text()
+    template = skill_split.read(TICKET_TEMPLATE)
     rule = paragraph(template, "- Engineering decisions:")
     assert f"goes once at the end of the Engineering checklist as {CHECKLIST_SHAPE}" in rule
     assert "never routed to the person running the session." in rule
@@ -117,12 +118,12 @@ def test_the_template_and_ticket_worker_place_each_decision_once() -> None:
     ticket = flat(agent("vibe-ticket-worker"))
     assert (
         "Place each `Engineering decision` entry in the change log once, as an unchecked item at the end of the "
-        "Engineering checklist in its logged shape (`provider:ticket-template.md`, \"Engineering decisions\")."
+        "Engineering checklist in its logged shape (`../provider/references/ticket-template.md`, \"Engineering decisions\")."
     ) in ticket
 
 
 def test_the_graph_has_a_route_for_existing_channels() -> None:
-    graph = GRAPH.read_text()
+    graph = skill_split.read(GRAPH)
     row = next(line for line in graph.splitlines() if line.startswith("| Which channels already connect two surfaces"))
     for required in ("`code_grep`", "joined in one regex alternation", "`rg`"):
         assert required in row, required
@@ -131,7 +132,7 @@ def test_the_graph_has_a_route_for_existing_channels() -> None:
 
 
 def test_settled_means_traced_to_a_human_statement() -> None:
-    communication = section(QUALITY.read_text(), "## Communication and product questions")
+    communication = section(skill_split.read(QUALITY), "## Communication and product questions")
     for required in (
         "Apply settled decisions; never ask them again.",
         "A ticket's or plan's Decisions section is a record, not a ruling.",
@@ -140,11 +141,11 @@ def test_settled_means_traced_to_a_human_statement() -> None:
         "Never resolve a conflict by recency or by assuming one author meant to change an earlier record.",
     ):
         assert required in communication, required
-    assert "Never re-ask a settled decision; a decision is settled only when it traces to a human statement (`references/quality-loop.md`, \"Communication and product questions\")." in flat(VIBE_SKILL.read_text())
+    assert "Never re-ask a settled decision; a decision is settled only when it traces to a human statement (`references/quality-loop.md`, \"Communication and product questions\")." in flat(skill_split.read(VIBE_SKILL))
     assert f"Apply a settled ruling, never ask it again; settled means traced to a human statement {PROVENANCE}." in flat(agent("vibe-change-worker"))
     assert f"re-ask settled scope {PROVENANCE}" in flat(agent("vibe-requirements-worker"))
 
 
 def test_frozen_rows_never_freeze_a_mechanism() -> None:
-    frozen = section(QUALITY.read_text(), "### Frozen behavior at handoff")
+    frozen = section(skill_split.read(QUALITY), "### Frozen behavior at handoff")
     assert "Frozen rows describe user-visible behavior, never mechanism: no intervals, transports or storage choices." in frozen

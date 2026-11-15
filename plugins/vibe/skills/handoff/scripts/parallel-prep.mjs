@@ -3,6 +3,7 @@
 
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
@@ -28,7 +29,7 @@ export function idlePrepDispatches({ writerState, pullRequestRequested, localQa 
   return PREP.map((entry) => (entry.id === "prepare-local-qa" && localQa?.command ? { ...entry, command: localQa.command } : { ...entry }));
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   const { values } = parseArgs({ options: { "writer-state": { type: "string" }, "pull-request": { type: "boolean" } } });
   process.stdout.write(`${JSON.stringify({ dispatches: idlePrepDispatches({ writerState: values["writer-state"], pullRequestRequested: values["pull-request"] === true }) }, null, 2)}\n`);
 }

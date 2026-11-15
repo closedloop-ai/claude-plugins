@@ -7,7 +7,8 @@
 // Usage (hook): reads the SessionStart JSON on stdin; prints additional context or nothing.
 
 import { fleetResume } from "./fleet-resume.mjs";
-import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 /** The guards every session start runs, in order. */
 export const SESSION_START_GUARDS = Object.freeze([{ name: "fleet-resume", run: fleetResume }]);
@@ -17,4 +18,4 @@ export function sessionStart(event, report) {
   return mergeResults("SessionStart", runGuards(SESSION_START_GUARDS, event, report));
 }
 
-if (isMain(import.meta.url)) runHookScript("session-start", sessionStart);
+if (isEntryPoint(import.meta.url)) runHookScript("session-start", sessionStart);

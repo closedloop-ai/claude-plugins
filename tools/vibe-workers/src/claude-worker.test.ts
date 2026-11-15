@@ -894,8 +894,7 @@ describe("production Claude CLI adapter", () => {
   });
   it("resolves the role's provider stubs against the session binding, and keeps the generic text without one", () => {
     const value = setup();
-    const body = "Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`.\n\n"
-      + "<!-- generic: lane-default -->\nRun the lanes the repository documents.\n<!-- end generic: lane-default -->\n"
+    const body = "<!-- generic: lane-default -->\nRun the lanes the repository documents.\n<!-- end generic: lane-default -->\n"
       + "> Provider `recipes` (block `lane-default` of `agents/vibe-verify-worker.md`)\n";
     writeFileSync(join(value.agentRoot, "agents", "vibe-verify-worker.md"),
       `---\nname: vibe-verify-worker\ndescription: Fixture role\nmodel: sonnet\ntools: Read, Grep, Glob, Bash, Skill\n---\n${body}`);
@@ -903,10 +902,7 @@ describe("production Claude CLI adapter", () => {
       { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker", requestId: "verify",
         input: "verify", timeoutMs: 1000, capabilities: graph, mode: "request" }).agent.prompt;
     const bound = launch();
-    const script = join(value.agentRoot, "skills/vibe/scripts/provider.mjs");
-    expect(bound).toContain(`from the folder \`node ${script} tree --worktree "${value.worktree}"\` prints`);
-    expect(bound).toContain(`when it exits 3, run \`node ${script} assemble --worktree "${value.worktree}" <file>\``);
-    expect(bound).not.toContain("Open every other vibe file that has provider stubs through");
+    expect(bound).not.toMatch(/provider\.mjs|provider-text/);
     expect(bound).toContain("Command-based repositories default to `pnpm test:lanes`");
     expect(bound).not.toContain("Run the lanes the repository documents.");
     expect(bound).not.toContain("> Provider");

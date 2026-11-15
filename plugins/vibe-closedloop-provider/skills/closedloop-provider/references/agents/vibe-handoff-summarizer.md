@@ -2,6 +2,11 @@
 
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
+<!-- block: ticket-template -->
+Read `provider:ticket-template.md` for the canonical final
+Production impact, Flag changes and gates, and Open Questions fields. Contribute
+<!-- end: ticket-template -->
+
 <!-- block: read-graph -->
 `provider:closedloop-graph.md`; the inventory; the session
 <!-- end: read-graph -->

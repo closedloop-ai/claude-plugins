@@ -219,12 +219,11 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory "
       + "through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, "
       + "tests or live records, and never adopt an unrecorded process. " : "";
-  // The role's provider stubs are resolved here against the session's binding, as provider-text.md promises a
-  // Claude-launched worker; with no provider bound each stub's generic text stays. A bound provider whose text cannot
-  // be read throws ProviderBroken, so the launch fails with its reason and fix instead of running generic text.
+  // Any provider stubs left in the role's definition are resolved here against the session's binding (a release built
+  // with its provider has none); with no provider bound each stub's generic text stays. A bound provider whose text
+  // cannot be read throws ProviderBroken, so the launch fails with its reason and fix instead of running generic text.
   const prompt = `${assembleProviderText(definition.prompt, binding)}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
-    + providerTextPolicy(join(definition.root, "skills/vibe/scripts/provider.mjs"), input.worktree)
     + pushPolicy(input) + phasePolicy
     + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "")
     + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName)
@@ -742,16 +741,4 @@ export function workerSessionName(agentName: string, branch: string, requestId: 
 
 function checkoutHead(root: string) {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-}
-
-/**
- * How a launched worker reads every other vibe file with provider stubs (skills/vibe/references/provider-text.md): from
- * the folder the check assembled at bind time, with per-file assembly only as the last resort.
- */
-function providerTextPolicy(script: string, worktree: string) {
-  return `Read every other vibe file that has provider stubs from the folder \`node ${script} tree --worktree "${worktree}"\` prints, `
-    + "at the same relative path, and a file with no copy there as it is; when it exits 3, "
-    + `run \`node ${script} assemble --worktree "${worktree}" <file>\` and read only the file it names (skills/vibe/references/provider-text.md). `
-    + "In a session bound to a provider, a `provider:` or `provider-broken:` answer from assemble, block or path stops that step; "
-    + "never follow the generic text in its place. ";
 }

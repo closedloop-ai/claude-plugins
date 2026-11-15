@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -42,32 +43,32 @@ def tools(name: str) -> set[str]:
 
 
 def test_both_notices_are_sent_without_waiting_and_are_never_approval_gates() -> None:
-    notices = section(VIBE_SKILL.read_text(), NOTICES)
+    notices = section(skill_split.read(VIBE_SKILL), NOTICES)
     assert "notifications, not approval gates" in notices
     assert "keep going without waiting for a reply" in notices
     assert "never asked to approve them" in notices
     assert "continues the active request in the SAME writer" in notices
-    communication = section(QUALITY.read_text(), "## Communication and product questions")
+    communication = section(skill_split.read(QUALITY), "## Communication and product questions")
     assert "never approval gates" in communication
     assert "primitive Storybook approval" not in communication
 
 
 def test_new_storybook_components_are_built_first_and_linked_while_the_build_continues() -> None:
-    notices = section(VIBE_SKILL.read_text(), NOTICES)
+    notices = section(skill_split.read(VIBE_SKILL), NOTICES)
     assert "NEW Storybook components" in notices
     assert "before the feature and returns `STORIES_READY`" in notices
     assert "<storybookUrl>/?path=/story/<id>" in notices
     assert "resume the SAME writer to build the feature" in notices
     assert "only reuses existing components skips this step" in notices
-    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert loop.index("returns `STORIES_READY`") < loop.index("resume it at once to build the feature")
-    assert "`STORIES_READY`" in section(VIBE_SKILL.read_text(), "## Workers")
+    assert "`STORIES_READY`" in section(skill_split.read(VIBE_SKILL), "## Workers")
     writer = flat(agent("vibe-change-worker"))
     assert "every NEW Storybook component the request needs (or none)" in writer
     assert "build those components and their stories first" in writer
     assert "only reuses existing components never returns `STORIES_READY`" in writer
     assert "`STORIES_READY` names the new Storybook components' story IDs and continues the same request" in writer
-    primitives = section(GUARDRAILS.read_text(), "## Missing primitives")
+    primitives = section(skill_split.read(GUARDRAILS), "## Missing primitives")
     assert "ask the person to approve" not in primitives
     assert "Only after approval" not in primitives
     assert "does not wait" in primitives
@@ -78,21 +79,21 @@ def test_new_storybook_components_are_built_first_and_linked_while_the_build_con
 
 
 def test_the_claude_launcher_accepts_the_new_components_status() -> None:
-    contracts = WORKER_CONTRACTS.read_text()
+    contracts = skill_split.read(WORKER_CONTRACTS)
     statuses = contracts[contracts.index("export const statusSchema") :].split(";", 1)[0]
     assert '"STORIES_READY"' in statuses
-    bundle = (VIBE / "scripts" / "dist" / "claude-worker.mjs").read_text()
+    bundle = skill_split.read(VIBE / "scripts" / "dist" / "claude-worker.mjs")
     assert "Use status PLAN, STORIES_READY," in bundle
 
 
 def test_a_reference_product_is_researched_into_a_behavior_list_the_build_keeps_using() -> None:
-    notices = section(VIBE_SKILL.read_text(), NOTICES)
+    notices = section(skill_split.read(VIBE_SKILL), NOTICES)
     assert "names an outside product as the reference" in notices
     assert "`vibe-requirements-worker` in reference mode" in notices
     assert "bulleted list of behaviors" in notices
     assert "forward the request with that list to the SAME writer" in notices
     assert "names behaviors, not wording" in notices
-    assert "reference mode" in section(VIBE_SKILL.read_text(), "## Workers")
+    assert "reference mode" in section(skill_split.read(VIBE_SKILL), "## Workers")
     research = section(agent("vibe-requirements-worker"), "## Reference mode")
     for required in ("public documentation", "Never sign in", "bulleted list of the behaviors",
                      "source link", "without waiting", "never a question",
@@ -104,29 +105,29 @@ def test_a_reference_product_is_researched_into_a_behavior_list_the_build_keeps_
 
 
 def test_handoff_freezes_the_accepted_rows_in_the_attached_session_table() -> None:
-    frozen = section(QUALITY.read_text(), "### Frozen behavior at handoff")
+    frozen = section(skill_split.read(QUALITY), "### Frozen behavior at handoff")
     for required in ("`## Frozen Behavior`", "stable row ID of every row the person accepted",
                      "request provenance", "Superseded rows", "remaining Open Question",
                      "rewrites this one section", "stays local to the session worktree",
                      "attachment on the live ticket is what travels", "`cl-execute`",
                      "tests in its pull request", "explicit OK of the person who ran the session"):
         assert required in frozen, required
-    candidate = section(HANDOFF_SKILL.read_text(), "### Candidate audits and pre-PR verification")
+    candidate = section(skill_split.read(HANDOFF_SKILL), "### Candidate audits and pre-PR verification")
     assert "`## Frozen Behavior` section" in candidate
-    step = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    step = section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
     assert "Frozen Behavior row IDs" in step
     ticket = section(agent("vibe-ticket-worker"), "## Handoff mode")
     assert "must carry its `## Frozen Behavior` section before you attach it" in ticket
     assert "return `NEEDS_CHANGE`" in ticket
     assert "names the attachment and its Frozen Behavior row IDs" in ticket
-    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    handoff = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
     assert "Frozen Behavior row IDs" in handoff
     assert "changes only with that person's explicit OK" in handoff
     assert "`## Frozen Behavior` section with the row IDs the person accepted" in flat(agent("vibe-change-worker"))
 
 
 def test_cl_execute_reads_the_attachment_and_keeps_frozen_rows_passing() -> None:
-    gates = section(CL_EXECUTE_GATES.read_text(), "## Vibe Frozen Behavior")
+    gates = section(skill_split.read(CL_EXECUTE_GATES), "## Vibe Frozen Behavior")
     for required in ("`Built in a vibe session by`", "download the session decision table",
                      "`HUMAN_REVIEW_REQUIRED`", "Record every frozen row ID in the plan",
                      "Keep every frozen row passing", "includes a test for each frozen row",
@@ -135,7 +136,7 @@ def test_cl_execute_reads_the_attachment_and_keeps_frozen_rows_passing() -> None
                      "`PRODUCT_BLOCKED`", "recorded OK",
                      "frozen row's test and every Missing tests entry passes at the PR head"):
         assert required in gates, required
-    skill = flat(CL_EXECUTE.read_text())
+    skill = flat(skill_split.read(CL_EXECUTE))
     assert "references/planning-and-gates.md#vibe-frozen-behavior" in skill
     assert "keep every frozen row passing with tests in the PR" in skill
 
@@ -145,6 +146,6 @@ def test_new_text_uses_no_emdashes_or_double_hyphen_dashes() -> None:
                  AGENTS / "vibe-requirements-worker.md", AGENTS / "vibe-change-worker.md",
                  AGENTS / "vibe-ticket-worker.md", AGENTS / "vibe-primitive-worker.md",
                  AGENTS / "vibe-guardrails-reviewer.md"):
-        text = path.read_text()
+        text = skill_split.read(path)
         assert "—" not in text, path.name
         assert " -- " not in text, path.name

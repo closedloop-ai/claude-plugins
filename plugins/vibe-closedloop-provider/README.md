@@ -1,8 +1,9 @@
 # vibe-closedloop-provider
 
-The optional ClosedLoop provider for vibe and fleet-orchestrator. vibe and fleet
-run in any git repository without it. With this plugin installed and enabled,
-a vibe or fleet start binds it, and the session also:
+The ClosedLoop provider for vibe and fleet-orchestrator. vibe and fleet run in
+any git repository without it. It is not installed as a plugin of its own: it
+is an input to the ClosedLoop build of vibe, published as `vibe`. In that
+build, a vibe or fleet start binds it, and the session also:
 
 - keeps a live ClosedLoop ticket for the work, publishes the session plan as a
   linked PLN, and hands the ticket to the next owner (`tickets`, `plans`);
@@ -18,22 +19,25 @@ a vibe or fleet start binds it, and the session also:
 Each capability binds only when what it needs holds in that chat: the ClosedLoop
 connection answered for `tickets` and `plans`, closedloop-graph answered for
 `graph`, and the committed opt-in file for `recipes`
-(`skills/closedloop-provider/SKILL.md`). That file holds exactly
+(`provider.json`). That file holds exactly
 `{"schema": 1, "provider": "vibe-closedloop-provider"}`; a missing or
 malformed one binds the other capabilities and withholds `recipes` with one
 named reason. A session started without the provider
-stays generic until it ends. The plugin ships text and data only: no hooks and
+stays generic until it ends. The folder holds text and data only: no hooks and
 no scripts. vibe-core's one guard engine reads its rules.
 
-## Installation
+## The build
 
-```bash
-claude plugin install vibe-closedloop-provider@closedloop-ai
-codex plugin add vibe-closedloop-provider@closedloop-ai
-```
-
-Disable or uninstall it to run vibe generically; vibe never re-enables or
-reinstalls it.
+`tools/vibe-closedloop-build` (`npm run build`) writes `plugins/vibe-closedloop`
+from `plugins/vibe` and this folder. It assembles every provider block into the
+vibe text it belongs to, copies `provider.json` and the references into the
+built plugin's `provider/` folder, and applies `build.json`: the manifest and
+frontmatter descriptions, the sections moved to cold files with their pointer
+line, the line that marks recipe text, and the files the provider replaces
+whole. Never edit `plugins/vibe-closedloop` by hand; change `plugins/vibe` or
+this folder and rebuild. Install the build as `vibe@closedloop-ai`; to run vibe with
+no provider, install `vibe-generic@closedloop-ai`, which is `plugins/vibe` as
+it stands.
 
 ## The main-sync recipe
 

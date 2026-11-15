@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, 
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { actionSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { isVibePlugin } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { installedPluginRoot, readPluginManifest } from "./plugin-root.js";
@@ -74,7 +75,7 @@ function definitionUpgradeEvidence(ledger: Ledger, installedRoot: string) {
   const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
   const installed = readDefinition(installedRoot, agentName, capabilities);
   const recordedVersion = observedDigest === null ? undefined : readPluginManifest(agentRoot).version;
-  const cacheVersion = basename(dirname(agentRoot)) === "vibe" ? basename(agentRoot) : undefined;
+  const cacheVersion = isVibePlugin(basename(dirname(agentRoot))) ? basename(agentRoot) : undefined;
   const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion
     && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
   // A versioned cache root whose manifest disagrees with its directory has no trusted release provenance.

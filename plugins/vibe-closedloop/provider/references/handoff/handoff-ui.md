@@ -1,0 +1,22 @@
+# Provider text for skills/handoff/references/handoff-ui.md
+
+Each block replaces the stub of the same id there, in a session bound to this provider.
+
+<!-- block: placement-record -->
+blocks in the writer's local plan. Each placement goes on the live ticket's
+Storybook placement line; the SAME writer logs each Conflict with its
+audience, and the ticket worker places it by that audience
+(`provider:ticket-template.md`, "Conflicts"), never to the person.
+Every new story follows the repo's `apps/storybook/TAXONOMY.md`, a v1.0
+<!-- end: placement-record -->
+
+<!-- block: control-verification -->
+diff/tree hashes. Use the repository's control skill
+(`<repo-root>/.claude/skills/control/SKILL.md`, `pnpm control`): hidden browser
+and displayless Desktop only, never `--headed` or `--allow-write`. Close owned
+sessions with `pnpm control down`; its throwaway Desktop profile stays separate
+from the session's stopped profile. Relocate captures with
+`../vibe/scripts/control-evidence.mjs` into private Git storage. Return captures,
+console/page errors, network/API/IPC evidence and baseline comparisons with
+what each proves.
+<!-- end: control-verification -->

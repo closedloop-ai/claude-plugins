@@ -3,7 +3,7 @@
 Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: claude-launcher -->
-- Claude Code: invoke as `/vibe:vibe`; plugin agents are available as
+- Claude Code: invoke as `/vibe-generic:vibe`; plugin agents are available as
   `vibe:<name>`. Launch every worker through `scripts/dist/claude-worker.mjs`,
   never through the native Agent tool: a plugin agent dispatched natively gets
   only the built-in tools its file lists, with no tracker or graph MCP

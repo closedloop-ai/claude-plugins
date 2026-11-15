@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +37,7 @@ GNU_TIMEOUT = re.compile(r"(?:^|[\s;&|(`$])g?timeout\s+(?:-[A-Za-z]+\s+\S+\s+)*\
 
 
 def banned_terms() -> list[str]:
-    rows = [line for line in PLAIN_WORDS.read_text().splitlines() if line.startswith("| ") and "---" not in line]
+    rows = [line for line in skill_split.read(PLAIN_WORDS).splitlines() if line.startswith("| ") and "---" not in line]
     return [term.strip().strip("`") for row in rows[1:] for term in row.split("|")[1].split(",")]
 
 
@@ -44,20 +45,20 @@ def test_one_banned_terms_list_covers_every_term_the_person_saw() -> None:
     terms = [term.lower() for term in banned_terms()]
     for seen in SESSION_TERMS:
         assert seen.lower() in terms, seen
-    table = PLAIN_WORDS.read_text()
+    table = skill_split.read(PLAIN_WORDS)
     assert "| Never say to the person | Say instead |" in table
     assert "Never use the person's email address as the name of a company" in flat(table)
 
 
 def test_both_skills_and_the_person_facing_workers_reference_the_list() -> None:
-    role = section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")
+    role = section(skill_split.read(VIBE_SKILL), "## Your role: orchestrate, never do the work")
     assert "Every word the person sees follows `references/plain-words.md`" in role
-    assert "`../vibe/references/plain-words.md`" in flat(HANDOFF_SKILL.read_text())
-    assert "plain-words.md" in flat((AGENTS / "vibe-setup-worker.md").read_text())
+    assert "`../vibe/references/plain-words.md`" in flat(skill_split.read(HANDOFF_SKILL))
+    assert "plain-words.md" in flat(skill_split.read(AGENTS / "vibe-setup-worker.md"))
 
 
 def test_every_question_is_recorded_and_never_asked_twice() -> None:
-    rule = section(VIBE_SKILL.read_text(), "### Questions are asked once")
+    rule = section(skill_split.read(VIBE_SKILL), "### Questions are asked once")
     for required in (
         "No question reaches the person twice.",
         "node scripts/session-questions.mjs ask --key <topic>",
@@ -68,19 +69,19 @@ def test_every_question_is_recorded_and_never_asked_twice() -> None:
         "`node scripts/session-questions.mjs reset` before the first question",
     ):
         assert required in rule, required
-    assert "`scripts/session-questions.mjs`" in section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")
-    assert "`../vibe/scripts/session-questions.mjs`" in flat(HANDOFF_SKILL.read_text())
+    assert "`scripts/session-questions.mjs`" in section(skill_split.read(VIBE_SKILL), "## Your role: orchestrate, never do the work")
+    assert "`../vibe/scripts/session-questions.mjs`" in flat(skill_split.read(HANDOFF_SKILL))
 
 
 def test_the_sample_data_question_is_plain_gated_and_never_uses_the_email() -> None:
-    skill = VIBE_SKILL.read_text()
+    skill = skill_split.read(VIBE_SKILL)
     starting = section(skill, "### Starting new")
     assert "same necessity gate as any other question" in starting
     assert "In every other case record `seeded` and ask nothing." in starting
     assert ("\"Should your copy of the app start with an example company that already has people and "
             "work in it, or start empty so you can set it up yourself?\"") in starting
     assert "Never name the example company after the person's email" in starting
-    for text in (skill, (AGENTS / "vibe-environment-worker.md").read_text()):
+    for text in (skill, skill_split.read(AGENTS / "vibe-environment-worker.md")):
         assert "<email> Co" not in text
     question = re.search(r'ask once, in these words: "([^"]+)"', starting)
     assert question
@@ -90,7 +91,7 @@ def test_the_sample_data_question_is_plain_gated_and_never_uses_the_email() -> N
 
 
 def test_claude_workers_launch_through_the_owned_launcher_without_a_guessed_root() -> None:
-    notes = section(VIBE_SKILL.read_text(), "## Harness notes")
+    notes = section(skill_split.read(VIBE_SKILL), "## Harness notes")
     for required in (
         "Launch every worker through `scripts/dist/claude-worker.mjs`, never through the native Agent tool",
         "with no tracker or graph MCP",
@@ -106,7 +107,7 @@ def test_claude_workers_launch_through_the_owned_launcher_without_a_guessed_root
 
 
 def test_the_sign_in_step_is_one_plain_instruction_shared_by_preflight_and_launcher() -> None:
-    row = next(line for line in PREFLIGHT.read_text().splitlines() if line.startswith("| `claude-auth-login` |"))
+    row = next(line for line in skill_split.read(PREFLIGHT).splitlines() if line.startswith("| `claude-auth-login` |"))
     instruction = re.search(r'Return `NEEDS_PERSON` with exactly: "([^"]+)"', row)
     assert instruction
     text = instruction.group(1)
@@ -114,10 +115,10 @@ def test_the_sign_in_step_is_one_plain_instruction_shared_by_preflight_and_launc
     assert "/login" not in text.replace("auth login", "")
     for term in ("MCP", "OAuth", "CLI", "token"):
         assert term not in text, term
-    source = LAUNCHER_SOURCE.read_text()
+    source = skill_split.read(LAUNCHER_SOURCE)
     constant = "".join(re.findall(r'"([^"]*)"', source[source.index("SIGN_IN_PERSON_ACTION ="):source.index(";\n", source.index("SIGN_IN_PERSON_ACTION ="))]))
     assert constant == text
-    assert text in LAUNCHER_BUNDLE.read_text().replace('" + "', "")
+    assert text in skill_split.read(LAUNCHER_BUNDLE).replace('" + "', "")
 
 
 def test_no_plugin_file_bounds_a_command_with_gnu_timeout() -> None:
@@ -125,13 +126,13 @@ def test_no_plugin_file_bounds_a_command_with_gnu_timeout() -> None:
     for path in PLUGIN_ROOT.rglob("*"):
         if path.suffix not in {".md", ".sh", ".mjs", ".yaml"} or "dist" in path.parts or "evals" in path.parts:
             continue
-        for number, line in enumerate(path.read_text().splitlines(), 1):
+        for number, line in enumerate(skill_split.read(path).splitlines(), 1):
             if GNU_TIMEOUT.search(line):
                 offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{number}")
     assert offenders == []
-    for text in (section(VIBE_SKILL.read_text(), "## Harness notes"),
-                 flat((AGENTS / "vibe-setup-worker.md").read_text()),
-                 flat((AGENTS / "vibe-verify-worker.md").read_text())):
+    for text in (section(skill_split.read(VIBE_SKILL), "## Harness notes"),
+                 flat(skill_split.read(AGENTS / "vibe-setup-worker.md")),
+                 flat(skill_split.read(AGENTS / "vibe-verify-worker.md"))):
         assert "macOS has no `timeout` or `gtimeout`" in text
         assert "run-bounded.mjs" in text
 
@@ -153,29 +154,29 @@ def _plugin_files(*suffixes: str) -> list[Path]:
 
 def test_no_script_stops_a_process_by_name_or_pattern() -> None:
     offenders = [f"{path.name}:{number}" for path in _plugin_files(".mjs", ".js", ".ts", ".sh")
-                 for number, line in enumerate(path.read_text().splitlines(), 1) if PROCESS_KILL.search(line)]
+                 for number, line in enumerate(skill_split.read(path).splitlines(), 1) if PROCESS_KILL.search(line)]
     assert offenders == []
     for path in _plugin_files(".md"):
-        for paragraph in re.split(r"\n\s*\n|\n(?=- )", path.read_text()):
+        for paragraph in re.split(r"\n\s*\n|\n(?=- )", skill_split.read(path)):
             if PROCESS_KILL.search(paragraph):
                 assert NEGATION.search(paragraph), f"{path.name}: {flat(paragraph)[:160]}"
-    rules = section((VIBE / "references" / "guardrails.md").read_text(), "## Processes and state")
+    rules = section(skill_split.read(VIBE / "references" / "guardrails.md"), "## Processes and state")
     assert "Never `pkill`, `killall` or `kill` by name or pattern" in rules
-    assert "never stop a process by name or pattern" in flat((AGENTS / "vibe-setup-worker.md").read_text())
-    assert "never with `pkill`, `killall`" in flat((AGENTS / "vibe-verify-worker.md").read_text())
+    assert "never stop a process by name or pattern" in flat(skill_split.read(AGENTS / "vibe-setup-worker.md"))
+    assert "never with `pkill`, `killall`" in flat(skill_split.read(AGENTS / "vibe-verify-worker.md"))
 
 
 def test_session_scripts_keep_no_state_in_the_temp_folder() -> None:
     scripts = [path for folder in (VIBE / "scripts", PLUGIN_ROOT / "skills" / "handoff" / "scripts")
                for path in folder.glob("*.mjs") if not path.name.endswith(".test.mjs") and path.name != "test-fixtures.mjs"]
-    assert [path.name for path in scripts if "tmpdir(" in path.read_text()] == []
-    assert '".codex", "vibe", "precedent"' in (VIBE / "scripts" / "precedent-check.mjs").read_text()
-    rules = section((VIBE / "references" / "guardrails.md").read_text(), "## Processes and state")
+    assert [path.name for path in scripts if "tmpdir(" in skill_split.read(path)] == []
+    assert '".codex", "vibe", "precedent"' in skill_split.read(VIBE / "scripts" / "precedent-check.mjs")
+    rules = section(skill_split.read(VIBE / "references" / "guardrails.md"), "## Processes and state")
     assert "never `/tmp` or the system temp folder" in rules
 
 
 def test_a_dependency_on_an_open_pull_request_never_idles_the_session() -> None:
-    rule = flat((VIBE / "references" / "quality-loop.md").read_text())
+    rule = flat(skill_split.read(VIBE / "references" / "quality-loop.md"))
     assert "**A dependency on an open pull request never idles the session**" in rule
     assert "Never pause, wait for the merge, or ask the person to restart anything" in rule
     assert "develops and checks independent changes uncommitted; only the dependent import waits" in rule

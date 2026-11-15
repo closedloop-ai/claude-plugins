@@ -168,3 +168,18 @@ test("only vibe or fleet conversations check dispatched script paths, and only v
     assert.match(pluginVersionGuard(event, dir)?.reason ?? "", /skills\/vibe\/scripts\/nonexistent\.mjs: plugin script does not exist/, event.tool_name);
   }
 });
+
+test("vibe-generic's skills, prompts and workers are vibe's to the check", (t) => {
+  const dir = home(t);
+  pluginVersionSkillStart({ tool_name: "Skill", session_id: SESSION, tool_input: { skill: "vibe-generic:fleet-orchestrator" } }, dir);
+  assert.equal(readHookSkill(SESSION, dir), "fleet-orchestrator");
+  assert.equal(JSON.parse(readFileSync(recordFile(dir), "utf8")).status, "pending", "a vibe-generic start marks the conversation pending");
+  pluginVersionPromptStart({ session_id: "prompt-start", prompt: "/vibe-generic:vibe build the page" }, dir);
+  assert.equal(readHookSkill("prompt-start", dir), "vibe");
+  assert.equal(JSON.parse(readFileSync(recordFile(dir, "prompt-start"), "utf8")).status, "pending");
+  pluginVersionPromptStart({ session_id: "codex-start", prompt: "$vibe-generic:fleet-orchestrator resume", turn_id: "turn-1" }, dir);
+  assert.equal(readHookSkill("codex-start", dir), "fleet-orchestrator");
+  assert.equal(launchesWriterAgent({ subagent_type: "vibe-generic:vibe-change-worker" }), true);
+  assert.equal(launchesWriterAgent({ subagent_type: "general-purpose", prompt: "Invoke vibe-generic:vibe first: resume the session" }), true);
+  assert.equal(launchesWriterAgent({ subagent_type: "vibe-core:vibe-change-worker" }), false);
+});

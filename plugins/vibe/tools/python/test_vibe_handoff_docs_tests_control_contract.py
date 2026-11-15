@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -53,20 +54,20 @@ CONTROL_COMMANDS = {"feature", "up", "doctor", "goto", "wait", "capture", "conso
 
 def plugin_prose() -> dict[str, str]:
     paths = [*AGENTS.glob("*.md"), *(PLUGIN_ROOT / "skills").rglob("*.md"), PLUGIN_ROOT / "README.md"]
-    return {str(path.relative_to(PLUGIN_ROOT)): path.read_text() for path in paths}
+    return {str(path.relative_to(PLUGIN_ROOT)): skill_split.read(path) for path in paths}
 
 
 def test_handoff_lists_docs_pages_and_leaves_internal_docs_to_engineering() -> None:
-    docs = section(GUARDRAILS.read_text(), "## Feature docs at handoff")
+    docs = section(skill_split.read(GUARDRAILS), "## Feature docs at handoff")
     assert "Nothing agent-written goes into public docs. This section is the rule's one canonical statement" in docs
     assert "the repo's internal engineering `docs/` folder" in docs
     assert "only records which existing product docs pages describe a changed feature" in docs
-    step = section(HANDOFF_SKILL.read_text(), "### Existing feature docs")
+    step = section(skill_split.read(HANDOFF_SKILL), "### Existing feature docs")
     assert "internal engineering `docs/` folder" in step
     assert "edits, creates and drafts nothing there" in step
     writer = flat(agent("vibe-change-worker"))
     assert "records, never edits, the existing product docs pages under `apps/web/content/docs/`" in writer
-    feature_docs = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    feature_docs = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
     assert "existing product docs page under `apps/web/content/docs/` that describes a changed feature" in feature_docs
     assert "Internal engineering docs under `docs/` are left to engineering's pull request" in feature_docs
     for name, text in plugin_prose().items():
@@ -74,7 +75,7 @@ def test_handoff_lists_docs_pages_and_leaves_internal_docs_to_engineering() -> N
         assert "internal docs under `docs/`" not in text, name
 
 def test_the_inventory_reads_target_owned_docs_policy() -> None:
-    inventory = INVENTORY.read_text()
+    inventory = skill_split.read(INVENTORY)
     assert "Target-specific docs rules belong in that repository's declaration" in inventory
     assert "const ALLOWED_PREFIXES" not in inventory
     assert "PATH_POLICY_BASENAME" in inventory
@@ -82,7 +83,7 @@ def test_the_inventory_reads_target_owned_docs_policy() -> None:
 
 
 def test_only_the_explicit_top_level_envelope_authorizes_test_writing() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Tests")
+    rule = section(skill_split.read(GUARDRAILS), "## Tests")
     for required in ("Without an explicit top-level pull-request or `testsRequired` grant, no worker authors a test in vibe or handoff",
                      "in the build loop and at handoff alike", "The edits allowed are a repair and a retired-only deletion",
                      "Handoff runs the existing affected tests",
@@ -91,15 +92,15 @@ def test_only_the_explicit_top_level_envelope_authorizes_test_writing() -> None:
                      "the files to cover", "Engineering writes those tests in its pull request",
                      "alongside the tests for every frozen row", "the test stays unedited"):
         assert required in rule, required
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "Handoff authors no tests" in handoff
-    assert "never what a test asserts" in section(HANDOFF_SKILL.read_text(), "## 5. Checks and the missing tests list")
-    loop = section(QUALITY.read_text(), "## Tests: repair, don't author")
+    assert "never what a test asserts" in section(skill_split.read(HANDOFF_SKILL), "## 5. Checks and the missing tests list")
+    loop = section(skill_split.read(QUALITY), "## Tests: repair, don't author")
     for required in ("No test authoring in the build loop or at handoff",
                      "runs the existing affected tests", "never what a test asserts",
                      "lists every missing test as engineering's scope of work"):
         assert required in loop, required
-    assert "top-level `testsRequired` grant on a request, fix or handoff turn" in section(QUALITY.read_text(), "## One persistent writer and a serial queue")
+    assert "top-level `testsRequired` grant on a request, fix or handoff turn" in section(skill_split.read(QUALITY), "## One persistent writer and a serial queue")
     for name in ("vibe-verify-worker", "vibe-backend-worker", "vibe-storybook-decomposer",
                  "vibe-adversarial-reviewer", "vibe-prototype-worker", "vibe-environment-worker"):
         text = flat(agent(name)).lower()
@@ -111,7 +112,7 @@ def test_only_the_explicit_top_level_envelope_authorizes_test_writing() -> None:
 
 
 def test_the_handoff_ticket_lists_missing_tests_as_engineering_scope() -> None:
-    template = TICKET_TEMPLATE.read_text()
+    template = skill_split.read(TICKET_TEMPLATE)
     handoff = section(template, "## Handoff")
     assert "- Missing tests (engineering scope):" in handoff
     for required in ("which engineering writes in its pull request", "stable row ID",
@@ -123,14 +124,14 @@ def test_the_handoff_ticket_lists_missing_tests_as_engineering_scope() -> None:
     ticket = flat(agent("vibe-ticket-worker"))
     assert "the writer's missing tests list" in ticket
     assert "Missing tests lists every entry of the writer's missing tests list" in ticket
-    gates = section(CL_EXECUTE_GATES.read_text(), "## Vibe Frozen Behavior")
+    gates = section(skill_split.read(CL_EXECUTE_GATES), "## Vibe Frozen Behavior")
     assert "lists the session's Missing tests as engineering's scope of work" in gates
     assert "write it in this PR" in gates
-    assert "write every test the ticket lists under Missing tests" in flat(CL_EXECUTE.read_text())
+    assert "write every test the ticket lists under Missing tests" in flat(skill_split.read(CL_EXECUTE))
 
 
 def test_missing_tests_never_count_as_coverage_and_do_not_block_alignment() -> None:
-    table = section(QUALITY.read_text(), "## Session decision table before code")
+    table = section(skill_split.read(QUALITY), "## Session decision table before code")
     assert "`Missing test (engineering)` disposition" in table
     assert "never counted as coverage" in table
     assert "a row whose only gap is a listed missing test does not block it" in table
@@ -140,10 +141,10 @@ def test_missing_tests_never_count_as_coverage_and_do_not_block_alignment() -> N
 
 
 def test_only_an_explicit_pull_request_request_authorizes_full_tests() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Tests")
+    rule = section(skill_split.read(GUARDRAILS), "## Tests")
     assert "when the person explicitly asks for a pull request to be raised" in rule
     assert "full tests for every change in the session are required before it opens" in rule
-    requested = section(HANDOFF_SKILL.read_text(), "## A requested pull request")
+    requested = section(skill_split.read(HANDOFF_SKILL), "## A requested pull request")
     for required in ("explicitly asks for a pull request to be raised", "`pull-request` mode",
                      "the only turn whose envelope authorizes tests", "every entry on the missing tests list",
                      "--phase pull-request", "does not open until those tests pass",
@@ -155,18 +156,18 @@ def test_only_an_explicit_pull_request_request_authorizes_full_tests() -> None:
 
 
 def test_the_launcher_grants_test_authority_from_an_explicit_top_level_turn() -> None:
-    launcher = (WORKERS_SRC / "claude-worker.ts").read_text()
+    launcher = skill_split.read(WORKERS_SRC / "claude-worker.ts")
     assert 'testAuthoringAuthorized: testAuthoringGranted(input)' in launcher
     assert 'input.testsRequired === true && testAuthoringModes.has(input.mode)' in launcher
     assert 'input.mode === "handoff" }' not in launcher
-    assert '"pull-request"' in (WORKERS_SRC / "record-context.ts").read_text()
-    bundle = LAUNCHER_BUNDLE.read_text()
+    assert '"pull-request"' in skill_split.read(WORKERS_SRC / "record-context.ts")
+    bundle = skill_split.read(LAUNCHER_BUNDLE)
     assert 'testAuthoringAuthorized: testAuthoringGranted(input)' in bundle
     assert "Never author tests in plan or record turns" in bundle
 
 
 def test_handoff_verifies_running_apps_with_the_control_skill() -> None:
-    step = section(HANDOFF_SKILL.read_text(), CONTROL)
+    step = section(skill_split.read(HANDOFF_SKILL), CONTROL)
     for required in ("`vibe-verify-worker` control mode", "`<repo-root>/.claude/skills/control/SKILL.md`",
                      "`pnpm control`", "every locally served uncommitted candidate screen",
                      "hidden browser", "displayless Desktop", "never `--headed`", "`--allow-write`",
@@ -176,7 +177,7 @@ def test_handoff_verifies_running_apps_with_the_control_skill() -> None:
                      "separated from source-only claims", "The build loop has no control step",
                      "Owned prototype sessions skip this check"):
         assert required in step, required
-    skill = HANDOFF_SKILL.read_text()
+    skill = skill_split.read(HANDOFF_SKILL)
     step_six = section(skill, "## 6. Independent integrated review")
     assert step_six.index(CONTROL[4:]) < step_six.index("Candidate audits and pre-PR verification")
     assert "step 6's reviews and running-app verification" in section(skill, "## Answers from the person")
@@ -201,7 +202,7 @@ def test_the_verify_worker_control_mode_cites_only_real_control_commands() -> No
 
 
 def test_control_evidence_lands_in_design_review_and_validation_records() -> None:
-    template = TICKET_TEMPLATE.read_text()
+    template = skill_split.read(TICKET_TEMPLATE)
     handoff = section(template, "## Handoff")
     assert "- Running app checks:" in handoff
     for required in ("`pnpm control` commands run at handoff", "each result with what it proves",
@@ -216,10 +217,10 @@ def test_control_evidence_lands_in_design_review_and_validation_records() -> Non
 
 
 def test_the_build_loop_uses_control_only_for_an_acceptance_criterion_read() -> None:
-    assert "pnpm control" not in section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    assert "pnpm control" not in section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert "pnpm control" not in flat(agent("vibe-change-worker"))
     heading = "## Acceptance criteria before ready"
-    before, _, after = QUALITY.read_text().partition(heading)
+    before, _, after = skill_split.read(QUALITY).partition(heading)
     acceptance, _, rest = after.partition("\n## ")
     assert "one bounded `pnpm control` read" in flat(acceptance)
     assert "pnpm control" not in before + rest

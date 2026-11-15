@@ -25,10 +25,9 @@ import json
 import re
 from pathlib import Path
 
-import yaml
-
-from skill_split import raw
+from skill_split import built, raw
 from vibe_contract_text import agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -60,7 +59,7 @@ def person_lines(text: str) -> list[str]:
 def test_no_instruction_sends_the_person_into_the_app_settings() -> None:
     offenders = []
     for path in instruction_files():
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         for allowed in ALLOWED_SETTINGS:
             text = re.sub(re.escape(allowed), "", text, flags=re.IGNORECASE)
         for found in [*SETTINGS.finditer(text), *VAGUE_CONNECT.finditer(text)]:
@@ -81,8 +80,8 @@ def test_the_guard_rejects_the_reported_step_and_a_mislabeled_path() -> None:
 
 
 def test_restoring_a_connection_is_commands_the_worker_runs() -> None:
-    restore = section(PREFLIGHT.read_text(), RESTORE)
-    install = flat((VIBE / "INSTALL.md").read_text())
+    restore = section(skill_split.read(PREFLIGHT), RESTORE)
+    install = flat(skill_split.read(VIBE / "INSTALL.md"))
     add = re.search(r'"\$CODEX" (mcp add closedloop --url \S+)', install)
     assert add, "INSTALL.md adds the ClosedLoop connection with the Codex CLI"
     for command in (
@@ -102,21 +101,21 @@ def test_restoring_a_connection_is_commands_the_worker_runs() -> None:
 
 
 def test_the_person_only_signs_in_and_is_asked_for_a_new_chat_in_plain_words() -> None:
-    restore = section(PREFLIGHT.read_text(), RESTORE)
+    restore = section(skill_split.read(PREFLIGHT), RESTORE)
     lines = person_lines(restore)
     assert len(lines) == 3
     sign_in, new_chat, claude_link = lines
     assert "sign-in page just opened in your browser" in sign_in and "your own ClosedLoop account" in sign_in
     assert "click New chat in the sidebar and type $vibe" in new_chat
     assert "Open this link to sign in to ClosedLoop with your own ClosedLoop account" in claude_link
-    for line in person_lines(PREFLIGHT.read_text()):
+    for line in person_lines(skill_split.read(PREFLIGHT)):
         assert not PERSON_BANNED.search(line), line
 
 
 def test_orchestrator_and_setup_worker_use_the_procedure_for_both_connections() -> None:
-    skill = flat((VIBE / "SKILL.md").read_text())
+    skill = flat(skill_split.read(VIBE / "SKILL.md"))
     worker = flat(agent("vibe-setup-worker"))
-    beyond = section(PREFLIGHT.read_text(), "## Beyond the script")
+    beyond = section(skill_split.read(PREFLIGHT), "## Beyond the script")
     assert "If either does not answer, dispatch `vibe-setup-worker` to restore that connection" in skill
     assert '"Restoring a connection"' in skill
     assert 'then start a new chat only when "Restoring a connection" step 5 says so' in skill
@@ -129,16 +128,16 @@ def test_a_new_chat_is_asked_for_only_when_this_chat_still_fails_or_the_connecti
     # Checked 2026-10-28: after `codex mcp login`, a chat whose connection failed when it started
     # reconnects at the next message; a chat whose sign-in ran out mid-chat, or one opened before
     # `codex mcp add`, never sees the new connection. The old text asked for a new chat every time.
-    step5 = section(PREFLIGHT.read_text(), RESTORE).split("5. The orchestrator then finds out whether this chat has the connection.", 1)
+    step5 = section(skill_split.read(PREFLIGHT), RESTORE).split("5. The orchestrator then finds out whether this chat has the connection.", 1)
     assert len(step5) == 2, "step 5 belongs to the orchestrator"
     step5 = step5[1].split("On Claude Code", 1)[0]
     assert "After `login` or no command: call `get-me` (or `sync_status`) again in this chat" in step5
     assert "carry on, with no new chat" in step5
     assert "It still fails, or the command was `add`" in step5
     assert step5.index("carry on, with no new chat") < step5.index("click New chat in the sidebar")
-    restore = section(PREFLIGHT.read_text(), RESTORE)
+    restore = section(skill_split.read(PREFLIGHT), RESTORE)
     assert "A connection added, signed in or repaired while this chat is open reaches only a new chat" not in restore
-    skill = flat((VIBE / "SKILL.md").read_text())
+    skill = flat(skill_split.read(VIBE / "SKILL.md"))
     assert "When it returns `DONE`, do that section's step 5 yourself: call the tool again in this chat" in skill
     assert "Ask for a new chat only when it still fails or the connection was just added, never as a precaution." in skill
     worker = flat(agent("vibe-setup-worker"))
@@ -147,13 +146,13 @@ def test_a_new_chat_is_asked_for_only_when_this_chat_still_fails_or_the_connecti
 
 
 def test_claude_code_restore_uses_the_conversations_own_sign_in_tool() -> None:
-    claude = section(PREFLIGHT.read_text(), RESTORE).split("On Claude Code", 1)[1]
+    claude = section(skill_split.read(PREFLIGHT), RESTORE).split("On Claude Code", 1)[1]
     assert "`mcp__<name>__authenticate`" in claude
     assert "the connection works in this same conversation" in claude
     assert "`claude mcp login` needs a terminal, so no worker can run it" in claude
     assert "The smallest one is `/exit` and then `claude --continue` in the same folder, which keeps the conversation" in claude
     assert "never `/clear`, which drops it" in claude
-    assert "a connection's own `authenticate` tool" in flat((VIBE / "SKILL.md").read_text())
+    assert "a connection's own `authenticate` tool" in flat(skill_split.read(VIBE / "SKILL.md"))
 
 
 SANDBOX = "## Commands the sandbox blocks"
@@ -166,7 +165,7 @@ ALLOWED_TERMINAL = ("Your Claude sign-in on this Mac has run out",)
 
 
 def test_a_command_the_sandbox_refuses_is_escalated_never_handed_to_the_person() -> None:
-    sandbox = section(PREFLIGHT.read_text(), SANDBOX)
+    sandbox = section(skill_split.read(PREFLIGHT), SANDBOX)
     for phrase in (
         "failed to persist config ... Operation not permitted",
         '`sandbox_permissions: "require_escalated"`',
@@ -179,9 +178,9 @@ def test_a_command_the_sandbox_refuses_is_escalated_never_handed_to_the_person()
         assert phrase in sandbox, phrase
     assert '"I\'m reconnecting <ClosedLoop|GitHub> for you. If ChatGPT asks whether it can run a command, click Allow once."' in sandbox
     for name in (RESTORE, GITHUB):
-        assert 'requesting escalation as "Commands the sandbox blocks" says' in section(PREFLIGHT.read_text(), name), name
+        assert 'requesting escalation as "Commands the sandbox blocks" says' in section(skill_split.read(PREFLIGHT), name), name
     assert '`preflight.md`, "Commands the sandbox blocks"' in flat(agent("vibe-setup-worker"))
-    skill = flat((VIBE / "SKILL.md").read_text())
+    skill = flat(skill_split.read(VIBE / "SKILL.md"))
     assert 'click Allow once when Codex asks to run a setup command' in skill
     assert ('send the one heads-up line from `references/preflight.md`, "Commands the sandbox blocks", '
             'before you dispatch it for a sign-in (ClosedLoop or GitHub)') in skill
@@ -189,7 +188,7 @@ def test_a_command_the_sandbox_refuses_is_escalated_never_handed_to_the_person()
 
 
 def test_github_sign_in_is_run_by_the_agent() -> None:
-    github = section(PREFLIGHT.read_text(), GITHUB)
+    github = section(skill_split.read(PREFLIGHT), GITHUB)
     for phrase in (
         "gh auth login --hostname github.com --git-protocol https --web",
         "< /dev/null &",
@@ -202,7 +201,7 @@ def test_github_sign_in_is_run_by_the_agent() -> None:
         assert phrase in github, phrase
     (line,) = person_lines(github)
     assert line.startswith("A GitHub page just opened in your browser.") and "enter the code <code>" in line
-    row = next(r for r in PREFLIGHT.read_text().splitlines() if r.startswith("| `gh-auth-login` |"))
+    row = next(r for r in skill_split.read(PREFLIGHT).splitlines() if r.startswith("| `gh-auth-login` |"))
     assert 'Follow "Signing in to GitHub" below' in row and "Never send the person to the Terminal app" in row
 
 
@@ -211,7 +210,7 @@ def test_no_person_line_sends_the_person_to_the_terminal_for_something_the_agent
     for path in instruction_files():
         if path.name == "INSTALL.md":  # written for the engineer who installs vibe, not the person
             continue
-        for found in PERSON_QUOTE.finditer(flat(path.read_text())):
+        for found in PERSON_QUOTE.finditer(flat(skill_split.read(path))):
             if TERMINAL.search(found.group(1)) and not found.group(1).startswith(ALLOWED_TERMINAL):
                 offenders.append(f"{path.relative_to(PLUGIN_ROOT)}: {found.group(1)[:120]}")
     assert offenders == []
@@ -227,20 +226,19 @@ def test_the_terminal_guard_rejects_the_reported_github_step() -> None:
 def test_vibe_and_the_fleet_show_the_setup_check_once_per_conversation() -> None:
     # ISS-13315: the connection states ride on the version check itself, one escalated command in Codex.
     # The connections are the bound provider's (operator rulings, 2026-11-11: vibe runs without one), so the
-    # calls come from `plugin-version.mjs provider` and the provider's contract still names the same two.
-    version = section((VIBE / "SKILL.md").read_text(), "### Plugin version")
+    # calls come from the check's own `connectionsNeeded`, and the provider's contract still names the same two.
+    version = section(built(VIBE / "SKILL.md"), "### Plugin version")
     for phrase in (
-        "first run `node scripts/plugin-version.mjs provider`",
-        "make each call its `connections` entries' `check` names yourself",
-        "`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]... [--skill-listed <skill>]`",
+        "make each call its `connectionsNeeded` names",
+        "`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]...`",
         "`connected` only when that call answered in this conversation",
         "never assume either",
     ):
         assert phrase in version, phrase
-    contract = json.loads((PLUGIN_ROOT.parent / "vibe-closedloop-provider" / "provider.json").read_text())
+    contract = json.loads(skill_split.read(PLUGIN_ROOT.parent / "vibe-closedloop-provider" / "provider.json"))
     assert "Call ClosedLoop `get-me`" in contract["connections"]["tracker"]["check"]
     assert "Call closedloop-graph `sync_status`" in contract["connections"]["graph"]["check"]
-    check = section((VIBE / "SKILL.md").read_text(), "### Setup check")
+    check = section(built(VIBE / "SKILL.md"), "### Setup check")
     for phrase in (
         "When the check prints `\"print\":true`",
         "opens your first reply word for word, before the version question or the endings line",
@@ -249,71 +247,34 @@ def test_vibe_and_the_fleet_show_the_setup_check_once_per_conversation() -> None
         "A `not connected` line starts \"Restoring a connection\" at once",
     ):
         assert phrase in check, phrase
-    assert 'the setup check block, once per conversation (section 1, "Setup check")' in flat((VIBE / "SKILL.md").read_text())
-    fleet = section((PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "SKILL.md").read_text(), "## Setup")
+    assert 'the setup check block, once per conversation (section 1, "Setup check")' in flat(built(VIBE / "SKILL.md"))
+    fleet = section(skill_split.read(PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "SKILL.md"), "## Setup")
     for phrase in (
         "Setup check, once per chat, from that same check run",
         "with the connection flags added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says",
         "never handed to the operator",
     ):
         assert phrase in fleet, phrase
-    new_chat = section((PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "references" / "state.md").read_text(), "## A new chat")
+    new_chat = section(skill_split.read(PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "references" / "state.md"), "## A new chat")
     assert "Then show the setup check block (SKILL.md, Setup) once." in new_chat
 
 
-PROVIDER_SKILL = PLUGIN_ROOT.parent / "vibe-closedloop-provider" / "skills" / "closedloop-provider" / "SKILL.md"
-FIRST_SENTENCE = re.compile(r"^(.+?\.)(?=\s|$)")
-# Codex cuts skill descriptions to about 150 characters when many skills are installed.
-START_SENTENCE_LIMIT = 140
-
-
-def test_the_provider_skill_description_opens_with_the_start_calls_and_flags() -> None:
-    # The provider skill's description repeats the start calls and check flags as a hint, so they lead it and fit
-    # before Codex cuts it short.
-    description = yaml.safe_load(PROVIDER_SKILL.read_text().split("---", 2)[1])["description"]
-    first = FIRST_SENTENCE.match(description)
-    assert first, description
-    sentence = first.group(1)
-    assert len(sentence) < START_SENTENCE_LIMIT, (len(sentence), sentence)
-    for word in ("get-me", "sync_status", "--closedloop", "--graph"):
-        assert word in sentence, (word, sentence)
-
-
 GENERIC_REGION = r"<!-- generic: %s -->\n(.*?)\n<!-- end generic: %s -->"
-RULE_REGION = re.compile(r"<!-- provider-rule -->\n(.*?)\n<!-- end provider-rule -->", re.DOTALL)
 
 
 def generic_region(path: Path, region: str) -> str:
-    """A generic region of the raw file; `read_text` would hand back the provider-assembled text without it."""
+    """A generic region of the raw file; the built text has none."""
     found = re.search(GENERIC_REGION % (region, region), raw(path), re.DOTALL)
     assert found, (path, region)
     return flat(found.group(1))
 
 
-def test_a_start_asks_the_installed_plugins_and_restores_any_missing_connection() -> None:
-    # Operator ruling: a listed provider skill's description gives the start calls, and in every other case the provider
-    # probe runs first, since a skill list never proves there is none,
-    # and a binding with any connection missing (one capability withheld) restores it as a disconnected one does.
-    version = section((VIBE / "SKILL.md").read_text(), "### Plugin version")
-    assert ("When your list of available skills shows a vibe provider skill whose description names its start calls, make those calls "
-            "yourself and run the check with the flags that description names") in version
-    assert "In every other case (no provider skill listed, or its description cut short or missing), first run" in version
-    assert "your skill list never decides that there is no provider" in version
-    assert "A check printing `\"state\":\"unprobed\"` had no states for an installed provider and bound nothing" in version
+def test_a_start_makes_the_calls_an_unprobed_check_names_and_restores_any_missing_connection() -> None:
+    # The check itself names the provider's calls when it ran without their states, and a binding with any connection
+    # missing (one capability withheld) restores it as a disconnected one does.
+    version = section(built(VIBE / "SKILL.md"), "### Plugin version")
+    assert "A check printing `\"state\":\"unprobed\"` had no states for the provider this vibe carries and bound nothing" in version
     for path, region in ((VIBE / "SKILL.md", "connectors"), (PREFLIGHT, "restore"), (PLUGIN_ROOT / "agents" / "vibe-setup-worker.md", "connection")):
         text = generic_region(path, region)
         assert "under `missing`" in text, (path, region)
         assert "`bound` with a capability withheld" in text, (path, region)
-
-
-def test_a_bound_session_reads_the_text_the_check_assembled_and_never_falls_back_to_generic() -> None:
-    found = RULE_REGION.search(raw(VIBE / "SKILL.md"))
-    assert found, "vibe SKILL.md has no provider-rule region"
-    rule = flat(found.group(1))
-    for phrase in ("`node scripts/provider.mjs tree` prints it", "`~/.codex/vibe/provider-text/index.json`", "`binding.json` has that `repoRoot`",
-                   "this session's repository main checkout, or its working folder when it is not in a checkout",
-                   "`vibeRoot`", "`SKILL.blocks.md`", "run the check again", "never follow the generic text in its place"):
-        assert phrase in rule, phrase
-    text = flat((VIBE / "references" / "provider-text.md").read_text())
-    assert "Never follow the generic text in its place; only an unbound session does." in text
-    assert "When `tree` exits 3 or the folder does not match, run the plugin version check again" in text

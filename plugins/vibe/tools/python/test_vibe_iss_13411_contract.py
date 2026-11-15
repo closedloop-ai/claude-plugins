@@ -7,6 +7,7 @@ behavior; these patterns catch known regressions cheaply.
 
 import re
 from pathlib import Path
+import skill_split
 
 
 PLUGIN = Path(__file__).parents[2]
@@ -88,7 +89,7 @@ def automated_head_qa_violations(root: Path) -> list[str]:
 
 
 def test_the_one_classifier_owns_post_qa_scope() -> None:
-    source = CLASSIFIER.read_text()
+    source = skill_split.read(CLASSIFIER)
     assert 'None: "None"' in source
     assert 'LanesOnly: "Lanes only"' in source
     assert 'Visual: "Visual QA"' in source
@@ -105,9 +106,9 @@ def test_the_one_classifier_owns_post_qa_scope() -> None:
 
 
 def test_instructions_call_the_classifier_instead_of_repeating_its_policy() -> None:
-    fleet = (PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md").read_text()
-    handoff = (HANDOFF / "SKILL.md").read_text()
-    worker = (PLUGIN / "agents" / "vibe-change-worker.md").read_text()
+    fleet = skill_split.read(PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md")
+    handoff = skill_split.read(HANDOFF / "SKILL.md")
+    worker = skill_split.read(PLUGIN / "agents" / "vibe-change-worker.md")
     for text in (fleet, handoff, worker):
         assert "qa-impact.mjs" in text
     assert "`None` runs no local lane, screenshot, audit or critic" in fleet
@@ -172,8 +173,8 @@ def test_heuristic_guard_catches_round_three_paraphrases(tmp_path: Path) -> None
 
 
 def test_frozen_render_evidence_names_states_and_dependency_inputs_without_a_head() -> None:
-    renderer = (HANDOFF / "scripts" / "frozen-render.mjs").read_text()
-    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    renderer = skill_split.read(HANDOFF / "scripts" / "frozen-render.mjs")
+    rules = skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs")
     assert "; states ${states}" in renderer
     assert "FROZEN_LINE_HEAD" not in rules
     assert "repo.frozenInputs(base, affected)" in rules

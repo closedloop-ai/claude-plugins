@@ -16,7 +16,7 @@ import type { EvalCaseResult, EvalSuiteResult } from "./eval-collector.ts";
 import { EVAL_POLICY } from "./eval-policy.ts";
 import type { EvalRuntime } from "./eval-policy.ts";
 import type { EvalCaseDefinition, ReleaseReference, UpgradeTransition } from "./eval-selection.ts";
-import { archivePluginRelease, archiveSnapshotTarget, snapshotPluginVersion } from "./plugin-snapshot.ts";
+import { archivePluginRelease, archiveSnapshotTarget, providerVibeDir, snapshotPluginVersion } from "./plugin-snapshot.ts";
 import type { PluginReleaseArchive } from "./plugin-snapshot.ts";
 import type { PluginSnapshot } from "./plugin-snapshot.ts";
 import { runOwnedProcess } from "./owned-process.ts";
@@ -1588,7 +1588,7 @@ export async function runUpgradeResumeCases(input: UpgradeResumeRunInput): Promi
     currentSnapshot: input.currentSnapshot });
   const availabilities = new Map<string, UpgradeCaseAvailability>();
   if (targetRef === input.pluginSha) {
-    const targetDigest = writerDefinitionDigest(input.currentSnapshot.vibeDir);
+    const targetDigest = writerDefinitionDigest(providerVibeDir(input.currentSnapshot));
     for (const item of input.cases) {
       const priorReference = item.nightlyPrior;
       if (!priorReference) throw new Error(`eval-stateful-nightly-prior-missing:${item.id}`);

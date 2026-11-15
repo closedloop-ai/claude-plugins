@@ -31,7 +31,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { flagKeyProblems } from "../../vibe/scripts/flag-keys.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
@@ -40,6 +39,7 @@ import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
 import { documentKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -472,7 +472,7 @@ export function parseAddedLines(diff) {
   return files;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   exitOnProviderBroken();
   main();
 }

@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { Layout, pluginInstall } from "../../../shared/plugin-roots.mjs";
-import { vibeCoreProblem, VIBE_CORE_INSTALL } from "../../../shared/vibe-core.mjs";
+import { VIBE_CORE_ID, vibeCoreProblem, VIBE_CORE_INSTALL } from "../../../shared/vibe-core.mjs";
 import { findCli } from "./plugin-cli.mjs";
 import { codexHookApproval, HookApproval, hookApprovalLine } from "./vibe-core-hooks.mjs";
 
@@ -78,13 +78,13 @@ function harnessOf(runtime, env) {
 }
 
 function fixCommand(harness, cli, problem) {
-  if (harness === CODEX) return [cli ?? "codex", "plugin", "add", "vibe-core@closedloop-ai"];
-  return [cli ?? "claude", "plugin", problem.outdated ? "update" : "install", "vibe-core@closedloop-ai"];
+  if (harness === CODEX) return [cli ?? "codex", "plugin", "add", VIBE_CORE_ID];
+  return [cli ?? "claude", "plugin", problem.outdated ? "update" : "install", VIBE_CORE_ID];
 }
 
 /** check's usual JSON, with vibe-core the one outdated (missing) plugin. */
 function missingRecord(harness, cli, problem, fix) {
-  const plugin = { name: "vibe-core", id: "vibe-core@closedloop-ai", version: null, missing: true, latest: null, status: "outdated" };
+  const plugin = { name: "vibe-core", id: VIBE_CORE_ID, version: null, missing: true, latest: null, status: "outdated" };
   return {
     status: "outdated", harnesses: [{ harness, cli, installed: true, plugins: [plugin] }],
     outdated: [{ harness, plugin: "vibe-core", installed: null, latest: null, missing: true }],

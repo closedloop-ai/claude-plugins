@@ -1,7 +1,7 @@
 # Installing vibe on a new Mac
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 For setting up a vibe user's laptop. About ten minutes of
@@ -29,7 +29,7 @@ In Terminal on the vibe user's Mac:
 ```bash
 CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 "$CODEX" plugin marketplace add closedloop-ai/claude-plugins
-"$CODEX" plugin add vibe@closedloop-ai
+"$CODEX" plugin add vibe-generic@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
 "$CODEX" plugin add vibe-core@closedloop-ai
 > Provider `tickets+graph` (block `install-2` of `vibe/install.md`)
@@ -45,7 +45,7 @@ says when Codex reports that an approval is needed.
 Check:
 
 ```bash
-"$CODEX" plugin list | grep vibe@closedloop-ai   # installed, enabled
+"$CODEX" plugin list | grep vibe-generic@closedloop-ai   # installed, enabled
 "$CODEX" plugin list | grep closedloop-core@closedloop-ai   # installed, enabled
 "$CODEX" plugin list | grep vibe-core@closedloop-ai   # installed, enabled
 <!-- generic: check -->
@@ -89,7 +89,7 @@ the repository documents, and opens it in the in-app browser.
 If a step fails, run the preflight on its own to see which check is red:
 
 ```bash
-bash ~/.codex/plugins/cache/*/vibe/*/skills/vibe/scripts/vibe-preflight.sh
+bash ~/.codex/plugins/cache/*/vibe-generic/*/skills/vibe/scripts/vibe-preflight.sh
 ```
 
 ## Updating
@@ -112,7 +112,7 @@ To update by hand, check which version is installed and where the `closedloop-ai
 comes from:
 
 ```bash
-"$CODEX" plugin list --marketplace closedloop-ai   # VERSION column of vibe@closedloop-ai
+"$CODEX" plugin list --marketplace closedloop-ai   # VERSION column of vibe-generic@closedloop-ai
 "$CODEX" plugin marketplace list                  # ROOT of closedloop-ai
 ```
 
@@ -128,11 +128,11 @@ of the Git repo.
 "$CODEX" plugin list --marketplace closedloop-ai
 ```
 
-If `vibe@closedloop-ai` still shows the old version, install it again from
+If `vibe-generic@closedloop-ai` still shows the old version, install it again from
 the refreshed marketplace:
 
 ```bash
-"$CODEX" plugin add vibe@closedloop-ai
+"$CODEX" plugin add vibe-generic@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
 "$CODEX" plugin add vibe-core@closedloop-ai
 ```
@@ -144,7 +144,7 @@ does not update this one. Pull the checkout, then install the plugin again:
 
 ```bash
 git -C "<path to the claude-plugins checkout>" pull
-"$CODEX" plugin add vibe@closedloop-ai
+"$CODEX" plugin add vibe-generic@closedloop-ai
 "$CODEX" plugin add closedloop-core@closedloop-ai
 "$CODEX" plugin add vibe-core@closedloop-ai
 "$CODEX" plugin list --marketplace closedloop-ai

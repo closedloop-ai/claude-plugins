@@ -131,6 +131,8 @@ test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, ()
     // work-dir.mjs resolves a chat's bound program (ISS-14028).
     'plugins/vibe-core/lib/fleet-orchestrator/scripts/chat-binding.mjs', 'plugins/vibe-core/lib/vibe/scripts/harness-identity.mjs',
     'plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.mjs', 'plugins/vibe-core/lib/vibe/scripts/session-record.mjs',
+    // liveness.mjs takes isEntryPoint from vibe-core's resolver.
+    'plugins/vibe-core/shared/plugin-roots.mjs',
     'plugins/vibe/.claude-plugin/plugin.json', 'plugins/vibe/.codex-plugin/plugin.json',
     'plugins/vibe/shared/plugin-roots.mjs', 'plugins/vibe/shared/vibe-core.mjs',
     'plugins/vibe/skills/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe/skills/codex-fleet-monitor/scripts/ratelimit.mjs',

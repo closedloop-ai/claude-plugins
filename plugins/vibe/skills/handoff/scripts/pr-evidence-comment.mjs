@@ -6,6 +6,7 @@ import { prEvidenceValidationProblems } from "./pr-facts.mjs";
 import { leftByRuling, targetedTestsRuling } from "./targeted-tests-ruling.mjs";
 import { laneReportLabel } from "./ci-job-shape.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
@@ -64,7 +65,7 @@ function renderValidatedComment(evidence, worktree, options, publishedHead) {
   return `${lines.join("\n")}\n`;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (isEntryPoint(import.meta.url)) {
   const { values } = parseArgs({ options: { evidence: { type: "string" }, output: { type: "string" }, worktree: { type: "string" },
     ticket: { type: "string" }, rulings: { type: "string" } } });
   if (!values.evidence || !values.output) throw new Error("--evidence and --output are required (--ticket or --rulings when the evidence cites a targeted-tests ruling)");

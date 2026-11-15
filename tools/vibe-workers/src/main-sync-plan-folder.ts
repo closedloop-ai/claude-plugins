@@ -14,8 +14,8 @@ export function planPrefixOf(root: string): string | null {
 }
 
 /**
- * Every in-worktree plan folder known in this repository (`knownLocalPlanPrefixes`: the bound provider's and any
- * installed provider's), read once per root, so a plan written while bound stays private when the session is not.
+ * Every in-worktree plan folder known in this repository (`knownLocalPlanPrefixes`: the bound provider's and the one
+ * vibe carries), read once per root, so a plan written while bound stays private when the session is not.
  */
 export function planPrefixesOf(root: string): string[] {
   if (!knownPrefixes.has(root)) knownPrefixes.set(root, knownLocalPlanPrefixes(sessionBinding(root)));

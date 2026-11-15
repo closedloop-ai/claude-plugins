@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -25,7 +26,7 @@ POINTER = "spec-card.md"
 
 
 def rule() -> str:
-    return flat(SPEC_CARD.read_text())
+    return flat(skill_split.read(SPEC_CARD))
 
 
 def test_the_rule_is_canonical_and_leaves_the_decision_table_whole() -> None:
@@ -38,7 +39,7 @@ def test_the_rule_is_canonical_and_leaves_the_decision_table_whole() -> None:
 
 
 def test_the_fork_checkpoint_is_off_by_default_with_the_open_decision_named() -> None:
-    text = flat(section(SPEC_CARD.read_text(), "## Fork checkpoint"))
+    text = flat(section(skill_split.read(SPEC_CARD), "## Fork checkpoint"))
     for required in (
         "The checkpoint is off by default (open decision, not ruled)",
         "Until it is made nothing changes",
@@ -50,25 +51,25 @@ def test_the_fork_checkpoint_is_off_by_default_with_the_open_decision_named() ->
         "in `plain-words.md` terms",
     ):
         assert required in text, required
-    script = (VIBE / "scripts" / "spec-card.mjs").read_text()
+    script = skill_split.read(VIBE / "scripts" / "spec-card.mjs")
     assert 'export const CHECKPOINT_ENV = "VIBE_FORK_CHECKPOINT";' in script
     assert "return flag === true || env[CHECKPOINT_ENV] === \"1\";" in script
 
 
 def test_the_file_check_is_a_justification_and_never_a_cap() -> None:
-    text = flat(section(SPEC_CARD.read_text(), "## File justification check (diff budget)"))
+    text = flat(section(skill_split.read(SPEC_CARD), "## File justification check (diff budget)"))
     assert "There is no cap on files or lines" in text
     assert "it never blocks" in text
     assert "A file that cites one is in scope whatever the count" in text
     assert "The check never removes a requirement-driven addition and never fails the change." in text
     assert "always exits 0" in text
-    script = (VIBE / "scripts" / "spec-card.mjs").read_text()
+    script = skill_split.read(VIBE / "scripts" / "spec-card.mjs")
     assert "blocks: false," in script
     assert "extra-files" not in script
 
 
 def test_freshness_runs_its_own_fetch() -> None:
-    text = flat(section(SPEC_CARD.read_text(), "## Freshness"))
+    text = flat(section(skill_split.read(SPEC_CARD), "## Freshness"))
     assert "a cached `origin/main` is never evidence" in text
     assert "leaves `originMain` null" in text
     assert "`fetchSkipped: true`" in text and "`sessionBase`" in text
@@ -77,26 +78,26 @@ def test_freshness_runs_its_own_fetch() -> None:
 
 
 def test_assumptions_are_generated_never_upgraded_and_required_on_the_ticket() -> None:
-    text = flat(section(SPEC_CARD.read_text(), "## Assumptions at handoff"))
+    text = flat(section(skill_split.read(SPEC_CARD), "## Assumptions at handoff"))
     assert "generated from the card, never written freehand" in text
     assert "handoff never upgrades it to grounded" in text
-    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
+    template = flat(skill_split.read(PROVIDER_REFERENCES / "ticket-template.md"))
     assert "- Assumptions: <generated from the session's Spec Card by `node scripts/spec-card.mjs assumptions <card> --worktree <wt> --base <sha>`" in template
-    check = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
+    check = skill_split.read(HANDOFF / "scripts" / "live-ticket-check.mjs")
     assert "Handoff: [[/^- Assumptions: \\S/m," in check
     ticket = flat(agent("vibe-ticket-worker"))
     assert "Fill the Handoff Assumptions line from the session's Spec Card, never freehand" in ticket
 
 
 def test_the_audit_rows_hold_the_verdict_type_and_ref_in_one_place() -> None:
-    text = flat(section(SPEC_CARD.read_text(), "## Audit rows"))
+    text = flat(section(skill_split.read(SPEC_CARD), "## Audit rows"))
     assert "`MET`, `PARTIAL` or `MISSED` (no other status words)" in text
     assert "There is no separate evidence file" in text
     assert "a planned test is not evidence" in text
-    audit = (HANDOFF / "scripts" / "criteria-audit.mjs").read_text()
+    audit = skill_split.read(HANDOFF / "scripts" / "criteria-audit.mjs")
     assert 'import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";' in audit
     assert "values.evidence" not in audit and "--evidence" not in audit
-    assert "--evidence" not in (HANDOFF / "scripts" / "handoff-gate.mjs").read_text()
+    assert "--evidence" not in skill_split.read(HANDOFF / "scripts" / "handoff-gate.mjs")
     assert "REMOTE_PENDING" not in audit and "NOT_APPLICABLE" not in audit
 
 
@@ -109,10 +110,10 @@ def test_the_card_seeds_the_decision_table_once() -> None:
 
 
 def test_skills_and_workers_point_at_the_rule() -> None:
-    assert POINTER in flat((VIBE / "SKILL.md").read_text())
-    assert POINTER in flat(QUALITY.read_text())
-    assert "scripts/criteria-audit.mjs --ticket <body> --worktree" in flat((HANDOFF / "SKILL.md").read_text())
-    assert "--evidence <evidence>" not in flat((HANDOFF / "SKILL.md").read_text())
+    assert POINTER in flat(skill_split.read(VIBE / "SKILL.md"))
+    assert POINTER in flat(skill_split.read(QUALITY))
+    assert "scripts/criteria-audit.mjs --ticket <body> --worktree" in flat(skill_split.read(HANDOFF / "SKILL.md"))
+    assert "--evidence <evidence>" not in flat(skill_split.read(HANDOFF / "SKILL.md"))
     requirements = flat(agent("vibe-requirements-worker"))
     assert POINTER in requirements
     assert "freshness.mjs --worktree <repo path>" in requirements
@@ -125,7 +126,7 @@ def test_skills_and_workers_point_at_the_rule() -> None:
 
 
 def test_the_quality_loop_adds_no_new_question_gate_and_keeps_the_table() -> None:
-    text = flat(QUALITY.read_text())
+    text = flat(skill_split.read(QUALITY))
     assert "it adds no question this section would not allow" in text
     assert "it never replaces the table, its rows or its passes" in text
     assert "The named core decision-table workflow is mandatory for every Vibe request" in text
@@ -133,7 +134,7 @@ def test_the_quality_loop_adds_no_new_question_gate_and_keeps_the_table() -> Non
 
 def test_no_strict_status_vocabulary_was_added() -> None:
     for path in (SPEC_CARD, VIBE / "scripts" / "spec-card.mjs", HANDOFF / "scripts" / "criteria-audit.mjs"):
-        assert "REMOTE_PENDING" not in path.read_text()
+        assert "REMOTE_PENDING" not in skill_split.read(path)
 
 
 def test_the_scripts_run_from_the_plugin() -> None:

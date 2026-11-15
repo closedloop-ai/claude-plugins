@@ -146,8 +146,8 @@ names any lanes or screens. A selected failure runs once more on captured main (
 --main-worktree <that checkout> --main-sha <mainSha>` with the same `--report`
 or `--impact` selection file). When it fails there
 too, record it `status: "main-preexisting"` with that `mainSha`: it does not
-block the pull request, and the body lists it under Known main failures
-. One that passes on main stays a failure for the writer. A
+block the pull request, and the body lists it under Known main failures.
+One that passes on main stays a failure for the writer. A
 Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
 `testRuns` the same way, with its `reason`.
 When the operator ruled targeted tests only and the ruling is recorded once,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "CL Analyze"
+  short_description: "Assess readiness, requirements, and batch fit"
+  default_prompt: "Use $cl-analyze <ClosedLoop feature URL or FEA slug> to discover and verify the ticket-specific requirements contract, readiness, UI guidance, complexity, risk, legacy split lineage, Product Answer Discovery, and merge-batch fit. Before PRODUCT_BLOCKED, search linked PRDs, plans, comments, sibling tickets, semantic facts, prior blockers, and product/design artifacts for an existing authoritative answer. Keep every issue as its single ticket, identify only evidence-backed compatible batch candidates, and never use batching to carry an unready ticket."

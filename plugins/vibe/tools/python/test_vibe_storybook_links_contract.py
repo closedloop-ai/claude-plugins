@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -45,7 +46,7 @@ def plugin_text_files() -> list[Path]:
 
 
 def test_the_rule_requires_the_full_storybook_ui() -> None:
-    text = section(ENVIRONMENT.read_text(), "## Storybook links")
+    text = section(skill_split.read(ENVIRONMENT), "## Storybook links")
     for required in (
         "Every Storybook link given to the person or written on the live ticket opens the full Storybook UI, "
         "with its sidebar and controls",
@@ -59,31 +60,31 @@ def test_the_rule_requires_the_full_storybook_ui() -> None:
 
 
 def test_the_skills_and_ticket_template_point_at_the_rule() -> None:
-    notices = section(VIBE_SKILL.read_text(), "### Notices that never wait")
+    notices = section(skill_split.read(VIBE_SKILL), "### Notices that never wait")
     assert "`<storybookUrl>/?path=/story/<id>`" in notices
     assert '(never the bare `iframe.html` canvas; `references/environment.md`, "Storybook links")' in notices
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert (
         "IDs/direct links (full Storybook UI links, never the bare `iframe.html` canvas; "
         '`../vibe/references/environment.md`, "Storybook links")' in handoff
     )
     assert 'the Storybook link (the full Storybook UI per `../vibe/references/environment.md`, "Storybook links")' in handoff
-    inventory = section(TICKET_TEMPLATE.read_text(), "## Design Review")
+    inventory = section(skill_split.read(TICKET_TEMPLATE), "## Design Review")
     assert f'each {FULL_UI} and never the bare `iframe.html` canvas (`environment.md`, "Storybook links")' in inventory
 
 
 def test_every_worker_that_reports_story_links_points_at_the_rule() -> None:
     for name in LINK_WORKERS:
-        assert AGENT_POINTER in flat((AGENTS / f"{name}.md").read_text()), name
+        assert AGENT_POINTER in flat(skill_split.read(AGENTS / f"{name}.md")), name
 
 
 def test_no_plugin_file_uses_the_canvas_link_form_except_the_rule_itself() -> None:
-    holders = [path.name for path in plugin_text_files() if CANVAS_LINK.search(path.read_text())]
+    holders = [path.name for path in plugin_text_files() if CANVAS_LINK.search(skill_split.read(path))]
     # frozen-render.mjs loads the canvas in a headless browser to render one story; it gives no link to anyone (ISS-13291).
     assert holders == ["frozen-render.mjs", "environment.md"]
 
 
 def test_every_story_path_uses_the_full_ui_form() -> None:
     for path in plugin_text_files():
-        for prefix in STORY_PATH.findall(path.read_text()):
+        for prefix in STORY_PATH.findall(skill_split.read(path)):
             assert prefix.endswith("?path="), (path.name, prefix)

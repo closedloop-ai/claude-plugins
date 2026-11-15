@@ -29,11 +29,11 @@ Keep your context for the conversation and session state; NEVER do the work:
   `scripts/session-questions.mjs`, `scripts/run-bounded.mjs`,
   `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`,
 <!-- generic: root-may -->
-  `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`,
-  `scripts/provider.mjs`); run `plugin-version.mjs update` only when the
-  person chose to update; make the connection calls `plugin-version.mjs
-  provider` lists (section 1, "Plugin version"); inspect the in-app browser
-  for accepted visual QA (`references/quality-loop.md`); and dispatch.
+  `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`); run
+  `plugin-version.mjs update` only when the person chose to update; make the
+  connection calls the check names (section 1, "Plugin version"); inspect the
+  in-app browser for accepted visual QA (`references/quality-loop.md`); and
+  dispatch.
 <!-- end generic: root-may -->
 > Provider `tickets` (block `root-may` of `vibe-skill.md`)
 - You and every worker leave plugins, plugin marketplaces and plugin caches
@@ -130,25 +130,7 @@ how to set it up, run it, check it and preview it (`references/preflight.md`).
 
 <!-- provider-rule -->
 Lines of the form ``> Provider `<capability>` (block `<id>` of `<file>`)`` stand
-for an optional provider's text (`references/provider-text.md`). With no
-provider bound, follow the generic text. When this conversation's check bound a
-provider (its `provider.state` is `bound`), read vibe files from the folder it
-wrote: `node scripts/provider.mjs tree` prints it, or read
-`~/.codex/vibe/provider-text/index.json` for the folder of this session's
-repository main checkout, or its working folder when it is not in a checkout
-(as `node scripts/provider.mjs tree --worktree "<wt>"` resolves it), and use it
-only when its `binding.json` has that `repoRoot`
-and, as `vibeRoot`, the vibe plugin folder this file was loaded from. Read each
-file at the same relative path there, and for this SKILL.md its `SKILL.blocks.md`, whose
-blocks replace the generic regions of the same id. When `tree` exits 3 or the
-folder does not match, run the check again, and as a last resort
-`node scripts/provider.mjs assemble <file>` (add `--worktree "<wt>"` once the
-session exists). In a bound session a `provider: ...` (exit 3),
-`provider-broken: ...` (exit 4) or any other failure from `assemble`, `block`
-or `path` is a stop: tell the person what it printed and never follow the
-generic text in its place. `provider:<file>` in provider text names
-a provider reference: `node scripts/provider.mjs path <capability> provider:<file>`
-prints where it is.
+for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 ## Harness notes
@@ -201,7 +183,7 @@ prints where it is.
   `references/quality-loop.md`. Never start a side writer outside the session
   record.
 - Plugin root: the folder two levels above this file (in Codex,
-  `~/.codex/plugins/cache/<marketplace>/vibe/<version>/`; take it from where
+  `~/.codex/plugins/cache/<marketplace>/vibe-generic/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute
   path once, and start every worker brief, in both harnesses, with: "Plugin
   root: `<root>`. Paths in your instructions that start with `../` are
@@ -302,32 +284,13 @@ Every `$vibe` start, new or resume, first checks whether the plugins from
 vibe's marketplace installed on this machine, in Claude Code and in Codex, are
 the latest release, binds the optional provider, and shows the setup check, in
 one command:
-`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]... [--skill-listed <skill>]`
+`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]...`
 in Codex, or `--runtime claude` in Claude Code. Each `<state>` is `connected`
 only when that call answered in this conversation, otherwise
-`not-connected`; never assume either. When your list of available skills shows
-a vibe provider skill whose description names its start calls, make those
-calls yourself and run the check with the flags that description names, plus
-`--skill-listed` with that skill's name as your list shows it. In every other
-case (no provider skill listed, or its description cut short or missing), first
-run `node scripts/plugin-version.mjs provider`: it reads the plugins installed
-here and writes nothing, and your skill list never decides that there is no
-provider. When it prints `"state":"candidate"`, make each call its
-`connections` entries' `check` names yourself, look for its skill name in your
-list, and run the check with one `--connection` per `connections` entry (and
-`--skill-listed` only when your list shows the skill); with no candidate, run
-the check with neither. A check printing `"state":"unprobed"` had no states for
-an installed provider and bound nothing: make each call its `connectionsNeeded`
-names and run the check once more with them before you reply. When the check's
-output carries an `offer`, make the call its `check` names; only when it answered, run
-`node scripts/plugin-version.mjs provider-install --connection <offer connection>=connected`,
-which installs that provider for the person once and never again, and tell
-the person in one line that it takes effect in a new chat. This session stays
-generic either way. When your opening message is a fleet brief with a
-`Provider:` line, run
-`node scripts/plugin-version.mjs provider-match --expect <that line's value>`
-right after the check; on exit 1 stop and return `BLOCKED` with its `reason`,
-since a writer works only under the binding of the lead that briefed it. In Codex, run it with escalated
+`not-connected`; never assume either. A check printing `"state":"unprobed"`
+had no states for the provider this vibe carries and bound nothing: make each
+call its `connectionsNeeded` names and run the check once more with one
+`--connection` per entry before you reply. In Codex, run it with escalated
 permissions from the first try (`sandbox_permissions: "require_escalated"`,
 justification "Check whether vibe is up to date"): it reads the latest
 release from GitHub and saves this conversation's result outside the
@@ -388,7 +351,7 @@ a plugin script the installed release no longer has.
   in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
   is updated. Close this Claude Code session, start a new one and type
-  /vibe:vibe." When `"status":"failed"`, also tell them in one plain line
+  /vibe-generic:vibe." When `"status":"failed"`, also tell them in one plain line
   that the update could not finish and state the exact restart action, if
   available; never retry it another way. Then stop when the harness you run
   in is in
@@ -451,7 +414,7 @@ checks. The later app preflight deliberately omits it.
 
 Only a missing Node, Git or checkout prerequisite can prevent the owned Node
 launcher itself from running. In that case, dispatch the canonical scoped
-`vibe:vibe-setup-worker` through supported native Claude CLI `--agent`/`--agents`
+`vibe-generic:vibe-setup-worker` through supported native Claude CLI `--agent`/`--agents`
 binding with the canonical model and an explicit built-in pool of
 `Read,Grep,Glob,Bash` in both `--tools` and `--allowedTools`. Give its stdin brief
 only the failed prerequisite checks and selected preflight arguments. Its

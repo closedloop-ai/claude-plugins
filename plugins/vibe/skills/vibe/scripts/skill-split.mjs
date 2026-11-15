@@ -3,8 +3,8 @@
 // `> Read \`references/x.md\` (block \`id\`) ...`; the block it names lives in that file between
 // `<!-- block: id -->` and `<!-- end: id -->`, moved without change. The path is relative to the skill folder
 // (the nearest folder above the file that holds a SKILL.md). Provider stubs then assemble as a reader with the
-// provider in this repository bound sees them (`provider: false` for a reader with none), the same
-// as tools/python/skill_split.py `assembled`. Test support only: nothing at runtime reads it.
+// provider in this repository bound sees them (`provider: false` for a reader with none), through the one
+// assembler the release build uses. Test support only: nothing at runtime reads it.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";

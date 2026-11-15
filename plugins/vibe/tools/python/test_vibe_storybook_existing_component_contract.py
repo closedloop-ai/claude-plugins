@@ -29,6 +29,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, paragraph
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -75,12 +76,12 @@ def test_existing_components_come_first_in_the_placement_owners_decision_order()
 
 def test_the_rule_is_stated_in_full_once() -> None:
     for canonical in (CANONICAL, FROZEN):
-        holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if canonical in flat(path.read_text())]
+        holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if canonical in flat(skill_split.read(path))]
         assert holders == ["vibe-storybook-decomposer.md"], canonical
 
 
 def test_guardrails_and_design_pass_carry_the_one_liner() -> None:
-    guardrails = paragraph(GUARDRAILS.read_text(), "- New states or variants of an existing component")
+    guardrails = paragraph(skill_split.read(GUARDRAILS), "- New states or variants of an existing component")
     for required in (
         "never retitle, re-tag or move its existing story file, since story IDs come from the title",
         "A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never edited beyond a "
@@ -92,7 +93,7 @@ def test_guardrails_and_design_pass_carry_the_one_liner() -> None:
         "(`vibe-storybook-decomposer.md`, \"Precedent search\" step 4)",
     ):
         assert required in guardrails, required
-    design = paragraph(DESIGN_PASS.read_text(), "6. Placement:")
+    design = paragraph(skill_split.read(DESIGN_PASS), "6. Placement:")
     assert (
         "New states of an existing component go in a new entry in the current root holding only them when its "
         "story file is v1.0 (under a `<Level> v1.0/` root or tagged `deprecated`), which is never edited beyond a "
@@ -103,7 +104,7 @@ def test_guardrails_and_design_pass_carry_the_one_liner() -> None:
 
 def test_no_role_still_sends_touched_stories_to_the_current_roots() -> None:
     for path in sorted(PLUGIN_ROOT.rglob("*.md")):
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         for retired in ("new or touched story", "New and touched stories", "every new or touched story"):
             assert retired not in text, (path.name, retired)
     writer = flat(agent("vibe-change-worker"))
@@ -112,13 +113,13 @@ def test_no_role_still_sends_touched_stories_to_the_current_roots() -> None:
         "story file is v1.0 (under a `<Level> v1.0/` root or tagged `deprecated`), which you never edit beyond a "
         "compile-only repair, and otherwise in its existing story file, title and tag unchanged"
     ) in writer
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert (
         "a v1.0 story file is never edited beyond a compile-only repair and any other existing story file keeps "
         "its title and tag"
     ) in handoff
     for path in sorted(PLUGIN_ROOT.rglob("*.md")):
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         for retired in ("even in a v1.0 root", "an existing v1.0 file keeps", "new v2.0 entry", "v2.0 placement"):
             assert retired not in text, (path.name, retired)
 
@@ -138,7 +139,7 @@ def test_the_reviewer_blocks_an_edited_v1_file_and_a_retitled_one_unless_it_is_a
 
 
 def test_the_inventory_freezes_v1_files_and_admits_only_recorded_replacements_for_retitles() -> None:
-    inventory = INVENTORY.read_text()
+    inventory = skill_split.read(INVENTORY)
     for required in (
         '...(base !== undefined && isV1Story(base) ? ["frozen"] : []),',
         "existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),",
@@ -146,14 +147,14 @@ def test_the_inventory_freezes_v1_files_and_admits_only_recorded_replacements_fo
         "record?.storyReplacements",
     ):
         assert required in inventory, required
-    assert "const STORY_META_START = " in TAXONOMY_SCRIPT.read_text()
-    guardrails = flat(GUARDRAILS.read_text())
+    assert "const STORY_META_START = " in skill_split.read(TAXONOMY_SCRIPT)
+    guardrails = flat(skill_split.read(GUARDRAILS))
     assert "and any other edit or move of a v1.0 story file (`v1Stories`, `storiesInV2Taxonomy`)" in guardrails
     assert "existing non-v1.0 one whose title changed (`retitledStories`, `existingStoryTitlesKept`)" in guardrails
     assert "`vibe-sessions.mjs story-replacement --worktree <wt> --path <story file> --replacement <component>`" in guardrails
-    sessions = SESSIONS.read_text()
+    sessions = skill_split.read(SESSIONS)
     assert 'case "story-replacement":' in sessions
-    readme = flat(README.read_text())
+    readme = flat(skill_split.read(README))
     for required in (
         "A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never edited beyond a "
         "compile-only repair, so new states of its component go in a new entry in the current root holding only "
@@ -171,4 +172,4 @@ def test_the_ruling_names_no_person() -> None:
     attributed = re.compile(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)*'s (?:design )?ruling, 2026-10-15")
     for path in sorted(PLUGIN_ROOT.rglob("*")):
         if path.is_file() and path.suffix in {".md", ".mjs", ".py"}:
-            assert not attributed.search(path.read_text()), path.name
+            assert not attributed.search(skill_split.read(path)), path.name

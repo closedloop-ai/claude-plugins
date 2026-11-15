@@ -6,7 +6,8 @@
 // Usage (hook): reads the PostToolUse JSON on stdin; prints a notice or nothing.
 
 import { contextGuard } from "./context-guard.mjs";
-import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 /** The guards every tool call runs after it finishes, in order. */
 export const POST_TOOL_USE_GUARDS = Object.freeze([{ name: "context-guard", run: contextGuard, activated: true }]);
@@ -16,4 +17,4 @@ function postToolUse(event, report) {
   return mergeResults("PostToolUse", runGuards(POST_TOOL_USE_GUARDS, event, report));
 }
 
-if (isMain(import.meta.url)) runHookScript("post-tool-use", postToolUse);
+if (isEntryPoint(import.meta.url)) runHookScript("post-tool-use", postToolUse);

@@ -62,10 +62,10 @@ test("the CLI prints each job shape and the needles no job runs", (t) => {
 });
 
 
-test("workflow lane definitions expand all twelve repository jobs and preserve exact run recipes", () => {
+test("workflow lane definitions expand all thirteen repository jobs and preserve exact run recipes", () => {
   const workflow = readFileSync(new URL("../../../../../.github/workflows/ci.yml", import.meta.url), "utf8");
   const lanes = workflowLaneDefinitions(workflow);
-  assert.equal(lanes.length, 12);
+  assert.equal(lanes.length, 13);
   assert.deepEqual(lanes.filter(lane => lane.job !== "tools-ts").map(lane => lane.name),
     ["plugin-version-bump", "plugin-manifest-versions", "lint", "typecheck", "test", "node-tests", "vibe-eval-t0"]);
   const workers = lanes.find(lane => lane.job === "tools-ts" && lane.matrix.tool === "vibe-workers");
@@ -79,7 +79,7 @@ test("workflow lane definitions expand all twelve repository jobs and preserve e
   assert.equal(steps.at(-1).env.MIN_BUNDLES, "2");
   assert.equal((steps.at(-1).run.match(/^npm run build$/gm) ?? []).length, 2);
   const python = lanes.find(lane => lane.name === "test");
-  assert.deepEqual(JSON.parse(python.command).job.steps.filter(step => step.run).map(step => step.run), ["uv sync --frozen --group dev", "uv run pytest plugins/"]);
+  assert.deepEqual(JSON.parse(python.command).job.steps.filter(step => step.run).map(step => step.run), ["uv sync --frozen --group dev", "npm ci", "uv run pytest plugins/"]);
 });
 
 test("workflow discovery refuses ambiguous YAML, dynamic matrices, missing jobs and incomplete run recipes", () => {

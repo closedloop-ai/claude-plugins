@@ -1,7 +1,6 @@
 {
   "vibeProvider": 1,
   "name": "vibe-closedloop-provider",
-  "skill": "closedloop-provider",
   "references": "skills/closedloop-provider/references",
   "capabilities": {
     "tickets": {

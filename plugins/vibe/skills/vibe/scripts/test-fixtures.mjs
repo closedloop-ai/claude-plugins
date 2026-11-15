@@ -226,6 +226,44 @@ export function portableSurfaceChecker(entries = []) {
 // The ClosedLoop provider plugin beside vibe in this repository, bound as a start would bind it.
 export const PROVIDER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../vibe-closedloop-provider");
 export const ALL_CAPABILITIES = ["tickets", "plans", "graph", "memory", "recipes"];
+/**
+ * Puts that provider into the vibe plugin at `vibeRoot` as a release built with it carries it: `provider/provider.json`
+ * with its references beside it, so vibe-core's discovery finds it there.
+ */
+export function bundleProvider(vibeRoot) {
+  const contract = JSON.parse(readFileSync(path.join(PROVIDER_ROOT, "provider.json"), "utf8"));
+  const bundled = path.join(vibeRoot, "provider");
+  fs.cpSync(path.join(PROVIDER_ROOT, contract.references), path.join(bundled, "references"), { recursive: true });
+  writeFileSync(path.join(bundled, "provider.json"), `${JSON.stringify({ ...contract, references: "references" }, null, 2)}\n`);
+  // The build that carries the provider is published as vibe (tools/vibe-closedloop-build BUILT_NAME).
+  for (const manifest of [".claude-plugin", ".codex-plugin"]) {
+    const file = path.join(vibeRoot, manifest, "plugin.json");
+    if (fs.existsSync(file)) writeFileSync(file, `${JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), name: "vibe" }, null, 2)}\n`);
+  }
+  return bundled;
+}
+
+const COPY_SKIPPED = new Set(["evals", "tools", "node_modules", "dist"]);
+const TEST_FILE = /\.test\.mjs$/;
+
+/**
+ * This checkout's vibe (its scripts, manifests and Markdown, no tests or bundles) and vibe-core copied into
+ * `root/plugins`, with the ClosedLoop provider built into that vibe only when `provider`; returns the copied vibe root.
+ */
+export function copyVibe(root, { provider = false } = {}) {
+  const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  const plugins = path.join(root, "plugins");
+  const keep = (file) => {
+    if (COPY_SKIPPED.has(path.basename(file))) return false;
+    if (fs.statSync(file).isDirectory()) return true;
+    return file.endsWith(".md") || file.endsWith(".json") || (file.endsWith(".mjs") && !TEST_FILE.test(file));
+  };
+  fs.cpSync(source, path.join(plugins, "vibe"), { recursive: true, filter: keep });
+  fs.cpSync(path.join(source, "..", "vibe-core"), path.join(plugins, "vibe-core"), { recursive: true });
+  if (provider) bundleProvider(path.join(plugins, "vibe"));
+  return path.join(plugins, "vibe");
+}
+
 /** That provider's binding, for in-process calls that take one. */
 export const PROVIDER_BINDING = Object.freeze({ state: "bound", name: "vibe-closedloop-provider", root: PROVIDER_ROOT, capabilities: ALL_CAPABILITIES });
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +29,7 @@ BLOCK_REASON = "recorded-definition-removed"
 
 
 def migration() -> str:
-    return section(QUALITY_LOOP.read_text(), "### Recorded definition migration")
+    return section(skill_split.read(QUALITY_LOOP), "### Recorded definition migration")
 
 
 def test_root_recovers_a_stranded_turn_internally_without_sending_the_person_to_engineering() -> None:
@@ -61,7 +62,7 @@ def test_a_block_moves_to_the_new_writer_only_once_the_recorded_writer_can_never
 
 
 def test_the_writer_settles_a_carried_block_first() -> None:
-    text = flat(CHANGE_WORKER.read_text())
+    text = flat(skill_split.read(CHANGE_WORKER))
     assert "When ROOT's continuation says the migrated request ended `BLOCKED`, settle that block first" in text
 
 
@@ -92,30 +93,30 @@ def test_recovered_writer_uses_fresh_grants_and_validation_never_old_witnesses()
     assert "All authority is fresh" in text
     assert "source `progress`, publisher, ticket `handoff` and `assign`" in text
     assert "Never reuse an old grant, lease or validation witness." in text
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "uses the same command with `retainedRecord`" in handoff
     assert "publication, the ticket update and assignment take fresh grants and fresh validation" in handoff
     assert "never ask the person running the session about it or send them to engineering" in handoff
 
 
 def test_the_guardrail_keeps_stranded_recovery_inside_allowed_migration() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Plugins and tooling")
+    rule = section(skill_split.read(GUARDRAILS), "## Plugins and tooling")
     assert "including a turn stranded by a plugin upgrade" in rule
     assert "It is recovery, not a tooling fix: never stop or send the person to engineering for it." in rule
 
 
 def test_codex_release_failure_and_the_writer_point_at_the_recovery() -> None:
-    vibe = flat(VIBE_SKILL.read_text())
+    vibe = flat(skill_split.read(VIBE_SKILL))
     assert "fails with `ENOENT` because a plugin install removed its recorded root" in vibe
     assert "`migrate` with `retainedRecord`, internally, never a question or a message to engineering" in vibe
-    worker = flat(CHANGE_WORKER.read_text())
+    worker = flat(skill_split.read(CHANGE_WORKER))
     assert "return `BLOCKED` saying the recorded definition was removed" in worker
     assert "never an engineering escalation or a question for the person" in worker
     assert "Never migrate yourself" in worker
 
 
 def test_the_prose_names_the_shipped_command_contract() -> None:
-    bundle = WRITER_STATE.read_text()
+    bundle = skill_split.read(WRITER_STATE)
     assert f'"{BLOCK_REASON}"' in bundle
     assert "retainedRecord" in bundle
     assert "verifyStrandedRecordGrant" in bundle
@@ -131,5 +132,5 @@ def test_a_writer_stopped_by_its_usage_limit_moves_harness_through_the_ledger() 
         "refuses running turns, retained grants, a `BLOCKED` writer and a same-runtime switch",
     ):
         assert required in text, required
-    bundle = WRITER_STATE.read_text()
+    bundle = skill_split.read(WRITER_STATE)
     assert '"harness-switch"' in bundle and "harnessSwitch" in bundle

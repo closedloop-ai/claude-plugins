@@ -96,7 +96,6 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
@@ -105,6 +104,7 @@ import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mj
 import { placementLines, readPlacementEvidence, recordPlacement, renderPlacements, writerPlacementProblem, writerTickets } from "./writer-placement.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { trackerBound, workItem } from "../../vibe/scripts/tracker-key.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
@@ -735,7 +735,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

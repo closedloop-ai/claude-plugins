@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import skill_split
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_setup_worker_sends_missing_clerk_keys_to_the_person() -> None:
-    text = " ".join((ROOT / "agents" / "vibe-setup-worker.md").read_text().split())
+    text = " ".join(skill_split.read(ROOT / "agents" / "vibe-setup-worker.md").split())
     assert "never fetch or type the secrets yourself" in text
     assert "`! just clerk-keys`" in text
     assert "`aws sso login --profile <their stage profile>`" in text

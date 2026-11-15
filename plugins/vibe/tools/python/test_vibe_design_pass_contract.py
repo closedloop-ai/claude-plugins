@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -71,8 +72,8 @@ def fenced_block(text: str, first_line: str) -> str:
 
 
 def test_owner_rules_put_shared_behavior_in_the_parent_as_a_generic_slot() -> None:
-    rules = section(DESIGN_PASS.read_text(), "## Owner rules")
-    where = section(GUARDRAILS.read_text(), "## Where code goes")
+    rules = section(skill_split.read(DESIGN_PASS), "## Owner rules")
+    where = section(skill_split.read(GUARDRAILS), "## Where code goes")
 
     for text in (rules, where):
         assert "any component that composes or inherits from a shared parent" in text.lower()
@@ -88,7 +89,7 @@ def test_owner_rules_put_shared_behavior_in_the_parent_as_a_generic_slot() -> No
 
 
 def test_prep_is_a_bounded_lookup_with_defined_fields() -> None:
-    text = DESIGN_PASS.read_text()
+    text = skill_split.read(DESIGN_PASS)
     prep = section(text, "## Prep (build loop, one or two minutes)")
     block = fenced_block(text, "Prep:")
 
@@ -105,7 +106,7 @@ def test_prep_is_a_bounded_lookup_with_defined_fields() -> None:
 
 
 def test_build_loop_reviews_before_handoff_and_preserves_design_depth() -> None:
-    text = DESIGN_PASS.read_text()
+    text = skill_split.read(DESIGN_PASS)
     intro = flat(text[: text.index("## Owner rules")])
     red_flags = section(text, "### Red flags")
     restructure = section(text, "### Restructuring")
@@ -131,10 +132,10 @@ def test_build_loop_reviews_before_handoff_and_preserves_design_depth() -> None:
 
 def test_guidance_names_no_specific_screen_or_component() -> None:
     for path in (DESIGN_PASS, GRAPH):
-        text = path.read_text()
+        text = skill_split.read(path)
         for name in NON_GENERIC_NAMES:
             assert name not in text, (path.name, name)
-    rule = section(GUARDRAILS.read_text(), "## Where code goes")
+    rule = section(skill_split.read(GUARDRAILS), "## Where code goes")
     for name in NON_GENERIC_NAMES:
         assert name not in rule, name
 
@@ -153,7 +154,7 @@ def test_change_worker_preps_by_rule_and_names_the_owner_it_built_in() -> None:
 
 
 def test_graph_is_required_with_a_graph_block_and_no_routine_fallback() -> None:
-    graph = GRAPH.read_text()
+    graph = skill_split.read(GRAPH)
     required = section(graph, "## Required calls")
     unreachable = section(graph, "## When the server is unreachable")
 
@@ -180,9 +181,9 @@ def test_every_code_worker_ends_with_the_graph_block() -> None:
 
 
 def test_orchestrators_send_back_a_result_without_graph_evidence() -> None:
-    vibe = flat(VIBE_SKILL.read_text())
-    handoff = flat(HANDOFF_SKILL.read_text())
-    install = flat((VIBE / "INSTALL.md").read_text())
+    vibe = flat(skill_split.read(VIBE_SKILL))
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
+    install = flat(skill_split.read(VIBE / "INSTALL.md"))
     setup = flat(agent("vibe-setup-worker"))
 
     for text in (vibe, handoff):
@@ -209,18 +210,18 @@ def test_no_worker_commits_and_the_orchestrators_do() -> None:
     assert "You never commit or push" in flat(agent("vibe-seed-fix-worker"))
     assert "`NEEDS_COMMIT`" in flat(agent("vibe-prototype-worker"))
 
-    redeploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
+    redeploy = section(skill_split.read(VIBE_SKILL), "## 6. Deploy each change")
     assert "`node scripts/commit-worktree.mjs --worktree" in redeploy
     assert redeploy.index("commit-worktree.mjs") < redeploy.index("`vibe-environment-worker` in redeploy mode")
-    upload = section(HANDOFF_SKILL.read_text(), "## 7. Upload the last changes")
+    upload = section(skill_split.read(HANDOFF_SKILL), "## 7. Upload the last changes")
     assert "`node ../vibe/scripts/commit-worktree.mjs --worktree" in upload
     assert upload.index("commit-worktree.mjs") < upload.index("Dispatch `vibe-environment-worker`")
-    assert "commit-worktree.mjs" in flat(SEED_SKILL.read_text())
+    assert "commit-worktree.mjs" in flat(skill_split.read(SEED_SKILL))
 
 
 def test_build_loop_runs_existing_checks_and_handoff_lists_missing_tests() -> None:
     environment = flat(agent("vibe-environment-worker"))
-    handoff = HANDOFF_SKILL.read_text()
+    handoff = skill_split.read(HANDOFF_SKILL)
 
     assert "still no broad or full test suite" in environment
     assert "Never write or edit tests in deployment mode" in environment
@@ -236,7 +237,7 @@ def test_build_loop_runs_existing_checks_and_handoff_lists_missing_tests() -> No
 
 
 def test_no_tests_are_authored_in_vibe_or_handoff_without_weakening_expectations() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Tests")
+    rule = section(skill_split.read(GUARDRAILS), "## Tests")
 
     assert "Without an explicit top-level pull-request or `testsRequired` grant, no worker authors a test in vibe or handoff" in rule
     assert "in the build loop and at handoff alike" in rule
@@ -249,9 +250,9 @@ def test_no_tests_are_authored_in_vibe_or_handoff_without_weakening_expectations
     assert "Never loosen, skip or remove a valid test" in rule
     assert "Neither vibe nor handoff opens a pull request on its own" in rule
 
-    assert "without changing what it asserts; none are authored" in flat(VIBE_SKILL.read_text())
-    assert "Reject other test edits and never retrospectively relabel them" in flat(HANDOFF_SKILL.read_text())
-    assert "A coverage gap goes on the missing tests list; nobody writes a test here" in flat(HANDOFF_SKILL.read_text())
+    assert "without changing what it asserts; none are authored" in flat(skill_split.read(VIBE_SKILL))
+    assert "Reject other test edits and never retrospectively relabel them" in flat(skill_split.read(HANDOFF_SKILL))
+    assert "A coverage gap goes on the missing tests list; nobody writes a test here" in flat(skill_split.read(HANDOFF_SKILL))
 
 
 def test_build_workers_do_not_author_tests_and_handoff_tests_mode_is_explicit() -> None:
@@ -265,7 +266,7 @@ def test_build_workers_do_not_author_tests_and_handoff_tests_mode_is_explicit() 
     )
     for path in [AGENTS / f"{name}.md" for name in VIBE_AGENTS if not name.startswith("vibe-seed-")] + [
     ]:
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         for step in writing_steps:
             assert step not in text, (path.name, step)
     for name in ("vibe-primitive-worker", "vibe-storybook-decomposer"):
@@ -297,7 +298,7 @@ def test_reviewers_flag_placement_red_flags_and_test_edits() -> None:
 
 
 def test_ticket_carries_design_decisions_and_the_missing_tests_for_engineering() -> None:
-    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    handoff = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
 
     assert "- Design decisions:" in handoff
     assert "old-UI assertions were updated" not in handoff
@@ -308,13 +309,13 @@ def test_ticket_carries_design_decisions_and_the_missing_tests_for_engineering()
 
 def test_new_files_use_no_emdashes_or_double_hyphen_dashes() -> None:
     for path in (DESIGN_PASS, GRAPH, QUALITY, VIBE / "scripts" / "commit-worktree.mjs", VIBE / "scripts" / "local-plans.mjs"):
-        text = path.read_text()
+        text = skill_split.read(path)
         assert "—" not in text, path.name
         assert " -- " not in text, path.name
 
 
 def test_local_plan_uses_core_by_name_and_is_never_committed_deployed_or_pasted_into_the_ticket() -> None:
-    planning = section(QUALITY.read_text(), "## Local plan")
+    planning = section(skill_split.read(QUALITY), "## Local plan")
     assert "`$plan-structure` in Codex" in planning
     assert "`/closedloop-core:plan-structure` in Claude Code" in planning
     assert "from that skill's own folder" in planning
@@ -330,7 +331,7 @@ def test_local_plan_uses_core_by_name_and_is_never_committed_deployed_or_pasted_
 
 
 def test_the_writer_builds_right_after_its_plan_and_reviews_wait_for_handoff() -> None:
-    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert loop.index("writes the canonical core-template plan locally") < loop.index("There is no plan review")
     assert loop.index("There is no plan review") < loop.index("The writer implements in dependency order")
     assert loop.index("The writer implements in dependency order") < loop.index("independent reviews come at handoff")
@@ -358,7 +359,7 @@ def test_registered_claude_plan_callers_can_invoke_the_named_core_skill() -> Non
 
 
 def test_one_persistent_writer_keeps_a_serial_queue_and_serial_record_owners() -> None:
-    queue = section(QUALITY.read_text(), "## One persistent writer and a serial queue")
+    queue = section(skill_split.read(QUALITY), "## One persistent writer and a serial queue")
     assert "same writer in order" in queue
     assert "Keep one active request" in queue
     assert "does not authorize starting the next queued request or a fresh writer" in queue
@@ -366,7 +367,7 @@ def test_one_persistent_writer_keeps_a_serial_queue_and_serial_record_owners() -
     assert "Never dispatch another source or test writer" in queue
     assert "Serialize session JSON, ticket and change-log mutations" in queue
     assert "Deployment waits for the writer's quick checks and the orchestrator's commit; PR review and verification finish before PR creation" in queue
-    assert "explicit serial record continuation" in section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    assert "explicit serial record continuation" in section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     for name in ("vibe-backend-worker", "vibe-primitive-worker", "vibe-storybook-decomposer", "vibe-verify-worker"):
         frontmatter = yaml.safe_load(agent(name).split("---", 2)[1])
         allowed = {tool.strip() for tool in frontmatter["tools"].split(",")}
@@ -374,7 +375,7 @@ def test_one_persistent_writer_keeps_a_serial_queue_and_serial_record_owners() -
 
 
 def test_questions_are_researched_and_technical_updates_never_reach_the_person() -> None:
-    communication = section(QUALITY.read_text(), "## Communication and product questions")
+    communication = section(skill_split.read(QUALITY), "## Communication and product questions")
     for route in ("ticket_detail", "fts_search", "search_memory_facts"):
         assert route in communication
     assert "live ClosedLoop" in communication
@@ -384,13 +385,13 @@ def test_questions_are_researched_and_technical_updates_never_reach_the_person()
     assert "Updates say only which requested feature is complete" in communication
     for name in ("vibe-requirements-worker", "vibe-change-worker", "vibe-backend-worker", "vibe-primitive-worker", "vibe-prototype-worker", "vibe-ticket-worker", "vibe-setup-worker", "vibe-environment-worker"):
         assert "quality-loop.md" in agent(name), name
-    summary = section(HANDOFF_SKILL.read_text(), "## 2. Summarize internally")
+    summary = section(skill_split.read(HANDOFF_SKILL), "## 2. Summarize internally")
     assert "Keep the summary internal" in summary
     assert "ask them to confirm" not in summary
 
 
 def test_initial_prototype_commit_and_share_require_quick_check_evidence() -> None:
-    start = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
+    start = section(skill_split.read(VIBE_SKILL), "## 2. Start or resume")
     assert start.index("After the writer's quick checks pass") < start.index("orchestrator commits")
     assert start.index("orchestrator commits") < start.index("operational share mode")
     assert "Do not spawn a separate prototype source writer" in start
@@ -399,7 +400,7 @@ def test_initial_prototype_commit_and_share_require_quick_check_evidence() -> No
     assert "current-result quick-check evidence" in prototype
     assert "does not follow steps that create another worktree, source writer or technical-plan approval" in prototype
     assert "Preserve genuine visual/product approval" in prototype
-    handoff = section(HANDOFF_SKILL.read_text(), "### Owned prototype sessions")
+    handoff = section(skill_split.read(HANDOFF_SKILL), "### Owned prototype sessions")
     assert "`NEEDS_REVIEW`/`NEEDS_COMMIT` returns to the same writer/root sequence" in handoff
     assert "Source generation or metadata fixes resume this SAME writer" in handoff
     assert "Preserve the already completed design-review outcome" in handoff
@@ -407,7 +408,7 @@ def test_initial_prototype_commit_and_share_require_quick_check_evidence() -> No
 
 
 def test_handoff_cannot_relabel_early_tests_and_displayless_coverage_is_not_silently_skipped() -> None:
-    guardrail_check = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
+    guardrail_check = section(skill_split.read(HANDOFF_SKILL), "## 3. Guardrail check")
     assert "never retrospectively relabel" in guardrail_check
     assert "treats every test the session added, deleted or changed as a finding" in guardrail_check
     assert "except the inventory's `testRepairs`" in guardrail_check
@@ -423,22 +424,22 @@ def test_handoff_cannot_relabel_early_tests_and_displayless_coverage_is_not_sile
 
 
 def test_every_request_binds_one_real_session_table_before_code() -> None:
-    table = section(QUALITY.read_text(), "## Session decision table before code")
+    table = section(skill_split.read(QUALITY), "## Session decision table before code")
     for required in ("mandatory for every Vibe request", "before the first line of code",
                      "one living table for the whole session", "<session-slug>.md",
                      "real source-backed rows", "stable row IDs", "request provenance",
                      "grouped behavior sections", "cross-request interactions", "Superseded"):
         assert required in table, required
     assert "$decision-table" in table and "/closedloop-core:decision-table" in table
-    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert loop.index("session decision table") < loop.index("The writer implements in dependency order")
-    queue = section(QUALITY.read_text(), "## Session decision table before code")
+    queue = section(skill_split.read(QUALITY), "## Session decision table before code")
     assert "Read the actual table before code, advice or review" in queue and "placeholder" in queue
-    assert "does not waive the session decision table" in flat(DESIGN_PASS.read_text())
+    assert "does not waive the session decision table" in flat(skill_split.read(DESIGN_PASS))
 
 
 def test_source_rows_are_verified_without_claiming_planned_test_coverage() -> None:
-    table = section(QUALITY.read_text(), "## Session decision table before code")
+    table = section(skill_split.read(QUALITY), "## Session decision table before code")
     for required in ("Current Code", "Intended Change", "frozen", "append",
                      "planned tests are not coverage", "Final Alignment Status: Aligned",
                      "`Missing test (engineering)` disposition", "never counted as coverage",
@@ -464,7 +465,7 @@ def test_real_role_briefs_read_the_same_table_and_return_row_evidence() -> None:
 
 
 def test_resume_uses_recorded_migration_only_for_definition_loss_or_upgrade() -> None:
-    queue = section(QUALITY.read_text(), "## One persistent writer and a serial queue")
+    queue = section(skill_split.read(QUALITY), "## One persistent writer and a serial queue")
     for required in ("binding.agentRoot", "binding.capabilities", "recorded writer ID",
                      "original definition", "BLOCKED", "present and", "matching",
                      "writer-state.mjs migrate", "previousWorkerId", "previousDigest",
@@ -472,15 +473,15 @@ def test_resume_uses_recorded_migration_only_for_definition_loss_or_upgrade() ->
                      "Never use `register` to replace", "Never migrate around a refusal"):
         assert required in queue, required
     for path in (VIBE_SKILL, HANDOFF_SKILL):
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         assert "original recorded binding" in text, path.name
         assert "writer-state.mjs migrate" in text, path.name
         assert "refusal" in text, path.name
-    assert "recorded migration" in flat((REFERENCES / "environment.md").read_text())
+    assert "recorded migration" in flat(skill_split.read(REFERENCES / "environment.md"))
 
 
 def test_handoff_metadata_callers_keep_detailed_final_evidence() -> None:
-    handoff = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    handoff = section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
     for field in ("Production impact", "Flag changes and gates", "Open Questions"):
         assert field in handoff, field
         for name in ("vibe-handoff-summarizer", "vibe-verify-worker", "vibe-ticket-worker"):
@@ -500,12 +501,12 @@ def test_handoff_metadata_callers_keep_detailed_final_evidence() -> None:
 
 
 def test_main_sync_callers_use_real_shared_execution_before_first_push_and_handoff() -> None:
-    environment = (REFERENCES / "environment.md").read_text()
+    environment = skill_split.read(REFERENCES / "environment.md")
     for required in ("Main-sync before publication", "--prepare-main-sync", "main-sync-validate",
                      "main-sync-push", "dispatch-inputs", "ROOT", "same", "no-op"):
         assert required.lower() in environment.lower(), required
     for path in (VIBE_SKILL, HANDOFF_SKILL):
-        assert "Main-sync before publication" in path.read_text(), path.name
+        assert "Main-sync before publication" in skill_split.read(path), path.name
     publisher = flat(agent("vibe-environment-worker"))
     assert "main-sync-push" in publisher
     assert "request-only" in publisher and "flags" in publisher and "desktop" in publisher
@@ -532,7 +533,7 @@ def test_main_sync_reviews_preserve_original_authorship_without_guessing_phase()
 def test_main_sync_callers_locally_commit_reviewed_source_before_preparation() -> None:
     for path, deliverable in ((VIBE_SKILL, "checked"), (HANDOFF_SKILL, "reviewed"),
                               (REFERENCES / "environment.md", "checked")):
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         local_commit = text.index(f"ROOT commits the {deliverable} deliverable LOCALLY")
         preparation = text.index("--prepare-main-sync", local_commit)
         assert local_commit < preparation
@@ -540,12 +541,12 @@ def test_main_sync_callers_locally_commit_reviewed_source_before_preparation() -
 
 
 def test_main_sync_callers_route_readiness_and_bound_validation_to_the_same_actor() -> None:
-    environment = flat((REFERENCES / "environment.md").read_text())
+    environment = flat(skill_split.read(REFERENCES / "environment.md"))
     for required in ("main-sync-inputs", "validationWitness", "mainSyncValidation", "recipeSha256",
                      "retained reports", "pristine", "30-minute", "general worker", "15-minute"):
         assert required in environment, required
     for path in (VIBE_SKILL, HANDOFF_SKILL):
-        assert "main-sync-inputs" in path.read_text(), path.name
+        assert "main-sync-inputs" in skill_split.read(path), path.name
     for name in ("vibe-change-worker", "vibe-environment-worker", "vibe-verify-worker"):
         text = flat(agent(name))
         assert "main-sync-inputs" in text, name

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { fixture, loadEvidence, PLUGIN_ROOT, remoteConfig, successfulRemoteWriter, writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs';
 import { readAssembled } from '../../vibe/scripts/skill-split.mjs';
 import { bindProvider, makeHome, PROVIDER_BINDING } from '../../vibe/scripts/test-fixtures.mjs';
+import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
@@ -19,7 +20,7 @@ function realRemoteSession(f) {
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
   writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*/vibe/scripts/provider.mjs|*codex-session.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
-  writeFileSync(join(f.root, 'bin', 'codex'), `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'app-server daemon start') console.log(JSON.stringify({ socketPath: ${JSON.stringify(join(f.root, 'missing.sock'))} }));\nelse console.log(JSON.stringify({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: ${JSON.stringify(PLUGIN_ROOT)} } }] }));\n`);
+  writeFileSync(join(f.root, 'bin', 'codex'), `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'app-server daemon start') console.log(JSON.stringify({ socketPath: ${JSON.stringify(join(f.root, 'missing.sock'))} }));\nelse console.log(JSON.stringify({ installed: [{ name: ${JSON.stringify(OWN_PLUGIN)}, installed: true, enabled: true, source: { path: ${JSON.stringify(PLUGIN_ROOT)} } }] }));\n`);
   chmodSync(join(f.root, 'bin', 'codex'), 0o755);
   const worktree = join(f.root, 'pre-made-worktree');
   const created = spawnSync('git', ['init', '-q', '-b', 'vibe/example', worktree], { encoding: 'utf8' });

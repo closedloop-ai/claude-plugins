@@ -26,11 +26,11 @@ import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { localPlanPaths, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { checkPublishableText } from "./publishable-text.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -121,7 +121,7 @@ function main() {
   return result;
 }
 
-if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const result = main();
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

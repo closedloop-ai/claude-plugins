@@ -24,10 +24,9 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { budgetDisabled, createBudget, isHeavyCommand } from "./heavy-budget.mjs";
 import { runAdmitted } from "./load-admission.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const TIMED_OUT_EXIT = 124;
 /** The stderr line that carries a heavy run's attempts, first-failure signature and load at start. */
@@ -137,7 +136,7 @@ async function main(argv) {
   return code;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {

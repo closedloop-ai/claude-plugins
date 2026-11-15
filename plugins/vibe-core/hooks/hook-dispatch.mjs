@@ -13,7 +13,6 @@
 // always exits 0.
 
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { isProviderBroken } from "../lib/vibe/scripts/provider.mjs";
 import { hookStandDown, vibeInstall } from "../shared/vibe-install.mjs";
 import { activated } from "./activation.mjs";
@@ -29,11 +28,6 @@ export function deny(reason) {
 /** The working directory a hook event names, or this process's. */
 export function eventCwd(event) {
   return typeof event?.cwd === "string" ? event.cwd : process.cwd();
-}
-
-/** Whether the module at `metaUrl` is the script node was started with. */
-export function isMain(metaUrl) {
-  return Boolean(process.argv[1]) && metaUrl === pathToFileURL(process.argv[1]).href;
 }
 
 /**

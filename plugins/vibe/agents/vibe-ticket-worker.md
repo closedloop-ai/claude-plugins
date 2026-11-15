@@ -6,7 +6,9 @@ tools: Read, Write, Grep, Glob, Bash
 ---
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `../skills/vibe/references/provider-text.md`. This worker runs only in a session whose provider has the `tickets` capability; with none bound, return `BLOCKED` saying no provider is bound.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
+
+This worker runs only in a session whose provider has the `tickets` capability; with none bound, return `BLOCKED` saying no provider is bound.
 
 > Provider `tickets` (block `ticket-worker` of `agents/vibe-ticket-worker.md`)

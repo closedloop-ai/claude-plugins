@@ -7,8 +7,10 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { hookApprovalWatch } from "./hook-approval.mjs";
 import { APPROVE_HOOKS, HookApproval, hookApprovalFromClient } from "../../vibe/scripts/vibe-core-hooks.mjs";
+import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./hook-approval.mjs", import.meta.url));
+const OTHER_VIBE = OWN_PLUGIN === "vibe" ? "vibe-generic" : "vibe";
 const KEY = "vibe-core@market:hooks/hooks.json:pre_tool_use:0:0";
 
 function stateDir(t) {
@@ -88,7 +90,8 @@ test("the command reads the installed Codex plugins and the App Server's hooks/l
 const a = process.argv.slice(2);
 if (a.join(" ") === "plugin list --json") {
   const plugin = (name, version) => ({ pluginId: name + "@market", name, marketplaceName: "closedloop-ai", version, installed: true, enabled: true });
-  process.stdout.write(JSON.stringify({ installed: [plugin("vibe", "1.1.71"), plugin("vibe-core", "1.0.0")] }));
+  // The other vibe, listed first, is not the one whose line this is.
+  process.stdout.write(JSON.stringify({ installed: [plugin(${JSON.stringify(OTHER_VIBE)}, "1.1.0"), plugin(${JSON.stringify(OWN_PLUGIN)}, "1.1.71"), plugin("vibe-core", "1.0.0")] }));
 } else if (a[0] === "app-server") {
   require("node:readline").createInterface({ input: process.stdin }).on("line", (text) => {
     const message = JSON.parse(text);

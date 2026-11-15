@@ -75,13 +75,13 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { bindChat, canonicalHome, canonicalProgram, chatBinding, chatHome, commandChat, currentProgram, programChats, programFor, refuseHeld, unbindChat, unboundLine } from "./chat-binding.mjs";
 import { migrate } from "./fleet-migrate.mjs";
 import { skillFreshnessProblem } from "./skill-freshness.mjs";
 import { vibeScriptPath } from "../../../shared/vibe-install.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "context-guard.json", "current", "programs"];
 const PROGRAM_DIRS = ["sessions", "prompts", "requests", "findings", "evidence"];
@@ -524,7 +524,7 @@ function bindCurrent(home, chat, env) {
   return [`BOUND ${resolved.program} ${chat}`];
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

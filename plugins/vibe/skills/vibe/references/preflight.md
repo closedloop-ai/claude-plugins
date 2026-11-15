@@ -1,7 +1,7 @@
 # Preflight fixes
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 The preflight uses the checkout `--repo` names, else the one the command runs

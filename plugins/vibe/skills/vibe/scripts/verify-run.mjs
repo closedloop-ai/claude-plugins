@@ -51,7 +51,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { RESULT_PREFIX } from "./run-bounded.mjs";
 import { reportLanes } from "./pre-pr-lanes.mjs";
@@ -60,6 +60,7 @@ import { classifyLane, LaneKind, poolSizeFor, runScheduled } from "./lane-pool.m
 import { readRun, RunExit, startBackground, waitForRun, writeRecord } from "./verify-background.mjs";
 import { execCommand, execCommandAsync, parseJson, stdoutOf, tailLines, toolDidNotRun } from "./ws3-exec.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -481,7 +482,7 @@ async function main(argv) {
   return evidence.ok ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {

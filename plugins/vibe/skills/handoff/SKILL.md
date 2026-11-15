@@ -13,7 +13,7 @@ its `AGENTS.md` names). Inventory blocks a nested declaration and every session
 change to a file with that name.
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `../vibe/references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 The person ran `vibe` and built something they are happy with. You
@@ -85,7 +85,7 @@ Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
 subagent's instructions and the `model` and `reasoning_effort` that
 `node ../vibe/scripts/worker-model.mjs codex <name>` prints; the vibe skill's
-usage-limit check runs here the same way; in Claude Code use `/vibe:handoff` and the
+usage-limit check runs here the same way; in Claude Code use `/vibe-generic:handoff` and the
 `vibe:<name>` agents. Repo agents live in `<repo>/.claude/agents/`. Paths like
 `scripts/...` and `../vibe/...` are relative to this skill's own folder, not
 the repository. Resolve the plugin root (two levels above this file, as the

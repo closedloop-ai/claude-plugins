@@ -11,12 +11,12 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs, TextDecoder } from "node:util";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { commentlessAst, sourceComments } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -506,7 +506,7 @@ function main(argv) {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (error) {

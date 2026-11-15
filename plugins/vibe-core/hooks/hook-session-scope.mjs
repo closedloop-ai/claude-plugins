@@ -4,12 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { LoadBasis, loadedSkillEvidence } from "../lib/vibe/scripts/loaded-skill.mjs";
 import { latestSkill, readTranscript } from "./skill-transcript.mjs";
+import { vibeSkillOf } from "../shared/plugin-roots.mjs";
 import { vibeRoot } from "../shared/vibe-install.mjs";
 
 const SESSION = /^[A-Za-z0-9_.:-]{1,128}$/;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const SCOPED = new Map([["vibe:vibe", "vibe"], ["vibe:fleet-orchestrator", "fleet-orchestrator"]]);
-const VIBE_PLUGIN_SKILL = /^vibe:[a-z0-9-]+$/;
+/** The skills whose start scopes the chat to them. */
+const SCOPED_SKILLS = Object.freeze(["vibe", "fleet-orchestrator"]);
 
 function scopePath(sessionId, home) {
   if (!SESSION.test(sessionId ?? "")) return null;
@@ -44,7 +45,8 @@ export function hookRuntime(event) {
 export function recordHookSkill(sessionId, skill, home = os.homedir(), now = new Date(), runtime = null, cwd = process.cwd()) {
   const file = scopePath(sessionId, home);
   if (!file || !isVibePluginSkill(skill)) return null;
-  const scoped = SCOPED.get(skill) ?? null;
+  const named = vibeSkillOf(skill);
+  const scoped = SCOPED_SKILLS.includes(named) ? named : null;
   const previous = scoped ? null : readOwnRecord(file, sessionId, home, now);
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const record = scoped
@@ -57,9 +59,9 @@ export function recordHookSkill(sessionId, skill, home = os.homedir(), now = new
   return record.skill;
 }
 
-/** Whether `skill` (a Skill tool name such as "vibe:handoff") is one of the vibe plugin's skills. */
+/** Whether `skill` (a Skill tool name such as "vibe:handoff" or "vibe-generic:handoff") is one of the vibe plugin's skills. */
 export function isVibePluginSkill(skill) {
-  return typeof skill === "string" && VIBE_PLUGIN_SKILL.test(skill);
+  return vibeSkillOf(skill) !== null;
 }
 
 /**
@@ -69,7 +71,7 @@ export function isVibePluginSkill(skill) {
 export function hookActivated(sessionId, home = os.homedir(), now = new Date()) {
   const file = scopePath(sessionId, home);
   const record = file === null ? null : readOwnRecord(file, sessionId, home, now);
-  return record?.activated === true || ["vibe", "fleet-orchestrator"].includes(record?.skill);
+  return record?.activated === true || SCOPED_SKILLS.includes(record?.skill);
 }
 
 function readOwnRecord(file, sessionId, home, now) {
@@ -95,7 +97,7 @@ export function readHookSkill(sessionId, home = os.homedir(), now = new Date()) 
   const file = scopePath(sessionId, home);
   if (!file) return null;
   const record = readOwnRecord(file, sessionId, home, now);
-  return ["vibe", "fleet-orchestrator"].includes(record?.skill) ? record.skill : null;
+  return SCOPED_SKILLS.includes(record?.skill) ? record.skill : null;
 }
 
 /** Full exact-session hook record, including the hook-observed loaded definition. */
@@ -109,5 +111,5 @@ export function readHookSkillRecord(sessionId, home = os.homedir()) {
 /** The vibe skill this hook event's conversation runs ("vibe" or "fleet-orchestrator"): its transcript first, then a recent hook record. */
 export function conversationSkill(event, home = os.homedir()) {
   const transcript = readTranscript(event?.transcript_path);
-  return (transcript === null ? null : latestSkill(transcript, ["vibe", "fleet-orchestrator"])) ?? readHookSkill(event?.session_id, home);
+  return (transcript === null ? null : latestSkill(transcript, SCOPED_SKILLS)) ?? readHookSkill(event?.session_id, home);
 }

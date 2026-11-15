@@ -54,7 +54,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources, sameWorktreeEntry } from "../../vibe/scripts/e2e-lock.mjs";
@@ -70,6 +70,7 @@ import { vibeRoot } from "../../../shared/vibe-install.mjs";
 import { captureScratchLease, reconcileExpiredScratchHelpers, registerScratchProgram, runScratchStack,
   scratchLeaseTerminal } from './scratch-cleanup.mjs';
 import { failScript } from "../../vibe/scripts/provider.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
@@ -641,7 +642,7 @@ async function main(argv) {
   } finally { releaseLedger(); }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {

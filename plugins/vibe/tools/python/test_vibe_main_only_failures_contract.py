@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +29,7 @@ TICKET_LINE = "- [ ] Known main failure: <check>; fails on captured main <mainSh
 
 
 def test_quality_loop_states_the_classification_once() -> None:
-    rule = section(QUALITY.read_text(), "## Failures already on main")
+    rule = section(skill_split.read(QUALITY), "## Failures already on main")
     for required in (
         "This applies to handoff in Codex and Claude Code alike",
         "Codex and Claude Code alike",
@@ -47,21 +48,21 @@ def test_quality_loop_states_the_classification_once() -> None:
         "never presents it as a stop",
     ):
         assert required in rule, required
-    tests = section(QUALITY.read_text(), "## Tests: repair, don't author")
+    tests = section(skill_split.read(QUALITY), "## Tests: repair, don't author")
     assert "classifies `main-preexisting` is not the session's to fix" in tests
 
 
 def test_a_main_only_failure_is_not_a_needed_tooling_fix() -> None:
-    tooling = section(GUARDRAILS.read_text(), "## Plugins and tooling")
+    tooling = section(skill_split.read(GUARDRAILS), "## Plugins and tooling")
     assert "also fails on the main the session captured is not a needed fix and never stops the handoff" in tooling
     assert "it is a Known main failure recorded for engineering" in tooling
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "A check that also fails on the main the session captured is not a needed fix and never stops the handoff" in handoff
     assert "Only a failure the session caused blocks." in handoff
 
 
 def test_handoff_publishes_and_routes_main_preexisting_failures_to_the_ticket() -> None:
-    upload = section(HANDOFF_SKILL.read_text(), "## 7. Upload the last changes")
+    upload = section(skill_split.read(HANDOFF_SKILL), "## 7. Upload the last changes")
     for required in (
         "`mainPreexistingFailures` still has `publicationReady: true`",
         "carry every entry to step 8's ticket worker as a Known main failure",
@@ -71,12 +72,12 @@ def test_handoff_publishes_and_routes_main_preexisting_failures_to_the_ticket() 
         assert required in upload, required
     assert "fixes uncommitted source" in upload
     assert "never creates a second repair commit" in upload
-    choose = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
+    choose = section(skill_split.read(HANDOFF_SKILL), "## 8. Choose who picks it up, then check the ticket")
     assert "every `mainPreexistingFailures` entry from step 7 with its main run's log" in choose
 
 
 def test_the_ticket_places_each_known_main_failure_once_on_the_engineering_checklist() -> None:
-    template = flat(TICKET_TEMPLATE.read_text())
+    template = flat(skill_split.read(TICKET_TEMPLATE))
     assert "Known main failures: each entry of handoff's `mainPreexistingFailures`" in template
     assert TICKET_LINE in template
     assert "Not on the Handoff section's Pre-existing failures line, never in both, and never routed to the person running the session" in template
@@ -99,18 +100,18 @@ def test_the_writer_and_the_environment_worker_do_not_block_on_main_preexisting_
     assert "returned under `mainPreexistingFailures`" in redeploy
     assert "does not block: push and request as usual" in redeploy
     assert "including one the executor called `session-caused`" in redeploy
-    environment = section(ENVIRONMENT.read_text(), "## Main-sync before publication")
+    environment = section(skill_split.read(ENVIRONMENT), "## Main-sync before publication")
     assert "one that also fails there is `main-preexisting` and does not block publication" in environment
 
 
 def test_the_shared_executor_owns_the_classification_for_both_harnesses() -> None:
-    checks = (WORKERS_SRC / "main-sync-checks.ts").read_text()
+    checks = skill_split.read(WORKERS_SRC / "main-sync-checks.ts")
     assert 'value.purpose === "handoff" ? new CapturedMainComparison(' in checks
     assert 'comparison.classification === "session-caused"' in checks
-    comparison = (WORKERS_SRC / "main-sync-main-comparison.ts").read_text()
+    comparison = skill_split.read(WORKERS_SRC / "main-sync-main-comparison.ts")
     assert 'new URL("../run-bounded.mjs", import.meta.url)' in comparison
     assert '"worktree", "add", "--detach"' in comparison
     assert '"worktree", "remove", "--force"' in comparison
-    bundle = MAIN_SYNC_BUNDLE.read_text()
+    bundle = skill_split.read(MAIN_SYNC_BUNDLE)
     for marker in ("mainPreexistingFailures", "main-preexisting", "session-caused", "vibe-captured-main-"):
         assert marker in bundle, marker

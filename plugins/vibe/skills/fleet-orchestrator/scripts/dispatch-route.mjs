@@ -22,12 +22,12 @@
 // nothing, or that may no longer be true, never moves a writer.
 
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { UsageState } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
 import { DEFAULT_STALE_SECONDS } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { CLASSES, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -115,7 +115,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

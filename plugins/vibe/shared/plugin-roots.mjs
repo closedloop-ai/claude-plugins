@@ -1,6 +1,10 @@
 // Finds a sibling plugin's root (one from vibe's marketplace) from the plugin a module lives
 // in. vibe loads vibe-core's code through it, and vibe-core's
 // guards find vibe's install through it to read that install as data.
+// It also tells a script whether node was started with it (isEntryPoint),
+// which a vibe command line needs before it can load vibe-core, and holds the
+// names vibe is published under and the marketplace an install comes from, so
+// every vibe and vibe-core module reads them from one place.
 //
 // The canonical copy is plugins/vibe-core/shared/plugin-roots.mjs. vibe ships
 // a byte-identical copy at plugins/vibe/shared/plugin-roots.mjs because it has
@@ -9,8 +13,9 @@
 // either imports anything but a node: builtin.
 //
 // Three layouts, decided from the caller's own plugin root R:
-// - a repository checkout (or a plugin loaded in place): R is plugins/<self>
-//   and the sibling is plugins/<name> beside it;
+// - a repository checkout (or a plugin loaded in place): R is plugins/<folder>
+//   and the sibling is the folder beside it whose manifest is named <name>
+//   (plugins/vibe holds vibe-generic, and the folder the build writes holds vibe);
 // - Claude Code: R is <config>/plugins/cache/<marketplace>/<self>/<version>
 //   and <config>/plugins/installed_plugins.json names the sibling's install,
 //   the one a session in the given cwd loads (its project's, else the user's);
@@ -32,6 +37,19 @@ const VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const NUMERIC = /^\d+$/;
 const SCOPE_FALLBACK = "user";
+/** The marketplace an install command names when the install path names none (a checkout). */
+export const DEFAULT_MARKETPLACE = "closedloop-ai";
+/** The names vibe is published under in one catalog: the build of it that carries a provider, and the generic plugin. */
+export const VIBE_PLUGIN_NAMES = Object.freeze(["vibe", "vibe-generic"]);
+/**
+ * The order a lookup tries them in. A checkout's plugins/vibe is the generic source and the built folder only what
+ * the build makes from it, so a checkout tries vibe-generic first. An install tries vibe first: every existing user
+ * has vibe, and with both installed the one that carries the provider serves the hooks and the binding.
+ */
+const VIBE_LOOKUP_ORDER = Object.freeze({ checkout: Object.freeze(["vibe-generic", "vibe"]), installed: VIBE_PLUGIN_NAMES });
+/** Regular-expression source matching either vibe name. */
+export const VIBE_NAME_PATTERN = `(?:${VIBE_PLUGIN_NAMES.join("|")})`;
+const VIBE_SKILL_ID = new RegExp(`^${VIBE_NAME_PATTERN}:([a-z0-9-]+)$`);
 /** Claude Code scopes tied to a project, nearest first. */
 const PROJECT_SCOPES = Object.freeze(["local", "project"]);
 
@@ -61,6 +79,31 @@ export function ownPluginRoot(from) {
     if (parent === dir) throw new Error(`${file} is not inside a plugin`);
     dir = parent;
   }
+}
+
+/** VIBE_PLUGIN_NAMES in the order a lookup from a plugin in `layout` (pluginInstall's) tries them. */
+export function vibeLookupOrder(layout) {
+  return layout === Layout.Checkout ? VIBE_LOOKUP_ORDER.checkout : VIBE_LOOKUP_ORDER.installed;
+}
+
+/** Whether `name` is a plugin name vibe is published under. */
+export function isVibePlugin(name) {
+  return VIBE_PLUGIN_NAMES.includes(name);
+}
+
+/** The skill `id` (a harness skill or agent id, `<plugin>:<name>`) names in either vibe, or null when it names none. */
+export function vibeSkillOf(id) {
+  return typeof id === "string" ? VIBE_SKILL_ID.exec(id)?.[1] ?? null : null;
+}
+
+/** The regular-expression source for `<either vibe name>:` followed by `skill` (itself regular-expression source). */
+export function vibeSkillPattern(skill) {
+  return `${VIBE_NAME_PATTERN}:${skill}`;
+}
+
+/** The marketplace `install` (pluginInstall's or siblingPluginInstall's) came from, else DEFAULT_MARKETPLACE. */
+export function pluginMarketplace(install) {
+  return install?.marketplace ?? DEFAULT_MARKETPLACE;
 }
 
 /**
@@ -121,8 +164,8 @@ export function pluginInstall(from) {
 export function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
   const self = pluginInstall(from);
   if (self.layout === Layout.Checkout) {
-    const candidate = path.join(self.plugins, name);
-    if (pluginManifest(candidate)?.name === name) return { root: realpathSync(candidate), layout: Layout.Checkout };
+    const candidate = checkoutRoot(self.plugins, name);
+    if (candidate) return { root: realpathSync(candidate), layout: Layout.Checkout };
     throw missing(name, self, Layout.Checkout);
   }
   if (self.layout === null) {
@@ -136,28 +179,20 @@ export function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
     ...(found.scope ? { scope: found.scope } : {}), ...(found.projectPath ? { projectPath: found.projectPath } : {}) };
 }
 
+/** `siblingPluginInstall` of each of `names` that is installed, in order, each with its `name`. */
+export function siblingInstalls(names, options) {
+  return names.flatMap((name) => {
+    try {
+      return [{ ...siblingPluginInstall(name, options), name }];
+    } catch {
+      return [];
+    }
+  });
+}
+
 /** The absolute root of sibling plugin `name` (`siblingPluginInstall`'s root). */
 export function siblingPluginRoot(name, options) {
   return siblingPluginInstall(name, options).root;
-}
-
-/**
- * The names of the plugins installed beside the plugin that holds `from`, in its marketplace (itself
- * included): a checkout's plugins/ folders, Claude Code's registry entries, or Codex's cache folders.
- * Installed is not enabled; the harness settings say which are on.
- */
-export function siblingPluginNames({ from }) {
-  const self = pluginInstall(from);
-  if (self.layout === Layout.Checkout) {
-    return listDirectories(self.plugins).filter((name) => pluginManifest(path.join(self.plugins, name))?.name === name).sort();
-  }
-  if (self.layout === Layout.Claude) {
-    const suffix = `@${self.marketplace}`;
-    return Object.keys(readRegistry(self.registry)?.plugins ?? {}).filter((key) => key.endsWith(suffix))
-      .map((key) => key.slice(0, -suffix.length)).sort();
-  }
-  if (self.layout === Layout.Codex) return listDirectories(path.join(self.cacheDir, self.marketplace)).sort();
-  return [];
 }
 
 /** `siblingPluginRoot`, or null when the sibling cannot be found. */
@@ -167,6 +202,22 @@ export function siblingPluginRootOrNull(name, options) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether the module at `moduleUrl` is the script node was started with. Node names its entry module by its real
+ * path, so both sides are compared as real paths: a script run through a symlinked directory (macOS /var, a linked
+ * plugin cache) would otherwise skip its command line and exit 0 with no output.
+ */
+export function isEntryPoint(moduleUrl, entry = process.argv[1]) {
+  return Boolean(entry) && realOrSame(path.resolve(entry)) === realOrSame(fileURLToPath(moduleUrl));
+}
+
+/** The folder of `plugins` whose manifest is named `name`: plugins/<name> when it is, else the one that is. */
+function checkoutRoot(plugins, name) {
+  const named = path.join(plugins, name);
+  if (pluginManifest(named)?.name === name) return named;
+  return listDirectories(plugins).sort().map((entry) => path.join(plugins, entry)).find((dir) => pluginManifest(dir)?.name === name) ?? null;
 }
 
 function claudeEntry(registry, name, self, cwd) {
@@ -202,8 +253,9 @@ function codexRoot(base, name, self) {
 }
 
 function missing(name, self, layout) {
+  const id = `${name}@${pluginMarketplace(self)}`;
   return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with `
-    + `\`claude plugin install ${name}@closedloop-ai\` in Claude Code or \`codex plugin add ${name}@closedloop-ai\` in Codex`);
+    + `\`claude plugin install ${id}\` in Claude Code or \`codex plugin add ${id}\` in Codex`);
 }
 
 function readRegistry(file) {

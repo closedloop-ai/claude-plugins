@@ -6,7 +6,7 @@
 // on whatever was installed, and nobody was told.
 //
 // Starting either skill (the Skill tool, or a `/vibe:vibe` or
-// `/vibe:fleet-orchestrator` prompt) marks the conversation pending unless it
+// `/vibe:fleet-orchestrator` prompt, or the same under vibe-generic) marks the conversation pending unless it
 // already has a record. Until the check has run, and while it found an
 // outdated plugin with no recorded choice or a stale loaded skill, every writer
 // launch is refused: an Agent call that starts a vibe worker or a vibe writer
@@ -33,23 +33,25 @@ import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { conversationSkill, hookRuntime, recordHookSkill } from "./hook-session-scope.mjs";
 import { loadedSkillEvidenceProblem, loadedSkillRequired } from "../lib/vibe/scripts/loaded-skill.mjs";
 import { pluginScriptProblems } from "../lib/vibe/scripts/plugin-script-references.mjs";
-import { vibeRoot, vibeRootOrNull, vibeScriptPath } from "../shared/vibe-install.mjs";
+import { VIBE_NAME_PATTERN, vibeSkillOf, vibeSkillPattern } from "../shared/plugin-roots.mjs";
+import { vibeRoot, vibeRootOrNull, vibeScriptPath, vibeSkill } from "../shared/vibe-install.mjs";
 import { existsSync } from "node:fs";
 
 const PLUGIN_VERSION_SCRIPT = "skills/vibe/scripts/plugin-version.mjs";
-export const CHECKED_SKILLS = Object.freeze(["vibe:vibe", "vibe:fleet-orchestrator"]);
-const STARTS_SKILL = /^\s*\/(vibe:vibe|vibe:fleet-orchestrator)(?:\s|$)/;
-const CODEX_SKILL_START = /^\s*\$(?:vibe:)?(vibe|fleet-orchestrator)(?:\s|$)/;
-// Any vibe-plugin skill started from a prompt: `/vibe:<name>` in Claude Code, `$<name>` or `$vibe:<name>` in Codex.
-const ANY_SKILL_START = /^\s*(?:\/vibe:|\$(?:vibe:)?)([a-z0-9-]+)(?:\s|$)/;
+/** The skills whose start runs the check, by their name within either vibe plugin. */
+const CHECKED_SKILLS = Object.freeze(["vibe", "fleet-orchestrator"]);
+const STARTS_SKILL = new RegExp(`^\\s*\\/(${vibeSkillPattern("(?:vibe|fleet-orchestrator)")})(?:\\s|$)`);
+const CODEX_SKILL_START = new RegExp(`^\\s*\\$(?:${VIBE_NAME_PATTERN}:)?(vibe|fleet-orchestrator)(?:\\s|$)`);
+// Any vibe-plugin skill started from a prompt: `/<vibe>:<name>` in Claude Code, `$<name>` or `$<vibe>:<name>` in Codex.
+const ANY_SKILL_START = new RegExp(`^\\s*(?:\\/${VIBE_NAME_PATTERN}:|\\$(?:${VIBE_NAME_PATTERN}:)?)([a-z0-9-]+)(?:\\s|$)`);
 const CONVERSATION = /^[A-Za-z0-9_.:-]{1,128}$/;
 const INTERPRETERS = new Set(["node", "bash", "sh", "zsh"]);
-const VIBE_WORKER = /^vibe:vibe-[a-z0-9-]+-worker$/;
-const INVOKES_VIBE = /\bvibe:vibe\b/;
+const VIBE_WORKER = /^vibe-[a-z0-9-]+-worker$/;
+const INVOKES_VIBE = new RegExp(`\\b${vibeSkillPattern("vibe")}\\b`);
 
 /** Whether an Agent call starts a vibe worker or a writer that runs the vibe skill. */
 export function launchesWriterAgent(input) {
-  return (typeof input?.subagent_type === "string" && VIBE_WORKER.test(input.subagent_type))
+  return VIBE_WORKER.test(vibeSkillOf(input?.subagent_type) ?? "")
     || (typeof input?.prompt === "string" && INVOKES_VIBE.test(input.prompt));
 }
 
@@ -82,7 +84,7 @@ export function versionProblem(conversation, home = os.homedir(), cwd = process.
 /** PreToolUse on Skill: starting vibe or fleet-orchestrator marks the conversation pending. Never decides. */
 export function pluginVersionSkillStart(event, home = os.homedir()) {
   recordHookSkill(event?.session_id, event?.tool_input?.skill, home, new Date(), hookRuntime(event), eventCwd(event));
-  if (CHECKED_SKILLS.includes(event?.tool_input?.skill) && CONVERSATION.test(event?.session_id ?? "")) markPending(event.session_id, home);
+  if (CHECKED_SKILLS.includes(vibeSkillOf(event?.tool_input?.skill)) && CONVERSATION.test(event?.session_id ?? "")) markPending(event.session_id, home);
   return null;
 }
 
@@ -95,17 +97,17 @@ export function pluginVersionPromptStart(event, home = os.homedir()) {
   if (!CONVERSATION.test(event?.session_id ?? "")) return null;
   const prompt = String(event?.prompt ?? "");
   const codex = CODEX_SKILL_START.exec(prompt)?.[1];
-  const skill = (codex ? `vibe:${codex}` : STARTS_SKILL.exec(prompt)?.[1]) ?? shippedSkillStart(prompt, eventCwd(event));
+  const skill = (codex ? vibeSkill(codex, eventCwd(event)) : STARTS_SKILL.exec(prompt)?.[1]) ?? shippedSkillStart(prompt, eventCwd(event));
   if (skill) recordHookSkill(event.session_id, skill, home, new Date(), hookRuntime(event), eventCwd(event));
   if (STARTS_SKILL.test(prompt)) markPending(event.session_id, home);
   return null;
 }
 
-/** `vibe:<name>` for a prompt that starts a skill the installed vibe ships, else null. */
+/** `<vibe>:<name>` for a prompt that starts a skill the installed vibe ships, else null. */
 function shippedSkillStart(prompt, cwd) {
   const name = ANY_SKILL_START.exec(prompt)?.[1];
   const root = name ? vibeRootOrNull(cwd) : null;
-  return root && existsSync(path.join(root, "skills", name, "SKILL.md")) ? `vibe:${name}` : null;
+  return root && existsSync(path.join(root, "skills", name, "SKILL.md")) ? vibeSkill(name, cwd) : null;
 }
 
 /** Whether the event's conversation started vibe or fleet-orchestrator: its transcript, hook record or startup record. */

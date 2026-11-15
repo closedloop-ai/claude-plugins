@@ -59,52 +59,50 @@ def default_codex_model() -> str:
 
 
 ARMS = ("provider", "generic", "provider-installed")
-# The arms that install the provider. `provider` installs vibe text with the provider stubs already resolved;
-# `provider-installed` installs the raw text and binds the provider through the real version check, as a session does.
+# The arms that model symphony-alpha: both install the committed built folder as `vibe`, as a release ships it.
+# `provider-installed` also binds its provider through the real version check before the model starts; `provider`
+# leaves the binding to the model's own session.
 PROVIDER_ARMS = ("provider", "provider-installed")
-PROVIDER_PLUGIN = "vibe-closedloop-provider"
+BUILT_VIBE = "vibe-closedloop"
 EVAL_MARKETPLACE = "vibe-eval"
-PROVIDER_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+# symphony-alpha commits this opt-in (abe87d83), so the working copy of a case that models it holds it too.
+OPT_IN_FILE = ".closedloop-ai/vibe-recipes.json"
+OPT_IN_TEXT = '{ "schema": 1, "provider": "vibe-closedloop-provider" }\n'
 
 
-def payload_plugins(plugins: Path, arm: str = "provider") -> list[str]:
-    """The plugins a payload installs: vibe and closedloop-core, vibe-core and (in a provider arm) the provider
-    where the payload has them (older ones do not). The generic arm installs no provider, as in a repository
-    vibe has no provider for."""
-    if arm not in ARMS:
-        raise ValueError(f"unknown eval arm {arm}")
-    return (["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
-            + ([PROVIDER_PLUGIN] if arm in PROVIDER_ARMS and (plugins / PROVIDER_PLUGIN).is_dir() else []))
+def payload_plugins(plugins: Path) -> list[str]:
+    """The plugins a payload installs: vibe and closedloop-core, and vibe-core where the payload has it (older ones
+    do not). No arm installs a separate provider plugin, not even from an older payload that has one."""
+    return ["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
 
 
-ASSEMBLE_PROVIDER_TEXT = r"""
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-const [plugins] = process.argv.slice(1);
-const { assembleProviderText, readContract } = await import(join(plugins, "vibe-core/lib/vibe/scripts/provider.mjs"));
-const root = join(plugins, "vibe-closedloop-provider");
-const contract = readContract(root);
-if (!contract) throw new Error("the provider snapshot has no contract vibe speaks");
-const binding = { state: "bound", name: contract.name, root, capabilities: Object.keys(contract.capabilities) };
-const walk = (dir) => readdirSync(dir).flatMap((name) => {
-  const path = join(dir, name);
-  return statSync(path).isDirectory() ? walk(path) : path.endsWith(".md") ? [path] : [];
-});
-for (const file of walk(join(plugins, "vibe"))) {
-  const text = readFileSync(file, "utf8");
-  const assembled = assembleProviderText(text, binding);
-  if (assembled !== text) writeFileSync(file, assembled);
-}
-"""
+def payload_source(plugin: Path, name: str, arm: str) -> Path:
+    """The folder the market copy of `name` is made from: in a provider arm vibe is the committed built folder beside
+    `plugin` (an older payload has none and installs `plugin`), and anywhere else each plugin's own folder."""
+    if name != "vibe":
+        return plugin.parent / name
+    built = plugin.parent / BUILT_VIBE
+    return built if arm in PROVIDER_ARMS and built.is_dir() else plugin
 
 
-def assemble_provider_text(plugins: Path, budget: Budget) -> None:
-    """The provider arm models a session bound to the provider: the installed vibe text has its provider stubs resolved,
-    as the bound session reads them, since a rehearsal cannot run the provider script itself."""
-    subprocess.check_output(
-        ["node", "--input-type=module", "-e", ASSEMBLE_PROVIDER_TEXT, str(plugins)],
-        text=True, timeout=min(60, budget.remaining()),
-    )
+def name_manifests(plugin: Path, name: str) -> None:
+    """Give a snapshot's manifests the marketplace entry's name, since Codex refuses an entry whose name differs from
+    its manifest's. A manifest that already carries it is left byte for byte."""
+    for relative in MANIFESTS:
+        manifest = plugin / relative
+        if not manifest.is_file():
+            continue
+        data = json.loads(manifest.read_text())
+        if data.get("name") != name:
+            data["name"] = name
+            manifest.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def write_opt_in(work: Path) -> None:
+    """Commit-equivalent arm setup: the case's working copy gets the opt-in file the modelled repository holds."""
+    target = work / OPT_IN_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(OPT_IN_TEXT)
 
 
 def case_arm(case: dict[str, Any]) -> str:
@@ -117,20 +115,9 @@ def runs_case(arm: str, case: dict[str, Any]) -> bool:
     return case_arm(case) == ("provider" if arm == "provider-installed" else arm)
 
 
-def provider_skill_id(provider: Path) -> str:
-    """The provider's skill as a harness lists it, `<plugin>:<skill>`, from its own provider.json."""
-    contract = json.loads((provider / "provider.json").read_text())
-    name, skill = contract.get("name"), contract.get("skill")
-    if not isinstance(name, str) or not isinstance(skill, str) or not PROVIDER_NAME.fullmatch(name) \
-            or not PROVIDER_NAME.fullmatch(skill):
-        raise ValueError("the provider snapshot's provider.json names no skill")
-    return f"{name}:{skill}"
-
-
-
 def installed_version_script(codex_home: Path, market: Path) -> Path:
-    """The version check of the vibe Codex installed from the eval marketplace (the copy the model's session runs, so
-    the bind-time text names that vibe), or the marketplace copy when Codex keeps none of its own."""
+    """The version check of the vibe Codex installed from the eval marketplace (the copy the model's session runs), or
+    the marketplace copy when Codex keeps none of its own."""
     installed = sorted(codex_home.glob(f"plugins/cache/{EVAL_MARKETPLACE}/vibe/*/skills/vibe/scripts/plugin-version.mjs"))
     return installed[0] if len(installed) == 1 else market / "plugins/vibe/skills/vibe/scripts/plugin-version.mjs"
 
@@ -159,9 +146,8 @@ def bind_installed_provider(
     name: str, work: Path, output: Path, env: dict[str, str], budget: Budget, codex_binary: str = "codex",
 ) -> dict[str, Any]:
     """The provider-installed arm binds as a session does: the real version check, once, in the case's folder before
-    the model starts, with every provider connection answered and the provider's skill listed. It runs under the
-    HOME and CODEX_HOME the model's shell sees, so its binding and bind-time provider text are where the session
-    reads them. Its output is kept with the run's evidence; a check that did not bind fails the case."""
+    the model starts, with every provider connection answered. It runs under the
+    HOME and CODEX_HOME the model's shell sees, so its binding is where the session reads it. Its output is kept with the run's evidence; a check that did not bind fails the case."""
     market = output / "market"
     checks = output / "provider-checks"
     checks.mkdir(exist_ok=True)
@@ -170,7 +156,7 @@ def bind_installed_provider(
         command(
             ["node", str(installed_version_script(Path(env["CODEX_HOME"]), market)), "check", "--runtime", "codex",
              "--codex", codex_binary, "--closedloop", "connected", "--graph", "connected",
-             "--skill-listed", provider_skill_id(market / "plugins" / PROVIDER_PLUGIN), "--latest-base", base],
+             "--latest-base", base],
             work, env, budget, 90, record,
         )
     checked = json.loads(record.read_text())
@@ -359,7 +345,9 @@ def install(
     codex_binary: str = "codex", arm: str = "provider",
 ) -> dict[str, str]:
     """Install worktree snapshots in a private CODEX_HOME, never the user's live install."""
-    home = Path(tempfile.mkdtemp(prefix="vibe-codex-home-"))
+    if arm not in ARMS:
+        raise ValueError(f"unknown eval arm {arm}")
+    home = private_dir("vibe-codex-home-")
     home.chmod(0o700)
     auth_home = Path(env.get("CODEX_HOME", str(Path.home() / ".codex")))
     auth = auth_home / "auth.json"
@@ -378,15 +366,16 @@ def install(
         catalog = market / ".agents/plugins"
         catalog.mkdir(parents=True)
         entries = []
-        for name in payload_plugins(plugin.parent, arm):
-            source = plugin if name == "vibe" else plugin.parent / name
+        for name in payload_plugins(plugin.parent):
             target = market / "plugins" / name
             target.parent.mkdir(exist_ok=True)
             # Both runtimes use the same Git-selected, symlink-confined copier.
             subprocess.check_output(
-                ["node", str(IDENTITY), "copy", str(source), str(target)],
+                ["node", str(IDENTITY), "copy", str(payload_source(plugin, name, arm)), str(target)],
                 text=True, timeout=min(60, budget.remaining()),
             )
+            if name == "vibe" and arm == "generic":
+                name_manifests(target, name)
             entries.append(
                 dict(
                     name=name,
@@ -398,8 +387,6 @@ def install(
         (catalog / "marketplace.json").write_text(
             json.dumps({"name": EVAL_MARKETPLACE, "plugins": entries})
         )
-        if arm == "provider" and (market / "plugins" / PROVIDER_PLUGIN).is_dir():
-            assemble_provider_text(market / "plugins", budget)
         subprocess.check_output(
             ["node", str(IDENTITY), "copy", str(plugin / "evals"), str(output / "suite")],
             text=True, timeout=min(60, budget.remaining()),
@@ -418,7 +405,7 @@ def install(
             60,
             output / "marketplace.json",
         )
-        for name in payload_plugins(market / "plugins", arm):
+        for name in payload_plugins(market / "plugins"):
             command(
                 [codex_binary, "plugin", "add", f"{name}@{EVAL_MARKETPLACE}", "--json"],
                 output,
@@ -768,6 +755,8 @@ def run_case(
                 30,
                 work / "scaffold.log",
             )
+        if arm in PROVIDER_ARMS:
+            write_opt_in(work)
         if arm == "provider-installed":
             bind_installed_provider(case["name"], work, output, env, budget, codex_binary)
         skill = next(name for name in SKILLS if "vibe:" + name in case["prompt"] or name == "vibe")
@@ -924,9 +913,9 @@ def main() -> int:
         help="Skip paid wording grading while retaining every deterministic check",
     )
     parser.add_argument("--arm", choices=ARMS, default="provider",
-                        help="provider: install the provider with its text resolved and run its cases; generic: no "
-                             "provider, the generic cases; provider-installed: install the provider and the raw vibe "
-                             "text, bind it through the real version check before each case, and run the provider cases")
+                        help="provider: install the built vibe-closedloop folder as vibe and run the provider cases; "
+                             "generic: install plugins/vibe as vibe, the generic cases; provider-installed: as provider, "
+                             "and bind the provider through the real version check before each case")
     parser.add_argument("--concurrency", type=int, choices=[1, 2], default=2)
     parser.add_argument("--max-seconds", type=int, default=1800)
     args = parser.parse_args()
@@ -954,7 +943,7 @@ def main() -> int:
     output = (
         args.output.resolve()
         if args.output
-        else Path(tempfile.mkdtemp(prefix="vibe-codex-eval-"))
+        else private_dir("vibe-codex-eval-")
     )
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
@@ -1028,6 +1017,12 @@ def main() -> int:
             shutil.rmtree(private_home, ignore_errors=True)
         for signum, handler in prior_handlers.items():
             signal.signal(signum, handler)
+
+
+def private_dir(prefix: str) -> Path:
+    """A new temporary directory by its real path. macOS's temporary root sits under the /var symlink, and Codex and
+    node report real paths (a script's main guard compares them with argv), so a path through the link matches none."""
+    return Path(tempfile.mkdtemp(prefix=prefix)).resolve()
 
 
 if __name__ == "__main__":

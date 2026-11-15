@@ -35,10 +35,10 @@
 // repository's lane report and its e2e path filter.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { GENERIC_AREAS, sessionAreas } from "./area-paths.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
@@ -369,7 +369,7 @@ function main(argv) {
   throw new Error("usage: vibe-triage.mjs classify|check (see the header of this file)");
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

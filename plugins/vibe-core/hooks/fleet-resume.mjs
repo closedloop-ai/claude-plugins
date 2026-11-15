@@ -21,14 +21,16 @@ import { validChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 import { defaultHome, FLEET_HOME_SCRIPT, resumeLines } from "../lib/fleet-orchestrator/scripts/fleet-home.mjs";
 import { loadsSkill, readTranscript } from "./skill-transcript.mjs";
 import { readHookSkill } from "./hook-session-scope.mjs";
-import { vibeScriptPath } from "../shared/vibe-install.mjs";
+import { vibeScriptPath, vibeSkill } from "../shared/vibe-install.mjs";
 
 const ENTRY_HEADING = /^## /m;
 const MAX_ENTRY_CHARS = 3000;
 // Claude Code re-attaches only the first 5,000 tokens of each invoked skill after compaction
 // (code.claude.com/docs/en/skills, "Skill content lifecycle"); invoking it again appends the full copy
 // and gives the plugin-version guard the load evidence it checks (operator ruling, 2026-11-11).
-export const REINVOKE_LINE = "First invoke the fleet-orchestrator skill again (the Skill tool with `vibe:fleet-orchestrator` in Claude Code, `$fleet-orchestrator` in Codex): after compaction only the first 5,000 tokens of it are left in context.";
+export function reinvokeLine(cwd = process.cwd()) {
+  return `First invoke the fleet-orchestrator skill again (the Skill tool with \`${vibeSkill("fleet-orchestrator", cwd)}\` in Claude Code, \`$fleet-orchestrator\` in Codex): after compaction only the first 5,000 tokens of it are left in context.`;
+}
 
 /** The SessionStart result after a compaction in an orchestrator session: its reading list as context, or null. */
 export function fleetResume(event, env = process.env) {
@@ -47,7 +49,7 @@ export function fleetResume(event, env = process.env) {
   const entry = lastEntry(path.join(programDir, "resume-log.md"));
   return {
     context: [
-      REINVOKE_LINE,
+      reinvokeLine(event.cwd),
       `Your context was just compacted, and the summary may be wrong or incomplete. Before any other action, run \`node "${vibeScriptPath(FLEET_HOME_SCRIPT)}" resume\` and read each READ file in order; it printed:`,
       ...lines,
       ...(entry ? ["", "The newest resume-log entry:", entry] : []),

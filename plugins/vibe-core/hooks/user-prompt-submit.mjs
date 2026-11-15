@@ -6,9 +6,10 @@
 // Usage (hook): reads the UserPromptSubmit JSON on stdin; prints additional context or nothing.
 
 import { awayProtocol } from "./away-protocol.mjs";
-import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
 import { pluginVersionPromptStart } from "./plugin-version-guard.mjs";
 import { programChange } from "./program-change.mjs";
+import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 /** The guards every prompt runs, in order. */
 export const USER_PROMPT_SUBMIT_GUARDS = Object.freeze([
@@ -22,4 +23,4 @@ export function userPromptSubmit(event, report) {
   return mergeResults("UserPromptSubmit", runGuards(USER_PROMPT_SUBMIT_GUARDS, event, report));
 }
 
-if (isMain(import.meta.url)) runHookScript("user-prompt-submit", userPromptSubmit);
+if (isEntryPoint(import.meta.url)) runHookScript("user-prompt-submit", userPromptSubmit);

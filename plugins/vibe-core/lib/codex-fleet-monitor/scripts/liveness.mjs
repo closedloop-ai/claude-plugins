@@ -8,10 +8,10 @@
 // `codex app-server proxy`, so a single file is all a remote host needs.
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -369,10 +369,8 @@ export function exitAfterTotalTimeout() {
   setTimeout(() => process.exit(1), TOTAL_TIMEOUT_MS).unref();
 }
 
-/** Compare real paths: a symlinked directory (macOS /tmp) makes argv[1] differ from the module url. */
-export function isEntryPoint(moduleUrl) {
-  return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(moduleUrl));
-}
+// Installed vibe releases load isEntryPoint from here through their vibe-core loader; new code imports it from shared/plugin-roots.mjs.
+export { isEntryPoint };
 
 /** The flag a failed turn or thread gets; recover.mjs acts on TRANSIENT and SYSTEM-ERROR. */
 export const Failure = Object.freeze({

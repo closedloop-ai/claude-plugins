@@ -4,6 +4,7 @@
 // or another skill's session never gets that skill's refusals or reminders.
 
 import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { VIBE_NAME_PATTERN, vibeSkillPattern } from "../shared/plugin-roots.mjs";
 
 /**
  * How much of a transcript a hook reads: all of it up to TRANSCRIPT_LIMIT_BYTES, else its first
@@ -18,16 +19,16 @@ const TAIL_BYTES = 48 * 1024 * 1024;
 /**
  * Each skill's load markers, never a mention of its files: Claude Code's skill base line
  * ("Base directory for this skill: <...>/skills/<name>"), a Skill tool call, and Codex's
- * injected `<skill><name>vibe:<name></name>` block. A plain Read or a file listing of
- * skills/vibe/SKILL.md once made any session in the plugin's own repository a vibe session
- * (PR #350 review).
+ * injected `<skill><name><plugin>:<name></name>` block, under either vibe plugin name. A plain
+ * Read or a file listing of skills/vibe/SKILL.md once made any session in the plugin's own
+ * repository a vibe session (PR #350 review).
  */
 const SKILL_MARKERS = Object.freeze({
-  vibe: /Base directory for this skill: [^"\\\n]*\/skills\/vibe(?=\\n|\n|"|$)|"skill":\s*"vibe:vibe"|<name>vibe:vibe<\/name>/gm,
-  "fleet-orchestrator": /Base directory for this skill: [^"\\\n]*\/skills\/fleet-orchestrator(?=\\n|\n|"|$)|"skill":\s*"vibe:fleet-orchestrator"|<name>vibe:fleet-orchestrator<\/name>/gm,
+  vibe: skillMarker("skills\\/vibe", "vibe"),
+  "fleet-orchestrator": skillMarker("skills\\/fleet-orchestrator", "fleet-orchestrator"),
   // Any skill of the vibe plugin: its base line under the plugin's own folder (a checkout's
-  // plugins/vibe, or vibe/<version> in a harness cache), a Skill call, or a Codex skill block.
-  "vibe-plugin": /Base directory for this skill: [^"\\\n]*\/(?:plugins\/vibe|vibe\/[^/"\\\n]+)\/skills\/[a-z0-9-]+(?=\\n|\n|"|$)|"skill":\s*"vibe:[a-z0-9-]+"|<name>vibe:[a-z0-9-]+<\/name>/gm,
+  // plugins/vibe, or <vibe name>/<version> in a harness cache), a Skill call, or a Codex skill block.
+  "vibe-plugin": skillMarker(`(?:plugins\\/vibe|${VIBE_NAME_PATTERN}\\/[^/"\\\\\\n]+)\\/skills\\/[a-z0-9-]+`, "[a-z0-9-]+"),
 });
 
 /** The transcript text at `file` (both ends of one past TRANSCRIPT_LIMIT_BYTES), or null when there is none to read. */
@@ -81,4 +82,10 @@ function lastLoad(text, skill) {
   let position = -1;
   for (const match of text.matchAll(SKILL_MARKERS[skill])) position = match.index;
   return position;
+}
+
+/** The load markers of a skill whose base directory ends in `base` and whose id is `<either vibe name>:<skill>`. */
+function skillMarker(base, skill) {
+  const id = vibeSkillPattern(skill);
+  return new RegExp(`Base directory for this skill: [^"\\\\\\n]*\\/${base}(?=\\\\n|\\n|"|$)|"skill":\\s*"${id}"|<name>${id}<\\/name>`, "gm");
 }

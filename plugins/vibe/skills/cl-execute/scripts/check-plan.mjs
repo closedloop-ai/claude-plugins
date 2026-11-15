@@ -10,7 +10,7 @@
 // rules here are cl-execute's own.
 
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 const REVISION_NARRATION = [
   /\b(?:previous|prior|earlier|last|original) (?:version|draft|revision|iteration) of (?:this|the) plan\b/i,
@@ -344,6 +344,6 @@ function main(argv) {
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

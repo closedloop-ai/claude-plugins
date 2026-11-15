@@ -30,8 +30,10 @@ import {
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 import { briefProviderProblem, briefWithProviderLine, launchCwd, recoveryTurnProblem, threadCwd, vibeBriefTicket, VIBE_PROMPT, vibeHookTrustProblem } from './writer-launch.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
-const { connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, readThreadState, summarize } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
+const { connectViaProxy, daemonSocket, exitAfterTotalTimeout, readThreadState, summarize } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 const { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
@@ -57,7 +59,7 @@ const REVERIFY = /^\s*Re-verify:\s*\S/m;
 /** A root hint is transport data, never authority: verify it against this host's enabled installation. */
 export function verifiedPluginRoot(requested, { list = () => JSON.parse(execFileSync('codex', ['plugin', 'list', '--json'],
   { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] })) } = {}) {
-  const installed = list().installed?.filter(row => row.name === 'vibe' && row.installed === true && row.enabled === true);
+  const installed = list().installed?.filter(row => row.name === OWN_PLUGIN && row.installed === true && row.enabled === true);
   if (installed?.length !== 1 || typeof installed[0].source?.path !== 'string') throw new Error('cannot establish one verified installed root for vibe');
   const root = realpathSync(installed[0].source.path);
   if (requested && (!existsSync(requested) || realpathSync(requested) !== root)) throw new Error('--plugin-root differs from the verified installed root');

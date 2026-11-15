@@ -1,7 +1,7 @@
 # Templates
 
 <!-- provider-rule -->
-Lines that start `> Provider` follow `../../vibe/references/provider-text.md`.
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
 <!-- end provider-rule -->
 
 Fill every `<field>`; delete a line only when it does not apply.
@@ -58,7 +58,7 @@ helper worker ID. The receipt reader checks that thread's completed turn and
 MCP items; the helper's tool-call list is informational only.
 
 ```
-Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
+Invoke vibe-generic:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
 Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
 Takeover: a Codex vibe session wrote this branch and stopped (<usage-limit|runtime-unavailable>). Resume that same vibe session and, before any other step, move its writer to you with vibe's harness switch (`writer-state.mjs migrate` with `harnessSwitch`, vibe's quality loop, "A writer whose runtime cannot run"). Never start a second session on this branch. Continue from its last pushed head <sha>; iterate uncommitted until push-ready. Re-verify every "done" claim in its report, change log and thread replies with a test or a measurement before building on it.

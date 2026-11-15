@@ -17,12 +17,12 @@
 import { existsSync, readdirSync, readFileSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import { parseArgs, isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { workflowLaneDefinitions } from "../../vibe/scripts/dist/main-sync.mjs";
 import { laneSourceShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { agentsTestCommand } = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
@@ -175,7 +175,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   exitOnProviderBroken();
   process.exitCode = main(process.argv.slice(2));
 }
