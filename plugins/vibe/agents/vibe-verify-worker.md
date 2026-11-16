@@ -216,8 +216,12 @@ At handoff only, drive the running app on the final commit headless with
 Playwright, or with the browser harness the repository documents, and for each
 screen the session touched:
 
-1. Open it at its real route, wait for it to settle, and capture it, its
-   console errors and page errors and its failed requests.
+1. Open it at its real route and wait for it to settle. Capture it when the
+   session has a reference image for that screen, or when
+   `../skills/vibe/references/quality-loop-visual-qa.md`, "When to capture
+   screenshots", calls for one, after `capture-guard.mjs begin` admits it and
+   with `capture-guard.mjs end` after it. Read its console errors and page
+   errors and its failed requests.
 2. When the session recorded reference images (`referenceImages`), open each
    as an image (`Read` in Claude Code, `view_image` in Codex) beside the
    matching capture and report every visible difference in shadow,

@@ -570,13 +570,14 @@ for a UI change, against the session's acceptance criteria
 (`../vibe/references/quality-loop.md`, "Visual QA during the session", "What
 it checks"), and any logical or product-contract QA skill its docs name for a
 data surface. A pass the repository does not ship is recorded as unsupported,
-never as passed. For every touched metric, summary, or card surface, visual
-QA compares the card's container, width, order and responsive placement with
-the established grid. Counting cards is never layout evidence. Confirmed
+never as passed. Confirmed
 findings resume the SAME writer in fix mode for every touched surface, even
 when they predate the branch, already exist on main or were called the
 component owner's decision; approved copy is reused and unsourced wording is
-escalated. Then steps 3 to 6 run again on the result. Their reports feed the
+escalated. Then steps 3 to 6 run again on the result, with visual QA as one
+pass scoped to the changes since the last reviewed capture
+(`../vibe/references/quality-loop-visual-qa.md`, "When to capture
+screenshots"). Their reports feed the
 Design Review evidence in step 8. Owned prototype sessions keep their
 canonical single design review instead.
 <!-- end generic: qa-passes -->
