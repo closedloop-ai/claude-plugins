@@ -224236,7 +224236,7 @@ function deploymentHost(host) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module2 = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding: sessionBinding2, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module2;
+var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, knownProviderContracts, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr: providerDataOr2, providerGuardRule, providerPath, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding: sessionBinding2, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module2;
 
 // src/contracts.ts
 var TRACKER_SERVICE = "tracker";
@@ -225514,7 +225514,7 @@ import { fileURLToPath as fileURLToPath3, pathToFileURL as pathToFileURL2 } from
 import path3 from "node:path";
 import { parseArgs } from "node:util";
 var { git: git4, readSessionRecord: readSessionRecord3 } = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { installedProviders: installedProviders2, providerDataOr: providerDataOr3, sessionBinding: sessionBinding3 } = await vibeCore("lib/vibe/scripts/provider.mjs");
+var { knownProviderContracts: knownProviderContracts2, providerDataOr: providerDataOr3, sessionBinding: sessionBinding3 } = await vibeCore("lib/vibe/scripts/provider.mjs");
 var { scriptExitCode: scriptExitCode2 } = await vibeCore("lib/vibe/scripts/provider.mjs");
 var ARTIFACT_ROOT = /^\.[a-z0-9][a-z0-9._-]*\/$/;
 var RESERVED_ROOTS = /* @__PURE__ */ new Set([".git/", ".claude/", ".codex/", ".agents/"]);
@@ -225531,13 +225531,13 @@ function knownLocalPlanPrefixes(binding) {
   const prefixes2 = /* @__PURE__ */ new Set();
   const bound = localPlanPrefix(binding);
   if (bound) prefixes2.add(bound);
-  let installed = [];
+  let known = [];
   try {
-    installed = installedProviders2();
+    known = knownProviderContracts2();
   } catch {
-    installed = [];
+    known = [];
   }
-  for (const provider of installed) {
+  for (const provider of known) {
     const root = provider.contract?.data?.recipes?.artifactRoot;
     if (typeof root === "string" && ARTIFACT_ROOT.test(root) && !RESERVED_ROOTS.has(root)) prefixes2.add(`${root}vibe-plans/`);
   }

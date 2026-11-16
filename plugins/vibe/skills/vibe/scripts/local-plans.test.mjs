@@ -38,8 +38,9 @@ test("plans live in the private git directory without a provider recipe, and in 
 
 test("the plan folder of the provider vibe carries is known, bound or not, and a committed plan there blocks publication", (t) => {
   const { root, git } = repo(t);
-  // This checkout's vibe carries no provider, so only a bound one names a folder; a vibe built with one knows it unbound.
-  assert.deepEqual(knownLocalPlanPrefixes(null), []);
+  // This checkout's plugins/vibe carries no provider, but the ClosedLoop build beside it does: its folder is known unbound.
+  assert.deepEqual(knownLocalPlanPrefixes(null), [".closedloop-ai/vibe-plans/"]);
+  assert.deepEqual(knownLocalPlanPrefixes({ state: "none" }), [".closedloop-ai/vibe-plans/"]);
   assert.deepEqual(knownLocalPlanPrefixes(PROVIDER_BINDING), [".closedloop-ai/vibe-plans/"]);
   const built = copyVibe(path.join(root, ".git", "built"), { provider: true });
   mkdirSync(path.join(root, ".closedloop-ai", "vibe-plans"), { recursive: true });

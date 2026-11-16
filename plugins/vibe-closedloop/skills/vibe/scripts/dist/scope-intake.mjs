@@ -257,7 +257,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module;
+var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, knownProviderContracts, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module;
 
 // src/cli.ts
 function providerAware(main2) {

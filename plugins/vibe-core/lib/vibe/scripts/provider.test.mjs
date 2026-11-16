@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  assembleProviderText, bindForRepository, boundWith, Capability, installedProviders, probeProvider, providerBlock, providerCandidate, providerData,
+  assembleProviderText, bindForRepository, boundWith, Capability, installedProviders, knownProviderContracts, probeProvider, providerBlock, providerCandidate, providerData,
   providerDataOr, providerPath, ProviderBroken, ProviderState, ProviderUnavailable, readContract, recordedBinding, ticketReference,
 } from "./provider.mjs";
 
@@ -536,4 +536,31 @@ test("in Claude Code, with both installed in either registry order, the build's 
     assert.deepEqual(installedProviders({ cwd: root, from: path.join(core, ".claude-plugin", "plugin.json") }).map((entry) => entry.root),
       [path.join(vibe, "provider")], order.join(" then "));
   }
+});
+
+test("the privacy guard knows a checkout's ClosedLoop build beside vibe-generic, while binding still finds no provider there", (t) => {
+  const plugins = path.join(tree(t), "plugins");
+  const core = plugin(path.join(plugins, "vibe-core"), "vibe-core", "1.0.5");
+  plugin(path.join(plugins, "vibe"), "vibe-generic", "2.3.4");
+  const build = plugin(path.join(plugins, "vibe-closedloop"), "vibe", "2.3.4");
+  write(path.join(build, "provider", "provider.json"), CONTRACT);
+  const from = path.join(core, ".codex-plugin", "plugin.json");
+  assert.deepEqual(knownProviderContracts({ cwd: plugins, from }).map((entry) => [entry.name, entry.root]),
+    [["acme-provider", path.join(build, "provider")]]);
+  assert.deepEqual(installedProviders({ cwd: plugins, from }), [], "a checkout looks up vibe-generic first, so nothing binds");
+  assert.equal(providerCandidate({ cwd: plugins, providers: installedProviders({ cwd: plugins, from }) }).state, ProviderState.None);
+});
+
+test("the privacy guard knows every vibe install's provider, enabled or not, and none where only vibe-generic is installed", (t) => {
+  const root = tree(t);
+  const { cache, vibe, from } = codexCache(root, { bundled: true });
+  write(path.join(root, "codex", "config.toml"), '[plugins."vibe@acme-market"]\nenabled = false\n');
+  const generic = plugin(path.join(cache, "vibe-generic", "2.3.4"), "vibe-generic", "2.3.4");
+  assert.deepEqual(installedProviders({ cwd: root, from }), [], "the disabled build binds nothing");
+  assert.deepEqual(knownProviderContracts({ cwd: root, from }).map((entry) => entry.root), [path.join(vibe, "provider")],
+    "the disabled build's provider is still known");
+  rmSync(vibe, { recursive: true, force: true });
+  assert.deepEqual(knownProviderContracts({ cwd: root, from }), [], "vibe-generic alone carries no provider");
+  assert.deepEqual(knownProviderContracts({ cwd: root, from: path.join(generic, ".codex-plugin", "plugin.json") }), [],
+    "from inside vibe-generic too");
 });

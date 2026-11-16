@@ -20,7 +20,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
-const { installedProviders, providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { knownProviderContracts, providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const ARTIFACT_ROOT = /^\.[a-z0-9][a-z0-9._-]*\/$/;
@@ -41,16 +41,16 @@ export function localPlanPrefix(binding) {
 }
 
 /**
- * Every in-worktree plan folder a session could have used in this repository: the bound provider's, and that of the
- * provider this vibe carries whether or not it is bound, so a plan written while bound stays private after it is not.
+ * Every in-worktree plan folder a session could have used in this repository: the bound provider's, and that of every
+ * provider built into a vibe installed here, bound or not, so a plan written while bound stays private after it is not.
  */
 export function knownLocalPlanPrefixes(binding) {
   const prefixes = new Set();
   const bound = localPlanPrefix(binding);
   if (bound) prefixes.add(bound);
-  let installed = [];
-  try { installed = installedProviders(); } catch { installed = []; }
-  for (const provider of installed) {
+  let known = [];
+  try { known = knownProviderContracts(); } catch { known = []; }
+  for (const provider of known) {
     const root = provider.contract?.data?.recipes?.artifactRoot;
     if (typeof root === "string" && ARTIFACT_ROOT.test(root) && !RESERVED_ROOTS.has(root)) prefixes.add(`${root}vibe-plans/`);
   }

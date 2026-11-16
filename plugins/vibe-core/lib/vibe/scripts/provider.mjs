@@ -24,7 +24,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { isEntryPoint, isVibePlugin, ownPluginRoot, pluginManifest } from "../../../shared/plugin-roots.mjs";
+import { isEntryPoint, isVibePlugin, ownPluginRoot, pluginManifest, siblingInstalls, VIBE_PLUGIN_NAMES } from "../../../shared/plugin-roots.mjs";
 import { vibeRoot as installedVibeRoot } from "../../../shared/vibe-install.mjs";
 import { harnessActor } from "./harness-identity.mjs";
 import { sessionRecordPath } from "./session-record.mjs";
@@ -189,6 +189,26 @@ export function installedProviders({ cwd = process.cwd(), from = import.meta.url
   const root = path.join(vibeRoot, BUNDLED_PROVIDER_DIR);
   const contract = readContract(root);
   return contract ? [{ name: contract.name, root, version: pluginManifest(vibeRoot)?.version ?? null, contract }] : [];
+}
+
+/**
+ * Every provider built into a vibe install found from `from`, under either vibe name, enabled or not: the vibe holding
+ * `from` when it is one, and each vibe beside it. Never for binding (installedProviders decides that); a privacy guard
+ * reads it so a folder a provider's session wrote while bound stays private once no session binds that provider.
+ */
+export function knownProviderContracts({ cwd = process.cwd(), from = import.meta.url } = {}) {
+  let vibeRoots;
+  try {
+    const own = ownPluginRoot(from);
+    vibeRoots = [...(isVibePlugin(own.name) ? [own.root] : []), ...siblingInstalls(VIBE_PLUGIN_NAMES, { from, cwd }).map((install) => install.root)];
+  } catch {
+    return [];
+  }
+  return [...new Set(vibeRoots)].flatMap((vibeRoot) => {
+    const root = path.join(vibeRoot, BUNDLED_PROVIDER_DIR);
+    const contract = readContract(root);
+    return contract ? [{ name: contract.name, root, version: pluginManifest(vibeRoot)?.version ?? null, contract }] : [];
+  });
 }
 
 /**
