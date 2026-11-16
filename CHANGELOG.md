@@ -44,6 +44,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - vibe now needs vibe-core 1.0.10 (`VIBE_CORE_MIN`) for the provider built into vibe, the `vibe-generic` name and the retired-command answers; the committed vibe-workers bundles are rebuilt with it, and the README version line and the Python and vibe-bench release-pin tests move to 1.1.88.
 - Measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs` against 1.1.86 (origin/main at this update, 8a858bb4), over each plugin's Markdown below its top directory: `plugins/vibe` is about 20552 words shorter, and the vibe-closedloop-provider folder adds about 41922 words. Counted the same way over `agents/` and `skills/`, the built `vibe` is about 3480 words shorter than 1.1.86 (it ships no evals), and it also carries those 41922 words as the references under `provider/`. Across all plugin Markdown, including eval prompts and graders and each plugin's README (`--path plugins`), with every file under the generated `plugins/vibe-closedloop` left out, this change is about 21891 words longer.
 
+### vibe-core v1.0.12
+
+#### Fixed
+- `remoteTrigger` reads an oversized RemoteTrigger reply, such as a routine `list` page, from the stream's structured tool result (ISS-14140). The client runs with `--no-session-persistence`, which leaves no saved file behind the `<persisted-output>` placeholder, so `cloud-worker.mjs check` failed with `CLOUD_RESULT_TOO_LARGE`. When the tool result is that placeholder and the same stream event carries `tool_use_result` with an integer `status` and a string `json`, the reply is read as `HTTP <status>` followed by that JSON. Without it the saved file is still read as before, and a partial save, a `<truncated-output>` wrapper or a placeholder whose file cannot be read still throws `CLOUD_RESULT_TOO_LARGE`. An inline result is used as it is.
+- `cloud-worker.test.mjs` adds a case built from a real `claude -p --no-session-persistence --output-format stream-json` list capture (the event's keys, the placeholder format, 20 routines with their 24 keys and captured sizes, every value synthetic), and the same placeholder without `tool_use_result` still throws `CLOUD_RESULT_TOO_LARGE`. `toolStream` takes optional extra event fields.
+
+### vibe v1.1.93
+
+#### Changed
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.93, with vibe-core 1.0.12.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.90 (origin/main at this update, 14d9016a).
+
 ### vibe-core v1.0.11
 
 #### Added

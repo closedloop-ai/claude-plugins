@@ -760,10 +760,10 @@ test('a RemoteTrigger create is sent only by the routine ledger', () => {
   assert.deepEqual(found, ['plugins/vibe-core/lib/vibe/scripts/cloud-routines.mjs']);
 });
 
-const persisted = (file, size = '272.0KB') => `<persisted-output>\nOutput too large (${size}). Full output saved to: ${file}\n\nPreview (first 2KB):\nHTTP 200\n{"data":[\n...\n</persisted-output>`;
-const toolStream = (action, content) => () => ({ status: 0, stderr: '', stdout: [
+const persisted = (file, size = '272.0KB', preview = 'HTTP 200\n{"data":[') => `<persisted-output>\nOutput too large (${size}). Full output saved to: ${file}\n\nPreview (first 2KB):\n${preview}\n...\n</persisted-output>`;
+const toolStream = (action, content, resultEvent = {}) => () => ({ status: 0, stderr: '', stdout: [
   JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'RemoteTrigger', id: 'tool_1', input: { action } }] } }),
-  JSON.stringify({ message: { content: [{ type: 'tool_result', tool_use_id: 'tool_1', content }] } }),
+  JSON.stringify({ ...resultEvent, message: { ...resultEvent.message, content: [{ type: 'tool_result', tool_use_id: 'tool_1', content }] } }),
 ].join('\n') });
 
 test('AC-7 and AC-9 (ISS-14140): a list reply larger than the inline limit is read from the file the harness saved it to', (t) => {
@@ -777,6 +777,45 @@ test('AC-7 and AC-9 (ISS-14140): a list reply larger than the inline limit is re
   const blocks = path.join(dir, 'blocks.json');
   writeFileSync(blocks, JSON.stringify([{ type: 'text', text }], null, 2));
   assert.equal(remoteTrigger('list', {}, { run: toolStream('list', [{ type: 'text', text: persisted(blocks) }]) }).data[19].id, 'trig_19');
+});
+
+// Item sizes and keys from a real `claude -p --no-session-persistence --output-format stream-json` list capture
+// (CLI 2.1.323), with every value replaced by a synthetic one.
+const CAPTURED_ITEM_SIZES = [3657, 6199, 6199, 7660, 7987, 7999, 8128, 8128, 8560, 9145, 9214, 9295, 9334, 9334, 9436, 9820, 10555, 10594, 10738, 11998];
+function capturedListItem(index, size) {
+  const item = (prompt) => ({
+    api_token_hint: null, created_at: '2026-11-01T00:00:00Z', created_kind: 'api', created_surface: 'cli', created_via: 'remote_trigger',
+    creator: { id: 'user_REDACTED' }, cron_expression: null, derived_state: { prompt }, enabled: false, enabled_plugins: [], ended_reason: null,
+    extra_marketplaces: [], id: `trig_REDACTED_${index}`,
+    job_config: { ccr: { environment_id: 'env_REDACTED', events: [{ data: { message: { content: prompt } } }] } },
+    last_fired_at: null, last_run: null, mcp_connections: [], name: `routine ${index}`, next_run_at: null, persist_session: false,
+    run_once_at: null, session_request: null, suspension_reason: null, updated_at: '2026-11-01T00:00:00Z',
+  });
+  const base = JSON.stringify(item('')).length;
+  return item('p'.repeat(Math.max(0, Math.floor((size - base) / 2))));
+}
+
+test('AC-7 (ISS-14140): the real CLI shape, a persisted-output placeholder whose saved file never exists, reads the list from the event\'s tool_use_result', (t) => {
+  const dir = fixtureHome(t);
+  const page = { data: CAPTURED_ITEM_SIZES.map((size, index) => capturedListItem(index, size)), has_more: true, next_cursor: 'cursor_REDACTED' };
+  assert.deepEqual(Object.keys(page.data[0]).sort(), ['api_token_hint', 'created_at', 'created_kind', 'created_surface', 'created_via', 'creator', 'cron_expression', 'derived_state', 'enabled', 'enabled_plugins', 'ended_reason', 'extra_marketplaces', 'id', 'job_config', 'last_fired_at', 'last_run', 'mcp_connections', 'name', 'next_run_at', 'persist_session', 'run_once_at', 'session_request', 'suspension_reason', 'updated_at']);
+  const json = JSON.stringify(page);
+  assert.ok(json.length > 100_000, 'larger than the RemoteTrigger inline limit of 100,000 characters');
+  const saved = path.join(dir, '.claude', 'projects', '-REDACTED', 'session_REDACTED', 'tool-results', 'toolu_REDACTED.txt');
+  assert.equal(existsSync(saved), false, '--no-session-persistence leaves no saved file');
+  const placeholder = persisted(saved, '166.5KB', `HTTP 200\n${json}`.slice(0, 2048));
+  const event = {
+    type: 'user', message: { role: 'user' }, parent_tool_use_id: null, session_id: 'session_REDACTED', uuid: 'uuid_REDACTED', timestamp: '2026-11-16T00:00:00.000Z',
+    tool_result_meta: [{ id: 'tool_1', permission_decision: { decision: 'accept', source: 'config', reason_type: 'rule' } }],
+    tool_use_result: { status: 200, json },
+  };
+  const listed = remoteTrigger('list', {}, { run: toolStream('list', placeholder, event) });
+  assert.deepEqual(listed.data.map((item) => item.id), CAPTURED_ITEM_SIZES.map((_, index) => `trig_REDACTED_${index}`));
+  assert.equal(listed.has_more, true);
+  assert.equal(listed.next_cursor, 'cursor_REDACTED');
+  // Without the structured result the same placeholder is the AC-8 case below: CLOUD_RESULT_TOO_LARGE.
+  const { tool_use_result: _dropped, ...bare } = event;
+  assert.throws(() => remoteTrigger('list', {}, { run: toolStream('list', placeholder, bare) }), { code: 'CLOUD_RESULT_TOO_LARGE' });
 });
 
 test('AC-8 and AC-9 (ISS-14140): a persisted-output wrapper that cannot be read is CLOUD_RESULT_TOO_LARGE, never sign-in advice', (t) => {
