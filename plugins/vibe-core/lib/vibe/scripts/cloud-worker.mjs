@@ -174,14 +174,17 @@ function tooLarge() { return cloudSetupError(CloudSetupError.ResultTooLarge, TOO
 /**
  * The tool result's text. A result over the tool's inline limit (100,000 characters) comes back as a
  * `<persisted-output>` placeholder naming the file the harness saved it to (ISS-14140: one routine list page
- * is about 272 KB); that file is read. A partial save, a `<truncated-output>` wrapper or a file that cannot be
- * read is CLOUD_RESULT_TOO_LARGE, never a sign-in problem.
+ * is about 272 KB). `--no-session-persistence` leaves no saved file, so the structured result the same stream
+ * event carries (`tool_use_result: { status, json }`, the untruncated reply) is used first; the saved file is
+ * read only when that is absent. A partial save, a `<truncated-output>` wrapper or a file that cannot be read
+ * is CLOUD_RESULT_TOO_LARGE, never a sign-in problem.
  */
-function toolResultText(body) {
+function toolResultText(body, structured) {
   const head = body.trimStart();
   if (head.startsWith("<truncated-output>")) throw tooLarge();
   if (!head.startsWith("<persisted-output>")) return body;
   if (/persist limit; only the first/.test(head)) throw tooLarge();
+  if (Number.isInteger(structured?.status) && typeof structured.json === "string") return `HTTP ${structured.status}\n${structured.json}`;
   const file = /Full output saved to: (.+)$/m.exec(head)?.[1]?.trim();
   if (!file || !path.isAbsolute(file)) throw tooLarge();
   let text;
@@ -212,6 +215,7 @@ export function remoteTrigger(action, payload, { run = runCommand, cwd, intent, 
   if (result.status !== 0) throw new Error(`Claude RemoteTrigger ${action} failed: ${firstLine(result.stderr || result.error?.message || result.stdout)}`);
   let toolId;
   let toolResult;
+  let structured;
   for (const line of result.stdout.split("\n")) {
     if (!line.trim()) continue;
     let event;
@@ -222,11 +226,14 @@ export function remoteTrigger(action, payload, { run = runCommand, cwd, intent, 
         if (toolId || !isDeepStrictEqual(item.input, sent)) throw new Error(`RemoteTrigger ${action} called an unexpected action`);
         toolId = item.id;
       }
-      if (item?.type === "tool_result" && item.tool_use_id === toolId) toolResult = item.content;
+      if (item?.type === "tool_result" && item.tool_use_id === toolId) {
+        toolResult = item.content;
+        structured = event.tool_use_result;
+      }
     }
   }
   if (!toolId || !toolResult) throw new Error(`RemoteTrigger ${action} returned no verified tool result`);
-  const body = toolResultText(typeof toolResult === "string" ? toolResult : Array.isArray(toolResult) ? toolResult.map((item) => item.text ?? "").join("\n") : "");
+  const body = toolResultText(typeof toolResult === "string" ? toolResult : Array.isArray(toolResult) ? toolResult.map((item) => item.text ?? "").join("\n") : "", structured);
   const [statusLine, jsonLine] = body.split("\n");
   if (statusLine !== "HTTP 200" || !jsonLine) {
     const status = Number(/^HTTP (\d{3})\b/.exec(statusLine ?? "")?.[1]);
