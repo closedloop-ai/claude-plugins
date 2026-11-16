@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import skill_split
 from vibe_contract_text import flat, hook_guard_routed
 
 
@@ -29,13 +30,17 @@ def test_guardrails_reject_parallel_page_composition_of_one_capability() -> None
 
 
 def test_handoff_compares_each_consumer_with_its_prototype_route() -> None:
-    verifier = flat((PLUGIN / "agents" / "vibe-verify-worker.md").read_text())
-    handoff = flat((PLUGIN / "skills" / "handoff" / "SKILL.md").read_text())
-    quality = flat((VIBE / "references" / "quality-loop.md").read_text())
+    # ISS-14158: the rule lives once in "What it checks"; the verify worker and handoff cite it.
+    canonical = flat(skill_split.raw(VIBE / "references" / "quality-loop-visual-qa.md"))
     required = "each consumer page against that page's approved prototype route"
-    for text in (verifier, handoff, quality):
-        assert required in text
-        assert "present in the prototype but missing in production" in text
+    assert required in canonical
+    assert "present in the prototype but missing in production" in canonical
+    verifier = flat(skill_split.raw(PLUGIN / "agents" / "vibe-verify-worker.md"))
+    handoff = flat(skill_split.raw(PLUGIN / "skills" / "handoff" / "SKILL.md"))
+    assert ("For shared scope (`../skills/vibe/references/quality-loop.md`, \"Visual QA during the session\","
+            " \"What it checks\")") in verifier
+    assert ("(`../vibe/references/quality-loop.md`, \"Visual QA during the session\", \"What it checks\"); its"
+            " rendered-control inventory") in handoff
 
 
 def test_worker_rules_forbid_credential_workarounds_and_force_push_everywhere() -> None:

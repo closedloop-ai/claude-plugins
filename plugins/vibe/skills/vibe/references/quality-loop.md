@@ -762,6 +762,8 @@ and the ready message names it as not done yet.
 
 > Read `references/quality-loop-visual-qa.md` (block `visual-qa-body`) when a user-visible change is ready to look at or the person asks for polish; skip it when the change shows nothing visible.
 
+> Read `references/quality-loop-visual-qa.md` (block `when-to-capture`) before any screenshot capture or visual QA pass, in the loop or at handoff.
+
 ## Tests: repair, don't author
 
 No test authoring in the build loop or at handoff without an explicit top-level grant, including new

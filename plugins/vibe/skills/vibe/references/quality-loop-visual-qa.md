@@ -79,3 +79,34 @@ when the person already declined visual QA for this version of the change
 since); then the request goes to the writer as an ordinary request under
 `guardrails-ui.md`, "Making something look better".
 <!-- end: visual-qa-body -->
+
+<!-- block: when-to-capture -->
+### When to capture screenshots
+
+Screenshots were never a standing requirement, and nothing here adds one.
+
+- Default: one visual-qa reviewer reads the diff, plus the Storybook stories
+  where they exist. That covers most UI changes: a new control, copy reuse,
+  styling, a single page or component.
+- Capture screenshots only when: (a) a shared component that renders on
+  several pages changes its pixels: capture the affected pages once, on the
+  branch, against one main baseline taken at the start; (b) the ticket's
+  acceptance criteria or an operator ruling ask for visual proof, such as the
+  PRD grouped-unit per-page check (ruling 2026-11-10); (c) the visual-qa
+  reviewer cannot settle a finding from code and stories: then take targeted
+  shots of just that state, never a sweep.
+- Limits when screenshots are justified: one main baseline per ticket, never
+  retaken because main moved. After a fix, recapture only the states the fix
+  can reach. A final check is never a new capture: it is one visual-qa pass
+  scoped to the changes since the last reviewed capture.
+
+Merging or rebasing onto main never triggers a re-baseline capture;
+differences that come from main are not reviewed as the ticket's.
+
+Before any capture of more than one state, run
+`scripts/capture-guard.mjs begin`, and `end` with the capture's exit status
+after it. It refuses a main commit already captured
+for the ticket, a second main baseline, and a capture over 240 shots or about
+20 minutes, unless an operator ruling recorded for that ticket overrides it.
+It only refuses; it never asks for a capture.
+<!-- end: when-to-capture -->
