@@ -1,6 +1,6 @@
 {
   "name": "vibe-generic",
-  "version": "1.1.88",
+  "version": "1.1.90",
   "description": "Vibe sessions and handoff in any git repository, with fleet orchestration, seed refresh and ticket workflows",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
   "homepage": "https://github.com/closedloop-ai/claude-plugins",
