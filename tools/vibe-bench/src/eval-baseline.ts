@@ -116,9 +116,22 @@ export function loadEvalQuarantine(): EvalQuarantineEntry[] {
   return entries;
 }
 
+/**
+ * Name the runtime that was rejected and why, so the alert does not read as
+ * if no runtime produced a result. The reason stays one scheduler-safe token:
+ * a stateful infrastructure code such as AUTH_UNAVAILABLE is folded to
+ * auth-unavailable, and a reason with any other character is left out.
+ */
+function runtimeIncomplete(runtime: EvalRuntime, invalidReason: string | null | undefined): Error {
+  const reason = (invalidReason || "eval-runtime-artifact-missing").toLowerCase().replaceAll("_", "-");
+  return new Error(/^[a-z0-9:-]+$/.test(reason)
+    ? `eval-baseline-runtime-incomplete:${runtime}:${reason}`
+    : `eval-baseline-runtime-incomplete:${runtime}`);
+}
+
 function runtimeCases(result: LocalEvalResult, runtime: EvalRuntime) {
   const record = result.runtimes.find((item) => item.runtime === runtime);
-  if (!record?.result || record.invalidReason) throw new Error("eval-baseline-runtime-incomplete");
+  if (!record?.result || record.invalidReason) throw runtimeIncomplete(runtime, record?.invalidReason);
   return new Map(record.result.cases.map((item) => [item.id, item]));
 }
 
@@ -165,7 +178,7 @@ export function buildEvalBaseline(input: {
     for (const result of input.results) {
       const record = result.runtimes.find((item) => item.runtime === runtime);
       if (!record) continue;
-      if (!record.result || record.invalidReason) throw new Error("eval-baseline-runtime-incomplete");
+      if (!record.result || record.invalidReason) throw runtimeIncomplete(runtime, record.invalidReason);
       for (const item of record.result.cases) {
         if (item.unavailableReason !== undefined) continue;
         const outcomes = prior.get(item.id) ?? [];
