@@ -7,8 +7,11 @@
  * VIBE_CLOUD_CLAUDE_ENV, then CLOUD_CLAUDE_ENV in the fleet home's config.env;
  * with none, the dispatch is refused. The RemoteTrigger API has no environment
  * list and no GitHub connection endpoint, so neither is discovered: the check
- * shows the environments this account's routines already use, and a refused
- * create or a fire that leaves no run is reported with its named error.
+ * reads this machine's recorded standing routine with `get` (one routine, never
+ * a list page that can outgrow the tool's inline limit, ISS-14140) and shows
+ * the environment it runs in; with none recorded it says so and reads nothing,
+ * and when the recorded one is gone from the account it reads the routine list.
+ * A refused create or a fire that leaves no run is reported with its named error.
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -17,6 +20,7 @@ import { defaultHome } from "../../fleet-orchestrator/scripts/fleet-home.mjs";
 
 export const CLAUDE_ENV_VAR = "VIBE_CLOUD_CLAUDE_ENV";
 export const CLAUDE_ENV_CONFIG_KEY = "CLOUD_CLAUDE_ENV";
+const NOTHING_RECORDED = "no vibe cloud worker routine is recorded on this machine yet; the first cloud run creates it";
 export const CloudSetupError = Object.freeze({
   EnvMissing: "CLOUD_ENV_MISSING",
   EnvInvalid: "CLOUD_ENV_INVALID",
@@ -24,6 +28,7 @@ export const CloudSetupError = Object.freeze({
   AuthRefused: "CLOUD_AUTH_REFUSED",
   RunNotCreated: "CLOUD_RUN_NOT_CREATED",
   ApiError: "CLOUD_API_ERROR",
+  ResultTooLarge: "CLOUD_RESULT_TOO_LARGE",
 });
 
 const ENV_ID = /^env_[A-Za-z0-9]+$/;
@@ -74,8 +79,9 @@ function accountAnswers(remote) {
   try {
     remote("list", {});
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // A reply too large to read here is still the account answering.
+    return error?.code === CloudSetupError.ResultTooLarge;
   }
 }
 
@@ -90,8 +96,32 @@ export function runNotCreated(routineId, environment, repository, remote) {
   return cloudSetupError(CloudSetupError.RunNotCreated, `routine ${routineId} was fired but no run appeared; a fire that fails repository access, its token preflight or environment lookup leaves none.${reported} Fix: give the Claude account access to ${repository} by installing the Claude GitHub App on it, or by running /web-setup in Claude Code; confirm ${environment.id} (${environment.source}) is this account's environment, then run cloud-worker.mjs check and dispatch again.`);
 }
 
-/** The setup check: environment configured, API reachable, and whether any routine uses the environment. */
-export function checkCloudSetup(request, { remote, env = process.env } = {}) {
+/** The api check for a failed call: a too-large reply is named as itself, never with sign-in or CLI advice. */
+function apiFailure(error) {
+  if (error?.code === CloudSetupError.ResultTooLarge) return { check: "api", ok: false, code: error.code, detail: error.message };
+  const status = statusOf(error);
+  const code = REFUSED.has(status) ? CloudSetupError.AuthRefused : CloudSetupError.ApiError;
+  const fix = REFUSED.has(status) ? SIGN_IN : "check that the claude CLI is installed and signed in, then rerun";
+  return { check: "api", ok: false, code, detail: `${code}: ${error.message}. Fix: ${fix}.` };
+}
+
+/** The recorded standing routine as `get` returns it, or null when the account no longer has it (HTTP 404). */
+function standingRoutine(remote, standing) {
+  try {
+    const answer = remote("get", { trigger_id: standing.id });
+    return answer?.trigger ?? answer;
+  } catch (error) {
+    if (statusOf(error) === 404) return null;
+    throw error;
+  }
+}
+
+/**
+ * The setup check: environment configured, API reachable, and the environment this machine's standing routine
+ * (`standing`, from the routine ledger) runs in; `pending` is the routine-removal line when routines vibe
+ * created are still recorded for removal.
+ */
+export function checkCloudSetup(request, { remote, env = process.env, standing = null, pending = null, ledgerProblem = null } = {}) {
   const checks = [];
   let environment = null;
   try {
@@ -102,13 +132,20 @@ export function checkCloudSetup(request, { remote, env = process.env } = {}) {
   }
   let routines = null;
   try {
-    routines = remote("list", {})?.data ?? [];
-    checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (${routines.length} routines)` });
+    // An unreadable ledger is its own failure, never "nothing recorded".
+    if (ledgerProblem) checks.push({ check: "ledger", ok: false, detail: ledgerProblem });
+    const recorded = standing?.id ? standingRoutine(remote, standing) : null;
+    if (ledgerProblem) { /* the routine on record is unknown */ } else if (!standing?.id) {
+      checks.push({ check: "api", ok: null, detail: NOTHING_RECORDED });
+    } else if (recorded) {
+      routines = [recorded];
+      checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (routine ${standing.id})` });
+    } else {
+      routines = remote("list", {})?.data ?? [];
+      checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (${routines.length} routines)` });
+    }
   } catch (error) {
-    const status = statusOf(error);
-    const code = REFUSED.has(status) ? CloudSetupError.AuthRefused : CloudSetupError.ApiError;
-    const fix = REFUSED.has(status) ? SIGN_IN : "check that the claude CLI is installed and signed in, then rerun";
-    checks.push({ check: "api", ok: false, code, detail: `${code}: ${error.message}. Fix: ${fix}.` });
+    checks.push(apiFailure(error));
   }
   if (environment && routines) {
     const used = [...new Set(routines.map((routine) => routine?.job_config?.ccr?.environment_id).filter(Boolean))];
@@ -118,5 +155,6 @@ export function checkCloudSetup(request, { remote, env = process.env } = {}) {
       : { check: "environment-use", ok: null, detail: `no routine on this account uses ${environment.id} yet, so it is unverified until the first dispatch, which names CLOUD_ENV_UNKNOWN if it is not this account's${used.length ? `; this account's routines use ${used.join(", ")}` : ""}` });
   }
   checks.push({ check: "github", ok: null, detail: "not checkable here: the routine API has no GitHub connection endpoint; a fire that fails repository access leaves no run, which dispatch and validate report as CLOUD_RUN_NOT_CREATED with the fix" });
+  if (pending) checks.push({ check: "routine-removal", ok: null, detail: pending });
   return { ok: checks.every((entry) => entry.ok !== false), environment, checks };
 }
