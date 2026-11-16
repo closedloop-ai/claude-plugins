@@ -7,6 +7,7 @@
 // Usage:
 //   pre-pr-lanes.mjs run    --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON>) [--main-worktree <checkout of captured main> --main-sha <sha>]
 //   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
+//   pre-pr-lanes.mjs record --ran-on <host> --proof-commit <sha the remote run tested> --git-tree <its Git tree> --worktree <path> --head <clean local HEAD> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
 //   pre-pr-lanes.mjs check  --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON>) [--skip <regex> --skip-ruling "<who, when, where>"]
 //
 // The report's lane commands are its 4-space-indented lines that start with a
@@ -70,6 +71,10 @@
 // result run elsewhere. Both refuse unless the worktree's HEAD is `--head`
 // and record HEAD, diffSha256 and treeSha256 (tested-head.mjs). `run` fails
 // if HEAD or uncommitted inputs move. `check` refuses evidence for other content.
+// `record --ran-on` takes a lane run on another host against a proof commit
+// this clone may never receive: it needs a clean worktree whose
+// HEAD's Git tree is `--git-tree`, records this HEAD's source, and adds
+// `ranOn: { host, proofCommit, gitTree, command }`; the proof commit is never resolved here.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -77,6 +82,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { RUNNER_HOST } from "../../handoff/scripts/e2e-tier.mjs";
 import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
 import { storyTypecheckLane } from "./story-typecheck.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -240,6 +246,7 @@ function reuseCachedLanes(values, lanes, records, selected) {
 }
 
 const NO_DIFF = createHash("sha256").digest("hex");
+const COMMIT = /^[a-f0-9]{40}$/;
 
 /** The lanes the changes since `request.lastQa.boundary` can touch, or null when that cannot be proven. */
 export function lanesTouchedSince(request, impact) {
@@ -319,14 +326,16 @@ function main(argv) {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
     "reuse-cache": { type: "boolean" }, "reuse-unaffected": { type: "string" }, base: { type: "string" }, config: { type: "string", multiple: true },
+    "ran-on": { type: "string" }, "proof-commit": { type: "string" }, "git-tree": { type: "string" },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
     if (!values.command?.trim() || (command === "record" && !["pass", "fail"].includes(values.result))) throw new Error(`${command} needs --head, --command${command === "record" ? " and --result pass|fail" : ""}`);
     const source = testedSource(values.worktree, values.head);
     const tested = source.head;
+    const ranOn = command === "record" ? remoteRun(values, source) : null;
     if (command === "record") {
-      if (!values.source && source.diffSha256 !== createHash('sha256').digest('hex')) {
+      if (!ranOn && !values.source && source.diffSha256 !== createHash('sha256').digest('hex')) {
         throw new Error('record of uncommitted inputs needs --source <JSON identity captured by the external runner>');
       }
       if (values.source && !sameSource(JSON.parse(values.source), source)) throw new Error('record --source does not match the current inputs');
@@ -369,10 +378,10 @@ function main(argv) {
     // Two lanes of one pool finish close together: the read, the change and the write happen under one lock so neither record is lost.
     withRecordsLock(values.worktree, () => {
       const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
+      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), ...(ranOn ? { ranOn } : {}), at: new Date().toISOString() });
       writeRecords(values.worktree, records);
     });
-    process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
+    process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}${ranOn ? ` (ran on ${ranOn.host} at ${ranOn.proofCommit})` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
   }
   if (command === "check") {
@@ -410,6 +419,22 @@ function main(argv) {
     }).exitCode;
   }
   throw new Error("Usage: pre-pr-lanes.mjs record|check ...");
+}
+
+/**
+ * The remote run a `record --ran-on` names, or null without it. Its proof commit is provenance only: the
+ * binding is the clean local HEAD's Git tree, so the row's source identity is this content's.
+ */
+function remoteRun(values, source) {
+  if (["ran-on", "proof-commit", "git-tree"].every((key) => values[key] === undefined)) return null;
+  if (values.source) throw new Error("record --ran-on binds by Git tree; it never takes --source");
+  if (!RUNNER_HOST.test(values["ran-on"] ?? "") || !COMMIT.test(values["proof-commit"] ?? "") || !COMMIT.test(values["git-tree"] ?? "")) {
+    throw new Error("record of a remote run needs --ran-on <host name>, --proof-commit <full sha> and --git-tree <full Git tree hash>");
+  }
+  if (source.diffSha256 !== NO_DIFF) throw new Error("record --ran-on needs a clean worktree: uncommitted inputs are not the proof's Git tree");
+  const tree = git(values.worktree, ["rev-parse", "--verify", `${source.head}^{tree}`]);
+  if (tree !== values["git-tree"]) throw new Error(`record --git-tree ${values["git-tree"]} is not HEAD's Git tree ${tree}`);
+  return { host: values["ran-on"], proofCommit: values["proof-commit"], gitTree: tree, command: values.command.trim() };
 }
 
 if (isEntryPoint(import.meta.url)) {

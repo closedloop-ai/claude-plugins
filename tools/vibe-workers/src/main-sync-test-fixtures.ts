@@ -6,6 +6,8 @@ import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
 import { changeWriter, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph, keepFixtureMaintenanceForeground, PROVIDER_BINDING, writeAgent } from "./test-fixtures.js";
 import type { RequestContinuation } from "./record-context.js";
+import { checkRecipe, committedInputs } from "./main-sync-checks.js";
+import { requireSyncReceipt, syncContext } from "./main-sync-state.js";
 import { z } from "zod";
 
 const producerFixtureSchema = z.object({ purpose: z.string(), origin: z.object({ repository: z.literal("closedloop-ai/symphony-alpha"),
@@ -268,6 +270,34 @@ export function generatedBiomeFixture(value: ReturnType<typeof syncFixture>) {
   const output = derive();
   writeFileSync(artifact, output);
   return { artifact, config, output, derive };
+}
+
+/** Captures main once under a publisher grant, as the normal path does before validation or a remote record. */
+export function captureMain(value: ReturnType<typeof syncFixture>, purpose?: "build" | "handoff") {
+  const prepare = value.start("create", purpose);
+  try {
+    const result = invokeSync(value, "prepare", prepare.context);
+    if (result.status !== 0) throw new Error(result.stdout || result.stderr);
+  } finally { prepare.finish(); }
+}
+
+/**
+ * The validation the fleet's remote slot records for its own commit of this tree: the session's selected matrix, each
+ * check passing, with log digests from that machine. Its commit id is computed, never written here. Read under the
+ * same source writer's turn that then records it.
+ */
+export function remoteSlotReport(value: ReturnType<typeof syncFixture>, context: unknown) {
+  const sync = syncContext({ context }, "validate");
+  const receipt = requireSyncReceipt(sync);
+  const identity = committedInputs(sync.place.root);
+  const recipe = checkRecipe(sync, receipt);
+  const commit = execFileSync("git", ["hash-object", "-t", "commit", "--stdin"], { cwd: value.worktree, encoding: "utf8",
+    input: `tree ${identity.treeSha}\nparent ${value.baseCommit}\nauthor Remote <remote@example.invalid> 1760000000 +0000\n`
+      + "committer Remote <remote@example.invalid> 1760000000 +0000\n\nRemote slot commit\n" }).trim();
+  return { host: "fleet-remote", validation: { headSha: commit, treeSha: identity.treeSha, inputSha256: identity.inputSha256,
+    checkedAt: "2026-11-15T00:00:00.000Z", e2eLimitations: recipe.e2eLimitations,
+    commands: recipe.commands.map((command, index) => ({ ...command, exitCode: 0, log: `/remote/vibe-main-sync-${index}.log`,
+      sha256: createHash("sha256").update(`remote log ${index}`).digest("hex") })) } };
 }
 
 /** Final-merge mode, set once QA passes: the next publication merges fresh main. */

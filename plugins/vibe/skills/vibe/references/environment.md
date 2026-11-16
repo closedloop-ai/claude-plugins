@@ -200,6 +200,14 @@ not silently included or discarded. A clean result needs no extra local commit.
    its 15-minute default and 30-minute maximum, and only the Root-owned
    witness derives a finite Claude envelope. Missing, tampered, stale or
    canceled proof blocks, never an enlarged caller timeout.
+   When the fleet's remote slot already ran this matrix on its own commit of
+   the same tree and pushed it, the SAME writer records that result instead
+   of rerunning it here: after preparation and readiness, run
+   `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-record-remote --worktree "<wt>"`
+   with `{ "context": <granted operationContext>, "report": { "host": "<remote host>", "validation": <the remote session's vibe-main-sync.json validation, verbatim> } }`
+   on stdin. It runs nothing, and refuses another tree, other committed
+   inputs, another matrix, a failing check, a blank host or another
+   transaction; never edit the report to get past a refusal.
 4. Validation checks every tracked/index byte/mode and scoped executable
    overlay against committed input before/between/after checks and again at
    consumption. Managed `localFixes` remain commit exclusions, NEVER check

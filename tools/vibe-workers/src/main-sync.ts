@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -14,7 +14,7 @@ import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
 import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
-import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt, type MainSyncSession } from "./main-sync-contracts.js";
+import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncRemoteInputSchema, mainSyncStateSchema, type MainSyncReceipt, type MainSyncSession } from "./main-sync-contracts.js";
 import { comparisonLogs } from "./main-sync-main-comparison.js";
 import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 
@@ -28,6 +28,13 @@ export { mainSyncFailure } from "./main-sync-failure.js";
 /** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */
 export async function readMainSyncInput(worktree: string) {
   const input = mainSyncInputSchema.parse(await readInput());
+  if (realpathSync(input.context.worktree) !== realpathSync(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  return input;
+}
+
+/** The same bounded input, carrying the remote slot's check report beside the owned operation context. */
+export async function readMainSyncRemoteInput(worktree: string) {
+  const input = mainSyncRemoteInputSchema.parse(await readInput());
   if (realpathSync(input.context.worktree) !== realpathSync(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
   return input;
 }
@@ -131,19 +138,7 @@ export function validateMainSync(raw: unknown) {
   const receipt = requireSyncReceipt(value);
   if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
   let identity = committedInputs(value.place.root);
-  if (value.context.runtime === "claude") {
-    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
-    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
-  }
-  const recipe = checkRecipe(value, receipt);
-  const selectedIdentity = committedInputs(value.place.root);
-  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha
-    || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
-  if (value.context.runtime === "claude") {
-    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
-    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256
-      || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
-  }
+  const recipe = selectedRecipe(value, receipt, identity);
   let validation = receipt.validation;
   if (!value.context.mainSyncCiRun || !validation || !validationMatches(value, receipt, identity)) {
     validation = executeChecks(value, receipt, recipe);
@@ -173,6 +168,77 @@ export function validateMainSync(raw: unknown) {
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
+  return validationResult(value, receipt, validation, ciEvidence);
+}
+
+/**
+ * Records checks the fleet's remote slot ran on its own commit of this exact tree, so a session whose head was
+ * committed and pushed there needs no local rerun. It executes nothing, and keeps every identity the local run binds:
+ * the same source writer and Root-issued transaction, captured main merged, committed tree and inputs, and the
+ * session's own recipe, every check passing. The report is stored privately as the commands' evidence.
+ */
+export function recordRemoteMainSync(raw: unknown) {
+  const { report, ...input } = mainSyncRemoteInputSchema.parse(raw);
+  const remote = report.validation;
+  const failing = remote.commands.find((command) => command.exitCode !== 0);
+  if (failing) throw new MainSyncError(`Remote check report has a failing check: ${failing.argv.join(" ")}`, "NEEDS_CHANGE");
+  // A remote result stands where a local validation would, so only that same registered writer may record it.
+  const value = syncContext(input, "validate");
+  const receipt = requireSyncReceipt(value);
+  if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
+  const identity = committedInputs(value.place.root);
+  if (remote.treeSha !== identity.treeSha) throw new MainSyncError("Remote check report names another tree than committed HEAD", "NEEDS_CHANGE");
+  if (remote.inputSha256 !== identity.inputSha256) throw new MainSyncError("Remote check report names other committed inputs", "NEEDS_CHANGE");
+  const recipe = selectedRecipe(value, receipt, identity);
+  if (JSON.stringify(recipe.commands.map(commandIdentity)) !== JSON.stringify(remote.commands.map(commandIdentity))
+    || JSON.stringify(recipe.e2eLimitations) !== JSON.stringify(remote.e2eLimitations)) {
+    throw new MainSyncError("Remote check report ran another matrix than this session's recipe", "NEEDS_CHANGE");
+  }
+  const file = remoteReportFile(value, receipt);
+  const bytes = JSON.stringify(report);
+  rmSync(file, { force: true });
+  writeFileSync(file, bytes, { mode: 0o600, flag: "wx" });
+  const sha256 = digest(bytes);
+  const validation = { headSha: identity.headSha, treeSha: identity.treeSha, inputSha256: identity.inputSha256,
+    checkedAt: remote.checkedAt, e2eLimitations: remote.e2eLimitations,
+    commands: recipe.commands.map((command, index) => ({ ...commandIdentity(command),
+      ...(command.timeoutMs ? { timeoutMs: command.timeoutMs } : {}), exitCode: 0, log: file, sha256,
+      remote: { host: report.host, commit: remote.headSha, logSha256: remote.commands[index]!.sha256 } })) };
+  const pushed = remoteHead(value.place.root, value.place.branch) === identity.headSha;
+  const after = committedInputs(value.place.root);
+  if (after.headSha !== identity.headSha || after.treeSha !== identity.treeSha || after.inputSha256 !== identity.inputSha256) {
+    throw new MainSyncError("Source changed while recording remote checks; no receipt was issued", "NEEDS_CHANGE");
+  }
+  syncContext(input, "validate");
+  const next = { ...requireSyncReceipt(value), validation };
+  delete next.failedChecks;
+  delete next.ciEvidence;
+  if (pushed) next.pushedHead = identity.headSha;
+  else delete next.pushedHead;
+  saveSyncReceipt(value.place.dir, next);
+  return { ...validationResult(value, receipt, validation), remote: { host: report.host, commit: remote.headSha } };
+}
+
+/** Claude's Root-bound witness pins the recipe selected for exactly these committed inputs. */
+function selectedRecipe(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt, identity: ReturnType<typeof committedInputs>) {
+  if (value.context.runtime === "claude") {
+    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
+    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
+  }
+  const recipe = checkRecipe(value, receipt);
+  const selectedIdentity = committedInputs(value.place.root);
+  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha
+    || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
+  if (value.context.runtime === "claude") {
+    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
+    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256
+      || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
+  }
+  return recipe;
+}
+
+function validationResult(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt,
+  validation: NonNullable<MainSyncReceipt["validation"]>, ciEvidence?: MainSyncReceipt["ciEvidence"]) {
   // The Desktop Electron lane never runs on a vibe machine; the post-merge run covers it, so it does not hold the
   // handoff or a requested pull request. Any other limitation still needs CI evidence.
   const e2eLeftForCi = validation.e2eLimitations.filter((item) => isDesktopE2eLimitation(value.place.root, item))
@@ -273,15 +339,16 @@ function validationMatches(value: ReturnType<typeof syncContext>, receipt: MainS
     return false;
   }
   const expected = checkRecipe(value, receipt);
-  const commandIdentity = (item: { argv: string[]; bindings?: Record<string, string>; cwd?: string }) => ({ argv: item.argv,
-    ...(item.bindings ? { bindings: item.bindings } : {}), ...(item.cwd ? { cwd: item.cwd } : {}) });
+  const remote = proof.commands.filter((command) => command.remote).length;
+  if (remote && remote !== proof.commands.length) return false;
   if (JSON.stringify(expected.commands.map(commandIdentity)) !== JSON.stringify(proof.commands.map(commandIdentity))
     || JSON.stringify(expected.e2eLimitations) !== JSON.stringify(proof.e2eLimitations)) {
     return false;
   }
   for (const [index, command] of proof.commands.entries()) {
     const prefix = `vibe-main-sync-${receipt.transactionId}-`;
-    const permitted = [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"]
+    // A remote check's only evidence is the stored report; a local run's logs keep their exact names.
+    const permitted = command.remote ? [remoteReportFile(value, receipt)] : [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"]
       .map((suffix) => `${prefix}${attempt}-${index}${suffix}.log`)), `${prefix}main-bootstrap.log`]
       .map((name) => join(value.place.dir, name));
     const evidence = [{ log: command.log, sha256: command.sha256 }, ...(command.comparison ? comparisonLogs(command.comparison) : [])];
@@ -294,6 +361,14 @@ function validationMatches(value: ReturnType<typeof syncContext>, receipt: MainS
     if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");
   }
   return true;
+}
+
+function commandIdentity(item: { argv: string[]; bindings?: Record<string, string>; cwd?: string }) {
+  return { argv: item.argv, ...(item.bindings ? { bindings: item.bindings } : {}), ...(item.cwd ? { cwd: item.cwd } : {}) };
+}
+
+function remoteReportFile(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt) {
+  return join(value.place.dir, `vibe-main-sync-${receipt.transactionId}-remote.json`);
 }
 
 function publicationTurn(value: ReturnType<typeof syncContext>) {

@@ -13,7 +13,7 @@ export const e2eRecipe = () => providerDataOr(sessionBinding(), "recipes", "e2e"
 export const requiredContainerIdentity = () => Object.freeze([...(e2eRecipe()?.containerIdentity ?? [])]);
 export const NO_DISPLAYLESS_ELECTRON = "no supported displayless Linux Electron harness";
 const CAPABILITY_KIND = "selected-runner-desktop-capability/v2";
-const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
+export const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const CAPABILITY_SCRIPT = [
   "const cp=require('node:child_process');",
   "const head=cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();",
@@ -22,9 +22,12 @@ const CAPABILITY_SCRIPT = [
 ].join("");
 // The commit reaches a regular expression and the remote shell, so only a full SHA is accepted.
 const SHA = /^[0-9a-f]{40}$/;
+// A runner host and worktree reach ssh and a remote shell, so only plain names and absolute paths are accepted.
+export const RUNNER_HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
+export const runnerPath = value => typeof value === "string" && /^\/[A-Za-z0-9_./-]+$/.test(value) && !value.split("/").includes("..");
 
 /** Re-probe the selected remote runner through its supported login-shell route. */
-function runSelectedRemoteProbe({ host, command }) {
+export function runSelectedRemoteProbe({ host, command }) {
   const result = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host,
     `zsh -lic ${shellQuote(command)}`], { encoding: "utf8", timeout: 60_000, maxBuffer: 2_000_000 });
   return { exitCode: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` };
@@ -38,9 +41,7 @@ function remoteDesktopProbe(capability, commit, runProbe = runSelectedRemoteProb
   const host = remote?.runnerHost;
   const worktree = remote?.runnerWorktree;
   const owner = remote?.probeOwner;
-  if (!SHA.test(commit ?? "") || typeof host !== "string" || !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(host)
-    || typeof worktree !== "string" || !/^\/[A-Za-z0-9_./-]+$/.test(worktree)
-    || worktree.split("/").includes("..")
+  if (!SHA.test(commit ?? "") || typeof host !== "string" || !RUNNER_HOST.test(host) || !runnerPath(worktree)
     || typeof owner !== "string" || !/^[a-z0-9][a-z0-9-]{2,60}$/.test(owner)
     || typeof remote?.command !== "string"
     || !recipe?.slotCommand || !remote.command.includes(recipe.slotCommand)
@@ -93,21 +94,22 @@ export function selectE2eTier(capability = {}) {
  * that an authenticated scenario consumes. Returns null when execution is
  * possible or the claimed limitation has no complete probe evidence.
  */
-export function specExecutionLimitation(capability, spec, commit, runProbe) {
+export function specExecutionLimitation(capability, spec, commit, runProbe, headTree = null) {
   if (!capability || capability.selectedTier !== selectE2eTier(capability).tier) return null;
   if (capability.selectedTier === null) return { tier: null, kind: "no-tier" };
-  if (!["A", "C"].includes(capability.selectedTier) || !SHA.test(commit ?? "") || capability.probedCommit !== commit
+  const probed = boundProbeCommit(capability, commit, headTree);
+  if (!["A", "C"].includes(capability.selectedTier) || !probed
     || typeof capability.container?.command !== "string" || !capability.container.command.trim()) return null;
   if (capability.selectedTier === "C" && (typeof capability.remote?.command !== "string"
-    || !new RegExp(`(?:^|\\s)--head\\s+${commit}(?:\\s|$)`).test(capability.remote.command)
+    || !new RegExp(`(?:^|\\s)--head\\s+${probed}(?:\\s|$)`).test(capability.remote.command)
     || typeof capability.remote?.source !== "string" || !capability.remote.source.trim())) return null;
   const desktopHarness = capability.selectedTier === "C" ? capability.remote?.desktopHarness : capability.desktopHarness;
   const desktopSpecs = e2eRecipe()?.desktopSpecs;
   if (desktopSpecs && spec.startsWith(desktopSpecs) && desktopHarness?.available === false
     && desktopHarness.reason === NO_DISPLAYLESS_ELECTRON
-    && (capability.selectedTier !== "C" || desktopHarness.probedCommit === commit)
+    && (capability.selectedTier !== "C" || desktopHarness.probedCommit === probed)
     && typeof desktopHarness.probe === "string" && desktopHarness.probe.trim()) {
-    if (capability.selectedTier === "C" && !remoteDesktopProbe(capability, commit, runProbe)) return null;
+    if (capability.selectedTier === "C" && !remoteDesktopProbe(capability, probed, runProbe)) return null;
     return { tier: capability.selectedTier, kind: "displayless", displaylessLimitation: NO_DISPLAYLESS_ELECTRON };
   }
   if (capability.selectedTier !== "A") return null;
@@ -118,6 +120,18 @@ export function specExecutionLimitation(capability, spec, commit, runProbe) {
   if (missingPrerequisites.length === 0 || typeof container.notRunnableReason !== "string"
     || !missingPrerequisites.every((key) => container.notRunnableReason.includes(key))) return null;
   return { tier: "A", kind: "missing-prerequisites", missingPrerequisites };
+}
+
+/**
+ * The commit a capability probe stands for when the published commit is `commit`: `commit` itself, or the
+ * probe's own commit when the probe names its runner host and the Git tree `headTree` of `commit` (a slot's
+ * proof commit holding the head's content, which need not exist here). Null when neither binds.
+ */
+export function boundProbeCommit(capability, commit, headTree = null) {
+  if (!SHA.test(commit ?? "")) return null;
+  if (capability?.probedCommit === commit) return commit;
+  return typeof capability?.host === "string" && RUNNER_HOST.test(capability.host) && SHA.test(capability.probedCommit ?? "")
+    && SHA.test(headTree ?? "") && capability.gitTree === headTree ? capability.probedCommit : null;
 }
 
 /** Problems in the recorded capability probe and chosen tier. */

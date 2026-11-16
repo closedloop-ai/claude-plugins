@@ -647,3 +647,45 @@ test('a heavy slot refuses a machine whose load per core is over the limit and n
   assert.match(skill, /Writers never set `FLEET_FORCE_HERE`[\s\S]*or `FLEET_LOAD`/);
   assert.doesNotMatch(readFileSync(LOAD_CHECK, 'utf8'), /FLEET_LOAD/, 'production admission has no caller-supplied load override');
 });
+
+/** Unpack the shipped archive on the loopback remote, then remove one shipped gate script as a stale or partial copy would. */
+function dropOnRemoteUnpack(f, script) {
+  const realTar = spawnSync('sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).stdout.trim();
+  writeFileSync(join(f.root, 'bin', 'tar'), `#!/usr/bin/env bash\n${JSON.stringify(realTar)} "$@" || exit $?\nif [ "$1" = -C ] && [ "$3" = -xf ]; then rm -f "$2/plugins/vibe/skills/fleet-orchestrator/scripts/${script}"; fi\n`);
+  chmodSync(join(f.root, 'bin', 'tar'), 0o755);
+}
+
+test('a remote heavy slot refuses with 78 and runs nothing when a shipped gate script is missing there', TIMEOUT, () => {
+  for (const script of ['load-check.sh', 'slot-lock.sh']) {
+    const f = fixture();
+    writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+    dropOnRemoteUnpack(f, script);
+    for (const typed of [[], ['--containerized-e2e-build']]) {
+      const result = f.run(['remote', 'slot', 'heavy', 'w2 tests', f.root, ...typed, 'echo', 'must-not-run']);
+      assert.equal(result.status, 78, `${script} ${typed}: ${result.stdout}${result.stderr}`);
+      assert.doesNotMatch(result.stdout, /must-not-run/, script);
+      assert.match(result.stderr, new RegExp(`fleet: remote ${script.replace('.', '\\.')} is missing; heavy slot refused`), script);
+    }
+  }
+});
+
+test('LOCAL_HEAVY_BARRED=1 refuses a local heavy slot with 78 and points at the remote slot; nothing else changes', TIMEOUT, () => {
+  const f = fixture('LOCAL_HEAVY_BARRED=1\n');
+  for (const env of [{}, { FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator wants it here' }]) {
+    const barred = f.run(['local', 'slot', 'heavy', 'w1 typecheck', f.root, 'echo', 'must-not-run'], env);
+    assert.equal(barred.status, 78, JSON.stringify(env) + barred.stdout + barred.stderr);
+    assert.doesNotMatch(barred.stdout, /must-not-run/);
+    assert.match(barred.stderr, /LOCAL_HEAVY_BARRED=1.*fleet\.sh <orchDir> remote slot heavy/);
+  }
+  assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran']).stdout, 'ran\n', 'only heavy slots are barred');
+  for (const config of [undefined, 'LOCAL_HEAVY_BARRED=0\n', 'LOCAL_HEAVY_BARRED=yes\n', 'HEAVY_SLOTS=2\n']) {
+    const g = fixture(config);
+    const ran = g.run(['local', 'slot', 'heavy', 'w1 typecheck', g.root, 'echo', 'ran']);
+    assert.equal(ran.status, 0, `${config}: ${ran.stderr}`);
+    assert.equal(ran.stdout, 'ran\n', String(config));
+  }
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'LOCAL_HEAVY_BARRED=1\n'));
+  const remote = f.run(['remote', 'slot', 'heavy', 'w2 typecheck', f.root, 'echo', 'ran']);
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.match(remote.stdout, /^ran$/m, 'the bar is for this machine only');
+});

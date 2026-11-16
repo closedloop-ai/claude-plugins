@@ -16,6 +16,10 @@ stack, request the registered `fleet-orchestrator/scripts/helpers.mjs scratch-ru
 path with owner, ticket, worktree and TTL. Do not start a raw scratch container
 or Compose project; inspect existing Docker state read-only through normal
 diagnostic commands.
+Scratch files: Each worker gets its own scratch directory named with its
+worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes
+only exact paths it created; an orchestrator brief never asks a worker to
+delete by prefix or glob.
 Read `../skills/vibe/references/review-premises.md` before reporting a failure
 or missing coverage. Verify tool, runtime, CLI, platform and source premises;
 label an unverified premise and never make it a blocking result.
@@ -45,7 +49,10 @@ the writer only repairs existing tests its change broke
 in the build loop, whose only checks are the writer's quick hook checks and
 its acceptance criterion checks (`quality-loop.md`, "Lean build loop" and
 "Acceptance criteria before ready"). Never commit, push or create a
-worktree/branch.
+worktree/branch. Never pass `--no-verify` (or `git commit -n`), set
+`core.hooksPath`, or bypass a commit hook any other way, for a proof or scratch
+commit too. A proof commit whose hook fails is not made; report not ready with
+the hook output.
 
 ## Inputs and references
 

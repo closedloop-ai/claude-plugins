@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -23,7 +24,7 @@ const { sourceIdentity, committedSourceIdentity } = await vibeCore("lib/vibe/scr
 // The PR evidence rules of the repository the ClosedLoop provider serves.
 // In-process checks resolve the session's binding through this conversation, bound like the repository they model.
 bindProviderInProcess(after);
-const selectionProblemsBound = (runsFile, files, required, commit) => selectionProblems(runsFile, files, required, commit, prRulesFor(PROVIDER_BINDING));
+const selectionProblemsBound = (runsFile, files, required, commit, worktree) => selectionProblems(runsFile, files, required, commit, prRulesFor(PROVIDER_BINDING), null, worktree);
 
 test('dirty precommit evidence cannot bind unchanged HEAD and binds only after the candidate is committed', t => {
   const { root, home, cleanup } = makeHome('precommit-evidence-binding-');
@@ -541,8 +542,8 @@ test("edited web and Desktop e2e specs can be carried only by exact not-run CI e
   ]) assert.match(check(changedEvidence).join(), /selected but no passing or carried run/);
 });
 
-test("Tier A Docker can be ready while five selected specs lack required identity or displayless execution", () => {
-  const commit = "f".repeat(40);
+/** Five changed specs a Tier A probe proves cannot run locally, each left to its CI owner by a not-run row at `commit`. */
+function tierACarry(commit) {
   const web = ["e2e/gated-route-shells.spec.ts", "e2e/org-issues-list.spec.ts", "e2e/shell-sidebar-v2-route-matrix.spec.ts"];
   const desktop = ["apps/desktop/test/e2e/issues-list.spec.ts", "apps/desktop/test/e2e/labs-signed-in-only-nav.spec.ts"];
   const specs = [...web, ...desktop];
@@ -576,7 +577,12 @@ test("Tier A Docker can be ready while five selected specs lack required identit
       entries: specs.map((path) => ({ kind: "e2e", path, cases: ["changed name"], command: "not run locally" })) },
     e2eCapability: capability,
   };
-  const changed = specs.map((path) => ({ path, status: "M" }));
+  return { web, desktop, specs, capability, runs, evidence, changed: specs.map((path) => ({ path, status: "M" })) };
+}
+
+test("Tier A Docker can be ready while five selected specs lack required identity or displayless execution", () => {
+  const commit = "f".repeat(40);
+  const { web, desktop, specs, capability, runs, evidence, changed } = tierACarry(commit);
   assert.deepEqual(selectionProblemsBound(evidence, changed, [], commit), []);
   assert.deepEqual(targetedEvidenceProblems(evidence, commit), []);
   assert.deepEqual(evidenceProblems(evidence, specs, commit), []);
@@ -597,6 +603,28 @@ test("Tier A Docker can be ready while five selected specs lack required identit
   rejects({ ...evidence, e2eCapability: { ...capability, container: { ...capability.container,
     runnable: true, secretsSet: { CLERK_SECRET_KEY: true, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: true, DEVOPS_CLOSEDLOOP_APP_PWD: true } } } });
   rejects({ ...evidence, e2eCapability: { ...capability, desktopHarness: { ...capability.desktopHarness, available: true } } });
+});
+
+test("ISS-14225: a Tier A spec left to CI by the slot that ran the lanes binds by the head's Git tree, the proof commit absent here", (t) => {
+  const f = makeHome("pr-facts-slot-carry-"); t.after(f.cleanup);
+  const wt = path.join(f.root, "wt"); mkdirSync(wt); writeFileSync(path.join(wt, "a.txt"), "published\n");
+  git(wt, ["init", "--quiet"], f.home); git(wt, ["add", "a.txt"], f.home); git(wt, ["commit", "--quiet", "-m", "published head"], f.home);
+  const head = git(wt, ["rev-parse", "HEAD"], f.home); const gitTree = git(wt, ["rev-parse", "HEAD^{tree}"], f.home);
+  const slot = path.join(f.root, "slot"); git(f.root, ["clone", "--quiet", wt, slot], f.home);
+  const proof = git(slot, ["commit-tree", gitTree, "-m", "proof made on the heavy slot"], f.home);
+  assert.throws(() => git(wt, ["cat-file", "-e", `${proof}^{commit}`], f.home), undefined, "the proof commit exists only on the slot");
+  const { specs, capability, evidence, changed } = tierACarry(proof);
+  evidence.targetedInventory.commit = head;
+  evidence.e2eCapability = { ...capability, host: "heavy-slot", gitTree, runnerWorktree: "/srv/slot", probeScript: "/opt/vibe/e2e-capability-probe.mjs" };
+  assert.deepEqual(selectionProblemsBound(evidence, changed, [], head, wt), []);
+  assert.deepEqual(evidenceProblems(evidence, specs, head, wt), []);
+  assert.deepEqual(targetedEvidenceProblems(evidence, head, wt), []);
+  const rejects = (candidate, why) => assert.match(selectionProblemsBound(candidate, changed, [], head, wt).join(), /selected but no passing or carried run/, why);
+  rejects({ ...evidence, e2eCapability: { ...evidence.e2eCapability, gitTree: git(wt, ["mktree"], f.home) } }, "a probe of another tree");
+  const { host, ...hostless } = evidence.e2eCapability;
+  rejects({ ...evidence, e2eCapability: hostless }, "a tree claim without its host");
+  rejects({ ...evidence, testRuns: evidence.testRuns.map((run) => ({ ...run, commit: "2".repeat(40) })) }, "rows at a commit the probe does not name");
+  assert.match(selectionProblemsBound(evidence, changed, [], head).join(), /selected but no passing or carried run/, "no worktree, no tree binding");
 });
 
 test("the PR gate rejects a claimed no-Docker carry when its live read-only probe sees Tier A", (t) => {
@@ -622,6 +650,35 @@ test("the PR gate rejects a claimed no-Docker carry when its live read-only prob
   assert.match(capabilityProbeProblems({ ...truthful, e2eCapability: { ...truthful.e2eCapability,
     container: { ...current.container, secretsSet: { ...current.container.secretsSet, CLERK_SECRET_KEY: true } } } },
     s.wt, commit, () => current).join(), /identity-key presence differs/);
+});
+
+test("ISS-14225: the gate accepts a fresh probe from the host that ran the lanes when it is bound to the head's Git tree", (t) => {
+  const f = makeHome("pr-facts-remote-probe-"); t.after(f.cleanup);
+  const wt = path.join(f.root, "wt"); mkdirSync(wt);
+  git(wt, ["init", "--quiet"], f.home); git(wt, ["commit", "--quiet", "--allow-empty", "-m", "published head"], f.home);
+  const commit = git(wt, ["rev-parse", "HEAD"], f.home); const gitTree = git(wt, ["rev-parse", "HEAD^{tree}"], f.home);
+  const probe = { probedCommit: "1".repeat(40), host: "heavy-slot", gitTree, runnerWorktree: "/Users/fixture/slot", probeScript: "/opt/vibe/e2e-capability-probe.mjs",
+    container: { dockerPresent: true, dockerReachable: true, memoryGiB: 23.4, diskGiB: 936, minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "docker info",
+      runnable: false, notRunnableReason: "CLERK_SECRET_KEY unset", secretsSet: { CLERK_SECRET_KEY: false, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: true, DEVOPS_CLOSEDLOOP_APP_PWD: true } },
+    desktopHarness: { available: false, reason: "no supported displayless Linux Electron harness", probe: "darwin" } };
+  const evidence = { e2eCapability: { ...probe, selectedTier: "A" }, testRuns: [{ path: "e2e/org-issues-list.spec.ts", status: "not-run", commit }] };
+  const asked = [];
+  const reprobe = (answer) => (request) => { asked.push(request); return typeof answer === "function" ? answer() : structuredClone(answer); };
+  assert.deepEqual(capabilityProbeProblems(evidence, wt, commit, reprobe(probe)), []);
+  assert.deepEqual(asked.map((request) => request.remote?.host), ["heavy-slot"], "the recorded host is re-probed, never this machine");
+  assert.equal(asked[0].remote.gitTree, gitTree);
+  const refused = (candidate, answer, pattern) => assert.match(capabilityProbeProblems(candidate, wt, commit, reprobe(answer)).join(), pattern);
+  refused({ ...evidence, e2eCapability: { ...evidence.e2eCapability, gitTree: "2".repeat(40) } }, probe, /not bound to the final committed HEAD/);
+  const { host, ...hostless } = evidence.e2eCapability;
+  refused({ ...evidence, e2eCapability: hostless }, probe, /not bound to the final committed HEAD/);
+  refused(evidence, { ...probe, container: { ...probe.container, dockerReachable: false } }, /Docker runtime probe differs/);
+  refused(evidence, { ...probe, gitTree: "2".repeat(40) }, /incomplete/);
+  refused(evidence, { ...probe, host: "other-slot" }, /incomplete/);
+  refused(evidence, () => { throw new Error("ssh refused"); }, /could not be verified/);
+  asked.length = 0;
+  const here = { ...evidence, e2eCapability: { ...evidence.e2eCapability, host: hostname() } };
+  assert.deepEqual(capabilityProbeProblems(here, wt, commit, reprobe({ ...probe, host: hostname(), probedCommit: commit })), []);
+  assert.equal(asked[0].remote, undefined, "a probe from this machine is compared with this machine");
 });
 
 test("the verifier's private shape check rejects path-only evidence and accepts exact entries", (t) => {
@@ -807,7 +864,7 @@ function siblingCarry(t, extraJob = "", laterBoundary = false) {
       laneReport: { source: { kind: "github-workflow", path: workflowPath, commit: published,
         sha256: createHash("sha256").update(workflow).digest("hex") }, matches: [{ name: "test", command }] },
       entries: [], noTestsReason: "workflow lane" }, testRuns: [result], rerunCycles: [] };
-  return { wt, g, evidence: JSON.parse(JSON.stringify(evidence)), published, proof, boundary, earliest, receiptFile };
+  return { wt, g, evidence: JSON.parse(JSON.stringify(evidence)), published, proof, boundary, earliest, receiptFile, base };
 }
 
 test("sibling QA proof carries only through a verified equal-tree publication receipt", t => {
@@ -887,6 +944,61 @@ test("a tree carry never accepts an old passing result for a lane changed after 
   e.testRuns[0].commit = f.boundary;
   e.treeEquivalentCarry.runs[0].result.commit = f.boundary;
   assert.match(targetedEvidenceProblems(e, f.published, f.wt).join(), /scope includes this lane/);
+});
+
+/** ISS-14225: every lane ran on another host against a proof commit this clone never received; only its Git tree equals the head's. */
+function remoteTreeCarry(t) {
+  const f = siblingCarry(t);
+  const carry = f.evidence.treeEquivalentCarry;
+  const qaRef = "refs/heads/proof/qa"; f.g("update-ref", qaRef, f.boundary);
+  f.g("update-ref", "-d", carry.proof.ref); f.g("update-ref", "-d", "ORIG_HEAD");
+  f.g("reflog", "expire", "--expire=now", "--all"); f.g("gc", "--quiet", "--prune=now");
+  assert.throws(() => f.g("cat-file", "-e", `${f.proof}^{commit}`), undefined, "the proof commit object is absent from this clone");
+  const commitKind = structuredClone(f.evidence);
+  carry.proof = { kind: "tree", host: "heavy-slot", proofCommit: f.proof, gitTree: carry.proof.gitTree,
+    treeSha256: carry.proof.source.treeSha256, command: "ssh heavy-slot pre-pr-lanes.mjs run" };
+  carry.proofs = [{ ref: qaRef, commit: f.boundary, gitTree: f.g("rev-parse", `${f.boundary}^{tree}`), source: committedSourceIdentity(f.wt, f.boundary) }];
+  return { ...f, commitKind };
+}
+
+test("ISS-14225: a lane run on another host against an absent proof commit with the head's tree passes prEvidence", t => {
+  const f = remoteTreeCarry(t);
+  assert.match(targetedEvidenceProblems(f.commitKind, f.published, f.wt).join(), /tree-equivalent carry refused/, "a commit point still needs its proof object");
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), []);
+  const runs = { ...f.evidence, touchFlows: [], touchFlowsReason: "fixture", runs: [], testSelection: [
+    { file: "service.mjs", selector: "related", tests: [] }, { file: "service.mjs", selector: "e2e-reference", tests: [] }],
+  e2eCapability: { selectedTier: null, container: { dockerPresent: false, dockerReachable: false, memoryGiB: 0, diskGiB: 0,
+    minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "fixture probe" }, native: { available: false, forbidden: false }, remote: { available: false } } };
+  const gate = evidence => pullRequestFacts({ worktree: f.wt, base: f.base, include: new Set(["service.mjs"]), runs: evidence, commit: f.published }).prEvidenceProblems;
+  assert.deepEqual(gate(runs), []);
+  assert.match(gate({ ...runs, treeEquivalentCarry: f.commitKind.treeEquivalentCarry }).join(), /tree-equivalent carry refused/);
+  // A targeted test row at the absent proof commit carries through its inventory entry, read from this worktree.
+  const targeted = structuredClone(runs); const testPath = "service.test.mjs"; const command = `node --test ${testPath}`;
+  targeted.testSelection[0].tests = [testPath];
+  delete targeted.targetedInventory.noTestsReason;
+  targeted.targetedInventory.entries = [{ kind: "node", path: testPath, cases: ["value"], command, resultCommit: f.proof, carriedTo: f.published,
+    carryReason: "ran on heavy-slot at a proof commit with the published Git tree",
+    coveredFiles: targeted.treeEquivalentCarry.runs[0].coveredFiles.filter((file) => file.path === "service.mjs") }];
+  targeted.testRuns.push({ path: testPath, cases: ["value"], status: "passed", commit: f.proof, command });
+  assert.deepEqual(gate(targeted), []);
+  targeted.targetedInventory.entries[0].coveredFiles[0].sha256 = "0".repeat(64);
+  assert.match(gate(targeted).join(), /covered file hash changed/);
+});
+
+for (const [name, mutate] of [
+  ["a different Git tree", f => { f.evidence.treeEquivalentCarry.proof.gitTree = f.g("rev-parse", `${f.boundary}^{tree}`); }],
+  ["a different treeSha256", f => { f.evidence.treeEquivalentCarry.proof.treeSha256 = committedSourceIdentity(f.wt, f.boundary).treeSha256; }],
+  ["a mismatched carry lane key", f => { f.evidence.treeEquivalentCarry.laneKey = "0".repeat(16); }],
+  ["a mismatched run scope key", f => { f.evidence.treeEquivalentCarry.runs[0].scopeKey = "0".repeat(16); }],
+  ["a missing host", f => { delete f.evidence.treeEquivalentCarry.proof.host; }],
+  ["a missing command", f => { delete f.evidence.treeEquivalentCarry.proof.command; }],
+  ["a result at another commit", f => { const e = f.evidence; e.testRuns[0].commit = e.treeEquivalentCarry.runs[0].result.commit = "1".repeat(40); }],
+  ["a tree point as the publication", f => { const e = f.evidence.treeEquivalentCarry; e.published = { ...e.proof, proofCommit: f.published }; }],
+]) test(`ISS-14225: a tree carry point refuses ${name}`, t => {
+  const f = remoteTreeCarry(t);
+  assert.deepEqual(targetedEvidenceProblems(f.evidence, f.published, f.wt), [], "positive control");
+  mutate(f);
+  assert.match(targetedEvidenceProblems(f.evidence, f.published, f.wt).join(), /tree-equivalent carry refused/);
 });
 
 

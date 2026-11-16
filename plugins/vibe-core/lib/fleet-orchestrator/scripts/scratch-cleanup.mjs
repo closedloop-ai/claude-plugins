@@ -1,3 +1,6 @@
+// Covers Docker scratch stacks only; scratch files follow the same ownership rule. Each worker gets its own scratch
+// directory named with its worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes only exact paths
+// it created; an orchestrator brief never asks a worker to delete by prefix or glob.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';

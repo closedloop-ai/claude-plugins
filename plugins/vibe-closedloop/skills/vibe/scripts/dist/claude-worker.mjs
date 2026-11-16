@@ -12951,8 +12951,10 @@ var commandReceiptSchema = external_exports.object({
   exitCode: external_exports.number().int(),
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
-  comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+  comparison: mainComparisonSchema.optional(),
+  // A check the fleet's remote slot ran: `log` is the stored report, `logSha256` the remote run's own log digest.
+  remote: external_exports.object({ host: external_exports.string().min(1).max(255), commit: commitSchema, logSha256: digestSchema }).strict().optional()
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence").refine((item) => !item.remote || item.exitCode === 0 && !item.comparison, "Remote check evidence must be a passing run");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -13020,6 +13022,26 @@ var mainSyncReceiptSchema = external_exports.object({
   recipe: storedValidationRecipeSchema.optional(),
   deferredMain: external_exports.object({ mainSha: commitSchema, reason: external_exports.string().min(1).max(500) }).strict().optional()
 }).strict();
+var remoteCheckReportSchema = external_exports.object({
+  host: external_exports.string().trim().min(1).max(255),
+  validation: external_exports.object({
+    headSha: commitSchema,
+    treeSha: commitSchema,
+    inputSha256: digestSchema,
+    commands: external_exports.array(external_exports.object({
+      argv: external_exports.array(external_exports.string()).min(1).max(256),
+      bindings: external_exports.record(external_exports.string()).optional(),
+      cwd: external_exports.string().optional(),
+      timeoutMs: external_exports.number().int().optional(),
+      exitCode: external_exports.number().int(),
+      log: external_exports.string().min(1).max(4096),
+      sha256: digestSchema
+    }).strict()).min(1).max(128),
+    checkedAt: external_exports.string().datetime(),
+    e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
+  }).strict()
+}).strict();
+var mainSyncRemoteInputSchema = mainSyncInputSchema.extend({ report: remoteCheckReportSchema }).strict();
 var readinessStateSchema = external_exports.object({
   version: external_exports.literal(1),
   phase: external_exports.literal("input-readiness"),

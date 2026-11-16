@@ -819,6 +819,12 @@
         "refusedFlags": [
           "--source-hash"
         ]
+      },
+      "heavySlot": {
+        "refusedScripts": [
+          "heavy-slot.sh"
+        ],
+        "gatedCommand": "scripts/fleet.sh <orchDir> local|remote slot heavy <owner> <worktree> <command...>"
       }
     },
     "memory": {

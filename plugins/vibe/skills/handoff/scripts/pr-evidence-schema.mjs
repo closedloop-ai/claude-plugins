@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 import { proofSourceAt, testIntegrityProofShapeProblems } from "./test-integrity.mjs";
+import { RUNNER_HOST } from "./e2e-tier.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -92,7 +93,12 @@ export function prEvidenceShapeProblems(evidence, receiptDir, readSource) {
 
 /** @typedef {{kind: "command", command: string} | {kind: "github-workflow", path: string}} RepositoryLaneSource */
 /** @typedef {{ref: string, commit: string, gitTree: string, source: {head: string, diffSha256: string, treeSha256: string}}} CarryPoint */
-/** @typedef {{kind: "tree-equivalent", version: 1, proof: CarryPoint, published: CarryPoint, proofs?: CarryPoint[], laneKey: string,
+/**
+ * A proof commit that exists only on the host that ran it: bound by its Git tree and content hash,
+ * which must equal the publication's; `proofCommit` names the run's commit and is never resolved locally.
+ * @typedef {{kind: "tree", host: string, proofCommit: string, gitTree: string, treeSha256: string, command: string}} TreeCarryPoint
+ */
+/** @typedef {{kind: "tree-equivalent", version: 1, proof: CarryPoint | TreeCarryPoint, published: CarryPoint, proofs?: CarryPoint[], laneKey: string,
  * runs: Array<{scopeKey: string, result: {lane: string, command: string, commit: string, laneKey?: string, status: "passed", exitCode: 0},
  * coveredFiles: Array<{path: string, sha256: string}>, receipt: {path: string, sha256: string}}>}} TreeEquivalentCarry */
 const HASH = /^[a-f0-9]{64}$/;
@@ -130,12 +136,17 @@ export function treeEquivalentCarryShapeProblems(carry) {
     return ["tree-equivalent carry needs its complete versioned contract"];
   }
   if (carry.proofs !== undefined && (!Array.isArray(carry.proofs) || carry.proofs.length > 100)) return ["tree carry proofs must be a bounded list of pinned points"];
-  const points = [["proof", carry.proof], ["published", carry.published], ...(carry.proofs ?? []).map((point, index) => [`proofs[${index}]`, point])];
-  const commits = new Set([carry.proof?.commit, carry.published?.commit]);
+  const treeProof = carry.proof?.kind === "tree";
+  const points = [...(treeProof ? [] : [["proof", carry.proof]]), ["published", carry.published], ...(carry.proofs ?? []).map((point, index) => [`proofs[${index}]`, point])];
+  const commits = new Set([treeProof ? carry.proof.proofCommit : carry.proof?.commit, carry.published?.commit]);
   for (const point of carry.proofs ?? []) {
     if (commits.has(point?.commit)) problems.push("tree carry proof commits must be unambiguous");
     commits.add(point?.commit);
   }
+  if (treeProof && (!exactKeys(carry.proof, ["kind", "host", "proofCommit", "gitTree", "treeSha256", "command"])
+    || typeof carry.proof.host !== "string" || !RUNNER_HOST.test(carry.proof.host) || !COMMIT.test(carry.proof.proofCommit ?? "")
+    || !COMMIT.test(carry.proof.gitTree ?? "") || !HASH.test(carry.proof.treeSha256 ?? "")
+    || typeof carry.proof.command !== "string" || !carry.proof.command.trim())) problems.push("tree carry proof tree point needs its host, proof commit, Git tree, tree hash and command");
   for (const [name, point] of points) {
     if (!exactKeys(point, ["ref", "commit", "gitTree", "source"]) || !/^refs\/(?:heads|remotes)\/[A-Za-z0-9_./-]+$/.test(point?.ref ?? "")
       || !COMMIT.test(point?.commit ?? "") || !COMMIT.test(point?.gitTree ?? "") || !validSourceIdentity(point?.source)

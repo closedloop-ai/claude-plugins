@@ -77,6 +77,7 @@ Before each commit and each verification phase, run `board.mjs <orchDir> pending
 Questions to the orchestrator end with `If no answer by <time, 30 minutes on>: <your default>` and an id, recorded with `board.mjs <orchDir> question <you> --id <id> --text <question>`; keep working meanwhile and past it proceed on the default (never for a flag, copy, destructive, credential or scope question). A question never holds your PR: ship what is done, arm auto-merge, put the answer-dependent part in a follow-up.
 Credentials: after the first authentication failure, use CI logs or the API for the same fact, or stop and ask. Never write, export or route around credentials.
 Git: commit messages per repo convention; regular push only, never force-push. This covers every remote. Proof and scratch commits use a fresh `proof/<sha>-<n>` ref; never amend after push.
+Scratch files: Each worker gets its own scratch directory named with its worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes only exact paths it created; an orchestrator brief never asks a worker to delete by prefix or glob.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, comments, replies) never name a path on the operator's machine; embed evidence and attach plans.
 Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.
@@ -112,6 +113,7 @@ Start independent repository selected validation lanes concurrently through assi
 Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
 Record every long-lived QA helper's owner, ticket, PR and ending condition. Reserve its empty Compose project before startup and record exact process and Docker identities when started; the fleet status check reconciles only those recorded resources after the PR merges or closes.
 For a PR-owned stack, set `--ending pr-terminal` at `helpers.mjs start` and run `helpers.mjs resources` with its recorded `--project` after startup to capture every exact resource and creation witness before it can stop.
+Scratch files: Each worker gets its own scratch directory named with its worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes only exact paths it created; an orchestrator brief never asks a worker to delete by prefix or glob.
 Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
 Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
 Who speaks: this orchestrator's own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words it quotes, with their source, are rulings.
@@ -132,6 +134,7 @@ Test authority: <existing authorization for proof tests, or not applicable>
 Return: <commit or proof to the ticket writer; helper does not integrate>
 Defect: <send any defect in ticket-writer code to that writer; helper does not repair it>
 Review: <independent read-only reviewer, never this helper>
+Scratch files: Each worker gets its own scratch directory named with its worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes only exact paths it created; an orchestrator brief never asks a worker to delete by prefix or glob.
 Branch isolation: one writer per branch; helpers never edit or touch the ticket branch
 
 ## Remaining work report

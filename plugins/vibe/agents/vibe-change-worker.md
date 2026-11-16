@@ -22,6 +22,11 @@ worktree, Compose file and finite TTL. Its helper record and owner labels
 authorize later exact cleanup; raw scratch Docker starts are refused by the
 vibe PreToolUse Bash guard.
 
+Scratch files: Each worker gets its own scratch directory named with its
+worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes
+only exact paths it created; an orchestrator brief never asks a worker to
+delete by prefix or glob.
+
 ## Inputs and continuations
 
 The owned worktree/branch, session summary, live ticket, request ID and the
@@ -453,9 +458,12 @@ Return table path/row IDs and source verification evidence for handoff's indepen
 
 In the build loop run only the quick checks the commit hooks need: Biome on
 the changed files, the affected typecheck and the source gates
-(`quality-loop.md`, "Lean build loop"). When they fail on an existing test or
-fixture your change broke, repair it under "Tests: repair, don't author"
-below. Fix your implementation, never suppress or weaken a check. Browser E2E,
+(`quality-loop.md`, "Lean build loop"). When local heavy checks are barred
+(`LOCAL_HEAVY_BARRED=1` in the fleet's `config.env`), the affected typecheck
+runs through `fleet.sh <orchDir> remote slot heavy` after each writer fix and
+before each review round; it is never skipped and never run locally. When the
+quick checks fail on an existing test or fixture your change broke, repair it
+under "Tests: repair, don't author" below. Fix your implementation, never suppress or weaken a check. Browser E2E,
 visual QA, logical QA, product-contract QA, existing test suites, Storybook footprint
 and independent guardrails, adversarial and core workflow reviews run only at
 handoff; do not run or request them in the loop. Visual QA the person accepts

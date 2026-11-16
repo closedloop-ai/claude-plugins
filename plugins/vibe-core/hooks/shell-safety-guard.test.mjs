@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
-import { credentialProblem, e2eSlotProblem, equalsWordProblem, forcePushProblem, shellSafetyGuard, watcherLaunchProblem, wordSplitProblem } from "./shell-safety-guard.mjs";
+import { credentialProblem, e2eSlotProblem, equalsWordProblem, forcePushProblem, heavySlotProblem, shellSafetyGuard, watcherLaunchProblem,
+  wordSplitProblem } from "./shell-safety-guard.mjs";
 import { activatedChat } from "./activation-test-support.mjs";
+import { recordWorkerScope } from "../lib/vibe/scripts/worker-scope.mjs";
 
 // The ClosedLoop provider's slot rule, as a chat it is bound to reads it.
 const SLOT_RULE = JSON.parse(readFileSync(new URL("../../vibe-closedloop-provider/provider.json", import.meta.url), "utf8")).data.guards.e2eSlot;
@@ -183,4 +186,193 @@ test("an unquoted word starting with = is refused, because zsh aborts the whole 
 test("with no provider bound there is no slot rule, so the wrapper's name means nothing", () => {
   assert.equal(e2eSlotProblem("e2e-slot.sh ISS-1 run", null), null);
   assert.equal(e2eSlotProblem("e2e-slot.sh ISS-1 run", undefined), null);
+  assert.equal(heavySlotProblem("heavy-slot.sh ISS-1 run", null), null);
+  assert.equal(heavySlotProblem("heavy-slot.sh ISS-1 run", undefined), null);
+});
+
+/** The guard's reason for `command` in a chat with no provider bound and no launcher record, or null. */
+const guardReason = (command, event = {}) => shellSafetyGuard({ ...event, tool_input: { command } })?.reason ?? null;
+
+/** Runs pre-tool-use.mjs for `command` in `chat` (as session `session`, when given); returns its hookSpecificOutput, or null. */
+function runHook(chat, command, session) {
+  const event = chat.payload({ ...(session ? { session_id: session } : {}), tool_name: "Bash", tool_input: { command } });
+  const result = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(event), encoding: "utf8", env: chat.env });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput ?? null : null;
+}
+
+/** Points HOME at a fresh home for test `t`, restored after it, where session "vibe-launcher-worker" is a launcher worker. */
+function launcherWorkerHome(t) {
+  const home = mkdtempSync(path.join(os.tmpdir(), "vibe-worker-home-"));
+  const previous = process.env.HOME;
+  t.after(() => {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "HOME");
+    else process.env.HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  });
+  process.env.HOME = home;
+  recordWorkerScope("vibe-launcher-worker", "/w", home);
+}
+
+test("git hook bypasses are refused: a failing hook means the commit is not ready (proof commit with --no-verify, ISS-14227)", () => {
+  const refused = [
+    "git commit --no-verify -m proof",
+    "git commit -n -m proof",
+    "git commit -anm proof",
+    "git commit -nm proof",
+    "git commit -am proof -n",
+    "git commit -m\"proof\" -n",
+    "git commit --no-verif -m proof",
+    "git commit --amend --no-edit --no-verify",
+    "git -C repo commit --no-verify -m proof",
+    "git -c user.name=x --git-dir .git --work-tree . commit -n -m proof",
+    "git --git-dir=.git --namespace ns commit --no-verify",
+    "cd wt && git add -A && git commit --no-verify -m proof",
+    "ssh host 'zsh -lic \"cd ~/wt && git -C r commit --no-verify -m proof\"'",
+    "bash -lc 'git am -n patch.mbox'",
+    "git am --no-verify patch.mbox",
+    "git am -3n patch.mbox",
+    "git merge --no-verify main",
+    "git pull --no-verify origin main",
+    "git push --no-verify origin HEAD",
+    "git rebase --no-verify main",
+    "git -c core.hooksPath=/dev/null commit -m proof",
+    "git -c CORE.HOOKSPATH=/dev/null push origin HEAD",
+    "git -c core.hooksPath status",
+    "git --config-env=core.hooksPath=EMPTY commit -m proof",
+    "git --config-env core.HooksPath=EMPTY merge main",
+  ];
+  for (const command of refused) assert.match(guardReason(command) ?? "", /failing hook means the commit is not ready/, command);
+  const allowed = [
+    "git commit -m proof",
+    "git commit -m -n",
+    "git commit -mn",
+    "git commit -F -n",
+    "git commit --message --no-verify",
+    "git commit -m 'skip --no-verify'",
+    "git commit --verify -m proof",
+    "git commit -- -n",
+    "git am -C -n patch.mbox",
+    "git push -n origin HEAD",
+    "git merge -n main",
+    "git merge --no-verify-signatures main",
+    "git rebase -n main",
+    "git pull -n origin main",
+    "git cherry-pick -n abc1234",
+    "git -c core.editor=true commit -m proof",
+    "git -C -n status",
+    "echo 'git commit --no-verify'",
+    "printf '%s\\n' 'git -c core.hooksPath=/dev/null commit'",
+  ];
+  for (const command of allowed) assert.equal(guardReason(command), null, command);
+});
+
+test("combined short force flags and git global options cannot hide a force push", () => {
+  const refused = [
+    "git push -uf origin fix/work",
+    "git push -fu origin fix/work",
+    "git push -vf origin fix/work",
+    "git -C repo push -uf origin fix/work",
+    "git --git-dir=.git -c push.default=current push --force",
+    "git -c user.name=x push -qf scratch HEAD:proof/abc-1",
+    "ssh host 'zsh -lic \"git -C wt push -uf origin fix/work\"'",
+    "git push --force-if-includes --force-with-lease=fix/work origin fix/work",
+    "ssh primary bash -s <<'EOF'\ngit push -f origin fix/work\nEOF",
+  ];
+  for (const command of refused) assert.match(forcePushProblem(command) ?? "", /force.push/i, command);
+  for (const command of ["git push -u origin fix/work", "git push -n origin fix/work", "git push -o ci.skip origin fix/work",
+    "git -C repo push origin HEAD:proof/abc-2", "git push --no-force origin fix/work"]) {
+    assert.equal(forcePushProblem(command), null, command);
+  }
+});
+
+test("a launcher worker deletes only exact paths: glob and brace deletes are refused, exact ones are not (ISS-14228)", (t) => {
+  launcherWorkerHome(t);
+  const worker = (command) => guardReason(command, { session_id: "vibe-launcher-worker" });
+  const refused = [
+    "rm -f /tmp/vibe-14191/e2e3.*",
+    "rm -f /tmp/vibe-14191/frozen2.*",
+    "rm -rf /tmp/vibe-14191/e2e3.{sh,json}",
+    "rm -f /tmp/vibe-14191/e2e{1..3}.log",
+    "rm /tmp/vibe-14191/e2e?.sh",
+    "rm /tmp/vibe-14191/e2e[0-9].sh",
+    "rm -rf \"$dir\"/*",
+    "cd /tmp/vibe-14191 && rm -f e2e3.*",
+    "unlink /tmp/vibe-14191/e2e3.*",
+    "find /tmp/vibe-14191 -name 'e2e3.*' -delete",
+    "find /tmp/vibe-14191 -maxdepth 1 -name 'e2e3.*' -exec rm -f {} +",
+    "find /tmp/vibe-14191/e2e3.* -delete",
+    "ssh host 'rm -f /tmp/vibe-14191/e2e3.*'",
+    "ssh host rm -f \"/tmp/vibe-14191/e2e3.*\"",
+    "zsh -lic 'rm -f /tmp/vibe-14191/e2e3.*'",
+  ];
+  for (const command of refused) assert.match(worker(command) ?? "", /deletes only exact paths it created, in its own per-worker directory/, command);
+  const allowed = [
+    "rm -f /tmp/vibe-14191/e2e3.sh /tmp/vibe-14191/e2e3.pid",
+    "rm -rf \"$dir\"",
+    "rm -rf \"${dir:?}\"",
+    "rm -rf ${dir:?}",
+    "rm -f '/tmp/vibe-14191/e2e3.*'",
+    "ls /tmp/vibe-14191/e2e3.*",
+    "find /tmp/vibe-14191 -name 'e2e3.*'",
+    "find /tmp/vibe-14191 -name e2e3.sh -delete",
+    "find /tmp/vibe-14191/e2e3 -exec rm -f {} +",
+  ];
+  for (const command of allowed) assert.equal(worker(command), null, command);
+  assert.equal(guardReason("rm -f /tmp/vibe-14191/e2e3.*", { session_id: "orchestrator-chat" }), null, "only a launcher worker is held to exact paths");
+});
+
+test("a launcher worker may remove its own per-worker directory, or exact files in it, by exact path (ISS-14228)", (t) => {
+  launcherWorkerHome(t);
+  const worker = (command) => guardReason(command, { session_id: "vibe-launcher-worker" });
+  const own = "/tmp/vibe-14191/workers/verify-e2e3";
+  for (const command of [`rm -rf ${own}`, `rm -rf ${own}/`, `rm -f ${own}/e2e3.sh ${own}/e2e3.status`, `find ${own} -delete`,
+    `ssh host 'rm -rf ${own}'`]) {
+    assert.equal(worker(command), null, command);
+  }
+  assert.match(worker(`rm -f ${own}/*`) ?? "", /exact paths/, "a glob is refused even in its own directory");
+});
+
+test("through the hook, the ISS-14191 delete is refused in a launcher worker, so the orchestrator's e2e3.json beside the worker's e2e3.sh survives", (t) => {
+  const chat = activatedChat(t);
+  const scratch = mkdtempSync(path.join(os.tmpdir(), "vibe-14228-scratch-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  recordWorkerScope("vibe-launcher-worker", scratch, chat.home);
+  const orchestratorFiles = ["e2e3.json", "e2e3.out.json"].map((name) => path.join(scratch, name));
+  const workerFile = path.join(scratch, "e2e3.sh");
+  for (const file of [...orchestratorFiles, workerFile]) writeFileSync(file, "{}\n");
+  // The harness runs a command only when the hook does not deny it.
+  const attempt = (command) => {
+    const output = runHook(chat, command, "vibe-launcher-worker");
+    if (output?.permissionDecision !== "deny") assert.equal(spawnSync("/bin/sh", ["-c", command]).status, 0, command);
+    return output;
+  };
+  const refused = attempt(`rm -f ${scratch}/e2e3.*`);
+  for (const file of [...orchestratorFiles, workerFile]) assert.ok(existsSync(file), `${file} survives the refused glob`);
+  assert.equal(refused?.permissionDecision, "deny");
+  assert.match(refused.permissionDecisionReason, /exact paths it created/);
+  assert.equal(attempt(`rm -f ${workerFile}`), null, "the exact path the worker created is allowed");
+  assert.equal(existsSync(workerFile), false);
+  for (const file of orchestratorFiles) assert.ok(existsSync(file), `${file} survives the exact delete`);
+});
+
+test("a bound provider's ungated heavy slot wrapper is refused, ssh payloads included; with no provider bound nothing is (ISS-14225)", (t) => {
+  const bound = activatedChat(t, process.env, { provider: true });
+  const refused = [
+    "~/vibe-remote/heavy-slot.sh ISS-1 pnpm typecheck",
+    "ssh host 'zsh -lic \"cd ~/Source/wt && ~/vibe-remote/heavy-slot.sh ISS-1 pnpm typecheck\"'",
+    "bash ~/vibe-remote/heavy-slot.sh ISS-1 pnpm test",
+    "HEAVY_SLOTS=3 heavy-slot.sh ISS-1 pnpm lint",
+    "cd ~/wt && env FOO=1 ~/vibe-remote/heavy-slot.sh ISS-1 pnpm verify",
+  ];
+  for (const command of refused) {
+    const output = runHook(bound, command);
+    assert.equal(output?.permissionDecision, "deny", command);
+    assert.match(output.permissionDecisionReason, /heavy-slot\.sh.*no load check.*fleet\.sh <orchDir> local\|remote slot heavy/, command);
+  }
+  for (const command of ["cat ~/vibe-remote/heavy-slot.sh", "scripts/fleet.sh orch remote slot heavy ISS-1 ~/wt pnpm typecheck"]) {
+    assert.notEqual(runHook(bound, command)?.permissionDecision, "deny", command);
+  }
+  const unbound = activatedChat(t);
+  assert.notEqual(runHook(unbound, refused[0])?.permissionDecision, "deny", "with no provider rule the script name means nothing");
 });

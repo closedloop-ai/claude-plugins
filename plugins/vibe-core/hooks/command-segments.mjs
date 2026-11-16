@@ -13,6 +13,10 @@ const MAX_NESTED_SHELL_DEPTH = 64;
 const CHDIR_OPTIONS = Object.freeze({ env: ['-C', '--chdir'], sudo: ['-D', '--chdir'] });
 const SSH_VALUED = new Set(['-p', '-i', '-o', '-J', '-F', '-l', '-S', '-W', '-L', '-R', '-D', '-b',
   '-E', '-B', '-I', '-w', '-c', '-e', '-m', '-O', '-P']);
+// Pathname glob characters, or a brace list (`{a,b}`, `{1..3}`), in a word's unquoted text.
+const EXPANDING = /[*?]|\[[^\]]*\]|\{[^{}]*(?:,|\.\.)[^{}]*\}/;
+// `${name...}` is parameter expansion, whose `?`, `*` or `,` the shell never globs.
+const PARAMETER = /\$\{[^}]*\}/g;
 const envSplit = value => {
   const quote = value[0];
   return shellWords((quote === '"' || quote === "'") && value.at(-1) === quote ? value.slice(1, -1) : value);
@@ -72,13 +76,25 @@ function attachedValue(word, option) {
   return word.startsWith(option) && word.length > option.length ? word.slice(option.length) : null;
 }
 
-/** Shell words with quoted whitespace preserved; operators are handled by commandSegments. */
-function shellWords(value) {
+/**
+ * Shell words with quoted whitespace preserved; operators are handled by commandSegments. With `globs`, each word
+ * whose unquoted text the shell expands as a pathname glob or a brace list is added to it.
+ */
+function shellWords(value, globs = null) {
   const words = [];
   let word = '';
+  let bare = '';
   let quote = null;
   let started = false;
-  const finish = () => { if (started) words.push(word); word = ''; started = false; };
+  const finish = () => {
+    if (started) {
+      words.push(word);
+      if (globs && EXPANDING.test(bare.replace(PARAMETER, ''))) globs.add(word);
+    }
+    word = '';
+    bare = '';
+    started = false;
+  };
   for (let index = 0; index < value.length; index += 1) {
     const char = value[index];
     if (quote) {
@@ -88,14 +104,14 @@ function shellWords(value) {
     } else if (char === '"' || char === "'") { quote = char; started = true; }
     else if (/\s/.test(char)) finish();
     else if (char === '\\' && index + 1 < value.length) { word += value[++index]; started = true; }
-    else { word += char; started = true; }
+    else { word += char; bare += char; started = true; }
   }
   finish();
   return words;
 }
 
 /** Keep executable words while removing attached redirection operators and their targets. */
-function commandWords(segment) {
+function commandWords(segment, globs) {
   let text = '';
   let quote = null;
   for (let index = 0; index < segment.length; index += 1) {
@@ -120,7 +136,7 @@ function commandWords(segment) {
       while (index + 1 < segment.length && !/[\s;|&()<>]/.test(segment[index + 1])) index += 1;
     }
   }
-  return shellWords(text);
+  return shellWords(text, globs);
 }
 
 /** Ordered command and scope events; substitutions stay attached until their host command executes. */
@@ -347,13 +363,14 @@ function heredocSubstitutions(body) {
 function expandSegment(segment, depth, expandShellPayloads, remote, scope, childScope,
   substitutions, inheritedSubstitution, functions, functionStack) {
   const hasSubstitution = inheritedSubstitution || substitutions.length > 0;
-  const words = commandWords(segment);
+  const globWords = new Set();
+  const words = commandWords(segment, globWords);
   const prefix = commandPrefix(words);
   const current = words.slice(prefix.index);
   const controls = [];
   while (CONTROL.has(current[0])) controls.push(current.shift());
   const moved = prefix.chdir === undefined ? {} : { chdir: prefix.chdir };
-  const entry = (extra = {}) => ({ env: prefix.env, words: current, controls, remote, scope, hasSubstitution,
+  const entry = (extra = {}) => ({ env: prefix.env, words: current, globWords, controls, remote, scope, hasSubstitution,
     substitutions, ...moved, ...extra });
   if (current.length === 0) return controls.length || Object.keys(prefix.env).length
     ? [entry()] : [];

@@ -2,7 +2,8 @@
 # Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end|interrupt|reload|recover-marker> <name> [codex-session.mjs options]
 #        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> <command...>
 #        fleet.sh <orchDir> <local|remote> cleanup
-# A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE.
+# A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE;
+# LOCAL_HEAVY_BARRED=1 in config.env refuses every local heavy slot (exit 78), even with FLEET_FORCE_HERE.
 # <orchDir> is a fleet home (its active program) or a program dir; codex-fleet-monitor/scripts/work-dir.mjs
 # resolves it and loads config.env (references/setup.md); without the REMOTE_* keys only `local` works.
 # `remote` copies the scripts it needs, and a session's prompt file (with its <prompt>.evidence/ folder), to <REMOTE_STATE_DIR>/.fleet-orchestrator/
@@ -327,6 +328,11 @@ slot() {
     admission_note="force reason: ${FLEET_FORCE_REASON:-}"
   fi
   if [ "$where" = local ]; then
+    # A placement order, not a load reading, so FLEET_FORCE_HERE cannot lift it.
+    if [ -n "$check" ] && [ "${LOCAL_HEAVY_BARRED:-}" = 1 ]; then
+      echo "fleet: LOCAL_HEAVY_BARRED=1 in config.env bars heavy work on this machine; run it with fleet.sh <orchDir> remote slot heavy <owner> <dir> <command...>" >&2
+      exit 78
+    fi
     cd "$dir"
     if [ -n "$check" ]; then MAX_LOAD_PER_CORE=${MAX_LOAD_PER_CORE:-1.5} bash "$here/load-check.sh"; fi
     local slot_args=(--slots "$slots")
@@ -334,8 +340,16 @@ slot() {
     if [ -n "$preflight" ]; then slot_args+=(--preflight-node "$skills/vibe/scripts/e2e-lock.mjs"); fi
     exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@"
   fi
-  local gate=
-  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/load-check.sh") && "; fi
+  local gate='' remote_scripts=$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts required=(slot-lock.sh) script
+  if [ -n "$check" ]; then
+    required+=(load-check.sh)
+    gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_scripts/load-check.sh") && "
+  fi
+  # A stale or partial unpack must refuse with its own code; bash's 127 reads like the command itself was missing.
+  local present=
+  for script in "${required[@]}"; do
+    present+="test -f $(printf %q "$remote_scripts/$script") || { printf 'fleet: remote %s is missing; %s slot refused\\n' $(printf %q "$script") $(printf %q "$name") >&2; exit 78; }; "
+  done
   local slot_args=(--slots "$slots")
   if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
   if [ -n "$preflight" ]; then
@@ -343,9 +357,9 @@ slot() {
     expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
     remote_root=$remote_vibe_root
     remote_gate="command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") || { printf 'fleet: remote vibe plugin is missing or not version %s; heavy build not started\\n' $(printf %q "$expected_version") >&2; exit 78; }; "
-    run_remote "${remote_gate}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
+    run_remote "${remote_gate}${present}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
   else
-    run_remote "cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
+    run_remote "${present}cd $(printf %q "$dir") && $gate$(printf '%q ' bash "$remote_scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
   fi
 }
 

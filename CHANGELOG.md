@@ -4,6 +4,36 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe-closedloop-provider v1.0.1
+
+#### Changed
+- New `data.guards.heavySlot` rule (ISS-14225): `refusedScripts` lists `heavy-slot.sh`, the machine's heavy slot wrapper that checks no load, and `gatedCommand` names `scripts/fleet.sh <orchDir> local|remote slot heavy`, which vibe-core's shell-safety guard points to when it refuses one.
+- The verify worker reference's `TreeEquivalentCarry` paragraph describes the tree point, `pre-pr-lanes.mjs record --ran-on`, the probe fields to copy with `--host`, and how a targeted test row at the proof commit carries through its inventory entry (see vibe v1.1.89). Its Tier C step says a proof commit is never made by bypassing a commit hook, and is not made when the hook fails (ISS-14227).
+
+### vibe-core v1.0.11
+
+#### Changed
+- `shell-safety-guard` refuses a git hook bypass (ISS-14227): `--no-verify` or an unambiguous abbreviation of it on commit, am, merge, pull, push and rebase, `-n` on commit and am (also inside a short cluster such as `-anm`, while an option's value such as `git commit -m -n` is skipped), and any git call that sets `core.hooksPath` through `-c` or `--config-env`. `--no-verify-signatures` is not refused.
+- Force push detection also reads command segments: a combined short flag (`-uf`), any `--force*` option and a `+` refspec, after git global options and inside `ssh` and `zsh -lic` payloads. The previous text match still applies, so a push in a heredoc fed to a remote shell stays refused.
+- In a launcher worker (a Claude launcher worker or a Codex fleet thread), `rm` or `unlink` of an unquoted glob or brace operand, and a deleting `find` with a glob start path or a wildcard `-name`, `-path` or `-regex` value, are refused, also inside the worker's own directory; exact paths stay allowed, and an orchestrator is not affected (ISS-14228). `command-segments.mjs` records each segment's unquoted glob words (`globWords`).
+- With a bound provider's `data.guards.heavySlot` rule, a call to a script it lists is refused and names its `gatedCommand` (ISS-14225); with no rule bound nothing is refused.
+- `provider.mjs` rejects a contract whose `data.guards` is not an object or whose `e2eSlot` or `heavySlot` rule is malformed. Unknown guard keys are still accepted.
+- The `scratch-cleanup.mjs` header says it covers Docker scratch stacks only and states the shared scratch-files rule.
+
+### vibe v1.1.89
+
+#### Changed
+- Lane evidence can be bound to a Git tree instead of a commit (ISS-14225). When the lanes ran on another host against a proof commit this clone never received, a `TreeEquivalentCarry` `proof` may be a tree point `{kind: "tree", host, proofCommit, gitTree, treeSha256, command}`. `pr-facts.mjs` checks `gitTree` and `treeSha256` against the published commit, never resolves `proofCommit`, reads scope and covered-file hashes at the published commit, and requires the receipt source to be the proof commit with the published tree hashes. Commit points are checked as before.
+- `pre-pr-lanes.mjs record` takes `--ran-on <host> --proof-commit <sha> --git-tree <tree>`, all three together and never with `--source`. It refuses a dirty worktree or a `HEAD^{tree}` other than `--git-tree`, and adds `ranOn: {host, proofCommit, gitTree, command}` to the row while keeping the local `head` and `source`.
+- The E2E capability probe records `host` (`--host <ssh name>`, default this machine's hostname), `gitTree`, `runnerWorktree` and `probeScript`. A probe from a named host is bound to the head when its `gitTree` is the head's tree; one recorded on another host is re-probed on that host over ssh (new `remoteCapabilityProbe`, which checks the remote worktree and tree first), never on this machine. New `boundProbeCommit` in `e2e-tier.mjs` lets Tier A and Tier C spec carry, not-run spec rows and the not-run `desktop-e2e` lane row name that probe's commit.
+- New `vibe-sessions.mjs main-sync-record-remote` records a main-sync matrix the fleet's remote slot already ran on its own commit of the same tree, instead of rerunning it (ISS-14225). It reads the granted context and `{host, validation}` (the remote receipt's `validation`, verbatim) on stdin, runs nothing, and refuses with no fresh main-sync transaction, another transaction, another tree, other committed inputs, another check matrix or e2e limitations, a failing or compared check, or a blank host. The report is stored as `vibe-main-sync-<txn>-remote.json` in the git directory, and a later request refuses when it changed. `environment.md` step 3 says when to use it, and the vibe-workers bundles are rebuilt.
+- `fleet.sh` refuses a remote slot with exit 78, naming the script and running nothing, when the remote host lacks its shipped `slot-lock.sh` or, for a heavy slot, `load-check.sh`; before this the slot failed with bash's 127 (ISS-14225).
+- New `LOCAL_HEAVY_BARRED=1` in the fleet's `config.env` makes `fleet.sh <orchDir> local slot heavy` refuse with exit 78 and name `remote slot heavy` (ISS-14229). `FLEET_FORCE_HERE` does not lift it, shared and remote slots still run, and `HEAVY_SLOTS` keeps its meaning. `setup.md` and the fleet SKILL.md describe it, and `quality-loop.md` and the change worker say the affected typecheck then runs through `remote slot heavy` after each writer fix and before each review round, never skipped and never run locally.
+- The verify worker never passes `--no-verify` or `git commit -n`, sets `core.hooksPath` or bypasses a commit hook any other way, also for a proof or scratch commit; a proof commit whose hook fails is not made (ISS-14227).
+- One scratch-files rule in the fleet worker preamble, resume prompt and disjoint helper branch brief, the fleet SKILL.md Claude workers section, the vibe SKILL.md worker brief, and the change, verify and setup workers: each worker keeps its files in `<scratch>/<worker-id>/` and deletes only exact paths it created, and no brief asks a worker to delete by prefix or glob (ISS-14228).
+- New `test_vibe_iss_14227_contract.py`, `test_vibe_iss_14228_contract.py` and `test_vibe_iss_14229_contract.py` pin those sentences. The README version line and the Python and vibe-bench release-pin tests move to 1.1.89.
+- Measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs` against 1.1.88 (22c726c8), over Markdown under `plugins/vibe`: vibe is about 658 words longer, and the vibe-closedloop-provider folder adds about 193 words. Across all plugin Markdown, including eval prompts and graders and each plugin's README (`--path plugins`), with every file under the generated `plugins/vibe-closedloop` left out, this change is about 851 words longer.
+
 ### vibe-closedloop-provider v1.0.0
 
 #### Added

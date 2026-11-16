@@ -51,7 +51,11 @@ Keep your context for the conversation and session state; NEVER do the work:
   local web e2e lane is never run, so its sign-in failure never happens: it is
   recorded not run and the containerized or CI run covers it
   (`scripts/pre-pr-lanes.mjs`; operator ruling, 2026-10-28). Never force-push; this covers every remote. Proof and
-  scratch commits use a fresh `proof/<sha>-<n>` ref.
+  scratch commits use a fresh `proof/<sha>-<n>` ref. It also carries this
+  line: Scratch files: Each worker gets its own scratch directory named with
+  its worker id (`<scratch>/<worker-id>/`), creates its files there, and
+  deletes only exact paths it created; an orchestrator brief never asks a
+  worker to delete by prefix or glob.
 
 Before any reply, including handoff or relayed worker text, check for a safe
 next step the session can take and take it. Do not tell the person they need

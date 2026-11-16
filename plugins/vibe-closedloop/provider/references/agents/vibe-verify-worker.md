@@ -102,7 +102,20 @@ publications require the versioned `TreeEquivalentCarry` contract from
 `pr-evidence-schema.mjs`. Preserve original results/keys and historical lane
 selections; bind the current `scopeKey`. List non-ancestor source snapshots
 in `proofs` using pinned `CarryPoint` values. The gates check Git/source/receipt
-consistency. Render with `pr-evidence-comment.mjs --worktree "<wt>"`.
+consistency. When the lanes ran on another host against a proof commit this
+clone never received, `proof` is a tree point `{ kind: "tree", host,
+proofCommit, gitTree, treeSha256, command }`: the gate checks `gitTree` and
+`treeSha256` against the published commit and never resolves `proofCommit`.
+Each result names `proofCommit`; its receipt `source` is that commit with the
+published tree hashes. Record each such lane from the clean published head
+with `pre-pr-lanes.mjs record --ran-on <host> --proof-commit <sha> --git-tree
+<tree>`. For an E2E carry, run the probe on that host with `--host <ssh name>`
+and also copy its `host`, `gitTree`, `runnerWorktree` and `probeScript`; the
+gate then re-probes that host over ssh, never this machine, and not-run spec
+and lane rows may name the probe's commit. A targeted test row at the proof
+commit carries through its inventory entry's `resultCommit` (the proof commit),
+`carriedTo` (the published commit), `carryReason` and `coveredFiles` hashes,
+which the gate reads from this worktree. Render with `pr-evidence-comment.mjs --worktree "<wt>"`.
 Also write `testIntegrityProofs: []`, populated for every candidate recomputed
 by the final handoff inventory. Each entry carries its exact `candidate`,
 `path`, `case`, `class`, intentional `mutation`, exact `command`,
@@ -228,6 +241,10 @@ For targeted E2E, record the repository's capability probe and choose:
    worktree at the push-ready local commit, building fresh after a switch
    (`image-head.mjs` refuses stale images). A failure is fixed uncommitted,
    then the still-unpushed commit is amended and transferred before rerunning.
+   Never pass `--no-verify` (or `git commit -n`), set `core.hooksPath`, or
+   bypass a commit hook any other way, for a proof or scratch commit too. A
+   proof commit whose hook fails is not made; report not ready with the hook
+   output.
 
 Record dirty E2E through `e2e-lock.mjs`; retain its `<gitdir>/vibe-e2e-results`
 receipt with `--head <HEAD> --source-hash <treeSha256>`, not the HEAD-only

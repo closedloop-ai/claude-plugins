@@ -322,3 +322,48 @@ test("a repository with no e2e recipe needs no staging identity", (t) => {
   assert.equal(hasStagingE2eIdentity(root, {}, null), true);
   assert.equal(hasStagingE2eIdentity(root, {}, stagingIdentity(PROVIDER_BINDING)), false);
 });
+
+test("ISS-14225: record binds a lane that ran on another host to the head by Git tree, never by a proof commit this clone lacks", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-ran-on-");
+  t.after(cleanup);
+  const wt = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", wt], home);
+  writeFileSync(path.join(wt, "a.txt"), "one\n");
+  git(wt, ["add", "a.txt"], home);
+  git(wt, ["commit", "--quiet", "-m", "base"], home);
+  git(wt, ["commit", "--quiet", "--allow-empty", "-m", "published head"], home);
+  const head = git(wt, ["rev-parse", "HEAD"], home);
+  const tree = git(wt, ["rev-parse", "HEAD^{tree}"], home);
+  const slot = path.join(root, "slot");
+  git(root, ["clone", "--quiet", wt, slot], home);
+  const proof = git(slot, ["commit-tree", tree, "-p", "HEAD~1", "-m", "proof made on the heavy slot"], home);
+  assert.throws(() => git(wt, ["cat-file", "-e", `${proof}^{commit}`], home), undefined, "the proof commit exists only on the slot");
+  const pass = 'node -e "process.exit(0)"';
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `    ${pass}\n`);
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const record = (...extra) => run("record", "--worktree", wt, "--head", head, "--command", pass, "--result", "pass", "--report", report, ...extra);
+  const ranOn = ["--ran-on", "heavy-slot", "--proof-commit", proof, "--git-tree", tree];
+  assert.equal(run("check", "--worktree", wt, "--report", report).status, 1);
+  const recorded = record(...ranOn);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  assert.equal(run("check", "--worktree", wt, "--report", report).status, 0, "check keys on the lane scope and the source tree");
+  const row = JSON.parse(readFileSync(path.join(wt, ".git", "vibe-lane-results.json"), "utf8")).find((item) => item.command === pass);
+  assert.deepEqual(row.ranOn, { host: "heavy-slot", proofCommit: proof, gitTree: tree, command: pass });
+  assert.equal(row.source.head, head, "the row's source is this clean head, whose content the proof shares");
+  const otherTree = git(wt, ["mktree"], home);
+  git(wt, ["commit", "--quiet", "--allow-empty", "-m", "same tree, other commit"], home);
+  const moved = git(wt, ["rev-parse", "HEAD"], home);
+  const refused = (args, pattern, why) => {
+    const result = run("record", "--worktree", wt, "--head", moved, "--command", pass, "--result", "pass", "--report", report, ...args);
+    assert.equal(result.status, 2, why);
+    assert.match(result.stderr, pattern, why);
+  };
+  refused(["--ran-on", "heavy-slot", "--proof-commit", proof, "--git-tree", otherTree], /Git tree/, "a proof tree that is not HEAD's tree");
+  refused(["--ran-on", "heavy-slot", "--proof-commit", proof], /--git-tree/, "a host without the proof tree");
+  refused(["--proof-commit", proof, "--git-tree", tree], /--ran-on/, "a proof without its host");
+  refused(["--ran-on", "heavy slot;", "--proof-commit", proof, "--git-tree", tree], /host/, "a host that is not a plain name");
+  refused([...ranOn, "--source", JSON.stringify(row.source)], /--source/, "a remote record never carries a local dirty identity");
+  writeFileSync(path.join(wt, "a.txt"), "uncommitted\n");
+  refused(ranOn, /clean/, "uncommitted inputs are not the proof tree");
+});
