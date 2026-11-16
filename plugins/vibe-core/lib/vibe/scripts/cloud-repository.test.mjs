@@ -69,16 +69,19 @@ test('a repository outside ClosedLoop validates from an SSH or HTTPS origin, wit
     assert.equal(request.ticket, undefined);
     assert.doesNotThrow(() => validateValidationRequest(request));
     const { calls, remote } = fakeRemote();
-    const result = await validateCommit(request, { remote, sleep: async () => {} });
+    const result = await validateCommit(request, { remote, sleep: async () => {}, home: path.join(path.dirname(worktree), 'home') });
     assert.deepEqual(calls[0].payload.body.job_config.ccr.session_context.sources, [{ git_repository: { url: 'https://github.com/acme/LocalFork' } }], origin);
-    assert.match(calls[0].payload.body.job_config.ccr.events[0].data.message.content, /^Validation only\. Repository: acme\/LocalFork\./);
+    // The standing routine receives each run's brief through its update (ISS-13998, operator ruling q1).
+    const update = calls.find((call) => call.action === 'update');
+    assert.deepEqual(update.payload.body.job_config.ccr.session_context.sources, [{ git_repository: { url: 'https://github.com/acme/LocalFork' } }], origin);
+    assert.match(update.payload.body.job_config.ccr.events[0].data.message.content, /^Validation only\. Repository: acme\/LocalFork\./);
     assert.deepEqual([result.repository, result.passed], ['acme/LocalFork', true]);
   }
   const local = checkout(t, '/srv/git/LocalFork.git');
-  await assert.rejects(validateCommit(validation(local), { remote: fakeRemote().remote, sleep: async () => {} }), { code: CloudRepoError.NotGithub });
+  await assert.rejects(validateCommit(validation(local), { remote: fakeRemote().remote, sleep: async () => {}, home: path.join(path.dirname(local), 'home') }), { code: CloudRepoError.NotGithub });
   const none = checkout(t);
   const { calls, remote } = fakeRemote();
-  await assert.rejects(validateCommit(validation(none), { remote, sleep: async () => {} }), { code: CloudRepoError.NotGithub });
+  await assert.rejects(validateCommit(validation(none), { remote, sleep: async () => {}, home: path.join(path.dirname(none), 'home') }), { code: CloudRepoError.NotGithub });
   assert.deepEqual(calls, [], 'nothing is sent for a repository that is not on GitHub');
 });
 
