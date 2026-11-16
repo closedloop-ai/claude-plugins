@@ -59,9 +59,9 @@ a final report. Every
 check narrowed or left for CI is named in the existing progress or handoff
 summary in plain words (`../vibe/references/guardrails.md`, "Checks"). Every
 worker brief says closedloop-graph is required
-(`../../provider/references/closedloop-graph.md`): a worker that locates, changes or
+(`../vibe/references/closedloop-graph.md`): a worker that locates, changes or
 reviews code ends with a Graph block listing its calls; otherwise dispatch the worker again saying so. On `unreachable` the step goes on; dispatch `vibe-setup-worker` to restore the connection before the next one. Every worker that edits the live ticket
-follows `../../provider/references/ticket-template.md`. You and every worker leave
+follows `../vibe/references/ticket-template.md`. You and every worker leave
 plugins, plugin marketplaces and plugin caches alone, and never clone the
 plugin's repository to run other tooling (`../vibe/references/guardrails.md`,
 "Plugins and tooling"). Read the person-facing reply rule in
@@ -435,7 +435,7 @@ exception: when the person chose passing it on, a criterion whose
 only gap is work another ticket owns (an API or data ticket that has not
 shipped) is marked `not met yet: waits on <ticket>`, and the table may then
 say `Final Alignment Status: Aligned except criteria waiting on <tickets>`.
-Each such criterion goes on the Engineering checklist (`../../provider/references/ticket-template.md`,
+Each such criterion goes on the Engineering checklist (`../vibe/references/ticket-template.md`,
 "Criteria waiting on other work"), so the people who close the dependency
 receive the work. A requested pull request still needs every criterion met.
 
@@ -483,7 +483,7 @@ needs a human decision is never the writer's to resolve, downgrade or
 absorb, including after verification. The SAME writer logs it in the change
 log as `Engineering decision: <question>; built: <what the session built>;
 evidence: <files, records or finding>`, and the ticket worker puts it on the
-live ticket's Engineering checklist (the provider's `../../provider/references/ticket-template.md`,
+live ticket's Engineering checklist (the provider's `../vibe/references/ticket-template.md`,
 "Engineering decisions"), never to the person.
 
 On a requested pull request, lighter and backend alike, the repo's
@@ -539,18 +539,15 @@ change, against the session's acceptance criteria when the ticket or its PRD
 has them and otherwise as the design pack's best-practice review
 (`../vibe/references/quality-loop.md`, "Visual QA during the session",
 "What it checks"); its rendered-control inventory flags anything with no
-sourced requirement. For shared scope it compares each consumer page against
-that page's approved prototype route and flags every control present in the
-prototype but missing in production. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
+sourced requirement. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
-evidence is visible. Each skill dispatches its own read-only agents. For every
-touched metric, summary, or card surface, visual QA compares the card's
-container, width, order and responsive placement with the established grid or
-that page's official prototype story. Counting cards is never layout evidence.
+evidence is visible. Each skill dispatches its own read-only agents.
 Confirmed findings resume the SAME writer in fix mode for every touched surface, even when
 they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
-steps 3 to 6 run again on the result. Before handoff, the findings file must pass
+steps 3 to 6 run again on the result, with visual QA as one pass scoped to
+the changes since the last reviewed capture
+(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). Before handoff, the findings file must pass
 `node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings
 <findings.json> --require-disposition`; every finding on a touched surface has
 `fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
@@ -778,7 +775,7 @@ run's log, the running app verification's artifact paths
 with what each proves and any surface it could not drive with its command and
 reason, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open
-Questions per `../../provider/references/ticket-template.md`,
+Questions per `../vibe/references/ticket-template.md`,
 and every answer from the person so far with how it was handled. For a source
 PRD, also pass every child classification and its current
 ownership, status and activity. The ticket worker moves to In Review only

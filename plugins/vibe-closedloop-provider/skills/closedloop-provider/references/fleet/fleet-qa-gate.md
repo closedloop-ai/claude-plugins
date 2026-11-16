@@ -3,7 +3,7 @@
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
 <!-- block: unit-review -->
-- A unit's PR is ready only once its review of the completed work passed (`provider:ticket-units.md`, "Review the completed work"): every member and PRD criterion with a code row and a capture for each page and surface it names.
+- A unit's PR is ready only once its review of the completed work passed (`references/ticket-units.md`, "Review the completed work"): every member and PRD criterion with a code row and a capture for each page and surface it names.
 <!-- end: unit-review -->
 
 <!-- block: qa-impact -->

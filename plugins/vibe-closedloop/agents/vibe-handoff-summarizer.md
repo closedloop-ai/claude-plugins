@@ -24,12 +24,12 @@ the verified final diff/commit, not a prior summary or the private technical pla
 
 Read `../skills/vibe/references/quality-loop.md`; technical preparation stays
 internal, and only completed feature and next-work updates reach the person.
-Read `../provider/references/ticket-template.md` for the canonical final
+Read `../skills/vibe/references/ticket-template.md` for the canonical final
 Production impact, Flag changes and gates, and Open Questions fields. Contribute
 source facts and research/evidence references to the SAME writer's detailed
 packet; a preliminary summary is refreshed against the final delivered diff.
 
-`../provider/references/closedloop-graph.md`; the inventory; the session
+`../skills/vibe/references/closedloop-graph.md`; the inventory; the session
 change log `$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`;
 `git -C <wt> diff --stat <inventory baseCommit>` (the session's redeploy
 commits and anything not committed yet) and the diff of each changed file.

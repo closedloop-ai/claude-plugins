@@ -672,7 +672,10 @@ function captureFixture() {
     return file;
   };
   const entries = () => JSON.parse(readFileSync(join(f.orch, 'captures', 'ISS-1.json'), 'utf8')).captures;
-  return { ...f, wt, spec, entries, git };
+  // A capture's ticket is a tracker ticket only with a tracker bound, so the lead runs bound to the provider this repository ships.
+  const home = join(f.root, 'home');
+  const bound = { HOME: home, ...bindProvider(home) };
+  return { ...f, wt, spec, entries, git, bound, run: (args, env = {}) => f.run(args, { ...bound, ...env }) };
 }
 
 test('AC-3 a local --capture slot refuses a main ref already captured for the ticket before any slot or command', TIMEOUT, () => {
@@ -742,7 +745,7 @@ test('AC-4 a fleet capture records the seconds its command ran, and the measured
 /** Starts `fleet.sh <args>` like fixture's run, but asynchronously, with its exit as a promise. */
 function startFleet(f, args, env = {}) {
   const child = spawn('bash', [FLEET, f.orch, ...args], {
-    env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}`, SLOT_LOCK_DIR: join(f.root, 'locks'), ...env },
+    env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}`, SLOT_LOCK_DIR: join(f.root, 'locks'), ...f.bound, ...env },
   });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });

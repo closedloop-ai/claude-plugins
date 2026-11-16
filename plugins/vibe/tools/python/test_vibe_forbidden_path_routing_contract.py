@@ -91,7 +91,7 @@ def test_the_ticket_worker_and_handoff_carry_each_need_to_the_checklist() -> Non
     ticket = flat(agent("vibe-ticket-worker"))
     assert (
         f"Place each {TAG} entry in the change log once, as an unchecked item at the end of the Engineering "
-        "checklist in its logged shape (`../provider/references/ticket-template.md`, \"Engineering needed\")."
+        "checklist in its logged shape (`../skills/vibe/references/ticket-template.md`, \"Engineering needed\")."
     ) in ticket
     guardrail = section(skill_split.read(HANDOFF_SKILL), "## 3. Guardrail check")
     assert (

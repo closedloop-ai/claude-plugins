@@ -227,8 +227,9 @@ export function portableSurfaceChecker(entries = []) {
 export const PROVIDER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../vibe-closedloop-provider");
 export const ALL_CAPABILITIES = ["tickets", "plans", "graph", "memory", "recipes"];
 /**
- * Puts that provider into the vibe plugin at `vibeRoot` as a release built with it carries it: `provider/provider.json`
- * with its references beside it, so vibe-core's discovery finds it there.
+ * Puts that provider into the vibe plugin at `vibeRoot` where vibe-core's discovery finds a built one
+ * (`provider/provider.json`), with its whole references folder beside it: unlike a release, which carries assembled
+ * text, the source text under test still holds stubs that read the block files.
  */
 export function bundleProvider(vibeRoot) {
   const contract = JSON.parse(readFileSync(path.join(PROVIDER_ROOT, "provider.json"), "utf8"));

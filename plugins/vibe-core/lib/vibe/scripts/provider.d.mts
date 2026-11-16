@@ -21,11 +21,15 @@ export class ProviderBroken extends Error {
 }
 /** The folder of vibe's own install that holds a provider built into it. */
 export const BUNDLED_PROVIDER_DIR: string;
+/** The contract's file name in a provider folder. */
+export const CONTRACT_FILE: string;
 /** A provider contract as provider.json declares it. */
 export interface ProviderContract {
   vibeProvider: number;
   name: string;
   references: string;
+  /** In a vibe release built with the provider: each whole reference file's path under `references`. */
+  placed?: Record<string, string>;
   capabilities: Record<string, { needs: string[] }>;
   connections?: Record<string, { label: string; check: string }>;
   data?: Record<string, Record<string, unknown>>;

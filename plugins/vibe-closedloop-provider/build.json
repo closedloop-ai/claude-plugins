@@ -38,7 +38,9 @@
   },
   "coldPointer": "Read `{path}` when you reach this step and follow it.",
   "recipesNote": "Steps in this file written for symphony-alpha apply only in a repository that commits `.closedloop-ai/vibe-recipes.json`.",
-  "replace": {
-    "skills/vibe/references/closedloop-graph.md": "closedloop-graph.md"
+  "place": {
+    "closedloop-graph.md": "skills/vibe/references/closedloop-graph.md",
+    "ticket-template.md": "skills/vibe/references/ticket-template.md",
+    "ticket-units.md": "skills/fleet-orchestrator/references/ticket-units.md"
   }
 }

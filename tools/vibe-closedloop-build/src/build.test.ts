@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -39,7 +39,7 @@ function fixture(files: Record<string, string>, blocks: Record<string, string>, 
   mkdirSync(join(provider, "refs"), { recursive: true });
   for (const [name, text] of Object.entries(blocks)) write(join(provider, "refs", name), text);
   write(join(provider, BUILD_DATA), JSON.stringify({ manifests: {}, descriptions: {}, cold: {}, coldPointer: POINTER,
-    recipesNote: RECIPES_NOTE, replace: {}, ...data }));
+    recipesNote: RECIPES_NOTE, place: {}, ...data }));
   return { source, provider, output: join(root, "out") };
 }
 
@@ -116,18 +116,33 @@ describe("assembly", () => {
     expect(text("agents/closedloop-c1.md")).toBe(`${RECIPES_NOTE}\n\nBlock c1.\n`);
   });
 
-  it("rewrites provider names to paths from the file to the bundled reference, and refuses a name the provider lacks", () => {
+  it("rewrites provider names to paths from the file to where build.json places the reference, and refuses a name it does not place", () => {
     const blocks = { "skill.md": block("t1", "Read `provider:ticket-template.md` and [it](provider:sub/units.md)."),
       "ticket-template.md": "# Template\n", "sub/units.md": "# Units\n" };
-    const paths = fixture({ "agents/a.md": `${stub("tickets", "t1")}\n`, "skills/x/references/b.md": `${stub("tickets", "t1")}\n` }, blocks);
+    const place = { "ticket-template.md": "skills/vibe/references/ticket-template.md", "sub/units.md": "skills/fleet/references/units.md" };
+    const paths = fixture({ "agents/a.md": `${stub("tickets", "t1")}\n`, "skills/x/references/b.md": `${stub("tickets", "t1")}\n` }, blocks, { place });
     buildClosedLoopVibe(paths);
     expect(readFileSync(join(paths.output, "agents/a.md"), "utf8"))
-      .toBe("Read `../provider/references/ticket-template.md` and [it](../provider/references/sub/units.md).\n");
-    const nested = readFileSync(join(paths.output, "skills/x/references/b.md"), "utf8");
-    const named = /`([^`]+)`/.exec(nested)?.[1] ?? "";
-    expect(readFileSync(join(paths.output, "skills/x/references", named), "utf8")).toBe("# Template\n");
-    const missing = fixture({ "agents/a.md": `${stub("tickets", "t1")}\n` }, { "skill.md": block("t1", "Read `provider:gone.md`.") });
-    expect(() => buildClosedLoopVibe(missing)).toThrow(/provider:gone\.md/);
+      .toBe("Read `../skills/vibe/references/ticket-template.md` and [it](../skills/fleet/references/units.md).\n");
+    expect(readFileSync(join(paths.output, "skills/x/references/b.md"), "utf8"))
+      .toBe("Read `../../vibe/references/ticket-template.md` and [it](../../fleet/references/units.md).\n");
+    expect(readFileSync(join(paths.output, "skills/vibe/references/ticket-template.md"), "utf8")).toBe("# Template\n");
+    const missing = fixture({ "agents/a.md": `${stub("tickets", "t1")}\n` }, { "skill.md": block("t1", "Read `provider:gone.md`.") },
+      { place: { "gone.md": "skills/vibe/references/gone.md" } });
+    expect(() => buildClosedLoopVibe(missing)).toThrow(/places gone\.md, which the provider does not have/);
+    const unplaced = fixture({ "agents/a.md": `${stub("tickets", "t1")}\n` }, { "skill.md": block("t1", "Read `provider:skill.md`.") });
+    expect(() => buildClosedLoopVibe(unplaced)).toThrow(/names provider:skill\.md, which build\.json does not place/);
+  });
+
+  it("places each whole reference file once, refuses one left unplaced, a placed block source and a place outside the plugin", () => {
+    const blocks = { "skill.md": block("t1", "Text."), "ticket-template.md": "# Template\n" };
+    expect(() => buildClosedLoopVibe(fixture({}, blocks))).toThrow(/ticket-template\.md is neither a block source nor placed/);
+    expect(() => buildClosedLoopVibe(fixture({}, blocks, { place: { "ticket-template.md": "a.md", "skill.md": "b.md" } })))
+      .toThrow(/places skill\.md, a block source/);
+    for (const target of ["provider/references/ticket-template.md", "../ticket-template.md", "skills/../../x.md", "/abs.md"]) {
+      expect(() => buildClosedLoopVibe(fixture({}, blocks, { place: { "ticket-template.md": target } })), target)
+        .toThrow(/not a path in the plugin outside provider/);
+    }
   });
 
   it("names skills and agents as vibe: whatever the source plugin calls itself", () => {
@@ -146,19 +161,24 @@ describe("assembly", () => {
       + " or `cache/<marketplace>/vibe/<version>/`; `my-vibe-generic@x`, `vibe-generic-x/`, `vibe-generic.md` and `/vibe-generic` stay.\n");
   });
 
-  it("writes the provider's manifest and frontmatter descriptions and copies its contract and references", () => {
-    const paths = fixture({ "agents/a.md": "---\nname: a\ndescription: generic words\nmodel: x\n---\nBody.\n", "bin/run.sh": "#!/bin/sh\n" },
-      { "ticket-template.md": "# Template\n" },
-      { manifests: { ".claude-plugin/plugin.json": { description: "Acme vibe" } }, descriptions: { "agents/a.md": "Acme words" } });
+  it("writes the provider's manifest and frontmatter descriptions, its contract with the placement, and each placed file over the source's", () => {
+    const paths = fixture({ "agents/a.md": "---\nname: a\ndescription: generic words\nmodel: x\n---\nBody.\n", "bin/run.sh": "#!/bin/sh\n",
+      "skills/vibe/references/graph.md": "Generic graph text.\n" },
+      { "ticket-template.md": "# Template\n", "graph.md": "# Acme graph\n", "skill.md": block("t1", "Text.") },
+      { manifests: { ".claude-plugin/plugin.json": { description: "Acme vibe" } }, descriptions: { "agents/a.md": "Acme words" },
+        place: { "ticket-template.md": "skills/vibe/references/ticket-template.md", "graph.md": "skills/vibe/references/graph.md" } });
     execFileSync("chmod", ["+x", join(paths.source, "bin/run.sh")]);
     buildClosedLoopVibe(paths);
     expect(JSON.parse(readFileSync(join(paths.output, ".claude-plugin/plugin.json"), "utf8")))
       .toEqual({ name: "vibe", version: "2.0.0", description: "Acme vibe" });
     expect(readFileSync(join(paths.output, "agents/a.md"), "utf8")).toBe("---\nname: a\ndescription: Acme words\nmodel: x\n---\nBody.\n");
     expect(statSync(join(paths.output, "bin/run.sh")).mode & 0o111).not.toBe(0);
-    expect(JSON.parse(readFileSync(join(paths.output, "provider/provider.json"), "utf8")).references).toBe("references");
-    expect(readFileSync(join(paths.output, "provider/references/ticket-template.md"), "utf8")).toBe("# Template\n");
-    expect(existsSync(join(paths.output, "provider", BUILD_DATA))).toBe(false);
+    const contract = JSON.parse(readFileSync(join(paths.output, "provider/provider.json"), "utf8"));
+    expect([contract.references, contract.placed]).toEqual(["..", { "ticket-template.md": "skills/vibe/references/ticket-template.md",
+      "graph.md": "skills/vibe/references/graph.md" }]);
+    expect(readFileSync(join(paths.output, "skills/vibe/references/ticket-template.md"), "utf8")).toBe("# Template\n");
+    expect(readFileSync(join(paths.output, "skills/vibe/references/graph.md"), "utf8")).toBe("# Acme graph\n");
+    expect(readdirSync(join(paths.output, "provider")), "no block file and no build data").toEqual(["provider.json"]);
   });
 });
 
@@ -173,18 +193,14 @@ describe("the ClosedLoop vibe from this repository", () => {
     expect(tree(output())).toEqual(tree(output()));
   });
 
-  it("holds no stub, no rule region, no provider name and no generic prefix, and every pointer and reference path resolves", () => {
+  it("holds no stub, no rule region, no provider name and no generic prefix (references.test.ts resolves every path)", () => {
     const dir = output();
     for (const [file] of tree(dir)) {
-      if (!file.endsWith(".md") || file.startsWith("provider/")) continue;
+      if (!file.endsWith(".md")) continue;
       const text = readFileSync(join(dir, file), "utf8");
       expect(text, file).not.toMatch(/^> Provider `/m);
       expect(text, file).not.toMatch(/provider-rule|^Lines (?:that start|of the form) `/m);
       expect(text, file).not.toMatch(/(?<![\w-])provider:[\w./-]+\.md/);
-      for (const [, path] of text.matchAll(/`((?:\.\.\/)*provider\/references\/[\w./-]+\.md|references\/closedloop-[\w.-]+\.md)`/g)) {
-        const bases = [dirname(join(dir, file)), dirname(dirname(join(dir, file)))];
-        expect(bases.some((base) => existsSync(join(base, path as string))), `${file}: ${path}`).toBe(true);
-      }
     }
     expect(readFileSync(join(dir, "skills/vibe/SKILL.md"), "utf8")).toContain("Read `references/closedloop-deploy.md`");
   });
@@ -234,6 +250,7 @@ describe("the ClosedLoop vibe from this repository", () => {
       expect(binding.root).toBe(join(realpathSync(dir), "provider"));
       expect(binding.version).toBe(version);
       expect([...binding.capabilities].sort()).toEqual(["graph", "memory", "plans", "recipes", "tickets"]);
+      expect(provider.providerPath(binding, "tickets", "ticket-template.md")).toBe(join(realpathSync(dir), "skills/vibe/references/ticket-template.md"));
       expect(lstatSync(provider.providerPath(binding, "tickets", "ticket-template.md")).isFile()).toBe(true);
     }
   });

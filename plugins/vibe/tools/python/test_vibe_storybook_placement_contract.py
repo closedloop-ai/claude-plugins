@@ -352,12 +352,12 @@ def test_producers_carry_the_audience() -> None:
 def test_consumers_place_each_conflict_once_by_audience() -> None:
     ticket = flat(agent("vibe-ticket-worker"))
     for required in (
-        "Place each `Conflict` entry in the change log once, by its audience (`../provider/references/ticket-template.md`, \"Conflicts\")",
+        "Place each `Conflict` entry in the change log once, by its audience (`../skills/vibe/references/ticket-template.md`, \"Conflicts\")",
         "`design` on Design Review's Design conflicts line; anything else, or no clear audience, as an unchecked item at the end of the Engineering checklist",
         "Never in the Handoff section, never in both, and never to the person.",
     ):
         assert required in ticket, required
     storybook = section(skill_split.read(HANDOFF_SKILL), "## 4. Storybook")
-    assert "the ticket worker places it by that audience (`../../../provider/references/ticket-template.md`, \"Conflicts\")" in storybook
+    assert "the ticket worker places it by that audience (`../vibe/references/ticket-template.md`, \"Conflicts\")" in storybook
     readme = paragraph(skill_split.read(README), "the read-only `vibe-storybook-decomposer` places it")
     assert "design conflicts under Design Review and everything else on the Engineering checklist" in readme

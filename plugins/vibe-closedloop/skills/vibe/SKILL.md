@@ -196,7 +196,7 @@ explicitly installed and enabled.
   spaces in their names. Quote every path you pass to a command.
 - Paths like `scripts/...` and `references/...` are relative to this skill's
   folder, not the repository.
-- Every worker reads `../../provider/references/closedloop-graph.md`. closedloop-graph is
+- Every worker reads `references/closedloop-graph.md`. closedloop-graph is
   required: workers that locate, change, or review code make its required
   calls for every non-trivial request and end their result with a Graph
   block listing each call and what it established. When you dispatch one,
@@ -206,7 +206,7 @@ explicitly installed and enabled.
   that change moving; dispatch `vibe-setup-worker` to restore the
   closedloop-graph connection before the next change.
 - Every worker that edits the live ticket follows
-  `../../provider/references/ticket-template.md`. Say so in the brief and give the slug.
+  `references/ticket-template.md`. Say so in the brief and give the slug.
 - Images: a worker never sees what the person attached in chat. Save every
   attached image with `scripts/reference-images.mjs` and pass its path; the
   worker opens it with `Read` in Claude Code or `view_image` in Codex
@@ -707,7 +707,7 @@ evidence, never by replacing the writer.
    the SAME writer with its Placement block, which the writer records in its
    local plan before writing. That block is a read-only lookup in quick prep,
    not a review. The writer logs a Conflict in it with its audience, `design`
-   or `engineering`, for the live ticket (`../../provider/references/ticket-template.md`,
+   or `engineering`, for the live ticket (`references/ticket-template.md`,
    "Conflicts"), never a question for the person.
    A part that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` for the live ticket's Engineering
@@ -960,14 +960,14 @@ Whenever the person asks to throw a session away (at any point, for any
 
 ## References
 
-- `../../provider/references/closedloop-graph.md`: how every worker uses closedloop-graph.
+- `references/closedloop-graph.md`: how every worker uses closedloop-graph.
 - `references/triage.md`: the triage manifest, its classes and the switch;
   `references/pipeline-core.md`: the rules every class pipeline shares.
 - `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions and the precedent check, visual references and the reference check before ready, visual QA during the session, and the repair-only test rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,
   redeploys, and what runs on this Mac.
-- `../../provider/references/ticket-template.md`: the live ticket's sections and who keeps
+- `references/ticket-template.md`: the live ticket's sections and who keeps
   each one current.
 - `references/guardrails.md`: what may change and how (change and primitive workers).
 - `references/design-pass.md`: the owner rules, the build loop's prep step,

@@ -13,7 +13,7 @@ component the session added, retitled or moved, checked against the Placement
 blocks in the writer's local plan. Each placement goes on the live ticket's
 Storybook placement line; the SAME writer logs each Conflict with its
 audience, and the ticket worker places it by that audience
-(`../../../provider/references/ticket-template.md`, "Conflicts"), never to the person.
+(`../vibe/references/ticket-template.md`, "Conflicts"), never to the person.
 Every new story follows the repo's `apps/storybook/TAXONOMY.md`, a v1.0
 story file is never edited beyond a compile-only repair and any other existing
 story file keeps its title and tag
@@ -53,8 +53,7 @@ what each proves.
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is
 rendered directly instead: the verify worker
-produces its HTML with the repo's own generator, opens it headless and
-captures it in light and dark wherever it supports both. "Could not drive" is
+produces its HTML with the repo's own generator. "Could not drive" is
 not accepted for such a page. Any other surface it can neither drive nor
 render comes back with the exact control command and the reason, never as
 verified. A console error, page error, failed request or

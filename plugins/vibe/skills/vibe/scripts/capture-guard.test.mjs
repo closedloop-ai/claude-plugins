@@ -3,8 +3,12 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { bindProvider, bindProviderInProcess, makeHome } from "./test-fixtures.mjs";
+
+// A tracker ticket is a ticket only with a tracker bound, so these run bound to the provider this repository ships (spawned guards inherit it).
+bindProviderInProcess(after);
 
 const GUARD = fileURLToPath(new URL("./capture-guard.mjs", import.meta.url));
 const TIMEOUT = { timeout: 30_000 };
@@ -415,7 +419,7 @@ test("AC-2 AC-3 inside a fleet program the default ledger is the program's, else
   mkdirSync(join(home, ".vibe-hook-scope", "fleet-binding"), { recursive: true });
   mkdirSync(program, { recursive: true });
   writeFileSync(join(program, "board.json"), JSON.stringify({ writers: { w1: { worktree: r.worktree } } }));
-  const env = { ...process.env, HOME: home };
+  const env = { ...process.env, HOME: home, ...bindProvider(home) };
   delete env.FLEET_HOME;
   const direct = (args, extra = {}) => spawnSync(process.execPath, [GUARD, ...args], { cwd: r.worktree, encoding: "utf8", env: { ...env, ...extra } });
   const cloneOnly = direct(["begin", "--spec", spec(r, { ref: "origin/main" }), "--repo", r.worktree]);
@@ -432,7 +436,7 @@ test("AC-2 AC-3 inside a fleet program the default ledger is the program's, else
   assert.equal(JSON.parse(inFleet.stdout).ledger, join(program, "captures", "ISS-1.json"), "a bound program's board lists this worktree");
   const status = spawnSync(process.execPath, [GUARD, "status", "--ticket", "ISS-1"], { cwd: r2.worktree, encoding: "utf8", env });
   assert.equal(JSON.parse(status.stdout).ledger, join(program, "captures", "ISS-1.json"), "status with no flags reads the program ledger");
-  const viaFleetHome = direct(["status", "--ticket", "ISS-1"], { HOME: join(r.root, "nohome"), FLEET_HOME: join(r.root, "fleet") });
+  const viaFleetHome = direct(["status", "--ticket", "ISS-1"], { HOME: join(r.root, "nohome"), ...bindProvider(join(r.root, "nohome")), FLEET_HOME: join(r.root, "fleet") });
   assert.equal(JSON.parse(viaFleetHome.stdout).ledger, join(program, "captures", "ISS-1.json"), "FLEET_HOME finds the program too");
   const r3 = repository();
   const clone3 = join(r3.worktree, ".git", "vibe-captures", "ISS-1.json");
@@ -524,4 +528,21 @@ test("AC-3 AC-4 override (j): lines split where the Ruling matcher splits them, 
   writeFileSync(o.rulings, `- Ruling 2026-11-14 (operator): "saved with crlf" ISS-1 capture-guard override: baseline\r\n`);
   const crlf = o.override("saved with crlf");
   assert.equal(crlf.status, 0, `a CRLF rulings file grants an honest override: ${crlf.stderr}`);
+});
+
+test("without a tracker bound a ticket is a GitHub issue number, and a tracker key is refused", TIMEOUT, () => {
+  const r = repository();
+  const unbound = makeHome("capture-guard-unbound-");
+  try {
+    const env = { ...process.env, HOME: unbound.home, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
+    const run = (ticket) => spawnSync(process.execPath, [GUARD, "begin", "--spec", spec(r, { ref: "origin/main", ticket }), "--repo", r.worktree,
+      "--ledger", r.ledger], { encoding: "utf8", env });
+    assert.equal(run("ISS-1").status, 2, "a tracker key with no tracker bound is a usage error");
+    const issue = run("#42");
+    assert.equal(issue.status, 0, issue.stderr);
+    assert.equal(existsSync(join(r.ledger, "#42.json")), true);
+    assert.equal(existsSync(join(r.ledger, "ISS-1.json")), false);
+  } finally {
+    unbound.cleanup();
+  }
 });

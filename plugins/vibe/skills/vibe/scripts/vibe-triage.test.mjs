@@ -527,7 +527,7 @@ test('ISS-13998 AC-5: abandon ends a dispatch for good and removes the routine i
   assert.deepEqual([ledger.removal, ledger.removed.map((entry) => entry.id)], [[], ['trig_old_dispatch']]);
   const file = path.join(gitDir, 'cloud-request.json');
   writeFileSync(file, JSON.stringify(request));
-  const again = spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cloud-worker.mjs'), 'dispatch', '--request', file], { cwd: worktree, encoding: 'utf8', env: { ...process.env, HOME: home } });
+  const again = spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cloud-worker.mjs'), 'dispatch', '--request', file], { cwd: worktree, encoding: 'utf8', env: { ...process.env, HOME: home, ...bindProvider(home) } });
   assert.equal(again.status, 2);
   assert.match(again.stderr, /cloud task already ended: abandoned/, 'an abandoned dispatch is never resumed');
 });

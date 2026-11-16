@@ -2,16 +2,18 @@
 // plugins/vibe-closedloop. Markdown goes through provider.mjs's assembleProviderText with every capability the
 // contract declares; every other runtime file is copied byte for byte. The provider's build.json says what the
 // assembler cannot: the manifest and frontmatter descriptions, the cold blocks that live in their own files, the
-// line over recipe text, and whole files the provider replaces.
+// line over recipe text, and where each whole reference file goes. The built plugin carries the provider's contract
+// in provider/provider.json and no block file: the assembled text is all a reader needs.
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assembleProviderText,
   BUNDLED_PROVIDER_DIR,
+  CONTRACT_FILE,
   providerBlock,
   providerStubs,
   readContract,
@@ -64,12 +66,20 @@ interface BuildData {
   cold: Record<string, string[][]>;
   coldPointer: string;
   recipesNote: string;
-  replace: Record<string, string>;
+  /**
+   * Each provider reference file read whole (not a block source), mapped to its path in the built plugin: where
+   * plugins/vibe on main kept it, so built text names it as main's did. It replaces a source file at that path.
+   */
+  place: Record<string, string>;
 }
 
 type Binding = { state: "bound"; name: string; root: string; capabilities: string[] };
 
 const RECIPES = "recipes";
+/** The built contract's references folder: the plugin around provider/, so its `placed` paths are the plugin's own. */
+const BUNDLED_REFERENCES = "..";
+const BLOCK_START = /^<!-- block: [a-z0-9-]+ -->$/m;
+const PLACED_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9_./-]+\.md$/;
 const PROVIDER_NAME = /(?<![\w-])provider:((?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.md)/g;
 const GENERIC_PREFIX = /(?<![\w-])vibe-generic:/g;
 /** The generic plugin's own install id (`vibe-generic@<marketplace>`) and cache folder (a `/vibe-generic/` path segment). */
@@ -114,6 +124,7 @@ export class ClosedLoopBuild {
     if (!contract) throw new Error(`${paths.provider} has no provider contract vibe can read`);
     this.contract = contract;
     this.data = JSON.parse(readFileSync(join(paths.provider, BUILD_DATA), "utf8")) as BuildData;
+    checkPlacement(join(paths.provider, contract.references), this.data.place);
     const capabilities = Object.keys(contract.capabilities);
     this.realBinding = { state: "bound", name: contract.name, root: paths.provider, capabilities };
     this.stage = mkdtempSync(join(tmpdir(), "vibe-closedloop-build-"));
@@ -150,16 +161,17 @@ export class ClosedLoopBuild {
       if (entries.has(relative)) throw new Error(`two build outputs at ${relative}`);
       entries.set(relative, entry);
     };
+    const placed = new Map(Object.entries(this.data.place).map(([file, target]) => [target, file]));
     for (const relative of sourceFiles(this.paths.source)) {
+      if (placed.has(relative)) continue;
       if ((MANIFESTS as readonly string[]).includes(relative)) add(relative, { kind: "manifest", relative });
       else if (relative.endsWith(".md")) {
         add(relative, { kind: "markdown", relative });
         for (const group of this.groupsIn(this.sourceMarkdown(relative))) add(coldPath(relative, group.name), { kind: "cold", relative, id: group.name });
       } else add(relative, { kind: "copy", relative });
     }
-    const references = join(this.paths.provider, this.contract.references);
-    add(`${BUNDLED_PROVIDER_DIR}/provider.json`, { kind: "contract", relative: "provider.json" });
-    for (const relative of listFiles(references)) add(`${BUNDLED_PROVIDER_DIR}/references/${relative}`, { kind: "reference", relative });
+    add(`${BUNDLED_PROVIDER_DIR}/${CONTRACT_FILE}`, { kind: "contract", relative: CONTRACT_FILE });
+    for (const [target, file] of placed) add(target, { kind: "reference", relative: file });
     return new Map([...entries].sort(([a], [b]) => compare(a, b)));
   }
 
@@ -171,7 +183,7 @@ export class ClosedLoopBuild {
       case "reference":
         return readFileSync(join(this.paths.provider, this.contract.references, entry.relative));
       case "contract":
-        return json({ ...this.contract, references: "references" });
+        return json({ ...this.contract, references: BUNDLED_REFERENCES, placed: this.data.place });
       case "manifest":
         return json(this.manifest(entry.relative));
       case "markdown":
@@ -202,10 +214,7 @@ export class ClosedLoopBuild {
   }
 
   private sourceMarkdown(relative: string): string {
-    const replacement = this.data.replace[relative];
-    return replacement === undefined
-      ? readFileSync(join(this.paths.source, relative), "utf8")
-      : readFileSync(join(this.paths.provider, this.contract.references, replacement), "utf8");
+    return readFileSync(join(this.paths.source, relative), "utf8");
   }
 
   /** The cold groups whose first block `text` stubs, each with its stubs and the name its file takes. */
@@ -257,15 +266,15 @@ export class ClosedLoopBuild {
   }
 
   /**
-   * Provider names become paths to the bundled references, `vibe-generic:` ids become `vibe:`, `vibe-generic@` install
-   * ids `vibe@`, `/vibe-generic/` cache folders `/vibe/`, and nothing is left.
+   * Provider names become paths from the file to where the reference is placed, `vibe-generic:` ids become `vibe:`,
+   * `vibe-generic@` install ids `vibe@`, `/vibe-generic/` cache folders `/vibe/`, and nothing is left.
    */
   private finish(text: string, target: string): string {
-    const references = join(this.paths.provider, this.contract.references);
     const out = text
       .replace(PROVIDER_NAME, (_name, file: string) => {
-        if (!existsSync(join(references, file))) throw new Error(`${target} names provider:${file}, which the provider does not have`);
-        return posix.relative(posix.dirname(target), `${BUNDLED_PROVIDER_DIR}/references/${file}`);
+        const placed = this.data.place[file];
+        if (placed === undefined) throw new Error(`${target} names provider:${file}, which build.json does not place`);
+        return posix.relative(posix.dirname(target), placed);
       })
       .replace(GENERIC_PREFIX, `${BUILT_NAME}:`)
       .replace(GENERIC_INSTALL_ID, `${BUILT_NAME}@`)
@@ -328,6 +337,23 @@ export function sourceFiles(source: string): string[] {
   });
   const files = new Set(listed.split("\0").filter(Boolean));
   return [...files].filter((relative) => !isExcluded(relative) && isFile(join(source, relative))).sort(compare);
+}
+
+/**
+ * Every reference file is placed or is a block source, never both, so nothing the provider ships is dropped from the
+ * build and no block file lands in it; each placed path stays inside the plugin and outside provider/.
+ */
+function checkPlacement(references: string, place: Record<string, string>): void {
+  for (const [file, target] of Object.entries(place)) {
+    if (!isFile(join(references, file))) throw new Error(`build.json places ${file}, which the provider does not have`);
+    if (!PLACED_PATH.test(target) || target.startsWith(`${BUNDLED_PROVIDER_DIR}/`)) throw new Error(`build.json places ${file} at ${target}, which is not a path in the plugin outside provider/`);
+  }
+  for (const file of listFiles(references)) {
+    const blocks = BLOCK_START.test(readFileSync(join(references, file), "utf8"));
+    if (blocks === Object.hasOwn(place, file)) {
+      throw new Error(blocks ? `build.json places ${file}, a block source the build assembles` : `${file} is neither a block source nor placed by build.json`);
+    }
+  }
 }
 
 function listFiles(dir: string, prefix = ""): string[] {

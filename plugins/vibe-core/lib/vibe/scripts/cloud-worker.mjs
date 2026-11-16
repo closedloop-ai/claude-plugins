@@ -199,7 +199,7 @@ function tooLarge() { return cloudSetupError(CloudSetupError.ResultTooLarge, TOO
 
 /**
  * The tool result's text. A result over the tool's inline limit (100,000 characters) comes back as a
- * `<persisted-output>` placeholder naming the file the harness saved it to (ISS-14140: one routine list page
+ * `<persisted-output>` placeholder naming the file the harness saved it to (one routine list page
  * is about 272 KB). `--no-session-persistence` leaves no saved file, so the structured result the same stream
  * event carries (`tool_use_result: { status, json }`, the untruncated reply) is used first; the saved file is
  * read only when that is absent. A partial save, a `<truncated-output>` wrapper or a file that cannot be read

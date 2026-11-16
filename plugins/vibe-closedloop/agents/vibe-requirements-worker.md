@@ -25,7 +25,7 @@ do not fabricate a table or claim it existed before code that already landed.
 
 ## Read first
 
-`../provider/references/closedloop-graph.md`.
+`../skills/vibe/references/closedloop-graph.md`.
 Read the "Schema" and "Fork checkpoint" sections of
 `../skills/vibe/references/spec-card.md` and no other section.
 Read `../skills/vibe/references/quality-loop.md`. Keep the brief internal;
@@ -213,4 +213,4 @@ net-new screen. Or
 `NEEDS_PERSON` with questions only the person can answer (scope, which of two
 existing tickets they mean), with decision-research evidence and why the answer
 is absolutely necessary. End with the Graph block
-(`../provider/references/closedloop-graph.md`); the graph is required.
+(`../skills/vibe/references/closedloop-graph.md`); the graph is required.

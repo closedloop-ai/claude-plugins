@@ -47,8 +47,8 @@ complete child classification.
 
 ## Read first
 
-`../provider/references/closedloop-graph.md` and
-`../provider/references/ticket-template.md` (the body, and the rules every
+`../skills/vibe/references/closedloop-graph.md` and
+`../skills/vibe/references/ticket-template.md` (the body, and the rules every
 editor follows). The session record:
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"`
 (except cancel: its target is gone, so use the parent-held receipt and verify
@@ -406,25 +406,25 @@ historical inspections accurately. Preserve the existing grading block.
      claims, and name the exact command and reason for any surface control
      could not drive.
    - Place each `Conflict` entry in the change log once, by its audience
-     (`../provider/references/ticket-template.md`, "Conflicts"): `design`
+     (`../skills/vibe/references/ticket-template.md`, "Conflicts"): `design`
      on Design Review's Design conflicts line; anything else, or no clear
      audience, as an unchecked item at the end of the Engineering checklist.
      Never in the Handoff section, never in both, and never to the person.
    - Place each `Engineering needed (forbidden path)` entry in the change log
      once, as an unchecked item at the end of the Engineering checklist in its
-     logged shape (`../provider/references/ticket-template.md`,
+     logged shape (`../skills/vibe/references/ticket-template.md`,
      "Engineering needed").
    - Place each `Engineering decision` entry in the change log once, as an
      unchecked item at the end of the Engineering checklist in its logged
-     shape (`../provider/references/ticket-template.md`, "Engineering
+     shape (`../skills/vibe/references/ticket-template.md`, "Engineering
      decisions").
    - Place each file in the inventory's `compileOnlyV1Repairs` once, as an
      unchecked item at the end of the Engineering checklist in the template's
-     shape (`../provider/references/ticket-template.md`, "Compile-only v1.0
+     shape (`../skills/vibe/references/ticket-template.md`, "Compile-only v1.0
      repairs").
    - Place each `mainPreexistingFailures` entry once, as an unchecked item at
      the end of the Engineering checklist
-     (`../provider/references/ticket-template.md`, "Known main failures").
+     (`../skills/vibe/references/ticket-template.md`, "Known main failures").
      Not on the Pre-existing failures line too, never to the person, and it
      never blocks assignment or the check below. The item's shape:
 
@@ -432,7 +432,7 @@ historical inspections accurately. Preserve the existing grading block.
    - Place each `machineLimitedChecks`, `e2eLeftForCi` and waiting-criterion
      entry, and each vibe tooling blocker, once, as an unchecked item at the
      end of the Engineering checklist in the template's shape
-     (`../provider/references/ticket-template.md`, "Checks that ran out of
+     (`../skills/vibe/references/ticket-template.md`, "Checks that ran out of
      time", "E2E left for CI", "Criteria waiting on other work" and "Vibe
      tooling blockers"). None of them blocks assignment or the check below,
      and none goes to the person.

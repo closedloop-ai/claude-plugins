@@ -30,7 +30,7 @@ One fleet home per machine holds everything (default `~/fleet-orchestrator`; `FL
 3. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
 4. Relaunch each `RELAUNCH <writer> <prompt>` Claude worker from that saved prompt; resume Codex writers through `fleet.sh`.
 5. Run `fleet-home.mjs check` and fix every line before acting.
-6. Keep the units the board lists (`board.md`, Units; the resume log's `Unit` lines), then rerun the related-ticket check (`../../../provider/references/ticket-units.md`) for folds and new tickets.
+6. Keep the units the board lists (`board.md`, Units; the resume log's `Unit` lines), then rerun the related-ticket check ([ticket-units.md](./ticket-units.md)) for folds and new tickets.
 7. Before any writer start, record each ticket's placement with `board.mjs placement` (SKILL.md, Cloud workers); the check lives in vibe-core, `lib/fleet-orchestrator/scripts/cloud-placement.mjs`, not in this plugin.
 
 ## Resume log
@@ -48,7 +48,7 @@ One fleet home per machine holds everything (default `~/fleet-orchestrator`; `FL
 
 ## Rulings
 
-`standing-rulings.md` holds operator rulings for every program (models, review rounds, test lanes); the program's `rulings.md` holds the rest, separate from the resume log. Each entry is `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`. `fleet.sh` mirrors both to every worker host; point every worker and QA-prep prompt at them. Per-ticket rulings still go through handoff's `rulings-check.mjs`. A sequencing ruling is written only by that checker's `--record-sequencing` operation after it verifies the live blocker-to-blocked `BLOCKS` receipt; unresolved references and missing links refuse the write, and the status sweep flags later drift. Orchestrator-authored directions remain `(orchestrator)` operational notes, not entries in this file.
+`standing-rulings.md` holds operator rulings for every program (models, review rounds, test lanes); the program's `rulings.md` holds the rest, separate from the resume log. Each entry is `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`. Add `capture-guard override: baseline` or `capture-guard override: budget` to a ruling only when the operator's words ask for that override, with the kind they ask for. A ruling with the marker is written as `- Ruling YYYY-MM-DD (<source>): "<the operator's exact words>" <TICKET> capture-guard override: <kind>`, with the operator's words as its only double-quoted text. `fleet.sh` mirrors both to every worker host; point every worker and QA-prep prompt at them. Per-ticket rulings still go through handoff's `rulings-check.mjs`. A sequencing ruling is written only by that checker's `--record-sequencing` operation after it verifies the live blocker-to-blocked `BLOCKS` receipt; unresolved references and missing links refuse the write, and the status sweep flags later drift. Orchestrator-authored directions remain `(orchestrator)` operational notes, not entries in this file.
 
 ## Lessons ledger
 

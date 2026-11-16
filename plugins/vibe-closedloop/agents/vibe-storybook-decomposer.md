@@ -69,7 +69,7 @@ writer adds missing rows before code and verifies preservation afterward.
 Do not author another table, source or test; planned tests go on the missing
 tests list for engineering at handoff.
 
-closedloop-graph is required, per `../provider/references/closedloop-graph.md`: `code_symbols` to find existing stories and similar components to match, `code_importers` on each precedent's providing component to list its hosts, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
+closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md`: `code_symbols` to find existing stories and similar components to match, `code_importers` on each precedent's providing component to list its hosts, and `code_callers` and `code_importers` before extracting a component so every import site is updated. End your report with the Graph block.
 
 ## Precedent search
 

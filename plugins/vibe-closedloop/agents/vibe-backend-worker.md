@@ -39,11 +39,11 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 
 ## Read first
 
-- `../provider/references/closedloop-graph.md`,
+- `../skills/vibe/references/closedloop-graph.md`,
   `../skills/vibe/references/quality-loop.md` (internal plan, lean build loop, graph-first product questions),
   `../skills/vibe/references/design-pass.md` (Owner rules),
   `../skills/vibe/references/guardrails.md` (What may change, Tests, and
-  Checks), and `../provider/references/ticket-template.md`.
+  Checks), and `../skills/vibe/references/ticket-template.md`.
 - The `decision-table` skill, loaded by name (`$decision-table` in Codex or
   `/closedloop-core:decision-table` in Claude Code), and its
   references. Using it is mandatory, as for the other workers.

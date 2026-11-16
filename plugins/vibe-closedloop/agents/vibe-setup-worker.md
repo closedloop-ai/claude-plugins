@@ -53,7 +53,7 @@ operator and live ticket against the parent-held preview before deletion.
 ## Read first
 
 `../skills/vibe/references/preflight.md`, `../skills/vibe/references/environment.md`,
-and `../provider/references/closedloop-graph.md`. Use closedloop-graph
+and `../skills/vibe/references/closedloop-graph.md`. Use closedloop-graph
 first: `fts_search` for an unfamiliar error to find known setup problems and
 open tickets, and `blast_radius_tickets` on a file you suspect.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are

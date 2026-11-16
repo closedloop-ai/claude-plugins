@@ -41,6 +41,8 @@ each name the fix when vibe-core is missing or its hooks are not approved.
 - `shared/vibe-install.mjs` is how the guards read vibe's install (its
   version, skill definitions and scripts) as data. vibe-core never imports or
   runs a file from vibe's install.
+- `shared/process-identity.mjs` reads a process's start time and command, so
+  the lib modules can tell a live process from a dead or reused PID.
 
 The hooks do nothing when neither `vibe` nor `vibe-generic` is installed, or
 while the installed vibe still registers its own hooks (vibe 1.1.70 and older), so no guard runs twice.

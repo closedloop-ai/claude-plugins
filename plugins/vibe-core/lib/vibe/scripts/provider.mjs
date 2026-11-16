@@ -157,7 +157,7 @@ function parseContract(root, text) {
     const contract = JSON.parse(text);
     const manifest = pluginManifest(root);
     if (contract?.vibeProvider !== PROVIDER_PROTOCOL || (manifest?.name !== contract.name && !isBundledRoot(root, manifest))) return null;
-    if (typeof contract.references !== "string") return null;
+    if (typeof contract.references !== "string" || !validPlacement(contract.placed)) return null;
     const capabilities = contract.capabilities;
     if (!capabilities || typeof capabilities !== "object" || Object.keys(capabilities).some((name) => !CAPABILITIES.has(name))) return null;
     for (const spec of Object.values(capabilities)) {
@@ -473,13 +473,27 @@ export function requireProvider(binding, capability) {
   throw new ProviderUnavailable(`no provider with ${capability} is bound to this session`);
 }
 
-/** The absolute path of reference `file` (relative to the bound provider's references folder, for `capability`). */
+/**
+ * The absolute path of reference `file` for `capability`: relative to the bound provider's references folder, or,
+ * when its contract has `placed` (a vibe release built with it), the path `placed` gives that file there; a file
+ * `placed` does not list is not in that release.
+ */
 export function providerPath(binding, capability, file) {
   const bound = requireProvider(binding, capability);
+  const name = String(file).replace(/^provider:/, "");
+  const { placed } = bound.contract;
+  if (placed && !Object.hasOwn(placed, name)) throw new ProviderBroken(`${name} is not a reference file this release of ${bound.name} carries`, bound.name);
   const references = path.resolve(bound.root, bound.contract.references);
-  const resolved = path.resolve(references, String(file).replace(/^provider:/, ""));
+  const resolved = path.resolve(references, placed ? placed[name] : name);
   if (!resolved.startsWith(`${references}${path.sep}`)) throw new ProviderBroken(`${file} is outside the provider's references`, bound.name);
   return resolved;
+}
+
+/** A contract's optional `placed`: reference file names mapped to paths under its references folder, all `.md`. */
+function validPlacement(placed) {
+  if (placed === undefined) return true;
+  if (!placed || typeof placed !== "object" || Array.isArray(placed)) return false;
+  return Object.entries(placed).every(([name, target]) => REFERENCE.test(name) && typeof target === "string" && REFERENCE.test(target));
 }
 
 /**

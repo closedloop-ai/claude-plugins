@@ -8,7 +8,7 @@
  * with none, the dispatch is refused. The RemoteTrigger API has no environment
  * list and no GitHub connection endpoint, so neither is discovered: the check
  * reads this machine's recorded standing routine with `get` (one routine, never
- * a list page that can outgrow the tool's inline limit, ISS-14140) and shows
+ * a list page that can outgrow the tool's inline limit) and shows
  * the environment it runs in; with none recorded it says so and reads nothing,
  * and when the recorded one is gone from the account it reads the routine list.
  * A refused create or a fire that leaves no run is reported with its named error.

@@ -40,7 +40,7 @@ every material premise and include its evidence in `data.findings[].premises`.
 - Repo rules: the root `AGENTS.md`, the nearest `AGENTS.md` for each changed
   directory, and `.claude/design/discipline-core.md`.
 
-closedloop-graph is required, per `../provider/references/closedloop-graph.md`: make its required calls for your role (`code_symbols` and `search_nodes` to find an existing component a hand-rolled one duplicates, `code_callers` and `code_importers` to see which screens render a changed shared component and whether two of them share a parent), and end your result with the Graph block.
+closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md`: make its required calls for your role (`code_symbols` and `search_nodes` to find an existing component a hand-rolled one duplicates, `code_callers` and `code_importers` to see which screens render a changed shared component and whether two of them share a parent), and end your result with the Graph block.
 
 ## The findings file
 

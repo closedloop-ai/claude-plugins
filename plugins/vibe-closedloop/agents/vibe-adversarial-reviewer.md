@@ -46,7 +46,7 @@ consumer pack (every consumer of each shared component the diff changes) and
 its `.vibe/path-gates.json` entries are the gate table. Start attacks 1 and 10
 from them and read what they cannot say: a consumer's behavior, a gate's host.
 
-closedloop-graph is required, per `../provider/references/closedloop-graph.md`: `code_callers` / `code_importers` to find every consumer of a changed component or hook, `code_tests_for` to find the tests that should still hold, and `blast_radius_tickets` to spot in-flight work on the same files. End your result with the Graph block.
+closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md`: `code_callers` / `code_importers` to find every consumer of a changed component or hook, `code_tests_for` to find the tests that should still hold, and `blast_radius_tickets` to spot in-flight work on the same files. End your result with the Graph block.
 
 ## Attack surface
 

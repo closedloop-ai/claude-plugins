@@ -564,3 +564,28 @@ test("the privacy guard knows every vibe install's provider, enabled or not, and
   assert.deepEqual(knownProviderContracts({ cwd: root, from: path.join(generic, ".codex-plugin", "plugin.json") }), [],
     "from inside vibe-generic too");
 });
+
+test("a release's placement map resolves each whole reference where the release put it, and nothing it does not list", (t) => {
+  const root = tree(t);
+  const { vibe, from } = codexCache(root);
+  const bundled = path.join(vibe, "provider");
+  const placed = { "ticket-template.md": "skills/vibe/references/ticket-template.md" };
+  write(path.join(bundled, "provider.json"), { ...CONTRACT, references: "..", placed });
+  write(path.join(vibe, placed["ticket-template.md"]), "# Template\n");
+  const repo = path.join(root, "repo");
+  mkdirSync(path.join(repo, ".git"), { recursive: true });
+  const found = installedProviders({ cwd: root, from });
+  const bound = probeProvider({ runtime: "codex", cwd: repo, providers: found, connections: { tracker: "connected", graph: "connected" } });
+  assert.equal(bound.state, ProviderState.Bound);
+  assert.equal(providerPath(bound, "tickets", "ticket-template.md"), path.join(vibe, "skills/vibe/references/ticket-template.md"));
+  assert.equal(providerPath(bound, "tickets", "provider:ticket-template.md"), path.join(vibe, "skills/vibe/references/ticket-template.md"));
+  assert.throws(() => providerPath(bound, "tickets", "skills/vibe/references/ticket-template.md"), ProviderBroken, "only a listed name resolves");
+  assert.throws(() => providerBlock(bound, "tickets", "vibe-skill.md", "intake"), /vibe-skill\.md is not a reference file this release/);
+
+  for (const bad of [{ "ticket-template.md": "../outside.md" }, { "../x.md": "x.md" }, { "ticket-template.md": "x.json" }, ["x.md"], "x.md"]) {
+    write(path.join(bundled, "provider.json"), { ...CONTRACT, references: "..", placed: bad });
+    assert.equal(readContract(bundled), null, JSON.stringify(bad));
+  }
+  write(path.join(bundled, "provider.json"), { ...CONTRACT, references: "..", placed });
+  assert.equal(readContract(bundled)?.placed?.["ticket-template.md"], placed["ticket-template.md"], "a valid map still reads");
+});

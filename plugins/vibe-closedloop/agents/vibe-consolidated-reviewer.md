@@ -50,4 +50,4 @@ for whom, the triggering input or state, the evidence and the smallest fix.
 Then one line per area checked and found clean, and one line naming every
 check you ran yourself because the file did not cover it. Return "No proven
 findings" when that is the result. End with the Graph block
-(`../provider/references/closedloop-graph.md`).
+(`../skills/vibe/references/closedloop-graph.md`).

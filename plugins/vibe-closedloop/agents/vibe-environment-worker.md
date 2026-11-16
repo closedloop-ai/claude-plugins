@@ -68,9 +68,9 @@ comes from handoff.
 
 ## Read first
 
-`../provider/references/closedloop-graph.md`,
+`../skills/vibe/references/closedloop-graph.md`,
 `../skills/vibe/references/environment.md`, and
-`../provider/references/ticket-template.md`. The session record:
+`../skills/vibe/references/ticket-template.md`. The session record:
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"` (mode,
 branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
@@ -461,7 +461,7 @@ changes and gates fields.
      their results.
    When the record cannot support a required answer, say so in that section
    for the reviewer instead of inventing one. The body and every review reply
-   follow the live ticket's hard rule (`../provider/references/ticket-template.md`):
+   follow the live ticket's hard rule (`../skills/vibe/references/ticket-template.md`):
    no path on the operator's machine and no plan
    pointed at by path; cite the ticket's embedded evidence or quote text
    inline, briefly. `blocking.prBody` refuses a line naming one.

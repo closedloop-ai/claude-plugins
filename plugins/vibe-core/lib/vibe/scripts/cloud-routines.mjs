@@ -1,7 +1,7 @@
 /**
  * The Claude routines vibe creates, and their removal. Every cloud run used to
  * create a new RemoteTrigger routine and leave it on the account for the
- * person to delete by hand (ISS-13998). RemoteTrigger has no delete action, so
+ * person to delete by hand. RemoteTrigger has no delete action, so
  * vibe now owns one standing routine per machine, "vibe cloud worker", and
  * reuses it for every dispatch and validate: under a machine lock it updates
  * the routine's job_config and runs it, and binds the run by the session id the
@@ -198,7 +198,10 @@ export async function runOnStanding({ remote, home = os.homedir(), environment, 
     const connectorsFor = (routine) => {
       if (allowlist.length === 0) return [];
       const allowed = allowedConnectors(routine, allowlist);
-      if (!allowed) throw new Error("approved ClosedLoop connector was not attached to the account; run refused");
+      if (!allowed) {
+        const missing = allowlist.filter((name) => !routine?.connectors?.some((entry) => entry?.name?.toLowerCase() === name));
+        throw new Error(`approved connector ${missing.join(", ")} was not attached to the account; run refused`);
+      }
       return allowed;
     };
     let updated;

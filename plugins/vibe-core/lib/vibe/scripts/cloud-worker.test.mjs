@@ -443,10 +443,10 @@ test('G3: recorded connector details that lack the requested connector are refre
   await startClaude(dispatchRequest(), 'brief', { remote: service.remote, home: other });
   attached = [];
   created = 0;
-  await assert.rejects(startClaude(allowListed, 'brief', { remote: account, home: other }), /^Error: approved ClosedLoop connector was not attached to the account; run refused$/);
+  await assert.rejects(startClaude(allowListed, 'brief', { remote: account, home: other }), /^Error: approved connector closedloop was not attached to the account; run refused$/);
   assert.equal(created, 1, 'a fresh create that still lacks the connector makes the refusal true');
   calls.length = 0;
-  await assert.rejects(startClaude(allowListed, 'brief', { remote: account, home: other }), /approved ClosedLoop connector was not attached to the account; run refused/);
+  await assert.rejects(startClaude(allowListed, 'brief', { remote: account, home: other }), /approved connector closedloop was not attached to the account; run refused/);
   assert.deepEqual(calls, [], 'a second request for the same missing connector does not replace again');
   assert.equal(readLedger(other).standing.id, 'trig_fresh_1');
 });

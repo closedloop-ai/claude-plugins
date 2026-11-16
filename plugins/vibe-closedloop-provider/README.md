@@ -19,7 +19,7 @@ build, a vibe or fleet start binds it, and the session also:
 Each capability binds only when what it needs holds in that chat: the ClosedLoop
 connection answered for `tickets` and `plans`, closedloop-graph answered for
 `graph`, and the committed opt-in file for `recipes`
-(`provider.json`). That file holds exactly
+(`.closedloop-ai/vibe-recipes.json`, as `provider.json` declares). That file holds exactly
 `{"schema": 1, "provider": "vibe-closedloop-provider"}`; a missing or
 malformed one binds the other capabilities and withholds `recipes` with one
 named reason. A session started without the provider
@@ -30,11 +30,18 @@ no scripts. vibe-core's one guard engine reads its rules.
 
 `tools/vibe-closedloop-build` (`npm run build`) writes `plugins/vibe-closedloop`
 from `plugins/vibe` and this folder. It assembles every provider block into the
-vibe text it belongs to, copies `provider.json` and the references into the
-built plugin's `provider/` folder, and applies `build.json`: the manifest and
-frontmatter descriptions, the sections moved to cold files with their pointer
-line, the line that marks recipe text, and the files the provider replaces
-whole. Never edit `plugins/vibe-closedloop` by hand; change `plugins/vibe` or
+vibe text it belongs to and applies `build.json`: the manifest and frontmatter
+descriptions, the sections moved to cold files with their pointer line, the
+line that marks recipe text, and `place`. `place` maps each reference file the
+build ships whole to its built path, the path `plugins/vibe` on main has it at:
+`closedloop-graph.md` (over the generic file there) and `ticket-template.md`
+under `skills/vibe/references/`, and `ticket-units.md` under
+`skills/fleet-orchestrator/references/`. Every other reference file is a block
+source, assembled into the built text and not shipped. A `provider:<file>` name
+becomes the path from the file that names it to that placement, and a name
+`place` does not list fails the build. The built `provider/` folder holds only
+`provider.json`: the contract with `references: ".."` and a `placed` map copied
+from `place`. Never edit `plugins/vibe-closedloop` by hand; change `plugins/vibe` or
 this folder and rebuild. Install the build as `vibe@closedloop-ai`; to run vibe with
 no provider, install `vibe-generic@closedloop-ai`, which is `plugins/vibe` as
 it stands.

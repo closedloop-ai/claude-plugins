@@ -230,7 +230,7 @@ function compareIdentifier(left, right) {
 }
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.10";
+var VIBE_CORE_MIN = "1.0.13";
 var SELF = pluginInstall(import.meta.url);
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });

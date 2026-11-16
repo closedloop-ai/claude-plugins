@@ -1,7 +1,7 @@
 {
   "vibeProvider": 1,
   "name": "vibe-closedloop-provider",
-  "references": "references",
+  "references": "..",
   "capabilities": {
     "tickets": {
       "needs": [
@@ -834,5 +834,10 @@
         "repoFlagRefusal": "is not a symphony-alpha or claude-plugins checkout"
       }
     }
+  },
+  "placed": {
+    "closedloop-graph.md": "skills/vibe/references/closedloop-graph.md",
+    "ticket-template.md": "skills/vibe/references/ticket-template.md",
+    "ticket-units.md": "skills/fleet-orchestrator/references/ticket-units.md"
   }
 }

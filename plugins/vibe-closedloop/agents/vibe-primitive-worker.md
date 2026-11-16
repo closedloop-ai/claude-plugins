@@ -28,9 +28,9 @@ a test (`guardrails.md`, "Tests").
 
 ## Read first
 
-`../provider/references/closedloop-graph.md`,
+`../skills/vibe/references/closedloop-graph.md`,
 `../skills/vibe/references/quality-loop.md` (internal quality and graph-first product questions),
-`../provider/references/ticket-template.md`, and
+`../skills/vibe/references/ticket-template.md`, and
 `../skills/vibe/references/guardrails-ui.md` ("Missing primitives" steps 2 to 4
 are yours; the orchestrator sends the step 5 notice and does not wait). The repo's
 `apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`, the storybook
