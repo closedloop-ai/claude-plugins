@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "pluginSha": "68d4dc8ddc44140b10eab3500db3985079254fb5",
+  "createdAt": "2026-11-17T17:45:29.555Z",
+  "wallMs": 13551,
+  "deterministicOnly": false,
+  "selectedCases": [
+    "pm-agent-docs-draft-blocked"
+  ],
+  "runtimes": [
+    {
+      "runtime": "claude",
+      "exitCode": 126,
+      "result": null,
+      "invalidReason": "eval-native-artifact-missing"
+    }
+  ],
+  "success": false,
+  "resultHash": "2968254f101b5cc9c59db263af5850206076b0a439e2031393bdeff5b544e36d"
+}
