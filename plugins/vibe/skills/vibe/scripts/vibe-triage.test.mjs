@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify, parsePathList, pathKind, switchOn, validateManifest } from "./vibe-triage.mjs";
+import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify as classifyIn, parsePathList, pathKind as kindIn, switchOn, validateManifest } from "./vibe-triage.mjs";
+import { repositoryAreas } from "./area-paths.mjs";
+import { bindProvider, bindProviderInProcess, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+
+// The repository the ClosedLoop provider serves, whose areas these cases name.
+const AREAS = repositoryAreas(PROVIDER_BINDING);
+const classify = (input) => classifyIn({ areas: AREAS, ...input });
+const pathKind = (file) => kindIn(file, AREAS);
 import { chooseDispatch } from "../../fleet-orchestrator/scripts/dispatch-route.mjs";
 import { recordHandoffGate } from "../../handoff/scripts/handoff-gate.mjs";
 import { prEvidenceValidationProblems } from "../../handoff/scripts/pr-facts.mjs";
@@ -14,14 +21,21 @@ import { COMMIT as RULED_COMMIT, FILES as RULED_FILES, RULINGS, ruledEvidence } 
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
-const { cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
+const { abandonDispatch, cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
+// The in-process cloud dispatch cases name tracker tickets, which need a tracker bound.
+bindProviderInProcess(after);
+
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-triage.mjs");
-const run = (args, env = {}) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, [SWITCH_ENV]: "", ...env } });
+// The command line runs as a session the ClosedLoop provider is bound to, under a throwaway home.
+const FIXTURE = makeHome("vibe-triage-");
+after(FIXTURE.cleanup);
+const BOUND = { HOME: FIXTURE.home, ...bindProvider(FIXTURE.home) };
+const run = (args, env = {}) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, ...BOUND, [SWITCH_ENV]: "", ...env } });
 
 const BACKEND_PATHS = ["apps/api/app/documents/route.ts", "apps/api/app/documents/route.test.ts", "packages/api/src/types/audit.ts"];
 const WEB_UI_PATHS = ["apps/app/components/header.tsx", "apps/app/components/footer.tsx"];
@@ -281,8 +295,10 @@ test('AC-2: generated brief embeds sourced criteria, local graph findings and re
   assert.throws(() => validateRequest({ ...request, graph: { ownership: 'x', collisions: 'y' } }), /blastRadius/);
 });
 
-test('AC-1: Claude clears auto-attached connectors before run and refuses an unconfirmed allow list', () => {
+test('AC-1: Claude clears auto-attached connectors before run and refuses an unconfirmed allow list', async (t) => {
   const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', connectorAllowlist: [], claudeEnvironment: 'env_01TestRequest' };
+  // Each case gets its own routine ledger home; runs reuse one standing routine per home (ISS-13998).
+  const newHome = () => { const home = mkdtempSync(path.join(tmpdir(), 'cloud-ledger-')); t.after(() => rmSync(home, { recursive: true, force: true })); return home; };
   const calls = [];
   const remote = (action, payload) => {
     calls.push({ action, payload });
@@ -290,36 +306,40 @@ test('AC-1: Claude clears auto-attached connectors before run and refuses an unc
     if (action === 'update') return { trigger: { id: 'routine_1', mcp_connections: [] } };
     return { session_id: 'run_1' };
   };
-  assert.equal(startClaude(request, 'brief', { remote }).taskId, 'run_1');
+  assert.equal((await startClaude(request, 'brief', { remote, home: newHome() })).taskId, 'run_1');
   assert.deepEqual(calls.map((call) => call.action), ['create', 'update', 'run']);
   assert.equal(calls[1].payload.body.clear_mcp_connections, true);
   assert.equal(calls[0].payload.body.job_config.ccr.environment_id, 'env_01TestRequest');
   assert.equal(calls[0].payload.body.job_config.ccr.session_context.model, request.model);
-  assert.throws(() => startClaude(request, 'brief', { remote: (action) => action === 'create' ? { trigger: { id: 'routine_2', mcp_connections: [{ name: 'Slack' }] } } : { trigger: { mcp_connections: [{ name: 'Slack' }] } } }), /connector clearing/);
+  assert.equal(calls[1].payload.body.job_config.ccr.session_context.model, request.model, 'each run sets its own model through update');
+  await assert.rejects(startClaude(request, 'brief', { home: newHome(), remote: (action) => action === 'create' ? { trigger: { id: 'routine_2', mcp_connections: [{ name: 'Slack' }] } } : { trigger: { mcp_connections: [{ name: 'Slack' }] } } }), /connector clearing/);
   assert.throws(() => validateRequest({ ...request, connectorAllowlist: ['slack'] }), /connector allow list/);
   const withClosedLoop = [];
   const allowedRequest = { ...request, connectorAllowlist: ['closedloop'] };
-  startClaude(allowedRequest, 'brief', { remote: (action, payload) => {
+  await startClaude(allowedRequest, 'brief', { home: newHome(), remote: (action, payload) => {
     withClosedLoop.push({ action, payload });
     if (action === 'create') return { trigger: { id: 'routine_3', mcp_connections: [{ name: 'Slack' }, { name: 'ClosedLoop', connector_uuid: 'cl_1' }] } };
     if (action === 'update' && payload.body.clear_mcp_connections) return { trigger: { mcp_connections: [] } };
     if (action === 'update') return { trigger: { mcp_connections: [{ name: 'ClosedLoop' }] } };
     return { session_id: 'run_3' };
   } });
-  assert.deepEqual(withClosedLoop.map((call) => call.action), ['create', 'update', 'update', 'run']);
-  assert.deepEqual(withClosedLoop[2].payload.body.mcp_connections.map((entry) => entry.name), ['ClosedLoop']);
+  // One update per run now sets the job_config and the allow-listed connector together (operator ruling q1, ISS-13998).
+  assert.deepEqual(withClosedLoop.map((call) => call.action), ['create', 'update', 'run']);
+  assert.deepEqual(withClosedLoop[1].payload.body.mcp_connections.map((entry) => entry.name), ['ClosedLoop']);
+  assert.equal(withClosedLoop[1].payload.body.clear_mcp_connections, undefined);
 });
 
 test('AC-1: RemoteTrigger requires a real matching tool result, not a model-only JSON claim', () => {
-  const toolOutput = (action, output) => [
-    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool_1', name: 'RemoteTrigger', input: { action } }] } }),
+  // The tool input carries the whole call, as RemoteTrigger receives it (ISS-13998 F3 binds the result to it).
+  const toolOutput = (action, output, input = { action }) => [
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool_1', name: 'RemoteTrigger', input } ] } }),
     JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool_1', content: `HTTP 200\n${JSON.stringify(output)}` }] } }),
   ].join('\n');
   const run = (_command, args) => {
     assert.deepEqual(args.slice(0, 2), ['-p', args[1]]);
     assert.ok(args.includes('RemoteTrigger'));
     assert.ok(args.includes('--no-session-persistence'), 'headless RemoteTrigger must not save a local session');
-    return { status: 0, stdout: toolOutput('update', { trigger: { mcp_connections: [] } }), stderr: '' };
+    return { status: 0, stdout: toolOutput('update', { trigger: { mcp_connections: [] } }, { action: 'update', trigger_id: 'routine_1', body: { clear_mcp_connections: true } }), stderr: '' };
   };
   assert.deepEqual(remoteTrigger('update', { trigger_id: 'routine_1', body: { clear_mcp_connections: true } }, { run }), { trigger: { mcp_connections: [] } });
   assert.throws(() => remoteTrigger('run', { trigger_id: 'routine_1' }, { run }), /unexpected action/);
@@ -379,9 +399,11 @@ test('AC-3: Claude active session becomes complete only when its worker is idle'
   assert.deepEqual(calls, ['list_runs', 'list_runs', 'get_run_log']);
 });
 
-test('DT-14: Claude uses run ID for list matching and a distinct session ID for logs', async () => {
+test('DT-14: Claude uses run ID for list matching and a distinct session ID for logs', async (t) => {
   const request = { ...cloudRequest(), provider: 'claude', branch: 'cloud/iss-13804-cloud', claudeEnvironment: 'env_01TestRequest' };
-  const started = startClaude(request, 'brief', { remote: (action) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'cloud-ledger-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const started = await startClaude(request, 'brief', { home, remote: (action) => {
     if (action === 'create') return { trigger: { id: 'routine_1', mcp_connections: [] } };
     if (action === 'update') return { trigger: { mcp_connections: [] } };
     return { run_id: 'run_1', session_id: 'session_1' };
@@ -480,6 +502,34 @@ test('DT-19: pre-import Claude follow-up continues the recorded cloud session', 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(marker), true);
   assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'cloud-worker-iss-13804.json'), 'utf8')).followups, 1);
+});
+
+test('ISS-13998 AC-5: abandon ends a dispatch for good and removes the routine its receipt names once get answers not found', async (t) => {
+  const { worktree, gitDir } = vibeFixture();
+  const home = mkdtempSync(path.join(tmpdir(), 'cloud-ledger-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  // A dispatch receipt records its reserved version (cloud-worker.mjs dispatch), which a later dispatch compares first.
+  completedReceipt(request, gitDir, 'run_1', { status: 'running', runId: 'run_1', sessionId: 'session_1', routineId: 'trig_old_dispatch', reservedVersion: request.reservedVersion });
+  const gone = new Set();
+  const removed = [];
+  const remote = (action, payload) => {
+    if (action === 'get' && gone.has(payload.trigger_id)) throw Object.assign(new Error('RemoteTrigger get failed: HTTP 404'), { httpStatus: 404 });
+    if (action === 'get') return { trigger: { id: payload.trigger_id } };
+    throw new Error(`unexpected ${action}`);
+  };
+  const executor = async (entries) => { for (const entry of entries) { removed.push([entry.id, entry.name]); gone.add(entry.id); } };
+  const abandoned = await abandonDispatch(request, { home, remote, executor, stderr: () => {} });
+  assert.equal(abandoned.status, 'abandoned');
+  assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'cloud-worker-iss-13804.json'), 'utf8')).status, 'abandoned');
+  assert.deepEqual(removed, [['trig_old_dispatch', 'ISS-13804 cloud worker']]);
+  const ledger = JSON.parse(readFileSync(path.join(home, '.codex', 'vibe', 'cloud', 'routines.json'), 'utf8'));
+  assert.deepEqual([ledger.removal, ledger.removed.map((entry) => entry.id)], [[], ['trig_old_dispatch']]);
+  const file = path.join(gitDir, 'cloud-request.json');
+  writeFileSync(file, JSON.stringify(request));
+  const again = spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cloud-worker.mjs'), 'dispatch', '--request', file], { cwd: worktree, encoding: 'utf8', env: { ...process.env, HOME: home, ...bindProvider(home) } });
+  assert.equal(again.status, 2);
+  assert.match(again.stderr, /cloud task already ended: abandoned/, 'an abandoned dispatch is never resumed');
 });
 
 test('AC-9: cloud CLI refuses local-evidence work before dispatch and generates a brief for code-only work', () => {
@@ -760,3 +810,12 @@ function claudeReviewReceipts(worktree, gitDir) {
     return outFile;
   });
 }
+
+test("with no provider bound, a file in no known area is unknown and Desktop relevance stays unknown", () => {
+  const generic = classifyIn({ paths: ["apps/api/lib/x.ts", "packages/app/x.ts"] });
+  assert.equal(generic.class, CLASSES.Unknown);
+  assert.equal(generic.evidence.desktopRelevant, null);
+  assert.equal(kindIn("src/components/header.tsx"), "ui", "a UI file is still known by its extension");
+  assert.equal(kindIn("db/migrations/001.sql"), "backend");
+  assert.equal(kindIn("apps/prototypes/a/page.ts"), "other");
+});

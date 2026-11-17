@@ -22,7 +22,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_DATA, PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +33,7 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
 GUARDRAILS = REFERENCES / "guardrails.md"
 QUALITY = REFERENCES / "quality-loop.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 RECORD_CONTEXT = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "record-context.ts"
 TWO_WAY = ("Do you want me to open a pull request so you can take it through review and merge, "
            "or pass it to someone, usually design and then engineering, to finish?")
@@ -46,11 +47,11 @@ HANDOFF_WORD = re.compile(r"hand ?off", re.IGNORECASE)
 
 def plugin_texts() -> dict[str, str]:
     files = [*PLUGIN_ROOT.glob("skills/**/*.md"), *AGENTS.glob("*.md"), PLUGIN_ROOT / "README.md"]
-    return {str(path.relative_to(PLUGIN_ROOT)): path.read_text() for path in files}
+    return {str(path.relative_to(PLUGIN_ROOT)): skill_split.read(path) for path in files}
 
 
 def test_plain_words_are_an_explicit_pull_request_request() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Tests")
+    rule = section(skill_split.read(GUARDRAILS), "## Tests")
     assert "plain-language intent to take the work through review and merge themselves IS that explicit request" in rule
     assert "as does choosing the pull request in handoff's question about how the session ends" in rule
     for phrase in (*PR_PHRASES, "open a pull request", "I'll get it merged"):
@@ -62,9 +63,9 @@ def test_plain_words_are_an_explicit_pull_request_request() -> None:
 
 
 def test_every_place_that_decides_a_pull_request_request_recognizes_plain_words() -> None:
-    requested = section(HANDOFF_SKILL.read_text(), "## A requested pull request")
-    tests_rule = flat(VIBE_SKILL.read_text())
-    ending = section(VIBE_SKILL.read_text(), "## 8. Ending a session")
+    requested = section(skill_split.read(HANDOFF_SKILL), "## A requested pull request")
+    tests_rule = flat(skill_split.read(VIBE_SKILL))
+    ending = section(skill_split.read(VIBE_SKILL), "## 8. Ending a session")
     writer = section(agent("vibe-change-worker"), "## Tests: repair, don't author")
     for phrase in PR_PHRASES:
         for name, text in (("handoff", requested), ("vibe", tests_rule), ("ending", ending), ("writer", writer)):
@@ -73,18 +74,18 @@ def test_every_place_that_decides_a_pull_request_request_recognizes_plain_words(
     assert "takes the handoff skill's requested pull request path" in tests_rule
     assert "choose the pull request. Run the handoff skill with that choice; ask nothing more." in ending
     assert "orchestrator's top-level turn envelope carries the authority" in writer
-    assert "plain-language intent counts" in section(QUALITY.read_text(), "## One persistent writer and a serial queue")
-    assert "in any plain words" in section(QUALITY.read_text(), "## Tests: repair, don't author")
+    assert "plain-language intent counts" in section(skill_split.read(QUALITY), "## One persistent writer and a serial queue")
+    assert "in any plain words" in section(skill_split.read(QUALITY), "## Tests: repair, don't author")
 
 
 def test_the_two_way_question_replaces_who_picks_it_up() -> None:
-    handoff = HANDOFF_SKILL.read_text()
+    handoff = skill_split.read(HANDOFF_SKILL)
     settle = section(handoff, "### Settle how it ends")
     assert TWO_WAY in settle
     assert "Never ask for a name before they choose passing it on" in settle
     assert "never jump straight to asking for a name" in settle
     assert "never re-ask it" in settle
-    assert TWO_WAY in section(VIBE_SKILL.read_text(), "## 8. Ending a session")
+    assert TWO_WAY in section(skill_split.read(VIBE_SKILL), "## 8. Ending a session")
     assert not HANDOFF_WORD.search(TWO_WAY)
     step_eight = section(handoff, "## 8. Choose who picks it up, then check the ticket")
     assert "Who should I pass it to? A name or email is fine." in step_eight
@@ -95,19 +96,19 @@ def test_the_two_way_question_replaces_who_picks_it_up() -> None:
 
 
 def test_the_person_never_hears_handoff_as_an_unexplained_term() -> None:
-    ending = section(VIBE_SKILL.read_text(), "## 8. Ending a session")
+    ending = section(skill_split.read(VIBE_SKILL), "## 8. Ending a session")
     assert 'Never use the word "handoff" with the person as if they know it' in ending
-    assert 'Never say "handoff" to the person as if they know the word' in flat(HANDOFF_SKILL.read_text())
-    resume = section(VIBE_SKILL.read_text(), "### Finding a session to resume")
+    assert 'Never say "handoff" to the person as if they know the word' in flat(skill_split.read(HANDOFF_SKILL))
+    resume = section(skill_split.read(VIBE_SKILL), "### Finding a session to resume")
     stale = re.search(r'"This one isn\'t finished yet\.[^"]*"', resume)
     assert stale, resume
     assert not HANDOFF_WORD.search(stale.group(0))
-    description = HANDOFF_SKILL.read_text().split("---", 2)[1]
+    description = skill_split.read(HANDOFF_SKILL).split("---", 2)[1]
     assert 'Use when someone says "handoff", "hand this off"' in description
 
 
 def test_the_endings_line_is_a_non_blocking_notice_in_a_new_sessions_first_reply_only() -> None:
-    skill = VIBE_SKILL.read_text()
+    skill = skill_split.read(VIBE_SKILL)
     notices = section(skill, "### Notices that never wait")
     assert "- Endings. In the first reply to a NEW session" in notices
     assert ENDINGS_LINE in notices
@@ -127,12 +128,12 @@ def test_nothing_offers_the_branch_to_merge() -> None:
         for match in BRANCH_TO_MERGE.finditer(flattened):
             before = flattened[max(0, match.start() - 80) : match.start()]
             assert NEGATION.search(before), (name, flattened[max(0, match.start() - 80) : match.end()])
-    final = section(HANDOFF_SKILL.read_text(), "## 9. Hand it over")
+    final = section(skill_split.read(HANDOFF_SKILL), "## 9. Hand it over")
     assert "the pull request link, and that they take it through review and merge from there; never the branch to merge" in final
 
 
 def test_handoff_opens_the_requested_pull_request_as_its_last_step() -> None:
-    handoff = HANDOFF_SKILL.read_text()
+    handoff = skill_split.read(HANDOFF_SKILL)
     requested = section(handoff, "## A requested pull request")
     assert "Handoff opens the pull request as its last step" in requested
     assert "the ticket stays with the person" in requested
@@ -143,7 +144,7 @@ def test_handoff_opens_the_requested_pull_request_as_its_last_step() -> None:
     assert "it never enqueues or merges it" in final
     for retired in ("Handoff itself still opens none", "It ends at the branch; no pull request is opened"):
         assert retired not in flat(handoff), retired
-    assert "ends at the branch without opening a pull request" not in flat((PLUGIN_ROOT / "README.md").read_text())
+    assert "ends at the branch without opening a pull request" not in flat(skill_split.read(PLUGIN_ROOT / "README.md"))
     assert "Opening a requested pull request | `vibe-environment-worker` (`pull-request` mode)" in flat(handoff)
 
 
@@ -159,13 +160,15 @@ def test_the_environment_worker_opens_the_pull_request_from_the_template_and_nev
                      "arm auto-merge, enqueue or merge", "never push to make it so"):
         assert required in mode, required
     assert "`pull-request`), the worktree path" in flat(worker)
-    record = RECORD_CONTEXT.read_text()
-    assert '"pull-request": [] }' in record
+    record = skill_split.read(RECORD_CONTEXT)
+    # The pull-request action is the environment worker's, and it writes nothing in a tracker.
+    assert '"vibe-environment-worker": ["create", "redeploy", "flags", "desktop", "handover", "pull-request"],' in record
     assert '"pull-request"]);' in record
+    assert "pull-request" not in PROVIDER_DATA["tickets"]["recordWrites"]["vibe-environment-worker"]
 
 
 def test_the_ticket_stays_with_the_person_on_the_pull_request_path() -> None:
-    template = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    template = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
     assert "- Next: <the next owner the person chose at handoff, by full name>" in template
     assert ("Next: <the person who ran the session, by full name> takes this through review and merge "
             "in the pull request handoff opens from this branch.") in template
@@ -175,7 +178,7 @@ def test_the_ticket_stays_with_the_person_on_the_pull_request_path() -> None:
 
 
 def test_a_requested_pull_request_runs_the_tests_the_push_and_one_consistent_brief() -> None:
-    requested = section(HANDOFF_SKILL.read_text(), "## A requested pull request")
+    requested = section(skill_split.read(HANDOFF_SKILL), "## A requested pull request")
     assert "Resume the SAME writer in `pull-request` mode" in requested
     assert "step 7's commit and its push and publication through `vibe-environment-worker` in redeploy mode" in requested
     assert "every brief in this handoff" in requested

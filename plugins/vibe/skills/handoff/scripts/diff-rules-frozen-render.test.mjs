@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { runDiffRules, storyId } from "./diff-rules.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
 import { isFrozenStory, run } from "./diff-rules-test-fixture.mjs";
+import { PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 test("component styles stay in their story closure while preview styles reach every frozen story (ISS-13752)", (t) => {
   const first = "apps/storybook/stories/first.stories.tsx";
@@ -99,7 +104,7 @@ test("a recorded frozen line goes stale when CSS behind a story .ts/.tsx swap ch
     const inputs = frozenInputs(result.checkout, result.baseSha, [story]);
     const line = `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${result.baseSha} --story-file ${story}: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states ${storyId("Composites v1.0/One", "Default")}; inputs ${inputs}; out/results.json\n`;
     writeFileSync(path.join(result.checkout, ".git", "vibe-changes.md"), line);
-    const findings = () => runDiffRules({ worktree: result.checkout, base: result.baseSha, isFrozenStory }).blocking.filter((entry) => entry.rule === "frozen-render");
+    const findings = () => runDiffRules({ worktree: result.checkout, base: result.baseSha, isFrozenStory, binding: PROVIDER_BINDING }).blocking.filter((entry) => entry.rule === "frozen-render");
     assert.deepEqual(findings(), [], `${baseExtension} → ${headExtension}: original line is current`);
     const changedCss = baseExtension === "ts" ? newCss : oldCss;
     writeFileSync(path.join(result.checkout, changedCss), ".changed { color: blue; }\n");
@@ -119,7 +124,7 @@ test("head .ts shadows an unchanged .tsx in frozen selection and makes a recorde
     "apps/storybook/stories/shared.ts": 'import "./head.css";\n',
     [headCss]: ".head { color: red; }\n",
   }, commit: true });
-  const findings = () => runDiffRules({ worktree: result.checkout, base: result.baseSha, isFrozenStory })
+  const findings = () => runDiffRules({ worktree: result.checkout, base: result.baseSha, isFrozenStory, binding: PROVIDER_BINDING })
     .blocking.filter((entry) => entry.rule === "frozen-render");
   assert.equal(findings().length, 1, "head-only .ts and CSS must select the frozen story");
   const inputs = frozenInputs(result.checkout, result.baseSha, [story]);

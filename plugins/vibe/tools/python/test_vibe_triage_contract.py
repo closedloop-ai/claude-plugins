@@ -13,10 +13,12 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
-from vibe_contract_text import flat, section
+from vibe_contract_text import bound_provider_env, flat, section
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILLS = PLUGIN_ROOT / "skills"
@@ -49,7 +51,7 @@ POLICY_STEPS = ("environment", "desktop", "ticket", "planPublish", "decisionTabl
 
 
 def frontmatter(path: Path) -> dict[str, str]:
-    return yaml.safe_load(path.read_text().split("---", 2)[1])
+    return yaml.safe_load(skill_split.read(path).split("---", 2)[1])
 
 
 def markdown_files() -> list[Path]:
@@ -57,7 +59,7 @@ def markdown_files() -> list[Path]:
 
 
 def test_core_defines_each_shared_rule_once() -> None:
-    text = CORE.read_text()
+    text = skill_split.read(CORE)
     for rule, heading in RULES.items():
         assert text.count(heading) == 1, rule
         assert len(section(text, heading)) > 40, rule
@@ -66,7 +68,7 @@ def test_core_defines_each_shared_rule_once() -> None:
 
 def test_each_shared_rule_sentence_lives_in_exactly_one_file() -> None:
     for rule, sentence in RULE_SENTENCES.items():
-        homes = [path for path in markdown_files() if sentence in flat(path.read_text())]
+        homes = [path for path in markdown_files() if sentence in flat(skill_split.read(path))]
         assert homes == [CORE], (rule, homes)
 
 
@@ -76,7 +78,7 @@ def test_every_class_pipeline_skill_cites_every_rule_and_restates_none() -> None
         meta = frontmatter(path)
         assert meta["name"] == name
         assert cls in meta["description"]
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         assert f"`class: {cls}`" in text, name
         assert "../vibe/references/pipeline-core.md" in text, name
         assert "../vibe/references/triage.md" in text, name
@@ -88,10 +90,10 @@ def test_every_class_pipeline_skill_cites_every_rule_and_restates_none() -> None
 
 
 def test_class_skills_cover_every_class_the_script_can_name() -> None:
-    script = SCRIPT.read_text()
+    script = skill_split.read(SCRIPT)
     classes = set(re.findall(r'^\s+\w+: "([a-z-]+)",?$', script.split("export const CLASSES", 1)[1].split("});", 1)[0], re.MULTILINE))
     assert classes == {"trivial-ui", "ui-feature", "backend", "docs-config", "mockup", "data-metric", "unknown"}
-    table = section(TRIAGE.read_text(), "## Classes")
+    table = section(skill_split.read(TRIAGE), "## Classes")
     for cls in classes:
         assert f"`{cls}`" in table, cls
     for name in CLASS_SKILLS:
@@ -100,35 +102,35 @@ def test_class_skills_cover_every_class_the_script_can_name() -> None:
 
 def test_class_skills_do_not_waive_a_policy_step() -> None:
     for name in CLASS_SKILLS:
-        text = flat((SKILLS / name / "SKILL.md").read_text())
+        text = flat(skill_split.read(SKILLS / name / "SKILL.md"))
         for waiver in ("skip Desktop", "without Desktop", "skips the decision table", "no decision table", "skip the ticket"):
             assert waiver not in text, (name, waiver)
 
 
 def test_script_records_every_policy_step_and_the_reference_names_them() -> None:
-    script = SCRIPT.read_text()
-    reference = flat(TRIAGE.read_text())
+    script = skill_split.read(SCRIPT)
+    reference = flat(skill_split.read(TRIAGE))
     assert 'export const POLICY = "required (policy)"' in script
     assert "`required (policy)`" in reference
     for step in POLICY_STEPS:
         assert f'"{step}"' in script, step
-    assert 'export const E2E_SOURCE = "pnpm test:lanes and the e2e path filter"' in script
-    assert "`pnpm test:lanes and the e2e path filter`" in reference
+    assert 'export const E2E_SOURCE = "the repository\'s lane report and its e2e path filter"' in script
+    assert "`the repository's lane report and its e2e path filter`" in reference
 
 
 def test_switch_is_documented_off_by_default_and_awaits_the_owner() -> None:
-    text = section(TRIAGE.read_text(), "## The switch")
+    text = section(skill_split.read(TRIAGE), "## The switch")
     assert "`VIBE_TRIAGE_APPLY_RECOMMENDATIONS` is off by default" in text
     assert "every step's `effective` is `run`" in text
     assert "await the owner's ruling" in text
-    script = SCRIPT.read_text()
+    script = skill_split.read(SCRIPT)
     assert 'export const SWITCH_ENV = "VIBE_TRIAGE_APPLY_RECOMMENDATIONS"' in script
     assert script.count("process.env") == 1, "only switchOn's default parameter reads the environment, and only the classify command calls it"
     assert script.count("switchOn()") == 1
 
 
 def test_vibe_skill_reads_effective_never_the_switch_and_keeps_todays_rules() -> None:
-    text = flat((VIBE / "SKILL.md").read_text())
+    text = flat(skill_split.read(VIBE / "SKILL.md"))
     assert "VIBE_TRIAGE_APPLY_RECOMMENDATIONS" not in text
     assert "scripts/vibe-triage.mjs classify" in text
     assert "`effective: defer`" in text
@@ -138,13 +140,16 @@ def test_vibe_skill_reads_effective_never_the_switch_and_keeps_todays_rules() ->
     assert "Stand up the environment (section 3)" not in text, "step 7 now says it runs unless the manifest defers it"
     assert "Section 3 runs now unless the manifest's `environment` step has `effective: defer`" in text
     assert "references/triage.md" in text and "references/pipeline-core.md" in text
-    reference = flat(TRIAGE.read_text())
+    reference = flat(skill_split.read(TRIAGE))
     assert "mid-run upgrade rules are not part of this release" in reference
     assert "never skipped" in reference
 
 
 def classify(*args: str) -> dict:
-    result = subprocess.run(["node", str(SCRIPT), "classify", *args], capture_output=True, text=True, check=False)
+    # The cases name the ClosedLoop provider's repository areas, so the script runs bound to it.
+    with tempfile.TemporaryDirectory() as home:
+        result = subprocess.run(["node", str(SCRIPT), "classify", *args], capture_output=True, text=True, check=False,
+                                env=bound_provider_env(Path(home)))
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -158,22 +163,22 @@ def test_ui_feature_skill_states_what_the_script_recommends_for_desktop() -> Non
     assert host["steps"]["desktop"]["recommendation"]["action"] == "run"
     text_only = classify("--request", "Rename the header on the settings page")
     assert text_only["steps"]["desktop"]["recommendation"]["action"] == "unknown"
-    skill = flat((SKILLS / "vibe-pipeline-ui-feature" / "SKILL.md").read_text())
+    skill = flat(skill_split.read(SKILLS / "vibe-pipeline-ui-feature" / "SKILL.md"))
     assert "Neither is ever left out" not in skill
     assert "a web-only multi-file UI change leaves Desktop out" in skill
 
 
 def test_requirements_brief_returns_likely_files_with_sources_and_step_7_passes_exactly_them() -> None:
-    worker = flat((PLUGIN_ROOT / "agents" / "vibe-requirements-worker.md").read_text())
+    worker = flat(skill_split.read(PLUGIN_ROOT / "agents" / "vibe-requirements-worker.md"))
     assert "`likelyFiles`" in worker
     assert "each `path` with its `source`" in worker
     assert "Never list a file you only guess" in worker
     assert "owner files and the hosts that import them" in worker
-    skill = flat((VIBE / "SKILL.md").read_text())
+    skill = flat(skill_split.read(VIBE / "SKILL.md"))
     assert "passing the brief's `likelyFiles` as `--paths`" in skill
     assert "their sources as `--path-sources-file`" in skill
     assert "no `--paths` when the brief has none" in skill
-    reference = flat(TRIAGE.read_text())
+    reference = flat(skill_split.read(TRIAGE))
     assert "`--paths` is exactly the `likelyFiles` of the requirements worker's brief" in reference
     assert "pass no `--paths`: the class comes from the request and ticket text alone" in reference
     assert "`evidence.paths` are the brief's likely files, not touched files" in reference
@@ -185,21 +190,21 @@ def test_no_likely_files_means_no_paths_and_the_class_is_set_once() -> None:
     assert manifest["evidence"]["paths"] == []
     assert manifest["evidence"]["likelyFiles"] == []
     assert manifest["evidence"]["sources"] == ["text"]
-    assert "The class is set once; it is not re-classified" in flat(TRIAGE.read_text())
+    assert "The class is set once; it is not re-classified" in flat(skill_split.read(TRIAGE))
 
 
 def test_handoff_reads_the_manifest_through_review_scope_and_only_adds_review_work() -> None:
-    handoff = flat((SKILLS / "handoff" / "SKILL.md").read_text())
+    handoff = flat(skill_split.read(SKILLS / "handoff" / "SKILL.md"))
     assert "add `--manifest <file>` to that command" in handoff
     assert "a missing or invalid one changes nothing" in handoff
     assert "When its `triage.applied` is `true` (the triage switch was on at classify time)" in handoff
     assert "each `triage.extraGates` entry (`workflow-code-review`, `logical-qa`) as an additional gate" in handoff
     assert "The manifest only adds review work: `mode` and its reasons stay as the diff decided them, so it never removes a review." in handoff
     assert "With `applied` `false`, run nothing extra." in handoff
-    reference = flat(section(TRIAGE.read_text(), "## What the handoff does with the review steps"))
+    reference = flat(section(skill_split.read(TRIAGE), "## What the handoff does with the review steps"))
     assert "ITEM 2 = A" in reference
     assert "never removes a review the diff-derived `mode` already requires" in reference
-    scope = (SKILLS / "handoff" / "scripts" / "review-scope.mjs").read_text()
+    scope = skill_split.read(SKILLS / "handoff" / "scripts" / "review-scope.mjs")
     assert "ITEM 2 = A" in scope and "must NEVER remove a review review-scope.mjs already requires" in scope
     assert "VIBE_TRIAGE_APPLY_RECOMMENDATIONS" not in scope, "the reader reads the manifest's effective, never the switch"
     assert "process.env.VIBE_TRIAGE" not in scope
@@ -207,7 +212,7 @@ def test_handoff_reads_the_manifest_through_review_scope_and_only_adds_review_wo
 
 def test_class_skills_name_the_real_reader_of_the_review_steps() -> None:
     for name in CLASS_SKILLS:
-        text = flat((SKILLS / name / "SKILL.md").read_text())
+        text = flat(skill_split.read(SKILLS / name / "SKILL.md"))
         assert "recorded in the manifest for the consolidated reviewer" not in text, name
         assert "read by the handoff's `review-scope.mjs --manifest`" in text, name
         assert "only adds review work" in text, name

@@ -3,7 +3,14 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkStaleCitations } from "./comment-rules.mjs";
+import { checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkStaleCitations, citationPattern } from "./comment-rules.mjs";
+import { bindProvider, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
+// The ClosedLoop provider's references, as a session it is bound to reads them.
+const TICKETED = ticketReference(PROVIDER_BINDING);
+const RULES = { ticketed: TICKETED, citations: citationPattern(PROVIDER_BINDING) };
 import { parseUnifiedDiff } from "./diff-rules.mjs";
 import { run } from "./diff-rules-test-fixture.mjs";
 
@@ -80,11 +87,11 @@ test("the PR #9732 shapes block through diff-rules: an unticketed excuse comment
 
 test("an excuse comment needs a ticket; ordinary comments with those words elsewhere do not fire", () => {
   const diff = (lines) => files(`diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join("\n")}\n`);
-  assert.equal(collect((add) => checkExcuseComments(diff(["// Works around a known issue in the date picker."]), add)).length, 1);
-  assert.equal(collect((add) => checkExcuseComments(diff(["// Skips the row: a pre-existing defect", "// in the shared fixture."]), add)).length, 1, "one finding per comment block");
-  assert.deepEqual(collect((add) => checkExcuseComments(diff(["// Works around a known issue in the date picker (ISS-1234)."]), add)), []);
-  assert.deepEqual(collect((add) => checkExcuseComments(diff(["// The parsing bug flag shows the banner.", "// Guards a regression in sort order."]), add)), []);
-  assert.deepEqual(collect((add) => checkExcuseComments(diff(["const onMain = 'pre-existing';"]), add)), [], "code, not a comment");
+  assert.equal(collect((add) => checkExcuseComments(diff(["// Works around a known issue in the date picker."]), add, TICKETED)).length, 1);
+  assert.equal(collect((add) => checkExcuseComments(diff(["// Skips the row: a pre-existing defect", "// in the shared fixture."]), add, TICKETED)).length, 1, "one finding per comment block");
+  assert.deepEqual(collect((add) => checkExcuseComments(diff(["// Works around a known issue in the date picker (ISS-1234)."]), add, TICKETED)), []);
+  assert.deepEqual(collect((add) => checkExcuseComments(diff(["// The parsing bug flag shows the banner.", "// Guards a regression in sort order."]), add, TICKETED)), []);
+  assert.deepEqual(collect((add) => checkExcuseComments(diff(["const onMain = 'pre-existing';"]), add, TICKETED)), [], "code, not a comment");
 });
 
 test("a guarded constant needs every use guarded and the diff to touch it", () => {
@@ -108,11 +115,11 @@ test("citation and removed-name candidates find the PR #9732 DI-13 lines and lef
     "- * Edit bar under the fields, as in the DI-13 design.",
     "+ * Edit bar under the fields, as in the issue detail design (ISS-13897).", "",
   ].join("\n"));
-  const citations = collect((add) => checkStaleCitations(leadDiff, { head: () => LEAD_HEAD }, add));
+  const citations = collect((add) => checkStaleCitations(leadDiff, { head: () => LEAD_HEAD, rules: RULES }, add));
   assert.deepEqual(citations.map(({ rule, line }) => [rule, line]), [["stale-citation", 1]]);
   assert.match(citations[0].problem, /replaced the citation DI-13 in one comment, but line 1 still cites it/);
   const kept = LEAD_HEAD.replace("issue detail design (ISS-13897)", "DI-13 design (ISS-13897)");
-  assert.deepEqual(collect((add) => checkStaleCitations(leadDiff.map((file) => ({ ...file, added: [{ line: 4, text: " * Edit bar, as in the DI-13 design (ISS-13897)." }] })), { head: () => kept }, add)), []);
+  assert.deepEqual(collect((add) => checkStaleCitations(leadDiff.map((file) => ({ ...file, added: [{ line: 4, text: " * Edit bar, as in the DI-13 design (ISS-13897)." }] })), { head: () => kept, rules: RULES }, add)), []);
 
   const removedDiff = files([`diff --git a/${CANVAS} b/${CANVAS}`, `--- a/${CANVAS}`, `+++ b/${CANVAS}`, "@@ -7,4 +7,3 @@",
     "-  const editRow =", "+  const toolbarParts = {", ""].join("\n"));
@@ -123,7 +130,10 @@ test("citation and removed-name candidates find the PR #9732 DI-13 lines and lef
 
 test("the command prints blocking findings and reviewer candidates for a worktree diff", (t) => {
   const result = run(t, { base: { [LEAD]: LEAD_BASE }, head: { [LEAD]: LEAD_HEAD, [STORY]: STORY_HEAD }, commit: true });
-  const printed = spawnSync(process.execPath, [SCRIPT, "--worktree", result.checkout, "--base", result.baseSha], { encoding: "utf8" });
+  const { home, cleanup } = makeHome("vibe-comment-rules-");
+  t.after(cleanup);
+  const printed = spawnSync(process.execPath, [SCRIPT, "--worktree", result.checkout, "--base", result.baseSha],
+    { encoding: "utf8", env: { ...process.env, HOME: home, ...bindProvider(home) } });
   assert.equal(printed.status, 0, printed.stderr);
   const output = JSON.parse(printed.stdout);
   assert.deepEqual(output.blocking.map(({ rule, file }) => [rule, file]), [["excuse-comment", STORY]]);

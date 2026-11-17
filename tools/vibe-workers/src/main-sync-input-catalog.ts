@@ -9,44 +9,28 @@ import { originTree } from "./main-sync-input-files.js";
 import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { digest } from "./main-sync-state.js";
 import { readProducerMetadata, verifyProducerHead } from "./main-sync-producer-read.js";
+import { mainSyncRecipe } from "./main-sync-recipe.js";
 
 export type InputProducer = { id: string; roots: string[]; inputs: string[]; argv?: string[];
-  package?: { dir: string; name: string }; strategy: "pristine" | "full-write" | "pure" };
-const DESKTOP = "apps/desktop";
+  package?: { dir: string; name: string }; strategy: "pristine" | "full-write" | "pure"; refreshable?: boolean };
 const WORKSPACE = "pnpm-workspace.yaml";
-export const inputProducers: readonly InputProducer[] = [
-  { id: "shared-prisma", roots: ["packages/database/generated"], inputs: ["packages/database/prisma", "packages/database/prisma.config.ts", "packages/database/package.json", WORKSPACE],
-    argv: ["pnpm", "--dir", "packages/database", "run", "db:generate"], package: { dir: "packages/database", name: "prisma" }, strategy: "pristine" },
-  { id: "desktop-prisma", roots: [`${DESKTOP}/src/main/database/generated`], inputs: [`${DESKTOP}/prisma`, `${DESKTOP}/prisma.config.ts`, `${DESKTOP}/package.json`, `${DESKTOP}/scripts/generate-prisma-client-lib.mjs`, WORKSPACE],
-    argv: ["pnpm", "--dir", DESKTOP, "exec", "prisma", "generate"], package: { dir: DESKTOP, name: "prisma" }, strategy: "pristine" },
-  ...["api", "app"].map((app): InputProducer => ({ id: `next-${app}`, roots: [`apps/${app}/next-env.d.ts`, `apps/${app}/.next/types`],
-    inputs: [`apps/${app}/app`, `apps/${app}/next.config.ts`, `apps/${app}/tsconfig.json`, `apps/${app}/package.json`, WORKSPACE],
-    argv: ["pnpm", "--dir", `apps/${app}`, "exec", "next", "typegen"], package: { dir: `apps/${app}`, name: "next" }, strategy: "pristine" })),
-  { id: "fumadocs", roots: ["apps/web/.source"], inputs: ["apps/web/content/docs", "apps/web/source.config.ts", "apps/web/package.json", WORKSPACE],
-    argv: ["pnpm", "--dir", "apps/web", "exec", "fumadocs-mdx"], package: { dir: "apps/web", name: "fumadocs-mdx" }, strategy: "full-write" },
-  { id: "desktop-build", roots: [`${DESKTOP}/src/shared/build-info.ts`], inputs: [`${DESKTOP}/package.json`, `${DESKTOP}/scripts/write-build-info-lib.mjs`], strategy: "pure" },
-  { id: "desktop-migrations", roots: [`${DESKTOP}/src/main/database/migration/migrations-manifest.ts`], inputs: [`${DESKTOP}/prisma/migrations`, `${DESKTOP}/scripts/generate-migrations-manifest-lib.mjs`, `${DESKTOP}/scripts/migration-order.mjs`], strategy: "pure" },
-  { id: "desktop-docs", roots: [`${DESKTOP}/src/main/docs-help/docs-bundle-manifest.ts`], inputs: ["apps/web/content/docs", `${DESKTOP}/scripts/generate-docs-bundle-manifest.mjs`, `${DESKTOP}/scripts/generate-docs-bundle-manifest-lib.mjs`],
-    argv: ["node", `${DESKTOP}/scripts/generate-docs-bundle-manifest.mjs`], strategy: "pristine" },
-  { id: "desktop-auth", roots: [`${DESKTOP}/src/shared/auth-handoff-assets.generated.ts`], inputs: ["packages/design-system/styles/globals.css", "packages/design-system/brand/logos/Horizontal", `${DESKTOP}/scripts/generate-auth-handoff-assets-lib.mjs`, "packages/design-system/package.json", WORKSPACE],
-    package: { dir: "packages/design-system", name: "geist" }, strategy: "pure" },
-  { id: "husky", roots: [".husky/_/husky.sh"], inputs: ["package.json", WORKSPACE], package: { dir: ".", name: "husky" }, strategy: "pure" },
-];
 
-export const reportOutputs = new Set([".vitest/blob/blob.json", ".vitest/json/output.json", "playwright-report/index.html",
-  "playwright-results.json", "test-results/.last-run.json", `${DESKTOP}/playwright-report-e2e/index.html`,
-  `${DESKTOP}/playwright-report-e2e/results.json`, `${DESKTOP}/playwright-report-e2e/dd-quarantine.json`]);
+/** The repository's generated inputs and their canonical producers: its main-sync recipe's, none without one. */
+export function inputProducers(root: string): readonly InputProducer[] {
+  return mainSyncRecipe(root).producers;
+}
+
 const packageSchema = z.object({ name: z.string(), version: z.string() }).passthrough();
 const manifestSchema = z.object({ dependencies: z.record(z.string()).optional(), devDependencies: z.record(z.string()).optional(),
   optionalDependencies: z.record(z.string()).optional() }).passthrough();
 const workspaceSchema = z.object({ catalog: z.record(z.string()).optional(), catalogs: z.record(z.record(z.string())).optional() }).passthrough();
 
 /** Finite owning paths are discovery, never directory permission without complete canonical evidence. */
-export function producerFor(path: string) {
-  return inputProducers.find((producer) => producer.roots.some((root) => path === root || path.startsWith(`${root}/`)));
+export function producerFor(root: string, path: string) {
+  return inputProducers(root).find((producer) => producer.roots.some((root) => path === root || path.startsWith(`${root}/`)));
 }
 export function presentProducers(root: string) {
-  return inputProducers.filter((producer) => producer.roots.some((path) => lstatSync(join(root, path), { throwIfNoEntry: false })));
+  return inputProducers(root).filter((producer) => producer.roots.some((path) => lstatSync(join(root, path), { throwIfNoEntry: false })));
 }
 export function producerFiles(root: string, producer: InputProducer, allowed?: ReadonlySet<string>) {
   return producer.roots.flatMap((path) => originTree(root, path, allowed));

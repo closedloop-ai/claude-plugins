@@ -1,0 +1,16 @@
+{
+  "name": "vibe-closedloop-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.28.2",
+    "typescript": "5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

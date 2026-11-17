@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { codexAppServerRequest } from "../../vibe/scripts/codex-app-server.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 
@@ -78,7 +78,7 @@ async function main() {
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) await main();
+if (isEntryPoint(import.meta.url)) await main();
 
 /** The harness whose installed core is resolved: the one owning this command, never a CLAUDECODE inherited by a Codex thread. */
 export function discoveryRuntime(env = process.env, harness = {}) {

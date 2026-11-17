@@ -16,8 +16,8 @@
 import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const DEFAULT_LIMIT_MINUTES = 45;
 
@@ -113,7 +113,7 @@ function main() {
   return result.due ? 1 : 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main());
   } catch (error) {

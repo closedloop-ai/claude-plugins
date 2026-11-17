@@ -7,6 +7,7 @@
 
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { isVibePlugin } from "../../../shared/plugin-roots.mjs";
 
 const TOKEN = /[^\s'"`()<>=]+/g;
 const SCRIPT_PATH = /^(.*?)(?:^|\/)(?:(skills)\/)?([a-z0-9][a-z0-9-]*)\/scripts\/([a-z0-9_./-]+\.(?:mjs|js|cjs|ts|py|sh))$/i;
@@ -33,7 +34,7 @@ export function installedPluginVersion(pluginRoot) {
 
 /** Whether `dir` is a vibe plugin root of any release (an installed cache, a source checkout). */
 export function isVibePluginRoot(dir) {
-  return [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"].some((relative) => readJson(path.join(dir, relative))?.name === "vibe");
+  return [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"].some((relative) => isVibePlugin(readJson(path.join(dir, relative))?.name));
 }
 
 function trimToken(token) {

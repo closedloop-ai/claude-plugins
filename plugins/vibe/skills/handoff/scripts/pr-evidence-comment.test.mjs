@@ -4,14 +4,20 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
-import { prEvidenceValidationProblems, proofCorpusBase, selectionProblems, targetedEvidenceProblems } from "./pr-facts.mjs";
+import { prEvidenceValidationProblems, proofCorpusBase, prRulesFor, selectionProblems, targetedEvidenceProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
-import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess, git, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { readAssembled } from "../../vibe/scripts/skill-split.mjs";
 
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+
+// The PR evidence rules of the repository the ClosedLoop provider serves.
+// In-process checks resolve the session's binding through this conversation, bound like the repository they model.
+bindProviderInProcess(after);
+const selectionProblemsBound = (runsFile, files, required, commit) => selectionProblems(runsFile, files, required, commit, prRulesFor(PROVIDER_BINDING));
 
 test("the PR comment lists the final SHA, exact cases, command, tier and result SHA", t => {
   const receiptDir = mkdtempSync(path.join(tmpdir(), "comment-proof-receipts-"));
@@ -76,7 +82,7 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
 
 
 test("the production environment worker passes its exact worktree to evidence-comment validation", () => {
-  const worker = readFileSync(new URL("../../../agents/vibe-environment-worker.md", import.meta.url), "utf8");
+  const worker = readAssembled(new URL("../../../agents/vibe-environment-worker.md", import.meta.url));
   const command = worker.match(/`node \.\.\/skills\/handoff\/scripts\/pr-evidence-comment\.mjs[^`]+`/);
   assert.ok(command, "actual production invocation");
   assert.match(command[0], /--worktree "<wt>"/);
@@ -278,7 +284,7 @@ test("ISS-13846 AC-3 tier-C Desktop carry agrees in inventory and comment render
   const bytes = JSON.stringify(receipt);
   writeFileSync(path.join(receiptDir, "probe.json"), bytes);
   evidence.e2eCapability.remote.desktopHarness.receipt = { path: "probe.json", sha256: createHash("sha256").update(bytes).digest("hex") };
-  assert.deepEqual(selectionProblems(evidence, [{ path: spec, status: "M" }], [], commit), []);
+  assert.deepEqual(selectionProblemsBound(evidence, [{ path: spec, status: "M" }], [], commit), []);
   assert.deepEqual(targetedEvidenceProblems(evidence, commit, undefined, receiptDir), []);
   const commentOptions = { receiptDir, candidateFiles: [], probeCapability: () => evidence.e2eCapability };
   assert.match(renderEvidenceComment(evidence, undefined, commentOptions), /Left for CI:.*shared-paged-source-documents/);

@@ -1,5 +1,5 @@
-// Builds the links vibe gives the person to the exact thing it points them at
-// (ISS-13320): one story in the component gallery, or one page of the
+// Builds the links vibe gives the person to the exact thing it points them at:
+// one story in the component gallery, or one page of the
 // session's app. Both come from the session record, never from an id or a
 // route pattern the person would have to resolve. `vibe-sessions.mjs link`
 // reads the record and calls these; they are pure so the choice of base is

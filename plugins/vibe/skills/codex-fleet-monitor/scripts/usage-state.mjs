@@ -13,9 +13,9 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
@@ -302,7 +302,7 @@ async function main(argv) {
   return command === "status" && rows.some((row) => row.stale || row.status === "readfail") ? 1 : 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {

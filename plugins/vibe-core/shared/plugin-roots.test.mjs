@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { activeCodexVersion, comparePluginVersions, siblingPluginRoot, siblingPluginRootOrNull } from "./plugin-roots.mjs";
+import { activeCodexVersion, comparePluginVersions, DEFAULT_MARKETPLACE, isEntryPoint, isVibePlugin, pluginInstall, pluginMarketplace, siblingPluginRoot,
+  siblingPluginRootOrNull, vibeSkillOf, vibeSkillPattern } from "./plugin-roots.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CANONICAL = path.join(HERE, "plugin-roots.mjs");
@@ -147,4 +148,51 @@ test("Codex's version order: semver precedence, prereleases below releases, buil
   assert.equal(activeCodexVersion([]), null);
   assert.equal(activeCodexVersion(["1.2.3", "..", "local"]), "local");
   assert.equal(activeCodexVersion(["9", "10"]), "9", "non-semver names compare as text, as Codex does");
+});
+
+test("a script is its own entry point by real path, through a symlinked directory too", (t) => {
+  const root = base(t);
+  mkdirSync(path.join(root, "real"));
+  const script = path.join(root, "real", "script.mjs");
+  writeFileSync(script, "");
+  symlinkSync(path.join(root, "real"), path.join(root, "linked"));
+  const url = pathToFileURL(script).href;
+  assert.equal(isEntryPoint(url, script), true);
+  assert.equal(isEntryPoint(url, path.join(root, "linked", "script.mjs")), true, "node names the module by its real path, argv by the link");
+  assert.equal(isEntryPoint(url, path.relative(process.cwd(), script)), true, "a relative argv resolves against the working directory");
+  assert.equal(isEntryPoint(url, path.join(root, "real", "other.mjs")), false);
+  assert.equal(isEntryPoint(url, path.join(root, "missing", "script.mjs")), false, "a path that does not exist is compared as written");
+  assert.equal(isEntryPoint(url, undefined), false);
+  assert.equal(isEntryPoint(url, ""), false);
+});
+
+test("a checkout finds a sibling by its manifest name: plugins/vibe is vibe-generic, plugins/vibe-closedloop is vibe", (t) => {
+  const plugins = path.join(base(t), "repo", "plugins");
+  const generic = plugin(path.join(plugins, "vibe"), "vibe-generic", "1.1.88");
+  const built = plugin(path.join(plugins, "vibe-closedloop"), "vibe", "1.1.88");
+  const core = plugin(path.join(plugins, "vibe-core"), "vibe-core", "1.0.10");
+  assert.equal(siblingPluginRoot("vibe-generic", { from: from(core) }), generic);
+  assert.equal(siblingPluginRoot("vibe", { from: from(core) }), built, "the folder named vibe holds vibe-generic, so vibe is the one whose manifest says so");
+  assert.equal(siblingPluginRoot("vibe-core", { from: from(generic) }), core);
+  assert.equal(siblingPluginRoot("vibe-core", { from: from(built) }), core);
+  assert.equal(pluginMarketplace(pluginInstall(from(generic))), DEFAULT_MARKETPLACE, "a checkout names no marketplace");
+});
+
+test("a cache install names its own marketplace, in its install hints too, for either vibe name", (t) => {
+  for (const name of ["vibe", "vibe-generic"]) {
+    const cache = path.join(base(t), "codex", "plugins", "cache", "team-market");
+    const vibe = plugin(path.join(cache, name, "1.1.88"), name, "1.1.88", ".codex-plugin");
+    const self = pluginInstall(from(vibe));
+    assert.deepEqual([self.name, pluginMarketplace(self)], [name, "team-market"]);
+    assert.throws(() => siblingPluginRoot("vibe-core", { from: from(vibe) }), new RegExp(`^Error: vibe-core is not installed beside ${name} \\(codex layout\\); `
+      + "install it with `claude plugin install vibe-core@team-market` in Claude Code or `codex plugin add vibe-core@team-market` in Codex$"));
+  }
+});
+
+test("both vibe names are vibe: plugin names and skill ids", () => {
+  assert.deepEqual(["vibe", "vibe-generic", "vibe-core", "vibe-closedloop", undefined].map(isVibePlugin), [true, true, false, false, false]);
+  assert.deepEqual(["vibe:handoff", "vibe-generic:vibe-change-worker", "vibe-core:handoff", "other:vibe", "vibe", null].map(vibeSkillOf),
+    ["handoff", "vibe-change-worker", null, null, null, null]);
+  const starts = new RegExp(`^/${vibeSkillPattern("vibe")}$`);
+  assert.deepEqual(["/vibe:vibe", "/vibe-generic:vibe", "/vibe-core:vibe", "/vibe:vibe-x"].map((text) => starts.test(text)), [true, true, false, false]);
 });

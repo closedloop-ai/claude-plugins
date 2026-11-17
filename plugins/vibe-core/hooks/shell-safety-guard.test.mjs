@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 import { credentialProblem, e2eSlotProblem, equalsWordProblem, forcePushProblem, shellSafetyGuard, watcherLaunchProblem, wordSplitProblem } from "./shell-safety-guard.mjs";
+import { activatedChat } from "./activation-test-support.mjs";
+
+// The ClosedLoop provider's slot rule, as a chat it is bound to reads it.
+const SLOT_RULE = JSON.parse(readFileSync(new URL("../../vibe-closedloop-provider/provider.json", import.meta.url), "utf8")).data.guards.e2eSlot;
+const slotProblem = (command) => e2eSlotProblem(command, SLOT_RULE);
 
 const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
@@ -33,9 +39,10 @@ test("force push is refused for every remote, including a remote laptop and proo
   assert.equal(forcePushProblem("git push origin fix/work"), null);
 });
 
-test("the PreToolUse hook denies unsafe Bash and is registered", () => {
+test("the PreToolUse hook denies unsafe Bash and is registered", (t) => {
+  const chat = activatedChat(t);
   const run = (command) => spawnSync(process.execPath, [GUARD], {
-    input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }), encoding: "utf8",
+    input: JSON.stringify(chat.payload({ tool_name: "Bash", tool_input: { command } })), encoding: "utf8", env: chat.env,
   });
   for (const command of ["GH_TOKEN=$token DOCKER_CONFIG=/tmp/x docker pull ghcr.io/acme/app:sha", "git push -f primary HEAD:proof/a-1"]) {
     const result = run(command);
@@ -68,41 +75,41 @@ test("set -- $var is refused because zsh does not split it (the merge watcher ne
 test("e2e-slot.sh uses the deployed wrapper's --head, owner, command interface", () => {
   for (const command of ["~/vibe-remote/e2e-slot.sh ISS-1 pnpm e2e", "ssh host 'zsh -lic \"cd ~/wt && ~/vibe-remote/e2e-slot.sh ISS-1 e2e/run.sh\"'",
     "zsh e2e-slot.sh --head HEAD ISS-1 run"]) {
-    assert.match(e2eSlotProblem(command) ?? "", /--head <sha>/, command);
+    assert.match(slotProblem(command) ?? "", /--head <sha>/, command);
   }
-  assert.equal(e2eSlotProblem('~/vibe-remote/e2e-slot.sh --head 0123abc ISS-1 pnpm prepush --all'), null);
-  assert.match(e2eSlotProblem(`~/vibe-remote/e2e-slot.sh --head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`) ?? '', /does not accept --source-hash/);
-  assert.ok(e2eSlotProblem(`e2e-slot.sh ISS-1 run --head 0123abc`), 'identity flags passed to the child command do not bind the wrapper');
-  assert.equal(e2eSlotProblem('cat ~/vibe-remote/e2e-slot.sh'), null);
-  assert.equal(e2eSlotProblem("cat <<'EOF'\ne2e-slot.sh ISS-1 run\nEOF"), null,
+  assert.equal(slotProblem('~/vibe-remote/e2e-slot.sh --head 0123abc ISS-1 pnpm prepush --all'), null);
+  assert.match(slotProblem(`~/vibe-remote/e2e-slot.sh --head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`) ?? '', /does not accept --source-hash/);
+  assert.ok(slotProblem(`e2e-slot.sh ISS-1 run --head 0123abc`), 'identity flags passed to the child command do not bind the wrapper');
+  assert.equal(slotProblem('cat ~/vibe-remote/e2e-slot.sh'), null);
+  assert.equal(slotProblem("cat <<'EOF'\ne2e-slot.sh ISS-1 run\nEOF"), null,
     'heredoc body is not an E2E slot invocation');
-  assert.match(e2eSlotProblem("cat <<EOF\n$(e2e-slot.sh ISS-1 run)\nEOF") ?? '', /--head/,
+  assert.match(slotProblem("cat <<EOF\n$(e2e-slot.sh ISS-1 run)\nEOF") ?? '', /--head/,
     'an unquoted heredoc still executes command substitutions');
   for (const command of ["# <<EOF\ne2e-slot.sh ISS-1 run",
     "echo $((1 << 2)); e2e-slot.sh ISS-1 run", "e2e-slot.sh</dev/null ISS-1 run"]) {
-    assert.match(e2eSlotProblem(command) ?? '', /--head/, command);
+    assert.match(slotProblem(command) ?? '', /--head/, command);
   }
   for (const command of ["cat <<\\EOF\ne2e-slot.sh ISS-1 run\nEOF",
     "cat <<E\"OF\"\ne2e-slot.sh ISS-1 run\nEOF"]) {
-    assert.equal(e2eSlotProblem(command), null, command);
+    assert.equal(slotProblem(command), null, command);
   }
-  const message = e2eSlotProblem('e2e-slot.sh ISS-1 run');
+  const message = slotProblem('e2e-slot.sh ISS-1 run');
   assert.doesNotMatch(message, /pushed|before the push/);
 });
 
 test('nested remote shell options cannot bypass E2E identity', () => {
   const prefix = "ssh host 'zsh -lic \"~/vibe-remote/e2e-slot.sh";
-  assert.match(e2eSlotProblem(`${prefix} ISS-1 run\"'`) ?? '', /--head/);
+  assert.match(slotProblem(`${prefix} ISS-1 run\"'`) ?? '', /--head/);
   const flags = `--head 0123abc`;
   for (const command of [`${prefix} ${flags} ISS-1 run\"'`,
     String.raw`ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic \"~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run\""'`]) {
-    assert.equal(e2eSlotProblem(command), null, command);
+    assert.equal(slotProblem(command), null, command);
   }
   // ISS-13701 AC-4: zsh -c executes one command-string argument. A later --head becomes $0,
   // not the slot's flag (https://zsh.sourceforge.io/Doc/Release/Invocation.html).
   const unquoted = `ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic ~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run"'`;
-  assert.match(e2eSlotProblem(unquoted) ?? '', /--head <sha>/);
-  assert.equal(e2eSlotProblem("printf '%s\\n' 'zsh -lic e2e-slot.sh ISS-1 run'"), null, 'quoted data is not an invocation');
+  assert.match(slotProblem(unquoted) ?? '', /--head <sha>/);
+  assert.equal(slotProblem("printf '%s\\n' 'zsh -lic e2e-slot.sh ISS-1 run'"), null, 'quoted data is not an invocation');
   assert.equal(watcherLaunchProblem({ command: "ssh host 'zsh -lic \"scripts/watch.sh orch\"'" }), null, 'only the e2e identity guard expands remote shell payloads');
 });
 
@@ -125,31 +132,31 @@ test('assignments and executable wrappers cannot hide the E2E slot', () => {
     suffix => `zsh -lic "builtin time ${slot} ${suffix}"`,
   ];
   for (const form of forms) {
-    assert.match(e2eSlotProblem(form('ISS-1 run')) ?? '', /--head/, form('ISS-1 run'));
-    assert.equal(e2eSlotProblem(form('--head 0123abc ISS-1 run')), null);
+    assert.match(slotProblem(form('ISS-1 run')) ?? '', /--head/, form('ISS-1 run'));
+    assert.equal(slotProblem(form('--head 0123abc ISS-1 run')), null);
   }
-  assert.equal(e2eSlotProblem(`printf '%s\\n' 'KEY=value env exec ${slot} ISS-1 run'`), null);
+  assert.equal(slotProblem(`printf '%s\\n' 'KEY=value env exec ${slot} ISS-1 run'`), null);
   for (const data of [`note; ${slot} ISS-1 run`, `note && ${slot} ISS-1 run`, `note $( ${slot} ISS-1 run )`]) {
-    assert.equal(e2eSlotProblem(`printf '%s\\n' '${data}'`), null, 'quoted operators remain data');
+    assert.equal(slotProblem(`printf '%s\\n' '${data}'`), null, 'quoted operators remain data');
   }
   for (const form of [
     suffix => `KEY="two; words" ${slot} ${suffix}`,
     suffix => `ssh host 'zsh -lic "KEY=\\"two && words\\" ${slot} ${suffix}"'`,
     suffix => `KEY+=value ${slot} ${suffix}`,
   ]) {
-    assert.match(e2eSlotProblem(form('ISS-1 run')) ?? '', /--head/);
-    assert.equal(e2eSlotProblem(form('--head 0123abc ISS-1 run')), null);
+    assert.match(slotProblem(form('ISS-1 run')) ?? '', /--head/);
+    assert.equal(slotProblem(form('--head 0123abc ISS-1 run')), null);
   }
   for (const form of [
     suffix => `result="$(${slot} ${suffix})"`,
     suffix => `echo "\`${slot} ${suffix}\`"`,
   ]) {
-    assert.match(e2eSlotProblem(form('ISS-1 run')) ?? '', /--head/, 'double-quoted substitutions execute');
-    assert.equal(e2eSlotProblem(form('--head 0123abc ISS-1 run')), null);
+    assert.match(slotProblem(form('ISS-1 run')) ?? '', /--head/, 'double-quoted substitutions execute');
+    assert.equal(slotProblem(form('--head 0123abc ISS-1 run')), null);
   }
-  assert.equal(e2eSlotProblem(`printf '%s\\n' '$(${slot} ISS-1 run)' '\`${slot} ISS-1 run\``), null, 'single-quoted substitutions are data');
+  assert.equal(slotProblem(`printf '%s\\n' '$(${slot} ISS-1 run)' '\`${slot} ISS-1 run\``), null, 'single-quoted substitutions are data');
   for (const suffix of [`${slot} ISS-1 run`, `${slot} --head 0123abc ISS-1 run`]) {
-    assert.equal(e2eSlotProblem(`printf '%s\\n' "$(echo safe) ${suffix}"`), null, 'literal suffix after substitution stays data');
+    assert.equal(slotProblem(`printf '%s\\n' "$(echo safe) ${suffix}"`), null, 'literal suffix after substitution stays data');
   }
 });
 
@@ -170,4 +177,10 @@ test("an unquoted word starting with = is refused, because zsh aborts the whole 
   ];
   for (const command of allowed) assert.equal(equalsWordProblem(command), null, command);
   assert.equal(shellSafetyGuard({ tool_input: { command: "echo ====; cat AGENTS.md" } })?.decision, "deny");
+});
+
+
+test("with no provider bound there is no slot rule, so the wrapper's name means nothing", () => {
+  assert.equal(e2eSlotProblem("e2e-slot.sh ISS-1 run", null), null);
+  assert.equal(e2eSlotProblem("e2e-slot.sh ISS-1 run", undefined), null);
 });

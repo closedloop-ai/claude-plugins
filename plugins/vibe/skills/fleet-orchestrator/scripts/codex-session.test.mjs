@@ -12,6 +12,7 @@ import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-moni
 import * as sessions from './codex-session.mjs';
 import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
@@ -19,7 +20,7 @@ const ownership = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 
 // A writer recorded its parent orchestrator's capacity stop as a human ruling (2026-10-26); every turn and steer
 // this client sends says who it is from.
-const SENT = `$vibe resume the session for the ticket.\n\n${ORCHESTRATOR_PROVENANCE}`;
+const SENT = `$vibe resume the session for the ticket.\nProvider: none\n\n${ORCHESTRATOR_PROVENANCE}`;
 
 /** Records each request and answers from `replies[method]` (a value or a function of params). */
 function stubClient(replies) {
@@ -46,7 +47,7 @@ const SIDEBAR = {
 function workDir() {
   const dir = mkdtempSync(join(tmpdir(), 'codex-session-'));
   const promptFile = join(dir, 'prompt.md');
-  writeFileSync(promptFile, '$vibe resume the session for the ticket.\n');
+  writeFileSync(promptFile, '$vibe resume the session for the ticket.\nProvider: none\n');
   return { dir, promptFile };
 }
 
@@ -74,7 +75,7 @@ test('the fleet CLI refuses a sessionless saved thread before connecting to App 
   const dir = mkdtempSync(join(tmpdir(), 'fleet-session-cli-'));
   execFileSync('git', ['init', '-q', '-b', 'vibe/example', dir]);
   const prompt = join(dir, 'prompt.md');
-  writeFileSync(prompt, '$vibe build this request\n');
+  writeFileSync(prompt, '$vibe build this request\nProvider: none\n');
   saveState(join(dir, 'state'), 'writer', { threadId: 'thread-1', cwd: dir, turns: [] });
   const result = spawnSync(process.execPath, [new URL('./codex-session.mjs', import.meta.url).pathname,
     'turn', join(dir, 'state'), 'writer', '--prompt-file', prompt], { encoding: 'utf8' });
@@ -197,6 +198,48 @@ test('a failed turn/start leaves the state file unchanged', async () => {
   assert.equal(loadState(dir, 'w1'), null);
 });
 
+test("a new writer whose brief names another binding is refused before any request", async () => {
+  const { dir } = workDir();
+  const brief = join(dir, 'brief.md');
+  const client = stubClient({});
+  writeFileSync(brief, '$vibe ISS-1 build it\nProvider: example-provider\n');
+  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', 'ISS-1'])), /this lead is bound as "Provider: none"/);
+  assert.deepEqual(client.calls, []);
+});
+
+test("a new writer whose brief has no Provider line is started under the lead's binding, the line added for it", async () => {
+  const { dir } = workDir();
+  const brief = join(dir, 'brief.md');
+  writeFileSync(brief, '$vibe #1 build it\n');
+  const lead = { state: 'bound', name: 'example-provider', capabilities: ['tickets'] };
+  const client = stubClient({ ...SIDEBAR, 'thread/start': { thread: { id: 'T1' } }, 'turn/start': {} });
+  const turn = parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', '#1', '--model', 'm', '--effort', 'high']);
+  await assert.rejects(run(client, turn, { binding: () => lead }), /no turn id/, 'the brief is not refused and the turn is requested');
+  const sent = client.calls.find(({ method }) => method === 'turn/start').params.input[0].text;
+  assert.match(sent, /^\$vibe #1 build it\nProvider: example-provider\n/);
+  assert.equal(readFileSync(brief, 'utf8'), '$vibe #1 build it\n', 'the brief file is left as written');
+});
+
+test("a writer started on another host takes the lead's binding from --lead-provider, having no chat of the lead's", async () => {
+  const { useLeadBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+  const { dir } = workDir();
+  const brief = join(dir, 'brief.md');
+  writeFileSync(brief, '$vibe #1 build it\nProvider: example-provider\n');
+  const lead = JSON.stringify({ state: 'bound', name: 'example-provider', capabilities: ['tickets'] });
+  const turn = (...extra) => parseCli(['turn', dir, 'w1', '--prompt-file', brief, '--cwd', '/wt', '--ticket', '#1', '--model', 'm', '--effort', 'high', ...extra]);
+  const noChat = { binding: () => null };
+  try {
+    await assert.rejects(run(stubClient({}), turn(), noChat), /this lead is bound as "Provider: none"/);
+    const client = stubClient({ ...SIDEBAR, 'thread/start': { thread: { id: 'T1' } }, 'turn/start': {} });
+    await assert.rejects(run(client, turn('--lead-provider', lead)), /no turn id/, 'the brief passes the binding check and the turn is requested');
+  } finally {
+    useLeadBinding(null);
+  }
+  assert.throws(() => turn('--lead-provider', '{"state":"bound","name":"Bad Name","capabilities":[]}'), /neither a bound provider nor none/);
+  assert.throws(() => turn('--lead-provider', 'not json'), /JSON provider\.mjs show prints/);
+  assert.throws(() => parseCli(['last', dir, 'w1', '--lead-provider', '{"state":"none"}']), /applies to turn only/);
+});
+
 test('an empty prompt file is refused before any request', async () => {
   const { dir } = workDir();
   const empty = join(dir, 'empty.md');
@@ -253,11 +296,11 @@ test('a new session refuses a prompt that does not start with $vibe; a saved one
 test('a prompt carrying another writer\'s Done: claims needs a Re-verify: line (takeover claims)', async () => {
   const { dir } = workDir();
   const handover = join(dir, 'resume.md');
-  writeFileSync(handover, '$vibe resume the vibe session for ISS-1.\nDone: threads fixed, migration ready\nLeft: QA\n');
+  writeFileSync(handover, '$vibe resume the vibe session for ISS-1.\nProvider: none\nDone: threads fixed, migration ready\nLeft: QA\n');
   const client = stubClient({ ...SIDEBAR, 'thread/start': { thread: { id: 'T1' } }, 'turn/start': { turn: { id: 'U1' } } });
   await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', handover, '--cwd', '/wt', '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'])), /no "Re-verify:" line/);
   assert.deepEqual(client.calls, []);
-  writeFileSync(handover, '$vibe resume the vibe session for ISS-1.\nDone: threads fixed, migration ready\nRe-verify: each Done claim with a test or a measurement before building on it\nLeft: QA\n');
+  writeFileSync(handover, '$vibe resume the vibe session for ISS-1.\nProvider: none\nDone: threads fixed, migration ready\nRe-verify: each Done claim with a test or a measurement before building on it\nLeft: QA\n');
   assert.equal(await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', handover, '--cwd', '/wt', '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high'])), 'w1 turn T1 U1');
 });
 
@@ -732,7 +775,7 @@ test('direct CLI refuses a caller old root against the verified host installatio
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /verified installed root/);
   assert.deepEqual(loadState(f.dir, 'w1'), saved);
-  assert.equal(sessions.verifiedPluginRoot(f.pluginRoot, { list: () => ({ installed: [{ name: 'vibe', installed: true, enabled: true, source: { path: f.pluginRoot } }] }) }),
+  assert.equal(sessions.verifiedPluginRoot(f.pluginRoot, { list: () => ({ installed: [{ name: OWN_PLUGIN, installed: true, enabled: true, source: { path: f.pluginRoot } }] }) }),
     saved.loadedSkill.pluginRoot.replace(/old-root$/, 'plugin'), 'the legitimate internal binding remains accepted');
 });
 
@@ -1165,4 +1208,28 @@ test('an ended actor cannot reopen a reload behind its released fence', async (t
   await server.pump(true);
   assert.equal(loadState(f.dir, 'w1').threadId, 'T1');
   assert.equal(ownership.reloadFenceStatus(f.dir, { ...f.lockDirs, identityOf: () => null }).held, true);
+});
+
+test("a new writer's $vibe brief inherits the lead's binding, and one naming another binding is refused", async () => {
+  const { briefProviderProblem, briefWithProviderLine, providerLine } = await import("./writer-launch.mjs");
+  const bound = { state: "bound", name: "example-provider" };
+  assert.equal(providerLine(bound), "Provider: example-provider");
+  assert.equal(providerLine(null), "Provider: none");
+  assert.equal(briefProviderProblem("$vibe #12 fix it\nProvider: none\n", null), null);
+  assert.equal(briefProviderProblem("$vibe ISS-1 fix it\nProvider: example-provider\n", bound), null);
+  assert.equal(briefProviderProblem("$vibe ISS-1 fix it\n", bound), null, "a brief with no line inherits the lead's binding");
+  assert.match(briefProviderProblem("$vibe #12 fix it\nProvider: example-provider\n", null), /this lead is bound as "Provider: none"/);
+  assert.equal(briefProviderProblem("continue the work", bound), null, "only a $vibe brief starts a writer");
+  assert.equal(briefWithProviderLine("$vibe ISS-1 fix it\n\n", bound), "$vibe ISS-1 fix it\nProvider: example-provider\n");
+  assert.equal(briefWithProviderLine("$vibe #12 fix it\nProvider: none\n", bound), "$vibe #12 fix it\nProvider: none\n", "a named line is kept as written");
+  assert.equal(briefWithProviderLine("continue the work", bound), "continue the work", "a prompt that starts no writer is untouched");
+});
+
+test('a root is verified against the enabled install of this vibe\'s own name, never the other vibe\'s', (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'verified-root-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const row = (name) => ({ name, installed: true, enabled: true, source: { path: root } });
+  const other = OWN_PLUGIN === 'vibe' ? 'vibe-generic' : 'vibe';
+  assert.equal(sessions.verifiedPluginRoot(undefined, { list: () => ({ installed: [row(OWN_PLUGIN), row(other)] }) }), root);
+  assert.throws(() => sessions.verifiedPluginRoot(undefined, { list: () => ({ installed: [row(other)] }) }), /cannot establish one verified installed root/);
 });

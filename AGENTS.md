@@ -7,6 +7,7 @@ This repository is a plugin monorepo under `plugins/`.
 - Each plugin typically contains `.claude-plugin/` (manifest), `agents/`, `commands/`, `skills/`, `tools/`, `prompts/`, `scripts/`, `schemas/`, and plugin-specific docs or resources.
 - Shared docs are in `docs/` (glossary, dependency map), and repository-wide guidance is in `README.md`, `CONTRIBUTING.md`, and `CHANGELOG.md`.
 - Plugin Python code/tests live under plugin subdirectories, e.g. `plugins/code/tools/python/` and `plugins/code-review/tools/python/`.
+- Where a vibe change goes: generic behavior goes in `plugins/vibe` (published as `vibe-generic`) and carries no ClosedLoop or symphony-alpha words, which `plugins/vibe/tools/python/vibe_generic_scan.py check` (`test_vibe_generic_scan.py`) enforces. ClosedLoop text and data go in `plugins/vibe-closedloop-provider` (provider blocks, `provider.json`, `build.json`). `plugins/vibe-closedloop` (published as `vibe`) is the output of `npm run build` in `tools/vibe-closedloop-build`: never edit it by hand; rebuild and commit it, and CI's `TypeScript (vibe-closedloop-build)` job fails when it differs from the build.
 
 ## Build, Test, and Development Commands
 - `python3.13 -m venv .venv && source .venv/bin/activate`  

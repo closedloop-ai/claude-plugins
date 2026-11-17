@@ -22,9 +22,9 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
@@ -99,7 +99,7 @@ function main(argv) {
   throw new Error("Usage: review-followup.mjs plan|record ...");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.stdout.write(`${JSON.stringify({ ok: true, ...main(process.argv.slice(2)) }, null, 2)}\n`);
   } catch (error) {

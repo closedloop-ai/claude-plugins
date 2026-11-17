@@ -37,8 +37,8 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const WRITER_ROLE = "vibe-change-worker";
 const COMMIT = /^[0-9a-f]{40}$/;
@@ -135,7 +135,7 @@ function main(argv) {
     Array.isArray(unresolved) ? unresolved : unresolved.threads ?? [], values.gh);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const result = main(process.argv.slice(2));
     process.stdout.write(`${JSON.stringify(result)}\n`);

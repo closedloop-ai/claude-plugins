@@ -8,8 +8,9 @@
 import { parseArgs } from 'node:util';
 import { defaultUsageWorkDir, recordUsageReading } from './usage-state.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
-const { connectStdio, connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
+const { connectStdio, connectViaProxy, daemonSocket, exitAfterTotalTimeout } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 export const UsageState = Object.freeze({

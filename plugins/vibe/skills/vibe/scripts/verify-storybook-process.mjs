@@ -8,10 +8,11 @@ import { closeSync, existsSync, lstatSync, openSync, readFileSync, realpathSync,
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
@@ -185,7 +186,7 @@ export async function stopVerifyStorybook(worktree, port) {
   return result;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const separator = process.argv.indexOf("--");
     const own = separator < 0 ? process.argv.slice(2) : process.argv.slice(2, separator);

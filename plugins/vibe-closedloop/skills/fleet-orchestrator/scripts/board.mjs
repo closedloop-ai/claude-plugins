@@ -1,0 +1,744 @@
+#!/usr/bin/env node
+// The fleet board: what every writer is doing, and what each writer or QA
+// guide must be told. Writers that could not see each other's work collided,
+// a QA guide never heard that its checkpoint was ready, and a UX ruling
+// reached one writer as text while another PR rendered the same behavior.
+//
+// Usage: board.mjs <orchDir> writer <name> [--tickets <a,b>] [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+//        board.mjs <orchDir> placement <ticket> --evidence <file> | --keep-local <the operator's reason>
+//        board.mjs <orchDir> push-check <writer> --head <sha>
+//        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
+//        board.mjs <orchDir> told <item> <recipient>
+//        board.mjs <orchDir> duty <duty> --owner <writer or helper>
+//        board.mjs <orchDir> unit <name> --tickets <a,b> [--writer <writer>] [--repo <owner/repo>]
+//        board.mjs <orchDir> unit <name> --closed <its writer row's PR: n, #n, owner/repo#n or its URL>
+//        board.mjs <orchDir> question|answered|ack <writer> --id <question or scope id> [--text <the question and its default, or the answer>]
+//        board.mjs <orchDir> pending <writer>
+//        board.mjs <orchDir> status [--pushed <name>=<sha>]... [--threads <name>=<n>]...
+//        board.mjs <orchDir> watch-lines
+//
+// `writer` adds or updates a writer's row (owner, PR, head, status,
+// dependencies). It refuses a new row in a program whose recorded shape
+// (fleet-home.mjs) is `no-writer`, and a second writer in a `one-writer` one,
+// until the shape is changed. A new writer names its tickets (`--tickets`, or an
+// open unit naming it as `--writer`), and is refused for a ticket with no
+// recorded `placement`, or one placed cloud with no keep-local reason
+// (writer-placement.mjs); `unit` refuses the same when it assigns a ticket
+// to a writer already on the board; `status` prints `PLACEMENT <writer> <ticket> ...`
+// for each. `deliver` records something each recipient must be told
+// directly (a ruling saved once as a reference file, a QA checkpoint that is
+// ready); `told` marks one recipient told. Every write re-renders
+// <orchDir>/board.md, the page every writer reads, with a log line.
+//
+// `status` prints `STALE <writer> board head <a>, pushed <b>` for a row whose
+// head differs from the PR's pushed head (`--pushed`, or `gh pr view` for rows
+// with a PR and repo; `BOARD_GH` overrides the gh binary), and
+// `UNTOLD <item> <recipient>` for each recipient not yet told, then
+// `board: <writers> writers, <stale> stale, <untold> untold`; exits 1 when any.
+//
+// A standing duty (main's post-merge health, a PR shepherd, the watcher) has a
+// named owner (`duty`). Main's health once went unwatched for an hour after its
+// owner was stopped with no replacement. `status` prints `UNOWNED-DUTY <duty>
+// owner <who> <why>` when the owner is neither a board writer nor a running
+// helper in helpers.json, and helpers.mjs refuses to stop an owner.
+// Each duty in `REQUIRED_DUTIES` (config.env, space-separated; default
+// `green-watch` and `status-sweep` once the work dir watches PRs in prs.txt)
+// must have one:
+// `status` prints `MISSING-DUTY <duty>` until it does. Merged program PRs once
+// broke main's post-merge batch with nobody following it.
+// A Codex writer (`--runtime codex`) whose head has not moved for 30 minutes
+// while its PR has unresolved human review threads (`--threads`, or read with
+// `gh api graphql` for rows with a PR and repo) prints `SLOW <writer> ...`:
+// hand it to a Claude writer. One spent 35 minutes on nine threads without a push.
+// A writer declares the head it calls push-ready (`writer <name> --ready
+// <sha>`); `push-check` exits 1 unless the head you are about to push for it
+// is that one. The orchestrator once pushed a writer's committed head while the
+// writer was still fixing two regressions in it, and auto-merge took it.
+// A writer records each question it sends you under an id (`question`), your
+// answer echoes that id (`answered`), and the writer acknowledges it in its next
+// status (`ack`). `status` prints `QUESTION-UNANSWERED <writer> <id> <m>m:
+// <text>` once a question waited 15 minutes, and `UNACKED <writer> <id> <m>m`
+// once an answer waited 15 minutes unacknowledged: escalate, for example by
+// asking the operator to press Esc in that pane. A writer once held its PR six
+// hours on an unanswered question, and answers to writers in long turns had to
+// be sent three times.
+// A mid-run scope change or answer to a writer is a `scope` delivery (`--text`
+// or `--reference`) to board writers with a `--worktree`; it records each
+// worktree's head. The writer reads `pending <writer>` (its scope changes and
+// answers not yet acknowledged, exit 1 when any) before each commit and each
+// verification phase, and acknowledges each by id (`ack`). `status` prints
+// `UNACKED-SCOPE <item> <writer> <m>m` once a told change waited 15 minutes
+// unacknowledged, and `SCOPE-NOT-STARTED <item> <writer> <m>m` once, 30 minutes
+// after it was told, the worktree still sits clean at the recorded head.
+// `watch-lines` prints those and the late-question lines without minutes, for
+// codex-fleet-monitor's snapshot, so the watcher wakes on each. A Claude pane
+// writer ran one turn for over two hours (2026-10-26) and never
+// received an answer and two scope additions; it committed and verified the old
+// scope while every send reported success.
+// `unit` records related tickets delivered by one writer on one branch as one
+// PR (operator ruling, 2026-11-09; ticket-units.mjs groups them). A second call adds tickets
+// (a fold) and never drops one. Each call also appends the unit and its tickets
+// to resume-log.md, so a new chat resumes the same grouping. `--closed <PR>`
+// finishes the unit once its PR merged and every member is reconciled: later
+// tickets start a new unit instead of folding into a finished writer, and
+// status-audit stops reading it. `--closed` is refused until the unit's
+// recorded review passed (handoff's unit-review.mjs --record), and `status`
+// prints UNIT-UNREVIEWED for an open unit whose writer has a PR before then.
+// `status` prints UNIT-MEMBERS-UNRECORDED while
+// a local writer's vibe session lacks one of its unit's other tickets.
+// <orchDir> is a fleet home or a program dir (work-dir.mjs). `status` also prints
+// fleet-home.mjs check's lines for a home, or for a flat dir that watches sessions or PRs.
+// All of these count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
+// work dir watches sessions or PRs (sessions.txt or prs.txt) and its watcher is
+// not running: a watcher left unarmed overnight let writers' questions sit
+// unanswered for 7 hours.
+
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { parseArgs } from "node:util";
+import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
+import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
+import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
+import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
+import { placementLines, readPlacementEvidence, recordPlacement, renderPlacements, writerPlacementProblem, writerTickets } from "./writer-placement.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { trackerBound, workItem } from "../../vibe/scripts/tracker-key.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+
+const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
+const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
+const { homeProblems, programShape, Shape } = await vibeCore("lib/fleet-orchestrator/scripts/fleet-home.mjs");
+const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
+
+const STATE = "board.json";
+const PAGE = "board.md";
+const KINDS = new Set(["ruling", "checkpoint", "note", "scope"]);
+const LOG_LINES = 50;
+const RUNTIMES = new Set(["codex", "claude"]);
+const SLOW_MINUTES = 30;
+const QUESTION_MINUTES = 15;
+const SCOPE_START_MINUTES = 30;
+const BOTS = new RegExp(process.env.BOT_LOGIN_REGEX || "vercel|codex|github-actions|copilot|bot", "i");
+
+/** Rows whose recorded head differs from the pushed head; a row with no known pushed head is not judged. */
+export function staleRows(board, pushed) {
+  return Object.entries(board.writers)
+    .filter(([name, row]) => pushed[name] && row.head !== pushed[name])
+    .map(([name, row]) => ({ name, head: row.head ?? "none", pushed: pushed[name] }));
+}
+
+/** Codex writers whose head has not moved for SLOW_MINUTES while their PR has unresolved human threads. */
+export function slowRows(board, threads, now) {
+  return Object.entries(board.writers)
+    .filter(([name, row]) => row.runtime === "codex" && threads[name] > 0 && row.headAt && now - Date.parse(row.headAt) >= SLOW_MINUTES * 60_000)
+    .map(([name, row]) => ({ name, minutes: Math.floor((now - Date.parse(row.headAt)) / 60_000), threads: threads[name] }));
+}
+
+/** Duties whose owner is not a board writer and not a started, unstopped helper. */
+export function unownedDuties(board, helpers) {
+  return Object.entries(board.duties).flatMap(([duty, { owner }]) => {
+    if (board.writers[owner]) return [];
+    const helper = helpers[owner];
+    if (helper?.startedAt && !helper.stoppedAt) return [];
+    return [{ duty, owner, why: helper?.stoppedAt ? `stopped ${helper.stoppedAt}` : "is not a writer or a running helper" }];
+  });
+}
+
+/** Questions unanswered, and answers unacknowledged, for QUESTION_MINUTES or more. */
+export function lateQuestions(board, now) {
+  const minutesSince = (at) => Math.floor((now - Date.parse(at)) / 60_000);
+  const entries = Object.entries(board.questions).map(([key, entry]) => ({ writer: entry.writer ?? key, id: entry.id ?? "-", ...entry }));
+  return {
+    unanswered: entries.filter((entry) => !entry.answeredAt && minutesSince(entry.at) >= QUESTION_MINUTES)
+      .map((entry) => ({ ...entry, minutes: minutesSince(entry.at) })),
+    unacked: entries.filter((entry) => entry.answeredAt && minutesSince(entry.answeredAt) >= QUESTION_MINUTES)
+      .map((entry) => ({ ...entry, minutes: minutesSince(entry.answeredAt) })),
+  };
+}
+
+/** A worktree's HEAD and whether it has no changes (untracked files count), or null when git cannot read it. */
+export function worktreeState(worktree) {
+  try {
+    const git = (args) => execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
+    return { head: git(["rev-parse", "HEAD"]).trim(), clean: git(["status", "--porcelain"]).trim() === "" };
+  } catch {
+    return null;
+  }
+}
+
+/** Told scope changes unacknowledged for QUESTION_MINUTES, and those whose writer's worktree sat clean at the recorded head for SCOPE_START_MINUTES. */
+export function scopeProblems(board, now, readState = worktreeState) {
+  const unacked = [];
+  const notStarted = [];
+  for (const [item, delivery] of Object.entries(board.deliveries)) {
+    if (delivery.kind !== "scope") continue;
+    for (const writer of delivery.to) {
+      const toldAt = delivery.told[writer];
+      if (!toldAt) continue;
+      const minutes = Math.floor((now - Date.parse(toldAt)) / 60_000);
+      if (!delivery.acked?.[writer] && minutes >= QUESTION_MINUTES) unacked.push({ item, writer, minutes });
+      const base = delivery.base?.[writer];
+      const worktree = board.writers[writer]?.worktree;
+      if (!base || !worktree || minutes < SCOPE_START_MINUTES) continue;
+      const current = readState(worktree);
+      if (current?.clean && current.head === base) notStarted.push({ item, writer, minutes, head: base });
+    }
+  }
+  return { unacked, notStarted };
+}
+
+/** The scope changes and answers a writer has not acknowledged yet. */
+export function pendingFor(board, writer) {
+  const changes = Object.entries(board.deliveries)
+    .filter(([, delivery]) => delivery.kind === "scope" && delivery.to.includes(writer) && !delivery.acked?.[writer])
+    .map(([item, delivery]) => ({ kind: "SCOPE", id: item, text: delivery.text ?? delivery.reference }));
+  const answers = Object.values(board.questions)
+    .filter((entry) => entry.writer === writer && entry.answeredAt)
+    .map((entry) => ({ kind: "ANSWERED", id: entry.id, text: entry.answer ?? `see the message answering: ${entry.text}` }));
+  return [...changes, ...answers];
+}
+
+/** Why a program of `shape` with `writers` cannot take another writer, or null. */
+export function writerShapeProblem(shape, writers) {
+  if (shape === Shape.NoWriter || (shape === Shape.OneWriter && writers.length > 0)) {
+    return `this program is recorded as ${shape}${writers.length > 0 ? ` (writer ${writers.join(", ")})` : ""}; record its new shape with fleet-home.mjs shape ${shape === Shape.NoWriter ? "one-writer|fleet" : "fleet"} before adding a writer, so the sections that shape needs apply`;
+  }
+  return null;
+}
+
+/** Required duties with no owner recorded. */
+export function missingDuties(board, required) {
+  return required.filter((duty) => !board.duties[duty]);
+}
+
+function requiredDuties(orchDir) {
+  const configured = readConfig(resolveWorkDir(orchDir)).REQUIRED_DUTIES;
+  if (configured !== undefined) return configured.split(/\s+/).filter(Boolean);
+  // The status sweep moves tracker tickets, so it is a duty only with a tracker bound.
+  if (!existsSync(path.join(orchDir, "prs.txt"))) return [];
+  return trackerBound() ? ["green-watch", "status-sweep"] : ["green-watch"];
+}
+
+/** Every recipient of every delivery not yet told. */
+export function untold(board) {
+  return Object.entries(board.deliveries).flatMap(([item, delivery]) =>
+    delivery.to.filter((recipient) => !delivery.told[recipient]).map((recipient) => ({ item, recipient, delivery })));
+}
+
+/** The page writers read. */
+export function render(board) {
+  const rows = Object.entries(board.writers).map(([name, row]) =>
+    `| ${name} | ${row.pr ? `${row.repo ?? ""}#${row.pr}` : ""} | ${row.head ?? ""} | ${row.ready ?? ""} | ${row.status ?? ""} | ${(row.deps ?? []).join(", ")} | ${row.updatedAt} |`);
+  const open = untold(board).map(({ item, recipient, delivery }) =>
+    `- ${item} (${delivery.kind}) for ${recipient}${delivery.reference ? `: ${delivery.reference}` : ""}${delivery.head ? ` at ${delivery.head}` : ""}`);
+  const duties = Object.entries(board.duties).map(([duty, { owner, at }]) => `- ${duty}: ${owner} (since ${at})`);
+  const scope = Object.keys(board.writers).flatMap((writer) => pendingFor(board, writer).filter((entry) => entry.kind === "SCOPE")
+    .map((entry) => `- ${entry.id} for ${writer}: ${entry.text}`));
+  return [
+    "# Fleet board",
+    "",
+    "| Writer | PR | Head | Ready | Status | Depends on | Updated |",
+    "|---|---|---|---|---|---|---|",
+    ...rows,
+    "",
+    "## Standing duties",
+    "",
+    ...(duties.length > 0 ? duties : ["- none"]),
+    "",
+    "## Units",
+    "",
+    ...renderUnits(board.units, board.writers),
+    "",
+    "## Placement",
+    "",
+    ...renderPlacements(board.placements),
+    "",
+    "## Not yet told",
+    "",
+    ...(open.length > 0 ? open : ["- nothing"]),
+    "",
+    "## Scope changes not acknowledged",
+    "",
+    ...(scope.length > 0 ? scope : ["- none"]),
+    "",
+    "## Log",
+    "",
+    ...board.log.slice(-LOG_LINES).map((line) => `- ${line}`),
+    "",
+  ].join("\n");
+}
+
+function read(orchDir) {
+  const file = path.join(orchDir, STATE);
+  const board = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, units: board.units ?? {}, placements: board.placements ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
+}
+
+function write(orchDir, board, line, at) {
+  // A program kept outside a fleet home is invisible to the hooks that read the home after a
+  // compaction (fleet-resume, the PreCompact summary, the unit-status board leg), which then act on
+  // a stale program (operator ruling, 2026-11-11). Reads still work, so status can say how to migrate.
+  if (!resolveWorkDir(orchDir).home) {
+    throw new Error(`${orchDir} is not a program in a fleet home, so the board will not write there: `
+      + "migrate it first with fleet-home.mjs migrate --from <dir> --program <slug>, then pass the home or its program dir");
+  }
+  board.log.push(`${at} ${line}`);
+  board.log = board.log.slice(-LOG_LINES);
+  for (const [name, text] of [[STATE, `${JSON.stringify(board, null, 2)}\n`], [PAGE, render(board)]]) {
+    const file = path.join(orchDir, name);
+    writeFileSync(`${file}.tmp`, text);
+    renameSync(`${file}.tmp`, file);
+  }
+}
+
+function list(text) {
+  return (text ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+}
+
+function ghOid(row, field) {
+  try {
+    return execFileSync(process.env.BOARD_GH || "gh", ["pr", "view", String(row.pr), "-R", row.repo, "--json", field, "-q", `.${field}`],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function ghHead(row) { return ghOid(row, 'headRefOid'); }
+
+/** Read Git from an exact recorded worktree; callers never rely on the coordinator cwd. */
+function repositoryGit(worktree, args) {
+  return execFileSync('git', ['-C', worktree, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 }).trim();
+}
+
+/** Use the live PR target, an orchestrator-pinned base, or the repository default before PR creation. */
+function trustedBaseOid(row, git, published) {
+  if (row.pr && row.repo) {
+    const oid = ghOid(row, 'baseRefOid');
+    if (!/^[a-f0-9]{40}$/i.test(oid ?? '')) throw new Error('Cannot establish the live PR base');
+    return git('rev-parse', '--verify', '--end-of-options', `${oid}^{commit}`);
+  }
+  if (row.trustedBase) {
+    if (!/^[a-f0-9]{40}$/i.test(row.trustedBase.oid ?? '')) throw new Error('Recorded trusted base is invalid');
+    return git('rev-parse', '--verify', '--end-of-options', `${row.trustedBase.oid}^{commit}`);
+  }
+  let ref;
+  try { ref = git('symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'); }
+  catch {
+    try { return git('rev-parse', '--verify', 'refs/remotes/origin/main^{commit}'); }
+    catch { return published; }
+  }
+  return git('rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`);
+}
+
+/** Unresolved review threads a human opened, or null when gh cannot answer. */
+function ghThreads(row) {
+  const threads = readThreads(row.repo, row.pr, process.env.BOARD_GH || "gh");
+  return threads === null ? null : threads.filter((thread) => !thread.resolved && !BOTS.test(thread.opener ?? "bot")).length;
+}
+
+function pairs(texts, flag) {
+  return Object.fromEntries(texts.map((pair) => {
+    const at = pair.indexOf("=");
+    if (at <= 0) {
+      throw new Error(`${flag} needs <name>=<value>, got ${pair}`);
+    }
+    return [pair.slice(0, at), pair.slice(at + 1)];
+  }));
+}
+
+function threadCounts(board, texts) {
+  const threads = Object.fromEntries(Object.entries(pairs(texts, "--threads")).map(([name, n]) => [name, Number(n)]));
+  for (const [name, row] of Object.entries(board.writers)) {
+    if (threads[name] === undefined && row.runtime === "codex" && row.pr && row.repo) {
+      const count = ghThreads(row);
+      if (count !== null) threads[name] = count;
+    }
+  }
+  return threads;
+}
+
+function readHelpers(orchDir) {
+  const file = path.join(orchDir, "helpers.json");
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+}
+
+function pushedHeads(board, texts) {
+  const pushed = pairs(texts, "--pushed");
+  for (const [name, row] of Object.entries(board.writers)) {
+    if (!pushed[name] && row.pr && row.repo) {
+      const head = ghHead(row);
+      if (head) pushed[name] = head;
+    }
+  }
+  return pushed;
+}
+
+/** Inspect every ahead commit; exempt only ancestry reachable from the actual trusted target base. */
+export function unreadyCommits(board, pushed = {}) {
+  const problems = [];
+  for (const [name, row] of Object.entries(board.writers)) {
+    if (!row.worktree || row.where === 'remote') continue;
+    const git = (...args) => repositoryGit(row.worktree, args);
+    try {
+      let base = pushed[name];
+      if (!base) {
+        try { base = git('rev-parse', '@{upstream}'); }
+        catch { base = null; }
+      }
+      const declared = new Set([...(row.readyHeads ?? []), row.ready].filter(Boolean).flatMap(sha => {
+        try { return [git('rev-parse', '--verify', `${sha}^{commit}`)]; }
+        catch { return []; }
+      }));
+      const trusted = trustedBaseOid(row, git, base);
+      if (!trusted) throw new Error('Cannot establish the repository default or a recorded trusted base');
+      if (!base) base = git('merge-base', 'HEAD', trusted);
+      for (const sha of git('rev-list', `${base}..HEAD`, '--not', trusted).split('\n').filter(Boolean)) {
+        if (!declared.has(sha)) problems.push(`UNREADY-COMMIT ${name} ${sha}: local commit ahead of ${base} was not declared push-ready`);
+      }
+    } catch {
+      problems.push(`PUSH-READY-UNKNOWN ${name}: cannot inspect local history or resolve its pushed base; restore the worktree/base before pushing`);
+    }
+  }
+  return problems;
+}
+
+function noHeadRows(board) {
+  return Object.entries(board.writers).filter(([, row]) => row.where === 'remote')
+    .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
+}
+
+const ACTIONS = ["writer", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
+
+/** A scope delivery's acknowledgements and each recipient's worktree head when it was sent; refuses a recipient status cannot watch. */
+function scopeBase(board, to, values, previous) {
+  if (!values.text?.trim() && !values.reference && !previous?.text && !previous?.reference) {
+    throw new Error("a scope change carries its content: pass --text <the change> or --reference <file>, so the writer's pending list shows it.");
+  }
+  const base = { ...previous?.base };
+  for (const writer of to) {
+    const worktree = board.writers[writer]?.worktree;
+    if (!worktree) {
+      throw new Error(`a scope change goes to a board writer with a worktree (board.mjs <orchDir> writer ${writer} --worktree <path>), so status can see whether it started.`);
+    }
+    if (base[writer]) continue;
+    const state = worktreeState(worktree);
+    if (state) base[writer] = state.head;
+    else process.stdout.write(`NO-HEAD ${writer}: git cannot read ${worktree}; only the acknowledgement is checked\n`);
+  }
+  return { base, acked: previous?.acked ?? {} };
+}
+
+/** Whether `value` names the writer row's PR: its number, `#n`, `<repo>#n` or its pull request URL. */
+function namesWriterPr(value, row) {
+  const pr = String(row.pr);
+  const url = /\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(value);
+  if (url) return url[2] === pr && (!row.repo || url[1] === row.repo);
+  const short = /^(?:([^\s#]+\/[^\s#]+))?#?(\d+)$/.exec(value);
+  return Boolean(short) && short[2] === pr && (!short[1] || !row.repo || short[1] === row.repo);
+}
+
+/** UNIT-UNREVIEWED for each open unit whose writer has a PR while the unit's recorded review has not passed. */
+export function unitReviewLines(orchDir, board) {
+  return Object.entries(board.units ?? {}).filter(([, unit]) => !unit.closed && board.writers?.[unit.writer]?.pr).flatMap(([name, unit]) => {
+    const problem = unitReviewProblem(orchDir, name, unit);
+    const row = board.writers[unit.writer];
+    return problem ? [`UNIT-UNREVIEWED ${name} ${unit.writer} ${row.repo ?? ""}#${row.pr}: ${problem}; it is not ready, and its tickets stay IN_PROGRESS`] : [];
+  });
+}
+
+/** Adds or extends a unit; tickets are only ever added, and the resume log records each change. */
+function recordUnit(orchDir, board, name, values, at) {
+  if (values.closed !== undefined) {
+    const unit = board.units[name];
+    if (!unit) throw new Error(`no unit ${name} on the board`);
+    if (values.tickets) throw new Error("--closed takes the unit's merged PR and nothing else");
+    const row = board.writers[unit.writer] ?? {};
+    if (!row.pr || !namesWriterPr(values.closed.trim(), row)) {
+      throw new Error(`--closed ${values.closed} is not the PR on writer ${unit.writer ?? "(none)"}'s board row (${row.pr ? `${row.repo ?? ""}#${row.pr}` : "no PR recorded"}); a unit closes only with its own PR`);
+    }
+    const review = unitReviewProblem(orchDir, name, unit);
+    if (review) throw new Error(`${review}; a unit closes only after every member and PRD criterion passed code review and visual QA`);
+    unit.closed = { pr: `${row.repo ?? ""}#${row.pr}`, at };
+    write(orchDir, board, `unit ${name} closed with ${unit.closed.pr}: ${unit.tickets.join(", ")}`, at);
+    appendFileSync(path.join(orchDir, "resume-log.md"), `\n## ${at.slice(0, 16).replace("T", " ")}\n- Unit ${name} (${unit.writer ?? "no writer"}) closed with ${unit.closed.pr}: ${unit.tickets.join(", ")}\n`);
+    return;
+  }
+  const tickets = list(values.tickets);
+  if (tickets.length === 0 || tickets.some((slug) => !workItem().test(slug))) {
+    throw new Error("unit needs --tickets <slug,slug>: every ticket the unit delivers.");
+  }
+  if (board.units[name]?.closed) throw new Error(`unit ${name} is closed; start the new unit as ${freeUnitName(name, Object.keys(board.units))}, the name ticket-units.mjs group prints`);
+  const owner = Object.entries(board.units).find(([other, unit]) => other !== name && !unit.closed && unit.tickets.some((slug) => tickets.includes(slug)));
+  if (owner) throw new Error(`${owner[1].tickets.filter((slug) => tickets.includes(slug)).join(", ")} already belongs to unit ${owner[0]}; one ticket has one writer`);
+  const previous = board.units[name];
+  const added = tickets.filter((slug) => !previous?.tickets.includes(slug));
+  const unit = {
+    ...previous,
+    tickets: [...(previous?.tickets ?? []), ...added],
+    ...(values.writer ? { writer: values.writer } : {}),
+    ...(values.repo ? { repo: values.repo } : {}),
+    at: previous?.at ?? at,
+  };
+  const assigned = unit.writer !== previous?.writer ? unit.tickets : added;
+  if (unit.writer && board.writers[unit.writer] && assigned.length > 0) {
+    const problem = writerPlacementProblem(board.placements, unit.writer, assigned);
+    if (problem) throw new Error(problem);
+  }
+  board.units[name] = unit;
+  const change = previous ? (added.length ? `folded ${added.join(", ")}` : "updated") : "started";
+  write(orchDir, board, `unit ${name} ${change}: ${unit.tickets.join(", ")}`, at);
+  appendFileSync(path.join(orchDir, "resume-log.md"), `\n## ${at.slice(0, 16).replace("T", " ")}\n- Unit ${name} (${unit.writer ?? "no writer yet"}) ${change}: ${unit.tickets.join(", ")}\n`);
+}
+
+function main(argv) {
+  const [workDir, action, ...rest] = argv;
+  const { values, positionals } = parseArgs({
+    args: rest,
+    allowPositionals: true,
+    options: {
+      pr: { type: "string" }, repo: { type: "string" }, head: { type: "string" }, status: { type: "string" }, deps: { type: "string" },
+      to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
+      pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
+      runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
+      worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" }, tickets: { type: "string" }, writer: { type: "string" }, closed: { type: "string" },
+      evidence: { type: "string" }, "keep-local": { type: "string" },
+    },
+  });
+  if (!workDir || !ACTIONS.includes(action)) {
+    throw new Error(`Usage: board.mjs <orchDir> ${ACTIONS.join("|")} ...`);
+  }
+  const orchDir = resolveWorkDir(workDir).dir;
+  const board = read(orchDir);
+  const now = values.now ? Date.parse(values.now) : Date.now();
+  const at = new Date(now).toISOString();
+  if (action === "watch-lines") {
+    for (const line of unreadyCommits(board, pushedHeads(board, values.pushed ?? []))) process.stdout.write(`board ${line}\n`);
+    for (const line of noHeadRows(board)) process.stdout.write(`board ${line}\n`);
+    const { unanswered, unacked } = lateQuestions(board, now);
+    const scope = scopeProblems(board, now);
+    for (const entry of unanswered) process.stdout.write(`board QUESTION-UNANSWERED ${entry.writer} ${entry.id}\n`);
+    for (const entry of unacked) process.stdout.write(`board UNACKED ${entry.writer} ${entry.id}\n`);
+    for (const entry of scope.unacked) process.stdout.write(`board UNACKED-SCOPE ${entry.item} ${entry.writer}\n`);
+    for (const entry of scope.notStarted) process.stdout.write(`board SCOPE-NOT-STARTED ${entry.item} ${entry.writer}\n`);
+    return 0;
+  }
+  if (action === "status") {
+    const pushed = pushedHeads(board, values.pushed ?? []);
+    const stale = staleRows(board, pushed);
+    const commits = unreadyCommits(board, pushed);
+    for (const line of commits) process.stdout.write(`${line}\n`);
+    for (const line of noHeadRows(board)) process.stdout.write(`${line}\n`);
+    for (const row of stale) process.stdout.write(`STALE ${row.name} board head ${row.head}, pushed ${row.pushed}\n`);
+    const open = untold(board);
+    for (const entry of open) process.stdout.write(`UNTOLD ${entry.item} ${entry.recipient}\n`);
+    const slow = slowRows(board, threadCounts(board, values.threads ?? []), now);
+    for (const row of slow) {
+      process.stdout.write(`SLOW ${row.name} no push for ${row.minutes}m with ${row.threads} unresolved human threads; hand it to a Claude writer\n`);
+    }
+    const duties = unownedDuties(board, readHelpers(orchDir));
+    for (const entry of duties) process.stdout.write(`UNOWNED-DUTY ${entry.duty} owner ${entry.owner} ${entry.why}\n`);
+    const members = unitMemberProblems(board.units, board.writers, readSessionRecord);
+    for (const line of members) process.stdout.write(`${line}\n`);
+    const reviews = unitReviewLines(orchDir, board);
+    for (const line of reviews) process.stdout.write(`${line}\n`);
+    const missing = missingDuties(board, requiredDuties(orchDir));
+    for (const duty of missing) process.stdout.write(`MISSING-DUTY ${duty}: give it an owner with board.mjs <orchDir> duty ${duty} --owner <writer or helper>\n`);
+    const { unanswered, unacked } = lateQuestions(board, now);
+    for (const entry of unanswered) process.stdout.write(`QUESTION-UNANSWERED ${entry.writer} ${entry.id} ${entry.minutes}m: ${entry.text.slice(0, 160)}\n`);
+    for (const entry of unacked) process.stdout.write(`UNACKED ${entry.writer} ${entry.id} ${entry.minutes}m: the writer has not acknowledged your answer; it is likely in a long turn, so escalate\n`);
+    const scope = scopeProblems(board, now);
+    for (const entry of scope.unacked) {
+      process.stdout.write(`UNACKED-SCOPE ${entry.item} ${entry.writer} ${entry.minutes}m: the writer has not acknowledged this scope change; it is likely in one long turn and has not read it, so interrupt it or stop and relaunch it with the change in its prompt\n`);
+    }
+    for (const entry of scope.notStarted) {
+      process.stdout.write(`SCOPE-NOT-STARTED ${entry.item} ${entry.writer} ${entry.minutes}m: its worktree is clean at ${entry.head.slice(0, 10)}, the head it had when the change was sent; ask what it is doing this minute, or stop and relaunch it\n`);
+    }
+    const usage = usageProblems(usageStatuses(readUsageReadings(orchDir), {
+      now, staleSeconds: configuredStaleSeconds(orchDir),
+    }));
+    for (const line of usage) process.stdout.write(`${line}\n`);
+    for (const line of placementLines(board)) process.stdout.write(`${line}\n`);
+    const asked = [...unanswered, ...unacked, ...scope.unacked, ...scope.notStarted];
+    const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
+    const watcher = watched ? watcherState(orchDir, now) : { ok: true };
+    if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
+    const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
+    for (const line of home) process.stdout.write(`${line}\n`);
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${members.length} unit member problems, ${reviews.length} units unreviewed${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
+    return members.length + reviews.length + commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+  }
+  const [name, recipient] = positionals;
+  if (!name) {
+    throw new Error(`${action} needs a name.`);
+  }
+  if (action === "push-check") {
+    const commits = unreadyCommits({ ...board, writers: { [name]: board.writers[name] ?? {} } }, pushedHeads(board, values.pushed ?? []));
+    if (commits.length) {
+      for (const line of commits) process.stdout.write(`${line}\n`);
+      return 1;
+    }
+    const ready = board.writers[name]?.ready;
+    if (!values.head) {
+      throw new Error("push-check needs --head <the sha you would push>.");
+    }
+    if (!ready || !(ready.startsWith(values.head) || values.head.startsWith(ready)) || Math.min(ready.length, values.head.length) < 7) {
+      process.stdout.write(`NOT-READY ${name} head ${values.head}, declared ready ${ready ?? "none"}: ask the writer for its push-ready head and wait for it; never push a head it has not called ready\n`);
+      return 1;
+    }
+    process.stdout.write(`READY ${name} ${values.head}\n`);
+    return 0;
+  }
+  if (action === "pending") {
+    const pending = pendingFor(board, name);
+    for (const entry of pending) process.stdout.write(`${entry.kind} ${entry.id}: ${entry.text}\n`);
+    process.stdout.write(pending.length > 0
+      ? `pending: ${pending.length}; apply each, then acknowledge it with board.mjs <orchDir> ack ${name} --id <id> and say in your next status what you applied\n`
+      : "pending: none\n");
+    return pending.length > 0 ? 1 : 0;
+  }
+  if (["question", "answered", "ack"].includes(action)) {
+    if (!/^[\w.:-]{1,40}$/.test(values.id ?? "")) {
+      throw new Error(`${action} needs --id <question id>; the answer echoes it and the writer acknowledges it.`);
+    }
+    const key = `${name}/${values.id}`;
+    const change = board.deliveries[values.id];
+    if (action === "question") {
+      if (!values.text?.trim()) throw new Error("question needs --text <the question and the default you proceed on>.");
+      board.questions[key] = { writer: name, id: values.id, text: values.text.trim(), at };
+    } else if (action === "ack" && !board.questions[key] && change?.kind === "scope" && change.to.includes(name)) {
+      change.acked = { ...change.acked, [name]: at };
+    } else if (!board.questions[key]) {
+      throw new Error(`no question or scope change ${values.id} for ${name} is recorded.`);
+    } else if (action === "answered") {
+      board.questions[key].answeredAt = at;
+      if (values.text?.trim()) board.questions[key].answer = values.text.trim();
+    } else {
+      delete board.questions[key];
+    }
+    write(orchDir, board, `${name} ${action} ${values.id}`, at);
+    return 0;
+  }
+  if (action === "duty") {
+    if (!values.owner) {
+      throw new Error("duty needs --owner <writer or helper>; a standing duty is never left without one.");
+    }
+    board.duties[name] = { owner: values.owner, at };
+    write(orchDir, board, `duty ${name}: ${values.owner}`, at);
+    return 0;
+  }
+  if (action === "unit") {
+    recordUnit(orchDir, board, name, values, at);
+    return 0;
+  }
+  if (action === "placement") {
+    const evidence = values.evidence === undefined ? undefined : readPlacementEvidence(path.resolve(values.evidence));
+    const decision = recordPlacement(board.placements, name, { evidence, keepLocal: values["keep-local"] }, at);
+    write(orchDir, board, `placement ${name}: ${decision.placement}${decision.keepLocal ? `, kept local: ${decision.keepLocal.reason}` : ""} (${decision.reason})`, at);
+    process.stdout.write(`PLACEMENT ${name} ${decision.placement}: ${decision.reason}\n`);
+    return 0;
+  }
+  if (action === "writer") {
+    if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
+      throw new Error("--runtime must be codex or claude.");
+    }
+    if (values.where !== undefined && !['local', 'remote'].includes(values.where)) {
+      throw new Error('--where must be local or remote.');
+    }
+    const shapeProblem = board.writers[name] ? null : writerShapeProblem(programShape(orchDir), Object.keys(board.writers));
+    if (shapeProblem) throw new Error(shapeProblem);
+    const row = board.writers[name] ?? {};
+    const named = values.tickets === undefined ? [] : list(values.tickets);
+    const taking = board.writers[name] ? named.filter((ticket) => !(row.tickets ?? []).includes(ticket)) : writerTickets(board, name, { tickets: named });
+    const placementProblem = taking.length > 0 || !board.writers[name] ? writerPlacementProblem(board.placements, name, taking) : null;
+    if (placementProblem) throw new Error(placementProblem);
+    const worktree = values.worktree === undefined ? undefined : path.resolve(values.worktree);
+    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree, where: values.where })
+      .filter(([, value]) => value !== undefined));
+    if (values.base !== undefined) {
+      const root = worktree ?? row.worktree;
+      if (!root || !/^(?:[a-f0-9]{40}|(?:refs\/remotes\/)?[^/\s]+\/.+)$/i.test(values.base)) {
+        throw new Error('--base needs an orchestrator-verified remote ref or full base OID and a worktree');
+      }
+      update.trustedBase = (values.where ?? row.where) === 'remote'
+        ? { ref: values.base, oid: /^[a-f0-9]{40}$/i.test(values.base) ? values.base : null }
+        : { ref: values.base, oid: repositoryGit(root, ['rev-parse', '--verify', '--end-of-options', `${values.base}^{commit}`]) };
+      if (!update.trustedBase.oid) throw new Error('a remote writer needs --base <full OID>');
+    }
+    if (values.ready && (values.where ?? row.where) === 'remote') {
+      if (!/^[a-f0-9]{7,40}$/i.test(values.ready) || !(update.trustedBase ?? row.trustedBase)) {
+        throw new Error('a remote push-ready declaration needs a SHA and recorded full base OID');
+      }
+    } else if (values.ready && (worktree ?? row.worktree)) {
+      const root = worktree ?? row.worktree;
+      const git = (...args) => repositoryGit(root, args);
+      const ready = git('rev-parse', '--verify', '--end-of-options', `${values.ready}^{commit}`);
+      let published;
+      try { published = git('rev-parse', '@{upstream}'); } catch { published = null; }
+      const inherited = trustedBaseOid({ ...row, ...update }, git, published);
+      if (!inherited) throw new Error('Record a trusted base before declaring push-ready source');
+      let parent = false;
+      try { git('merge-base', '--is-ancestor', ready, inherited); parent = true; } catch { /* Not inherited. */ }
+      if (parent) {
+        throw new Error('trusted base commits are inherited, never writer push-ready declarations');
+      }
+    }
+    if (values.ready) update.readyHeads = [...new Set([...(row.readyHeads ?? []), row.ready, values.ready].filter(Boolean))];
+    const moved = values.head !== undefined && values.head !== row.head;
+    if (named.length > 0) update.tickets = [...new Set([...(row.tickets ?? []), ...named])];
+    board.writers[name] = { ...row, ...update, ...(values.deps === undefined ? {} : { deps: list(values.deps) }), ...(moved ? { headAt: at } : {}), updatedAt: at };
+    write(orchDir, board, `${name}: ${Object.entries(update).map(([key, value]) => `${key} ${value}`).join(", ") || "touched"}`, at);
+    return 0;
+  }
+  if (action === "deliver") {
+    const to = list(values.to);
+    const kind = values.kind ?? "note";
+    if (to.length === 0 || !KINDS.has(kind)) {
+      throw new Error("deliver needs --to <a,b> and a --kind of ruling, checkpoint or note.");
+    }
+    if (kind === "ruling" && !values.reference) {
+      throw new Error("a ruling is saved once as a reference file (its screenshots beside it); pass --reference <file>.");
+    }
+    const versionRecord = existsSync(path.join(orchDir, "plugin-version.json"))
+      ? JSON.parse(readFileSync(path.join(orchDir, "plugin-version.json"), "utf8")) : null;
+    let brief = values.text ?? "";
+    if (values.reference && /\.(?:md|txt)$/i.test(values.reference)) {
+      const reference = path.isAbsolute(values.reference) ? values.reference : path.resolve(orchDir, values.reference);
+      if (existsSync(reference)) brief += `\n${readFileSync(reference, "utf8")}`;
+    }
+    const promptIssues = promptProblems(versionRecord, brief);
+    if (promptIssues.length) throw new Error(promptIssues.join("; "));
+    const previous = board.deliveries[name];
+    const scope = kind === "scope" ? scopeBase(board, to, values, previous) : {};
+    board.deliveries[name] = {
+      kind,
+      to: [...new Set([...(previous?.to ?? []), ...to])],
+      told: previous?.told ?? {},
+      ...(values.reference ? { reference: values.reference } : {}),
+      ...(values.text?.trim() ? { text: values.text.trim() } : {}),
+      ...(values.head ? { head: values.head } : {}),
+      ...scope,
+      at,
+    };
+    write(orchDir, board, `${name} (${kind}) for ${to.join(", ")}`, at);
+    return 0;
+  }
+  const delivery = board.deliveries[name];
+  if (!delivery || !recipient || !delivery.to.includes(recipient)) {
+    throw new Error(`told needs a delivery and one of its recipients (${delivery ? delivery.to.join(", ") : "no such delivery"}).`);
+  }
+  delivery.told[recipient] = at;
+  write(orchDir, board, `${recipient} told ${name}`, at);
+  return 0;
+}
+
+if (isEntryPoint(import.meta.url)) {
+  try {
+    process.exit(main(process.argv.slice(2)));
+  } catch (error) {
+    process.exit(failScript(error, 2));
+  }
+}

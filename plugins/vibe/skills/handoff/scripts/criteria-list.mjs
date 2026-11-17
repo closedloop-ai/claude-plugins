@@ -4,9 +4,10 @@
 // criteria-audit.mjs re-exports these for its other importers. A checkbox
 // outside those sections that still reads as a criterion (its heading or list
 // label names criteria, or its text leads with a criterion id) is reported,
-// never dropped silently (ISS-14136).
+// never dropped silently.
 
 import { readFileSync } from "node:fs";
+import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 
 const CRITERIA_START = /^\s*-\s*Acceptance criteria:\s*$/;
 const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
@@ -83,7 +84,7 @@ export function memberCriteria(members, recorded = []) {
   for (const entry of members) {
     const at = entry.indexOf("=");
     const slug = entry.slice(0, at);
-    if (at <= 0 || !/^[A-Z]+-\d+$/.test(slug)) throw new Error(`--member needs <slug>=<ticket body file>, got ${entry}`);
+    if (at <= 0 || !new RegExp(`^${trackerKey()}$`).test(slug)) throw new Error(`--member needs <slug>=<ticket body file>, got ${entry}`);
     given.add(slug);
     const body = readFileSync(entry.slice(at + 1), "utf8");
     const own = ticketCriteria(body).map(({ id, text }) => ({ id: `${slug}:${id}`, text }));

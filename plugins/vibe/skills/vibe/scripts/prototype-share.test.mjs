@@ -52,6 +52,7 @@ function shareRoutes({ statuses = [{ state: "success", environment_url: "https:/
     ["local-plans.mjs", ok({ ok: true, committedLocalPlans: [] })],
     ["main-sync-share", ok({ ok: true, mainSync: { status: "DONE" } })],
     ["main-sync-push", ok({ ok: true, mainSync: { pushed: true } })],
+    ["config --get remote.origin.url", ok("git@github.com:acme/widgets.git\n")],
     ["rev-parse HEAD", ok(`${SHA}\n`)],
     ["rev-parse --absolute-git-dir", ok("/gd\n")],
     ["vibe-sessions.mjs show", ok({ ok: true, session: { slug: "bulk-bar" } })],
@@ -70,7 +71,8 @@ test("share checks plans, admits, pushes, waits for the exact SHA's deployment a
   const order = ["local-plans.mjs", "main-sync-share", "main-sync-push", "deployments?sha=", "prototype-result"].map((part) => calls.findIndex((call) => call.line.includes(part)));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   assert.ok(calls.find((call) => call.line.includes("main-sync-push")).options.input === "{\"ctx\":1}");
-  assert.ok(calls.some((call) => call.line.includes(`deployments?sha=${SHA}`)));
+  assert.ok(calls.some((call) => call.line.includes(`repos/acme/widgets/deployments?sha=${SHA}`)));
+  assert.ok(calls.some((call) => call.line.includes("repos/acme/widgets/deployments/3/statuses")));
   const recorded = JSON.parse(written["/gd/vibe-prototype-result.json"]);
   assert.equal(recorded.deployedCommit, SHA);
   assert.equal(recorded.slug, "bulk-bar");
@@ -141,4 +143,16 @@ test("a read failure from GitHub is BLOCKED naming the read, not retried into a 
   assert.equal(result.status, Status.Blocked);
   assert.equal(result.error, "reading deployments failed");
   assert.equal(result.detail, "HTTP 502");
+});
+
+test("the deployments are read from the worktree's GitHub origin; an injected repository wins, and a non-GitHub origin is BLOCKED before any push", async () => {
+  const injected = [];
+  await createPrototypeShare({ run: router(shareRoutes(), injected), repo: "other/repo", ...clock(), write: () => {} }).share({ worktree: "/wt" });
+  assert.ok(injected.some((call) => call.line.includes("repos/other/repo/deployments?sha=")));
+  assert.ok(!injected.some((call) => call.line.includes("remote.origin.url")));
+  const calls = [];
+  const routes = shareRoutes({ extra: [["config --get remote.origin.url", ok("https://gitlab.example/acme/widgets.git\n")]] });
+  const result = await createPrototypeShare({ run: router(routes, calls), ...clock() }).share({ worktree: "/wt" });
+  assert.deepEqual(result, { status: Status.Blocked, error: "the worktree's origin is not a GitHub repository" });
+  assert.ok(!calls.some((call) => call.line.includes("main-sync") || call.line.includes("local-plans")));
 });

@@ -18,14 +18,15 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { criteriaStates } from "./criteria-audit.mjs";
 import { rulingNamesScope } from "./rulings-check.mjs";
 import { escapeRegExp } from "./source-imports.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const ROLLOUT = /\b(?:feature (?:flag|switch)|flag(?:-gated|ged)?|closed[- ]by[- ]default|default[- ]off|rollback|roll back|legacy|cohort|staged rollout|rollout|kill switch|percentage rollout)\b/i;
 const FLAG = /\b(?:feature (?:flag|switch)|flag|closed[- ]by[- ]default|default[- ]off|kill switch)\b/i;
@@ -101,11 +102,10 @@ function main(argv) {
   return problems.length === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

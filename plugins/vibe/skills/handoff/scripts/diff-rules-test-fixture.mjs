@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runDiffRules } from "./diff-rules.mjs";
-import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 
 export const isFrozenStory = (text) => / v1\.0\//.test(text);
 
@@ -16,8 +16,11 @@ export function put(root, files) {
   }
 }
 
-/** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
-export function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false }) {
+/**
+ * Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`, with the
+ * ClosedLoop provider bound unless `binding` says otherwise (null for a session with none).
+ */
+export function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false, binding = PROVIDER_BINDING }) {
   const { root, home, cleanup } = makeHome("vibe-diff-rules-");
   t.after(cleanup);
   const checkout = path.join(root, "wt");
@@ -37,6 +40,6 @@ export function run(t, { history = [], base = {}, head = {}, changeLog = "", com
     git(checkout, ["commit", "--quiet", "-m", "session"], home);
   }
   writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), typeof changeLog === "function" ? changeLog({ checkout, base: baseSha }) : changeLog);
-  const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory });
+  const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory, binding });
   return { ...result, checkout, baseSha, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
 }

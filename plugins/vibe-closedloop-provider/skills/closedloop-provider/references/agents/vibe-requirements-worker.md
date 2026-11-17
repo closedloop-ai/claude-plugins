@@ -1,0 +1,156 @@
+# Provider text for agents/vibe-requirements-worker.md
+
+Each block replaces the stub of the same id there, in a session bound to this provider.
+
+<!-- block: inputs -->
+The repo path, and either a ticket reference (ISS-, PRD-, PLN- slug or URL) or
+the person's description in their own words, or in precedent mode a
+product question.
+<!-- end: inputs -->
+
+<!-- block: read-graph -->
+`provider:closedloop-graph.md`.
+<!-- end: read-graph -->
+
+<!-- block: evidence-file -->
+## The evidence file
+
+When `../skills/vibe/scripts/req-gather.mjs` exists, save each query result you
+make (`ticket_detail`, `get-document-comments`, `query_collisions`,
+`code_symbols`, `blast_radius_tickets`, `search_nodes`, `shipped_lineage`) as
+`<name>.json` in one folder and run
+`node ../skills/vibe/scripts/req-gather.mjs --worktree "<wt>" --request-file <the request text> --results-dir <folder> [--terms <t1,t2>]`.
+It bundles your saved results with what it reads from the worktree itself (the
+ticket and plan slugs in the text, the paths the text names that exist, their
+owners and FEATURE_MAP ids, and the files that already use each term), so you
+need not search for those by hand. It cannot make the queries: exit 3 and its
+`queries.missing` list mean a required query has no result yet, and a brief
+must not be written as if it had been made. Without the script, work as below.
+<!-- end: evidence-file -->
+
+<!-- block: ticket -->
+1. Ticket: `ticket_detail` for the ticket and its lineage (the PRD or plan that
+   produced it), then the full text through the ClosedLoop MCP
+   (`get-document`, `get-document-comments`). Extract the acceptance criteria
+   of the ticket AND of its PRD, each quoted exactly with its source slug,
+   any design or prototype links, and any decisions in comments; the PRD's flag,
+   rollout, rollback, parity, boundary and non-goal clauses are criteria too.
+   A brief that names member tickets (a fleet unit: one session, one PR) gets
+   the same read for each member; their criteria are in scope, numbered
+   `<slug>:AC-n`, and the overlap and newest-ruling checks cover them too. These seed
+   the session's acceptance criteria list (`quality-loop.md`, "Acceptance
+   criteria before ready"). Tag ticket text that names an implementation
+   mechanism (a poller, feed, lane, socket, route, table, cursor, or a write
+   into another tool's data through its files, API or IPC) `mechanism
+   (proposal)`, never an acceptance criterion, so the session checks the
+   outcome and not the named mechanism. Flag a new direction of data flow
+   between surfaces the request needs
+   (`../skills/cl-execute/references/planning-and-gates.md`, Readiness Gate,
+   "Data direction") `data direction (new)`, with the decision that allows it
+   and its source, or `untraced`; it is never a question for the person.
+   A new mechanism that moves data between surfaces along an existing
+   direction is flagged the same way.
+   - Newest ruling: before any scope, search for later rulings on the same
+     capability (`fts_search` on its nouns with "only when", "descoped",
+     "out of scope"; `search_memory_facts`; comments on the ticket and its
+     PRD). Return one of these lines; the live ticket check fails without it:
+     `Newest ruling: <slug, date, quoted words>`
+     `none found (searched: <searches>)`
+     A ruling newer than the ticket text it contradicts makes that text a
+     question for the operator, never a build order.
+   - Prior removal: for each user-visible element the work adds that the
+     ticket does not name verbatim, `fts_search` its name with "remove",
+     "drop", "retire" or "delete" and `search_memory_facts`. Return one of
+     these lines:
+     `Prior removal: <slug>`
+     `none found (searched: <searches>)`
+<!-- end: ticket -->
+
+<!-- block: ticket-2 -->
+   When the source is a PRD, load every child before defining scope. List each
+   open child as a scope unit and classify it as untouched, active by someone
+   else, delivered, superseded by a cited human ruling, or uncovered. Existing
+   children are never declared "not reused". A child with real activity by another person
+   is reported and excluded from the build, never claimed, built, canceled or
+   superseded. Never narrow the targets a PRD names; list each one the request
+   will not build as unadopted.
+<!-- end: ticket-2 -->
+
+<!-- block: overlap -->
+2. Overlap: for a ticket or a description, run `query_collisions` with the
+   title and request text, then `search_nodes` and `fts_search` on its key
+   terms. Inspect every matching PRD even when it is `EXECUTED`: report its
+   `DONE` children and the shipped rules they established so the session does
+   not reclaim delivered work. For every overlapping live child whose stated
+   outcome matches the request, return the required reconciliation: include
+   it, cite a human supersession ruling, or leave it uncovered with its current
+   status and owner. Discovery alone is incomplete.
+<!-- end: overlap -->
+
+<!-- block: locate -->
+3. Locate the relevant code: `.claude/skills/control/FEATURE_MAP.md`
+   (`pnpm control feature list`, `feature show <id>`), confirmed with
+   closedloop-graph `code_symbols` on the screen's main component. List the
+   `likelyFiles` from this research: the owner files and the hosts that import
+   them, as repo-relative paths, each with the source it came from (a graph
+   query such as `code_symbols` or `code_importers`, a FEATURE_MAP entry, or a
+   read of the worktree). Never list a file you only guess; with no such
+   evidence, return no `likelyFiles`.
+<!-- end: locate -->
+
+<!-- block: in-flight -->
+4. Note in-flight work on that code: run `blast_radius_tickets` on its route
+   and main component files. List open GitHub pull requests and inspect their
+   changed files, reporting every open pull request that touches any of those
+   same files or a module they import; resolve each named dependency ("Roadmap
+   N", "Dependencies:") to its PRD and open pull requests. A ticket-only
+   collision result is incomplete.
+<!-- end: in-flight -->
+
+<!-- block: catalog-map -->
+delivers it (`packages/design-system/storybook/component-catalog.ts` and the
+token files); never a pixel value or the other product's markup. One with no
+design-system equivalent is marked `no equivalent: missing primitive` for the
+writer's existing missing-primitive path.
+<!-- end: catalog-map -->
+
+<!-- block: reference-return -->
+as our copy. End with the Graph block.
+<!-- end: reference-return -->
+
+<!-- block: precedent -->
+questions". Precedent means live Asana in the operator's signed-in Chrome,
+never a public help center, documentation page or web-search result. Whoever
+has that browser runs the interaction; never sign in, create an account or
+type credentials.
+
+If this worker has no access to that browser, return `NEEDS_PERSON` to the
+orchestrator with the exact interaction still to observe. Under fleet
+orchestration the orchestrator performs it before asking the operator. If the
+live interaction is available, return `DONE` with the observed behavior in
+one plain line and source `Asana, observed <date>`; behavior only, never its
+<!-- end: precedent -->
+
+<!-- block: precedent-2 -->
+state. End with the Graph block.
+<!-- end: precedent-2 -->
+
+<!-- block: return -->
+orchestrator keeps internal and which never names a screen to start
+on; the requirements as a short list quoted from their source (never
+invented), each named mechanism tagged `mechanism (proposal)` and each new
+data direction flagged `data direction (new)`; the Newest ruling and Prior removal lines; every
+acceptance criterion of the ticket and its PRD, quoted exactly with its source
+slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives and the
+`likelyFiles` (each `path` with its `source`, or none), for change workers (not
+shown to the person); overlapping or in-flight tickets
+(slug and title), open pull requests touching the same files, and each matched
+`EXECUTED` PRD with its `DONE` children and shipped rules; for a source PRD,
+every child with its scope classification, current status, owner and activity
+evidence; and whether this is a change to an existing screen or a
+net-new screen. Or
+`NEEDS_PERSON` with questions only the person can answer (scope, which of two
+existing tickets they mean), with decision-research evidence and why the answer
+is absolutely necessary. End with the Graph block
+(`provider:closedloop-graph.md`); the graph is required.
+<!-- end: return -->

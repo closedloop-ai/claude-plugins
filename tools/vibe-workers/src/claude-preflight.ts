@@ -3,7 +3,8 @@ import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { siblingPluginRoot } from "../../../plugins/vibe/shared/plugin-roots.mjs";
-import { mcpToolIdentity, type Capability } from "./contracts.js";
+import { mcpToolIdentity, TRACKER_SERVICE, type Capability } from "./contracts.js";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 
 /** A launch refused before or at worker start, carrying the one plain step a person can take when there is one. */
 export class LaunchPrecheckError extends Error {
@@ -19,7 +20,7 @@ function protectedHookPath(pluginRoot: string): string {
     `The headless Claude writer's protected-path hook is unavailable: ${reason}`);
   let hookPath: string;
   try {
-    // The guard lives in vibe-core beside the installed vibe (ISS-13869).
+    // The guard lives in vibe-core beside the installed vibe.
     hookPath = join(siblingPluginRoot("vibe-core", { from: join(pluginRoot, ".claude-plugin", "plugin.json") }), "hooks", "protected-write-guard.mjs");
   } catch (error) {
     throw unavailable(`vibe-core is missing: ${error instanceof Error ? error.message : String(error)}`);
@@ -106,19 +107,17 @@ export async function checkClaudeSignInAsync(command = "claude"): Promise<void> 
   checkClaudeSignInResult(status.stdout, status.error);
 }
 
-/** Services each role cannot do its job without, beyond the graph every launched role already needs. */
-const requiredLiveReads: Readonly<Record<string, readonly string[]>> = {
-  "vibe-requirements-worker": ["get_document"],
-  "vibe-ticket-worker": ["get_document"],
-};
-
-/** Refuses a launch whose parent-discovered capabilities leave out what the role must read. */
+/**
+ * Refuses a launch whose parent-discovered capabilities leave out what the role must read: the tracker reads the
+ * bound provider names per role (`data.tickets.roleReads`); none with no tracker bound.
+ */
 export function checkRoleCapabilities(agentName: string, capabilities: readonly Capability[]): void {
-  const missing = (requiredLiveReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) =>
-    capability.service === "closedloop" && capability.access === "read" && capability.operation === operation));
+  const roleReads = providerDataOr<Record<string, string[]>>(sessionBinding(), "tickets", "roleReads", {});
+  const missing = (roleReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) =>
+    capability.service === TRACKER_SERVICE && capability.access === "read" && capability.operation === operation));
   if (missing.length) {
     throw new LaunchPrecheckError("MISSING_CAPABILITIES",
-      `${agentName} needs ClosedLoop read capabilities: ${missing.join(", ")}; discover and pass them in the parent`);
+      `${agentName} needs tracker read capabilities: ${missing.join(", ")}; discover and pass them in the parent`);
   }
 }
 

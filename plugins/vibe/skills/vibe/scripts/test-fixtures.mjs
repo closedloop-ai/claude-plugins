@@ -86,7 +86,9 @@ export function makeCheckout({ root, home, checkout, files = {}, remoteUrl = SYM
   const seed = path.join(root, `seed-${Math.random().toString(16).slice(2)}`);
   git(root, ["init", "--quiet", "--bare", "--initial-branch=main", origin], home);
   git(root, ["init", "--quiet", "--initial-branch=main", seed], home);
-  const allFiles = { "README.md": "seed\n", ...files };
+  // The modeled symphony-alpha commits the provider's recipes opt-in, as that repository does.
+  const optIn = remoteUrl === SYMPHONY_REMOTE ? { ".closedloop-ai/vibe-recipes.json": `${JSON.stringify({ schema: 1, provider: "vibe-closedloop-provider" })}\n` } : {};
+  const allFiles = { "README.md": "seed\n", ...optIn, ...files };
   for (const [file, content] of Object.entries(allFiles)) {
     const absolute = path.join(seed, file);
     mkdirSync(path.dirname(absolute), { recursive: true });
@@ -121,9 +123,16 @@ export function mainSyncRecipeFiles() {
   };
 }
 
-export function runNode(script, args, home, extraEnv = {}, input) {
+/**
+ * Runs `script` as a session in the repository the ClosedLoop provider serves: the provider is bound for the
+ * fixture chat unless `extraEnv` names another chat (or none, with empty CLAUDE_CODE_SESSION_ID and
+ * CODEX_THREAD_ID, for a session with no provider). The script runs in `cwd`, else in the fixture home: the
+ * session repository resolves from the working directory's checkout first, so it must never be this one.
+ */
+export function runNode(script, args, home, extraEnv = {}, input, { cwd = home } = {}) {
   const result = spawnSync(process.execPath, [script, ...args], {
-    env: { ...gitEnv(home), ...extraEnv },
+    env: { ...gitEnv(home), ...bindProvider(home), ...extraEnv },
+    cwd,
     encoding: "utf8",
     input: input === undefined ? undefined : JSON.stringify(input),
   });
@@ -212,4 +221,81 @@ export function portableSurfaceChecker(entries = []) {
     "export const accepts = (specifier) => portableSurfaceAllowlist.has(specifier);",
     "",
   ].join("\n");
+}
+
+// The ClosedLoop provider plugin beside vibe in this repository, bound as a start would bind it.
+export const PROVIDER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../vibe-closedloop-provider");
+export const ALL_CAPABILITIES = ["tickets", "plans", "graph", "memory", "recipes"];
+/**
+ * Puts that provider into the vibe plugin at `vibeRoot` where vibe-core's discovery finds a built one
+ * (`provider/provider.json`), with its whole references folder beside it: unlike a release, which carries assembled
+ * text, the source text under test still holds stubs that read the block files.
+ */
+export function bundleProvider(vibeRoot) {
+  const contract = JSON.parse(readFileSync(path.join(PROVIDER_ROOT, "provider.json"), "utf8"));
+  const bundled = path.join(vibeRoot, "provider");
+  fs.cpSync(path.join(PROVIDER_ROOT, contract.references), path.join(bundled, "references"), { recursive: true });
+  writeFileSync(path.join(bundled, "provider.json"), `${JSON.stringify({ ...contract, references: "references" }, null, 2)}\n`);
+  // The build that carries the provider is published as vibe (tools/vibe-closedloop-build BUILT_NAME).
+  for (const manifest of [".claude-plugin", ".codex-plugin"]) {
+    const file = path.join(vibeRoot, manifest, "plugin.json");
+    if (fs.existsSync(file)) writeFileSync(file, `${JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), name: "vibe" }, null, 2)}\n`);
+  }
+  return bundled;
+}
+
+const COPY_SKIPPED = new Set(["evals", "tools", "node_modules", "dist"]);
+const TEST_FILE = /\.test\.mjs$/;
+
+/**
+ * This checkout's vibe (its scripts, manifests and Markdown, no tests or bundles) and vibe-core copied into
+ * `root/plugins`, with the ClosedLoop provider built into that vibe only when `provider`; returns the copied vibe root.
+ */
+export function copyVibe(root, { provider = false } = {}) {
+  const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  const plugins = path.join(root, "plugins");
+  const keep = (file) => {
+    if (COPY_SKIPPED.has(path.basename(file))) return false;
+    if (fs.statSync(file).isDirectory()) return true;
+    return file.endsWith(".md") || file.endsWith(".json") || (file.endsWith(".mjs") && !TEST_FILE.test(file));
+  };
+  fs.cpSync(source, path.join(plugins, "vibe"), { recursive: true, filter: keep });
+  fs.cpSync(path.join(source, "..", "vibe-core"), path.join(plugins, "vibe-core"), { recursive: true });
+  if (provider) bundleProvider(path.join(plugins, "vibe"));
+  return path.join(plugins, "vibe");
+}
+
+/** That provider's binding, for in-process calls that take one. */
+export const PROVIDER_BINDING = Object.freeze({ state: "bound", name: "vibe-closedloop-provider", root: PROVIDER_ROOT, capabilities: ALL_CAPABILITIES });
+
+/**
+ * Records the provider as bound with `capabilities` for chat `conversation` under `home`, as the startup
+ * check does, and returns the environment that names that chat to the scripts.
+ */
+export function bindProvider(home, { capabilities = ALL_CAPABILITIES, conversation = "fixture-chat" } = {}) {
+  const dir = path.join(home, ".codex", "vibe", "plugin-version");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, `${conversation}.json`), JSON.stringify({ conversation, status: "current",
+    provider: { state: "bound", name: "vibe-closedloop-provider", root: PROVIDER_ROOT, capabilities } }));
+  return { CLAUDE_CODE_SESSION_ID: conversation, CODEX_THREAD_ID: "" };
+}
+
+/**
+ * Binds the provider for in-process calls of this test file that resolve a session's binding through this
+ * conversation (sessionBinding): points HOME and the chat ids at a throwaway home holding the fixture
+ * chat's binding, and restores them, removing any that were unset, when `after` runs.
+ */
+export function bindProviderInProcess(after) {
+  const fixture = makeHome("vibe-bound-chat-");
+  const keys = ["HOME", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"];
+  const saved = Object.fromEntries(keys.map((key) => [key, Object.hasOwn(process.env, key) ? process.env[key] : undefined]));
+  Object.assign(process.env, { HOME: fixture.home, ...bindProvider(fixture.home) });
+  after(() => {
+    for (const key of keys) {
+      if (saved[key] === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = saved[key];
+    }
+    fixture.cleanup();
+  });
+  return fixture;
 }

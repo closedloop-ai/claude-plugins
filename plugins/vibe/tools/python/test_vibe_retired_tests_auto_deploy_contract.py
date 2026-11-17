@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +28,7 @@ VIBE_SKILL = VIBE / "SKILL.md"
 QUALITY = REFERENCES / "quality-loop.md"
 GUARDRAILS = REFERENCES / "guardrails.md"
 ENVIRONMENT = REFERENCES / "environment.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 RECORDER = VIBE / "scripts" / "retired-tests.mjs"
@@ -38,7 +39,7 @@ LAUNCHER_DELETION = "Delete a test file or case only when it covers nothing but 
 
 
 def test_only_tests_of_retired_code_may_be_deleted() -> None:
-    rule = section(GUARDRAILS.read_text(), "### Retired-only tests may be deleted")
+    rule = section(skill_split.read(GUARDRAILS), "### Retired-only tests may be deleted")
     for required in ("may delete a test file or test case that covers ONLY code the request itself retires",
                      "citing the ticket or PRD that retires that code",
                      "deleting its test is the complete and correct outcome",
@@ -48,20 +49,21 @@ def test_only_tests_of_retired_code_may_be_deleted() -> None:
                      "`vibe-guardrails-reviewer` verifies each one covered only retired code",
                      "Retired tests deleted line next to Missing tests"):
         assert required in rule, required
-    assert "no deleted test of live behavior" in section(GUARDRAILS.read_text(), "## Tests")
+    assert "no deleted test of live behavior" in section(skill_split.read(GUARDRAILS), "## Tests")
     writer = section(agent("vibe-change-worker"), "## Tests: repair, don't author")
     for required in ("only when it covers nothing but code the request itself retires",
                      "retired-tests.mjs record", "citing the ticket or PRD that retires that code",
                      "A test that still covers any live behavior is only repaired"):
         assert required in writer, required
-    assert "retired-tests.mjs" in section(QUALITY.read_text(), "## Tests: repair, don't author")
+    assert "retired-tests.mjs" in section(skill_split.read(QUALITY), "## Tests: repair, don't author")
 
 
 def test_the_recorder_and_inventory_gate_deletions_outside_a_pull_request() -> None:
-    recorder = RECORDER.read_text()
-    assert 'const RETIRING_DOCUMENT = /^(?:ISS|PRD|FEA)-\\d+$/;' in recorder
+    recorder = skill_split.read(RECORDER)
+    # The retiring document is the bound tracker's issue or requirements document key.
+    assert "new RegExp(`^(?:${issueKey()}|${requirementsKey()})$`)" in recorder
     assert '"vibe-retired-tests.json"' in recorder
-    inventory = INVENTORY.read_text()
+    inventory = skill_split.read(INVENTORY)
     assert "readRetiredTests(worktree)" in inventory
     assert 'file.status === "D" && retiredFiles.has(file.path)' in inventory
     assert "retiredTests," in inventory
@@ -77,12 +79,12 @@ def test_reviewers_verify_deleted_tests_covered_only_retired_code() -> None:
     # ISS-13353: the adversarial reviewer no longer repeats check 9's deletion rule; it points at it.
     assert "guardrails reviewer, not repeated" in flat(agent("vibe-adversarial-reviewer"))
     assert "recorded deletion of a test that covered only retired code" in flat(agent("vibe-verify-worker"))
-    check = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
+    check = section(skill_split.read(HANDOFF_SKILL), "## 3. Guardrail check")
     assert "`retiredTests` whose deleted files or cases it confirms covered only code the request retires" in check
 
 
 def test_the_ticket_lists_retired_test_deletions_next_to_missing_tests() -> None:
-    handoff = TICKET_TEMPLATE.read_text()
+    handoff = skill_split.read(TICKET_TEMPLATE)
     missing = handoff.index("- Missing tests (engineering scope):")
     retired = handoff.index("- Retired tests deleted:")
     following = handoff.index("- Pre-existing failures not touched by this work:")
@@ -91,17 +93,17 @@ def test_the_ticket_lists_retired_test_deletions_next_to_missing_tests() -> None
     for required in ("`retiredTests`", "the retired code it covered", "the ticket or PRD that retired it", '"None"'):
         assert required in line, required
     assert "Retired tests deleted lists every `retiredTests` entry" in flat(agent("vibe-ticket-worker"))
-    assert "the inventory's `retiredTests`" in section(HANDOFF_SKILL.read_text(),
+    assert "the inventory's `retiredTests`" in section(skill_split.read(HANDOFF_SKILL),
                                                        "## 8. Choose who picks it up, then check the ticket")
 
 
 def test_the_launcher_names_the_retired_only_deletion() -> None:
-    assert LAUNCHER_DELETION in (WORKERS_SRC / "claude-worker.ts").read_text()
-    assert LAUNCHER_DELETION in LAUNCHER_BUNDLE.read_text()
+    assert LAUNCHER_DELETION in skill_split.read(WORKERS_SRC / "claude-worker.ts")
+    assert LAUNCHER_DELETION in skill_split.read(LAUNCHER_BUNDLE)
 
 
 def test_each_change_deploys_without_being_asked() -> None:
-    skill = VIBE_SKILL.read_text()
+    skill = skill_split.read(VIBE_SKILL)
     deploy = section(skill, DEPLOY)
     for required in ("deploys every change in the build loop without being asked",
                      "as soon as the writer finishes a request", "tell the person it's ready to look at",
@@ -118,13 +120,13 @@ def test_each_change_deploys_without_being_asked() -> None:
     expectations = section(skill, "## 4. Set expectations")
     assert 'Say "redeploy"' not in expectations
     assert "Each change goes to your app on its own" in expectations
-    lean = section(QUALITY.read_text(), "## Lean build loop")
+    lean = section(skill_split.read(QUALITY), "## Lean build loop")
     assert "deploys through the existing publication gate without being asked" in lean
     assert "batching changes that arrive while a deploy runs into the next one" in lean
-    redeploying = section(ENVIRONMENT.read_text(), "## Redeploying")
+    redeploying = section(skill_split.read(ENVIRONMENT), "## Redeploying")
     assert "After each change the build loop finishes, without the person asking" in redeploying
     assert "Only when the person asks" not in redeploying
     for path in (VIBE_SKILL, QUALITY, ENVIRONMENT, HANDOFF_SKILL):
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         assert "Never redeploy unless the person asked" not in text, path.name
         assert "when the person asks to redeploy" not in text, path.name

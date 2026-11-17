@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { escapeRegExp } from "./source-imports.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
 const RESPONSIVE_NAME = /(?:narrow|mobile)/i;
@@ -229,7 +230,7 @@ export function proofSourceAt(worktree, file) {
 function diagnosticPathMatches(actual, expected) {
   const normalized = actual.replaceAll("\\", "/").replace(/^file:\/\//, "");
   if (normalized === expected || normalized.endsWith(`/${expected}`)) return true;
-  for (const root of ["packages/app/", "apps/storybook/", "apps/desktop/"]) {
+  for (const root of repositoryLayout().diagnosticRoots ?? []) {
     if (expected.startsWith(root) && normalized === expected.slice(root.length)) return true;
   }
   return false;
@@ -316,7 +317,7 @@ function instrumentedStoryAssertion(failure, proof, source, receipt) {
   if (!Number.isInteger(line)) return false;
   // A direct frame on another assertion's line means that assertion failed, not this candidate.
   // With a Proxy instrumenter frame, the direct frame is the instrumenter's source map, which can
-  // land on an unrelated multiline assertion (ISS-13699's real runs all framed one line), so only
+  // land on an unrelated multiline assertion (the real runs seen so far all framed one line), so only
   // a runner-owned frame is checked against other assertions' spans.
   const frameLine = Number(new RegExp(`^\\s*❯\\s+${matcher}\\s+[^\\n]+\\.stories\\.[cm]?[jt]sx?:(\\d+):\\d+`, "m").exec(failure)?.[1]);
   const runnerFrame = !new RegExp(`^\\s*❯\\s+Proxy\\.${matcher}\\s`, "m").test(failure);
@@ -356,7 +357,7 @@ function exactAssertionFailure(proof, source, receipt = {}) {
   const [, expectedPath, expectedLine, expectedColumn] = expected;
   if (!diagnosticPathMatches(actualPath, expectedPath)) return false;
   // Only the runner's own failure frame binds the assertion; authored text that
-  // merely names the coordinate is not proof (ISS-13846 AC-1, AC-5).
+  // merely names the coordinate is not proof.
   return runner && (runnerAssertionAt(failure, Number(actualLine), Number(actualColumn), Number(expectedLine), Number(expectedColumn), proof.assertionLine, source)
     || instrumentedStoryAssertion(failure, proof, source, receipt));
 }
@@ -563,7 +564,7 @@ function laterAssertionCouldFail(source, following, matcher, ambiguity, depth = 
     const argument = later[1].trim();
     if (variable && new RegExp(`^${escapeRegExp(variable)}(?![\\w$])`).test(argument)) return true;
     // A query the gate cannot read from the source stays a known limit rather than a refusal
-    // (orchestrator ruling, 2026-11-09): refusing it would reject ISS-13699's genuine proofs.
+    // (orchestrator ruling, 2026-11-09): refusing it would reject genuine proofs.
     const key = assertionKey(argument, source);
     if (!key) continue;
     if (key.text !== undefined && (query?.text === key.text || inserted.includes(key.text))) return true;

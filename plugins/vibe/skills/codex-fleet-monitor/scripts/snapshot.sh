@@ -23,7 +23,10 @@ remote_node() {
     ship+=(skills/fleet-orchestrator/scripts/skill-freshness.mjs)
     shift
     # Resolve outside env: a bare `env VAR=...` would print the process environment.
-    invoke='root=$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1); test -n "$root" && '
+    # The remote host runs the vibe of this one's own name (vibe or vibe-generic).
+    local own; own=$(jq -er .name $K/../../../.codex-plugin/plugin.json) || return 2
+    [[ $own =~ '^[a-z0-9-]+$' ]] || return 2
+    invoke='root=$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "'$own'" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1); test -n "$root" && '
     invoke+="env $e node $d/plugins/vibe/skills/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
   fi
   # These scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).

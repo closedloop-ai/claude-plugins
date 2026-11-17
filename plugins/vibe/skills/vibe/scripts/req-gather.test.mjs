@@ -4,8 +4,11 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { EVIDENCE_SCHEMA, gatherEvidence, pathsIn, readResults, REQUIRED_QUERIES, slugsIn } from "./req-gather.mjs";
-import { makeCheckout, makeHome } from "./test-fixtures.mjs";
+import { EVIDENCE_SCHEMA, gatherEvidence, pathsIn, readResults, requiredQueries, slugsIn } from "./req-gather.mjs";
+import { bindProvider, makeCheckout, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+
+// The ClosedLoop provider bound, as in the repository its queries serve.
+const REQUIRED_QUERIES = requiredQueries(PROVIDER_BINDING);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "req-gather.mjs");
 
@@ -20,12 +23,12 @@ function fixture(t) {
   t.after(home.cleanup);
   const checkout = path.join(home.root, "checkout");
   makeCheckout({ root: home.root, home: home.home, checkout, files: FILES });
-  return { checkout, root: home.root };
+  return { checkout, root: home.root, env: { ...process.env, HOME: home.home, ...bindProvider(home.home) } };
 }
 
 test("slugs are every ticket, plan, document and project reference, once each, in order", () => {
-  assert.deepEqual(slugsIn("Fix ISS-12 per PRD-7; see ISS-12 and PLN-3, PRO-9."), ["ISS-12", "PRD-7", "PLN-3", "PRO-9"]);
-  assert.deepEqual(slugsIn("no references here"), []);
+  assert.deepEqual(slugsIn("Fix ISS-12 per PRD-7; see ISS-12 and PLN-3, PRO-9.", PROVIDER_BINDING), ["ISS-12", "PRD-7", "PLN-3", "PRO-9"]);
+  assert.deepEqual(slugsIn("no references here", PROVIDER_BINDING), []);
 });
 
 test("paths are only the ones that exist in the tree, files or folders, never an invented one", () => {
@@ -37,7 +40,7 @@ test("paths are only the ones that exist in the tree, files or folders, never an
 
 test("a required query with no saved result is listed missing, and the saved ones are bundled whole", () => {
   const files = { "/r/ticket_detail.json": "{\"slug\":\"ISS-1\"}", "/r/query_collisions.json": "[]" };
-  const out = readResults("/r", { exists: (file) => file in files, read: (file) => files[file], size: () => 10 });
+  const out = readResults("/r", { exists: (file) => file in files, read: (file) => files[file], size: () => 10 }, REQUIRED_QUERIES);
   assert.deepEqual(out.present, ["ticket_detail", "query_collisions"]);
   assert.deepEqual(out.missing, ["get-document-comments", "code_symbols", "blast_radius_tickets", "search_nodes", "shipped_lineage"]);
   assert.deepEqual(out.results.ticket_detail, { slug: "ISS-1" });
@@ -45,7 +48,7 @@ test("a required query with no saved result is listed missing, and the saved one
 
 test("a result that is not JSON or is too large counts as missing and says why, never as present", () => {
   const files = { "/r/ticket_detail.json": "not json", "/r/query_collisions.json": "[]" };
-  const out = readResults("/r", { exists: (file) => file in files, read: (file) => files[file], size: (file) => (file.endsWith("query_collisions.json") ? 999_999 : 5) });
+  const out = readResults("/r", { exists: (file) => file in files, read: (file) => files[file], size: (file) => (file.endsWith("query_collisions.json") ? 999_999 : 5) }, REQUIRED_QUERIES);
   assert.deepEqual(out.present, []);
   assert.ok(out.missing.includes("ticket_detail") && out.missing.includes("query_collisions"));
   assert.deepEqual(out.unreadable.map((item) => item.name), ["ticket_detail", "query_collisions"]);
@@ -53,7 +56,7 @@ test("a result that is not JSON or is too large counts as missing and says why, 
 });
 
 test("no results directory means every required query is missing", () => {
-  const out = readResults(undefined);
+  const out = readResults(undefined, undefined, REQUIRED_QUERIES);
   assert.deepEqual(out.missing, [...REQUIRED_QUERIES]);
 });
 
@@ -64,7 +67,7 @@ test("the evidence resolves the request's paths against the worktree and ledgers
   writeFileSync(path.join(dir, "ticket_detail.json"), JSON.stringify({ slug: "ISS-5", title: "Branch card" }));
   const evidence = gatherEvidence({
     worktree: checkout, request: "ISS-5: change packages/app/branches/branch-card.tsx and packages/app/nope/x.tsx", resultsDir: dir, terms: ["BranchCard"],
-  });
+  }, { binding: PROVIDER_BINDING });
   assert.equal(evidence.schema, EVIDENCE_SCHEMA);
   assert.deepEqual(evidence.slugs, ["ISS-5"]);
   assert.deepEqual(evidence.paths.map((item) => item.path), ["packages/app/branches/branch-card.tsx"]);
@@ -76,10 +79,10 @@ test("the evidence resolves the request's paths against the worktree and ledgers
 });
 
 test("the command line exits 3 while a required query is missing and 0 once every one has a result", (t) => {
-  const { checkout, root } = fixture(t);
+  const { checkout, root, env } = fixture(t);
   const dir = path.join(root, "results");
   mkdirSync(dir);
-  const run = () => spawnSync(process.execPath, [SCRIPT, "--worktree", checkout, "--request", "ISS-5 packages/app/branches/", "--results-dir", dir], { encoding: "utf8" });
+  const run = () => spawnSync(process.execPath, [SCRIPT, "--worktree", checkout, "--request", "ISS-5 packages/app/branches/", "--results-dir", dir], { encoding: "utf8", env });
   const partial = run();
   assert.equal(partial.status, 3, partial.stderr);
   assert.ok(JSON.parse(partial.stdout).queries.missing.length > 0);
@@ -88,4 +91,17 @@ test("the command line exits 3 while a required query is missing and 0 once ever
   assert.equal(full.status, 0, full.stderr);
   assert.deepEqual(JSON.parse(full.stdout).queries.missing, []);
   assert.equal(spawnSync(process.execPath, [SCRIPT, "--worktree", checkout], { encoding: "utf8" }).status, 2);
+});
+
+test("with no provider bound nothing is owed, and a reference is a GitHub number", (t) => {
+  const { checkout } = fixture(t);
+  assert.deepEqual(requiredQueries(null), []);
+  assert.deepEqual(slugsIn("Fix #12 and ISS-3, see #12", null), ["#12"]);
+  const evidence = gatherEvidence({ worktree: checkout, request: "#4: packages/app/branches/branch-card.tsx" }, { binding: null });
+  assert.deepEqual(evidence.queries, { required: [], present: [], missing: [], unreadable: [] });
+  assert.deepEqual(evidence.slugs, ["#4"]);
+  assert.deepEqual(evidence.paths[0].featureMap, [], "no feature map without the provider's recipe");
+  const trackerless = { ...PROVIDER_BINDING, capabilities: ["graph"] };
+  assert.equal(requiredQueries(trackerless).includes("get-document-comments"), false, "a tracker query is owed only with the tracker bound");
+  assert.ok(requiredQueries(trackerless).includes("query_collisions"));
 });

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
-import { PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
+import { portableSurfaceChecker } from "./prototype-allowlist.mjs";
+import { prototypeRecipe } from "../../vibe/scripts/area-paths.mjs";
 
 export const PathDisposition = Object.freeze({
   Allowed: "allowed",
@@ -9,7 +10,14 @@ export const PathDisposition = Object.freeze({
 });
 
 const PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
-const PROTOTYPE_REGISTRY = "apps/prototypes/lib/registry.generated.ts";
+
+/**
+ * The built-in policy for a repository with no committed declaration (operator ruling, 2026-11-11): no protected
+ * path classes, so every path but the declaration itself is the session's to change, and tests may live anywhere.
+ */
+export const DEFAULT_PATH_POLICY = Object.freeze({ version: 1, allowedPrefixes: Object.freeze([""]), allowedFiles: Object.freeze([]),
+  forbiddenPrefixes: Object.freeze([]), forbiddenBasenames: Object.freeze([]), rootTests: true });
+export const DEFAULT_POLICY_SOURCE = "built-in-default";
 
 /** Classify one changed or planned file through the canonical Vibe path policy. */
 export function classifyHandoffPath({
@@ -55,10 +63,11 @@ function isForbiddenHandoffPath(policy, filePath) {
 }
 
 function isAllowedSourcePath({ filePath, policy, prototype, portableSurfaceAllowed }) {
-  if (prototype?.owned && (filePath.startsWith(`apps/prototypes/app/p/${prototype.slug}/`) || filePath === PROTOTYPE_REGISTRY)) {
+  const recipe = prototypeRecipe();
+  if (prototype?.owned && recipe && (filePath.startsWith(`${recipe.sessionRoot}/${prototype.slug}/`) || filePath === recipe.registry)) {
     return true;
   }
-  if (prototype?.owned && filePath === PORTABLE_SURFACE_CHECKER) return portableSurfaceAllowed;
+  if (prototype?.owned && filePath === portableSurfaceChecker()) return portableSurfaceAllowed;
   return Boolean(policy?.allowedPrefixes.some((prefix) => filePath.startsWith(prefix))) ||
     Boolean(policy?.allowedFiles.includes(filePath));
 }

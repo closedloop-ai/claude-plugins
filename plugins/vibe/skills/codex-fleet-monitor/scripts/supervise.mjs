@@ -15,8 +15,8 @@ import {
 import { rateLimitReading, readRateLimits } from './ratelimit.mjs';
 import { recordUsageReading } from './usage-state.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
-const { isEntryPoint } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { hasPendingOwnedCleanups, sweepOwnedCleanups } = await vibeCore("lib/vibe/scripts/owned-cleanup.mjs");
 

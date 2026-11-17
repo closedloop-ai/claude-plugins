@@ -3,7 +3,8 @@
 import json
 from pathlib import Path
 
-from vibe_contract_text import agent, flat
+import skill_split
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -14,7 +15,7 @@ MONITOR = PLUGIN / "skills" / "codex-fleet-monitor"
 
 
 def _text(path: Path) -> str:
-    return flat(path.read_text())
+    return flat(skill_split.read(path))
 
 
 def test_fleet_board_ruling_and_checkpoint_delivery_are_run_from_the_skill() -> None:
@@ -46,7 +47,7 @@ def test_helpers_record_and_end_their_processes_and_the_watcher_is_checked() -> 
 
 
 def test_push_cadence_and_shepherding_are_wired() -> None:
-    cadence = (VIBE / "scripts" / "push-cadence.mjs").read_text()
+    cadence = skill_split.read(VIBE / "scripts" / "push-cadence.mjs")
     assert "attention signal" in cadence
     assert "never permission to" in cadence
     assert "shepherd.mjs --pr <n> --repo <owner/repo>" in _text(HANDOFF / "SKILL.md")
@@ -56,11 +57,11 @@ def test_push_cadence_and_shepherding_are_wired() -> None:
 
 
 def test_migration_order_compose_projects_precedent_and_path_gates_are_wired() -> None:
-    assert "migrationOrderProblems" in (VIBE / "scripts" / "vibe-sessions.mjs").read_text()
+    assert "migrationOrderProblems" in skill_split.read(VIBE / "scripts" / "vibe-sessions.mjs")
     assert "scripts/migration-order.mjs" in _text(VIBE / "references" / "environment.md")
     assert "its own compose project" in _text(HANDOFF / "SKILL.md")
     assert "precedent-check.mjs check --report <report>" in _text(VIBE / "references" / "quality-loop.md")
-    assert "pathGateTests" in (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    assert "pathGateTests" in skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs")
     assert ".vibe/path-gates.json" in flat(agent("vibe-verify-worker"))
 
 
@@ -71,32 +72,32 @@ def test_criteria_audit_and_rulings_check_gate_the_handoff() -> None:
         assert f"scripts/{script}" in handoff, script
     assert "audit the uncommitted candidate" in handoff
     assert "after independent review" in handoff
-    assert '- Ruling <date> (<who>): "' in (VIBE / "references" / "ticket-template.md").read_text()
+    assert '- Ruling <date> (<who>): "' in skill_split.read(PROVIDER_REFERENCES / "ticket-template.md")
 
 
 def test_findings_reach_a_writer_with_their_evidence() -> None:
     assert "finding-brief.mjs <orchDir> --findings" in _text(FLEET / "SKILL.md")
-    assert "$prompt.evidence" in (FLEET / "scripts" / "fleet.sh").read_text()
+    assert "$prompt.evidence" in skill_split.read(FLEET / "scripts" / "fleet.sh")
 
 
 def test_precedent_disputed_behaviors_and_review_gap_rules_are_wired() -> None:
     assert '--behavior "<the interaction to perform>"' in _text(VIBE / "references" / "quality-loop.md")
-    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    rules = skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs")
     assert "checkComparators" in rules
     assert "checkUnusedExports" in rules
 
 
 def test_story_plays_are_judged_by_the_verdict_helper() -> None:
     assert (VIBE / "scripts" / "story-play-verdict.mjs").exists()
-    assert "playVerdictProblems" in (HANDOFF / "scripts" / "pr-facts.mjs").read_text()
+    assert "playVerdictProblems" in skill_split.read(HANDOFF / "scripts" / "pr-facts.mjs")
     worker = flat(agent("vibe-verify-worker"))
     assert "story-play-verdict.mjs" in worker
     assert "never by `storyFinished`'s status" in worker
 
 
 def test_shared_component_changes_require_every_hosts_suites() -> None:
-    assert "sharedComponentTests" in (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
-    assert "flagStates" in (HANDOFF / "scripts" / "pr-facts.mjs").read_text()
+    assert "sharedComponentTests" in skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs")
+    assert "flagStates" in skill_split.read(HANDOFF / "scripts" / "pr-facts.mjs")
     assert 'with `flag: "on"` or `flag: "off"`' in flat(agent("vibe-verify-worker"))
 
 
@@ -108,7 +109,7 @@ def test_status_audit_runs_at_every_merge_and_writer_assignment() -> None:
 
 
 def test_storybook_rules_run_inside_the_handoff_diff_rules() -> None:
-    diff_rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    diff_rules = skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs")
     assert "checkStorybookRules(files, repo, logged, add);" in diff_rules
     assert "...storybookRuleTests(files, (file) => repo.head(file))" in diff_rules
 
@@ -118,7 +119,7 @@ def test_the_verify_worker_runs_the_declared_storybook_checks() -> None:
 
 
 def test_the_example_declaration_names_every_storybook_rule() -> None:
-    example = json.loads((HANDOFF / "references" / "storybook-rules.example.json").read_text())
+    example = json.loads(skill_split.read(HANDOFF / "references" / "storybook-rules.example.json"))
     for key in ("release", "frozenRoots", "tagRoots", "noOpHandler", "handRolledCells", "controlsDecision", "literalOptions", "storySupportPaths", "checks"):
         assert key in example, key
 
@@ -165,3 +166,29 @@ def test_product_questions_use_the_shared_live_precedent_order() -> None:
     assert "return `NEEDS_PERSON` to the orchestrator" in requirements
     assert "do not copy or reorder it here" in fleet
     assert "--product --code-evidence" in _text(VIBE / "SKILL.md")
+
+
+
+def _generic(path: Path) -> str:
+    return flat(skill_split.generic(path))
+
+
+def test_generic_precedent_text_is_the_live_app_never_public_docs() -> None:
+    readme = _generic(PLUGIN / "README.md")
+    requirements = _generic(PLUGIN / "agents" / "vibe-requirements-worker.md")
+    quality = _generic(VIBE / "references" / "quality-loop.md")
+    description = next(line for line in skill_split.raw(PLUGIN / "agents" / "vibe-requirements-worker.md").splitlines()
+                       if line.startswith("description:"))
+    assert "never public help centers or documentation)" in readme
+    assert "Public help centers and documentation are never precedent." in readme
+    assert "through whichever actor has the operator's signed-in browser, never public help centers or documentation" in description
+    assert "never a public help center, documentation page or web-search result" in requirements
+    assert "never a public help center or documentation page" in quality
+    for name, text in (
+        ("README.md", readme),
+        ("vibe-requirements-worker.md", requirements),
+        ("vibe-change-worker.md", _generic(PLUGIN / "agents" / "vibe-change-worker.md")),
+        ("quality-loop.md", quality),
+    ):
+        for weakened in ("own documentation", "documentation URL", "help-center URL"):
+            assert weakened not in text, (name, weakened)

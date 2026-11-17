@@ -1,7 +1,11 @@
 // What a vibe pull request body must state, computed from the session diff for
 // handoff-inventory.mjs: overlap with open pull requests (shared or imported
-// files), assertion and export changes, new apps/api refusals, ticket asks and
+// files), assertion and export changes, new API refusals, ticket asks and
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
+// The repository-specific parts (its E2E CI owners, Desktop spec folder, lane
+// report, API folders and workspace import aliases) are the bound provider's
+// `data.recipes.prEvidence`; without it a changed E2E spec cannot be left for
+// CI and must pass locally.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -9,15 +13,16 @@ import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { repositoryLaneReportProblems, laneReportLabel } from "./ci-job-shape.mjs";
+import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
-import { DESKTOP_HOST, UI_PREFIXES as UI } from "../../vibe/scripts/area-paths.mjs";
+import { GENERIC_AREAS, isUiFile, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
 import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
-import { REQUIRED_CONTAINER_IDENTITY, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
+import { requiredContainerIdentity, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { prBodyClaimProblems } from "./pr-body-claims.mjs";
-import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
+import { GRAPH_SELECTOR, prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
 import { leftByRuling, RULING_HOST_LANES, targetedTestsRuling } from "./targeted-tests-ruling.mjs";
@@ -27,6 +32,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 const { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 const GH_LIST_FILE_CAP = 100;
@@ -48,12 +54,7 @@ const TEMPLATE_HEADING = /^#{1,6}\s+\S.*$/gm;
 const SHA = /^[a-f0-9]{40}$/;
 export const KNOWN_MAIN_FAILURES = "Known main failures";
 const CI_CHECK_PATH = /^(?:\.github\/(?:workflows|actions)\/|scripts\/)|(?:^|\/)(?:package\.json|turbo\.json|biome\.jsonc?)$|(?:^|\/)(?:lint|checks?|gates?)\//;
-// The producer jobs checked on symphony-alpha main. A spec left for CI must
-// name the actual owner, not an invented local PASS or a generic "CI".
-const E2E_CI_OWNER = Object.freeze({
-  web: "e2e-test.yml:e2e",
-  desktop: "desktop-e2e-validation.yml:desktop-e2e/validated",
-});
+export const GENERIC_PR_RULES = Object.freeze({ e2eOwners: null, desktopSpecs: null, laneReport: null, refusalPaths: [], workspaceAliases: [] });
 
 export const STACKED_BASE_STATEMENT = "Stacked pull request: its base is not main, so no required CI lane runs on it; local evidence is listed below.";
 
@@ -102,8 +103,8 @@ function evidenceCandidateFiles(worktree) {
   const base = proofCorpusBase(worktree);
   const localFixPaths = new Set((Array.isArray(record?.localFixes) ? record.localFixes : [])
     .flatMap(fix => Array.isArray(fix?.paths) ? fix.paths : []).filter(file => typeof file === "string"));
-  return readDiff(worktree, base).filter(file => !localFixPaths.has(file.path)
-    && !file.path.startsWith(".closedloop-ai/vibe-plans/"));
+  const planPrefix = sessionLocalPlanPrefix(worktree);
+  return readDiff(worktree, base).filter(file => !localFixPaths.has(file.path) && !isLocalPlanPath(file.path, planPrefix));
 }
 
 /** Open pull requests sharing a changed file, or a file a changed file imports. */
@@ -118,15 +119,16 @@ export function computeOverlap({ worktree, changed, prs, ownBranch }) {
     .sort((a, b) => a.number - b.number);
 }
 
-function importsOf(worktree, file) {
+function importsOf(worktree, file, aliases = prRules(worktree).workspaceAliases) {
   const absolute = path.join(worktree, file);
   if (!SOURCE.test(file) || !existsSync(absolute)) {
     return [];
   }
   return [...readFileSync(absolute, "utf8").matchAll(IMPORT)].flatMap(([, specifier]) => {
     const [, pkg, ...rest] = specifier.split("/");
+    const alias = aliases.find((entry) => specifier.startsWith(entry.prefix));
     const bases = specifier.startsWith(".") ? [path.posix.join(path.posix.dirname(file), specifier)]
-      : specifier.startsWith("@repo/") ? [`packages/${pkg}/${rest.join("/") || "index"}`, `packages/${pkg}/src/${rest.join("/") || "index"}`]
+      : alias ? alias.bases.map((base) => base.replace("{package}", pkg).replace("{rest}", rest.join("/") || "index"))
       : [];
     const found = bases.flatMap((base) => SUFFIXES.map((suffix) => base + suffix))
       .find((candidate) => SOURCE.test(candidate) && existsSync(path.join(worktree, candidate)));
@@ -152,8 +154,8 @@ export function assertionChanges(files) {
   });
 }
 
-/** Changed or removed exports outside tests, and new 4xx refusals in apps/api. */
-export function contractChanges(files) {
+/** Changed or removed exports outside tests, and new 4xx refusals under the repository's API folders `refusalPaths`. */
+export function contractChanges(files, refusalPaths = []) {
   const contracts = [];
   const refusals = [];
   for (const file of files.filter((entry) => SOURCE.test(entry.path) && !isTestFile(entry.path))) {
@@ -168,7 +170,7 @@ export function contractChanges(files) {
           contracts.push({ kind: "changed", name, path: file.path, line: replacement.line });
         }
       }
-      for (const line of file.path.startsWith("apps/api/") ? hunk.added : []) {
+      for (const line of refusalPaths.some((prefix) => file.path.startsWith(prefix)) ? hunk.added : []) {
         const status = REFUSAL.exec(line.text)?.[1];
         if (status) {
           refusals.push({ path: file.path, line: line.line, status: Number(status) });
@@ -185,12 +187,12 @@ function signature(text) {
   return BODY_EXPORT.test(trimmed) ? trimmed.split("{")[0].trim() : trimmed;
 }
 
-/** The evidence lanes a diff needs; none for a server-only diff. */
-export function requiredLanes(changed, touchFlows = []) {
+/** The evidence lanes a diff needs in the repository's `areas` (area-paths.mjs); none for a server-only diff. */
+export function requiredLanes(changed, touchFlows = [], areas = GENERIC_AREAS) {
   const lanes = [];
-  if (changed.some((file) => UI.some((prefix) => file.startsWith(prefix)))) {
+  if (changed.some((file) => isUiFile(file, areas))) {
     lanes.push("web-host");
-    if (changed.some((file) => DESKTOP_HOST.some((prefix) => file.startsWith(prefix)))) lanes.push("desktop-host");
+    if (changed.some((file) => areas.desktopHost.some((prefix) => file.startsWith(prefix)))) lanes.push("desktop-host");
     if (touchFlows.length > 0) lanes.push("webkit-iphone", "chromium-pixel");
     if (changed.some((file) => /\.stories\.tsx?$/.test(file))) lanes.push("storybook-plays");
   }
@@ -201,7 +203,7 @@ export function requiredLanes(changed, touchFlows = []) {
 /**
  * A run that failed the same way on the main the session captured: the
  * session did not cause it, so it never stops the pull request, and the body
- * lists it under Known main failures (ISS-13321). `mainSha` is the captured
+ * lists it under Known main failures. `mainSha` is the captured
  * main the same command also failed on.
  */
 export function isMainPreexisting(run) {
@@ -216,11 +218,11 @@ function passedOrMainPreexisting(run) {
  * The web E2E lane is left for CI only when every changed spec has complete
  * per-spec evidence that its selected runtime tier cannot execute it.
  */
-function e2eLeftForCi(runsFile, changed, commit) {
+function e2eLeftForCi(runsFile, changed, commit, rules) {
   const specs = changed.filter((file) => isE2ePath(file) && TEST_SPEC_PATTERN.test(file));
   const selection = readTestSelection(runsFile);
   return specs.length > 0 && selection.problems.length === 0
-    && specs.every((spec) => e2eCarriedForCi(runsFile, selection.entries, spec, commit));
+    && specs.every((spec) => e2eCarriedForCi(runsFile, selection.entries, spec, commit, rules));
 }
 
 /** Immutable carry is an explicit alternate authority, never a weaker interpretation of a failed ancestry check. */
@@ -337,7 +339,7 @@ export function evidenceProblems(runsFile, changed, commit, worktree, rulingId =
   const recomputed = older || runsFile?.treeEquivalentCarry !== undefined ? recomputedImpact(runsFile, worktree, commit) : null;
   if (recomputed?.problem) return [recomputed.problem];
   const impactKey = recomputed?.impact?.laneKey;
-  return requiredLanes(changed, runsFile.touchFlows).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit))).flatMap((lane) => {
+  return requiredLanes(changed, runsFile.touchFlows, sessionAreas(worktree)).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit, prRules(worktree)))).flatMap((lane) => {
     const runs = allRuns.filter((run) => run.lane === lane);
     if (runs.length === 0) return [`${lane}: no run recorded`];
     return runs.flatMap((run) => RULING_HOST_LANES.includes(lane) && leftByRuling(run, rulingId, commit)
@@ -352,7 +354,7 @@ export function evidenceProblems(runsFile, changed, commit, worktree, rulingId =
 }
 
 /** What a drafted body gets wrong against the facts. */
-export function bodyProblems(body, facts, files, prBase, template = "", runsFile = null) {
+export function bodyProblems(body, facts, files, prBase, template = "", runsFile = null, planPrefix = null) {
   const flat = body.replace(/\s+/g, " ");
   const byPath = new Map(files.map((file) => [file.path, file]));
   const changedLine = (file, line) => file.hunks.some((hunk) => hunk.added.some((entry) => entry.line === line)
@@ -372,7 +374,7 @@ export function bodyProblems(body, facts, files, prBase, template = "", runsFile
       .map((refusal) => `new ${refusal.status} refusal ${refusal.path}:${refusal.line} is not listed`),
     ...facts.asks.filter((ask) => !flat.includes(ask)).map((ask) => `ticket ask not quoted and answered: ${ask}`),
     ...(prBase !== "main" && !flat.includes(STACKED_BASE_STATEMENT) ? [`base is ${prBase}; add verbatim: ${STACKED_BASE_STATEMENT}`] : []),
-    ...pointerProblems(body).map(({ line, kind }) => `body line ${line}: ${kind}`),
+    ...pointerProblems(body, planPrefix).map(({ line, kind }) => `body line ${line}: ${kind}`),
     ...prBodyClaimProblems(body, runsFile),
     ...templateHeadingProblems(body, template),
   ];
@@ -416,10 +418,11 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     const bindingProblems = binding.problems;
     const files = readDiff(worktree, base).filter((file) => include.has(file.path));
     const changed = files.map((file) => file.path);
-    const { contracts, refusals } = contractChanges(files);
+    const { contracts, refusals } = contractChanges(files, prRules(worktree).refusalPaths);
+    const areas = sessionAreas(worktree);
     const facts = {
-      serverOnly: !changed.some((file) => UI.some((prefix) => file.startsWith(prefix))),
-      requiredLanes: requiredLanes(changed),
+      serverOnly: !changed.some((file) => isUiFile(file, areas)),
+      requiredLanes: requiredLanes(changed, [], areas),
       assertionChanges: assertionChanges(files),
       contractChanges: contracts,
       refusals,
@@ -431,7 +434,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     return {
       ...facts,
       ...(body === undefined ? {} : { prBodyProblems: [
-        ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base), runs),
+        ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base), runs, sessionLocalPlanPrefix(worktree)),
         ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
       ] }),
       ...(runs === undefined ? {} : { prEvidenceProblems: [
@@ -499,12 +502,13 @@ export function capabilityProbeProblems(evidence, worktree, commit, probeCapabil
   if (!named.secretsSet || !current.container.secretsSet) {
     return ["E2E identity-key presence probe is incomplete; do not carry specs to CI"];
   }
-  for (const key of REQUIRED_CONTAINER_IDENTITY) {
+  for (const key of requiredContainerIdentity()) {
     if (named.secretsSet?.[key] !== current.container.secretsSet[key]) {
       return ["E2E identity-key presence differs from the current machine; rerun the read-only capability probe"];
     }
   }
-  if (carried.some((run) => run.path.startsWith("apps/desktop/"))
+  const desktopSpecs = prRules(worktree).desktopSpecs;
+  if (desktopSpecs && carried.some((run) => run.path.startsWith(desktopSpecs))
     && (recorded.desktopHarness?.available !== current.desktopHarness.available
       || recorded.desktopHarness?.reason !== current.desktopHarness.reason
       || recorded.desktopHarness?.probe !== current.desktopHarness.probe)) {
@@ -560,7 +564,7 @@ export function prEvidenceValidationProblems(evidence, commit, options = {}) {
     ...ruling.problems,
     ...(ruling.id && inventoryTests === 0 ? [`targeted-tests ruling ${ruling.id} needs at least one targeted inventory test that passed on the published commit`] : []),
     ...evidenceProblems(evidence, files.map(file => file.path), commit, worktree, ruling.id),
-    ...selectionProblems(evidence, files, options.requiredTests ?? [], commit, ruling.id),
+    ...selectionProblems(evidence, files, options.requiredTests ?? [], commit, prRules(worktree ?? null), ruling.id),
     ...targetedEvidenceProblems(evidence, commit, worktree, receiptDir, ruling.id, mustRunTests(options.requiredTests ?? [], files)),
     ...tierEvidenceProblems(evidence?.e2eCapability, specs),
     ...sourceProblems,
@@ -593,7 +597,7 @@ export function templateHeadingProblems(body, template) {
 /**
  * Test selection over the whole branch diff (vibe-pr-evidence.json
  * `testSelection` and `testRuns`). Each changed source file needs an import
- * selection that returned tests (`code_tests_for`), or the repo's related-test
+ * selection that returned tests (a graph test lookup), or the repo's related-test
  * selection when the graph found none or does not index the file, plus an e2e
  * by-reference selection, since import selection never reaches specs that
  * drive the app. Every selected test, every required test of the diff rules and
@@ -603,15 +607,15 @@ export function templateHeadingProblems(body, template) {
  * ruling (`rulingId`), a selected test that is neither required nor edited by
  * the branch may instead have a `not-run` row naming the ruling.
  */
-export function selectionProblems(runsFile, files, requiredTests, commit, rulingId = null) {
+export function selectionProblems(runsFile, files, requiredTests, commit, rules = GENERIC_PR_RULES, rulingId = null) {
   const { entries: selection, problems: shapeProblems } = readTestSelection(runsFile);
   const listed = (entry) => Array.isArray(entry?.tests) && entry.tests.every((test) => typeof test === "string");
   const problems = [...shapeProblems];
   const of = (file, selector) => selection.filter((entry) => entry?.file === file && entry.selector === selector && listed(entry));
   const live = files.filter((file) => file.status !== "D");
   for (const file of live.filter((entry) => SOURCE.test(entry.path) && !isTestFile(entry.path)).map((entry) => entry.path)) {
-    if (!of(file, "code_tests_for").some((entry) => entry.tests.length > 0) && of(file, "related").length === 0) {
-      problems.push(`${file}: no import selection; code_tests_for returned no tests or does not index it, so record the repo's related-test selection`);
+    if (!of(file, GRAPH_SELECTOR).some((entry) => entry.tests.length > 0) && of(file, "related").length === 0) {
+      problems.push(`${file}: no import selection; no graph test lookup (${GRAPH_SELECTOR}) returned tests for it, so record the repo's related-test selection`);
     }
     if (of(file, "e2e-reference").length === 0) {
       problems.push(`${file}: no e2e by-reference selection (routes, request fields, test IDs, accessible names, channels and flag keys it touches)`);
@@ -635,7 +639,7 @@ export function selectionProblems(runsFile, files, requiredTests, commit, ruling
       && target(test)?.cases?.every((name) => entry.cases.includes(name)))));
   const ruled = (test) => ruledByRuling(runs, test, rulingId, commit, mustRun);
   for (const test of [...selected].sort()) {
-    if (!passed(test) && !e2eCarriedForCi(runsFile, selection, test, commit) && !ruled(test)) {
+    if (!passed(test) && !e2eCarriedForCi(runsFile, selection, test, commit, rules) && !ruled(test)) {
       problems.push(`${test}: selected but no passing or carried run for ${commit ?? "the published commit"} in testRuns`);
     }
   }
@@ -650,22 +654,23 @@ export function selectionProblems(runsFile, files, requiredTests, commit, ruling
 /**
  * A changed E2E spec may remain not run locally only with a per-spec record,
  * exact selected HEAD, a proved per-spec execution limitation and named CI.
- * Desktop additionally needs the matching not-run lane from test:lanes.
+ * Desktop additionally needs the matching not-run lane from the lane report. Without the provider's
+ * E2E CI owners (`rules.e2eOwners`) no spec is left for CI.
  */
-function e2eCarriedForCi(evidence, selection, spec, commit) {
-  if (!commit || !isE2ePath(spec) || !TEST_SPEC_PATTERN.test(spec)) return false;
+function e2eCarriedForCi(evidence, selection, spec, commit, rules) {
+  if (!rules?.e2eOwners || !commit || !isE2ePath(spec) || !TEST_SPEC_PATTERN.test(spec)) return false;
   const capability = evidence?.e2eCapability;
   if (!capability || !Array.isArray(capability.unavailableSpecs) || !capability.unavailableSpecs.includes(spec)) return false;
   const limitation = specExecutionLimitation(capability, spec, commit);
   if (!limitation) return false;
   if (!selection.some((entry) => entry.selector === "e2e-reference" && Array.isArray(entry.tests) && entry.tests.includes(spec))) return false;
-  const desktop = spec.startsWith("apps/desktop/");
+  const desktop = Boolean(rules.desktopSpecs) && spec.startsWith(rules.desktopSpecs);
   const reason = desktop ? NOT_RUN_NO_DESKTOP_HARNESS : NOT_RUN_NO_IDENTITY;
-  const ciOwner = desktop ? E2E_CI_OWNER.desktop : E2E_CI_OWNER.web;
+  const ciOwner = desktop ? rules.e2eOwners.desktop : rules.e2eOwners.web;
   const laneReport = evidence?.targetedInventory?.laneReport;
   if (!Array.isArray(capability.ciCoverage) || !capability.ciCoverage.includes(ciOwner)
     || laneReportShapeProblems(laneReport).length !== 0
-    || laneReport?.source?.kind !== "github-workflow" && laneReportLabel(laneReport) !== "pnpm test:lanes") return false;
+    || laneReport?.source?.kind !== "github-workflow" && laneReportLabel(laneReport) !== rules.laneReport) return false;
   const runs = Array.isArray(evidence.testRuns) ? evidence.testRuns : [];
   const own = runs.some((run) => run?.path === spec && run.status === "not-run" && run.commit === commit
     && run.reason === reason && run.ciOwner === ciOwner && run.selectionSource === "e2e-reference"
@@ -719,7 +724,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir,
         && (!impactKey || run.commit === commit || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
         && (!recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
-      problems.push(`lane ${lane.name}: no passing run of its test:lanes command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
+      problems.push(`lane ${lane.name}: no passing run of its lane command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
     }
   }
   if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {
@@ -736,7 +741,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir,
       continue;
     }
     if (entry.kind === "e2e" && unavailable.has(entry.path)) {
-      if (!e2eCarriedForCi(runsFile, selection, entry.path, commit)) {
+      if (!e2eCarriedForCi(runsFile, selection, entry.path, commit, prRules(worktree))) {
         problems.push(`${entry.path}: unavailable E2E needs an exact not-run spec record and authoritative CI owner`);
       }
       continue;
@@ -801,7 +806,7 @@ export function ciCheckProblems(runsFile, changed, commit) {
  * The Desktop Electron lane cannot run on a machine without the displayless
  * Linux harness, and vibe never launches Electron natively; there
  * `pre-pr-lanes.mjs check` records it `not-run` and the post-merge
- * `desktop-e2e/validated` run covers it (ISS-13321).
+ * `desktop-e2e/validated` run covers it.
  */
 function desktopLeftForCi(run) {
   return run?.status === "not-run" && isDesktopE2eLane(run.command ?? "") && text(run.reason);
@@ -809,7 +814,7 @@ function desktopLeftForCi(run) {
 
 /**
  * Every main-preexisting run is named in the body under Known main failures,
- * so the reviewer sees what the pull request did not cause (ISS-13321).
+ * so the reviewer sees what the pull request did not cause.
  */
 export function knownMainFailureProblems(body, runsFile) {
   const known = [...(runsFile?.runs ?? []), ...(runsFile?.testRuns ?? [])].filter(isMainPreexisting);
@@ -857,6 +862,17 @@ function localComparisonOperand(worktree) {
     if (configured) return `origin/${configured}`;
   } catch { /* No configured base. */ }
   try { return git(worktree, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]); } catch { return "origin/main"; }
+}
+
+/** The PR evidence rules (`data.recipes.prEvidence`) of the provider `binding` binds, or GENERIC_PR_RULES. */
+export function prRulesFor(binding) {
+  const data = providerDataOr(binding, "recipes", "prEvidence", null);
+  return data ? Object.freeze({ ...GENERIC_PR_RULES, ...data }) : GENERIC_PR_RULES;
+}
+
+/** prRulesFor the session at `worktree`. */
+export function prRules(worktree) {
+  return prRulesFor(sessionBinding(worktree));
 }
 
 /** The tests no ruling may leave not run: the diff rules' required tests and every spec the branch edits. */

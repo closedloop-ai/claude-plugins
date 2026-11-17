@@ -3,7 +3,7 @@
 // where vibe-core is always beside it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -18,7 +18,8 @@ function codexInstall(t) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-no-core-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const cache = path.join(root, "codex-home", "plugins", "cache", "closedloop-ai");
-  const vibe = path.join(cache, "vibe", "1.1.71");
+  // The cache folder is the plugin name its manifest gives: this source is published as vibe-generic.
+  const vibe = path.join(cache, "vibe-generic", "1.1.71");
   const keep = (file) => !file.endsWith(".test.mjs") && !file.includes(`${path.sep}dist${path.sep}`) && !file.endsWith(`${path.sep}dist`);
   for (const part of [".claude-plugin", ".codex-plugin", "shared", "skills/vibe/scripts", "skills/fleet-orchestrator/scripts"]) {
     cpSync(path.join(VIBE, part), path.join(vibe, part), { recursive: true, filter: keep });
@@ -45,14 +46,14 @@ if (a.join(" ") === "plugin add vibe-core@closedloop-ai") {
   chmodSync(path.join(bin, "codex"), 0o755);
   const home = path.join(root, "home");
   mkdirSync(home);
-  const run = (script, args) => spawnSync(process.execPath, [path.join(vibe, script), ...args], {
+  const run = (script, args, from = vibe) => spawnSync(process.execPath, [path.join(from, script), ...args], {
     encoding: "utf8", cwd: root, timeout: 60_000, env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, CODEX_THREAD_ID: "thread-1" } });
-  return { root, cache, run, calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : []) };
+  return { root, cache, vibe, run, calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : []) };
 }
 
 test("without vibe-core, check and status report it missing with its add command and exit 0 with their usual JSON", (t) => {
   const f = codexInstall(t);
-  const check = f.run("skills/vibe/scripts/plugin-version.mjs", ["check", "--runtime", "codex", "--closedloop", "connected", "--graph", "connected"]);
+  const check = f.run("skills/vibe/scripts/plugin-version.mjs", ["check", "--runtime", "codex", "--connection", "tracker=connected", "--connection", "graph=connected"]);
   assert.equal(check.status, 0, check.stderr);
   assert.doesNotMatch(check.stderr, /^\s+at /m);
   const result = JSON.parse(check.stdout);
@@ -65,13 +66,22 @@ test("without vibe-core, check and status report it missing with its add command
     "Setup check",
     "- Codex: vibe-core not installed",
     `- Codex: vibe-core is not installed in Codex, so vibe's guards cannot run there: run \`codex plugin add vibe-core@closedloop-ai\`, then ${APPROVE}`,
-    "- ClosedLoop connection: connected",
-    "- closedloop-graph connection: connected",
+    "- tracker connection: connected",
+    "- graph connection: connected",
   ]);
-  const status = f.run("skills/vibe/scripts/plugin-version.mjs", ["status", "--closedloop", "connected", "--graph", "not-connected"]);
+  const status = f.run("skills/vibe/scripts/plugin-version.mjs", ["status", "--connection", "tracker=connected", "--connection", "graph=not-connected"]);
   assert.equal(status.status, 0, status.stderr);
-  assert.match(JSON.parse(status.stdout).block, /- Codex: vibe-core not installed\n(?:.*\n){2}- closedloop-graph connection: not connected$/);
+  assert.match(JSON.parse(status.stdout).block, /- Codex: vibe-core not installed\n(?:.*\n){2}- graph connection: not connected$/);
   assert.deepEqual(f.calls(), [], "nothing is installed by a check");
+});
+
+test("without vibe-core, the check still reports it when node reaches the script through a symlinked directory", (t) => {
+  const f = codexInstall(t);
+  const linked = path.join(f.root, "linked-vibe");
+  symlinkSync(f.vibe, linked);
+  const check = f.run("skills/vibe/scripts/plugin-version.mjs", ["check", "--runtime", "codex"], linked);
+  assert.equal(check.status, 0, check.stderr);
+  assert.equal(JSON.parse(check.stdout).versions, "vibe-core: not installed");
 });
 
 test("without vibe-core, the chosen update runs codex plugin add vibe-core and names the approval its new hooks need", (t) => {
@@ -96,7 +106,7 @@ test("without vibe-core, a moved command such as fleet-home.mjs resume says what
   const resume = f.run("skills/fleet-orchestrator/scripts/fleet-home.mjs", ["resume", "--home", path.join(f.root, "fleet")]);
   assert.equal(resume.status, 2);
   assert.equal(resume.stdout, "");
-  assert.match(resume.stderr, /^fleet-home\.mjs: vibe-core is not installed beside vibe \(codex layout\); install it with `claude plugin install vibe-core@closedloop-ai` in Claude Code or `codex plugin add vibe-core@closedloop-ai` in Codex\n$/);
+  assert.match(resume.stderr, /^fleet-home\.mjs: vibe-core is not installed beside vibe-generic \(codex layout\); install it with `claude plugin install vibe-core@closedloop-ai` in Claude Code or `codex plugin add vibe-core@closedloop-ai` in Codex\n$/);
 });
 
 test("with a vibe-core older than this vibe needs, check says which version is installed and which it needs", (t) => {
@@ -106,7 +116,7 @@ test("with a vibe-core older than this vibe needs, check says which version is i
     mkdirSync(path.join(core, manifest), { recursive: true });
     writeFileSync(path.join(core, manifest, "plugin.json"), JSON.stringify({ name: "vibe-core", version: "0.9.0" }));
   }
-  const check = f.run("skills/vibe/scripts/plugin-version.mjs", ["check", "--closedloop", "connected", "--graph", "connected"]);
+  const check = f.run("skills/vibe/scripts/plugin-version.mjs", ["check", "--connection", "tracker=connected", "--connection", "graph=connected"]);
   assert.equal(check.status, 0, check.stderr);
   const result = JSON.parse(check.stdout);
   assert.equal(result.versions, `vibe-core: you have 0.9.0, this vibe needs ${VIBE_CORE_MIN} or newer`);

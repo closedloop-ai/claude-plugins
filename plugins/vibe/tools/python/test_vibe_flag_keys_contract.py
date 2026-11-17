@@ -22,12 +22,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, paragraph, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
 GUARDRAILS = VIBE / "references" / "guardrails.md"
-TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 VIBE_SKILL = VIBE / "SKILL.md"
 SESSIONS_SCRIPT = VIBE / "scripts" / "vibe-sessions.mjs"
 FLAG_KEYS_SCRIPT = VIBE / "scripts" / "flag-keys.mjs"
@@ -43,7 +44,7 @@ def assert_all(text: str, required: tuple[str, ...]) -> None:
 
 
 def test_the_canonical_rule_reads_the_target_repo_and_needs_a_human_source() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Feature flags")
+    rule = section(skill_split.read(GUARDRAILS), "## Feature flags")
     assert_all(rule, (
         "Propose a key, or a new read of one,",
         "No agent creates or adds a flag on its own.",
@@ -58,17 +59,17 @@ def test_the_canonical_rule_reads_the_target_repo_and_needs_a_human_source() -> 
 
 
 def test_the_closed_by_default_paragraph_points_at_the_repo_rule_instead_of_restating_it() -> None:
-    text = flat(GUARDRAILS.read_text())
+    text = flat(skill_split.read(GUARDRAILS))
     assert "the target repo's flag rule decides which keys it may add (\"Feature flags\")" in text
     assert "net-new screen, surface, or navigation item ships behind a default-off PostHog flag" not in text
-    labs = section(GUARDRAILS.read_text(), "## Labs")
+    labs = section(skill_split.read(GUARDRAILS), "## Labs")
     assert 'both keys follow "Feature flags"' in labs
 
 
 def test_the_writer_justifies_and_proposes_but_never_adds_a_flag_on_its_own() -> None:
     writer = paragraph(agent("vibe-change-worker"), "Never add a flag key or read yourself")
     assert_all(writer, (CANONICAL, "propose it and return `NEEDS_FLAG_APPROVAL`", '"No new tech debt"'))
-    script = FLAG_KEYS_SCRIPT.read_text()
+    script = skill_split.read(FLAG_KEYS_SCRIPT)
     assert_all(script, (
         "has no justification: reason must be one of",
         "with none of them, build the change ungated",
@@ -78,16 +79,16 @@ def test_the_writer_justifies_and_proposes_but_never_adds_a_flag_on_its_own() ->
 
 
 def test_the_person_approves_each_key_after_seeing_why_what_it_gates_and_the_whole_stack() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Feature flags")
+    rule = section(skill_split.read(GUARDRAILS), "## Feature flags")
     assert_all(rule, (
         "The person approves each key: ask the exact words `flag-keys.mjs question` prints (the key, why, what it gates, the whole stack)",
         "Only an explicit yes builds the key; no answer or nobody to ask builds nothing.",
     ))
-    skill = section(VIBE_SKILL.read_text(), "## 7. Feature flags")
+    skill = section(skill_split.read(VIBE_SKILL), "## 7. Feature flags")
     assert_all(skill, ("On `NEEDS_FLAG_APPROVAL`", "in the exact words `scripts/flag-keys.mjs question` prints", "skipping the product research gate"))
-    assert "`NEEDS_FLAG_APPROVAL` (ask the person, section 7)" in flat(VIBE_SKILL.read_text())
-    assert "and so does each flag key's approval" in section(QUALITY.read_text(), "## Communication and product questions")
-    script = FLAG_KEYS_SCRIPT.read_text()
+    assert "`NEEDS_FLAG_APPROVAL` (ask the person, section 7)" in flat(skill_split.read(VIBE_SKILL))
+    assert "and so does each flag key's approval" in section(skill_split.read(QUALITY), "## Communication and product questions")
+    script = skill_split.read(FLAG_KEYS_SCRIPT)
     assert_all(script, (
         'case "approve":',
         "only the person running it can approve a flag key",
@@ -99,7 +100,7 @@ def test_the_person_approves_each_key_after_seeing_why_what_it_gates_and_the_who
 
 
 def test_tech_debt_is_one_principle_applied_by_the_existing_owners() -> None:
-    rule = section(GUARDRAILS.read_text(), "## No new tech debt")
+    rule = section(skill_split.read(GUARDRAILS), "## No new tech debt")
     assert_all(rule, (
         "A change grows no tech debt without a cited reason.",
         "a parallel path (a second route, service, writer or store for a behavior one already owns)",
@@ -134,25 +135,25 @@ def test_the_guardrails_reviewer_checks_every_key_the_session_adds_or_depends_on
 
 
 def test_handoff_routes_flag_findings_to_the_writer_and_tells_the_person_the_keys() -> None:
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "A flag key without the person's recorded yes gets its approval question once" in handoff
     assert "with no yes the writer removes the gate" in handoff
-    hand_over = section(HANDOFF_SKILL.read_text(), "## 9. Hand it over")
+    hand_over = section(skill_split.read(HANDOFF_SKILL), "## 9. Hand it over")
     assert 'the ticket\'s "Keys to see this work"' in hand_over
 
 
 def test_the_ticket_summary_and_pull_request_carry_the_keys_and_justifications() -> None:
-    template = flat(TICKET_TEMPLATE.read_text())
+    template = flat(skill_split.read(TICKET_TEMPLATE))
     assert 'and "Keys to see this work" (`guardrails.md`, "Feature flags")' in template
     environment = flat(agent("vibe-environment-worker"))
     assert 'with the live ticket\'s slug and its "Keys to see this work"' in environment
 
 
 def test_the_record_commands_the_rule_names_exist_and_the_ticket_check_requires_approval() -> None:
-    script = FLAG_KEYS_SCRIPT.read_text()
+    script = skill_split.read(FLAG_KEYS_SCRIPT)
     for command in ('case "record":', 'case "question":', 'case "approve":', 'case "show":'):
         assert command in script
-    assert "flagKeys: listedFlagKeys(" in SESSIONS_SCRIPT.read_text()
-    check = TICKET_CHECK.read_text()
+    assert "flagKeys: listedFlagKeys(" in skill_split.read(SESSIONS_SCRIPT)
+    check = skill_split.read(TICKET_CHECK)
     assert '"lists no keys to see the work"' in check
     assert "flagKeyProblems(record)" in check

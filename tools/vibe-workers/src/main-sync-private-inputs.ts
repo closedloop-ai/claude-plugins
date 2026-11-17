@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { isPlanFile, planPrefixesOf } from "./main-sync-plan-folder.js";
 import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
 import { MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
@@ -11,7 +11,7 @@ let analyzed: { root: string; head: string; candidates: string; privatePaths: bo
 /** Checks owned archive paths and finite static import/collector references, not arbitrary runtime reachability. */
 export function verifyPrivateInput(root: string, file: string, head: string) {
   verifyEvidencePath(root, file);
-  const privatePaths = git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0").filter(isLocalPlanPath);
+  const privatePaths = git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0").filter((path) => isPlanFile(root, path));
   const candidates = privatePaths.join("\0");
   if (analyzed?.root !== root || analyzed.head !== head || analyzed.candidates !== candidates) {
     analyzed = { root, head, candidates, privatePaths: referencesPrivateInputs(root, privatePaths) };
@@ -23,7 +23,10 @@ export function verifyPrivateInput(root: string, file: string, head: string) {
 
 /** Git can omit a symlinked private directory's descendants, so inspect the namespace itself first. */
 export function verifyPrivateRoot(root: string) {
-  for (const path of [".closedloop-ai", ".closedloop-ai/vibe-plans"]) {
+  // Every known plan folder and its artifact root, bound or not.
+  const paths = planPrefixesOf(root).flatMap((prefix) => [prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/")), prefix.slice(0, -1)])
+    .filter(Boolean);
+  for (const path of [...new Set(paths)]) {
     const stat = lstatSync(join(root, path), { throwIfNoEntry: false });
     if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(join(root, path)) !== join(root, path))) {
       throw new MainSyncError("Private planning evidence requires its canonical owned directory; no symlink or alias is accepted", "NEEDS_CHANGE");
@@ -50,6 +53,6 @@ function referencesPrivateInputs(root: string, privatePaths: string[]) {
     if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
     if (reference.kind !== "path") return false;
     const path = resolve(reference.base === "module" ? dirname(join(root, file)) : root, reference.value);
-    return existsSync(path) && isLocalPlanPath(relative(root, realpathSync(path)));
+    return existsSync(path) && isPlanFile(root, relative(root, realpathSync(path)));
   });
 }

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from vibe_contract_text import flat, hook_guard_routed
+import skill_split
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -15,7 +16,7 @@ MONITOR = SKILLS / "codex-fleet-monitor"
 
 
 def _text(path: Path) -> str:
-    return flat(path.read_text())
+    return flat(skill_split.read(path))
 
 
 def test_questions_carry_a_default_and_the_fleet_keeps_a_heartbeat() -> None:
@@ -27,15 +28,15 @@ def test_questions_carry_a_default_and_the_fleet_keeps_a_heartbeat() -> None:
     monitor = _text(MONITOR / "SKILL.md")
     for wired in ("HEARTBEAT_SECONDS", "proceeded-on-default", "If no answer by <ISO time>: <default>"):
         assert wired in monitor, wired
-    assert "HEARTBEAT" in (MONITOR / "scripts" / "watch.sh").read_text()
-    assert "seq 1 200" not in (MONITOR / "scripts" / "watch.sh").read_text(), "a 6.7 hour watcher is not a heartbeat"
+    assert "HEARTBEAT" in skill_split.read(MONITOR / "scripts" / "watch.sh")
+    assert "seq 1 200" not in skill_split.read(MONITOR / "scripts" / "watch.sh"), "a 6.7 hour watcher is not a heartbeat"
 
 
 def test_takeovers_reverify_done_claims() -> None:
     templates = _text(FLEET / "references" / "templates.md")
     assert "Re-verify: each Done claim with a test or a measurement" in templates
     assert 'Re-verify every "done" claim' in templates
-    assert "REVERIFY" in (FLEET / "scripts" / "codex-session.mjs").read_text()
+    assert "REVERIFY" in skill_split.read(FLEET / "scripts" / "codex-session.mjs")
 
 
 def test_a_migration_is_tested_before_its_first_push() -> None:
@@ -43,11 +44,11 @@ def test_a_migration_is_tested_before_its_first_push() -> None:
     assert "migration-publish.mjs --worktree" in environment
     guardrails = _text(VIBE / "references" / "guardrails.md")
     assert "Pushing a migration publishes it" in guardrails and "`Scale test:`" in guardrails
-    assert "migrationProblems" in (HANDOFF / "scripts" / "diff-rules.mjs").read_text(), "handoff runs the same check"
+    assert "migrationProblems" in skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs"), "handoff runs the same check"
 
 
 def test_a_spec_or_criterion_changes_only_with_a_human_source() -> None:
-    assert "checkSpecChanges" in (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    assert "checkSpecChanges" in skill_split.read(HANDOFF / "scripts" / "diff-rules.mjs")
     assert "--criteria-before" in _text(AGENTS / "vibe-ticket-worker.md")
     assert "`spec-change`" in _text(AGENTS / "vibe-guardrails-reviewer.md")
 
@@ -65,7 +66,7 @@ def test_every_path_that_sets_a_ticket_done_checks_its_criteria_first() -> None:
 
 def test_the_shepherd_stops_on_review_threads() -> None:
     assert "an unresolved round-one review thread the writer has not answered last" in _text(HANDOFF / "SKILL.md")
-    assert '"threads"' in (VIBE / "scripts" / "shepherd.mjs").read_text()
+    assert '"threads"' in skill_split.read(VIBE / "scripts" / "shepherd.mjs")
 
 
 def test_claude_sessions_run_the_kill_guard_on_every_bash_command() -> None:
@@ -74,8 +75,8 @@ def test_claude_sessions_run_the_kill_guard_on_every_bash_command() -> None:
 
 
 def test_stale_prs_and_unanswered_questions_are_flagged_and_answered() -> None:
-    assert "STALE-PR" in (MONITOR / "scripts" / "snapshot.sh").read_text()
-    assert "QUESTION-UNANSWERED" in (MONITOR / "scripts" / "classify.sh").read_text()
+    assert "STALE-PR" in skill_split.read(MONITOR / "scripts" / "snapshot.sh")
+    assert "QUESTION-UNANSWERED" in skill_split.read(MONITOR / "scripts" / "classify.sh")
     monitor = _text(MONITOR / "SKILL.md")
     for wired in ("STALE-PR(...)", "QUESTION-UNANSWERED(15m+)", "STALE_PR_SECONDS", "QUESTION_SECONDS"):
         assert wired in monitor, wired
@@ -100,13 +101,13 @@ def test_program_practices_and_rollout_gate_are_wired() -> None:
         assert wired in fleet, wired
     assert "--criteria <ticket body>" in fleet and "--scope <ticket>,<PRD>" in fleet
     assert "rollout-gate.mjs --worktree" in _text(HANDOFF / "SKILL.md")
-    assert "load-check.sh" in (FLEET / "scripts" / "fleet.sh").read_text()
+    assert "load-check.sh" in skill_split.read(FLEET / "scripts" / "fleet.sh")
 
 
 def test_the_requirements_worker_never_reads_public_help_material() -> None:
     import re
 
-    worker = (AGENTS / "vibe-requirements-worker.md").read_text()
+    worker = skill_split.read(AGENTS / "vibe-requirements-worker.md")
     sentences = re.split(r"(?<=[.!?])\s+", flat(worker))
     public = re.compile(r"help cent(?:er|re)|public documentation|release notes|web search", re.IGNORECASE)
     offenders = [sentence for sentence in sentences if public.search(sentence) and not re.search(r"\bnever\b|\bnot\b", sentence, re.IGNORECASE)]
@@ -119,5 +120,5 @@ def test_ready_heads_green_watch_claude_usage_and_status_sweep_are_wired() -> No
     for wired in ("`push-check` must print `READY`", "`UNREADY-COMMIT`", "green-watch.mjs --repo", "claude -p \"/usage\"", "`status-sweep` duty", "`PLAN-OPEN`", "`ABSORBED-OPEN`"):
         assert wired in fleet, wired
     assert "the monitor cannot read Claude usage" not in fleet
-    assert "claude-usage.mjs" in (MONITOR / "scripts" / "snapshot.sh").read_text()
+    assert "claude-usage.mjs" in skill_split.read(MONITOR / "scripts" / "snapshot.sh")
     assert "--ready <sha>" in _text(FLEET / "references" / "templates.md")

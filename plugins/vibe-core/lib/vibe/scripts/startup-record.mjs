@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isVibePlugin } from "../../../shared/plugin-roots.mjs";
 
 export const VersionStatus = Object.freeze({ Current: "current", Outdated: "outdated", Unknown: "unknown", Pending: "pending" });
 export const RELEASE_VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
@@ -31,7 +32,7 @@ export function compareVersions(left, right) {
 /** The installed vibe version reported for `runtime`, or null. */
 export function installedVibeVersion(record, runtime) {
   const entry = (record?.harnesses ?? []).find((item) => item?.harness === runtime);
-  return entry?.plugins?.find((plugin) => plugin?.name === "vibe")?.version ?? null;
+  return entry?.plugins?.find((plugin) => isVibePlugin(plugin?.name))?.version ?? null;
 }
 
 /** Why this conversation must reload the current skill before another brief. */

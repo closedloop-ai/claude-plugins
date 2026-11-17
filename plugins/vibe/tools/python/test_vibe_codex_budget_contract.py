@@ -14,10 +14,12 @@ accounts' weekly Codex limits.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -31,7 +33,7 @@ WHOLE_STORYBOOK_SUITE = re.compile(r"`pnpm --filter storybook test`(?! suite)")
 
 
 def harness_notes() -> str:
-    return section(VIBE_SKILL.read_text(), "## Harness notes")
+    return section(skill_split.read(VIBE_SKILL), "## Harness notes")
 
 
 def test_codex_spawns_take_model_and_effort_from_the_policy() -> None:
@@ -40,7 +42,7 @@ def test_codex_spawns_take_model_and_effort_from_the_policy() -> None:
     assert "`gpt-5.6-terra`" in notes and "`gpt-6-sol`" in notes
     assert "Never pass `xhigh` unless the person asked for it" in notes
     for skill in (HANDOFF_SKILL, SEED_SKILL):
-        assert "worker-model.mjs codex <name>" in flat(skill.read_text()), skill.name
+        assert "worker-model.mjs codex <name>" in flat(skill_split.read(skill)), skill.name
 
 
 def test_usage_limits_stop_both_harnesses_unless_credits_were_allowed() -> None:
@@ -64,10 +66,10 @@ def test_verify_worker_runs_only_targeted_tests() -> None:
 
 def test_no_vibe_text_asks_for_a_whole_suite() -> None:
     sources = {
-        "guardrails": (REFERENCES / "guardrails.md").read_text(),
-        "quality-loop": (REFERENCES / "quality-loop.md").read_text(),
-        "closedloop-graph": (REFERENCES / "closedloop-graph.md").read_text(),
-        "handoff": HANDOFF_SKILL.read_text(),
+        "guardrails": skill_split.read(REFERENCES / "guardrails.md"),
+        "quality-loop": skill_split.read(REFERENCES / "quality-loop.md"),
+        "closedloop-graph": skill_split.read(PROVIDER_REFERENCES / "closedloop-graph.md"),
+        "handoff": skill_split.read(HANDOFF_SKILL),
         "primitive": agent("vibe-primitive-worker"),
         "decomposer": agent("vibe-storybook-decomposer"),
         "environment": agent("vibe-environment-worker"),
@@ -82,12 +84,18 @@ def test_no_vibe_text_asks_for_a_whole_suite() -> None:
 
 
 def test_handoff_recipe_runs_no_test_suite() -> None:
-    source = CHECKS_SOURCE.read_text()
+    source = skill_split.read(CHECKS_SOURCE)
     recipe = source[source.index("export function checkRecipe") : source.index("/** Runs the fixed matrix")]
     for command in ('"test:affected"', '"turbo", "test"', '["pnpm", "verify"]', '["pnpm", "test"]', '"test:lint"',
                     '"test:skills"', '"test:renderer"', '"storybook", "test"', "lanes.commands"):
         assert command not in recipe, command
-    assert '"typecheck:affected"' in recipe
+    # The matrix itself is the provider repository's recipe; its handoff steps run no suite either.
+    contract = json.loads(skill_split.read(PROVIDER_REFERENCES.parents[2] / "provider.json"))
+    checks = contract["data"]["recipes"]["mainSync"]["checks"]
+    handoff = [" ".join(step["argv"]) for purpose in ("handoff", "final") for step in checks[purpose] if "argv" in step]
+    for command in ("test:affected", "turbo test", "pnpm verify", "pnpm test", "test:lint", "test:skills", "test:renderer", "storybook test"):
+        assert not any(command in line.split("--")[0] for line in handoff if line != "pnpm typecheck:affected"), command
+    assert "pnpm typecheck:affected" in handoff
 
 
 def test_e2e_uses_a_capability_tier_and_only_needed_specs() -> None:
@@ -97,6 +105,6 @@ def test_e2e_uses_a_capability_tier_and_only_needed_specs() -> None:
     assert "Tier C:" in checks
     assert "Run only those specs through the chosen tier" in checks
     assert "git config --bool vibe.noNativeE2e" in checks
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "and no other spec" in handoff
     assert "one stack per machine through `../vibe/scripts/e2e-lock.mjs`" in handoff

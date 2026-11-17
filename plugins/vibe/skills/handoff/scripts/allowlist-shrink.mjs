@@ -1,8 +1,8 @@
 // Decides whether an edit to a source-gate allowlist only removes entries or
 // lowers their counts. The repo's allowlists are shrink-only: a vibe session
 // whose change removes the last allowlisted occurrence of a rule must delete
-// that entry for `pnpm check:source-gates` to pass, so a session may make
-// exactly that edit and no other edit under `scripts/` (ISS-12135).
+// that entry for the repository's source gates to pass, so a session may make
+// exactly that edit and no other edit under `scripts/`.
 
 import { isDeepStrictEqual } from "node:util";
 

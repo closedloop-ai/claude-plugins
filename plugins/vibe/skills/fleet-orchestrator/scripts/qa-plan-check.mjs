@@ -20,9 +20,12 @@
 // rollout gate was once skipped and no QA step checked it.
 
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { rolloutRequirements } from "../../handoff/scripts/rollout-gate.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const CHECKPOINT = /^###\s+([A-Za-z0-9_-]+):/;
 const ROUTING = /^-\s*Routing[^:]*:\s*(.*)$/;
@@ -94,11 +97,10 @@ function main(argv) {
   return refused === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

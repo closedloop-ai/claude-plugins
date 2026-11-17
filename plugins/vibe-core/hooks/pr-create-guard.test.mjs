@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { handoffGateProblem, mergeabilityProblem, resolvePrBase, reviewFindingProblems } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { recordHandoffGate } from "../../vibe/skills/handoff/scripts/handoff-gate.mjs";
 import { sourceIdentity } from "../lib/vibe/scripts/tested-head.mjs";
@@ -304,7 +305,8 @@ test("null transcript uses only an active exact-session marker or recorded vibe 
   assert.match(prCreateGuard(event, home)?.reason ?? "", /no vibe session record/);
   assert.equal(prCreateGuard({ ...event, session_id: "session-b" }, home), null, "another session cannot borrow the marker");
   recordHookSkill("session-a", "other:skill", home);
-  assert.equal(prCreateGuard(event, home), null, "a later unrelated skill clears scope");
+  assert.match(prCreateGuard(event, home)?.reason ?? "", /no vibe session record/,
+    "a later unrelated skill no longer clears scope (operator ruling, 2026-11-11: activation lasts until the chat ends or expires)");
   recordHookSkill("session-a", "vibe:fleet-orchestrator", home, new Date("2020-01-01T00:00:00Z"));
   assert.equal(readHookSkill("session-a", home), null);
   assert.equal(prCreateGuard(event, home), null, "stale marker does not scope the session");
@@ -361,7 +363,7 @@ test("AC-1 AC-4 AC-5 AC-7 AC-9 AC-10: a failing vibe gate accepts only a tickete
   assert.match(prCreateGuard({ cwd: worktree, tool_input: { command: `gh pr new --body-file ${body}` } })?.reason ?? "", /handoff gate has not passed/,
     "the new alias keeps the failing Vibe gate");
 
-  writeFileSync(body, "Vibe gate override: ISS-13855: handoff gate bug refuses the verified PR source.\n");
+  writeFileSync(body, "Vibe gate override: #13855: handoff gate bug refuses the verified PR source.\n");
   assert.equal(prCreateGuard(event), null, "a dedicated ticketed reason is an explicit, auditable exception");
   assert.equal(prCreateGuard({ cwd: worktree, tool_input: { command: `gh pr new -F${body}` } }), null,
     "the new alias accepts the same ticketed body only through its parsed body file");
@@ -375,7 +377,7 @@ test("AC-1 AC-4 AC-5 AC-7 AC-9 AC-10: a failing vibe gate accepts only a tickete
     "the override does not bypass cloud import readiness");
   rmSync(cloudReceipt);
 
-  writeFileSync(body, "Vibe gate override: ISS-13855:   \n");
+  writeFileSync(body, "Vibe gate override: #13855:   \n");
   assert.equal(prCreateGuard(event)?.decision, "deny", "an empty reason cannot override");
   writeFileSync(body, "Vibe gate override: handoff gate bug refuses the verified PR source.\n");
   assert.equal(prCreateGuard(event)?.decision, "deny", "a reason without a ticket cannot override");
@@ -384,12 +386,12 @@ test("AC-1 AC-4 AC-5 AC-7 AC-9 AC-10: a failing vibe gate accepts only a tickete
   writeFileSync(body, "ISS-13855: handoff gate bug refuses the verified PR source.\n");
   assert.equal(prCreateGuard(event)?.decision, "deny", "a ticket and reason without the explicit marker cannot override");
   assert.equal(prCreateGuard({ cwd: worktree, tool_input: { command: "gh pr create --base main" } })?.decision, "deny", "no submitted body file cannot override");
-  writeFileSync(body, "Vibe gate override: ISS-13855: handoff gate bug refuses the verified PR source.\n");
+  writeFileSync(body, "Vibe gate override: #13855: handoff gate bug refuses the verified PR source.\n");
   const linkedBody = path.join(worktree, "body-link.md");
   symlinkSync(body, linkedBody);
   assert.equal(prCreateGuard({ cwd: worktree, tool_input: { command: `gh pr create --body-file ${linkedBody}` } })?.decision, "deny",
     "a symlinked body is not the checked regular file");
-  writeFileSync(body, `Vibe gate override: ISS-13855: ${"x".repeat(65536)}\n`);
+  writeFileSync(body, `Vibe gate override: #13855: ${"x".repeat(65536)}\n`);
   assert.equal(prCreateGuard(event)?.decision, "deny", "an oversized body is not read as an override");
 });
 
@@ -484,7 +486,7 @@ test("AC-2 AC-6: an explicit proven non-vibe PR head is allowed from a vibe conv
     assert.equal(prCreateGuard({ cwd: ordinaryRepo, session_id: "fleet-head", tool_input: { command } }, home)?.decision, "deny",
       `${command}: a vibe-scoped conversation still refuses a session-less vibe head without the override`);
   }
-  writeFileSync(path.join(ordinaryRepo, "override.md"), "Vibe gate override: ISS-13846: the session record was lost.\n");
+  writeFileSync(path.join(ordinaryRepo, "override.md"), "Vibe gate override: #13846: the session record was lost.\n");
   assert.equal(prCreateGuard({ cwd: ordinaryRepo, session_id: "fleet-head", tool_input: { command: "gh pr create --head vibe/new --body-file override.md" } }, home), null,
     "the ticketed override also clears the missing-record refusal");
   execFileSync("git", ["-C", ordinaryRepo, "checkout", "-q", "vibe/new"]);
@@ -542,7 +544,7 @@ test("ISS-13855: the orchestrator opens a gate-refused Vibe PR from outside its 
   assert.match(prCreateGuard(create(checkout))?.reason ?? "", /handoff gate has not passed/,
     "from the repository checkout the guard finds the session that owns the head and keeps its gate");
 
-  writeFileSync(body, "## Summary\nServer-only plugin change; every real check passed.\n\nVibe gate override: ISS-13846: the gate's live-ticket check requires preview URLs a server-only change cannot have.\n");
+  writeFileSync(body, "## Summary\nServer-only plugin change; every real check passed.\n\nVibe gate override: #13846: the gate's live-ticket check requires preview URLs a server-only change cannot have.\n");
   assert.equal(prCreateGuard(create(checkout)), null, "the ticketed override opens the PR from the repository checkout");
   assert.equal(prCreateGuard({ ...create(checkout), tool_input: { command: `gh pr create --repo owner/plugins --head vibe/server-only --body-file ${body}` } }), null,
     "the long repository flag resolves the same owning session");
@@ -615,7 +617,7 @@ test("ISS-13855: every PR guard refusal names a supported retry, and gate refusa
   const plain = path.join(outside, "plain.md");
   const ticketed = path.join(outside, "ticketed.md");
   writeFileSync(plain, "## Summary\nNo override line.\n");
-  writeFileSync(ticketed, "Vibe gate override: ISS-13846: the gate refuses a verified change.\n");
+  writeFileSync(ticketed, "Vibe gate override: #13846: the gate refuses a verified change.\n");
   const guard = (cwd, command) => prCreateGuard({ cwd, session_id: "retry", tool_input: { command } }, home);
   const retry = /; (if every real check and review passed and a known Vibe gate bug is the only blocker|run gh pr create on this machine from a checkout|cd to a literal checkout path|run gh pr create as a plain command|run the final handoff gate on the published source, or if every real check|pass the handoff gate, then finish the cloud task)/;
   const refusals = {
@@ -646,4 +648,51 @@ test("ISS-13855: every PR guard refusal names a supported retry, and gate refusa
   git("checkout", "-q", "vibe/orphan");
   assert.match(guard(repo, `gh pr create --body-file ${plain}`)?.reason ?? "", retry, "a vibe/ worktree with no record names the override");
   assert.equal(guard(repo, `gh pr create --body-file ${ticketed}`), null, "and the ticketed override clears it");
+});
+
+test("the override names its ticket the way the session's tracker does: a bound provider's reference, else a GitHub issue or URL", (t) => {
+  const worktree = mkdtempSync(path.join(tmpdir(), "vibe-pr-override-ref-"));
+  t.after(() => rmSync(worktree, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q", "-b", "vibe/example", worktree]);
+  writeFileSync(path.join(worktree, "file.txt"), "base\n");
+  execFileSync("git", ["-C", worktree, "add", "."]);
+  execFileSync("git", ["-C", worktree, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "base"]);
+  const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  const record = (extra) => writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ branch: "vibe/example", ...extra }));
+  const body = path.join(worktree, "body.md");
+  const event = { cwd: worktree, tool_input: { command: `gh pr create --base main --body-file ${body}` } };
+  const declare = (reference) => writeFileSync(body, `Vibe gate override: ${reference}: handoff gate bug refuses the verified PR source.\n`);
+
+  record({ provider: { state: "none" } });
+  declare("ISS-13855");
+  assert.equal(prCreateGuard(event)?.decision, "deny", "with no tracker bound, a tracker-style key is not a reference");
+  declare("#42");
+  assert.equal(prCreateGuard(event), null, "a GitHub issue number names the ticket");
+  declare("https://github.com/acme/widgets/issues/42");
+  assert.equal(prCreateGuard(event), null, "an issue URL names the ticket");
+
+  record({ provider: { state: "bound", name: "vibe-closedloop-provider", capabilities: ["tickets", "plans", "graph", "memory", "recipes"],
+    root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../vibe-closedloop-provider") } });
+  declare("ISS-13855");
+  assert.equal(prCreateGuard(event), null, "the bound tracker's reference names the ticket");
+  declare("WIDGET");
+  assert.equal(prCreateGuard(event)?.decision, "deny", "a word that is no reference still cannot override");
+});
+
+test("with a tracker bound the override names one of its issues, never a URL or a plan", (t) => {
+  const worktree = mkdtempSync(path.join(tmpdir(), "vibe-pr-override-issue-"));
+  t.after(() => rmSync(worktree, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q", "-b", "vibe/example", worktree]);
+  writeFileSync(path.join(worktree, "file.txt"), "base\n");
+  execFileSync("git", ["-C", worktree, "add", "."]);
+  execFileSync("git", ["-C", worktree, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "base"]);
+  const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ branch: "vibe/example", provider: { state: "bound", name: "vibe-closedloop-provider",
+    capabilities: ["tickets", "plans", "graph", "memory", "recipes"], root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../vibe-closedloop-provider") } }));
+  const body = path.join(worktree, "body.md");
+  const event = { cwd: worktree, tool_input: { command: `gh pr create --base main --body-file ${body}` } };
+  for (const [reference, allowed] of [["ISS-13855", true], ["FEA-12", true], ["PLN-7", false], ["https://example.com/x", false], ["#42", false]]) {
+    writeFileSync(body, `Vibe gate override: ${reference}: handoff gate bug refuses the verified PR source.\n`);
+    assert.equal(prCreateGuard(event) === null, allowed, reference);
+  }
 });

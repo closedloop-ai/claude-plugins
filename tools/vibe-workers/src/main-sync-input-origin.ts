@@ -8,6 +8,7 @@ import { MainSyncError, type OriginProof } from "./main-sync-contracts.js";
 import { digest, type syncContext } from "./main-sync-state.js";
 import { trackedInputs, verifyOriginProof, type inspectInputInventory } from "./main-sync-checks.js";
 import { producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, type InputProducer } from "./main-sync-input-catalog.js";
+import { bootstrapFor, mainSyncRecipe } from "./main-sync-recipe.js";
 import { originIdentity, sameOriginFiles, type OriginFile } from "./main-sync-input-files.js";
 import { isRefreshable, pureOriginFiles, refreshPureOutput } from "./main-sync-input-pure.js";
 import { packPackageOwner } from "./main-sync-package-owner.js";
@@ -43,11 +44,14 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
         throw new MainSyncError(`Pristine output origin was not empty: ${path}`, "NEEDS_CHANGE");
       }
     }
-    if (lstatSync(join(cold, "node_modules"), { throwIfNoEntry: false })
-      || lstatSync(join(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
+    // The recipe names the paths a pristine checkout must not already hold (installed packages, legacy artifacts).
+    const { pristineEmpty } = mainSyncRecipe(root);
+    if (pristineEmpty.some((path) => lstatSync(join(cold!, path), { throwIfNoEntry: false }))) {
       throw new MainSyncError("Pristine bootstrap prerequisites are not empty or contain a legacy migration artifact", "NEEDS_CHANGE");
     }
-    run(cold, ["bash", ".closedloop-ai/loops-setup.sh"]);
+    const bootstrap = bootstrapFor(root, cold);
+    if (!bootstrap) throw new MainSyncError("The repository declares no bootstrap for a pristine producer checkout", "NEEDS_CHANGE");
+    run(cold, [...bootstrap]);
     assertTracked(cold, before);
    }
     const prepared: { producer: InputProducer; expected: OriginFile[]; actual: OriginFile[];
@@ -75,7 +79,7 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
       const names = new Set(expected.map((file) => file.path));
       const actual = producerFiles(root, producer, names);
       // A stale gitignored output (build-info, the docs bundle manifest) is rewritten below by the repository's own
-      // producer, once every original set is known (ISS-13321).
+      // producer, once every original set is known.
       const stale = !sameOriginFiles(actual, expected) && isRefreshable(producer);
       if (producer.strategy !== "full-write" && !stale && !sameOriginFiles(actual, expected)) {
         throw new MainSyncError(`Generated input differs from canonical committed production: ${producer.id}; SAME source must use the existing canonical producer then recheck`, "NEEDS_CHANGE");

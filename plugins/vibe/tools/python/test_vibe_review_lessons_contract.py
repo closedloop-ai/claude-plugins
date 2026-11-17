@@ -10,16 +10,18 @@ retired: nothing agent-written goes into public docs.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from vibe_contract_text import agent, flat, section
+from vibe_contract_text import PROVIDER_DATA, PROVIDER_REFERENCES, agent, flat, section
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
 GUARDRAILS = REFERENCES / "guardrails.md"
 DESIGN_PASS = REFERENCES / "design-pass.md"
 QUALITY = REFERENCES / "quality-loop.md"
-TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
@@ -54,13 +56,13 @@ def test_main_sync_capability_removal_is_a_reviewer_check_on_every_merge() -> No
     writer = flat(agent("vibe-change-worker"))
     assert "A conflict is never resolved by taking away what main ships" in writer
     assert "no test is changed to pin a reduced behavior" in writer
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "Every main sync is checked for capability removal, this one included" in handoff
     assert "dispatch `vibe-guardrails-reviewer` for its check 13 on that merge" in handoff
 
 
 def test_version_history_is_one_entry_at_the_next_version_and_checked() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Storybook taxonomy")
+    rule = section(skill_split.read(GUARDRAILS), "## Storybook taxonomy")
     assert_all(rule, (
         "A session is one release: exactly one new Version History entry, at the next version",
         "special-case a validator, test or key (a duplicate-key exception) so two entries can coexist",
@@ -76,7 +78,7 @@ def test_version_history_is_one_entry_at_the_next_version_and_checked() -> None:
 
 
 def test_a_compile_only_repair_rewords_no_prose_and_is_read_word_by_word() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Storybook taxonomy")
+    rule = section(skill_split.read(GUARDRAILS), "## Storybook taxonomy")
     assert "A compile-only repair rewords no comment, description, docs parameter or story text either" in rule
     check = reviewer_check(10)
     assert "`git -C <wt> diff --word-diff <base> <file>`" in check
@@ -85,19 +87,21 @@ def test_a_compile_only_repair_rewords_no_prose_and_is_read_word_by_word() -> No
 
 
 def test_lost_and_stale_story_ids_are_searched_and_block() -> None:
-    rule = section(GUARDRAILS.read_text(), "## Storybook taxonomy")
+    rule = section(skill_split.read(GUARDRAILS), "## Storybook taxonomy")
     assert "the inventory's `lost-story-id` findings name every reference left" in rule
     assert "`lost-story-id` findings block" in reviewer_check(10)
-    assert "`lost-story-id` finding, a lost story ID or a reference still naming one, blocks too" in flat(HANDOFF_SKILL.read_text())
-    rules = DIFF_RULES.read_text()
+    assert "`lost-story-id` finding, a lost story ID or a reference still naming one, blocks too" in flat(skill_split.read(HANDOFF_SKILL))
+    rules = skill_split.read(DIFF_RULES)
     assert '"lost-story-id"' in rules
-    assert "STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS," in rules
-    for spec in ('"docs/"', '"apps/web/content/docs/"', '".claude/"', '"*.test.*"', '"*.stories.*"'):
-        assert spec in rules, spec
+    # The places a story ID can be named: the repository's e2e roots, its docs (the provider's diff rules) and tests.
+    assert '"--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"' in rules
+    docs = PROVIDER_DATA["recipes"]["diffRules"]["docs"]
+    for spec in ("docs/", "apps/web/content/docs/", ".claude/"):
+        assert spec in docs, spec
 
 
 def test_a_slot_alone_is_not_a_shared_owner() -> None:
-    rules = section(DESIGN_PASS.read_text(), "## Owner rules")
+    rules = section(skill_split.read(DESIGN_PASS), "## Owner rules")
     assert_all(rules, (
         "A slot alone is not an owner",
         "(selection, grouping, collapse, paging) live in the parent or in one shared hook",
@@ -113,7 +117,7 @@ def test_a_slot_alone_is_not_a_shared_owner() -> None:
 
 
 def test_each_acceptance_criterion_maps_to_every_surface_it_names() -> None:
-    rule = section(QUALITY.read_text(), "## Acceptance criteria before ready")
+    rule = section(skill_split.read(QUALITY), "## Acceptance criteria before ready")
     assert_all(rule, (
         "Each criterion also carries a `Surfaces:` line",
         "a list and a board are two",
@@ -127,24 +131,24 @@ def test_each_acceptance_criterion_maps_to_every_surface_it_names() -> None:
 
 
 def test_nothing_agent_written_goes_into_public_docs() -> None:
-    docs = section(GUARDRAILS.read_text(), "## Feature docs at handoff")
+    docs = section(skill_split.read(GUARDRAILS), "## Feature docs at handoff")
     assert_all(docs, (
         "Nothing agent-written goes into public docs. This section is the rule's one canonical statement",
         "No worker edits, creates or drafts anything under `apps/web/content/docs/`",
         "it never carries drafted words",
         "reports any change under either folder as outside the allowed paths in every phase",
     ))
-    copy = section(GUARDRAILS.read_text(), "## Copy")
+    copy = section(skill_split.read(GUARDRAILS), "## Copy")
     assert "There is no exception" in copy
     assert "scoped exception" not in copy
-    table = next(line for line in GUARDRAILS.read_text().splitlines() if line.startswith("| `packages/app/**`"))
+    table = next(line for line in skill_split.read(GUARDRAILS).splitlines() if line.startswith("| `packages/app/**`"))
     assert "`apps/web/content/docs/**`" in table.split("|")[2]
     assert "`outsideAllowed` already blocks every docs path" in reviewer_check(4)
-    inventory = INVENTORY.read_text()
+    inventory = skill_split.read(INVENTORY)
     assert "isExistingDocsEdit" not in inventory
     assert "PRODUCT_DOCS_PREFIX" not in inventory
     for path in (GUARDRAILS, HANDOFF_SKILL, TICKET_TEMPLATE, PLUGIN_ROOT / "README.md"):
-        assert "Agent draft (<live ticket slug>)" not in path.read_text(), path.name
+        assert "Agent draft (<live ticket slug>)" not in skill_split.read(path), path.name
     for name in ("vibe-change-worker", "vibe-guardrails-reviewer", "vibe-ticket-worker"):
         text = flat(agent(name))
         assert "marked agent draft" not in text, name
@@ -166,7 +170,7 @@ def test_flag_retirement_reads_linked_ticket_comments_and_a_hold_needs_a_human()
 
 
 def test_leftovers_after_an_extraction_are_a_red_flag_with_a_concrete_check() -> None:
-    flags = section(DESIGN_PASS.read_text(), "### Red flags")
+    flags = section(skill_split.read(DESIGN_PASS), "### Red flags")
     assert_all(flags, (
         "Leftovers: what an extraction, move or deletion leaves behind",
         "a re-export alias",
@@ -181,7 +185,7 @@ def test_leftovers_after_an_extraction_are_a_red_flag_with_a_concrete_check() ->
 
 
 def test_reviewer_flags_checks_nobody_asked_for_and_test_oracles_from_production_code() -> None:
-    assert "Never add a check nobody asked for" in section(GUARDRAILS.read_text(), "## Checks")
+    assert "Never add a check nobody asked for" in section(skill_split.read(GUARDRAILS), "## Checks")
     check = reviewer_check(9)
     assert_all(check, (
         "So is a new check nobody asked for",
@@ -211,7 +215,7 @@ def test_pull_request_tests_follow_the_review_rules() -> None:
 
 def test_verify_runs_sort_order_tests_by_capability_and_reads_ci_tiers() -> None:
     verify = flat(agent("vibe-verify-worker"))
-    assert "apps/storybook/__tests__/preview-story-sort-order.test.ts" in DIFF_RULES.read_text()
+    assert "apps/storybook/__tests__/preview-story-sort-order.test.ts" in PROVIDER_DATA["recipes"]["diffRules"]["storybook"]["sidebarOrderTests"]
     assert_all(verify, (
         "`diffRules.requiredTests`",
         "Tier A: its container path (`run-containerized.sh` or Dagger)",
@@ -219,7 +223,8 @@ def test_verify_runs_sort_order_tests_by_capability_and_reads_ci_tiers() -> None
         "Tier C: otherwise use the operator's configured remote runner",
         "read `.github/pr-test-event-tiers.md` and cite the tier",
     ))
-    handoff = flat(HANDOFF_SKILL.read_text())
+    # The repository's containerized E2E path and CI tiers file are the provider's handoff text for its repository.
+    handoff = flat(skill_split.read(PROVIDER_REFERENCES / "handoff-skill.md"))
     assert "`dagger call e-2-e`" in handoff
     assert "`.github/pr-test-event-tiers.md`" in handoff
 
@@ -247,23 +252,23 @@ def test_adversary_checks_selections_gates_and_per_row_enums() -> None:
     writer = flat(agent("vibe-change-worker"))
     assert "An action over selected rows accounts for every selected row" in writer
     assert "settle it through `quality-loop.md`, \"Precedent before asking\", before building; ask the person only when that fails" in writer
-    assert "### Precedent before asking" in QUALITY.read_text()
+    assert "### Precedent before asking" in skill_split.read(QUALITY)
 
 
 def test_an_outdated_plugin_question_comes_before_the_endings_line() -> None:
-    version = section(VIBE_SKILL.read_text(), "### Plugin version")
+    version = section(skill_split.read(VIBE_SKILL), "### Plugin version")
     assert "That question is the whole first reply: the endings line of a new session" in version
     assert "The next reply is then the new session's first reply, endings line included" in version
-    starting = section(VIBE_SKILL.read_text(), "### Starting new")
+    starting = section(skill_split.read(VIBE_SKILL), "### Starting new")
     assert_all(starting, (
         "after the plugin version check (section 1, \"Plugin version\")",
         "when the version is current or unknown it goes in the very first reply",
         "the version question comes first on its own and the endings line goes in the first reply after the person answers it",
     ))
-    endings = flat(VIBE_SKILL.read_text())
+    endings = flat(skill_split.read(VIBE_SKILL))
     assert "The one thing that comes before it is an outdated plugin's version question" in endings
     order = [
-        endings.index("Every `$vibe` start, new or resume, first checks whether the ClosedLoop plugins installed on this machine"),
+        endings.index("Every `$vibe` start, new or resume, first checks whether the plugins from vibe's marketplace installed on this machine"),
         endings.index("1. Your first reply to the new session carries the endings line"),
     ]
     assert order == sorted(order)
@@ -286,7 +291,7 @@ def test_pr_body_files_are_named_per_ticket_and_read_back_before_gh() -> None:
         "Read the file back right before the `gh` command",
         "the file named and re-read as step 4 says",
     ))
-    cl_execute = flat(CL_EXECUTE_PR.read_text())
+    cl_execute = flat(skill_split.read(CL_EXECUTE_PR))
     assert "(`pr-body-<ticket slug>.md`, never a shared name such as `pr-body.md`)" in cl_execute
     assert "read it back right before `gh pr create` or `gh pr edit --body-file`" in cl_execute
     assert "read back right before the command" in flat(agent("vibe-seed-pr-worker"))
@@ -300,13 +305,13 @@ def test_new_text_uses_no_emdashes_or_double_hyphen_dashes() -> None:
         assert "—" not in text, name
         assert " -- " not in text, name
     for path in (GUARDRAILS, DESIGN_PASS, QUALITY, HANDOFF_SKILL, TICKET_TEMPLATE):
-        assert "—" not in path.read_text(), path.name
-        assert " -- " not in path.read_text(), path.name
+        assert "—" not in skill_split.read(path), path.name
+        assert " -- " not in skill_split.read(path), path.name
 
 
 def test_diff_rules_run_inside_the_inventory_and_block() -> None:
-    inventory = INVENTORY.read_text()
-    rules = DIFF_RULES.read_text()
+    inventory = skill_split.read(INVENTORY)
+    rules = skill_split.read(DIFF_RULES)
     assert 'import { runDiffRules } from "./diff-rules.mjs";' in inventory
     assert "diffRulesClear: diffRulesBlocking.length === 0" in inventory
     assert 'const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);' in inventory
@@ -315,8 +320,8 @@ def test_diff_rules_run_inside_the_inventory_and_block() -> None:
                  "story-outcome", "story-entry", "frozen-render"):
         assert f'"{rule}"' in rules, rule
     assert "`forbiddenPaths` and `diffRulesClear` gates to be true" in flat(agent("vibe-change-worker"))
-    assert "`blocking.diffRulesClear` is false" in section(HANDOFF_SKILL.read_text(), "## 1. Internal checklist")
-    assert "diff-rules.mjs" not in HANDOFF_SKILL.read_text()
+    assert "`blocking.diffRulesClear` is false" in section(skill_split.read(HANDOFF_SKILL), "## 1. Internal checklist")
+    assert "diff-rules.mjs" not in skill_split.read(HANDOFF_SKILL)
     reviewer = section(agent("vibe-guardrails-reviewer"), "## Check, for added or changed lines only")
     assert "Open what each change log line that cleared an inventory `diffRules` finding cites" in reviewer
     assert "`diffRules.requiredTests` and `requiredChecks`" in flat(agent("vibe-verify-worker"))
@@ -333,8 +338,8 @@ def test_review_lessons_have_one_line_owners() -> None:
     assert "every surface it reaches with the flag off at 390, 412, 1024 and 1280 px wide" in verify
     assert "axe `color-contrast` on every new or changed story state; a failing node blocks" in verify
     assert "an in-row message a fixed-height row clips" in adversary
-    assert "rerun the inventory's `requiredChecks` on the merged tree" in flat(HANDOFF_SKILL.read_text())
-    assert "renaming its folder, SQL unchanged" in DIFF_RULES.read_text()
+    assert "rerun the inventory's `requiredChecks` on the merged tree" in flat(skill_split.read(HANDOFF_SKILL))
+    assert "renaming its folder, SQL unchanged" in json.dumps(PROVIDER_DATA["recipes"]["diffRules"]["migrations"])
     decomposer = flat(agent("vibe-storybook-decomposer"))
     assert "never place an entry on a fallback a sibling retires" in decomposer
     assert "its flag-on state on that surface's existing story entry" in decomposer

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { auditProblems, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
 import { EvidenceAt } from "./criterion-surface.mjs";
 import { markLine, NAMES_DESKTOP, NEEDS_APP_RUN, NO_SURFACE_FIXTURES, PROOF_TEST, proofFolder, testRow, TICKET, UNREAD } from "./criteria-test-fixture.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// These read live tracker tickets, so they run bound to the ClosedLoop provider (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL("./criteria-audit.mjs", import.meta.url));
 

@@ -4,8 +4,8 @@
 // rejects merged that way and broke main.
 //
 // The repository declares them in `.vibe/path-gates.json`:
-//   {"gates": [{"name": "catalog-imports", "paths": ["apps/prototypes/**"],
-//               "command": "node apps/prototypes/scripts/check-catalog-imports.mjs"}]}
+//   {"gates": [{"name": "catalog-imports", "paths": ["prototypes/**"],
+//               "command": "node prototypes/scripts/check-catalog-imports.mjs"}]}
 // A path is a prefix, or a glob with `*` (one segment) and `**` (any depth).
 // Each gate a changed file matches becomes a required test whose path is the
 // gate's command, so the evidence gate needs a passing run of that command on

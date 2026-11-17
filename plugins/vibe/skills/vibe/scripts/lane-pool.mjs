@@ -1,5 +1,5 @@
-// Bounded pool for independent verify lanes (PRD-823, WS8 load-aware execution, W4, ISS-13587).
-// verify-run ran every lane `pnpm test:lanes` names strictly one after another; this schedules
+// Bounded pool for independent verify lanes (load-aware execution).
+// verify-run ran every lane the lane report names strictly one after another; this schedules
 // them, it never skips one. Pure unit and script-suite lanes may overlap up to the pool size,
 // which comes from the worker budget (heavy-budget.mjs) and is never above `poolSize`. Every
 // other lane is serial: at most one runs at a time, alongside the pool. A lane this file does

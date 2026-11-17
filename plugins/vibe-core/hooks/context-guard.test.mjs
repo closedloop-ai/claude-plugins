@@ -229,6 +229,15 @@ test("a Skill tool call of vibe:fleet-orchestrator counts as a load", (t) => {
   assert.ok(contextGuard(event, env));
 });
 
+test("a Skill tool call of vibe-generic:fleet-orchestrator counts as a load, another plugin's does not", (t) => {
+  const { env, event, request } = fixture(t, { load: ORCHESTRATOR_SKILL_CALL.replace("vibe:fleet-orchestrator", "vibe-generic:fleet-orchestrator") });
+  request(900_000);
+  assert.ok(contextGuard(event, env));
+  const other = fixture(t, { load: ORCHESTRATOR_SKILL_CALL.replace("vibe:fleet-orchestrator", "other:fleet-orchestrator") });
+  other.request(900_000);
+  assert.equal(contextGuard(other.event, other.env), null);
+});
+
 test("a load line still being written is read whole on the next call", (t) => {
   const { env, event, transcript, request } = fixture(t, { load: "" });
   request(900_000);

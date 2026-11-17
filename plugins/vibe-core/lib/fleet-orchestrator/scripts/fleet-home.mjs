@@ -20,8 +20,8 @@
 //        fleet-home.mjs migrate --from <flat work dir> --program <slug> [--home <fleetHome, default --from>] [--dry-run]
 //        fleet-home.mjs launcher [--install] [--bin <dir, default ~/.local/bin>] [--home <fleetHome>]
 //
-// Each orchestrator chat is bound to its own program (chat-binding.mjs,
-// ISS-14028): `start`, `resume` and `migrate` bind the chat that runs them, and
+// Each orchestrator chat is bound to its own program (chat-binding.mjs):
+// `start`, `resume` and `migrate` bind the chat that runs them, and
 // every vibe hook and script in that chat resolves that program with no
 // environment variable. --home defaults to FLEET_HOME (an explicit override),
 // else the chat's bound home, else ~/fleet-orchestrator. `current` is the
@@ -75,13 +75,13 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { bindChat, canonicalHome, canonicalProgram, chatBinding, chatHome, commandChat, currentProgram, programChats, programFor, refuseHeld, unbindChat, unboundLine } from "./chat-binding.mjs";
 import { migrate } from "./fleet-migrate.mjs";
 import { skillFreshnessProblem } from "./skill-freshness.mjs";
 import { vibeScriptPath } from "../../../shared/vibe-install.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "context-guard.json", "current", "programs"];
 const PROGRAM_DIRS = ["sessions", "prompts", "requests", "findings", "evidence"];
@@ -524,7 +524,7 @@ function bindCurrent(home, chat, env) {
   return [`BOUND ${resolved.program} ${chat}`];
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

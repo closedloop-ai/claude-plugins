@@ -18,6 +18,12 @@
     },
     {
       "name": "vibe",
+      "source": {"source": "local", "path": "./plugins/vibe-closedloop"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Development"
+    },
+    {
+      "name": "vibe-generic",
       "source": {"source": "local", "path": "./plugins/vibe"},
       "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
       "category": "Development"

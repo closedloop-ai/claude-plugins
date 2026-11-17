@@ -6,5 +6,15 @@ export declare function comparePluginVersions(left: string, right: string): numb
 export declare function activeCodexVersion(versions: string[]): string | null;
 export declare function siblingPluginRoot(name: string, options: { from: string; cwd?: string }): string;
 export declare function siblingPluginRootOrNull(name: string, options: { from: string; cwd?: string }): string | null;
+export declare function isEntryPoint(moduleUrl: string, entry?: string): boolean;
 export declare function pluginInstall(from: string): { root: string; name: string; version: string | null; layout: "checkout" | "claude" | "codex" | null; home?: string; marketplace?: string };
 export declare function siblingPluginInstall(name: string, options: { from: string; cwd?: string }): { root: string; layout: "checkout" | "claude" | "codex"; home?: string; marketplace?: string; scope?: string; projectPath?: string };
+export declare const DEFAULT_MARKETPLACE: string;
+export declare const VIBE_PLUGIN_NAMES: readonly string[];
+export declare const VIBE_NAME_PATTERN: string;
+export declare function isVibePlugin(name: unknown): boolean;
+export declare function vibeSkillOf(id: unknown): string | null;
+export declare function vibeSkillPattern(skill: string): string;
+export declare function pluginMarketplace(install: { marketplace?: string } | null | undefined): string;
+export declare function siblingInstalls(names: readonly string[], options: { from: string; cwd?: string }): Array<{ root: string; name: string; layout: "checkout" | "claude" | "codex"; home?: string; marketplace?: string; scope?: string; projectPath?: string }>;
+export declare function vibeLookupOrder(layout: string | null): readonly string[];

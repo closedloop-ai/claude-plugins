@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from vibe_contract_text import flat, hook_guard_routed
+import skill_split
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -10,7 +11,7 @@ FLEET = PLUGIN / "skills" / "fleet-orchestrator"
 
 
 def _text(path: Path) -> str:
-    return flat(path.read_text())
+    return flat(skill_split.read(path))
 
 
 def test_answers_echo_question_ids_and_unacknowledged_answers_are_flagged() -> None:
@@ -35,7 +36,7 @@ def test_green_watch_triages_each_lane_and_mocks_per_block() -> None:
 
 
 def test_the_watch_set_finds_every_open_pr_and_names_its_writer() -> None:
-    snapshot = (PLUGIN / "skills" / "codex-fleet-monitor" / "scripts" / "snapshot.sh").read_text()
+    snapshot = skill_split.read(PLUGIN / "skills" / "codex-fleet-monitor" / "scripts" / "snapshot.sh")
     assert "--author" in snapshot and "done_prs" in snapshot
     assert "liveness signal" in _text(PLUGIN / "skills" / "codex-fleet-monitor" / "SKILL.md")
     assert "<owner/repo> <n> <writer>" in _text(FLEET / "SKILL.md")

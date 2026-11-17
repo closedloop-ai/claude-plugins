@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { selectE2eTier, specExecutionLimitation } from "./e2e-tier.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 test("the capability producer reports working Docker and only boolean prerequisite presence", (t) => {
   const fixture = makeHome("vibe-e2e-probe-");

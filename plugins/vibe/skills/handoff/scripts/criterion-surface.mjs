@@ -1,5 +1,5 @@
 // The surface decisions of the criteria audit and the unit review, and the "no surface" mark that
-// overrides both (ISS-14136). criteria-audit.mjs asks needsRunningSurface and unit-review.mjs asks
+// overrides both (operator ruling, 2026-11-13). criteria-audit.mjs asks needsRunningSurface and unit-review.mjs asks
 // namedSurfaces; an unmarked criterion keeps each script's existing rule. This module also owns the
 // evidence point (EvidenceAt): whether a test file exists there, and its text for a mark's test name.
 //
@@ -20,14 +20,17 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { escapeRegExp } from "./source-imports.mjs";
+import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
 export const ACROSS_PAGES = /\b(?:every|each|all|across)(?: the| all)?(?: \w+)? pages?\b|\bwhere(?:ver)? (?:it is |they are )?available\b/i;
 export const ACROSS_SURFACES = /\bboth (?:surfaces|hosts|shells|platforms|apps)\b|\b(?:every|each|all) (?:surfaces?|hosts?|shells?|platforms?)\b/i;
 export const KNOWN_SURFACES = Object.freeze(["Web", "Desktop"]);
 
-const AUDIT_ROW = /^\|\s*((?:[A-Z]+-\d+:)?AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
-const MARK_LINE = /^No surface:[ \t]*((?:[A-Z]+-\d+:)?AC-\d+)\b[ \t]*(?::[ \t]*(.*))?$/;
+// A criterion id, optionally prefixed with the member ticket key it belongs to (the bound tracker's key; see trackerKey).
+const criterionId = () => String.raw`(?:${trackerKey()}:)?AC-\d+`;
+const auditRow = () => new RegExp(String.raw`^\|\s*(${criterionId()})\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$`, "gm");
+const markLine = () => new RegExp(String.raw`^No surface:[ \t]*(${criterionId()})\b[ \t]*(?::[ \t]*(.*))?$`);
 const MARK_LIKE = /^\s*(?:[-*+>]\s*)*no[\s_-]*surface\s*:/i;
 
 export const EvidenceAt = Object.freeze({ Worktree: "worktree", Head: "head" });
@@ -43,7 +46,7 @@ export function namesIn(text, names) {
 
 /** The audit table's rows: `| AC-n | MET|PARTIAL|MISSED | <type> | <ref> |`. */
 export function auditRows(audit) {
-  return [...audit.matchAll(AUDIT_ROW)].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
+  return [...audit.matchAll(auditRow())].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
 }
 
 /** A test ref's file and test name: `<file>::<test name>` or `<file>#<test name>`. */
@@ -115,7 +118,7 @@ export function noSurfaceMarks(audit, criteria, { worktree = null, at = Evidence
   const problems = [];
   for (const line of audit.split("\n")) {
     if (!MARK_LIKE.test(line)) continue;
-    const match = MARK_LINE.exec(line.trimEnd());
+    const match = markLine().exec(line.trimEnd());
     if (!match) {
       problems.push(`${JSON.stringify(line.trim())}: a no-surface mark reads "No surface: <id>: <reason>"`);
       continue;

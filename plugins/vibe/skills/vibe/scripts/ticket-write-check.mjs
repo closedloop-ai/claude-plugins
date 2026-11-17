@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks a ClosedLoop issue write before it is made (operator rulings,
+// Checks a tracker issue write before it is made (operator rulings,
 // 2026-10-21): a new or follow-up ticket goes in the current sprint project,
 // never a past one, and is never linked under a parent that is already
 // EXECUTED, OBSOLETE, DONE or CANCELED; an issue moves to IN_REVIEW only with the pull request
@@ -12,8 +12,8 @@
 // A sprint project's end comes from `--project-end`, or from a `M/D-M/D` date
 // range in its name.
 
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const CLOSED_PARENT = new Set(["EXECUTED", "OBSOLETE", "DONE", "CANCELED"]);
 const RANGE = /(\d{1,2})\/(\d{1,2})\s*-\s*(\d{1,2})\/(\d{1,2})/;
@@ -81,6 +81,6 @@ function main() {
   process.exit(problems.length === 0 ? 0 : 1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main();
 }

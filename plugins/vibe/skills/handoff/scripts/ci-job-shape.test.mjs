@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync, unlinkSync, renameSync, symlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeHome, makeCheckout, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
-import { jobShapes, tierOf, workflowJobs, workflowLaneDefinitions, laneSourceBootstrap } from "./ci-job-shape.mjs";
+import { agentsTestCommand, jobShapes, repositoryLaneReportProblems, tierOf, workflowJobs, workflowLaneDefinitions, laneSourceBootstrap } from "./ci-job-shape.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "ci-job-shape.mjs");
 const WORKFLOW = `name: PR Tests
@@ -61,10 +62,10 @@ test("the CLI prints each job shape and the needles no job runs", (t) => {
 });
 
 
-test("workflow lane definitions expand all twelve repository jobs and preserve exact run recipes", () => {
+test("workflow lane definitions expand all thirteen repository jobs and preserve exact run recipes", () => {
   const workflow = readFileSync(new URL("../../../../../.github/workflows/ci.yml", import.meta.url), "utf8");
   const lanes = workflowLaneDefinitions(workflow);
-  assert.equal(lanes.length, 12);
+  assert.equal(lanes.length, 13);
   assert.deepEqual(lanes.filter(lane => lane.job !== "tools-ts").map(lane => lane.name),
     ["plugin-version-bump", "plugin-manifest-versions", "lint", "typecheck", "test", "node-tests", "vibe-eval-t0"]);
   const workers = lanes.find(lane => lane.job === "tools-ts" && lane.matrix.tool === "vibe-workers");
@@ -78,7 +79,7 @@ test("workflow lane definitions expand all twelve repository jobs and preserve e
   assert.equal(steps.at(-1).env.MIN_BUNDLES, "2");
   assert.equal((steps.at(-1).run.match(/^npm run build$/gm) ?? []).length, 2);
   const python = lanes.find(lane => lane.name === "test");
-  assert.deepEqual(JSON.parse(python.command).job.steps.filter(step => step.run).map(step => step.run), ["uv sync --frozen --group dev", "uv run pytest plugins/"]);
+  assert.deepEqual(JSON.parse(python.command).job.steps.filter(step => step.run).map(step => step.run), ["uv sync --frozen --group dev", "npm ci", "uv run pytest plugins/"]);
 });
 
 test("workflow discovery refuses ambiguous YAML, dynamic matrices, missing jobs and incomplete run recipes", () => {
@@ -155,4 +156,42 @@ test("candidate workflow additions, removals, renames, bytes, symlinks and modes
     assert.ok(laneSourceBootstrap(wt, base, base), "positive control"); mutate();
     assert.equal(laneSourceBootstrap(wt, base, base), null); reset();
   }
+});
+
+
+test("AGENTS.md names the test command: the first command span on a line about tests", () => {
+  assert.equal(agentsTestCommand("Build with `pnpm build`.\nRun the suite with `pnpm test` before pushing."), "pnpm test");
+  assert.equal(agentsTestCommand("- `uv run pytest plugins` runs the tests"), "uv run pytest plugins");
+  assert.equal(agentsTestCommand("Test the change with `npm run test:unit`."), "npm run test:unit");
+  assert.equal(agentsTestCommand("Tests: see the CI workflow."), null);
+  assert.equal(agentsTestCommand(undefined), null);
+});
+
+test("with no declaration a lane command is the AGENTS.md test command, and a committed workflow is a lane source", (t) => {
+  const { root, home, cleanup } = makeHome("lane-default-");
+  t.after(cleanup);
+  const checkout = path.join(root, "repo");
+  makeCheckout({ root, home, checkout, files: { "AGENTS.md": "Run `npm test` before you push.\n",
+    ".github/workflows/ci.yml": "name: CI\non: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n" } });
+  const commit = git(checkout, ["rev-parse", "HEAD"], home);
+  const report = (source) => ({ source, matches: [] });
+  assert.deepEqual(repositoryLaneReportProblems(report({ kind: "command", command: "npm test" }), checkout, commit), []);
+  assert.match(repositoryLaneReportProblems(report({ kind: "command", command: "npm run lint" }), checkout, commit)[0],
+    /test command AGENTS\.md names/);
+  const content = readFileSync(path.join(checkout, ".github/workflows/ci.yml"));
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const workflow = { kind: "github-workflow", path: ".github/workflows/ci.yml", commit, sha256 };
+  const lanes = workflowLaneDefinitions(content.toString("utf8"));
+  assert.deepEqual(repositoryLaneReportProblems({ source: workflow, matches: lanes.map(({ name, command }) => ({ name, command })) }, checkout, commit), []);
+  const labeler = "name: Labeler\non: [pull_request]\njobs:\n  label:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo label\n";
+  writeFileSync(path.join(checkout, ".github/workflows/labeler.yml"), labeler);
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "second workflow"], home);
+  const second = git(checkout, ["rev-parse", "HEAD"], home);
+  const labelerSource = { kind: "github-workflow", path: ".github/workflows/labeler.yml", commit: second, sha256: createHash("sha256").update(labeler).digest("hex") };
+  const labelerLanes = workflowLaneDefinitions(labeler).map(({ name, command }) => ({ name, command }));
+  assert.match(repositoryLaneReportProblems({ source: labelerSource, matches: labelerLanes }, checkout, second)[0], /must be the repository's only workflow/,
+    "with two workflows and no declaration, the report cannot choose the one it ran");
+  assert.match(repositoryLaneReportProblems({ source: { ...workflow, commit: second }, matches: lanes.map(({ name, command }) => ({ name, command })) }, checkout, second)[0],
+    /must be the repository's only workflow/);
 });

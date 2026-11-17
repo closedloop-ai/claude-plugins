@@ -1,0 +1,46 @@
+{
+  "manifests": {
+    ".claude-plugin/plugin.json": {
+      "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows"
+    },
+    ".codex-plugin/plugin.json": {
+      "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows",
+      "keywords": [
+        "closedloop",
+        "vibe-coding",
+        "handoff",
+        "ticket-workflows"
+      ],
+      "interface": {
+        "shortDescription": "Vibe sessions and ClosedLoop ticket workflows.",
+        "longDescription": "Vibe sessions let anyone (an executive, designer, product manager or engineer) build product UI in the in-app browser on their own Vercel copy of symphony-alpha, kept on a live ClosedLoop ticket, and finish it as a pull request they take through review or pass it to design and engineering."
+      }
+    }
+  },
+  "descriptions": {
+    "agents/vibe-environment-worker.md": "Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Handover mode, on a verified human-only blocker, pushes the orchestrator's commit through the repo's normal pre-push checks so engineering can pick the work up, with no main sync and no environment request. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.",
+    "agents/vibe-requirements-worker.md": "Turns a ClosedLoop ticket or a plain description into vibe-session requirements for the target repository. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. In reference mode, researches an outside product the person named or showed in a reference screenshot, reads the image itself, and returns the behaviors plus the visual and UX requirements to build, mapped to the design system. In precedent mode, obtains live Asana evidence through whichever actor has the operator's signed-in browser, never public help centers. Read-only.",
+    "agents/vibe-ticket-worker.md": "Owns a vibe session's live ClosedLoop ticket in the target repository for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template, records its slug on the session and links the document the session started from to it. Plan mode publishes the session's local plans as one implementation plan document (PLN) linked from the ticket, keeps it current and sets its status as the work moves, recording the PLN on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff and Grading sections, reconciles the backend sections, attaches decision tables, verifies and repairs the source link, the PLN and its link, leaves the PLN Approved, and checks the ticket is complete. Assign mode hands the ticket and its PLN to the next owner the lookup resolved, with the ticket status left In Progress. Cancel mode moves only a discarded session's own created ticket to Canceled. Returns a short status.",
+    "agents/vibe-verify-worker.md": "Read-only validation and coverage advisor for a vibe session. Runs existing checks and Storybook footprint, reports failures and the missing tests engineering must write, drives the running web app and Desktop with the repo's control skill at handoff, and returns evidence to the same persistent implementation writer. Never writes or fixes source or tests.",
+    "skills/vibe/SKILL.md": "Start or resume a vibe-coding session in symphony-alpha for anyone (an executive, designer, product manager or engineer) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says \"vibe\", \"let's build\", \"start a vibe session\", \"pick up where I left off\", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill."
+  },
+  "cold": {
+    "vibe-skill.md": [
+      [
+        "deploy",
+        "deploy-2",
+        "deploy-3"
+      ],
+      [
+        "environment"
+      ]
+    ]
+  },
+  "coldPointer": "Read `{path}` when you reach this step and follow it.",
+  "recipesNote": "Steps in this file written for symphony-alpha apply only in a repository that commits `.closedloop-ai/vibe-recipes.json`.",
+  "place": {
+    "closedloop-graph.md": "skills/vibe/references/closedloop-graph.md",
+    "ticket-template.md": "skills/vibe/references/ticket-template.md",
+    "ticket-units.md": "skills/fleet-orchestrator/references/ticket-units.md"
+  }
+}

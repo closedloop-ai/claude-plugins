@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +36,7 @@ POINTER = '"Acceptance criteria before ready"'
 
 
 def rule() -> str:
-    return section(QUALITY.read_text(), HEADING)
+    return section(skill_split.read(QUALITY), HEADING)
 
 
 def test_the_rule_is_canonical() -> None:
@@ -109,14 +110,14 @@ def test_it_stays_light() -> None:
     text = rule()
     assert "It is not a QA pass" in text
     assert "no long-running command joins the loop" in text
-    lean = section(QUALITY.read_text(), "## Lean build loop")
+    lean = section(skill_split.read(QUALITY), "## Lean build loop")
     assert "- Acceptance check: before `DONE`" in lean
     assert "The acceptance check's single test, script or control read per criterion is not one of them." in lean
 
 
 def test_handoff_alignment_starts_from_the_list() -> None:
     assert "At handoff the whole-table alignment above starts from this list" in rule()
-    handoff = HANDOFF_SKILL.read_text()
+    handoff = skill_split.read(HANDOFF_SKILL)
     checks = section(handoff, "## 5. Checks and the missing tests list")
     assert "its `## Acceptance Criteria` list and checks log" in checks
     assert "that list is where its whole-table alignment starts" in checks
@@ -128,7 +129,7 @@ def test_handoff_alignment_starts_from_the_list() -> None:
 
 
 def test_the_vibe_skill_forwards_criteria_and_refuses_an_unchecked_done() -> None:
-    skill = VIBE_SKILL.read_text()
+    skill = skill_split.read(VIBE_SKILL)
     start = section(skill, "## 2. Start or resume")
     assert "Keep its quoted acceptance criteria from the ticket and its PRD" in start
     loop = section(skill, "## 5. Build loop")
@@ -153,10 +154,10 @@ def test_workers_point_at_the_rule() -> None:
     assert "acceptance criteria of the ticket AND of its PRD, each quoted exactly with its source slug" in requirements
     assert f'(`quality-loop.md`, {POINTER})' in requirements
     assert "and its acceptance criterion checks" in flat(agent("vibe-verify-worker"))
-    assert POINTER in flat(GUARDRAILS.read_text())
+    assert POINTER in flat(skill_split.read(GUARDRAILS))
 
 
 def test_the_rule_is_stated_once() -> None:
     canonical = "Nothing is called ready until every acceptance criterion the change touches"
-    holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if canonical in flat(path.read_text())]
+    holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if canonical in flat(skill_split.read(path))]
     assert holders == ["quality-loop.md"]

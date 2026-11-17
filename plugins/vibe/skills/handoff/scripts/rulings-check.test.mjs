@@ -3,9 +3,14 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { planProblems, programRulingProblems, recordRulings, rulingProblems, sequencingRequirements, uncitedExclusions, criteriaChangeProblems } from "./rulings-check.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { readAssembled } from "../../vibe/scripts/skill-split.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL("./rulings-check.mjs", import.meta.url));
 
@@ -159,7 +164,7 @@ test("a sourced sequencing ruling yields blocker-to-blocked edges and reports un
   assert.equal(recorded.status, 0, recorded.stderr);
   assert.match(readFileSync(target, "utf8"), /ISS-300 waits until ISS-100 and #42 merge/);
 
-  const skill = readFileSync(path.resolve(path.dirname(SCRIPT), "..", "..", "fleet-orchestrator", "SKILL.md"), "utf8");
+  const skill = readAssembled(path.resolve(path.dirname(SCRIPT), "..", "..", "fleet-orchestrator", "SKILL.md"));
   assert.match(skill, /create-artifact-link[\s\S]*--record-sequencing/);
   assert.match(skill, /only sequencing-ruling writer[\s\S]*refuses a missing link/);
 });

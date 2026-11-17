@@ -18,18 +18,19 @@
 //
 // A migration the branch got by merging main is main's, not the session's: one
 // that main already has (`--main`, by default the branch's merge-base with
-// origin/main, which is the main it merged) is left out (ISS-13321: two
+// origin/main, which is the main it merged) is left out (two
 // migrations a main merge brought in blocked a publication twice).
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { escapeRegExp } from "../../handoff/scripts/source-imports.mjs";
 import { isTestFile } from "./test-files.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const MIGRATION = /(?:^|\/)migrations\/(?:([^/]+)\/[^/]+|([^/]+))\.sql$/;
 const PER_ROW_WORK = /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?(?:TRIGGER|FUNCTION|PROCEDURE)\b|\bFOR\s+EACH\s+ROW\b/i;
@@ -99,11 +100,10 @@ function mainFiles(worktree, main) {
   return new Set(git(worktree, ["ls-tree", "-r", "--name-only", ref]).split("\n").filter(Boolean));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    process.exit(failScript(error, 2));
   }
 }

@@ -3,13 +3,16 @@ import { z } from "zod";
 import { MAX_CHECK_MS, MainSyncError, type MainSyncReceipt, type e2eLimitationSchema } from "./main-sync-contracts.js";
 import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
+import { mainSyncRecipe } from "./main-sync-recipe.js";
 
 export type CheckCommand = { argv: string[]; bindings?: Record<string, string>; cwd?: string; timeoutMs?: number };
-// Mirrors the owner's emitted LaneCiCommand (scripts/lint/report-test-lanes.ts); `laneless` entries never leave execPlan.
+// Mirrors the lane command the recipe's discovery emits; `laneless` entries never leave its plan.
 const laneSchema = z.object({ script: z.string().min(1), dir: z.string().optional(),
   suites: z.string().optional(), widenReason: z.string().optional(), env: z.record(z.string()).optional() }).strict();
 const discoverySchema = z.object({ commands: z.array(laneSchema).max(128),
-  desktopHarness: z.object({ run: z.string().min(1), dir: z.literal("apps/desktop") }).strict().optional() }).strict();
+  desktopHarness: z.object({ run: z.string().min(1), dir: z.string().min(1) }).strict().optional() }).strict();
+// The lane discovery of the bound provider's repository, through its own lane modules. Provider-only
+// machinery: it runs only when the bound provider's mainSync recipe asks for it, so it never runs in another repository.
 const DISCOVERY_MODULES = ["scripts/lint/affected-test-lanes.ts", "scripts/lint/report-test-lanes.ts",
   "scripts/lint/desktop-e2e-lane.ts", "scripts/lint/workflow-shell-harness.ts"] as const;
 // The changed-path set is derived in the child from the captured main and the recipe's bound HEAD, so the
@@ -49,7 +52,10 @@ const BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
  */
 export function discoverRequiredE2eLanes(root: string, receipt: MainSyncReceipt) {
   if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
-  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.mainSha] };
+  // The provider repository's lane discovery, under its recipe's runner; none without that recipe.
+  const { runner, laneDiscovery, desktopLane } = mainSyncRecipe(root);
+  if (!runner || laneDiscovery !== true) return [];
+  const discovery = { argv: [...runner, DISCOVERY_SOURCE, receipt.mainSha] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
   verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
   // The owner runs one git grep per changed path; diffing from the captured main keeps that to the session's own changes.
@@ -61,15 +67,15 @@ export function discoverRequiredE2eLanes(root: string, receipt: MainSyncReceipt)
   for (const lane of selected.commands) {
     const bindings: Record<string, string> = { ...lane.env, ...(lane.suites === undefined ? {} : { AFFECTED_SCRIPT_SUITES: lane.suites }) };
     if (bindings.PWDEBUG) throw new MainSyncError("Selected lane enables PWDEBUG; no test lane was spawned");
-    if (lane.dir === "apps/desktop" && lane.script === "test:e2e") {
+    if (desktopLane && lane.dir === desktopLane.dir && lane.script === desktopLane.script) {
       const harness = selected.desktopHarness;
       if (process.platform !== "linux" || !harness || !harness.run.includes("dbus-run-session")
         || !harness.run.includes("xvfb-run") || !displaylessPrerequisites(root)) {
-        limitations.push({ argv: ["pnpm", "--dir", "apps/desktop", lane.script], bindings,
+        limitations.push({ argv: ["pnpm", "--dir", desktopLane.dir, lane.script], bindings,
           reason: `Required Desktop Electron lane has no supported displayless prerequisites on ${process.platform}; no lane spawned or PASS. No automatic Vibe-branch E2E path is established; CI dispatch requires explicit operator permission` });
         continue;
       }
-      limitations.push({ argv: ["pnpm", "--dir", "apps/desktop", lane.script], bindings,
+      limitations.push({ argv: ["pnpm", "--dir", desktopLane.dir, lane.script], bindings,
         reason: "Selected Desktop verdict reads results.json then adjacent dd-quarantine.json from fixed retained locations; no verified current-run report isolation is available here. No lane spawned or PASS; use exact-SHA authorized external coverage" });
     } else if (BROWSER_SCRIPT.test(lane.script)) {
       limitations.push({ argv: ["pnpm", ...(lane.dir ? ["--dir", lane.dir] : []), lane.script], bindings,
@@ -85,10 +91,14 @@ function displaylessPrerequisites(root: string) {
   return !result.error && result.status === 0;
 }
 
-/** The post-merge workflow and commit status that run the whole Desktop Electron suite on every main SHA. */
-export const DESKTOP_E2E_POST_MERGE_COVERAGE = "symphony-alpha desktop-e2e-validation.yml, commit status desktop-e2e/validated";
+/** The post-merge coverage of the repository's Desktop Electron lane (its recipe's), or null with none. */
+export function desktopE2ePostMergeCoverage(root: string) {
+  return mainSyncRecipe(root).desktopLane?.postMergeCoverage ?? null;
+}
 
-/** A recorded limitation for the Desktop Electron lane, the one e2e lane a vibe machine never runs. */
-export function isDesktopE2eLimitation(item: { argv: string[] }) {
-  return item.argv.length === 4 && item.argv[0] === "pnpm" && item.argv[1] === "--dir" && item.argv[2] === "apps/desktop" && item.argv[3] === "test:e2e";
+/** A recorded limitation for the recipe's Desktop Electron lane, the one e2e lane a vibe machine never runs. */
+export function isDesktopE2eLimitation(root: string, item: { argv: string[] }) {
+  const lane = mainSyncRecipe(root).desktopLane;
+  return Boolean(lane) && item.argv.length === 4 && item.argv[0] === "pnpm" && item.argv[1] === "--dir"
+    && item.argv[2] === lane!.dir && item.argv[3] === lane!.script;
 }

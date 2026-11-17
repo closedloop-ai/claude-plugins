@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
+from skill_split import read
+
 
 AGENTS = Path(__file__).resolve().parents[2] / "agents"
+# The optional provider's references: text moved out of vibe that a provider-bound session still follows.
+PROVIDER_REFERENCES = (Path(__file__).resolve().parents[3] / "vibe-closedloop-provider" / "skills" / "closedloop-provider"
+                       / "references")
 
+# The ClosedLoop provider's data (`provider.json` `data`): the recipes and rules its repository's contracts pin.
+PROVIDER_DATA = json.loads((PROVIDER_REFERENCES.parents[2] / "provider.json").read_text(encoding="utf-8"))["data"]
 
 def flat(text: str) -> str:
     """`text` with every run of whitespace collapsed to one space."""
@@ -40,8 +48,8 @@ def paragraph(text: str, marker: str) -> str:
 
 
 def agent(name: str) -> str:
-    """The raw text of the vibe agent definition `name`."""
-    return (AGENTS / f"{name}.md").read_text()
+    """The text of the vibe agent definition `name` as the ClosedLoop vibe carries it (skill_split.read)."""
+    return read(AGENTS / f"{name}.md")
 
 
 def hook_guard_routed(plugin: Path, event: str, guard: str, tool: str | None = None) -> bool:
@@ -63,3 +71,15 @@ def hook_guard_routed(plugin: Path, event: str, guard: str, tool: str | None = N
         return f'name: "{guard}"' in source
     route = re.search(rf"\b{re.escape(tool)}: Object\.freeze\(\[(.*?)\]\)", source, re.DOTALL)
     return route is not None and f'name: "{guard}"' in route.group(1)
+
+
+def bound_provider_env(home: Path) -> dict[str, str]:
+    """The environment of a script run as a chat the ClosedLoop provider is bound to, under the throwaway `home`."""
+    chat = "fixture-chat"
+    records = home / ".codex" / "vibe" / "plugin-version"
+    records.mkdir(parents=True, exist_ok=True)
+    binding = {"state": "bound", "name": "vibe-closedloop-provider",
+               "root": str(PROVIDER_REFERENCES.parents[2]),
+               "capabilities": ["tickets", "plans", "graph", "memory", "recipes"]}
+    (records / f"{chat}.json").write_text(json.dumps({"conversation": chat, "status": "current", "provider": binding}))
+    return {**os.environ, "HOME": str(home), "CLAUDE_CODE_SESSION_ID": chat, "CODEX_THREAD_ID": ""}

@@ -45,9 +45,9 @@ was seeded.
 ```json
 {
   "version": 1,
-  "source": "ISS-123",
+  "source": "request",
   "criteria": [
-    { "id": "AC-1", "text": "exact words", "source": "ISS-123", "evidence": "test" }
+    { "id": "AC-1", "text": "exact words", "source": "request", "evidence": "test" }
   ],
   "assumptions": [
     {
@@ -85,7 +85,7 @@ was seeded.
     "notTouched": [{ "path": "path/it/leaves", "reason": "why it stays" }],
     "justifications": [
       { "path": "extra/file.ts", "cites": "AC-2" },
-      { "path": "other/file.ts", "requirement": "the quoted requirement", "source": "PRD-9" }
+      { "path": "other/file.ts", "requirement": "the quoted requirement", "source": "request" }
     ]
   }
 }
@@ -169,8 +169,8 @@ removes a requirement-driven addition and never fails the change.
 `node scripts/spec-card.mjs budget --card <card> --worktree <wt> --base <sha>`
 prints `{blocks: false, planned, outsidePlan, cited, uncited}` and always
 exits 0. The writer runs it before `DONE`, and the uncited files go to the
-writer and into the handoff Assumptions field. Session artifacts under
-`.closedloop-ai/` are not counted.
+writer and into the handoff Assumptions field. Session artifacts in vibe's
+private plan folder are not counted.
 
 ## Freshness
 
@@ -207,14 +207,13 @@ a Handoff section with no Assumptions line.
 Before the session is called done, each criterion gets one row in the audit
 table `criteria-audit.mjs` reads, which holds the verdict, its evidence type
 and its ref in one place: `| AC-n | MET | <type> | <ref> |`. There is no
-separate evidence file. `spec-card.mjs audit-skeleton <card>` prints the table
-with one row per criterion, numbered by position in card order (the audit's
-numbering) and the intended type, for the fresh-context reviewer to fill in.
+separate evidence file. `spec-card.mjs audit-skeleton <card>` prints one row per
+criterion, in card order, to fill in.
 `type` is `test`, `script`, `screenshot`, `api-read` or `source-trace`; `ref` names the test
 file, the script run, the capture, the read or the file and line the trace ends at; the verdict is `MET`, `PARTIAL`
-or `MISSED` (no other status words). A criterion with no `MET` row of a known
-type and a `ref`, or with any `PARTIAL` or `MISSED` row, blocks done; on a
-`PARTIAL` or `MISSED` row the last column says what is missing. A criterion
+or `MISSED` (no other status words). A criterion without a `MET` row of a known
+type and a `ref`, or with a `PARTIAL` or `MISSED` row (whose last column says
+what is missing), blocks done. A criterion
 that needs the product running on a surface (it names Web, Desktop, the browser
 or the running app) needs a `MET` screenshot row, or a test or script row whose
 ref is an e2e spec or a control run; typecheck, unit-test and source evidence
@@ -222,14 +221,11 @@ alone never meet it. When such a criterion has no screen to run (a contract, a
 command, a statement that nothing is added), the reviewer adds the line
 `No surface: AC-n: <reason>` to the audit and a `MET` `test` row whose ref is
 `<file>::<test name>`; the audit then asks for that test instead of an app run,
-and refuses the mark without a reason or without a test that exists. When the person chose passing the work on instead of a
-pull request, a criterion whose only gap is another ticket's work takes a
-`PARTIAL` row whose ref is `not met yet: waits on <ticket>`, run with
-`--passing-on --ticket-status <ticket>=<status>`; it is listed as waiting while
-that ticket is open, and refused for a pull request, without a ticket, or when
-the ticket is DONE or CANCELED. A `test` ref
+and refuses the mark without a reason or without a test that exists. When the
+work is passed on instead of a pull request, a criterion whose only gap is
+another ticket's work takes a `PARTIAL` row whose ref is
+`not met yet: waits on <ticket>`; it is listed as waiting while that ticket is
+open, and refused otherwise. A `test` ref
 must name a file that exists (in the worktree at a candidate audit, at HEAD at
-handoff-gate): a planned test is not evidence, and the
-session writes tests only when the person asked for a pull request, so a
-criterion whose intended test does not exist is met by a script, screenshot, API
-read or source trace, or stays unmet and blocks.
+handoff-gate): a planned test is not evidence, so such a criterion is met by
+other evidence or blocks.

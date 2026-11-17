@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import flat, section
+import skill_split
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,20 +26,20 @@ SINGLE_USE = "## Programs with one writer or none"
 
 
 def test_the_fleet_skill_is_the_entry_point_for_one_writer_and_for_none() -> None:
-    description = FLEET_SKILL.read_text().split("---")[1]
+    description = skill_split.read(FLEET_SKILL).split("---")[1]
     for phrase in ("several workers at once", "one writer delivering one pull request",
                    "a session with no writer at all (design, research or analysis)"):
         assert phrase in description, phrase
 
 
 def shape_lines() -> dict[str, str]:
-    text = section(FLEET_SKILL.read_text(), SINGLE_USE)
+    text = section(skill_split.read(FLEET_SKILL), SINGLE_USE)
     return {label: text.split(f"- {label}", 1)[1].split(" - ", 1)[0] for label in ("Both shapes:", "one-writer, also:", "no-writer, also:")}
 
 
 def test_every_fleet_section_says_whether_a_one_writer_and_a_no_writer_program_needs_it() -> None:
     # A section added later without a mention would leave the smaller shapes guessing again.
-    headings = [line[3:] for line in FLEET_SKILL.read_text().splitlines() if line.startswith("## ") and line != SINGLE_USE]
+    headings = [line[3:] for line in skill_split.read(FLEET_SKILL).splitlines() if line.startswith("## ") and line != SINGLE_USE]
     lines = shape_lines()
     one_writer = lines["Both shapes:"] + lines["one-writer, also:"]
     assert [heading for heading in headings if heading not in one_writer] == []
@@ -50,28 +51,28 @@ def test_every_fleet_section_says_whether_a_one_writer_and_a_no_writer_program_n
 
 
 def test_the_shape_is_recorded_and_enforced_by_the_scripts() -> None:
-    single = section(FLEET_SKILL.read_text(), SINGLE_USE)
+    single = section(skill_split.read(FLEET_SKILL), SINGLE_USE)
     assert "`fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the shape" in single
     assert "`board.mjs writer` refuses a writer the shape does not allow" in single
-    assert "`fleet-home.mjs start <slug> --shape <shape>`" in STATE.read_text()
+    assert "`fleet-home.mjs start <slug> --shape <shape>`" in skill_split.read(STATE)
 
 
 def test_every_fleet_chat_starts_with_the_plugin_version_check() -> None:
-    setup = section(FLEET_SKILL.read_text(), "## Setup")
+    setup = section(skill_split.read(FLEET_SKILL), "## Setup")
     for phrase in (
-        "Plugin version, first in every chat: make both connection calls (`get-me`, `sync_status`), then run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
+        "Plugin version, first in every chat: run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
         "\"A newer version of the plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results.\"",
         "`plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log",
         "run `plugin-version.mjs update --choice update --state <same file>`, `--choice update` only because the operator said update; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them",
     ):
         assert phrase in setup, phrase
-    new_chat = section(STATE.read_text(), "## A new chat")
+    new_chat = section(skill_split.read(STATE), "## A new chat")
     assert "Run the plugin version check its `PLUGIN-VERSION` line names (SKILL.md, Setup) before anything else." in new_chat
 
 
 def test_writers_carry_the_operators_version_answer_instead_of_asking_again() -> None:
     line = "Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on."
-    templates = TEMPLATES.read_text()
+    templates = skill_split.read(TEMPLATES)
     for name in ("## Worker preamble", "## Resume prompt"):
         assert line in flat(section(templates, name)), name
     assert "keep the current version" not in templates
@@ -79,7 +80,7 @@ def test_writers_carry_the_operators_version_answer_instead_of_asking_again() ->
 
 def test_a_partial_update_still_asks_for_the_restart_it_needs() -> None:
     # PR #350 review: a failed update could leave one harness on replaced files with nobody told to restart it.
-    version = section((ROOT / "skills" / "vibe" / "SKILL.md").read_text(), "### Plugin version")
+    version = section(skill_split.read(ROOT / "skills" / "vibe" / "SKILL.md"), "### Plugin version")
     assert "Whatever its status, tell the person, for each harness in its `restart`" in version
     assert "Then stop when the harness you run in is in `restart`: the update is used only from a new session." in version
-    assert "a takeover of its writer, which keeps the writer's board row name" in section(FLEET_SKILL.read_text(), SINGLE_USE)
+    assert "a takeover of its writer, which keeps the writer's board row name" in section(skill_split.read(FLEET_SKILL), SINGLE_USE)
