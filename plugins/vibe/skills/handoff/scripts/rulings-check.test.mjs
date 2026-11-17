@@ -25,6 +25,18 @@ test("rulings are read from a resume log and a QA record", () => {
   assert.deepEqual(recordRulings(QA_RECORD), ["the board keeps the old column order"]);
 });
 
+test("ISS-14128 ruling sources may contain colons without becoming part of the decision", () => {
+  const records = [
+    '- Ruling 2026-11-13 (operator, chat ~22:05Z): "ship it"; amends: none\n',
+    '- Ruling 2026-11-13 (operator message: chat): "ship it"; amends: none\n',
+    '- Ruling 2026-11-13 (ticket: ISS-1): "ship it"; amends: none\n',
+    '- Ruling 2026-11-13 (operator): "ship it"; amends: none\n',
+  ];
+  for (const record of records) assert.deepEqual(recordRulings(record), ['"ship it"; amends: none']);
+  const ticket = '- Ruling 2026-11-13 (operator): "ship it"; amends: none\n';
+  assert.deepEqual(rulingProblems(ticket, ['- Ruling 2026-11-13 (operator message: chat): "ship it"\n']), []);
+});
+
 test("a ruling missing from the ticket, or a ticket ruling with no amended criteria, is refused", () => {
   const ticket = `## Scope and acceptance criteria
 - Ruling 2026-10-21 (operator): "Offline editing is descoped; edits are online only"; amends: AC-3

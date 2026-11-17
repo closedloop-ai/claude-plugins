@@ -11630,7 +11630,7 @@ function compareIdentifier(left, right) {
 }
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.13";
+var VIBE_CORE_MIN = "1.0.14";
 var SELF = pluginInstall(import.meta.url);
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
@@ -11842,7 +11842,7 @@ var migrationSchema = external_exports.object({
   harnessSwitch: harnessSwitchSchema.extend({ from: external_exports.enum(["codex", "claude"]) }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
-async function readInput(stream = process.stdin) {
+async function readInput(stream = process.stdin, emptyError) {
   const buffers = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -11851,6 +11851,7 @@ async function readInput(stream = process.stdin) {
     if (size > 128 * 1024) throw new Error("Worker input exceeds the private input limit");
     buffers.push(bytes);
   }
+  if (size === 0 && emptyError) throw new Error(emptyError);
   return JSON.parse(Buffer.concat(buffers).toString("utf8"));
 }
 
@@ -12031,6 +12032,18 @@ function readReferenceImages(metadataDir) {
   return images;
 }
 
+// src/worker-refusal.ts
+var WorkerRefusal = class extends Error {
+  constructor(code, summary2, message = summary2) {
+    super(message);
+    this.code = code;
+    this.summary = summary2;
+    this.name = "WorkerRefusal";
+  }
+  code;
+  summary;
+};
+
 // src/ledger.ts
 function checkoutLocation(worktree) {
   const root = realpathSync5(git(worktree, ["rev-parse", "--show-toplevel"]));
@@ -12093,6 +12106,10 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
     sameRelease,
     provenNewer
   };
+}
+function writerUpgradeCompatible(evidence) {
+  const unchangedUpgrade = evidence.provenNewer && evidence.installedDigest === evidence.recordedDigest;
+  return evidence.observedDigest === evidence.recordedDigest && (evidence.sameRelease || unchangedUpgrade);
 }
 function takeWriterInput(input) {
   const data = actionSchema.parse(input);
@@ -12173,7 +12190,7 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
     const observedDigest = evidence.observedDigest;
     const reason = harnessSwitch ? "harness-switch" : provenDefinitionChange(evidence);
     const releasedRecord = retained && data.retainedRecord && verifyRetained ? verifyRetained(lock, ledger, data.retainedRecord) : void 0;
-    const block = migratableBlock(ledger, observedDigest, releasedRecord);
+    const block = migratableBlock(ledger, evidence, releasedRecord);
     const runtime = harnessSwitch?.to ?? data.runtime;
     const workerId = runtime === "claude" ? randomUUID() : data.workerId;
     if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
@@ -12227,11 +12244,11 @@ function provenDefinitionChange(evidence) {
   }
   return "definition-upgraded";
 }
-function migratableBlock(ledger, observedDigest, releasedRecord) {
+function migratableBlock(ledger, evidence, releasedRecord) {
   const active = ledger.active;
   if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
-  if (active.blockReason === void 0 && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
-  if (observedDigest === null) return "carried";
+  if (active.blockReason === void 0 && evidence.observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
+  if (evidence.observedDigest === null || !writerUpgradeCompatible(evidence) && evidence.provenNewer && evidence.observedDigest === evidence.recordedDigest) return "carried";
   throw new Error("Migration cannot bypass a writer refusal while the recorded writer can still run; resolve the blocked request first");
 }
 function isNewerRelease(current, previous) {
@@ -12243,23 +12260,25 @@ function isNewerRelease(current, previous) {
   }
   return false;
 }
+function activeContinuationSummary(requestId) {
+  return `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}; the refused request was not queued.`;
+}
 function changeWriter(action, input) {
   const data = actionSchema.parse(input);
   const place = writerLocation(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
-    if (data.workerId !== ledger.workerId) throw new Error("Request must name the registered persistent writer");
+    if (data.workerId !== ledger.workerId) throw new WorkerRefusal(
+      "WRITER_ID_MISMATCH",
+      "The request must name the registered persistent writer."
+    );
     const requestId = data.requestId;
-    if (!requestId) throw new Error("Request ID is required");
-    if (action === "enqueue") {
-      if (!data.input || data.continuation) throw new Error("Enqueue requires one original request input");
-      if (ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId)) {
-        throw new Error("Request ID already exists");
+    if (!requestId) throw new WorkerRefusal("REQUEST_ID_REQUIRED", "A requestId is required.");
+    const duplicateRequest = () => ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId);
+    const prepareClaim = () => {
+      if (existsSync3(join4(place.dir, "vibe-record-turn.lock"))) {
+        throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; retain the queued writer request.");
       }
-      if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
-      ledger.pending.push({ id: requestId, input: data.input });
-    } else if (action === "claim") {
-      if (existsSync3(join4(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
         ledger.active.status = "FAILED";
         ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
@@ -12268,7 +12287,41 @@ function changeWriter(action, input) {
         delete ledger.active.processGroupId;
         delete ledger.active.continuation;
       }
-      if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
+      if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
+    };
+    if (action === "enqueue") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
+      if (duplicateRequest()) throw new WorkerRefusal(
+        "REQUEST_ID_EXISTS",
+        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work."
+      );
+      if (ledger.pending.length >= 32) throw new WorkerRefusal(
+        "REQUEST_QUEUE_FULL",
+        "The pending queue is full; keep the new input with the parent."
+      );
+      ledger.pending.push({ id: requestId, input: data.input });
+    } else if (action === "start") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
+      if (duplicateRequest()) throw new WorkerRefusal(
+        "REQUEST_ID_EXISTS",
+        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work."
+      );
+      prepareClaim();
+      if (ledger.active?.status === "FAILED") {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (ledger.active) throw new WorkerRefusal(
+        "ACTIVE_REQUEST_PENDING",
+        activeContinuationSummary(ledger.active.id)
+      );
+      if (ledger.pending.length) throw new WorkerRefusal(
+        "REQUEST_ORDER_INVALID",
+        "Claim the oldest pending request before starting new work."
+      );
+      ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
+    } else if (action === "claim") {
+      prepareClaim();
       if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
@@ -12277,12 +12330,18 @@ function changeWriter(action, input) {
         ledger.completed = ledger.completed.slice(0, -1);
         ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
       } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
+        if (ledger.active.id !== requestId || !data.continuation) throw new WorkerRefusal(
+          "ACTIVE_REQUEST_PENDING",
+          activeContinuationSummary(ledger.active.id)
+        );
         ledger.active.continuation = data.continuation;
       } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new Error("Claim must take the oldest pending request");
+        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal(
+          "REQUEST_ORDER_INVALID",
+          "Claim must take the oldest pending request."
+        );
         const next = ledger.pending.shift();
-        if (!next) throw new Error("No pending request");
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
         ledger.active = { ...next, status: "PLAN" };
       }
       ledger.active.lease = randomUUID();
@@ -12317,7 +12376,7 @@ function changeWriter(action, input) {
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...action === "claim" ? { turn: ledger.active } : {} };
+    return { ...summary(ledger), ...["start", "claim"].includes(action) ? { turn: ledger.active } : {} };
   });
 }
 function acquireRecordTurnAt(place, owner) {
@@ -12568,29 +12627,53 @@ function isPublisherContext(input) {
 }
 function resolveRecordContext(input) {
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
-    throw new Error("Canonical validation witness belongs only to the Root source validation continuation");
+    throw new WorkerRefusal(
+      "VALIDATION_CONTEXT_INVALID",
+      "Canonical validation witness belongs only to the Root source validation continuation."
+    );
   }
   if (input.mainSyncCiRun && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.publicationPurpose !== "handoff")) {
-    throw new Error("External CI locators require the actual source handoff-validation grant");
+    throw new WorkerRefusal(
+      "CI_LOCATOR_CONTEXT_INVALID",
+      "External CI locators require the actual source handoff-validation grant."
+    );
   }
   if (input.mainSyncRequestContinuations && (input.agentName !== "vibe-environment-worker" || !isPublisherContext(input))) {
-    throw new Error("Only an actual environment publisher grant may predeclare request continuations");
+    throw new WorkerRefusal(
+      "REQUEST_CONTINUATIONS_CONTEXT_INVALID",
+      "Only an actual environment publisher grant may predeclare request continuations."
+    );
   }
   if (input.mainSyncRequestContinuations && new Set(input.mainSyncRequestContinuations.map((item) => `${item.runtime}:${item.requestId}:${item.recordAction}`)).size !== input.mainSyncRequestContinuations.length) {
-    throw new Error("Parent request continuations must identify distinct exact requests");
+    throw new WorkerRefusal(
+      "REQUEST_CONTINUATIONS_DUPLICATE",
+      "Parent request continuations must identify distinct exact requests."
+    );
   }
-  if (input.recordAction === "discard" && !input.discardTarget) throw new Error("Discard requires parent-held target and confirmation evidence");
+  if (input.recordAction === "discard" && !input.discardTarget) throw new WorkerRefusal(
+    "DISCARD_TARGET_REQUIRED",
+    "Discard requires parent-held target and confirmation evidence."
+  );
   if (input.discardTarget && (input.agentName !== "vibe-setup-worker" || input.mode !== "record" || input.recordAction !== "discard" || !input.exclusiveRecordTurn || input.sessionless?.kind !== "startup")) {
-    throw new Error("Discard executes only through setup's exclusive stable-checkout operation");
+    throw new WorkerRefusal(
+      "DISCARD_CONTEXT_INVALID",
+      "Discard executes only through setup's exclusive stable-checkout operation."
+    );
   }
   let place;
   if (input.sessionless) {
     const startup = input.sessionless.kind === "startup" && STARTUP_ROLES.has(input.agentName) && input.mode !== "handoff" && input.mode !== "pull-request";
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     const takeover = input.sessionless.kind === "takeover" && !input.recordAction && !input.exclusiveRecordTurn && (TAKEOVER_REVIEWERS.has(input.agentName) && input.mode === "pull-request" || input.agentName === TAKEOVER_WRITER && input.mode !== "record" && input.mode !== "plan" && Boolean(input.sessionless.evidence.sourceBranch));
-    if (!startup && !cancel && !takeover) throw new Error("This role/action has no sessionless operation");
+    if (!startup && !cancel && !takeover) throw new WorkerRefusal(
+      "SESSIONLESS_CONTEXT_INVALID",
+      `The role ${input.agentName} action ${input.recordAction ?? input.mode} has no sessionless operation.`
+    );
     place = checkoutLocation(input.worktree);
-    if (existsSync4(join5(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync4(join5(place.dir, "vibe-session.json"))) throw new WorkerRefusal(
+      "SESSIONLESS_PRIVATE_SESSION_EXISTS",
+      "A private session exists; use its strict owned operation."
+    );
   } else {
     const checkout = checkoutLocation(input.worktree);
     if (!existsSync4(join5(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
@@ -12614,11 +12697,17 @@ function discardLocation(input, stable) {
   );
   const recordedTicket = sessionLiveTicket(record);
   const recordedCreated = record.liveTicketCreatedBySession ?? recordedTicket !== null;
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync4(join5(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync4(join5(target.dir, "commondir"))) throw new WorkerRefusal(
+    "DISCARD_EXECUTION_CHECKOUT_INVALID",
+    "Discard must retain its execution checkout."
+  );
   const common = readFileSync6(join5(target.dir, "commondir"), "utf8").trim();
   const stableCommon = existsSync4(join5(stable.dir, "commondir")) ? realpathSync6(join5(stable.dir, readFileSync6(join5(stable.dir, "commondir"), "utf8").trim())) : realpathSync6(stable.dir);
   if (realpathSync6(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (recordedTicket ?? void 0) !== evidence.liveTicket || recordedCreated !== evidence.liveTicketCreatedBySession) {
-    throw new Error("Discard target does not match the parent's owned session evidence");
+    throw new WorkerRefusal(
+      "DISCARD_TARGET_MISMATCH",
+      "Discard target does not match the parent's owned session evidence."
+    );
   }
   return target;
 }

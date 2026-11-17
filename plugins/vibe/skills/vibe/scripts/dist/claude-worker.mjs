@@ -11635,7 +11635,7 @@ function compareIdentifier(left, right) {
 // ../../plugins/vibe/shared/vibe-core.mjs
 import path2 from "node:path";
 import { pathToFileURL } from "node:url";
-var VIBE_CORE_MIN = "1.0.13";
+var VIBE_CORE_MIN = "1.0.14";
 var SELF = pluginInstall(import.meta.url);
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
@@ -11820,7 +11820,7 @@ var migrationSchema = external_exports.object({
   harnessSwitch: harnessSwitchSchema.extend({ from: external_exports.enum(["codex", "claude"]) }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
-async function readInput(stream = process.stdin) {
+async function readInput(stream = process.stdin, emptyError) {
   const buffers = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -11829,6 +11829,7 @@ async function readInput(stream = process.stdin) {
     if (size > 128 * 1024) throw new Error("Worker input exceeds the private input limit");
     buffers.push(bytes);
   }
+  if (size === 0 && emptyError) throw new Error(emptyError);
   return JSON.parse(Buffer.concat(buffers).toString("utf8"));
 }
 
@@ -12163,6 +12164,18 @@ function readReferenceImages(metadataDir) {
   return images;
 }
 
+// src/worker-refusal.ts
+var WorkerRefusal = class extends Error {
+  constructor(code, summary2, message = summary2) {
+    super(message);
+    this.code = code;
+    this.summary = summary2;
+    this.name = "WorkerRefusal";
+  }
+  code;
+  summary;
+};
+
 // src/ledger.ts
 function checkoutLocation(worktree) {
   const root = realpathSync6(git(worktree, ["rev-parse", "--show-toplevel"]));
@@ -12229,6 +12242,10 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
 function readWriterUpgradeEvidence(worktree, installedRoot) {
   return definitionUpgradeEvidence(readLedger(writerLocation(worktree)), installedRoot);
 }
+function writerUpgradeCompatible(evidence) {
+  const unchangedUpgrade = evidence.provenNewer && evidence.installedDigest === evidence.recordedDigest;
+  return evidence.observedDigest === evidence.recordedDigest && (evidence.sameRelease || unchangedUpgrade);
+}
 function registerWriter(input) {
   const data = registerSchema.parse(input);
   requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
@@ -12269,23 +12286,25 @@ function isNewerRelease(current, previous) {
   }
   return false;
 }
+function activeContinuationSummary(requestId) {
+  return `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}; the refused request was not queued.`;
+}
 function changeWriter(action, input) {
   const data = actionSchema.parse(input);
   const place = writerLocation(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
-    if (data.workerId !== ledger.workerId) throw new Error("Request must name the registered persistent writer");
+    if (data.workerId !== ledger.workerId) throw new WorkerRefusal(
+      "WRITER_ID_MISMATCH",
+      "The request must name the registered persistent writer."
+    );
     const requestId = data.requestId;
-    if (!requestId) throw new Error("Request ID is required");
-    if (action === "enqueue") {
-      if (!data.input || data.continuation) throw new Error("Enqueue requires one original request input");
-      if (ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId)) {
-        throw new Error("Request ID already exists");
+    if (!requestId) throw new WorkerRefusal("REQUEST_ID_REQUIRED", "A requestId is required.");
+    const duplicateRequest = () => ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId);
+    const prepareClaim = () => {
+      if (existsSync3(join5(place.dir, "vibe-record-turn.lock"))) {
+        throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; retain the queued writer request.");
       }
-      if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
-      ledger.pending.push({ id: requestId, input: data.input });
-    } else if (action === "claim") {
-      if (existsSync3(join5(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
         ledger.active.status = "FAILED";
         ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
@@ -12294,7 +12313,41 @@ function changeWriter(action, input) {
         delete ledger.active.processGroupId;
         delete ledger.active.continuation;
       }
-      if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
+      if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
+    };
+    if (action === "enqueue") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
+      if (duplicateRequest()) throw new WorkerRefusal(
+        "REQUEST_ID_EXISTS",
+        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work."
+      );
+      if (ledger.pending.length >= 32) throw new WorkerRefusal(
+        "REQUEST_QUEUE_FULL",
+        "The pending queue is full; keep the new input with the parent."
+      );
+      ledger.pending.push({ id: requestId, input: data.input });
+    } else if (action === "start") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
+      if (duplicateRequest()) throw new WorkerRefusal(
+        "REQUEST_ID_EXISTS",
+        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work."
+      );
+      prepareClaim();
+      if (ledger.active?.status === "FAILED") {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (ledger.active) throw new WorkerRefusal(
+        "ACTIVE_REQUEST_PENDING",
+        activeContinuationSummary(ledger.active.id)
+      );
+      if (ledger.pending.length) throw new WorkerRefusal(
+        "REQUEST_ORDER_INVALID",
+        "Claim the oldest pending request before starting new work."
+      );
+      ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
+    } else if (action === "claim") {
+      prepareClaim();
       if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
@@ -12303,12 +12356,18 @@ function changeWriter(action, input) {
         ledger.completed = ledger.completed.slice(0, -1);
         ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
       } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
+        if (ledger.active.id !== requestId || !data.continuation) throw new WorkerRefusal(
+          "ACTIVE_REQUEST_PENDING",
+          activeContinuationSummary(ledger.active.id)
+        );
         ledger.active.continuation = data.continuation;
       } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new Error("Claim must take the oldest pending request");
+        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal(
+          "REQUEST_ORDER_INVALID",
+          "Claim must take the oldest pending request."
+        );
         const next = ledger.pending.shift();
-        if (!next) throw new Error("No pending request");
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
         ledger.active = { ...next, status: "PLAN" };
       }
       ledger.active.lease = randomUUID();
@@ -12343,7 +12402,7 @@ function changeWriter(action, input) {
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...action === "claim" ? { turn: ledger.active } : {} };
+    return { ...summary(ledger), ...["start", "claim"].includes(action) ? { turn: ledger.active } : {} };
   });
 }
 function acquireRecordTurnAt(place, owner) {
@@ -12767,29 +12826,53 @@ function isHandoverContext(input) {
 }
 function resolveRecordContext(input) {
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
-    throw new Error("Canonical validation witness belongs only to the Root source validation continuation");
+    throw new WorkerRefusal(
+      "VALIDATION_CONTEXT_INVALID",
+      "Canonical validation witness belongs only to the Root source validation continuation."
+    );
   }
   if (input.mainSyncCiRun && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.publicationPurpose !== "handoff")) {
-    throw new Error("External CI locators require the actual source handoff-validation grant");
+    throw new WorkerRefusal(
+      "CI_LOCATOR_CONTEXT_INVALID",
+      "External CI locators require the actual source handoff-validation grant."
+    );
   }
   if (input.mainSyncRequestContinuations && (input.agentName !== "vibe-environment-worker" || !isPublisherContext(input))) {
-    throw new Error("Only an actual environment publisher grant may predeclare request continuations");
+    throw new WorkerRefusal(
+      "REQUEST_CONTINUATIONS_CONTEXT_INVALID",
+      "Only an actual environment publisher grant may predeclare request continuations."
+    );
   }
   if (input.mainSyncRequestContinuations && new Set(input.mainSyncRequestContinuations.map((item) => `${item.runtime}:${item.requestId}:${item.recordAction}`)).size !== input.mainSyncRequestContinuations.length) {
-    throw new Error("Parent request continuations must identify distinct exact requests");
+    throw new WorkerRefusal(
+      "REQUEST_CONTINUATIONS_DUPLICATE",
+      "Parent request continuations must identify distinct exact requests."
+    );
   }
-  if (input.recordAction === "discard" && !input.discardTarget) throw new Error("Discard requires parent-held target and confirmation evidence");
+  if (input.recordAction === "discard" && !input.discardTarget) throw new WorkerRefusal(
+    "DISCARD_TARGET_REQUIRED",
+    "Discard requires parent-held target and confirmation evidence."
+  );
   if (input.discardTarget && (input.agentName !== "vibe-setup-worker" || input.mode !== "record" || input.recordAction !== "discard" || !input.exclusiveRecordTurn || input.sessionless?.kind !== "startup")) {
-    throw new Error("Discard executes only through setup's exclusive stable-checkout operation");
+    throw new WorkerRefusal(
+      "DISCARD_CONTEXT_INVALID",
+      "Discard executes only through setup's exclusive stable-checkout operation."
+    );
   }
   let place;
   if (input.sessionless) {
     const startup = input.sessionless.kind === "startup" && STARTUP_ROLES.has(input.agentName) && input.mode !== "handoff" && input.mode !== "pull-request";
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     const takeover = input.sessionless.kind === "takeover" && !input.recordAction && !input.exclusiveRecordTurn && (TAKEOVER_REVIEWERS.has(input.agentName) && input.mode === "pull-request" || input.agentName === TAKEOVER_WRITER && input.mode !== "record" && input.mode !== "plan" && Boolean(input.sessionless.evidence.sourceBranch));
-    if (!startup && !cancel && !takeover) throw new Error("This role/action has no sessionless operation");
+    if (!startup && !cancel && !takeover) throw new WorkerRefusal(
+      "SESSIONLESS_CONTEXT_INVALID",
+      `The role ${input.agentName} action ${input.recordAction ?? input.mode} has no sessionless operation.`
+    );
     place = checkoutLocation(input.worktree);
-    if (existsSync5(join6(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync5(join6(place.dir, "vibe-session.json"))) throw new WorkerRefusal(
+      "SESSIONLESS_PRIVATE_SESSION_EXISTS",
+      "A private session exists; use its strict owned operation."
+    );
   } else {
     const checkout = checkoutLocation(input.worktree);
     if (!existsSync5(join6(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
@@ -12813,11 +12896,17 @@ function discardLocation(input, stable) {
   );
   const recordedTicket = sessionLiveTicket(record);
   const recordedCreated = record.liveTicketCreatedBySession ?? recordedTicket !== null;
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join6(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join6(target.dir, "commondir"))) throw new WorkerRefusal(
+    "DISCARD_EXECUTION_CHECKOUT_INVALID",
+    "Discard must retain its execution checkout."
+  );
   const common = readFileSync7(join6(target.dir, "commondir"), "utf8").trim();
   const stableCommon = existsSync5(join6(stable.dir, "commondir")) ? realpathSync7(join6(stable.dir, readFileSync7(join6(stable.dir, "commondir"), "utf8").trim())) : realpathSync7(stable.dir);
   if (realpathSync7(join6(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (recordedTicket ?? void 0) !== evidence.liveTicket || recordedCreated !== evidence.liveTicketCreatedBySession) {
-    throw new Error("Discard target does not match the parent's owned session evidence");
+    throw new WorkerRefusal(
+      "DISCARD_TARGET_MISMATCH",
+      "Discard target does not match the parent's owned session evidence."
+    );
   }
   return target;
 }
@@ -12951,8 +13040,10 @@ var commandReceiptSchema = external_exports.object({
   exitCode: external_exports.number().int(),
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
-  comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+  comparison: mainComparisonSchema.optional(),
+  // A check the fleet's remote slot ran: `log` is the stored report, `logSha256` the remote run's own log digest.
+  remote: external_exports.object({ host: external_exports.string().min(1).max(255), commit: commitSchema, logSha256: digestSchema }).strict().optional()
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence").refine((item) => !item.remote || item.exitCode === 0 && !item.comparison, "Remote check evidence must be a passing run");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -13020,6 +13111,26 @@ var mainSyncReceiptSchema = external_exports.object({
   recipe: storedValidationRecipeSchema.optional(),
   deferredMain: external_exports.object({ mainSha: commitSchema, reason: external_exports.string().min(1).max(500) }).strict().optional()
 }).strict();
+var remoteCheckReportSchema = external_exports.object({
+  host: external_exports.string().trim().min(1).max(255),
+  validation: external_exports.object({
+    headSha: commitSchema,
+    treeSha: commitSchema,
+    inputSha256: digestSchema,
+    commands: external_exports.array(external_exports.object({
+      argv: external_exports.array(external_exports.string()).min(1).max(256),
+      bindings: external_exports.record(external_exports.string()).optional(),
+      cwd: external_exports.string().optional(),
+      timeoutMs: external_exports.number().int().optional(),
+      exitCode: external_exports.number().int(),
+      log: external_exports.string().min(1).max(4096),
+      sha256: digestSchema
+    }).strict()).min(1).max(128),
+    checkedAt: external_exports.string().datetime(),
+    e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
+  }).strict()
+}).strict();
+var mainSyncRemoteInputSchema = mainSyncInputSchema.extend({ report: remoteCheckReportSchema }).strict();
 var readinessStateSchema = external_exports.object({
   version: external_exports.literal(1),
   phase: external_exports.literal("input-readiness"),
@@ -13172,9 +13283,10 @@ function claudeWorkerUsage() {
     "Launches one canonical vibe agent as an owned Claude session. Takes no arguments;",
     "the launch request is one JSON object on stdin.",
     "",
-    "Fields: worktree, agentName, mode, requestId, capabilities, and input (a new request) or continuation",
-    "(the active request). Optional: agentRoot, timeoutMs, allowCredits, and the record fields",
-    "(recordAction, exclusiveRecordTurn, ...) for a record turn.",
+    "Fields: worktree, agentName, mode, requestId, capabilities, and input for a new request or continuation",
+    "for the active request. Reusing an active requestId with input is refused and names continuation.",
+    "Optional: agentRoot, timeoutMs (default and maximum 1800000 ms), allowCredits, and the record fields.",
+    "A record action uses mode record, recordAction, and exclusiveRecordTurn true.",
     "Prints one JSON result; exits 1 when the status is BLOCKED or FAILED.",
     "",
     capabilityUsage()
@@ -13209,6 +13321,8 @@ function mustStopForUsage(rateLimit, allowCredits) {
 }
 
 // src/claude-worker.ts
+var MAX_WORKER_TIMEOUT_MS = 30 * 60 * 1e3;
+var DEFAULT_WORKER_TIMEOUT_MS = MAX_WORKER_TIMEOUT_MS;
 var launchSchema = recordContextSchema.extend({
   /** Optional: the launcher binds its own installed plugin root (or a resumed writer's recorded root) when omitted. */
   agentRoot: external_exports.string().min(1).optional(),
@@ -13216,7 +13330,7 @@ var launchSchema = recordContextSchema.extend({
   input: external_exports.string().min(1).max(64 * 1024).optional(),
   continuation: external_exports.string().min(1).max(64 * 1024).optional(),
   capabilities: capabilitiesSchema,
-  timeoutMs: external_exports.number().int().min(1e3).max(30 * 60 * 1e3).default(15 * 60 * 1e3),
+  timeoutMs: external_exports.number().int().min(1e3).max(MAX_WORKER_TIMEOUT_MS).optional(),
   /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
   allowCredits: external_exports.boolean().optional(),
   /** Explicit top-level orchestrator requirement; raw brief text never grants test authoring. */
@@ -13254,7 +13368,7 @@ var workerResultJsonSchema = {
   additionalProperties: false,
   properties: {
     status: { type: "string", enum: statusSchema.options },
-    summary: { type: "string", maxLength: 4096 },
+    summary: { type: "string" },
     data: { type: "object", additionalProperties: true }
   },
   required: ["status", "summary"]
@@ -13277,6 +13391,39 @@ var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
 var MCP_READINESS_WINDOW_MS = 15e3;
 var MAX_MCP_STARTUP_ATTEMPTS = 3;
 var MCP_STARTUP_RETRY_DELAY_MS = 500;
+function workerResultJsonSchemaFor(agentName) {
+  const schema = structuredClone(workerResultJsonSchema);
+  if (!receiptRoles.has(agentName)) return schema;
+  schema.properties.data = {
+    type: "object",
+    additionalProperties: true,
+    properties: { findings: { type: "array", items: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        id: { type: "string", minLength: 1 },
+        blocking: { type: "boolean" },
+        evidence: { type: "string", minLength: 1 },
+        premises: { type: "array", minItems: 1, items: {
+          type: "object",
+          additionalProperties: false,
+          properties: { claim: { type: "string", minLength: 1 }, evidence: {
+            type: "object",
+            additionalProperties: true,
+            properties: { kind: { type: "string", enum: ["code", "command", "official-doc", "UNVERIFIED"] } },
+            required: ["kind"]
+          } },
+          required: ["claim", "evidence"]
+        } }
+      },
+      required: ["id", "blocking", "evidence"],
+      allOf: [{ if: { properties: { blocking: { const: true } }, required: ["blocking"] }, then: { required: ["premises"] } }]
+    } } },
+    required: ["findings"]
+  };
+  schema.required = ["status", "summary", "data"];
+  return schema;
+}
 function testAuthoringGranted(input) {
   return input.agentName === "vibe-change-worker" && (input.mode === "pull-request" || input.testsRequired === true && testAuthoringModes.has(input.mode));
 }
@@ -13327,11 +13474,20 @@ function dispatchFreshnessProblem(agentRoot, installedRoot, worktree, text) {
 function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync2) {
   if (input.agentName !== "vibe-environment-worker" || input.mode !== "record" || !previewActions.has(input.recordAction ?? "") || output.status !== "DONE") return;
   if (!input.previewProducer && !input.previewRequirements) return;
-  if (input.previewProducer !== "runtime-provider") throw new Error("Preview requirements need an authoritative provider producer declaration");
-  if (!input.previewRequirements?.includes("app-preview")) throw new Error("Environment DONE needs explicit preview requirements including app-preview");
+  if (input.previewProducer !== "runtime-provider") throw new WorkerRefusal(
+    "PREVIEW_PRODUCER_INVALID",
+    "Preview requirements need an authoritative provider producer declaration."
+  );
+  if (!input.previewRequirements?.includes("app-preview")) throw new WorkerRefusal(
+    "PREVIEW_REQUIREMENTS_INVALID",
+    "Environment DONE needs explicit preview requirements including app-preview."
+  );
   const receipt = output.data?.previewReceipt;
   const environmentId = output.data?.environmentId;
-  if (typeof receipt !== "string" || typeof environmentId !== "string") throw new Error("Environment DONE needs provider preview receipt and environment identity");
+  if (typeof receipt !== "string" || typeof environmentId !== "string") throw new WorkerRefusal(
+    "PREVIEW_RECEIPT_MISSING",
+    "Environment DONE needs provider preview receipt and environment identity."
+  );
   const args = [
     realpathSync8(join8(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
     "--file",
@@ -13345,7 +13501,10 @@ function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync
     ...input.previewRequirements.flatMap((capability) => ["--required", capability])
   ];
   const checked = run(process.execPath, args, { encoding: "utf8" });
-  if (checked.status !== 0) throw new Error(`Environment preview is not ready: ${checked.stdout || checked.stderr}`);
+  if (checked.status !== 0) throw new WorkerRefusal(
+    "PREVIEW_NOT_READY",
+    `Environment preview is not ready: ${checked.stdout || checked.stderr}`
+  );
 }
 function reviewSourceIdentity(pluginRoot, worktree) {
   return JSON.parse(execFileSync2(
@@ -13358,10 +13517,10 @@ function boundDefinition(definition, input) {
   const binding = sessionBinding(input.worktree);
   requireSupportedCapabilities(input.capabilities, binding);
   const inherited = briefProviderProblem(input.input ?? "", binding);
-  if (inherited) throw new Error(inherited);
+  if (inherited) throw new WorkerRefusal("PROVIDER_BRIEF_MISMATCH", inherited);
   const modes = recordModes(binding);
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
-    throw new Error("This role is outside the vibe and handoff owned launcher");
+    throw new WorkerRefusal("ROLE_NOT_OWNED", `The role ${input.agentName} is outside the vibe and handoff owned launcher.`);
   }
   const { model } = resolveWorkerModel(
     ModelRuntime.Claude,
@@ -13374,23 +13533,48 @@ function boundDefinition(definition, input) {
   const declaredModes = modes[input.agentName];
   const possibleWrites = new Set(Object.values(declaredModes ?? {}).flat());
   if (reader && !prototypeAdvice && definition.tools.some((tool) => tool === "Write" || tool === "Edit")) {
-    throw new Error("Read-only advisor declares writable filesystem tools");
+    throw new WorkerRefusal(
+      "READER_DECLARATION_WRITABLE",
+      `The read-only role ${input.agentName} declares writable filesystem tools.`
+    );
   }
-  if (input.capabilities.some((capability) => capability.access === "write") && (reader || input.capabilities.some((capability) => capability.access === "write" && !possibleWrites.has(capability.operation)))) {
-    throw new Error("This worker cannot receive record-write capabilities");
+  const undeclaredWrite = input.capabilities.find((capability) => capability.access === "write" && !possibleWrites.has(capability.operation));
+  if (input.capabilities.some((capability) => capability.access === "write") && (reader || undeclaredWrite)) {
+    throw new WorkerRefusal(
+      "RECORD_CAPABILITY_UNDECLARED",
+      `Record capability ${undeclaredWrite?.operation ?? "write"} is not declared for ${input.agentName}.`
+    );
   }
   let permittedWrites = [];
   if (input.mode === "record") {
-    if (!input.exclusiveRecordTurn || !input.recordAction || !declaredModes?.[input.recordAction]) {
-      throw new Error("Record writes require a declared canonical action and exclusive record turn");
-    }
+    const declaredActions = Object.keys(declaredModes ?? {});
+    if (!input.recordAction) throw new WorkerRefusal(
+      "RECORD_ACTION_REQUIRED",
+      `Record mode for ${input.agentName} requires recordAction. Allowed actions: ${declaredActions.join(", ") || "none"}.`
+    );
+    if (!declaredModes?.[input.recordAction]) throw new WorkerRefusal(
+      "RECORD_ACTION_UNDECLARED",
+      `Record action ${input.recordAction} is not declared for ${input.agentName}. Allowed actions: ${declaredActions.join(", ") || "none"}.`
+    );
+    if (!input.exclusiveRecordTurn) throw new WorkerRefusal(
+      "EXCLUSIVE_RECORD_TURN_REQUIRED",
+      `Record action ${input.recordAction} for ${input.agentName} requires exclusiveRecordTurn.`
+    );
     permittedWrites = declaredModes[input.recordAction] ?? [];
-    if (input.capabilities.some((capability) => capability.access === "write" && !permittedWrites.includes(capability.operation))) {
-      throw new Error("Record capability is outside this canonical action");
+    const outsideAction = input.capabilities.find((capability) => capability.access === "write" && !permittedWrites.includes(capability.operation));
+    if (outsideAction) {
+      const allowedActions = Object.entries(declaredModes).filter(([, operations]) => operations.includes(outsideAction.operation)).map(([action]) => action);
+      throw new WorkerRefusal(
+        "RECORD_CAPABILITY_OUTSIDE_ACTION",
+        `Record capability ${outsideAction.operation} is outside action ${input.recordAction} for ${input.agentName}. Allowed actions: ${allowedActions.join(", ") || "none"}.`
+      );
     }
-  } else if (input.recordAction || input.exclusiveRecordTurn) throw new Error("Record grants belong only to a separate record continuation");
+  } else if (input.recordAction || input.exclusiveRecordTurn) throw new WorkerRefusal(
+    "RECORD_GRANT_OUTSIDE_RECORD",
+    "Record grants require mode record and a separate record continuation."
+  );
   if (boundWith(binding, "graph") && !input.capabilities.some((capability) => capability.service === "graph")) {
-    throw new Error("Parent-discovered read-only graph capabilities are required");
+    throw new WorkerRefusal("GRAPH_CAPABILITIES_REQUIRED", "Parent-discovered read-only graph capabilities are required.");
   }
   const roleTools = prototypeAdvice ? definition.tools.filter((tool) => tool !== "Write" && tool !== "Edit") : definition.tools;
   const tools = [.../* @__PURE__ */ new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities.filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation)).flatMap((capability) => mcpToolAliases(capability.name))])];
@@ -13421,8 +13605,11 @@ function pushPolicy(input) {
 }
 async function runWorker(rawInput) {
   const input = launchSchema.parse(rawInput);
-  if (input.mainSyncValidation && input.timeoutMs !== 15 * 60 * 1e3) {
-    throw new Error("Canonical validation derives its own envelope; caller timeout overrides are not allowed");
+  if (input.mainSyncValidation && input.timeoutMs !== void 0) {
+    throw new WorkerRefusal(
+      "VALIDATION_TIMEOUT_OVERRIDE",
+      "Canonical validation derives its own envelope; caller timeout overrides are not allowed."
+    );
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const recorded = input.agentName === "vibe-change-worker" && (!input.sessionless || input.sessionless.kind === "takeover") ? recordedWriterRoot(input.worktree) : void 0;
@@ -13430,7 +13617,7 @@ async function runWorker(rawInput) {
   const resolvedRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
   const upgrade = recorded ? readWriterUpgradeEvidence(input.worktree, installedRoot) : void 0;
   const unchangedUpgrade = upgrade?.provenNewer && upgrade.installedDigest === upgrade.recordedDigest;
-  const compatible = upgrade && upgrade.observedDigest === upgrade.recordedDigest && (upgrade.sameRelease || unchangedUpgrade);
+  const compatible = upgrade && writerUpgradeCompatible(upgrade);
   if (upgrade && !compatible) {
     const command = `node ${join8(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
     const message = upgrade.provenNewer || upgrade.observedDigest === null ? `Claude dispatch definition is from a stale installed plugin release; run ${command} with the recorded migration JSON on stdin` : "Writer definition mismatch has no proven installed release upgrade; retain the original writer";
@@ -13444,6 +13631,12 @@ async function runWorker(rawInput) {
     input.input ?? input.continuation ?? ""
   );
   if (dispatchProblem) throw new Error(dispatchProblem);
+  if (receiptRoles.has(input.agentName) && input.continuation) {
+    throw new WorkerRefusal(
+      "REVIEWER_RELAUNCH_REQUIRED",
+      `Read-only role ${input.agentName} has no persistent continuation. Relaunch that same role fresh with a new requestId and input; do not continue the session writer.`
+    );
+  }
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
@@ -13479,8 +13672,7 @@ async function runWorker(rawInput) {
       capabilities: input.capabilities
     });
     workerId = registered.workerId;
-    if (input.input) changeWriter("enqueue", { worktree: input.worktree, workerId, requestId: input.requestId, input: input.input });
-    const claim = changeWriter("claim", {
+    const claim = input.input ? changeWriter("start", { worktree: input.worktree, workerId, requestId: input.requestId, input: input.input }) : changeWriter("claim", {
       worktree: input.worktree,
       workerId,
       requestId: input.requestId,
@@ -13489,7 +13681,11 @@ async function runWorker(rawInput) {
     lease = claim.turn?.lease;
     if (!lease) throw new Error("Writer claim returned no owned turn");
     turnInput = claim.turn?.continuation ?? claim.turn?.input ?? "";
-  } else if (!input.input || input.continuation) throw new Error("Advisors require a fresh read-only input");
+  } else if (input.continuation) throw new WorkerRefusal(
+    "REVIEWER_RELAUNCH_REQUIRED",
+    `Read-only role ${input.agentName} has no persistent continuation. Relaunch that same role fresh with a new requestId and input; do not continue the session writer.`
+  );
+  else if (!input.input) throw new WorkerRefusal("REVIEWER_INPUT_REQUIRED", "A read-only role requires fresh input.");
   recordWorkerScope(workerId, place.root);
   const turnId = randomUUID3();
   const definitionFile = join8(place.dir, `vibe-agent-${turnId}.json`);
@@ -13538,7 +13734,7 @@ async function runWorker(rawInput) {
     }
     writeFileSync3(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 384, flag: "wx" });
     trace = openSync(tracePath, "wx", 384);
-    const timeoutMs = input.mainSyncValidation ? await deriveValidationEnvelope(operationContext, place.dir, place.branch, () => prelaunchCanceled) : input.timeoutMs;
+    const timeoutMs = input.mainSyncValidation ? await deriveValidationEnvelope(operationContext, place.dir, place.branch, () => prelaunchCanceled) : input.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
     if (prelaunchCanceled) throw new Error("Owned worker turn canceled before Claude spawn");
     if (persistent && lease) resume = markClaudeStarted(input.worktree, workerId, lease).resume;
     const args = [
@@ -13549,7 +13745,7 @@ async function runWorker(rawInput) {
       "--agent",
       definition.name,
       "--json-schema",
-      JSON.stringify(workerResultJsonSchema),
+      JSON.stringify(workerResultJsonSchemaFor(input.agentName)),
       "--agents",
       definitionFile,
       "--model",
@@ -13588,8 +13784,12 @@ async function runWorker(rawInput) {
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
-    if (reviewSource && JSON.stringify(reviewSourceIdentity(definition.root, place.root)) !== JSON.stringify(reviewSource)) {
-      throw new Error("Reviewer source changed during its read-only turn; rerun on the settled source");
+    const endingReviewSource = reviewSource ? reviewSourceIdentity(definition.root, place.root) : void 0;
+    if (reviewSource && JSON.stringify(endingReviewSource) !== JSON.stringify(reviewSource)) {
+      throw new WorkerRefusal(
+        "REVIEWER_SOURCE_CHANGED",
+        `Reviewer source changed during its read-only turn from ${JSON.stringify(reviewSource)} to ${JSON.stringify(endingReviewSource)}. Rerun the review on the final settled source.`
+      );
     }
     checkPreviewResult(input, output, definition.root, place.root);
     if (persistent && lease) changeWriter("finish", {
@@ -13631,7 +13831,10 @@ async function runWorker(rawInput) {
         leaseRetained = true;
       }
     }
-    const failure = error instanceof StructuredOutputRetryError && input.mode === "record" ? { code: "RECORD_RESULT_UNVERIFIED", summary: "The record turn's final status failed structured output validation. Its write may have succeeded. Do not repeat the write; perform read-only reconciliation of the ticket and session record, then continue from the verified state." } : safeFailure(error);
+    const failure = error instanceof WorkerRefusal && error.code === "STRUCTURED_OUTPUT_RETRY_EXHAUSTED" && input.mode === "record" ? { code: "RECORD_RESULT_UNVERIFIED", summary: "The record turn's final status failed structured output validation. Its write may have succeeded. Do not repeat the write; perform read-only reconciliation of the ticket and session record, then continue from the verified state." } : safeFailure(error, input);
+    if (!persistent && failure.code === "TURN_TIMEOUT") {
+      failure.summary = `Read-only role ${input.agentName} timed out. Relaunch that same role fresh with a new requestId and input; reviewer turns cannot be continued.`;
+    }
     const capHit = persistent && failure.code === "TURN_TIMEOUT" ? capCheckpoint(place.root, place.dir, turnId) : void 0;
     if (capHit) {
       failure.summary = `CAP-HIT: the turn hit its time cap with ${capHit.dirtyFiles} changed files${capHit.midMerge ? ", mid-merge" : ""}${capHit.patch ? `; work saved as ${capHit.patch}` : ""}. Continue this request with the same writer.`;
@@ -13777,18 +13980,44 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
           return;
         }
         if (final?.is_error && final.terminal_reason === "structured_output_retry_exhausted") {
-          reject(new StructuredOutputRetryError("Claude exhausted structured output retries"));
+          reject(new WorkerRefusal(
+            "STRUCTURED_OUTPUT_RETRY_EXHAUSTED",
+            "Claude exhausted structured output retries; continue the same request with a shorter compact result."
+          ));
           return;
         }
-        if (code !== 0 || !final || final.is_error || final.structured_output === void 0 && !final.result) {
-          reject(new Error("Claude failed or returned no successful structured result"));
+        if (code !== 0) {
+          reject(new WorkerRefusal("CLAUDE_PROCESS_FAILED", `Claude exited with status ${code}. Inspect the private trace and continue the same request.`));
+          return;
+        }
+        if (!final) {
+          reject(new WorkerRefusal("CLAUDE_RESULT_MISSING", "Claude returned no final result record. Inspect the private trace and continue the same request."));
+          return;
+        }
+        if (final.is_error) {
+          reject(new WorkerRefusal("CLAUDE_RESULT_ERROR", "Claude marked its final result as an error. Inspect the private trace and continue the same request."));
+          return;
+        }
+        if (final.structured_output === void 0 && !final.result) {
+          reject(new WorkerRefusal("CLAUDE_RESULT_EMPTY", "Claude returned no structured result payload. Continue the same request."));
           return;
         }
         try {
-          const result = workerResultSchema.parse(capWorkerResult(final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result)));
+          let rawResult;
+          try {
+            rawResult = final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result);
+          } catch {
+            throw new WorkerRefusal("WORKER_RESULT_JSON_INVALID", "The worker returned invalid JSON instead of a compact status object.");
+          }
+          const parsed = workerResultSchema.safeParse(capWorkerResult(rawResult));
+          if (!parsed.success) throw new WorkerRefusal(
+            "WORKER_RESULT_SCHEMA_INVALID",
+            `The worker returned an invalid compact status object: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "result"} ${issue.message}`).join("; ")}`
+          );
+          const result = parsed.data;
           resolve3({ ...result, sessionId: final.session_id, ...rateLimit ? { rateLimit } : {} });
-        } catch {
-          reject(new Error("Worker returned no valid compact status object"));
+        } catch (error) {
+          reject(error);
         }
       }, reject);
     });
@@ -13864,8 +14093,6 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
 }
 var OwnedCleanupError = class extends Error {
 };
-var StructuredOutputRetryError = class extends Error {
-};
 var WorkerLaunchError = class extends Error {
   constructor(result) {
     super(result.summary);
@@ -13873,8 +14100,29 @@ var WorkerLaunchError = class extends Error {
   }
   result;
 };
-function safeFailure(error) {
+function invalidRequestSummary(error, rawInput) {
+  const input = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput) ? rawInput : void 0;
+  const modeIssue = error.issues.find((issue) => issue.path.join(".") === "mode");
+  if (modeIssue && typeof input?.mode === "string" && typeof input.agentName === "string") {
+    try {
+      const actions = Object.keys(recordModes(sessionBinding(typeof input.worktree === "string" ? input.worktree : void 0))[input.agentName] ?? {});
+      if (actions.includes(input.mode)) {
+        return `Field mode received record action ${JSON.stringify(input.mode)} for ${input.agentName}. Use mode ${JSON.stringify("record")} with recordAction ${JSON.stringify(input.mode)}. Allowed record actions: ${actions.join(", ")}.`;
+      }
+    } catch {
+    }
+  }
+  return error.issues.map((issue) => {
+    const field = issue.path.join(".") || "request";
+    if (field === "timeoutMs" && issue.code === "too_big" && "maximum" in issue && typeof issue.maximum === "number") {
+      return `${field} received ${String(input?.timeoutMs)}; maximum ${issue.maximum} ms (${issue.maximum / 6e4} minutes)`;
+    }
+    return `${field}: ${issue.message}`;
+  }).join("; ");
+}
+function safeFailure(error, rawInput) {
   const message = error instanceof Error ? error.message : "";
+  if (error instanceof WorkerRefusal) return { code: error.code, summary: error.summary };
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
@@ -13887,7 +14135,7 @@ function safeFailure(error) {
   if (message.includes("Takeover worktree HEAD")) return { code: "TAKEOVER_HEAD_MISMATCH", summary: "The takeover worktree is not at the bound pull request head; fetch and check out that head, then relaunch." };
   if (message.includes("Takeover worktree already has a writer")) return { code: "TAKEOVER_WRITER_BOUND", summary: "This takeover worktree already has its one writer for another pull request or source branch; use a new worktree for another takeover." };
   if (message.includes("never argv")) return { code: "INVALID_REQUEST", summary: "This command takes no arguments; send the launch request on stdin (claude-worker.mjs help prints its shape)." };
-  if (error instanceof external_exports.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
+  if (error instanceof external_exports.ZodError) return { code: "INVALID_REQUEST", summary: invalidRequestSummary(error, rawInput) };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
   if (message.includes("deadline")) return { code: "TURN_TIMEOUT", summary: "The owned worker turn exceeded its deadline." };
   if (message.includes("canceled")) return { code: "TURN_CANCELED", summary: "The owned worker turn was canceled." };
@@ -13949,7 +14197,7 @@ async function main(argv) {
     }
     const result = error instanceof WorkerLaunchError ? error.result : {
       status: "BLOCKED",
-      ...safeFailure(error),
+      ...safeFailure(error, input),
       requestId: identity.success ? identity.data.requestId : void 0,
       workerId: writer?.workerId,
       sessionId: writer?.runtime === "claude" ? writer.workerId : void 0,
@@ -13976,8 +14224,10 @@ function capWorkerResult(value) {
   const result = { ...value };
   const clip = (summary2, suffix) => summary2.length + suffix.length <= SUMMARY_LIMIT ? `${summary2}${suffix}` : `${summary2.slice(0, SUMMARY_LIMIT - suffix.length)}${suffix}`;
   if (typeof result.summary === "string" && result.summary.length > SUMMARY_LIMIT) result.summary = clip(result.summary, TRUNCATED);
-  if (JSON.stringify(result).length > RESULT_LIMIT && "data" in result) {
-    delete result.data;
+  const originalBytes = JSON.stringify(result).length;
+  if (originalBytes > RESULT_LIMIT && "data" in result) {
+    result.status = "BLOCKED";
+    result.data = { launcher: { code: "WORKER_DATA_TOO_LARGE", originalBytes } };
     if (typeof result.summary === "string") result.summary = clip(result.summary, DATA_DROPPED);
   }
   return result;
@@ -14010,6 +14260,8 @@ function checkoutHead(root) {
   return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }
 export {
+  DEFAULT_WORKER_TIMEOUT_MS,
+  MAX_WORKER_TIMEOUT_MS,
   armMcpInitWatchdog,
   boundDefinition,
   canStartWorkerAttempt,
@@ -14023,5 +14275,6 @@ export {
   runWorker,
   safeFailure,
   testAuthoringGranted,
+  workerResultJsonSchemaFor,
   workerSessionName
 };

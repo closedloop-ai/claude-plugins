@@ -12,7 +12,7 @@ import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs'
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity,
   reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
-import { reconcileExpiredScratchHelpers, sweepScratchHelpers } from './scratch-cleanup.mjs';
+import { captureScratchLease, reconcileExpiredScratchHelpers, sweepScratchHelpers } from './scratch-cleanup.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -214,6 +214,33 @@ test('scratch helper start requires owner, exact project, finite TTL and label p
   const kept = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['scratch-pg'];
   assert.equal(kept.project, saved.project);
   assert.equal(kept.ownerToken, saved.ownerToken);
+});
+
+test('ISS-14222 scratch lease refusal names both machine-local proof paths and keeps cwd and ended guards', (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'remote-writer-worktree');
+  mkdirSync(worktree);
+  execFileSync('git', ['init', '-q', '-b', 'main', worktree]);
+  const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  const sessionFile = path.join(gitDir, 'vibe-session.json');
+  const fleetFile = path.join(dir, 'sessions', 'claude-writer.json');
+  mkdirSync(path.dirname(fleetFile));
+
+  for (const state of [
+    { cwd: worktree, threadId: 'thread-1', ended: true },
+    { cwd: path.join(dir, 'foreign'), threadId: 'thread-1', ended: false },
+  ]) {
+    writeFileSync(fleetFile, JSON.stringify(state));
+    assert.throws(() => captureScratchLease(dir, 'claude-writer', worktree), (error) => {
+      assert.match(error.message, /machine that holds the live writer lease/);
+      assert.match(error.message, new RegExp(sessionFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.match(error.message, new RegExp(fleetFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      return true;
+    });
+  }
+  writeFileSync(fleetFile, JSON.stringify({ cwd: worktree, threadId: 'thread-1', ended: false }));
+  assert.deepEqual(captureScratchLease(dir, 'claude-writer', worktree),
+    { kind: 'fleet', stateDir: path.dirname(fleetFile), name: 'claude-writer', threadId: 'thread-1' });
 });
 
 test('generic stopped and pr-terminal paths cannot bypass scratch TTL and writer lease', async (t) => {
@@ -527,6 +554,29 @@ test('a helper whose result was accepted and that still runs is a stop candidate
   assert.equal(run([dir, 'stopped', 'review-a', '--now', '2026-10-21T10:21:00Z']).status, 0);
   assert.equal(run([dir, 'status', '--now', '2026-10-21T10:30:00Z']).status, 0);
   assert.deepEqual(stopCandidates({ x: { startedAt: 'a' } }, Date.now()), [], 'a running helper with no accepted result is not idle');
+});
+
+test('ISS-14117 an interrupted reviewer closes through recorded abandonment without becoming accepted', (t) => {
+  const dir = tempDir(t);
+  const source = path.join(dir, 'source-abandoned');
+  mkdirSync(source);
+  execFileSync('git', ['init', '-q', '-b', 'review', source]);
+  writeFileSync(path.join(source, 'app.txt'), 'source\n');
+  execFileSync('git', ['-C', source, 'add', '.']);
+  execFileSync('git', ['-C', source, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const capabilities = path.join(dir, 'abandoned-capabilities.json'); writeFileSync(capabilities, '[]\n');
+  const definition = path.join(dir, 'abandoned-review.md'); writeFileSync(definition, '---\nname: review-abandoned\n---\n');
+  const brief = path.join(dir, 'abandoned-brief.md'); writeFileSync(brief, 'Review.\n');
+  assert.equal(run([dir, 'start', 'review-abandoned', '--kind', 'reviewer', '--brief', brief, '--worktree', source,
+    '--worker-id', 'native-reviewer-abandoned', '--role', 'review-abandoned', '--agent-definition', definition,
+    '--capabilities', capabilities]).status, 0);
+  assert.match(run([dir, 'stopped', 'review-abandoned']).stderr, /no accepted final deliverable or recorded abandonment/);
+  assert.equal(run([dir, 'abandoned', 'review-abandoned', '--reason', 'operator changed the review model']).status, 0);
+  assert.equal(run([dir, 'stopped', 'review-abandoned']).status, 0);
+  const entry = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['review-abandoned'];
+  assert.equal(entry.abandonReason, 'operator changed the review model');
+  assert.ok(entry.abandonedAt && entry.stoppedAt);
+  assert.equal(entry.acceptedAt, undefined, 'abandonment never counts as an accepted review');
 });
 
 test('history attribution refuses a shallow clone', (t) => {

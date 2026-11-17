@@ -226,6 +226,23 @@ describe("ISS-13506 installed release upgrade", () => {
       expect(proof[0]!.args).toContain(migrated.workerId);
     } finally { process.env.PATH = previousPath; }
   });
+  it("ISS-14116 carries a BLOCKED request across a proven cached definition upgrade, so resume and migrate never deadlock", async () => {
+    const value = setupInstalledUpgrade(true);
+    const owner = { worktree: value.worktree, workerId: value.registered.workerId, requestId: value.launch.requestId };
+    changeWriter("enqueue", { ...owner, input: "Request blocked under the older release" });
+    const turn = changeWriter("claim", owner).turn!;
+    changeWriter("finish", { ...owner, lease: turn.lease, status: "BLOCKED", resultSummary: "Finished wait needs recovery" });
+    const ledger = JSON.parse(readFileSync(value.ledgerFile, "utf8"));
+    delete ledger.active.blockReason;
+    writeFileSync(value.ledgerFile, JSON.stringify(ledger));
+
+    await expect(runWorker({ ...value.launch, input: undefined, continuation: "Resume the blocked request" }))
+      .rejects.toThrow(/writer-state\.mjs.*migrate/);
+    const migrated = migrateWriter(value.migrationInput, value.installedRoot);
+    expect(migrated).toMatchObject({ status: "BLOCKED", activeRequestId: value.launch.requestId,
+      carriedBlock: { requestId: value.launch.requestId } });
+    expect(JSON.parse(readFileSync(value.ledgerFile, "utf8")).migrations[0]).toMatchObject({ reason: "definition-upgraded" });
+  });
   describe("live 1.1.23 to 1.1.25 writer upgrade", () => {
     let value: ReturnType<typeof setupLiveUpgrade>;
     let migratedId: string;
@@ -665,7 +682,7 @@ describe("a BLOCKED writer stranded by a plugin update (ISS-13291)", () => {
     for (const key of ["pending", "completed"]) expect(after[key]).toEqual(before[key]);
     expect(after.migrations[0]).toMatchObject({ reason: "definition-missing", observedDigest: null });
     const writer = { worktree: value.worktree, workerId: migrated.workerId };
-    expect(() => changeWriter("claim", { ...writer, requestId: "next-01" })).toThrow(/Continue the active request/);
+    expect(() => changeWriter("claim", { ...writer, requestId: "next-01" })).toThrow(/requestId "record-01".*"continuation"/);
     const settled = changeWriter("claim", { ...writer, requestId: "record-01", continuation: "Settle the refusal first" });
     expect(settled.turn).toMatchObject({ id: "record-01", input: "Record the build on the ticket", continuation: "Settle the refusal first" });
   });

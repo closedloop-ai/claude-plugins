@@ -279,7 +279,8 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names. A `frozen-render` finding is settled
 only by `scripts/frozen-render.mjs`, run in step 4 by
-`vibe-storybook-decomposer`: the writer records the `Frozen render
+`vibe-storybook-decomposer`: on a remote runner it uses fleet's
+`--shipped-plugin-script handoff/scripts/frozen-render.mjs`; the writer records the `Frozen render
 unchanged` line that command prints, and nobody captures frozen stories any
 other way. Give it the prepared base worktree, never base or head server URLs:
 the renderer starts both through the verifier's owned run wrapper and stops
@@ -521,7 +522,7 @@ step 5's checks and step 7's validation:
 - Run every e2e spec the session touched, and every spec covering a touched
   screen, and no other spec.
 - Run them through the repo's containerized path (the `local-ci` skill's
-  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  `zsh -lic 'e2e/run-containerized.sh ...'`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
   "Existing checks"), never natively on the person's Mac. The lock gives
   each run its own compose project, so a teardown removes only its own
   stack; `--foreign-compose <project>` names a stack started outside the
@@ -614,7 +615,8 @@ person accepted (`../vibe/references/quality-loop.md`, "Frozen behavior at
 handoff"). Have it refresh that section after any behavior answer that changes
 the table, before the ticket worker sees the table again.
 
-The read-only verifier runs `scripts/live-ticket-check.mjs` on the private candidate ticket
+The read-only verifier runs `scripts/live-ticket-check.mjs` on the private candidate ticket,
+passing the separate session change log or program rulings record with `--rulings`,
 before readiness. Behavior questions and code gaps return to the SAME writer
 and repeat these gates before the first commit. After publication, the ticket
 worker binds accepted evidence and deployment metadata. A metadata-only mismatch
@@ -765,6 +767,9 @@ engineering finishing is the usual route, but the person decides.
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the next owner (full name and email), whether the person asked
 for a pull request, the inventory path, the
+complete handoff record grant from the provider contract, including
+`upload_attachment` for each decision table (a brief that omits that capability
+is refused before launch), the
 confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,

@@ -11,10 +11,28 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { localPlanPaths } from "./local-plans.mjs";
 
 export const SYMPHONY_REMOTE = "git@github.com:closedloop-ai/symphony-alpha.git";
 // Fixture mirror of symphony-alpha/vibe-handoff-paths.json; production loads the target repository itself.
 export const SYMPHONY_PATH_POLICY = readFileSync(new URL("./fixtures/symphony-vibe-handoff-paths.json", import.meta.url), "utf8");
+
+/** Seed the private table required by handoff for a fixture whose table behavior is not under test. */
+export function seedAlignedDecisionTable(worktree) {
+  const file = localPlanPaths(worktree).decisionTable;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const relativeDirectory = path.relative(realpathSync(worktree), path.dirname(file));
+  if (relativeDirectory && !relativeDirectory.startsWith("..")) {
+    const excludePath = execFileSync("git", ["-C", worktree, "rev-parse", "--git-path", "info/exclude"], { encoding: "utf8" }).trim();
+    const exclude = path.resolve(worktree, excludePath);
+    mkdirSync(path.dirname(exclude), { recursive: true });
+    const current = readFileSync(exclude, "utf8");
+    const rule = `/${relativeDirectory.replaceAll(path.sep, "/")}/`;
+    if (!current.split("\n").includes(rule)) writeFileSync(exclude, `${current.trimEnd()}\n${rule}\n`);
+  }
+  writeFileSync(file, "# Fixture decision table\n\n## Missing tests\n\n- None\n\n## Frozen Behavior\n\n- Fixture behavior is unchanged.\n\n## Final Alignment Status\n\nAligned\n");
+  return file;
+}
 
 /** Mutate a fixture immediately after a named source read, without patching the consumer under test. */
 export function mutateSourceRead({ file, caller, text, gitDiff = false, writeTo = file, excludeCaller }) {

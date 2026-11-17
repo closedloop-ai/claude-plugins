@@ -473,7 +473,11 @@ the orchestrator's push-ready commit, deploy and showing the person.
   change, so the orchestrator's commit and the deploy push pass: Biome on the
   changed files, the affected typecheck and the source gates. When they fail
   on an existing test or fixture the change broke, the writer repairs it
-  (`guardrails.md`, "Repair, don't author").
+  (`guardrails.md`, "Repair, don't author"). When local heavy checks are
+  barred (`LOCAL_HEAVY_BARRED=1` in the fleet's `config.env`), the affected
+  typecheck runs through `fleet.sh <orchDir> remote slot heavy` after each
+  writer fix and before each review round; it is never skipped and never run
+  locally.
 - Acceptance check: before `DONE`, the writer checks every acceptance
   criterion the change touches with concrete, cheap evidence and records the
   result ("Acceptance criteria before ready" below).

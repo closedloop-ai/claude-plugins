@@ -34,7 +34,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
@@ -242,6 +242,7 @@ export function remoteTrigger(action, payload, { run = runCommand, cwd, intent, 
   let toolId;
   let toolResult;
   let structured;
+  let echoProblem = null;
   for (const line of result.stdout.split("\n")) {
     if (!line.trim()) continue;
     let event;
@@ -249,8 +250,9 @@ export function remoteTrigger(action, payload, { run = runCommand, cwd, intent, 
     for (const item of event?.message?.content ?? []) {
       if (item?.type === "tool_use" && item.name === "RemoteTrigger") {
         // The tool input is the model's copy of ours: a different id or body would act on, or prove, another routine.
-        if (toolId || !isDeepStrictEqual(item.input, sent)) throw new Error(`RemoteTrigger ${action} called an unexpected action`);
+        if (toolId) throw new Error(`RemoteTrigger ${action} called an unexpected action`);
         toolId = item.id;
+        if (!isDeepStrictEqual(item.input, sent)) echoProblem = `RemoteTrigger ${action} called an unexpected action`;
       }
       if (item?.type === "tool_result" && item.tool_use_id === toolId) {
         toolResult = item.content;
@@ -260,12 +262,18 @@ export function remoteTrigger(action, payload, { run = runCommand, cwd, intent, 
   }
   if (!toolId || !toolResult) throw new Error(`RemoteTrigger ${action} returned no verified tool result`);
   const body = toolResultText(typeof toolResult === "string" ? toolResult : Array.isArray(toolResult) ? toolResult.map((item) => item.text ?? "").join("\n") : "", structured);
+  if (echoProblem && action !== "create") throw new Error(echoProblem);
   const [statusLine, jsonLine] = body.split("\n");
   if (statusLine !== "HTTP 200" || !jsonLine) {
     const status = Number(/^HTTP (\d{3})\b/.exec(statusLine ?? "")?.[1]);
     throw Object.assign(new Error(`RemoteTrigger ${action} failed: ${firstLine(body)}`), Number.isInteger(status) ? { httpStatus: status } : {});
   }
   const parsed = parseJsonOutput(jsonLine, `RemoteTrigger ${action}`);
+  if (echoProblem) {
+    const createdId = parsed?.trigger?.id;
+    if (action !== "create" || typeof createdId !== "string" || !createdId) throw new Error(echoProblem);
+    parsed.echoWarning = echoProblem;
+  }
   // get_run_log answers with a JSON header line, then the condensed log as text.
   return action === "get_run_log" ? { ...parsed, log: body.split("\n").slice(2).join("\n") } : parsed;
 }
@@ -322,12 +330,12 @@ function findRun(remote, routineId, runId) {
   return undefined;
 }
 
-/** Poll one active task until it ends or its fixed wall-clock budget expires. */
+/** Poll one active task until it ends; after the budget, return an overdue receipt that a later poll can reconcile. */
 export async function pollTask(receipt, request, { codex = codexStatus, remote = remoteTrigger, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now } = {}) {
   const started = Date.parse(receipt.startedAt);
   if (!Number.isFinite(started)) throw new Error("task receipt has no valid start time");
   const deadline = started + (request.maxWallMs ?? DEFAULT_WALL_MS);
-  while (now() < deadline) {
+  for (;;) {
     let state;
     if (receipt.provider === "codex") state = codex(receipt.taskId);
     else {
@@ -339,7 +347,7 @@ export async function pollTask(receipt, request, { codex = codexStatus, remote =
     }
     if (TERMINAL.has(state.status)) {
       const finished = { ...receipt, status: state.status, finishedAt: new Date(now()).toISOString(), wallMs: now() - started, ...(state.sessionId ? { sessionId: state.sessionId } : {}) };
-      if (receipt.provider === "claude") {
+      if (receipt.provider === "claude" && state.status !== "archived") {
         if (!finished.sessionId) throw new Error("Claude run has no resolved cloud session id for its log");
         remote("get_run_log", { session_id: finished.sessionId });
         finished.logFetched = true;
@@ -347,15 +355,26 @@ export async function pollTask(receipt, request, { codex = codexStatus, remote =
       return finished;
     }
     if (state.status !== "pending" && state.status !== "queued" && state.status !== "running" && state.status !== "in_progress") throw new Error(`unknown cloud task state: ${state.status}`);
+    if (now() >= deadline) {
+      return { ...receipt, status: "overdue", remoteStatus: state.status,
+        overdueAt: new Date(now()).toISOString(), wallMs: now() - started };
+    }
     await sleep(Math.min(request.pollMs ?? DEFAULT_POLL_MS, Math.max(0, deadline - now())));
   }
-  throw new Error(`cloud task exceeded ${request.maxWallMs ?? DEFAULT_WALL_MS} ms wall time`);
 }
 
 function gitDir(worktree) { return git(worktree, ["rev-parse", "--absolute-git-dir"]); }
 function receiptPath(worktree, ticket) { return path.join(gitDir(worktree), dispatchReceiptName(ticket)); }
 function importWitnessPath(worktree) { return path.join(gitDir(worktree), "vibe-cloud-import.json"); }
 function saveReceipt(worktree, ticket, data) { writeFileSync(receiptPath(worktree, ticket), `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 }); }
+function archiveReceipt(worktree, ticket, receipt) {
+  const file = receiptPath(worktree, ticket);
+  const identity = String(receipt.runId ?? receipt.taskId ?? "archived").replace(/[^A-Za-z0-9._-]/g, "-");
+  const archived = file.replace(/\.json$/, `.archived-${identity}.json`);
+  if (existsSync(archived)) throw new Error(`archived cloud receipt already exists: ${path.basename(archived)}`);
+  renameSync(file, archived);
+  return archived;
+}
 function readReceipt(worktree, ticket) {
   const file = receiptPath(worktree, ticket);
   if (!existsSync(file)) throw new Error("no cloud dispatch receipt exists for this Vibe session");
@@ -686,14 +705,18 @@ async function main(argv) {
   if (action === "brief") return { brief, placement: decideCloudPlacement(request.placement) };
   if (action === "dispatch" || action === "poll") {
     const file = receiptPath(request.worktree, request.ticket);
-    let started;
+    let started = null;
     if (existsSync(file)) {
       started = readReceipt(request.worktree, request.ticket);
       if (started.requestDigest !== requestDigest(request) || started.provider !== request.provider) throw new Error("cloud receipt belongs to another request; refusing replay");
       if (action === "dispatch" && started.reservedVersion !== request.reservedVersion) throw new Error("reserved version changed after dispatch; poll the existing task and correct the version locally");
       if (started.status === "completed") return started;
-      if (TERMINAL.has(started.status)) throw new Error(`cloud task already ended: ${started.status}`);
-    } else {
+      if (started.status === "archived" && action === "dispatch") {
+        archiveReceipt(request.worktree, request.ticket, started);
+        started = null;
+      } else if (TERMINAL.has(started.status)) throw new Error(`cloud task already ended: ${started.status}`);
+    }
+    if (!started) {
       if (action === "poll") throw new Error("no cloud task exists to poll");
       hydrateCloudRequest(raw, { requireCurrentSource: true });
       if (request.provider === "claude") await sweepRemovals({ remote: cliRemote(request.worktree), worktree: request.worktree });

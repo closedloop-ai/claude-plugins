@@ -7,7 +7,7 @@ import test from "node:test";
 import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { captureNativeReviewReceipt, captureReviewReceipt, REVIEW_ROLES, reviewReceiptProblems, verifiedReviewModel } from "./review-receipts.mjs";
 import { finalMarker } from "../../fleet-orchestrator/scripts/helpers.mjs";
-import { gatePath, handoffGateProblem, mergeabilityProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
+import { gatePath, handoffGateProblem, memberNameProblems, mergeabilityProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
 import { recordHandoffGate } from "../../../../vibe/skills/handoff/scripts/handoff-gate.mjs";
 import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
 import { vibeRoot } from "../../../shared/vibe-install.mjs";
@@ -59,6 +59,10 @@ test("review receipts require all launcher roles, completion identity, graph use
   captureReviewReceipt({ worktree, resultFile: receipts[1].resultFile, outFile: receipts[1].outFile, role: REVIEW_ROLES[1] });
   assert.deepEqual(reviewReceiptProblems(saved(), source), { problems: [], findings: [] }, "provider-off has no graph-call requirement");
   const verifier = receipts.find(item => item.output.agentName === "vibe-verify-worker");
+  writeFileSync(verifier.resultFile, JSON.stringify({ ...verifier.output,
+    data: { findings: [{ id: "N1", blocking: false, evidence: "informational note" }] } }));
+  assert.doesNotThrow(() => captureReviewReceipt({ worktree, resultFile: verifier.resultFile, outFile: verifier.outFile, role: "vibe-verify-worker" }),
+    "a nonblocking note does not invalidate an otherwise clean receipt");
   writeFileSync(verifier.resultFile, JSON.stringify({ ...verifier.output, data: { findings: [{ id: "V1", blocking: true, evidence: "claimed check failed" }] } }));
   assert.throws(() => captureReviewReceipt({ worktree, resultFile: verifier.resultFile, outFile: verifier.outFile, role: "vibe-verify-worker" }), /list every material premise/);
   writeFileSync(verifier.resultFile, JSON.stringify(verifier.output));
@@ -70,6 +74,16 @@ test("review receipts require all launcher roles, completion identity, graph use
   writeFileSync(receipts[0].tracePath, `${JSON.stringify({ type: "result", session_id: receipts[0].output.sessionId })}\n`);
   assert.throws(() => captureReviewReceipt({ worktree, resultFile: receipts[0].resultFile, outFile: receipts[0].outFile, role: REVIEW_ROLES[0] }), /no graph call/);
   assert.match(reviewReceiptProblems(saved(), source).problems.join(), /trace changed|graph calls missing/);
+});
+
+test("member ticket names fit in the body without consuming the pull request title", () => {
+  const members = ["ISS-14107", "ISS-14141", "ISS-14143"];
+  assert.deepEqual(memberNameProblems(members, "ISS-14107: Finish mesh follow-ups",
+    "Delivers ISS-14107, ISS-14141, and ISS-14143."), []);
+  assert.deepEqual(memberNameProblems(members, "ISS-14107: Finish mesh follow-ups", "Delivers ISS-14107."), [
+    "the PR body does not name member ticket ISS-14141",
+    "the PR body does not name member ticket ISS-14143",
+  ]);
 });
 
 test("Codex native FINAL helper artifacts reach the same four-role handoff gate", async () => {
@@ -192,7 +206,7 @@ test("AC-001 DT-12 R4 R5: stacked gate checks and stores one main identity", (t)
   assert.equal(JSON.parse(readFileSync(gatePath(worktree), "utf8")).main.oid, base);
   assert.equal(handoffGateProblem(worktree, { base: "parent", bodyFile: body }), null);
   git("update-ref", "refs/remotes/origin/main", mainSha);
-  assert.match(handoffGateProblem(worktree, { base: "parent" }) ?? "", /stale for current main/);
+  assert.match(handoffGateProblem(worktree, { base: "parent", bodyFile: body }) ?? "", /stale for current main/);
   git("switch", "-q", "-c", "clean-main", base);
   writeFileSync(path.join(worktree, "note-b.txt"), "main B\n");
   git("add", ".");

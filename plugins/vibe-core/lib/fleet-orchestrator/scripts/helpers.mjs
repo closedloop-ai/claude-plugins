@@ -17,6 +17,7 @@
 //        [--completion-event <saved thread/read JSON>]; deliverable ends with
 //        FINAL <one-time token> <start tree> <worker ID> <session ID> <turn ID> completed
 //        helpers.mjs <orchDir> accepted <name> --report <helper-final.json>
+//        helpers.mjs <orchDir> abandoned <name> --reason <why this review was superseded or stopped>
 //        helpers.mjs <orchDir> stopped <name> [--grace-seconds <n, default 10>] [--owner <writer> --owner-token <token>]
 //        helpers.mjs <orchDir> hand <stack> --to <guide>
 //        helpers.mjs <orchDir> unhand <stack>
@@ -400,10 +401,11 @@ async function main(argv) {
       role: { type: "string" }, "agent-definition": { type: "string" },
       deliverable: { type: "string" }, out: { type: "string" }, "session-id": { type: "string" }, "turn-id": { type: "string" },
       "completion-event": { type: "string" }, runtime: { type: "string" },
+      reason: { type: "string" },
       container: { type: "string", multiple: true }, volume: { type: "string", multiple: true }, network: { type: "string", multiple: true },
     },
   });
-  if (!workDir || !["start", "pid", "resources", "final", "accepted", "stopped", "hand", "unhand", "status", "scratch-run"].includes(action)) {
+  if (!workDir || !["start", "pid", "resources", "final", "accepted", "abandoned", "stopped", "hand", "unhand", "status", "scratch-run"].includes(action)) {
     throw new Error("Usage: helpers.mjs <orchDir> start <name> [--kind reviewer|verifier|critic --brief <file> --worktree <dir> --worker-id <thread> --role <name> --agent-definition <file> --capabilities <file> [--runtime claude|codex]] | final|accepted|stopped|pid|resources|hand|unhand <name> | status");
   }
   const orchDir = resolveWorkDir(workDir).dir;
@@ -583,6 +585,13 @@ async function main(argv) {
     const problem = finalReportProblem(entry, values.report);
     if (problem) throw new Error(problem);
     ledger[name] = { ...entry, acceptedAt: at, report: evidenceFingerprint(values.report) };
+  } else if (action === "abandoned") {
+    const entry = ledger[name];
+    if (!entry?.startedAt || entry.stoppedAt || !entry.requiresFinal || entry.acceptedAt) {
+      throw new Error("abandoned needs an active unaccepted reviewer, verifier or critic helper");
+    }
+    if (!values.reason?.trim()) throw new Error("abandoned needs --reason <why the helper was superseded or stopped>");
+    ledger[name] = { ...entry, abandonedAt: at, abandonReason: values.reason.trim() };
   } else {
     const entry = ledger[name] ?? {};
     if (entry.kind === 'scratch') {
@@ -609,7 +618,7 @@ async function main(argv) {
       write(orchDir, ledger);
       return 0;
     }
-    if (entry.requiresFinal && !entry.acceptedAt) throw new Error("review helper has no accepted final deliverable");
+    if (entry.requiresFinal && !entry.acceptedAt && !entry.abandonedAt) throw new Error("review helper has no accepted final deliverable or recorded abandonment");
     if (entry.acceptedAt) {
       if (!entry.report || JSON.stringify(evidenceFingerprint(entry.report.path)) !== JSON.stringify(entry.report)) throw new Error("helper final report changed after acceptance");
       const problem = finalReportProblem(entry, entry.report.path);

@@ -1239,3 +1239,28 @@ def test_the_real_check_binds_the_provider_and_writes_under_the_run_home(tmp_pat
         "the built folder's own provider binds, not a separate plugin"
     assert "recipes" in checked["provider"]["capabilities"], "the arm's opt-in file is the one the provider accepts"
     assert (home / ".codex/vibe/plugin-version").is_dir(), "the binding is recorded under the HOME the model sees"
+
+
+def test_failed_case_keeps_only_its_resumable_session_and_never_auth(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    sessions = home / "sessions/2026/11/16"
+    sessions.mkdir(parents=True)
+    (home / "auth.json").write_text("secret")
+    (sessions / "rollout-thread-failed.jsonl").write_text('{"type":"session_meta"}\n')
+    (sessions / "rollout-thread-passed.jsonl").write_text('{"type":"session_meta"}\n')
+    output = tmp_path / "output"
+    output.mkdir()
+    failed = {"case": "failed-case", "passed": False, "session_id": "thread-failed"}
+    passed = {"case": "passed-case", "passed": True, "session_id": "thread-passed"}
+
+    runner.retain_failed_sessions(output, home, [failed, passed])
+
+    kept = output / "failed-sessions/failed-case/sessions/2026/11/16/rollout-thread-failed.jsonl"
+    assert kept.read_text() == '{"type":"session_meta"}\n'
+    assert not (output / "failed-sessions/passed-case").exists()
+    assert not list((output / "failed-sessions").rglob("auth.json"))
+    assert failed["retained_session"] == {
+        "id": "thread-failed",
+        "path": "failed-sessions/failed-case/sessions",
+        "resume_command": "codex resume thread-failed",
+    }

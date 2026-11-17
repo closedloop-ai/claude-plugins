@@ -10,9 +10,9 @@
 // rules do not run and only the generic rules apply.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { isLocalPlanPath, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
+import { isLocalPlanPath, localPlanPaths, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
@@ -22,7 +22,7 @@ import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { createImportClosure, escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
-import { frozenInputs, isFrozenGlobalInput, storybookPreviewImportClosure } from "./frozen-render.mjs";
+import { frozenGlobalInputAffectsRender, frozenInputs, storybookPreviewImportClosure } from "./frozen-render.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
@@ -40,6 +40,11 @@ const CAPTURE_CALL = /\bcapture[A-Z]\w*\(/;
 const TX_OPEN = /withDb\.tx\(/g;
 const TX_WRITE = /\btx\.(?:\w+\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw)/;
 const RESULT_ERR_RETURN = /\breturn\s+(?:Result\.)?err\(/;
+const BATCH_LIMIT_SIGNAL = /\b(?:BATCH|BULK)[A-Z0-9_]*LIMIT\b|\b(?:batch|bulk)\s+limit\b/i;
+const SET_TRANSFORM_SIGNAL = /\b(?:collapse|dedupe|deduplicate|normaliz|distinct|unique)[A-Za-z0-9_]*\b/i;
+const USER_ID_SET_SIGNAL = /\b(?:selected|selection|input|request|artifact|entity)[A-Za-z0-9_]*(?:Ids?|UUIDs?)\b|\b(?:Ids?|UUIDs?)\b/i;
+const TRANSACTION_SCALE_RECORD = /^\s*(?:[-*]\s+)?Transaction scale:\s*(\S+):\s*limit\s+\d+;\s*duration\s+\d+(?:\.\d+)?ms;\s*timeout\s+\d+ms;\s*ambient timeout\s+(?:honored|ignored);\s*lock hold\s+\d+(?:\.\d+)?ms;\s*test\s+(\S+)\s*$/im;
+const INPUT_SET_RECORD = /^\s*(?:[-*]\s+)?Input set:\s*(\S+):(?=[^\n]*\border permutations\b)(?=[^\n]*\bcase\b)(?=[^\n]*\bduplicates\b)(?=[^\n]*\bwhitespace\b)[^\n]*;\s*test\s+(\S+)\s*$/im;
 const LINK_DELETE = /\.artifactLink\.deleteMany\(|\bDELETE\s+FROM\s+"?artifact_links"?/i;
 const LINK_EDGE_KEYS = [/\bsourceId\b|\bsource_id\b/, /\btargetId\b|\btarget_id\b/, /\blinkType\b|\blink_type\b/];
 const SYNC_TABLE = /outbox|sync/i;
@@ -64,6 +69,7 @@ const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
 const WINDOW = 25;
 const COPY_FILE = /\.[jt]sx$/;
+const UI_PATH = /\.(?:[jt]sx|css|scss|sass|less|html?|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot|mp4|webm|og[gv]|mp3|wav)$/i;
 const COPY_LITERALS = [
   /\bsearchLabel\s*[=:]\s*\{?\s*(["'\x60])((?:(?!\1)[^\\]|\\.)*)\1/g,
   /\btoast(?:\.\w+)?\(\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
@@ -136,6 +142,11 @@ export function parseUnifiedDiff(text, planPrefix = null) {
   return files.filter((file) => file.path && !isLocalPlanPath(file.path, planPrefix));
 }
 
+/** Whether a diff touches a rendered UI path; tests and snapshots are evidence, not product UI. */
+export function touchesUiPath(files) {
+  return files.some((file) => file.status !== "D" && UI_PATH.test(file.path) && !isTestFile(file.path));
+}
+
 /**
  * Applies every rule. `repo` supplies reads: `head(path)` and `base(path)` file
  * text or null, `headFiles`
@@ -172,6 +183,8 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
     checkTransactions(file, head, add);
     checkLinkDeletes(file, head, add);
   }
+  checkHighRiskBatchChanges(live, changeLog, repo, add, requiredTests);
+  checkOwnerTestRules(live, changeLog, repo, add, requiredTests);
   if (rules.desktopLane) checkDesktopLane(live, repo, logged, add, rules);
   checkTicketedComments(files, repo, logged, add, rules);
   checkCommentRules(live, repo, add);
@@ -194,6 +207,61 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo, add), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
+}
+
+/** Consolidated transactions and user-id set transforms need measured, mutation-backed evidence before review. */
+function checkHighRiskBatchChanges(files, changeLog, repo, add, requiredTests) {
+  const source = files.filter((file) => SOURCE_FILE.test(file.path) && !isTestFile(file.path));
+  const addedText = source.flatMap((file) => file.added.map((entry) => entry.text)).join("\n");
+  const transaction = source.find((file) => file.added.some((entry) => /\bwithDb\.tx\(/.test(entry.text))
+    && /\b(?:updateMany|createMany|deleteMany|\$executeRaw)\b/.test(repo.head(file.path) ?? ""));
+  if (transaction && BATCH_LIMIT_SIGNAL.test(addedText)) {
+    const record = TRANSACTION_SCALE_RECORD.exec(changeLog);
+    if (!record || record[1] !== transaction.path || repo.head(record[2]) === null) {
+      add("transaction-scale", transaction.path, transaction.added.find((entry) => /\bwithDb\.tx\(/.test(entry.text))?.line ?? 1,
+        "consolidates batch work into one transaction without measured limit, duration, effective timeout, ambient-timeout and lock-hold evidence",
+        "measure the documented batch limit before review and record `Transaction scale: <file>: limit <n>; duration <ms>; timeout <ms>; ambient timeout honored|ignored; lock hold <ms>; test <path>`");
+    } else {
+      requiredTests.push({ path: record[2], reason: `transaction scale evidence for ${transaction.path}` });
+    }
+  }
+  for (const file of source.filter((candidate) => candidate.added.some((entry) => SET_TRANSFORM_SIGNAL.test(entry.text))
+    && USER_ID_SET_SIGNAL.test(repo.head(candidate.path) ?? ""))) {
+    const record = INPUT_SET_RECORD.exec(changeLog);
+    if (!record || record[1] !== file.path || repo.head(record[2]) === null) {
+      add("input-set-proof", file.path, file.added.find((entry) => SET_TRANSFORM_SIGNAL.test(entry.text))?.line ?? 1,
+        "adds set, dedupe, normalization or collapse logic over user-supplied ids without order and normalization evidence",
+        "test order permutations plus case, duplicates and whitespace, then record `Input set: <file>: order permutations; case; duplicates; whitespace; test <path>`");
+    } else {
+      requiredTests.push({ path: record[2], reason: `input set evidence for ${file.path}` });
+    }
+  }
+}
+
+/** Repository-owned UI bug rules must stay source-bound and cover every mounted shell. */
+function checkOwnerTestRules(files, changeLog, repo, add, requiredTests) {
+  const rules = repo.rules?.ownerTestRules;
+  if (!rules || !rules.bugSignal.test(changeLog) || !files.some((file) => rules.paths.test(file.path))) return;
+  for (const requirement of rules.requirements) {
+    const source = repo.base(requirement.owner) ?? "";
+    if (!source.includes(requirement.sentence)) {
+      add("owner-test-rule-source", requirement.owner, 1,
+        `the provider's owner test rule no longer matches its source sentence: ${requirement.sentence}`,
+        "update the provider rule from the repository owner file before relying on it");
+      continue;
+    }
+    const added = files.find((file) => file.status === "A" && requirement.tests.test(file.path));
+    const record = changeLog.split("\n").find((line) => line.includes(`Owner test: ${requirement.owner}:`));
+    const recordedTest = record ? /:\s*test\s+(\S+)\s*$/.exec(record)?.[1] : null;
+    if (added) requiredTests.push({ path: added.path, reason: requirement.sentence });
+    else if (recordedTest && requirement.tests.test(recordedTest) && repo.head(recordedTest) !== null) {
+      requiredTests.push({ path: recordedTest, reason: requirement.sentence });
+    } else if (!record || !/:\s*missing tests\b/i.test(record)) {
+      add("owner-test-rule", files.find((file) => rules.paths.test(file.path))?.path ?? requirement.owner, 1,
+        `UI bug fix has no ${requirement.tests.source} regression E2E or Missing tests record; source: ${requirement.owner}: ${requirement.sentence}`,
+        `add the required spec, or record \`Owner test: ${requirement.owner}: missing tests <shell and behavior>\``);
+    }
+  }
 }
 
 /**
@@ -397,7 +465,20 @@ function checkLinkDeletes(file, head, add) {
 }
 
 function checkDesktopLane(files, repo, logged, add, { desktopLane: lane, migrations }) {
-  const laneFiles = files.filter((file) => file.status === "A" && lane.files.test(file.path) && !isTestFile(file.path));
+  const movedFromBase = (file) => {
+    const lines = file.added.map((entry) => entry.text.trim()).filter((text) => text && !COMMENT_LINE.test(text));
+    return lines.length >= 3 && lines.every((text) => repo.baseContains(text));
+  };
+  const ruledNotLane = (file) => {
+    if (!logged("Synchronizing-susan: not a sync lane")) return false;
+    const token = path.posix.basename(file.path).replace(/\.[^.]+$/, "");
+    const roster = `${repo.head(lane.roster) ?? ""}\n${repo.base(lane.roster) ?? ""}`;
+    const rostered = roster.includes(file.path) || roster.includes(token);
+    const importedBySync = repo.wordFiles(token).some((candidate) => candidate.startsWith(lane.importPrefix));
+    return !rostered && !importedBySync;
+  };
+  const laneFiles = files.filter((file) => file.status === "A" && lane.files.test(file.path) && !isTestFile(file.path)
+    && !movedFromBase(file) && !ruledNotLane(file));
   const syncTables = files
     .filter((file) => file.status === "A" && migrations?.desktop?.test(file.path))
     .flatMap((file) => [...(repo.head(file.path) ?? "").matchAll(SQL_CREATE_TABLE)].map((found) => ({ file: file.path, table: found[1] })))
@@ -509,7 +590,8 @@ function checkFrozenRenders(files, repo, changeLog, add) {
   const headClosure = createImportClosure(headFiles,
     (paths) => new Map(paths.map((file) => [file, repo.head(file)])));
   const previewClosure = storybookPreviewImportClosure(repo.baseFiles, headFiles, repo.base, repo.head);
-  const globalChanged = [...changed].some((file) => isFrozenGlobalInput(file, previewClosure));
+  const globalChanged = files.some((file) => [file.path, file.oldPath].filter(Boolean).some((candidate) =>
+    frozenGlobalInputAffectsRender(candidate, previewClosure, repo.base(file.oldPath ?? file.path), repo.head(file.path))));
   const affected = stories.filter((story) => {
     if (globalChanged) return true;
     return [...baseClosure([story]), ...headClosure([story])]
@@ -762,7 +844,7 @@ export function sidebarOrderTests(files, repo) {
     : [];
 }
 
-function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules) {
+function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules, sessionIds = []) {
   let deepened = 0;
   const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
@@ -802,6 +884,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules) {
     baseFiles,
     baseBlobs,
     wordFiles: (word) => lines(() => git(worktree, ["grep", "-l", "-w", "-F", "--untracked", "-e", word])),
+    sessionIds,
     storyReplacements,
     deletionOf: (file) => {
       const hit = lines(() => git(worktree, ["log", "--diff-filter=D", "-n", "1", "--format=%h %s", base, "--", file]))[0];
@@ -915,7 +998,19 @@ export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), i
     .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements, compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding)), phase);
+  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements,
+    compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding), sessionInternalIds(worktree, log)), phase);
+}
+
+function sessionInternalIds(worktree, changeLog) {
+  const texts = [changeLog];
+  const directory = path.dirname(localPlanPaths(worktree).decisionTable);
+  try {
+    for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".md"))) {
+      texts.push(readFileSync(path.join(directory, name), "utf8"));
+    }
+  } catch { /* A session with no table contributes no private row ids. */ }
+  return [...new Set(texts.flatMap((text) => text.match(/\b(?:DT|ROW|DEC)-[A-Za-z0-9.-]+\b/g) ?? []))];
 }
 
 /** Every tracked file importing each of `files` by its directory and stem, or by `./stem` beside it. */
@@ -954,11 +1049,15 @@ export function compileDiffRules(data, binding = null) {
     ? { server: pattern(data.migrations.server), desktop: pattern(data.migrations.desktop), checks: data.migrations.checks ?? [] } : null;
   const lane = data?.desktopLane;
   const parity = data?.hostParity;
+  const ownerTests = data?.ownerTestRules;
   return {
     migrations,
     activityCapture: data?.activityCapture?.fix ? { fix: data.activityCapture.fix } : null,
-    desktopLane: lane?.files ? { ...lane, files: pattern(lane.files), giveUpImport: pattern(lane.giveUpImport) } : null,
+    desktopLane: lane?.files ? { ...lane, files: pattern(lane.files), giveUpImport: pattern(lane.giveUpImport),
+      importPrefix: typeof lane.importPrefix === "string" ? lane.importPrefix : "\0" } : null,
     sharedPaths: pattern(data?.sharedPaths),
+    ownerTestRules: ownerTests?.paths ? { paths: pattern(ownerTests.paths), bugSignal: pattern(ownerTests.bugSignal),
+      requirements: (ownerTests.requirements ?? []).map((item) => ({ ...item, tests: pattern(item.tests) })) } : null,
     hostParity: parity?.gridTest ? { ...parity, gridTable: pattern(parity.gridTable), gridSymbol: pattern(parity.gridSymbol),
       hostTests: pattern(parity.hostTests), breadcrumbPaths: pattern(parity.breadcrumbPaths), headerInput: pattern(parity.headerInput),
       headerUse: pattern(parity.headerUse) } : null,

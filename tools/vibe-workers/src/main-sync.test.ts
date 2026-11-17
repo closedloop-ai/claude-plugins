@@ -1,12 +1,14 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
-import { finalMerge, generatedBiomeFixture, invokeSync, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
+import { createHash } from "node:crypto";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { captureMain, finalMerge, generatedBiomeFixture, invokeSync, remoteSlotReport, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
 import { bundleDirectory, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
 import { inspectInputInventory } from "./main-sync-checks.js";
 import { syncLocation } from "./main-sync-state.js";
+import { admitMainSyncRequest, recordRemoteMainSync } from "./main-sync.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -944,4 +946,103 @@ const command = args[0];`));
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);
     expect(value.calls()).toContain('"typecheck:affected"');
   }, 25000);
+  it("refuses a remote-slot record before main is captured", () => {
+    const value = setup();
+    const report = { host: "fleet-remote", validation: { headSha: "0".repeat(40), treeSha: "0".repeat(40),
+      inputSha256: "0".repeat(64), checkedAt: "2026-11-15T00:00:00.000Z", e2eLimitations: [],
+      commands: [{ argv: ["pnpm", "check"], exitCode: 0, log: "/remote/check.log", sha256: "0".repeat(64) }] } };
+    const source = value.sourceTurn();
+    try {
+      const refused = invokeSync(value, "record-remote", source.context, { report });
+      expect(refused.status, refused.stdout).toBe(1);
+      expect(refused.json).toMatchObject({ ok: false, status: "NEEDS_CHANGE" });
+      expect(String(refused.json?.error)).toMatch(/no fresh main-sync transaction/);
+    } finally { source.finish(); }
+    const publisher = value.start("create");
+    try { expect(() => admitMainSyncRequest({ context: publisher.context })).toThrow(/no fresh main-sync transaction/); }
+    finally { publisher.finish(); }
+    expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+  });
+  // One captured, pushed session serves every case: no refusal writes, the tamper case restores what it recorded, and the
+  // admission case, which consumes the proof, runs last.
+  describe("a captured session with a remote-slot report", () => {
+    let shared: { value: ReturnType<typeof syncFixture>; report: ReturnType<typeof remoteSlotReport> };
+    beforeAll(() => {
+      const value = syncFixture();
+      value.git(["push", "origin", "HEAD:refs/heads/vibe/test"]);
+      captureMain(value);
+      const source = value.sourceTurn();
+      try { shared = { value, report: remoteSlotReport(value, source.context) }; } finally { source.finish(); }
+    });
+    afterAll(() => shared?.value.cleanup());
+    const receiptFile = () => join(shared.value.metadata, "vibe-main-sync.json");
+    type Context = ReturnType<typeof shared.value.sourceTurn>["context"];
+    const refusesAll = (cases: [((context: Context) => Context) | undefined, unknown, RegExp, Record<string, unknown>?][]) => {
+      const source = shared.value.sourceTurn();
+      try {
+        for (const [change, report, refusal, extra] of cases) {
+          expect(() => recordRemoteMainSync({ context: change ? change(source.context) : source.context, report, ...extra })).toThrow(refusal);
+        }
+      } finally { source.finish(); }
+      expect(JSON.parse(readFileSync(receiptFile(), "utf8")).validation).toBeUndefined();
+    };
+    it("refuses another tree, other inputs, a failing check, no host or a blank host", () => {
+      const { report } = shared;
+      const [first, ...rest] = report.validation.commands;
+      refusesAll([
+        [undefined, { ...report, validation: { ...report.validation, treeSha: shared.value.baseCommit } }, /another tree/],
+        [undefined, { ...report, validation: { ...report.validation, inputSha256: "0".repeat(64) } }, /other committed inputs/],
+        [undefined, { ...report, validation: { ...report.validation, commands: [{ ...first!, exitCode: 1 }, ...rest] } }, /failing check/],
+        [undefined, { ...report, host: "" }, /too_small|at least/i],
+        [undefined, { ...report, host: "   " }, /too_small|at least/i],
+      ]);
+    });
+    it("refuses an extra check, another argv or another E2E limitation list", () => {
+      const { report } = shared;
+      const [first, ...rest] = report.validation.commands;
+      refusesAll([
+        [undefined, { ...report, validation: { ...report.validation, commands: [...report.validation.commands, first!] } }, /another matrix/],
+        [undefined, { ...report, validation: { ...report.validation, commands: [{ ...first!, argv: ["pnpm", "other"] }, ...rest] } }, /another matrix/],
+        [undefined, { ...report, validation: { ...report.validation, e2eLimitations: [{ argv: ["pnpm", "e2e"], reason: "remote" }] } }, /another matrix/],
+      ]);
+    });
+    it("refuses a context or input naming another transaction", () => {
+      refusesAll([
+        [(context) => ({ ...context, mainSyncTransactionId: "22222222-2222-4222-8222-222222222222" }), shared.report, /differs: mainSyncTransactionId/],
+        [undefined, shared.report, /transaction context changed/, { transactionId: "11111111-1111-4111-8111-111111111111" }],
+      ]);
+      const publisher = shared.value.start("create");
+      try { expect(() => admitMainSyncRequest({ context: publisher.context })).toThrow(/validation proof is missing or stale/); }
+      finally { publisher.finish(); }
+    });
+    it("refuses a well-shaped remote report without authenticated command artifacts", () => {
+      const source = shared.value.sourceTurn();
+      try {
+        expect(() => recordRemoteMainSync({ context: source.context, report: shared.report })).toThrow(/no authenticated command artifacts/);
+      }
+      finally { source.finish(); }
+      const proof = JSON.parse(readFileSync(receiptFile(), "utf8"));
+      expect(proof.validation).toBeUndefined();
+      const publisher = shared.value.start("create");
+      try {
+        expect(() => admitMainSyncRequest({ context: publisher.context })).toThrow(/validation proof is missing or stale/);
+      } finally { publisher.finish(); }
+    });
+    it("refuses a legacy stored remote receipt until canonical local validation replaces it", () => {
+      const receipt = JSON.parse(readFileSync(receiptFile(), "utf8"));
+      const reportFile = join(shared.value.metadata, `vibe-main-sync-${receipt.transactionId}-remote.json`);
+      const bytes = JSON.stringify(shared.report);
+      writeFileSync(reportFile, bytes);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      receipt.validation = { headSha: shared.value.git(["rev-parse", "HEAD"]), treeSha: shared.report.validation.treeSha,
+        inputSha256: shared.report.validation.inputSha256, checkedAt: shared.report.validation.checkedAt,
+        e2eLimitations: shared.report.validation.e2eLimitations,
+        commands: shared.report.validation.commands.map((command) => ({ ...command, log: reportFile, sha256,
+          remote: { host: shared.report.host, commit: shared.report.validation.headSha, logSha256: command.sha256 } })) };
+      writeFileSync(receiptFile(), JSON.stringify(receipt));
+      const publisher = shared.value.start("create");
+      try { expect(() => admitMainSyncRequest({ context: publisher.context })).toThrow(/validation proof is missing or stale/); }
+      finally { publisher.finish(); }
+    });
+  });
 });

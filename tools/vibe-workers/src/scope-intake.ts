@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import { isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { runWhenMain } from "../../shared/cli.js";
@@ -136,15 +137,24 @@ async function portableSurfaceEditAllowed(worktree: string, inventory: Inventory
   }
 }
 
-function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript: string) {
-  const result = spawnSync(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "build"], {
-    encoding: "utf8",
-    env: process.env,
+export function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript: string) {
+  const privateDir = mkdtempSync(resolve(tmpdir(), "vibe-scope-intake-"));
+  const out = resolve(privateDir, "inventory.json");
+  const result = spawnSync(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "build", "--out", out], {
+    encoding: "utf8", env: process.env, maxBuffer: 64 * 1024 * 1024,
   });
+  let output = "";
+  try { output = readFileSync(out, "utf8"); } catch { /* The boundary diagnostic below reports the child result. */ }
+  rmSync(privateDir, { recursive: true, force: true });
   if (result.error) throw result.error;
   let inventory: InventoryResult;
-  try { inventory = JSON.parse(result.stdout) as InventoryResult; }
-  catch { throw new Error(`handoff inventory did not return JSON: ${result.stderr.trim() || `exit ${result.status}`}`); }
+  try { inventory = JSON.parse(output) as InventoryResult; }
+  catch {
+    const first = (value: string) => value.trim().split("\n").slice(0, 6).join(" | ") || "(empty)";
+    const stdout = String(result.stdout ?? "");
+    const stderr = String(result.stderr ?? "");
+    throw new Error(`handoff inventory did not return JSON: exit ${result.status}, signal ${result.signal ?? "none"}, stdout ${Buffer.byteLength(stdout)} bytes: ${first(stdout)}, stderr: ${first(stderr)}`);
+  }
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
   const file = inventory.pathPolicyFile;
@@ -161,7 +171,7 @@ function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript: string
 
 function plannedPath(value: string) {
   if (!value || value.includes("\0") || value.includes("\\") || isAbsolute(value) ||
-    normalize(value).split(sep).join("/") !== value || value === "." || value.endsWith("/") || /[\r\n*?\[\]]/.test(value)) {
+    normalize(value).split(sep).join("/") !== value || value === "." || value.endsWith("/") || /[\r\n*?]/.test(value)) {
     throw new Error(`planned path must be one literal repository-relative file: ${JSON.stringify(value)}`);
   }
   return value;

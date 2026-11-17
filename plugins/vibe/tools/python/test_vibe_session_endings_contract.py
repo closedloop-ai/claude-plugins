@@ -33,6 +33,7 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
 GUARDRAILS = REFERENCES / "guardrails.md"
 QUALITY = REFERENCES / "quality-loop.md"
+ENVIRONMENT = REFERENCES / "environment.md"
 TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 RECORD_CONTEXT = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "record-context.ts"
 TWO_WAY = ("Do you want me to open a pull request so you can take it through review and merge, "
@@ -43,6 +44,13 @@ PR_PHRASES = ("raise a PR", "I'll get the PR merged", "I'll ship it myself", "I 
 BRANCH_TO_MERGE = re.compile(r"branch to merge", re.IGNORECASE)
 NEGATION = re.compile(r"\b(never|not)\b", re.IGNORECASE)
 HANDOFF_WORD = re.compile(r"hand ?off", re.IGNORECASE)
+
+
+def test_remote_main_sync_reports_never_replace_authenticated_local_validation() -> None:
+    text = skill_split.read(ENVIRONMENT)
+    assert "A fleet remote report is diagnostic only" in text
+    assert "main-sync-record-remote" in text and "refuses it with `NEEDS_CHANGE`" in text
+    assert "canonical `main-sync-validate` path in this checkout" in text
 
 
 def plugin_texts() -> dict[str, str]:
@@ -165,6 +173,9 @@ def test_the_environment_worker_opens_the_pull_request_from_the_template_and_nev
     assert '"vibe-environment-worker": ["create", "redeploy", "flags", "desktop", "handover", "pull-request"],' in record
     assert '"pull-request"]);' in record
     assert "pull-request" not in PROVIDER_DATA["tickets"]["recordWrites"]["vibe-environment-worker"]
+    assert PROVIDER_DATA["tickets"]["recordWrites"]["vibe-environment-worker"]["create"] == [
+        "create_branch_artifact", "create_document_version"
+    ]
 
 
 def test_the_ticket_stays_with_the_person_on_the_pull_request_path() -> None:

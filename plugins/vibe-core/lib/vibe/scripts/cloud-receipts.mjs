@@ -4,7 +4,7 @@
  */
 
 /** A run in one of these states never runs again; its routine may be removed. */
-export const TERMINAL = new Set(["completed", "failed", "canceled", "cancelled", "abandoned"]);
+export const TERMINAL = new Set(["completed", "failed", "canceled", "cancelled", "archived", "abandoned"]);
 
 /** A dispatch receipt's file name for one ticket. */
 export function dispatchReceiptName(ticket) { return `cloud-worker-${ticket.toLowerCase()}.json`; }

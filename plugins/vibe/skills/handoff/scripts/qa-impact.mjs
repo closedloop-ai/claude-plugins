@@ -26,7 +26,7 @@ export const QaImpact = Object.freeze({ None: "None", LanesOnly: "Lanes only", V
 const SAFE_ROOT_FILES = new Set(["CHANGELOG.md", "CHANGES.md", "HISTORY.md", "RELEASE.md", "RELEASES.md", "README.md"]);
 const CI_CONFIG = /^(?:\.github\/(?:workflows\/[^/]+\.ya?ml|dependabot\.ya?ml|CODEOWNERS)|\.circleci\/config\.ya?ml|\.buildkite\/[^/]+\.ya?ml|Jenkinsfile)$/i;
 const TOKENIZED_SOURCE = /\.(?:[cm]?[jt]sx?)$/i;
-const UI_CAPABLE = /\.(?:tsx|jsx|vue|svelte|css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|ico|html?|mdx|woff2?|ttf|otf|eot)$/i;
+const UI_CAPABLE = /\.(?:tsx|jsx|vue|svelte|css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|ico|html?|mdx|woff2?|ttf|otf|eot|mp4|webm|og[gv]|mp3|wav)$/i;
 const UI_TOKEN_SOURCE = /(?:^|\/)(?:(?:tokens?|themes?)\.[cm]?[jt]s|(?:tokens?|themes?)(?:\/|-).+\.[cm]?[jt]s)$/i;
 const DOC_FILE = /\.(?:md|rst|txt)$/i;
 const LOCKFILE = /(?:^|\/)(?:pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?)$/;
@@ -179,13 +179,22 @@ function inConfiguredPath(file, paths) {
   return paths.some((owner) => pathMatches(file, owner.endsWith("/") ? owner : `${owner}/`));
 }
 
-function normalizeImporters(raw) {
+export function normalizeImporters(raw) {
   if (raw === undefined || raw === null) return null;
-  const source = raw?.importers ?? raw?.files ?? raw ?? {};
-  if (Array.isArray(source)) {
-    return new Map(source.map((entry) => [entry.file, entry.importers ?? entry.paths ?? []]));
+  const envelopes = [raw?.importers, raw?.files].filter((value) => value !== undefined);
+  if (envelopes.length > 1) return null;
+  const source = envelopes[0] ?? raw;
+  if (!Array.isArray(source)) return source && typeof source === "object" ? new Map(Object.entries(source)) : null;
+  const importers = new Map();
+  for (const entry of source) {
+    const lists = [entry?.importers, entry?.paths].filter((value) => value !== undefined);
+    if (typeof entry?.file !== "string" || lists.length !== 1 || !Array.isArray(lists[0]) || importers.has(entry.file)) {
+      if (typeof entry?.file === "string") importers.set(entry.file, undefined);
+      continue;
+    }
+    importers.set(entry.file, lists[0]);
   }
-  return new Map(Object.entries(source));
+  return importers;
 }
 
 function normalizeLaneSelections(raw) {

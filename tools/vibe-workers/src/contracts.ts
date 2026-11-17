@@ -134,8 +134,8 @@ export const migrationSchema = z.object({
 export const ledgerSchema = ledgerStateSchema.extend({ migrations: z.array(migrationSchema).default([]) }).strict();
 export type Ledger = z.infer<typeof ledgerSchema>;
 
-/** Limits parent input before JSON parsing; briefs never belong in process arguments. */
-export async function readInput(stream: NodeJS.ReadableStream = process.stdin): Promise<unknown> {
+/** Limits parent input before JSON parsing; `emptyError` distinguishes a missing owned envelope from malformed JSON. */
+export async function readInput(stream: NodeJS.ReadableStream = process.stdin, emptyError?: string): Promise<unknown> {
   const buffers: Buffer[] = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -144,5 +144,6 @@ export async function readInput(stream: NodeJS.ReadableStream = process.stdin): 
     if (size > 128 * 1024) throw new Error("Worker input exceeds the private input limit");
     buffers.push(bytes);
   }
+  if (size === 0 && emptyError) throw new Error(emptyError);
   return JSON.parse(Buffer.concat(buffers).toString("utf8"));
 }

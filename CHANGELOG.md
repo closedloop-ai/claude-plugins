@@ -4,6 +4,28 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe-closedloop-provider v1.0.4
+
+#### Changed
+- Updated the ClosedLoop provider’s worker, fleet, handoff and repository recipes for targeted test receipts, displayless E2E placement, ticket rulings, environment evidence and main-sync validation.
+
+### vibe-core v1.0.14
+
+#### Fixed
+- Hardened cloud and fleet cleanup, PR and shell guards, native review receipts, provider loading and worker scope so failed operations retain their evidence and surface their exact refusal.
+
+### vibe v1.1.101
+
+#### Added
+- Added fleet-wide duplicate/full-corpus admission, immutable-generation remote plugin shipment, remote plugin preflight, retired-writer records and bounded cold plugin inventory checks.
+- Added handoff checks for review reuse, decision-table alignment, session-only comments, test-only stand-ins, no-environment rulings and exact targeted-lane receipts.
+
+#### Fixed
+- Preserved failed cloud and eval evidence for inspection and continuation, reconciled archived cloud runs, and surfaced worker refusals with their own codes and reasons instead of a generic turn failure.
+- Corrected reload freshness, Claude sign-in recovery, pull-request body validation, environment setup proof, live-ticket URL validation and grader wording variants while retaining mutation-backed coverage.
+- Extended prevention for shared-consumer tests, Storybook sweeps, premise and ruling provenance, ticket handoff attachment grants, and fresh relaunch guidance for timed-out or continued read-only reviewers.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, the generic vibe and provider text together are about 22,943 words longer than 1.1.94 (origin/main at this update, 716a5683), excluding the generated `plugins/vibe-closedloop` copy.
+
 ### vibe-closedloop-provider v1.0.0
 
 #### Added

@@ -1,3 +1,6 @@
+// Covers Docker scratch stacks only; scratch files follow the same ownership rule. Each worker gets its own scratch
+// directory named with its worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes only exact paths
+// it created; an orchestrator brief never asks a worker to delete by prefix or glob.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -6,13 +9,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureOwnedDockerResources, removeOwnedDockerResources } from '../../vibe/scripts/owned-docker.mjs';
 import { defaultLockDir, sameWorktreeEntry } from '../../vibe/scripts/e2e-lock.mjs';
-import { readSessionRecord } from '../../vibe/scripts/session-record.mjs';
+import { readSessionRecord, sessionRecordPath } from '../../vibe/scripts/session-record.mjs';
 import { acquireLedgerLock, helperEntries, isAlive, pendingRecordedProcess, read, readIdentity, write } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** Capture the exact live vibe or fleet writer lease that authorizes a scratch stack. */
 export function captureScratchLease(orchDir, owner, worktree) {
+  const sessionFile = sessionRecordPath(worktree);
   let session;
   try { session = readSessionRecord(worktree); } catch { /* Fleet state is checked below. */ }
   if (session?.createdAt && session.status === 'active') return { kind: 'vibe', createdAt: session.createdAt };
@@ -22,7 +26,7 @@ export function captureScratchLease(orchDir, owner, worktree) {
   if (state?.cwd === path.resolve(worktree) && state.threadId && !state.ended) {
     return { kind: 'fleet', stateDir: path.dirname(file), name: owner, threadId: state.threadId };
   }
-  throw new Error('scratch start requires a live recorded vibe or fleet writer lease');
+  throw new Error(`scratch start must run on the machine that holds the live writer lease: checked vibe session record ${sessionFile} and fleet state ${file}; neither contained an active lease for ${path.resolve(worktree)}`);
 }
 
 /** Whether the scratch stack's recorded writer lease has reached its terminal handoff. */

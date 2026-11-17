@@ -15,6 +15,7 @@ import { evidenceFingerprint } from "./handoff-evidence.mjs";
 import { reviewReceiptProblems } from "./review-receipts.mjs";
 import { missingTicketNames } from "./ticket-names.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { BodyFileError, readPrBodyFile } from "./gate-override.mjs";
 
 const GATE_FILE = "vibe-handoff-gate.json";
 export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "rulings", "audit", "matrix", "review"]);
@@ -55,6 +56,8 @@ export function gatePath(worktree) {
 
 /** Current gate problem, or null when the final inventory covered this source. */
 export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
+  try { readPrBodyFile(bodyFile, 8 * 1024 * 1024); }
+  catch (error) { if (error instanceof BodyFileError) return error.message; throw error; }
   let record;
   try {
     const file = gatePath(worktree);
@@ -84,7 +87,8 @@ export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
       if ((record.evidence?.[key] ?? []).some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return `handoff ${label} evidence changed`;
     }
     if (!Array.isArray(record.receipts) || record.receipts.some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff review receipt changed";
-    if (reviewReceiptProblems(readReviewReceipts(record.receipts.map(item => item.path)), sourceIdentity(worktree)).problems.length) return "handoff review evidence is stale or incomplete";
+    if (reviewReceiptProblems(readReviewReceipts(record.receipts.map(item => item.path)), sourceIdentity(worktree),
+      { reusableRoles: new Set(Array.isArray(record.reviewCarry) ? record.reviewCarry : []) }).problems.length) return "handoff review evidence is stale or incomplete";
     return null;
   } catch {
     return "handoff gate could not verify the current source";
@@ -134,8 +138,5 @@ export function sessionMembers(worktree) {
 export function memberNameProblems(memberTickets, title, bodyText) {
   if (memberTickets.length === 0) return [];
   if (typeof title !== "string") return [`the session delivers member tickets ${memberTickets.join(", ")}; pass --title so the gate checks the PR names them`];
-  return [
-    ...missingTicketNames(title, memberTickets).map((slug) => `the PR title does not name member ticket ${slug}`),
-    ...missingTicketNames(bodyText, memberTickets).map((slug) => `the PR body does not name member ticket ${slug}`),
-  ];
+  return missingTicketNames(bodyText, memberTickets).map((slug) => `the PR body does not name member ticket ${slug}`);
 }

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
+import { seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
 import { StorybookScheme, storybookSchemeOf } from "./storybook-taxonomy.mjs";
 
 // The story group order file of the repository the ClosedLoop provider serves.
@@ -85,6 +86,7 @@ function setup(t, slug, files) {
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
+  seedAlignedDecisionTable(created.json.session.worktree);
   return { ...fixture, checkout, worktree: created.json.session.worktree };
 }
 

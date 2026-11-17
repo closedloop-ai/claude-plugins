@@ -65,7 +65,13 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
   assert.throws(() => renderEvidenceComment({
     ...evidence,
     testIntegrityProofs: [{ ...evidence.testIntegrityProofs[0], mutationRun: undefined }],
-  }, undefined, options), /absence proof needs a mutation run/);
+  }, undefined, options), /assertion proof needs a mutation run/);
+  const standInEvidence = structuredClone(evidence);
+  standInEvidence.testIntegrityProofs[0].ownerBoundary = "test-stand-in";
+  delete standInEvidence.testIntegrityProofs[0].mountedSignal;
+  delete standInEvidence.testIntegrityProofs[0].presentState;
+  assert.match(renderEvidenceComment(standInEvidence, undefined, options), /Test integrity mutations/,
+    "the comment renderer accepts the same truthful stand-in boundary as the gate");
   const multiline = renderEvidenceComment({
     ...evidence,
     testIntegrityProofs: [bind({ ...evidence.testIntegrityProofs[0],

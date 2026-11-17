@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { comparePluginVersions, pluginInstall, pluginManifest, pluginMarketplace, siblingPluginRoot } from "./plugin-roots.mjs";
 
 /** The oldest vibe-core release this vibe works with; raise it when vibe starts using something newer. */
-export const VIBE_CORE_MIN = "1.0.13";
+export const VIBE_CORE_MIN = "1.0.14";
 const SELF = pluginInstall(import.meta.url);
 /** vibe-core's id in the marketplace this vibe came from. */
 export const VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;

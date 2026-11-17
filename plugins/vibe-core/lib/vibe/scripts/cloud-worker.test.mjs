@@ -60,6 +60,31 @@ function fakeRemote(report) {
   return { calls, remote };
 }
 
+test('ISS-14259 archived and overdue runs become durable outcomes that later polling can reconcile', async () => {
+  const startedAt = '2026-11-16T20:00:00.000Z';
+  const receipt = { provider: 'claude', taskId: 'run_v', runId: 'run_v', routineId: 'routine_v', startedAt };
+  const request = { repository: 'closedloop-ai/claude-plugins', maxWallMs: 1000, pollMs: 1000 };
+  const archivedCalls = [];
+  const archived = await pollTask(receipt, request, { now: () => Date.parse(startedAt) + 500, sleep: async () => {},
+    remote: (action) => { archivedCalls.push(action); return action === 'list_runs' ? { data: [{ id: 'run_v', status: 'archived' }] } : {}; } });
+  assert.equal(archived.status, 'archived');
+  assert.deepEqual(archivedCalls, ['list_runs'], 'an archived zero-turn run has no session log to fetch');
+
+  let complete = false;
+  const remote = (action) => {
+    if (action === 'list_runs') return { data: [{ id: 'run_v', status: complete ? 'active' : 'running',
+      worker_status: complete ? 'idle' : 'working', session_id: 'session_v' }] };
+    if (action === 'get_run_log') return { events: [] };
+    throw new Error(`unexpected ${action}`);
+  };
+  const overdue = await pollTask(receipt, request, { now: () => Date.parse(startedAt) + 2000, sleep: async () => {}, remote });
+  assert.deepEqual([overdue.status, overdue.remoteStatus], ['overdue', 'running']);
+  complete = true;
+  const reconciled = await pollTask(overdue, request, { now: () => Date.parse(startedAt) + 3000, sleep: async () => {}, remote });
+  assert.equal(reconciled.status, 'completed');
+  assert.equal(reconciled.logFetched, true);
+});
+
 test('a validate request starts a Claude session bound to the branch and the exact commit', async (t) => {
   const worktree = checkout(t);
   const request = validationRequest(worktree);

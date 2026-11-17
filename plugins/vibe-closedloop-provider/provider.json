@@ -112,9 +112,26 @@
           "giveUpProblem": "the new lane does not import the shared give-up (shared/lane-give-up.ts or telemetry/sync-lane-give-up-telemetry.ts)",
           "giveUpFix": "use the shared give-up and re-arm (apps/desktop/src/main/sync/AGENTS.md, invariant 3)",
           "backoffFix": "use exponentialBackoffMs from apps/desktop/src/shared/exponential-backoff.ts (invariant 5)",
+          "importPrefix": "apps/desktop/src/main/sync/",
           "roster": "apps/desktop/src/main/sync/AGENTS.md"
         },
         "sharedPaths": "^(?:apps/api/lib/.+|apps/api/app/.*service[^/]*|packages/app/.*data-source[^/]*)\\.tsx?$",
+        "ownerTestRules": {
+          "paths": "^packages/app/.*\\.tsx?$",
+          "bugSignal": "\\b(?:bug|regression|fix)\\b",
+          "requirements": [
+            {
+              "owner": "packages/app/AGENTS.md",
+              "sentence": "UI bug fix ⇒ regression e2e that would fail without the fix",
+              "tests": "^e2e/"
+            },
+            {
+              "owner": "apps/desktop/AGENTS.md",
+              "sentence": "a `packages/app` surface needs this Electron spec and the web `e2e/` spec",
+              "tests": "^apps/desktop/test/e2e/"
+            }
+          ]
+        },
         "hostParity": {
           "gridTable": "grid-table-v2",
           "gridSymbol": "\\bGridTableV2\\b",
@@ -225,6 +242,7 @@
         }
       },
       "prEvidence": {
+        "graphSelector": "code_tests_for_changes",
         "e2eOwners": {
           "web": "e2e-test.yml:e2e",
           "desktop": "desktop-e2e-validation.yml:desktop-e2e/validated"
@@ -278,6 +296,7 @@
       },
       "e2e": {
         "identityKey": "DEVOPS_CLOSEDLOOP_APP_PWD",
+        "sandboxOrgIdentityKey": "SEED_SANDBOX_CLERK_ORG_ID",
         "identityEnvFile": "apps/app/.env.local",
         "containerIdentity": [
           "CLERK_SECRET_KEY",
@@ -736,6 +755,7 @@
         },
         "vibe-environment-worker": {
           "create": [
+            "create_branch_artifact",
             "create_document_version"
           ],
           "redeploy": [
@@ -768,6 +788,7 @@
         "code_callers",
         "code_importers",
         "code_tests_for",
+        "code_tests_for_changes",
         "blast_radius_tickets"
       ],
       "packSource": "worktree: git ls-files, git grep, CODEOWNERS and FEATURE_MAP.md; not the closedloop-graph",
@@ -793,6 +814,7 @@
         "code_snippet",
         "code_symbols",
         "code_tests_for",
+        "code_tests_for_changes",
         "fts_search",
         "get_entity_edge",
         "get_routing_protocol",
@@ -816,9 +838,16 @@
       "e2eSlot": {
         "script": "e2e-slot.sh",
         "headFlag": "--head",
+        "nativeDesktopFlag": "--native-desktop",
         "refusedFlags": [
           "--source-hash"
         ]
+      },
+      "heavySlot": {
+        "refusedScripts": [
+          "heavy-slot.sh"
+        ],
+        "gatedCommand": "scripts/fleet.sh <orchDir> local|remote slot heavy <owner> <worktree> <command...>"
       }
     },
     "memory": {

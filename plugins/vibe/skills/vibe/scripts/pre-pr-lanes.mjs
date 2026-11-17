@@ -6,7 +6,8 @@
 //
 // Usage:
 //   pre-pr-lanes.mjs run    --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON>) [--main-worktree <checkout of captured main> --main-sha <sha>]
-//   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
+//   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>) [--targeted-specs '<JSON list>' --graph-query '<query>' --graph-result '<normalized JSON>']
+//   pre-pr-lanes.mjs record --ran-on <host> --proof-commit <sha the remote run tested> --git-tree <its Git tree> --worktree <path> --head <clean local HEAD> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
 //   pre-pr-lanes.mjs check  --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON>) [--skip <regex> --skip-ruling "<who, when, where>"]
 //
 // The report's lane commands are its 4-space-indented lines that start with a
@@ -70,13 +71,20 @@
 // result run elsewhere. Both refuse unless the worktree's HEAD is `--head`
 // and record HEAD, diffSha256 and treeSha256 (tested-head.mjs). `run` fails
 // if HEAD or uncommitted inputs move. `check` refuses evidence for other content.
+// `record --ran-on` takes a lane run on another host against a proof commit
+// this clone may never receive: it needs a clean worktree whose
+// HEAD's Git tree is `--git-tree`, records this HEAD's source, and adds
+// `ranOn: { host, proofCommit, gitTree, command }`; the proof commit is never resolved here.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { containerizedE2eIdentityProblem, RUNNER_HOST } from "../../handoff/scripts/e2e-tier.mjs";
+import { targetedTestsRuling } from "../../handoff/scripts/targeted-tests-ruling.mjs";
 import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
 import { storyTypecheckLane } from "./story-typecheck.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -86,12 +94,20 @@ const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const FLEET_SCRIPT = fileURLToPath(new URL("../../fleet-orchestrator/scripts/fleet.sh", import.meta.url));
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;
 // The repo's web Playwright lanes (`pnpm test:e2e`, `pnpm test:web-smoke`); a lane naming desktop is the Electron one.
 const WEB_E2E = /\b(?:test:e2e|test:web-smoke)\b/;
 const DESKTOP = /\bdesktop\b/i;
+const E2E_SPEC = /(?:^|\/)e2e(?:\/|.*\/)[^/]+\.(?:spec|test)\.[cm]?[jt]sx?$/i;
+const TARGETED_POLICY = [
+  /An e2e lane \(`e2e`, `desktop-e2e`\) is the exception/i,
+  /test[^\n]*changes/i,
+  /plus every spec the PR adds or edits/i,
+  /full lane runs after merge/i,
+];
 // The staging e2e identity the web e2e lane signs in with: an env key, set in the environment or the app's env file
 // (the provider's `recipes.e2e`); a repository with no such recipe needs none.
 export const stagingIdentity = (binding = sessionBinding()) => {
@@ -147,6 +163,30 @@ export function hasStagingE2eIdentity(worktree, env = process.env, identity = st
   });
 }
 
+/** Refuse the containerized lane before it starts when its login-shell identity is absent. */
+export function lanePreflightProblem(command, env = process.env, recipe) {
+  return /(?:^|\s)e2e\/run-containerized\.sh(?:\s|$)/.test(command)
+    ? containerizedE2eIdentityProblem(env, recipe) : null;
+}
+
+/** The fleet heavy-slot process for a lane run, or null for the direct local path. */
+export function fleetLaneInvocation(values, source, tree = values.worktree) {
+  const any = ["fleet-where", "fleet-orch", "fleet-owner"].some((key) => values[key] !== undefined);
+  if (!any) return null;
+  if (!["local", "remote"].includes(values["fleet-where"]) || !path.isAbsolute(values["fleet-orch"] ?? "")
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(values["fleet-owner"] ?? "")) {
+    throw new Error("fleet lane run needs --fleet-where local|remote, absolute --fleet-orch and --fleet-owner");
+  }
+  if (values["fleet-where"] === "remote" && source.diffSha256 !== NO_DIFF) {
+    throw new Error("remote fleet lane needs a clean worktree so the target can prove the same HEAD");
+  }
+  const command = values["fleet-where"] === "remote"
+    ? `test "$(git rev-parse HEAD)" = ${source.head} || { echo "fleet lane HEAD does not match ${source.head}" >&2; exit 78; }; ${values.command}`
+    : values.command;
+  return { bin: "bash", args: [FLEET_SCRIPT, values["fleet-orch"], values["fleet-where"], "slot", "heavy",
+    values["fleet-owner"], tree, "sh", "-lc", command], receipt: { where: values["fleet-where"], owner: values["fleet-owner"], head: source.head } };
+}
+
 function sameSelection(record, selection) {
   return record.laneKey === selection.laneKey && (!selection.source || record.source?.treeSha256 === selection.source.treeSha256);
 }
@@ -154,7 +194,8 @@ function sameSelection(record, selection) {
 /** Lanes with no passing record for the selected changed-file scope; head is provenance only. */
 export function missingLanes(lanes, records, selection) {
   return lanes.filter((lane) => !records.some((record) => record.command === lane && sameSelection(record, selection)
-    && (record.result === "pass" || (record.result === "main-preexisting" && /^[a-f0-9]{40}$/.test(record.mainSha ?? "")))));
+    && ((record.result === "pass" && record.targeted === undefined)
+      || (record.result === "main-preexisting" && /^[a-f0-9]{40}$/.test(record.mainSha ?? "")))));
 }
 
 /** The lanes left for CI on this machine: web e2e without the staging identities, Desktop e2e without the harness. */
@@ -240,6 +281,7 @@ function reuseCachedLanes(values, lanes, records, selected) {
 }
 
 const NO_DIFF = createHash("sha256").digest("hex");
+const COMMIT = /^[a-f0-9]{40}$/;
 
 /** The lanes the changes since `request.lastQa.boundary` can touch, or null when that cannot be proven. */
 export function lanesTouchedSince(request, impact) {
@@ -298,6 +340,97 @@ function selectedScope(values, command) {
   return { lanes, laneKey, impact: null };
 }
 
+function targetBase(values) {
+  if (values.base) return git(values.worktree, ["rev-parse", "--verify", `${values.base}^{commit}`]);
+  return git(values.worktree, ["merge-base", "HEAD", "refs/remotes/origin/main"]);
+}
+
+/** The changed paths whose exact scope a targeted E2E receipt covers. */
+export function changedFileScope(values) {
+  return git(values.worktree, ["diff", "--name-only", "--diff-filter=ACMRT", targetBase(values), "--"])
+    .split("\n").map((item) => item.trim()).filter(Boolean).sort();
+}
+
+/** Whether the target repository explicitly permits graph-selected local E2E instead of the full lane. */
+export function allowsTargetedE2e(worktree) {
+  const file = path.join(worktree, "AGENTS.md");
+  if (!existsSync(file)) return false;
+  const text = readFileSync(file, "utf8");
+  return TARGETED_POLICY.every((pattern) => pattern.test(text));
+}
+
+function parseTargetedSpecs(raw) {
+  let value;
+  try { value = JSON.parse(raw); } catch { value = raw.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean); }
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new Error("--targeted-specs must be a non-empty JSON list or comma-separated list of repository-relative spec paths");
+  }
+  return [...new Set(value.map((item) => item.trim()))].sort();
+}
+
+function parseGraphResult(raw) {
+  let value;
+  try { value = typeof raw === "string" ? JSON.parse(raw) : raw; }
+  catch { throw new Error("--graph-result must be the selection tool's normalized JSON result"); }
+  if (!value || typeof value !== "object" || !["RUN_ALL", "SELECTED"].includes(value.mode)) {
+    throw new Error("--graph-result needs mode RUN_ALL or SELECTED");
+  }
+  const fields = value.mode === "RUN_ALL" ? ["startHere", "directEvidence"] : ["selected"];
+  for (const field of fields) {
+    if (!Array.isArray(value[field]) || value[field].some((item) => typeof item !== "string" || !E2E_SPEC.test(item.trim()))) {
+      throw new Error(`--graph-result ${field} must be a list of repository-relative E2E spec paths`);
+    }
+  }
+  return value.mode === "RUN_ALL"
+    ? { mode: value.mode, startHere: [...new Set(value.startHere.map((item) => item.trim()))].sort(), directEvidence: [...new Set(value.directEvidence.map((item) => item.trim()))].sort() }
+    : { mode: value.mode, selected: [...new Set(value.selected.map((item) => item.trim()))].sort() };
+}
+
+function graphSpecs(result) {
+  return result.mode === "RUN_ALL" ? [...new Set([...result.startHere, ...result.directEvidence])].sort() : result.selected;
+}
+
+function targetedRecord(values, lane) {
+  const supplied = [values["targeted-specs"], values["graph-query"], values["graph-result"]];
+  if (supplied.every((item) => item === undefined)) return null;
+  if (supplied.some((item) => item === undefined)) throw new Error("--targeted-specs, --graph-query and --graph-result go together");
+  if (!isWebE2eLane(lane) && !isDesktopE2eLane(lane)) throw new Error("targeted specs are accepted only for an E2E lane");
+  if (!allowsTargetedE2e(values.worktree)) throw new Error("the target repository's AGENTS.md does not allow targeted E2E lanes");
+  const specs = parseTargetedSpecs(values["targeted-specs"]);
+  const graphQuery = values["graph-query"].trim();
+  if (!graphQuery) throw new Error("--graph-query must record the non-empty graph query that selected the targeted specs");
+  const graphResult = parseGraphResult(values["graph-result"]);
+  const changedFiles = changedFileScope(values);
+  const required = [...new Set([...graphSpecs(graphResult), ...changedFiles.filter((file) => E2E_SPEC.test(file))])].sort();
+  if (!sameStringList(specs, required)) throw new Error(`--targeted-specs must exactly match graph-selected plus added or edited E2E specs: ${required.join(", ")}`);
+  return { specs, graphQuery, graphResult, changedFiles };
+}
+
+function sameStringList(left, right) {
+  return Array.isArray(left) && left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+/** Valid targeted E2E receipts for the current source and changed-file scope. */
+export function targetedE2eCoverage(values, lanes, records, selected) {
+  if (!allowsTargetedE2e(values.worktree)) return [];
+  const changedFiles = changedFileScope(values);
+  return lanes.flatMap((lane) => {
+    if (!isWebE2eLane(lane) && !isDesktopE2eLane(lane)) return [];
+    const record = records.find((item) => item.command === lane && item.result === "pass" && item.targeted
+      && typeof item.targeted.graphQuery === "string" && item.targeted.graphQuery.trim()
+      && sameSelection(item, selected) && sameStringList(item.targeted.changedFiles, changedFiles));
+    if (!record) return [];
+    let graphResult;
+    try { graphResult = parseGraphResult(itemGraphResult(record)); } catch { return []; }
+    const required = [...new Set([...graphSpecs(graphResult), ...changedFiles.filter((file) => E2E_SPEC.test(file))])].sort();
+    return sameStringList(record.targeted.specs, required) ? [{ lane, specs: record.targeted.specs }] : [];
+  });
+}
+
+function itemGraphResult(record) {
+  return record?.targeted?.graphResult;
+}
+
 /**
  * The selected lanes plus story-typecheck.mjs when the diff changes a story whose package has
  * no typecheck script: the repository's lane report names no such lane, and PR #9732 shipped a
@@ -319,22 +452,33 @@ function main(argv) {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
     "reuse-cache": { type: "boolean" }, "reuse-unaffected": { type: "string" }, base: { type: "string" }, config: { type: "string", multiple: true },
+    "ran-on": { type: "string" }, "proof-commit": { type: "string" }, "git-tree": { type: "string" },
+    "fleet-where": { type: "string" }, "fleet-orch": { type: "string" }, "fleet-owner": { type: "string" },
+    targeted: { type: "string" }, "targeted-ruling-id": { type: "string" }, "targeted-ruling-source": { type: "string" },
+    "targeted-specs": { type: "string" }, "graph-query": { type: "string" }, "graph-result": { type: "string" },
+    ticket: { type: "string" }, rulings: { type: "string" },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
     if (!values.command?.trim() || (command === "record" && !["pass", "fail"].includes(values.result))) throw new Error(`${command} needs --head, --command${command === "record" ? " and --result pass|fail" : ""}`);
     const source = testedSource(values.worktree, values.head);
     const tested = source.head;
+    const ranOn = command === "record" ? remoteRun(values, source) : null;
     if (command === "record") {
-      if (!values.source && source.diffSha256 !== createHash('sha256').digest('hex')) {
+      if (!ranOn && !values.source && source.diffSha256 !== createHash('sha256').digest('hex')) {
         throw new Error('record of uncommitted inputs needs --source <JSON identity captured by the external runner>');
       }
       if (values.source && !sameSource(JSON.parse(values.source), source)) throw new Error('record --source does not match the current inputs');
     }
     const selected = { ...selectedScope(values, values.command.trim()), source };
+    const targetedReceipt = command === "record" ? targetedRecord(values, values.command.trim()) : null;
+    if (command === "run" && (values["targeted-specs"] !== undefined || values["graph-query"] !== undefined || values["graph-result"] !== undefined)) {
+      throw new Error("targeted E2E evidence is recorded after the selected specs run, with record --targeted-specs --graph-query --graph-result");
+    }
     if (Boolean(values["main-worktree"]) !== Boolean(values["main-sha"]) || (values["main-worktree"] && command !== "run")) {
       throw new Error("--main-worktree and --main-sha go together, on run only");
     }
+    if (values["main-worktree"] && values["fleet-where"]) throw new Error("a fleet lane run cannot also rerun captured main");
     let mainTested = null;
     try { mainTested = values["main-worktree"] ? testedHead(values["main-worktree"], values["main-sha"]) : null; }
     catch (error) {
@@ -348,10 +492,16 @@ function main(argv) {
     if (command === "run") {
       const execute = (tree, expected) => withStableSource(tree, current => {
         if (!sameSource(expected, current)) throw new Error('SOURCE-MOVED before lane startup');
-        return { status: spawnSync(values.command, { cwd: tree, shell: true, stdio: 'inherit' }).status };
+        const preflight = lanePreflightProblem(values.command);
+        if (preflight) throw new Error(preflight);
+        const fleet = fleetLaneInvocation(values, expected, tree);
+        return fleet
+          ? { status: spawnSync(fleet.bin, fleet.args, { cwd: tree, stdio: 'inherit' }).status, fleet: fleet.receipt }
+          : { status: spawnSync(values.command, { cwd: tree, shell: true, stdio: 'inherit' }).status };
       }, { head: expected.head });
       let unchanged = true;
-      try { result = execute(values.worktree, source).status === 0 ? 'pass' : 'fail'; }
+      let fleetReceipt;
+      try { const execution = execute(values.worktree, source); result = execution.status === 0 ? 'pass' : 'fail'; fleetReceipt = execution.fleet; }
       catch (error) {
         if (!error.message.startsWith('SOURCE-MOVED')) throw error;
         unchanged = false;
@@ -364,15 +514,16 @@ function main(argv) {
         result = 'main-preexisting';
         mainSha = mainTested;
       }
+      values.fleetReceipt = fleetReceipt;
     }
     const cacheKey = source.diffSha256 === createHash("sha256").digest("hex") ? laneKeyFor(values.worktree, { command: values.command, base: values.base, config: values.config }) : null;
     // Two lanes of one pool finish close together: the read, the change and the write happen under one lock so neither record is lost.
     withRecordsLock(values.worktree, () => {
       const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
+      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), ...(ranOn ? { ranOn } : {}), ...(values.fleetReceipt ? { fleet: values.fleetReceipt } : {}), ...(targetedReceipt ? { targeted: targetedReceipt } : {}), at: new Date().toISOString() });
       writeRecords(values.worktree, records);
     });
-    process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
+    process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}${ranOn ? ` (ran on ${ranOn.host} at ${ranOn.proofCommit})` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
   }
   if (command === "check") {
@@ -385,15 +536,23 @@ function main(argv) {
       if (impact && !["None", "Lanes only", "Visual QA"].includes(impact.outcome)) throw new Error("the impact file has no valid qa-impact outcome");
       const skip = values.skip ? new RegExp(values.skip, "i") : null;
       const records = readRecords(values.worktree);
-      const left = notRunLanes(named.filter((lane) => !skip?.test(lane)), records, selected,
+      const targeted = targetedLaneDecision(values, named);
+      const targetedRuns = targetedE2eCoverage(values, named, records, selected);
+      const targetedRunLanes = targetedRuns.map((item) => item.lane);
+      const left = notRunLanes(named.filter((lane) => !skip?.test(lane) && !targeted.left.includes(lane) && !targetedRunLanes.includes(lane)), records, selected,
         { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness() });
       const notRun = left.map((item) => item.lane);
-      const lanes = named.filter((lane) => !skip?.test(lane) && !notRun.includes(lane));
+      const lanes = named.filter((lane) => !skip?.test(lane) && !targeted.left.includes(lane) && !targetedRunLanes.includes(lane) && !notRun.includes(lane));
       for (const lane of named.filter((lane) => skip?.test(lane))) process.stdout.write(`SKIPPED-LANE ${lane} (${values["skip-ruling"].trim()})\n`);
-      if (notRun.length) {
-        const kept = records.filter((record) => !(notRun.includes(record.command) && sameSelection(record, selected)));
+      for (const lane of targeted.left) process.stdout.write(`RULED-LANE ${lane} (${targeted.id}, ${targeted.source}: outside the diff-targeted lane set)\n`);
+      for (const { lane, specs } of targetedRuns) process.stdout.write(`TARGETED-LANE ${lane} (${specs.length} specs)\n`);
+      if (notRun.length || targeted.left.length) {
+        const replaced = [...notRun, ...targeted.left];
+        const kept = records.filter((record) => !(replaced.includes(record.command) && sameSelection(record, selected)));
         const at = new Date().toISOString();
-        writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey, result: "not-run", reason, at }))], null, 2)}\n`);
+        const ruled = targeted.left.map((lane) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey,
+          result: "not-run", ruling: targeted.id, rulingSource: targeted.source, reason: "outside the diff-targeted lane set", at }));
+        writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey, result: "not-run", reason, at })), ...ruled], null, 2)}\n`);
         for (const { lane, reason } of left) process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
       }
       for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
@@ -410,6 +569,39 @@ function main(argv) {
     }).exitCode;
   }
   throw new Error("Usage: pre-pr-lanes.mjs record|check ...");
+}
+
+function targetedLaneDecision(values, lanes) {
+  const keys = ["targeted", "targeted-ruling-id", "targeted-ruling-source"];
+  if (keys.every((key) => values[key] === undefined)) return { left: [], id: null, source: null };
+  if (keys.some((key) => values[key] === undefined)) throw new Error("--targeted needs --targeted-ruling-id and --targeted-ruling-source");
+  const source = values["targeted-ruling-source"];
+  const evidence = { targetedTestsRuling: { id: values["targeted-ruling-id"], source } };
+  const verified = targetedTestsRuling(evidence, {
+    ticketText: values.ticket ? readFileSync(values.ticket, "utf8") : undefined,
+    rulingsText: values.rulings ? readFileSync(values.rulings, "utf8") : undefined,
+  });
+  if (verified.problems.length) throw new Error(verified.problems.join("; "));
+  const pattern = new RegExp(values.targeted, "i");
+  const kept = lanes.filter((lane) => pattern.test(lane));
+  if (kept.length === 0) throw new Error("--targeted must retain at least one lane named by the diff");
+  return { left: lanes.filter((lane) => !kept.includes(lane)), id: verified.id, source };
+}
+
+/**
+ * The remote run a `record --ran-on` names, or null without it. Its proof commit is provenance only: the
+ * binding is the clean local HEAD's Git tree, so the row's source identity is this content's.
+ */
+function remoteRun(values, source) {
+  if (["ran-on", "proof-commit", "git-tree"].every((key) => values[key] === undefined)) return null;
+  if (values.source) throw new Error("record --ran-on binds by Git tree; it never takes --source");
+  if (!RUNNER_HOST.test(values["ran-on"] ?? "") || !COMMIT.test(values["proof-commit"] ?? "") || !COMMIT.test(values["git-tree"] ?? "")) {
+    throw new Error("record of a remote run needs --ran-on <host name>, --proof-commit <full sha> and --git-tree <full Git tree hash>");
+  }
+  if (source.diffSha256 !== NO_DIFF) throw new Error("record --ran-on needs a clean worktree: uncommitted inputs are not the proof's Git tree");
+  const tree = git(values.worktree, ["rev-parse", "--verify", `${source.head}^{tree}`]);
+  if (tree !== values["git-tree"]) throw new Error(`record --git-tree ${values["git-tree"]} is not HEAD's Git tree ${tree}`);
+  return { host: values["ran-on"], proofCommit: values["proof-commit"], gitTree: tree, command: values.command.trim() };
 }
 
 if (isEntryPoint(import.meta.url)) {

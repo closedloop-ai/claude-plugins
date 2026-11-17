@@ -163,6 +163,14 @@ process.stdin.on('end', () => {
     compact.data.environmentId = 'fixture-preview';
   }
   if (payload.input.includes('LONG_SUMMARY')) compact.summary = 'x'.repeat(5000);
+  if (payload.input.includes('LARGE_DATA')) compact.data = { blob: 'y'.repeat(20 * 1024) };
+  const declaredSchema = args.includes('--json-schema') ? JSON.parse(option('--json-schema')) : null;
+  const declaredSummaryLimit = declaredSchema?.properties?.summary?.maxLength;
+  if (typeof declaredSummaryLimit === 'number' && compact.summary.length > declaredSummaryLimit) {
+    process.stdout.write(JSON.stringify({ type: 'result', session_id: id, is_error: true,
+      terminal_reason: 'structured_output_retry_exhausted' }) + '\n');
+    return;
+  }
   if (payload.input.includes('REVIEW_RECEIPT')) {
     const graphTool = option('--tools').split(',').find(tool => tool.startsWith('mcp__custom_graph__'));
     process.stdout.write(JSON.stringify({ type: 'assistant', session_id: id,
@@ -173,6 +181,14 @@ process.stdin.on('end', () => {
   if (discardReceipt) compact.data.discardReceipt = discardReceipt;
   const result = { type: 'result', session_id: reportedId, is_error: false,
     result: JSON.stringify(compact) };
+  if (payload.input.includes('PERMISSION_DENIAL')) result.permission_denials = [{ tool_name: 'Bash' }];
+  if (payload.input.includes('TOOL_USE_STOP')) result.stop_reason = 'tool_use';
+  if (payload.input.includes('REVIEW_SOURCE_CHANGE')) {
+    const cp = require('node:child_process');
+    fs.writeFileSync(path.join(process.cwd(), 'review-source-change.txt'), 'changed during review\n');
+    cp.execFileSync('git', ['add', 'review-source-change.txt'], { cwd: process.cwd() });
+    cp.execFileSync('git', ['commit', '-m', 'Change during review'], { cwd: process.cwd(), stdio: 'ignore' });
+  }
   const schemaTool = definition[option('--agent')].tools.includes('StructuredOutput')
     && option('--tools').split(',').includes('StructuredOutput')
     && option('--allowedTools').split(',').includes('StructuredOutput');

@@ -116,6 +116,23 @@ function standingRoutine(remote, standing) {
   }
 }
 
+/** Whether the recorded routine proves its environment setup reached a worker turn. */
+function environmentSetupCheck(routine) {
+  const last = routine?.last_run;
+  if (!last) return { check: "environment-setup", ok: null,
+    detail: "not exercised: the recorded routine has no run yet, so check did not run the environment setup script" };
+  const status = String(last.status ?? "").toLowerCase();
+  const turns = last.turn_count ?? last.turns_count ?? last.num_turns;
+  if (status.includes("archiv") && (!Number.isInteger(turns) || turns === 0)) {
+    return { check: "environment-setup", ok: false, code: "CLOUD_ENV_SETUP_FAILED",
+      detail: `CLOUD_ENV_SETUP_FAILED: the last run was archived before any worker turn${last.failure_reason ? `: ${last.failure_reason}` : ""}. Fix the environment setup script, then rerun cloud-worker.mjs check.` };
+  }
+  if (Number.isInteger(turns) && turns > 0) return { check: "environment-setup", ok: true,
+    detail: `the last run reached ${turns} worker turn(s) after environment setup` };
+  return { check: "environment-setup", ok: null,
+    detail: `not exercised: the last run status ${last.status ?? "unknown"} does not prove the environment setup script completed` };
+}
+
 /**
  * The setup check: environment configured, API reachable, and the environment this machine's standing routine
  * (`standing`, from the routine ledger) runs in; `pending` is the routine-removal line when routines vibe
@@ -140,6 +157,7 @@ export function checkCloudSetup(request, { remote, env = process.env, standing =
     } else if (recorded) {
       routines = [recorded];
       checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (routine ${standing.id})` });
+      checks.push(environmentSetupCheck(recorded));
     } else {
       routines = remote("list", {})?.data ?? [];
       checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (${routines.length} routines)` });

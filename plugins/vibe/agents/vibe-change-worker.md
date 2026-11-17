@@ -22,6 +22,11 @@ worktree, Compose file and finite TTL. Its helper record and owner labels
 authorize later exact cleanup; raw scratch Docker starts are refused by the
 vibe PreToolUse Bash guard.
 
+Scratch files: Each worker gets its own scratch directory named with its
+worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes
+only exact paths it created; an orchestrator brief never asks a worker to
+delete by prefix or glob.
+
 ## Inputs and continuations
 
 The owned worktree/branch, session summary, live ticket, request ID and the
@@ -155,6 +160,8 @@ request needs (or none). When the plan adds periodic or cross-surface work (a
 poller, interval, background lane, socket, subscription, feed or watcher), it
 carries a Cost Scaling table with the columns and rules in
 `../skills/cl-execute/references/planning-and-gates.md`, "Cost Scaling".
+Consolidated transactions measure limit, duration, effective/ambient timeout
+and lock hold; set/dedupe/collapse tests order, case, duplicates and whitespace.
 The plan gets no review: build in the same turn right after it
 (`quality-loop.md`, "Lean build loop"). No technical plan goes to the person
 running the session for approval.
@@ -367,8 +374,9 @@ from `design-pass.md`. Never revert another person's changes.
 An extraction, move or deletion is finished only when nothing it orphaned is
 left (`design-pass.md`, "Red flags", leftovers): import the new owner at
 every site instead of keeping a pass-through file, wrapper or re-export
-alias; delete helpers, types, constants and props nothing uses any more;
-collapse a loop or `each` table left with one arm; and record each test still
+alias; delete unused helpers, types, constants and props; correct nearby
+comments, docstrings and docs, including claims about other readers; collapse
+a loop or `each` table left with one arm; and record each test still
 named or placed after the old module for engineering (a rename on the missing
 tests list, or done in a `pull-request` turn).
 
@@ -379,7 +387,16 @@ parity test listing a sibling prop, not only the one you edited.
 
 Before publication/main-sync, read `environment.md`, "Main-sync before
 publication". Keep your current ID and registration metadata;
+record every new flag key with `flag-keys.mjs record` before handoff;
 only ROOT's recorded definition migration can change the writer binding.
+After a structural change to a shared component, run the repository's
+whole-diff test selector and its consumer tests in every importing package,
+including unedited contract tests. After adding or changing a story, run the repository's
+all-stories jsdom sweep and follow its existing browser-only tag precedent for
+browser APIs. Before `DONE`, require the existing cast guard, compare any file
+near the size ceiling against its base line count and record a `Debt:` reason
+for growth, and settle every required `Frozen render unchanged`, `Story entry:`
+and flag-key record the inventory names.
 After migration refresh source-owned readiness and validation proof. Compare
 captured main/imports against the same session table before fixes. Only you resolve conflicts/generators/code;
 ROOT alone commits.
@@ -453,9 +470,12 @@ Return table path/row IDs and source verification evidence for handoff's indepen
 
 In the build loop run only the quick checks the commit hooks need: Biome on
 the changed files, the affected typecheck and the source gates
-(`quality-loop.md`, "Lean build loop"). When they fail on an existing test or
-fixture your change broke, repair it under "Tests: repair, don't author"
-below. Fix your implementation, never suppress or weaken a check. Browser E2E,
+(`quality-loop.md`, "Lean build loop"). When local heavy checks are barred
+(`LOCAL_HEAVY_BARRED=1` in the fleet's `config.env`), the affected typecheck
+runs through `fleet.sh <orchDir> remote slot heavy` after each writer fix and
+before each review round; it is never skipped and never run locally. When the
+quick checks fail on an existing test or fixture your change broke, repair it
+under "Tests: repair, don't author" below. Fix your implementation, never suppress or weaken a check. Browser E2E,
 visual QA, logical QA, product-contract QA, existing test suites, Storybook footprint
 and independent guardrails, adversarial and core workflow reviews run only at
 handoff; do not run or request them in the loop. Visual QA the person accepts

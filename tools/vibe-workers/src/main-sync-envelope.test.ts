@@ -71,6 +71,10 @@ describe("production derived Claude validation envelope", () => {
     if (failure === "caller-timeout") input.timeoutMs = 1800000;
     const result = launch(value, input);
     expect(result.status, result.stdout).toBe(1);
+    if (failure === "caller-timeout") {
+      expect(result.json.code).toBe("VALIDATION_TIMEOUT_OVERRIDE");
+      expect(result.json.summary).toMatch(/timeout overrides are not allowed/);
+    }
     expect(readFileSync(join(value.metadata, "fake-proof.jsonl"), "utf8")).toBe(before);
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);
   }, 60000);

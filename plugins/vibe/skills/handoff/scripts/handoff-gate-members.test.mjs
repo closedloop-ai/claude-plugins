@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import { recordHandoffGate } from "./handoff-gate.mjs";
+import { parseRunsEvidence, recordHandoffGate } from "./handoff-gate.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
@@ -18,6 +18,18 @@ bindProviderInProcess(after);
 
 const passingInventory = { ok: true, blocking: { prBody: true, prEvidence: true } };
 const TITLE = "ISS-123, ISS-124: Group header counts";
+
+test("verifier evidence rejects duplicate importer keys before JSON parsing can overwrite them", (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "vibe-gate-duplicate-importers-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "runs.json");
+  writeFileSync(file, '{"qaImpactRequest":{"graphImporters":{"importers":[{"file":"src/a.ts","importers":["src/a.stories.tsx"]}],"importers":[]}}}');
+  assert.throws(() => parseRunsEvidence(file), /duplicate JSON key importers/);
+  writeFileSync(file, '{"qaImpactRequest":{"graphImporters":{"importers":[{"file":"src/a.ts","importers":["src/a.stories.tsx"]}]}}}');
+  assert.equal(parseRunsEvidence(file).qaImpactRequest.graphImporters.importers.length, 1);
+  writeFileSync(file, '{"qaImpactRequest":{"graphImporters":{"importers":[],"impor\\u0074ers":[{"file":"src/a.ts","paths":[]}]}}}');
+  assert.throws(() => parseRunsEvidence(file), /duplicate JSON key importers/);
+});
 
 function fixture(t) {
   const worktree = mkdtempSync(path.join(tmpdir(), "vibe-gate-members-"));
@@ -111,14 +123,14 @@ test("the gate runs the real criteria audit over each member ticket it is given,
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body, title: TITLE }), "the session's member tickets changed since the handoff gate");
 });
 
-test("with member tickets the gate needs a PR title, and the title and body must name every member", (t) => {
+test("with member tickets the gate needs a PR title while the body names every member", (t) => {
   const { worktree, receipts, body, ticket, member, audit, matrix, review } = fixture(t);
   const runScript = (command, args, options) => (args[0].endsWith("criteria-audit.mjs") ? spawnSync(command, args, options)
     : { status: 0, stdout: JSON.stringify(passingInventory), stderr: "" });
   const ids = ["AC-1", "ISS-124:AC-1"];
   const gate = (title) => recordHandoffGate({ worktree, base: "main", body, runs: receipts[0], receipts, ticket, audit: audit(ids), matrix: matrix(ids), members: [`ISS-124=${member}`], title, review: review(ids) }, { runScript });
   assert.throws(() => gate(undefined), /pass --title so the gate checks the PR names them/);
-  assert.throws(() => gate("ISS-123: Group header counts"), /the PR title does not name member ticket ISS-124/);
+  gate("ISS-123: Group header counts");
   writeFileSync(body, "Delivers ISS-123 and ISS-1240.\n");
   assert.throws(() => gate("ISS-123, ISS-124: Group header counts"), /the PR body does not name member ticket ISS-124/);
   writeFileSync(body, "Delivers ISS-123 and ISS-124.\n");
@@ -126,7 +138,7 @@ test("with member tickets the gate needs a PR title, and the title and body must
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body, title: TITLE }), null);
 });
 
-test("at PR creation the hook refuses a title that leaves a member ticket unnamed, or no title", (t) => {
+test("at PR creation the hook accepts a lead-only title but still requires a title", (t) => {
   const { worktree, receipts, body, ticket, member, audit, matrix, review } = fixture(t);
   const runScript = (command, args, options) => (args[0].endsWith("criteria-audit.mjs") ? spawnSync(command, args, options)
     : { status: 0, stdout: JSON.stringify(passingInventory), stderr: "" });
@@ -137,8 +149,8 @@ test("at PR creation the hook refuses a title that leaves a member ticket unname
   assert.equal(create(`--title="${TITLE}"`), null);
   assert.equal(create(`-t "${TITLE}"`), null);
   assert.equal(create(`-t"${TITLE}"`), null, "gh accepts a joined short flag");
-  assert.match(create('-t"ISS-123: Group header counts"')?.reason ?? "", /the PR title does not name member ticket ISS-124/);
-  assert.match(create('--title "ISS-123: Group header counts"')?.reason ?? "", /the PR title does not name member ticket ISS-124/);
+  assert.equal(create('-t"ISS-123: Group header counts"'), null);
+  assert.equal(create('--title "ISS-123: Group header counts"'), null);
   assert.match(create("--fill")?.reason ?? "", /pass --title so the gate checks the PR names them/);
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }) === null, false, "without a title the gate is not satisfied");
 });

@@ -1,14 +1,15 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, checkPreviewResult, DEFAULT_WORKER_TIMEOUT_MS, dispatchFreshnessProblem, MAX_WORKER_TIMEOUT_MS, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, testAuthoringGranted, workerResultJsonSchemaFor, workerSessionName } from "./claude-worker.js";
 import { providerAware } from "./cli.js";
 import { ProviderBroken } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
-import { bundleDirectory, fixture, graph, liveReads, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
+import { recordModes } from "./record-context.js";
+import { bundleDirectory, fixture, graph, liveReads, PROVIDER_BINDING, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
 
@@ -25,6 +26,12 @@ it("Claude dispatch binds the exact installed definition root and script referen
   mkdirSync(join(value.worktree, "skills", "vibe", "scripts"), { recursive: true });
   writeFileSync(join(value.worktree, "skills", "vibe", "scripts", "repo-only.mjs"), "export {};\n");
   expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run skills/vibe/scripts/repo-only.mjs")).toBeNull();
+  mkdirSync(join(value.worktree, "plugins", "vibe", "skills", "vibe", "scripts"), { recursive: true });
+  const prefixed = join(value.worktree, "plugins", "vibe", "skills", "vibe", "scripts", "branch-only.mjs");
+  writeFileSync(prefixed, "export {};\n");
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree,
+    "run plugins/vibe/skills/vibe/scripts/branch-only.mjs")).toBeNull();
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, `run ${prefixed}`)).toBeNull();
   mkdirSync(join(value.worktree, "handoff", "scripts"), { recursive: true });
   writeFileSync(join(value.worktree, "handoff", "scripts", "repo-tool.mjs"), "export {};\n");
   expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run handoff/scripts/repo-tool.mjs")).toBeNull();
@@ -352,7 +359,7 @@ describe("production Claude CLI adapter", () => {
       { worktree: value.worktree, agentRoot: value.agentRoot, requestId: "open-pr", input: "open the requested PR",
         timeoutMs: 1000, capabilities, ...item });
     expect(launch(graph).agent.prompt).toContain("Never start another implementation writer, commit, or push.");
-    expect(() => launch([...graph, recordWrite])).toThrow(/outside this canonical action/);
+    expect(() => launch([...graph, recordWrite])).toThrow(/outside action pull-request/);
   });
   it("a record turn with malformed final formatting reports unverified outcome without replaying its write", () => {
     const value = setup();
@@ -381,10 +388,10 @@ describe("production Claude CLI adapter", () => {
       write("update_document").name]));
     expect(launch("handoff", [...graph, write("create_document"), recordWrite, link, write("update_document")]).tools)
       .toEqual(expect.arrayContaining([link.name, write("update_document").name]));
-    expect(() => launch("plan", [...graph, write("upload_attachment")])).toThrow(/outside this canonical action/);
-    expect(() => launch("create", [...graph, write("update_document")])).toThrow(/outside this canonical action/);
-    expect(() => launch("assign", [...graph, link])).toThrow(/outside this canonical action/);
-    expect(() => launch("cancel", [...graph, link])).toThrow(/outside this canonical action/);
+    expect(() => launch("plan", [...graph, write("upload_attachment")])).toThrow(/outside action plan/);
+    expect(() => launch("create", [...graph, write("update_document")])).toThrow(/outside action create/);
+    expect(() => launch("assign", [...graph, link])).toThrow(/outside action assign/);
+    expect(() => launch("cancel", [...graph, link])).toThrow(/outside action cancel/);
   });
   it("selects the canonical scoped agent directly and resumes the same underlying ID across two requests", () => {
     const value = setup();
@@ -435,7 +442,7 @@ describe("production Claude CLI adapter", () => {
     expect(readProof(value.metadata)).toHaveLength(1);
     const continued = run(value, { continuation: "Finish current request" });
     expect(continued.status, continued.stderr).toBe(0);
-    const next = run(value, { requestId: "second" });
+    const next = run(value, { requestId: "second", input: "SECRET_SECOND" });
     expect(next.status, next.stderr).toBe(0);
     expect(readProof(value.metadata).map((item) => item.payload.input)).toEqual(["PLAN_FIRST", "Finish current request", "SECRET_SECOND"]);
     expect(readProof(value.metadata).slice(1).every((item) => item.args.includes("--resume"))).toBe(true);
@@ -506,7 +513,7 @@ describe("production Claude CLI adapter", () => {
     expect(proof?.definition["vibe:vibe-change-worker"]?.tools).toContain("StructuredOutput");
     const invalid = run(value, { requestId: "invalid-structured", input: "INVALID_STRUCTURED" });
     expect(invalid.status).toBe(1);
-    expect(JSON.parse(invalid.stdout).code).toBe("WORKER_TURN_FAILED");
+    expect(JSON.parse(invalid.stdout).code).toBe("WORKER_RESULT_SCHEMA_INVALID");
     expect(readWriterSummary(value.worktree)?.status).toBe("FAILED");
     const legacy = run(value, { requestId: "invalid-structured", continuation: "Legacy JSON without a structured field" });
     expect(legacy.status, legacy.stderr).toBe(0);
@@ -970,9 +977,9 @@ describe("production Claude CLI adapter", () => {
     const base = { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-change-worker",
       requestId: "one", capabilities: [...graph, recordWrite], input: "test", timeoutMs: 1000 };
     expect(boundDefinition(definition, { ...base, mode: "request" }).tools).not.toContain(recordWrite.name);
-    expect(() => boundDefinition(definition, { ...base, mode: "record" })).toThrow(/exclusive record turn/);
+    expect(() => boundDefinition(definition, { ...base, mode: "record" })).toThrow(/requires recordAction/);
     expect(boundDefinition(definition, { ...base, mode: "record", recordAction: "progress", exclusiveRecordTurn: true }).tools).toContain(recordWrite.name);
-    expect(() => boundDefinition(definition, { ...base, mode: "record", recordAction: "assign", exclusiveRecordTurn: true })).toThrow(/canonical action/);
+    expect(() => boundDefinition(definition, { ...base, mode: "record", recordAction: "assign", exclusiveRecordTurn: true })).toThrow(/not declared/);
   });
   it("bounds prototype advice to a reader while retaining serialized operational share capabilities", () => {
     const value = setup();
@@ -1007,6 +1014,29 @@ describe("production Claude CLI adapter", () => {
     expect(run(value, { continuation: "Continue after interruption" }).status).toBe(0);
     expect(readProof(value.metadata)[1]?.args).toContain("--resume");
   });
+  it.each(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"])(
+    "refuses a continuation for read-only role %s with the fresh-relaunch action", (agentName) => {
+      const value = setup();
+      const result = run(value, { agentName, requestId: "review-continuation", continuation: "Continue the review" });
+      expect(result.status).toBe(1);
+      const refusal = JSON.parse(result.stdout);
+      expect(refusal.code).toBe("REVIEWER_RELAUNCH_REQUIRED");
+      expect(refusal.summary).toContain(agentName);
+      expect(refusal.summary).toContain("new requestId and input");
+      expect(refusal.summary).toContain("do not continue the session writer");
+      expect(refusal.workerId).toBeUndefined();
+    });
+  it("tells a timed-out read-only reviewer to relaunch fresh, never to continue the writer", () => {
+    const value = setup();
+    const result = run(value, { agentName: "vibe-guardrails-reviewer", requestId: "review-timeout",
+      input: "WAIT_FOR_CANCEL", timeoutMs: 1000 });
+    expect(result.status).toBe(1);
+    const failure = JSON.parse(result.stdout);
+    expect(failure.code).toBe("TURN_TIMEOUT");
+    expect(failure.summary).toContain("vibe-guardrails-reviewer");
+    expect(failure.summary).toContain("Relaunch that same role fresh");
+    expect(failure.summary).not.toContain("Continue this request");
+  });
   it("reports CAP-HIT with the saved patch when a writer turn hits its cap, and a new request still starts (vibe-13007)", () => {
     const value = setup();
     writeFileSync(join(value.worktree, "page.tsx"), "export const page = 1;\n");
@@ -1032,10 +1062,119 @@ describe("production Claude CLI adapter", () => {
     const summary = JSON.parse(long.stdout).summary as string;
     expect(summary.length).toBe(4096);
     expect(summary.endsWith("[truncated by the launcher]")).toBe(true);
+    const schema = JSON.parse(readProof(value.metadata)[0]!.args[readProof(value.metadata)[0]!.args.indexOf("--json-schema") + 1]!);
+    expect(schema.properties.summary).not.toHaveProperty("maxLength");
     const capped = capWorkerResult({ status: "DONE", summary: "ok", data: { blob: "y".repeat(20 * 1024) } }) as Record<string, unknown>;
-    expect(capped.data).toBeUndefined();
+    expect(capped.status).toBe("BLOCKED");
+    expect(capped.data).toMatchObject({ launcher: { code: "WORKER_DATA_TOO_LARGE" } });
     expect(capped.summary).toMatch(/data dropped by the launcher/);
     expect(capWorkerResult({ status: "DONE", summary: "ok", data: { a: 1 } })).toEqual({ status: "DONE", summary: "ok", data: { a: 1 } });
+  });
+  it("blocks an oversized structured payload through the production launcher instead of reporting clean DONE", () => {
+    const value = setup();
+    const launched = run(value, { input: "LARGE_DATA" });
+    expect(launched.status).toBe(1);
+    const result = JSON.parse(launched.stdout);
+    expect(result.status).toBe("BLOCKED");
+    expect(result.data).toMatchObject({ launcher: { code: "WORKER_DATA_TOO_LARGE" } });
+    expect(readWriterSummary(value.worktree)?.status).toBe("BLOCKED");
+  });
+  it("returns precise request and record diagnostics from the production launcher", () => {
+    const tooLong = setup();
+    const timeout = run(tooLong, { input: "work", timeoutMs: MAX_WORKER_TIMEOUT_MS + 60_000 });
+    expect(timeout.status).toBe(1);
+    expect(JSON.parse(timeout.stdout)).toMatchObject({ code: "INVALID_REQUEST" });
+    expect(JSON.parse(timeout.stdout).summary).toMatch(/timeoutMs.*1800000 ms.*30 minutes/);
+
+    const wrongMode = setup();
+    const handover = run(wrongMode, { agentName: "vibe-environment-worker", mode: "handover", input: "handover" });
+    expect(handover.status).toBe(1);
+    expect(JSON.parse(handover.stdout).summary).toContain('mode "record" with recordAction "handover"');
+
+    const undeclared = setup();
+    const action = run(undeclared, { agentName: "vibe-ticket-worker", mode: "record", recordAction: "progress",
+      exclusiveRecordTurn: true, capabilities: [...graph, recordWrite], input: "progress" });
+    expect(JSON.parse(action.stdout).code).toBe("RECORD_ACTION_UNDECLARED");
+    expect(JSON.parse(action.stdout).summary).toMatch(/progress.*create, plan, handoff, assign, cancel/);
+
+    const nonexclusive = setup();
+    const missingTurn = run(nonexclusive, { agentName: "vibe-ticket-worker", mode: "record", recordAction: "plan",
+      capabilities: [...graph, recordWrite], input: "plan" });
+    expect(JSON.parse(missingTurn.stdout).code).toBe("EXCLUSIVE_RECORD_TURN_REQUIRED");
+
+    const outside = setup();
+    const upload = { ...recordWrite, name: "mcp__live_workspace__upload_attachment", operation: "upload_attachment" };
+    const capability = run(outside, { agentName: "vibe-ticket-worker", mode: "record", recordAction: "plan",
+      exclusiveRecordTurn: true, capabilities: [...graph, upload], input: "plan" });
+    expect(JSON.parse(capability.stdout).code).toBe("RECORD_CAPABILITY_OUTSIDE_ACTION");
+    expect(JSON.parse(capability.stdout).summary).toMatch(/upload_attachment.*plan.*handoff/);
+  });
+  it("keeps every resolveRecordContext refusal out of the generic catch-all", () => {
+    const source = readFileSync(resolve(bundleDirectory, "../../../../../../tools/vibe-workers/src/record-context.ts"), "utf8");
+    const boundary = source.slice(source.indexOf("export function resolveRecordContext"), source.indexOf("export const STARTUP_ROLES"));
+    expect(boundary).not.toMatch(/throw new Error\(/);
+    const codes = [...boundary.matchAll(/new WorkerRefusal\("([A-Z0-9_]+)"/g)].map((match) => match[1]);
+    expect(new Set(codes).size).toBe(codes.length);
+    expect(codes).toEqual(expect.arrayContaining([
+      "VALIDATION_CONTEXT_INVALID", "CI_LOCATOR_CONTEXT_INVALID", "REQUEST_CONTINUATIONS_CONTEXT_INVALID",
+      "REQUEST_CONTINUATIONS_DUPLICATE", "DISCARD_TARGET_REQUIRED", "DISCARD_CONTEXT_INVALID",
+      "SESSIONLESS_CONTEXT_INVALID", "SESSIONLESS_PRIVATE_SESSION_EXISTS", "DISCARD_EXECUTION_CHECKOUT_INVALID",
+      "DISCARD_TARGET_MISMATCH",
+    ]));
+  });
+  it("documents every canonical ticket and environment record action with the exact launcher shape", () => {
+    const harness = readFileSync(resolve(bundleDirectory, "../../references/vibe-harness-claude.md"), "utf8");
+    expect(harness).toContain('"mode":"record","recordAction":"<action>","exclusiveRecordTurn":true');
+    const modes = recordModes(PROVIDER_BINDING);
+    const documented = /Environment-worker actions are (?<environment>[\s\S]*?)Ticket-worker actions are (?<ticket>[\s\S]*?)The launcher's/.exec(harness)?.groups;
+    const actions = (text: string) => [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1]).sort();
+    expect(actions(documented?.environment ?? "")).toEqual(Object.keys(modes["vibe-environment-worker"] ?? {}).sort());
+    expect(actions(documented?.ticket ?? "")).toEqual(Object.keys(modes["vibe-ticket-worker"] ?? {}).sort());
+  });
+  it("starts a new writer request atomically without queuing a launch refused behind active work", () => {
+    const value = setup();
+    expect(run(value, { input: "PLAN_FIRST: active work" }).status).toBe(0);
+    const before = readWriterSummary(value.worktree);
+    const queued = run(value, { requestId: "second", input: "new work" });
+    const refusal = JSON.parse(queued.stdout);
+    expect(refusal.code).toBe("ACTIVE_REQUEST_PENDING");
+    expect(refusal.summary).toContain('requestId "first"');
+    expect(refusal.summary).toContain('"continuation":"<next step>"');
+    expect(readWriterSummary(value.worktree)?.queuedRequestIds).toEqual(before?.queuedRequestIds);
+    expect(run(value, { continuation: "finish active work" }).status).toBe(0);
+  });
+  it("names duplicate input and keeps the same active request recoverable through continuation", () => {
+    const value = setup();
+    expect(run(value, { input: "PLAN_FIRST: active work" }).status).toBe(0);
+    const duplicate = run(value, { input: "same id as active" });
+    expect(JSON.parse(duplicate.stdout).code).toBe("REQUEST_ID_EXISTS");
+    expect(JSON.parse(duplicate.stdout).summary).toContain("continuation");
+    expect(run(value, { continuation: "finish active work" }).status).toBe(0);
+  });
+  it("accepts valid structured output with denied calls or a tool-use stop and names source drift precisely", () => {
+    const denials = setup();
+    expect(run(denials, { input: "PERMISSION_DENIAL TOOL_USE_STOP" }).status).toBe(0);
+
+    const changed = setup();
+    const review = run(changed, { agentName: "vibe-guardrails-reviewer", input: "REVIEW_SOURCE_CHANGE" });
+    expect(review.status).toBe(1);
+    const result = JSON.parse(review.stdout);
+    expect(result.code).toBe("REVIEWER_SOURCE_CHANGED");
+    expect(result.summary).toMatch(/from .* to .*Rerun the review on the final settled source/);
+  });
+  it("holds mandatory reviewers to the receipt premise shape in structured output", () => {
+    const reviewer = workerResultJsonSchemaFor("vibe-guardrails-reviewer");
+    expect(reviewer.required).toContain("data");
+    expect(reviewer.properties.data.required).toEqual(["findings"]);
+    const finding = reviewer.properties.data.properties.findings.items;
+    expect(finding.required).toEqual(["id", "blocking", "evidence"]);
+    expect(finding.allOf[0].then.required).toEqual(["premises"]);
+    expect(finding.properties.premises.items.required).toEqual(["claim", "evidence"]);
+    expect(workerResultJsonSchemaFor("vibe-change-worker").required).toEqual(["status", "summary"]);
+  });
+  it("uses a 30 minute default without changing the 30 minute maximum", () => {
+    expect(DEFAULT_WORKER_TIMEOUT_MS).toBe(30 * 60 * 1000);
+    expect(MAX_WORKER_TIMEOUT_MS).toBe(30 * 60 * 1000);
   });
   it("serializes truly concurrent helper publication and native writer claims through the production CLIs", async () => {
     const value = setup();

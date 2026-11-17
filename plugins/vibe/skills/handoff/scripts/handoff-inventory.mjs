@@ -91,7 +91,7 @@
 import { laneSourceBootstrap } from "./ci-job-shape.mjs";
 import { laneSourceShapeProblems } from "./pr-evidence-schema.mjs";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { prototypeRecipe, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
@@ -104,6 +104,7 @@ import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-s
 import { unexplainedLockfileEntries } from "./lockfile-manifest.mjs";
 import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
+import { decisionTableProblems } from "./decision-table-gate.mjs";
 import { buildInventoryBundle } from "./inventory-bundle.mjs";
 import { isPortableSurfaceAllowlistEdit, portableSurfaceChecker } from "./prototype-allowlist.mjs";
 import { loadOpenPrs, proofCorpusBase, pullRequestFacts } from "./pr-facts.mjs";
@@ -149,6 +150,7 @@ const { values } = parseArgs({
     body: { type: "string" },
     runs: { type: "string" },
     commit: { type: "string" },
+    out: { type: "string" },
   },
 });
 if (!values.worktree) {
@@ -237,6 +239,7 @@ const result = withStableSource(worktree, () => {
   const prFacts = values.phase === "build" ? null : readPullRequestFacts();
   const deferredToHandoff = values.phase === "build" ? diffRules.blocking.filter((finding) => HANDOFF_ONLY_RULES.has(finding.rule)) : [];
   const diffRulesBlocking = diffRules.blocking.filter((finding) => !deferredToHandoff.includes(finding));
+  const decisionTables = values.phase === "build" ? [] : decisionTableProblems(worktree);
 
   const blocking = {
     forbiddenPaths: !pathPolicyProblem && forbidden.length === 0 && outsideAllowed.length === 0 && unexplainedLockfile.length === 0,
@@ -244,6 +247,7 @@ const result = withStableSource(worktree, () => {
     storiesInV2Taxonomy: v1Stories.length === 0,
     existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
     diffRulesClear: diffRulesBlocking.length === 0,
+    ...(values.phase === "build" ? {} : { decisionTablesCurrent: decisionTables.length === 0 }),
     ...(storybookSchemeUnreadable ? { storybookSchemeRecognized: false } : {}),
     ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
     ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
@@ -288,6 +292,7 @@ const result = withStableSource(worktree, () => {
     compileOnlyV1Repairs,
     retitledStories,
     diffRules: { blocking: diffRulesBlocking, deferredToHandoff, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
+    decisionTableProblems: decisionTables,
     ...(values.phase === "build" ? {} : { bundle: buildBundle() }),
     ...prFacts,
   };
@@ -422,7 +427,7 @@ const result = withStableSource(worktree, () => {
 
   /** Accept literal relative paths only, with no glob or traversal grammar. */
   function safePolicyPath(value, kind) {
-    if (typeof value !== "string" || !value || value.startsWith("/") || /[\\\0*?\[\]]/.test(value)) return false;
+    if (typeof value !== "string" || !value || value.startsWith("/") || /[\\\0*?]/.test(value)) return false;
     if ((kind === "prefix") !== value.endsWith("/")) return false;
     if (kind === "basename" && value.includes("/")) return false;
     const segments = value.replace(/\/$/, "").split("/");
@@ -677,8 +682,10 @@ const result = withStableSource(worktree, () => {
     });
   }
 });
-process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-process.exit(result.ok ? 0 : 1);
+const serialized = `${JSON.stringify(result, null, 2)}\n`;
+if (values.out) writeFileSync(path.resolve(values.out), serialized, { mode: 0o600 });
+else process.stdout.write(serialized);
+process.exitCode = result.ok ? 0 : 1;
 
 function fail(message) {
   process.stdout.write(`${JSON.stringify({ ok: false, error: message })}\n`);

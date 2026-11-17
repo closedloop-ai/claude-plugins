@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, mutationPreload, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
+import { seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -44,6 +45,7 @@ function setup(t, slug, extraFiles = {}, { repoName = "symphony-alpha", remoteUr
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
+  seedAlignedDecisionTable(created.json.session.worktree);
   return { ...fixture, checkout, origin, worktree: created.json.session.worktree };
 }
 
@@ -366,6 +368,17 @@ test("malformed or duplicate declarations fail closed with a target-owned diagno
   const ambiguous = runNode(INVENTORY, ["--worktree", duplicate.worktree], duplicate.home);
   assert.equal(ambiguous.json.blocking.forbiddenPaths, false);
   assert.match(ambiguous.json.pathPolicyProblem, /found 2/);
+});
+
+test("ISS-14221 path policy treats bracket segments literally instead of as glob syntax", (t) => {
+  const policy = JSON.stringify({ ...JSON.parse(SYMPHONY_PATH_POLICY), allowedPrefixes: ["apps/[orgSlug]/"] });
+  const { home, worktree } = setup(t, "policy-bracket-literal", { "vibe-handoff-paths.json": policy });
+  const route = "apps/[orgSlug]/page.tsx";
+  write(worktree, route, "export const page = 2;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.pathPolicyProblem, undefined);
+  assert.deepEqual(result.json.changedFiles, [{ path: route, status: "A" }]);
+  assert.equal(result.json.blocking.forbiddenPaths, true);
 });
 
 function write(worktree, file, content) {

@@ -9,12 +9,13 @@ import { inVibeSession } from "./foreground-guard.mjs";
 import { handoffGateProblem } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { cloudPrProblem } from "../lib/vibe/scripts/cloud-worker.mjs";
 import { githubRepository } from "../lib/vibe/scripts/github-remote.mjs";
-import { isProviderBroken, providerDataOr, recordedBinding, ticketReference } from "../lib/vibe/scripts/provider.mjs";
+import { isProviderBroken, recordedBinding } from "../lib/vibe/scripts/provider.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import os from "node:os";
+import { BodyFileError, gateOverrideEntries, readPrBodyFile } from "../lib/handoff/scripts/gate-override.mjs";
 
 const VIBE_BRANCH = "vibe/";
-const OVERRIDE_HINT = "if every real check and review passed and a known Vibe gate bug is the only blocker (operator ruling 2026-11-08), add the line `Vibe gate override: <ticket>: <reason>` naming that bug's ticket (the bound tracker's issue, or with no tracker a GitHub issue `#<number>` or its URL) to the PR body file";
+const OVERRIDE_HINT = "if every real check and review passed and known Vibe gate bugs are the only blocker (operator ruling 2026-11-08), add `Vibe gate override: <ticket>[, <ticket>...]: <reason>` naming each bug ticket to the PR body file";
 const LOCAL_RETRY = "run gh pr create on this machine from a checkout of the target repository so the guard can find the session that owns the head";
 const LITERAL_CWD_RETRY = "cd to a literal checkout path, then run gh pr create";
 const CLOUD_RETRY = "pass the handoff gate, then finish the cloud task with cloud-worker.mjs import, the independent review (Codex or Fable 5.2 for a Claude import, Claude for a Codex import) and refresh-import, and rerun gh pr create";
@@ -214,17 +215,7 @@ function prHeadTarget(cwd, head, repositoryOverrides) {
  */
 function hasTicketedGateOverride(bodyFile, binding) {
   if (!bodyFile) return false;
-  try {
-    const stat = lstatSync(bodyFile);
-    if (!stat.isFile() || stat.size > 65536) return false;
-    const issue = providerDataOr(binding, "tickets", "issuePattern", null)?.replace(/^\^/, "").replace(/\$$/, "");
-    const declaration = new RegExp(`^Vibe gate override: (?:${issue ?? ticketReference(binding).source}):\\s*\\S.*$`);
-    return readFileSync(bodyFile, "utf8").split(/\r?\n/).some(line => declaration.test(line));
-  } catch (error) {
-    // A broken bound provider cannot say which override it accepts; the dispatcher refuses the PR with its fix.
-    if (isProviderBroken(error)) throw error;
-    return false;
-  }
+  return gateOverrideEntries(readPrBodyFile(bodyFile), binding).length > 0;
 }
 
 /** A Vibe-named head the guard cannot resolve stays refused rather than falling back to the command cwd. */
@@ -258,7 +249,6 @@ export function prCreateGuard(event, home = os.homedir()) {
     if (call.uncertainCwd) {
       return refuse(`unresolved shell cwd ${call.unresolvedTarget ?? "unknown"} from ${call.cwd} cannot prove a local vibe handoff gate`, LITERAL_CWD_RETRY);
     }
-    const override = () => hasTicketedGateOverride(call.bodyFile, recordedBinding({ worktree: call.cwd, conversation: event?.session_id ?? null, home }));
     let target = targets[index];
     if (!target && !vibeNamedHead(call.head)) {
       // An unresolvable non-Vibe head (remote-only, a fork, another repository) is judged by the
@@ -267,6 +257,14 @@ export function prCreateGuard(event, home = os.homedir()) {
       else if (vibeWorktree(call.cwd) === false) continue;
     }
     if (target?.nonVibe) continue;
+    let overridePresent;
+    try { overridePresent = hasTicketedGateOverride(call.bodyFile, recordedBinding({ worktree: call.cwd, conversation: event?.session_id ?? null, home })); }
+    catch (error) {
+      if (isProviderBroken(error)) throw error;
+      if (error instanceof BodyFileError) return refuse(error.message, "pass one literal readable path to --body-file or -F, then rerun gh pr create");
+      throw error;
+    }
+    const override = () => overridePresent;
     if (target?.unownedVibe || target?.uncertain) {
       if (override()) continue;
       return refuse(target.unownedVibe ? "no vibe session record for the PR head branch" : "PR head ownership cannot be verified", OVERRIDE_HINT);

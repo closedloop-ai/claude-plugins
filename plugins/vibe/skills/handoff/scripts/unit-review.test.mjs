@@ -145,15 +145,26 @@ test("the CLI prints the gap list, exits 1 until both parts pass on every page a
       { criterion: "ISS-2:AC-1", part: "visual", verdict: "MET", page: "Branches", surface: "Desktop", capture: "text.png" },
     ];
     const write = (list) => writeFileSync(path.join(dir, "review.json"), JSON.stringify({ pages: ["Sessions", "Branches"], surfaces: ["Web", "Desktop"], listQueries: [], rows: list }));
+    const body = path.join(dir, "body.md");
+    writeFileSync(body, "## Summary\nNo override.\n");
     const orch = path.join(dir, "orch");
     mkdirSync(orch);
     writeFileSync(path.join(orch, "board.json"), JSON.stringify({ units: { "ISS-1": { tickets: ["ISS-1", "ISS-2"], writer: "w" } } }));
-    const run = () => spawnSync(process.execPath, [SCRIPT, "--worktree", wt, "--slug", "ISS-1", "--ticket", path.join(dir, "ticket.md"), "--member", `ISS-2=${path.join(dir, "member.md")}`, "--review", path.join(dir, "review.json"), "--at", "head", "--record", orch, "--unit", "ISS-1"], { encoding: "utf8" });
+    const run = () => spawnSync(process.execPath, [SCRIPT, "--worktree", wt, "--slug", "ISS-1", "--ticket", path.join(dir, "ticket.md"), "--member", `ISS-2=${path.join(dir, "member.md")}`, "--review", path.join(dir, "review.json"), "--body", body, "--at", "head", "--record", orch, "--unit", "ISS-1"], { encoding: "utf8" });
     write(rows);
     const failing = run();
     assert.equal(failing.status, 1, failing.stderr);
     assert.match(failing.stdout, /^GAP ISS-2 AC-1: code ref src\/a\.ts:9 is past the end of src\/a\.ts \(3 lines\); Branches on Desktop: capture .*text\.png is not a PNG, JPEG, WebP or GIF image$/m);
     assert.match(unitReviewProblem(orch, "ISS-1", { tickets: ["ISS-1", "ISS-2"] }), /has 1 gaps/);
+    writeFileSync(body, "Vibe gate override: ISS-14136: approved unit-review gate defect.\n");
+    write(rows.map((row) => row.criterion === "ISS-2:AC-1" ? { ...row, override: "ISS-14136" } : row));
+    const overridden = run();
+    assert.equal(overridden.status, 0, overridden.stdout + overridden.stderr);
+    const overrideRecord = JSON.parse(readFileSync(path.join(orch, "evidence", "unit-review-ISS-1.json"), "utf8"));
+    assert.deepEqual(overrideRecord.coveredGaps, [{ ticket: "ISS-2", criterion: "AC-1",
+      missing: ["code ref src/a.ts:9 is past the end of src/a.ts (3 lines)", `Branches on Desktop: capture ${path.join(dir, "text.png")} is not a PNG, JPEG, WebP or GIF image`],
+      override: "ISS-14136" }]);
+    writeFileSync(body, "## Summary\nNo override.\n");
     write([...rows.slice(0, 3), { ...rows[3], ref: "src/a.ts:1" }, rows[4], { ...rows[5], capture: "b-desk.png" }]);
     const passed = run();
     assert.equal(passed.status, 0, passed.stdout + passed.stderr);

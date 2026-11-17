@@ -135,6 +135,27 @@ test("a contract vibe does not speak is no provider", (t) => {
   assert.ok(readContract(acme), "an older contract's skill key is ignored");
 });
 
+test("a contract's guard rules have the shape vibe-core's guards read, and the ClosedLoop provider declares its ungated heavy slot (ISS-14225)", (t) => {
+  const heavySlot = readContract(REAL_PROVIDER).data.guards.heavySlot;
+  assert.ok(heavySlot.refusedScripts.includes("heavy-slot.sh"));
+  assert.match(heavySlot.gatedCommand, /fleet\.sh <orchDir> local\|remote slot heavy/);
+  const root = tree(t);
+  const acme = plugin(path.join(root, "acme"), "acme-provider", "1.0.0", CONTRACT);
+  const withGuards = (guards) => write(path.join(acme, "provider.json"), { ...CONTRACT, name: "acme-provider", data: { ...CONTRACT.data, guards } });
+  const good = { e2eSlot: { script: "slot.sh", headFlag: "--head", refusedFlags: ["--hash"] }, heavySlot: { refusedScripts: ["heavy.sh"], gatedCommand: "run heavy" } };
+  for (const guards of [good, { e2eSlot: { script: "slot.sh", headFlag: "--head" } }, { ...good, laterRule: { any: "shape" } }]) {
+    withGuards(guards);
+    assert.ok(readContract(acme), JSON.stringify(guards));
+  }
+  for (const guards of [[], { heavySlot: { refusedScripts: "heavy.sh", gatedCommand: "run heavy" } }, { heavySlot: { refusedScripts: [], gatedCommand: "run heavy" } },
+    { heavySlot: { refusedScripts: ["bin/heavy.sh"], gatedCommand: "run heavy" } }, { heavySlot: { refusedScripts: ["heavy.sh"] } },
+    { heavySlot: { refusedScripts: ["heavy.sh"], gatedCommand: "" } }, { e2eSlot: { script: 5, headFlag: "--head" } },
+    { e2eSlot: { script: "slot.sh", headFlag: "--head", refusedFlags: "--hash" } }]) {
+    withGuards(guards);
+    assert.equal(readContract(acme), null, JSON.stringify(guards));
+  }
+});
+
 test("provider files and data answer only a bound session with the capability", (t) => {
   const root = tree(t);
   const acme = plugin(path.join(root, "acme"), "acme-provider", "1.0.0", CONTRACT);

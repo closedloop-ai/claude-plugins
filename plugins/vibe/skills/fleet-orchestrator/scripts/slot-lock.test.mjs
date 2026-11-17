@@ -66,6 +66,18 @@ test('runs the command with its stdin, returns its exit status and frees the slo
   assert.equal(existsSync(join(root, 'e2e-1.lock')), false);
 });
 
+test('an immediate command failure is reported as the worker command with its output', TIMEOUT, () => {
+  const root = lockRoot();
+  const script = join(root, 'not-executable.sh');
+  writeFileSync(script, '#!/bin/sh\necho should-not-run\n', { mode: 0o600 });
+  const result = runSync(root, ['e2e', 'writer', script]);
+  assert.equal(result.status, 126);
+  assert.match(result.stderr, /Permission denied|permission denied/);
+  assert.match(result.stderr, /worker command failed immediately after slot grant \(exit 126\)/);
+  assert.match(result.stderr, /not-executable\.sh/);
+  assert.doesNotMatch(result.stderr, /busy|waiting/);
+});
+
 test('preflight executes after the slot is acquired and refuses the child on failure', TIMEOUT, () => {
   const root = lockRoot();
   const preflight = join(root, 'preflight.mjs');

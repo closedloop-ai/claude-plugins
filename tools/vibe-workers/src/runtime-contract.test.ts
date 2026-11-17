@@ -85,6 +85,13 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(bound["vibe-ticket-worker"]?.handoff).toContain("upload_attachment");
   });
 
+  it("documents every ticket-worker handoff capability the provider grant requires", () => {
+    const handoff = readFileSync(resolve(pluginRoot,
+      "../vibe-closedloop-provider/skills/closedloop-provider/references/handoff-skill.md"), "utf8");
+    expect(recordModes(sessionBinding())["vibe-ticket-worker"]?.handoff).toContain("upload_attachment");
+    expect(handoff).toMatch(/complete handoff record grant[\s\S]*upload_attachment/);
+  });
+
   it("parses a ledger's capabilities by shape in any chat and checks a grant against the session's provider", () => {
     const write = { name: "mcp__closedloop__create_document", service: "tracker", operation: "create_document", access: "write" } as const;
     const graphRead = { name: "mcp__closedloop-graph__code_symbols", service: "graph", operation: "code_symbols", access: "read" } as const;

@@ -48,8 +48,8 @@ import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
-const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
-const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
+const RECORD_RULING = /^\s*[-*]?\s*Ruling\b(?:[^:\n]*\([^\n)]*\)|[^:\n]*):\s*(.+?)\s*$/gm;
+const TICKET_RULING = /^\s*[-*]\s*Ruling\b(?:[^:\n]*\([^\n)]*\)|[^:\n]*):\s*(.+?)\s*$/gm;
 const AMENDS = /;\s*amends:\s*(\S.*)$/;
 const PROGRAM_RULING = /^\s*[-*]\s*Ruling\s+(\d{4}-\d{2}-\d{2})\s+\((operator message|AskUserQuestion|ticket):\s*(\S.*?)\):\s*(\S.*)$/gm;
 const SEQUENCING_RELATION = /^(.*?)\b(?:waits?\s+(?:until|on|for)|follows?|is\s+blocked\s+by)\b(.*)$/i;

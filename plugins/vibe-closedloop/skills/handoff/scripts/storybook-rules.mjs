@@ -147,7 +147,7 @@ function listed(keys) {
 
 /**
  * Adding, renaming, moving, promoting or removing stories is a release: a
- * removed or renamed story ID needs a major, a new entry (title) or a changed
+ * removed entry needs a major, a removed state, new entry (title) or changed
  * lifecycle tag a minor, a story added to an existing entry at least a patch,
  * and the release record names the new version exactly once.
  */
@@ -168,9 +168,13 @@ function checkRelease(files, stories, repo, release, logged, add) {
   const removed = [...before].filter((key) => !after.has(key));
   const added = [...after].filter((key) => !before.has(key));
   const titles = new Set([...before].map(titleOf));
+  const afterTitles = new Set([...after].map(titleOf));
+  const removedEntries = [...new Set(removed.map(titleOf))].filter((title) => !afterTitles.has(title));
+  const removedStates = removed.filter((key) => afterTitles.has(titleOf(key)));
   const entries = [...new Set(added.map(titleOf))].filter((title) => !titles.has(title));
-  const need = removed.length ? "major" : entries.length || retagged ? "minor" : added.length ? "patch" : null;
-  const what = removed.length ? `removes or renames ${listed(removed)}`
+  const need = removedEntries.length ? "major" : removedStates.length || entries.length || retagged ? "minor" : added.length ? "patch" : null;
+  const what = removedEntries.length ? `removes or renames the entries ${listed(removedEntries)}`
+    : removedStates.length ? `removes or renames the states ${listed(removedStates)}`
     : entries.length ? `adds the entries ${listed(entries)}`
     : retagged ? "changes a lifecycle tag" : `adds ${listed(added)}`;
   const field = release.versionField ?? "version";

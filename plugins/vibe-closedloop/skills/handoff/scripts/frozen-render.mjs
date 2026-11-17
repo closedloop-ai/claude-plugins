@@ -127,6 +127,18 @@ export function isFrozenGlobalInput(file, previewClosure = new Set()) {
     || (STYLESHEET.test(file) && previewClosure.has(file));
 }
 
+/** A render manifest whose only JSON change is its release version cannot alter any frozen render. */
+export function frozenGlobalInputAffectsRender(file, previewClosure, before, after) {
+  if (!isFrozenGlobalInput(file, previewClosure)) return false;
+  if (!(repositoryLayout().renderManifests ?? []).includes(file) || before === null || after === null) return true;
+  try {
+    const normalized = (text) => { const value = JSON.parse(text); delete value.version; return value; };
+    return JSON.stringify(normalized(before)) !== JSON.stringify(normalized(after));
+  } catch {
+    return true;
+  }
+}
+
 /** Pick separate loopback ports; the verifier still refuses a port already recorded by a peer. */
 async function freePort(exclude) {
   for (;;) {
@@ -450,7 +462,7 @@ export function frozenInputs(repo, base, storyFiles = []) {
   };
   const previewClosure = storybookPreviewImportClosure(baseFiles, headFiles,
     (file) => textAt(file, "base"), (file) => textAt(file, "head"));
-  const globalInput = (file) => isFrozenGlobalInput(file, previewClosure);
+  const globalInput = (file) => frozenGlobalInputAffectsRender(file, previewClosure, textAt(file, "base"), textAt(file, "head"));
   const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(globalInput)])];
   const walk = (files, ref) => createImportClosure(files,
     (paths) => new Map(paths.map((file) => [file, textAt(file, ref)])),

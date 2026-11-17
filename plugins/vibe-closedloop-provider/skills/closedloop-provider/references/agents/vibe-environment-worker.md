@@ -60,6 +60,9 @@ ticket slug, and for redeploy the session summary, the session's
 historically by setup or currently by the sole implementation writer; they
 are never committed), and whether the dispatch
 comes from handoff.
+These worker modes are launcher record actions: the launcher envelope always
+uses `mode: "record"`, this name as `recordAction`, and
+`exclusiveRecordTurn: true`.
 
 <!-- end: inputs -->
 
@@ -70,6 +73,10 @@ comes from handoff.
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"` (mode,
 branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
+Before any evidence read or write, run
+`node ../skills/vibe/scripts/session-plan.mjs paths --worktree "<wt>"` once.
+Use only the exact returned paths below. Never derive an evidence path from
+Git metadata.
 <!-- end: read-first -->
 
 <!-- block: read-first-2 -->
@@ -116,11 +123,9 @@ returns `BLOCKED` on that you can fix, follow the steps below unchanged.
    flag with a variant takes the variant name, otherwise its `enabled`
    boolean. Never use a personal or project API key other than `phc_`, and
    never print the key in your result.
-3. Write `{ takenAt (now, ISO), distinctId, orgId, flags }` to a file in the
-   session's private git directory
-   (`$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-flag-snapshot.new.json`)
-   and save it:
-   `node ../skills/vibe/scripts/vibe-sessions.mjs flag-snapshot --worktree "<wt>" --file "<file>"`,
+3. Write `{ takenAt (now, ISO), distinctId, orgId, flags }` to the returned
+   `flagSnapshot` path and save it:
+   `node ../skills/vibe/scripts/vibe-sessions.mjs flag-snapshot --worktree "<wt>" --file "<flagSnapshot>"`,
    adding `--replace` in flags mode only. It refuses anything that does not
    match the contract (fix the file, never the contract), and without
    `--replace` it refuses a session that already has a snapshot.
@@ -143,7 +148,7 @@ returns `BLOCKED` on that you can fix, follow the steps below unchanged.
 
 ## Requesting the environment (create, flags, and desktop modes)
 
-1. Write the inputs: `node ../skills/vibe/scripts/vibe-sessions.mjs dispatch-inputs --worktree "<wt>" --out "<gitdir>/vibe-dispatch-inputs.json" [--person-email <email>]`.
+1. Write the inputs: `node ../skills/vibe/scripts/vibe-sessions.mjs dispatch-inputs --worktree "<wt>" --out "<dispatchInputs>" [--person-email <email>]`.
    Pass the same actual operation context on stdin. The state check runs
    before file/request-id mutation. Missing/stale proof returns canonical
    redeploy first; flags/Desktop retain only their request-only grants.
@@ -365,9 +370,9 @@ redeploy, flags, and desktop.
 
 1. Download it from the succeeded run into the session's private git
    directory:
-   `gh run download <run id> --repo closedloop-ai/symphony-alpha -n vibe-environment-result -D "<gitdir>/vibe-environment-result"`.
+   `gh run download <run id> --repo closedloop-ai/symphony-alpha -n vibe-environment-result -D "<environmentResult>"`.
 2. Check and record it:
-   `node ../skills/vibe/scripts/vibe-sessions.mjs environment-result --worktree "<wt>" --file "<gitdir>/vibe-environment-result/vibe-environment-result.json" --request-id <requestId>`.
+   `node ../skills/vibe/scripts/vibe-sessions.mjs environment-result --worktree "<wt>" --file "<environmentResultFile>" --request-id <requestId>`.
    It accepts the result only when the request id, branch, and mode match
    and `headSha` is the worktree's HEAD (the commit you pushed), with https
    URLs, all three deployment ids, and `verifiedAt`; only then does it record
@@ -431,7 +436,7 @@ changes and gates fields.
    evidence` comment, posting it per step 4 if absent. Then return its URL. A
    dispatch from handoff's "Changes on the open pull request" (section 10)
    updates it instead, as "Updating an open pull request" below says.
-3. Run `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request --overlap --ticket "<gitdir>/vibe-live-ticket.md"`
+3. Run `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request --overlap --ticket "<liveTicket>"`
    and fetch the current PR template from main
    (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
    and fill every section from the session's own record, never from
@@ -492,22 +497,18 @@ changes and gates fields.
    <adversarial receipt> --receipt <Storybook receipt> --receipt
    <verifier receipt> --ticket
    <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
-   file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`, which with members must name each one, as must the body, and `--rulings <program rulings file>` when the evidence cites a targeted-tests ruling recorded there) immediately before creation. Use the paths step 9 of handoff passed;
+   file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`; the body must name every member while the title may name the lead, and add `--rulings <program rulings file>` when the evidence cites a targeted-tests ruling recorded there) immediately before creation. Use the paths step 9 of handoff passed;
    when there is no ticket, omit the ticket/audit/matrix arguments. A failed
    gate is `BLOCKED`, not a reason to bypass the hook, except through the
    exception the hook's refusal names. Create it with
-   `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
-   the body file in the session's private git directory and named for the
-   live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
-   `pr-body.md`. Read the file back right before the `gh` command and confirm
-   it names this ticket's slug and summary; parallel workers share scratch
-   space, and one pull request's body can overwrite another's. The same holds for every body or payload file this
-   mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
+   `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file "<prBody>"`.
+   Read the returned `prBody` file back right before the `gh` command and confirm
+   it names this ticket's slug and summary. Rerun step 3 with `--body "<prBody>" --runs "<prEvidence>" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
    Capture the new URL, render the validated evidence with
-   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --worktree "<wt>" --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`
+   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --worktree "<wt>" --evidence "<prEvidence>" --output "<prEvidenceComment>"`
    (plus `--ticket <ticket body file>` or `--rulings <rulings file>` when the evidence cites a `targetedTestsRuling`),
-   and post it with `gh pr comment <url> --body-file <file>`. Do not return
+   and post it with `gh pr comment <url> --body-file "<prEvidenceComment>"`. Do not return
    `DONE` until the comment lists the inventory, result SHAs, probe and tier.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI
    by hand, arm auto-merge, enqueue or merge.

@@ -377,9 +377,11 @@ test('AC-3: polling stops at completion and reports elapsed wall time', async ()
   });
   assert.equal(result.wallMs, 1000);
   assert.equal(reads, 2);
-  await assert.rejects(() => pollTask(receipt, { maxWallMs: 1000, pollMs: 1000 }, {
+  const overdue = await pollTask(receipt, { maxWallMs: 1000, pollMs: 1000 }, {
     codex: () => ({ status: 'pending' }), sleep: async (ms) => { current += ms; }, now: () => current,
-  }), /exceeded/);
+  });
+  assert.equal(overdue.status, 'overdue');
+  assert.equal(overdue.remoteStatus, 'pending');
 });
 
 test('AC-3: Claude active session becomes complete only when its worker is idle', async () => {
@@ -582,7 +584,9 @@ test('AC-4 and AC-5: Claude branch imports its one operator-authored commit into
   gitAt(worktree, 'switch', 'vibe/iss-13804-cloud-dispatch');
   const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
   const receipt = completedReceipt(request, gitDir, 'run_1', { runId: 'run_1', sessionId: 'session_1' });
-  const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: 'gh pr create --base main --body-file body.md' } };
+  const preImportBody = path.join(gitDir, 'pre-import-body.md');
+  writeFileSync(preImportBody, 'PR body\n');
+  const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${preImportBody}` } };
   assert.match(prCreateGuard(event)?.reason ?? '', /no imported source witness/);
   const before = gitAt(worktree, 'rev-parse', 'HEAD');
   const imported = importResult(request, receipt);
@@ -783,18 +787,18 @@ test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refre
 
   const before = readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8');
   assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: the session delivers member tickets ISS-13805, ISS-13806; pass --title so the gate checks the PR names them/);
-  assert.throws(() => refreshImportWitness(worktree, { bodyFile, title: oneMember }), /cloud import cannot refresh: the PR title does not name member ticket ISS-13806/);
   assert.equal(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8'), before, 'a refused refresh leaves the import witness as it was');
+  assert.equal(refreshImportWitness(worktree, { bodyFile, title: oneMember }).reviewedSource.head, gitAt(worktree, 'rev-parse', 'HEAD'));
 
   assert.equal(refreshImportWitness(worktree, { bodyFile, title }).reviewedSource.head, gitAt(worktree, 'rev-parse', 'HEAD'));
   assert.equal(cloudPrProblem(worktree, { bodyFile, title }), null);
-  assert.match(cloudPrProblem(worktree, { bodyFile, title: oneMember }) ?? '', /the PR title does not name member ticket ISS-13806/);
+  assert.equal(cloudPrProblem(worktree, { bodyFile, title: oneMember }), null);
   assert.equal(readyForPr(request, { bodyFile, title }).ready, true);
-  assert.throws(() => readyForPr(request, { bodyFile, title: oneMember }), /PR refused: the PR title does not name member ticket ISS-13806/);
+  assert.equal(readyForPr(request, { bodyFile, title: oneMember }).ready, true);
 
   const create = (prTitle) => prCreateGuard({ cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --title "${prTitle}" --body-file ${bodyFile}` } });
   assert.equal(create(title), null, 'the PR hook admits the import with no gate override in its body');
-  assert.match(create(oneMember)?.reason ?? '', /the PR title does not name member ticket ISS-13806/);
+  assert.equal(create(oneMember), null, 'member tickets fit in the body without consuming the PR title');
 });
 
 /** One clean Claude launcher receipt per handoff review role, captured on the worktree's current source. */

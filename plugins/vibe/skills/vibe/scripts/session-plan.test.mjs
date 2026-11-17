@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkPublishableText } from "./publishable-text.mjs";
-import { localPlanFiles, planDigest, renderSessionPlan, SELF_APPROVED_MARKER } from "./session-plan.mjs";
+import { localPlanFiles, planDigest, renderSessionPlan, SELF_APPROVED_MARKER, sessionPlanEvidencePaths } from "./session-plan.mjs";
 import { bindProviderInProcess, git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "session-plan.mjs");
+const TICKET_WORKER = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../../vibe-closedloop-provider/skills/closedloop-provider/references/agents/vibe-ticket-worker.md");
+const ENVIRONMENT_WORKER = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../../vibe-closedloop-provider/skills/closedloop-provider/references/agents/vibe-environment-worker.md");
 const WORKTREE = "/Users/vibe-person/symphony-alpha/.claude/worktrees/vibe-board";
 const CHECKOUT = "/Users/vibe-person/symphony-alpha";
 
@@ -23,7 +26,9 @@ function setup(t) {
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.root, "symphony-alpha");
   makeCheckout({ root: fixture.root, home: fixture.home, checkout });
-  const out = path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], fixture.home), "vibe-live-plan.md");
+  const evidence = sessionPlanEvidencePaths(checkout, fixture.home);
+  t.after(() => rmSync(evidence.root, { recursive: true, force: true }));
+  const out = evidence.rendered;
   return { ...fixture, checkout, out };
 }
 
@@ -90,6 +95,48 @@ test("the digest ignores whitespace-only edits and changes with content", () => 
   assert.notEqual(planDigest("# Plan\n- one\n"), planDigest("# Plan\n- two\n"));
 });
 
+test("ISS-14217: plan publication evidence uses one writable machine-private directory, never Git metadata", (t) => {
+  const { home, checkout } = setup(t);
+  const paths = sessionPlanEvidencePaths(checkout, home);
+  const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
+  assert.equal(paths.root.startsWith(`${home}${path.sep}.codex${path.sep}vibe${path.sep}plan-evidence${path.sep}`), true, paths.root);
+  assert.deepEqual(paths, {
+    root: paths.root,
+    rendered: path.join(paths.root, "vibe-live-plan.md"),
+    published: path.join(paths.root, "vibe-live-plan-published.md"),
+    planDocument: path.join(paths.root, "vibe-live-plan-document.json"),
+    childEvidence: path.join(paths.root, "vibe-child-evidence.json"),
+    liveTicket: path.join(paths.root, "vibe-live-ticket.md"),
+    users: path.join(paths.root, "vibe-users"),
+    flagSnapshot: path.join(paths.root, "vibe-flag-snapshot.new.json"),
+    dispatchInputs: path.join(paths.root, "vibe-dispatch-inputs.json"),
+    environmentResult: path.join(paths.root, "vibe-environment-result"),
+    environmentResultFile: path.join(paths.root, "vibe-environment-result", "vibe-environment-result.json"),
+    prBody: path.join(paths.root, "pr-body.md"),
+    prEvidence: path.join(paths.root, "vibe-pr-evidence.json"),
+    prEvidenceComment: path.join(paths.root, "pr-evidence-comment.md"),
+  });
+  for (const file of Object.values(paths)) assert.equal(file.startsWith(`${gitDir}${path.sep}`), false, file);
+
+  const listed = runNode(SCRIPT, ["paths", "--worktree", checkout], home);
+  assert.equal(listed.status, 0, JSON.stringify(listed.json));
+  assert.deepEqual(listed.json, { ok: true, ...paths });
+  assert.equal(existsSync(paths.users), true);
+});
+
+test("ISS-14217: provider workers resolve every direct evidence write through session-plan paths", () => {
+  const workers = [
+    [TICKET_WORKER, ["published", "planDocument", "childEvidence", "liveTicket", "users"]],
+    [ENVIRONMENT_WORKER, ["flagSnapshot", "dispatchInputs", "environmentResult", "environmentResultFile", "liveTicket", "prBody", "prEvidence", "prEvidenceComment"]],
+  ];
+  for (const [file, fields] of workers) {
+    const worker = readFileSync(file, "utf8");
+    assert.match(worker, /session-plan\.mjs paths --worktree/, file);
+    for (const field of fields) assert.match(worker, new RegExp(`<?${field}>?`), `${file}: ${field}`);
+    assert.doesNotMatch(worker, /<gitdir>|rev-parse --absolute-git-dir|private git directory/, file);
+  }
+});
+
 test("the CLI writes the sanitized body and reports whether the published version is current", (t) => {
   const { home, checkout, out } = setup(t);
   const empty = runNode(SCRIPT, ["--worktree", checkout, "--out", out], home);
@@ -113,6 +160,16 @@ test("the CLI refuses a plan with a local path, writes nothing and names the fil
   assert.equal(result.status, 1);
   assert.deepEqual(result.json.problems, [{ file: ".closedloop-ai/vibe-plans/request-1.md", line: 3, kind: "local absolute path" }]);
   assert.throws(() => readFileSync(out), /ENOENT/);
+});
+
+test("a bare file URI scheme is prose, while an actual file URI remains private", (t) => {
+  const { home, checkout, out } = setup(t);
+  writePlan(checkout, "request-1.md", "# Plan\n\nDo not publish file:// URIs.\n");
+  assert.equal(runNode(SCRIPT, ["--worktree", checkout, "--out", out], home).status, 0);
+  writePlan(checkout, "request-1.md", "# Plan\n\nDo not publish file:///Users/vibe-person/secret.txt.\n");
+  const blocked = runNode(SCRIPT, ["--worktree", checkout, "--out", out], home);
+  assert.equal(blocked.status, 1);
+  assert.match(JSON.stringify(blocked.json.problems), /local absolute path/);
 });
 
 test("a symlinked plan is refused rather than followed", (t) => {

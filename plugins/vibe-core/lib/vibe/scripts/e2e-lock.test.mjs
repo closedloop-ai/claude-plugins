@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn as rawSpawn, spawnSync as rawSpawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, test } from "node:test";
+import { after, afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BUSY_EXIT, DUPLICATE_EXIT, composeProjectFor, defaultLockDir, readHolder, release,
   runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
@@ -13,6 +13,41 @@ import { captureOwnedDockerResources, plannedLocalTags, removeOwnedDockerResourc
 import { sourceIdentity } from './tested-head.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
+const CHILD_TIMEOUT_MS = 60_000;
+const trackedChildren = new Map();
+
+function spawn(command, args, options = {}) {
+  const child = rawSpawn(command, args, options);
+  trackedChildren.set(child, options.detached === true);
+  child.once("close", () => trackedChildren.delete(child));
+  return child;
+}
+
+function spawnSync(command, args, options = {}) {
+  const boundedArgs = command === process.execPath && args?.[0] === SCRIPT && args?.[1] === "run" && !args.includes("--wait-seconds")
+    ? [...args.slice(0, 2), "--wait-seconds", "5", ...args.slice(2)] : args;
+  return rawSpawnSync(command, boundedArgs, { ...options, timeout: options.timeout ?? CHILD_TIMEOUT_MS });
+}
+
+async function waitForClose(child, step, timeoutMs = 30_000) {
+  if (child.exitCode !== null || child.signalCode !== null) return child.exitCode;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`${step} did not close within ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once("close", (code) => { clearTimeout(timer); resolve(code); });
+  });
+}
+
+afterEach(async () => {
+  const children = [...trackedChildren.entries()];
+  for (const [child, detached] of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    try { if (detached && child.pid > 1) process.kill(-child.pid, "SIGKILL"); else child.kill("SIGKILL"); } catch { /* Already exited. */ }
+  }
+  await Promise.allSettled(children.map(([child]) => waitForClose(child, "test child cleanup", 2_000)));
+});
 const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-")));
 after(() => rmSync(root, { recursive: true, force: true }));
 // `run` tests a named commit of a clean worktree, so every run happens in a repository at a known HEAD.
@@ -34,13 +69,13 @@ const DEAD_PID = 99_999_999;
 const FULL_CONTAINER_ID = "a".repeat(64);
 const FULL_NETWORK_ID = "c".repeat(64);
 
-async function waitUntil(predicate, timeoutMs = 5_000) {
+async function waitUntil(predicate, timeoutMs = 15_000, step = "fixture state") {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  assert.fail('timed out waiting for fixture state');
+  assert.fail(`timed out waiting for ${step}`);
 }
 
 test("e2e lock and fleet helpers share the raw process identity primitive", () => {
@@ -56,6 +91,13 @@ test("e2e lock and fleet helpers share the raw process identity primitive", () =
   assert.doesNotMatch(helpers, /function readIdentity\(/);
   assert.match(session, /\nfunction processIdentity\(/);
   assert.doesNotMatch(session, /export function processIdentity\(/);
+});
+
+test("ISS-14184 the node test lane has a fixed workflow timeout", () => {
+  const workflow = readFileSync(path.resolve(path.dirname(SCRIPT), "../../../../../.github/workflows/ci.yml"), "utf8");
+  const lane = /\n  node-tests:\n([\s\S]*?)(?=\n  [a-z0-9-]+:)/.exec(workflow)?.[1] ?? "";
+  assert.match(lane, /timeout-minutes:\s*15/);
+  assert.match(lane, /node --test --test-reporter=spec/);
 });
 
 test("Docker inspect read failures retain an owned resource; only exact absence counts gone", () => {
@@ -271,7 +313,7 @@ test('SIGHUP reaches the detached command and the lock stays held until its grou
   { cwd: repo, env: { ...process.env, VIBE_E2E_DOCKER: docker }, stdio: 'ignore' });
   await waitUntil(() => existsSync(ready));
   child.kill('SIGHUP');
-  const code = await new Promise((resolve) => child.once('close', resolve));
+  const code = await waitForClose(child, 'SIGHUP wrapper');
   assert.equal(code, 129);
   assert.equal(readFileSync(marker, 'utf8').trim(), 'hup');
   assert.equal(existsSync(lock), false);
@@ -293,7 +335,7 @@ test('SIGINT waits for a bounded command-group drain and preserves exit 130', as
   await waitUntil(() => existsSync(ready));
   const signalledAt = Date.now();
   child.kill('SIGINT');
-  const code = await new Promise((resolve) => child.once('close', resolve));
+  const code = await waitForClose(child, 'SIGINT drain wrapper');
   assert.equal(code, 130);
   assert.ok(Date.now() - signalledAt >= 250, 'wrapper waits for the child trap');
   assert.equal(readFileSync(marker, 'utf8').trim(), '1', 'the child gate does not re-forward the group signal');
@@ -316,7 +358,7 @@ test('one SIGINT allows the repository teardown budget to finish without forced 
   await waitUntil(() => existsSync(ready));
   const signalledAt = Date.now();
   child.kill('SIGINT');
-  const code = await new Promise((resolve) => child.once('close', resolve));
+  const code = await waitForClose(child, 'slow SIGINT drain wrapper', 30_000);
   assert.equal(code, 130);
   assert.ok(Date.now() - signalledAt >= 14_500, 'single signal does not force-kill teardown at ten seconds');
   assert.equal(readFileSync(marker, 'utf8'), 'finished');
@@ -338,7 +380,7 @@ test('a second signal explicitly escalates a stuck command group', async () => {
   child.kill('SIGINT');
   await new Promise((resolve) => setTimeout(resolve, 100));
   child.kill('SIGINT');
-  const code = await new Promise((resolve) => child.once('close', resolve));
+  const code = await waitForClose(child, 'second-signal wrapper');
   assert.equal(code, 137);
   assert.ok(Date.now() - started < 2_000, 'second signal escalates immediately');
 });
@@ -651,11 +693,10 @@ test('child gate starts no command until the durable launch handshake is release
   writeFileSync(command, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
   const child = spawn(process.execPath, [SCRIPT, 'child-gate', gate, process.execPath, command],
     { stdio: 'ignore', detached: true });
-  const closed = new Promise((resolve) => child.once('close', resolve));
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(existsSync(marker), false, 'the real command has not begun before acknowledgement');
   writeFileSync(gate, token, { mode: 0o600, flag: 'wx' });
-  assert.equal(await closed, 0);
+  assert.equal(await waitForClose(child, 'child-gate handshake'), 0);
   assert.equal(readFileSync(marker, 'utf8'), 'ran');
 });
 
@@ -723,7 +764,7 @@ test("run serializes two commands on one stack and releases the lock after each"
   assert.equal(commitAt(otherWorktree), SHA);
   const second = spawnSync(process.execPath, step("b"), { encoding: "utf8", timeout: 60_000, cwd: otherWorktree });
   assert.equal(second.status, 0, second.stderr);
-  await new Promise((resolve) => first.once("close", resolve));
+  await waitForClose(first, "first serialized E2E run");
   assert.deepEqual(readFileSync(marks, "utf8").trim().split("\n"), ["a-start", "a-end", "b-start", "b-end"]);
   assert.equal(existsSync(lockDir), false);
 });
@@ -741,6 +782,21 @@ test("run keeps the command's exit code and runs nothing when the stack stays bu
   assert.equal(existsSync(marker), false);
   const status = spawnSync(process.execPath, [SCRIPT, "status", "--lock-dir", lockDir], { encoding: "utf8" });
   assert.equal(JSON.parse(status.stdout).status, "held");
+});
+
+test("ISS-14184 a live stuck lock holder reaches the explicit five-second wait deadline", { timeout: 12_000 }, () => {
+  const lockDir = path.join(root, "bounded-busy");
+  assert.equal(tryAcquire(lockDir, { ...owner(process.pid, "stuck-holder"), worktree: path.join(root, "foreign") }).acquired, true);
+  const started = Date.now();
+  try {
+    const result = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", lockDir,
+      process.execPath, "-e", "process.exit(0)"], { encoding: "utf8" });
+    const elapsed = Date.now() - started;
+    assert.equal(result.status, BUSY_EXIT, result.stderr);
+    assert.ok(elapsed >= 4_000 && elapsed < 9_000, `bounded holder wait took ${elapsed}ms`);
+  } finally {
+    release(lockDir, owner(process.pid, "stuck-holder"));
+  }
 });
 
 test("one session takes one entry: a second run from the same worktree is refused while the first holds or waits", () => {

@@ -17,7 +17,7 @@ const FENCE = /^\s*(```|~~~)/;
 const INLINE_CODE = /`[^`\n]*`/g;
 const ANGLE_NAME = /<\/?[A-Za-z][^<>\n]*>/g;
 
-const LOCAL_PATH = /(?:^|[\s("'`=:,[{<])((?:\/(?:Users|home|private|tmp|Volumes|root|var\/folders)\/|~\/|[A-Za-z]:\\(?:Users|Documents and Settings)\\|file:\/\/)[^\s"'`)\]}>]*)/;
+const LOCAL_PATH = /(?:^|[\s("'`=:,[{<])((?:\/(?:Users|home|private|tmp|Volumes|root|var\/folders)\/|~\/|[A-Za-z]:\\(?:Users|Documents and Settings)\\|file:\/\/)[^\s"'`)\]}>]+)/;
 const CONTROL_CAPTURE = /(?:^|[\s("'`=:,[{<])\.control\//;
 const GIT_DIR_PATH = /(?:^|[\s("'`=:,[{<])\.git\//;
 const EMAIL = /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})\b/g;

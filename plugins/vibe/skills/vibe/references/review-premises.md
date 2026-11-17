@@ -7,6 +7,10 @@ support. Verify each premise against its primary source now. Use a code
 the current official documentation URL with a short fact from that page.
 Training data and an earlier review are not evidence. Label a premise you
 cannot verify `UNVERIFIED`; it cannot support a blocking finding.
+Claims that something is the only production mount, that a set of readers is
+complete, or that a mechanism caused an observed visual/runtime effect require
+primary importer, caller or measured probe evidence. An orchestrator's report
+is operational evidence to verify, never an operator ruling or product source.
 
 In structured reviewer output, each finding has `id`, `blocking`, `evidence`,
 and `premises`. Each premise is `{claim, evidence}`. Evidence is one of

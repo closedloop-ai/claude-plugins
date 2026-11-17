@@ -3,8 +3,9 @@ import { createRequire as __vibeRequire } from 'node:module'; import {fileURLToP
 
 // src/scope-intake.ts
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync as readFileSync2, rmSync } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { tmpdir } from "node:os";
 import { isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -230,7 +231,7 @@ function compareIdentifier(left, right) {
 }
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.13";
+var VIBE_CORE_MIN = "1.0.14";
 var SELF = pluginInstall(import.meta.url);
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
@@ -340,16 +341,28 @@ async function portableSurfaceEditAllowed(worktree, inventory, file) {
   }
 }
 function loadPathPolicy(worktree, _phase, inventoryScript) {
-  const result = spawnSync(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "build"], {
+  const privateDir = mkdtempSync(resolve(tmpdir(), "vibe-scope-intake-"));
+  const out = resolve(privateDir, "inventory.json");
+  const result = spawnSync(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "build", "--out", out], {
     encoding: "utf8",
-    env: process.env
+    env: process.env,
+    maxBuffer: 64 * 1024 * 1024
   });
+  let output = "";
+  try {
+    output = readFileSync2(out, "utf8");
+  } catch {
+  }
+  rmSync(privateDir, { recursive: true, force: true });
   if (result.error) throw result.error;
   let inventory;
   try {
-    inventory = JSON.parse(result.stdout);
+    inventory = JSON.parse(output);
   } catch {
-    throw new Error(`handoff inventory did not return JSON: ${result.stderr.trim() || `exit ${result.status}`}`);
+    const first = (value) => value.trim().split("\n").slice(0, 6).join(" | ") || "(empty)";
+    const stdout = String(result.stdout ?? "");
+    const stderr = String(result.stderr ?? "");
+    throw new Error(`handoff inventory did not return JSON: exit ${result.status}, signal ${result.signal ?? "none"}, stdout ${Buffer.byteLength(stdout)} bytes: ${first(stdout)}, stderr: ${first(stderr)}`);
   }
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
@@ -364,7 +377,7 @@ function loadPathPolicy(worktree, _phase, inventoryScript) {
   return { inventory, policy: JSON.parse(text) };
 }
 function plannedPath(value) {
-  if (!value || value.includes("\0") || value.includes("\\") || isAbsolute(value) || normalize(value).split(sep).join("/") !== value || value === "." || value.endsWith("/") || /[\r\n*?\[\]]/.test(value)) {
+  if (!value || value.includes("\0") || value.includes("\\") || isAbsolute(value) || normalize(value).split(sep).join("/") !== value || value === "." || value.endsWith("/") || /[\r\n*?]/.test(value)) {
     throw new Error(`planned path must be one literal repository-relative file: ${JSON.stringify(value)}`);
   }
   return value;
@@ -388,3 +401,6 @@ async function main(argv) {
   }
 }
 runWhenMain(import.meta.url, providerAware(main));
+export {
+  loadPathPolicy
+};

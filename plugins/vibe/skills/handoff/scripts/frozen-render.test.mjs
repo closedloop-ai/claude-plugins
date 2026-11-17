@@ -5,7 +5,7 @@ import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, isFrozenGlobalInput, prepareBase, rebuildStatic, runOwnedFrozenComparison, storybookPreviewImportClosure, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenGlobalInputAffectsRender, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, isFrozenGlobalInput, prepareBase, rebuildStatic, runOwnedFrozenComparison, storybookPreviewImportClosure, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome, mutateSourceRead, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
@@ -679,6 +679,29 @@ test("preview reachability includes imports added or removed across the comparis
   assert.equal(isFrozenGlobalInput(oldCss, closure), true);
   assert.equal(isFrozenGlobalInput(newCss, closure), true);
   assert.equal(isFrozenGlobalInput("apps/storybook/.storybook/unrelated.css", closure), false);
+});
+
+test("ISS-14171 version-only render manifest changes preserve frozen inputs while dependency changes invalidate them", (t) => {
+  const fixture = makeHome("vibe-frozen-version-only-");
+  t.after(fixture.cleanup);
+  const checkout = path.join(fixture.root, "wt");
+  git(fixture.root, ["init", "--quiet", "--initial-branch=main", checkout], fixture.home);
+  const story = "apps/storybook/stories/frozen.stories.tsx";
+  const manifest = "apps/storybook/package.json";
+  mkdirSync(path.dirname(path.join(checkout, story)), { recursive: true });
+  writeFileSync(path.join(checkout, story), 'export default { title: "Composites v1.0/Frozen" };\nexport const Default = {};\n');
+  writeFileSync(path.join(checkout, manifest), JSON.stringify({ version: "1.0.0", dependencies: { react: "1" } }));
+  git(checkout, ["add", "-A"], fixture.home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], fixture.home);
+  const base = git(checkout, ["rev-parse", "HEAD"], fixture.home);
+  const before = frozenInputs(checkout, base, [story]);
+  const oldManifest = readFileSync(path.join(checkout, manifest), "utf8");
+  writeFileSync(path.join(checkout, manifest), JSON.stringify({ version: "1.1.0", dependencies: { react: "1" } }));
+  assert.equal(frozenGlobalInputAffectsRender(manifest, new Set(), oldManifest, readFileSync(path.join(checkout, manifest), "utf8")), false);
+  assert.equal(frozenInputs(checkout, base, [story]), before);
+  writeFileSync(path.join(checkout, manifest), JSON.stringify({ version: "1.1.0", dependencies: { react: "2" } }));
+  assert.equal(frozenGlobalInputAffectsRender(manifest, new Set(), oldManifest, readFileSync(path.join(checkout, manifest), "utf8")), true);
+  assert.notEqual(frozenInputs(checkout, base, [story]), before);
 });
 
 test("frozen input digests include global HTML, config, manifests, lockfile and public bytes but exclude unrelated CSS (ISS-13752)", (t) => {

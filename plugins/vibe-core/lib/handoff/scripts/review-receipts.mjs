@@ -10,7 +10,7 @@ import { sourceIdentity, validSourceIdentity } from "../../vibe/scripts/tested-h
 import { premiseProblems } from "./review-premises.mjs";
 import { finalMarker, finalReportProblem } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
-import { readCodexReviewTurn } from "./codex-review-runtime.mjs";
+import { codexGraphSetupProblem, readCodexReviewTurn } from "./codex-review-runtime.mjs";
 import { exitOnProviderBroken } from "../../vibe/scripts/provider.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -22,7 +22,8 @@ function findingShapeProblems(findings, worktree) {
   if (!Array.isArray(findings)) return ["structured findings are missing; [] is required when none were found"];
   return findings.flatMap((finding, index) => typeof finding?.id === "string" && finding.id.trim()
     && typeof finding.blocking === "boolean" && typeof finding.evidence === "string" && finding.evidence.trim()
-    ? premiseProblems(finding, worktree) : [`finding ${index + 1} needs id, blocking and evidence`]);
+    ? (finding.blocking || finding.premises !== undefined ? premiseProblems(finding, worktree) : [])
+    : [`finding ${index + 1} needs id, blocking and evidence`]);
 }
 
 /**
@@ -100,6 +101,8 @@ export async function captureNativeReviewReceipt({ worktree, orchDir, helperName
     throw new Error(`${role}: managed App Server turn did not finish with readable tool items`);
   }
   const aliases = graphAliases(JSON.parse(readFileSync(helper.capabilities.path, "utf8")));
+  const setupProblem = codexGraphSetupProblem(runtime, aliases);
+  if (setupProblem) throw new Error(`${role}: ${setupProblem}`);
   const usedGraphCalls = runtime.toolCalls.filter(name => aliases.includes(name));
   if (aliases.length > 0 && usedGraphCalls.length === 0) throw new Error(`${role}: recorded graph capability has no observed tool call`);
   const runtimeFile = `${outFile}.runtime.json`;
@@ -115,7 +118,7 @@ export async function captureNativeReviewReceipt({ worktree, orchDir, helperName
 }
 
 /** Verify every mandatory role and collect its actual findings on the current source. */
-export function reviewReceiptProblems(receipts, source) {
+export function reviewReceiptProblems(receipts, source, { reusableRoles = new Set() } = {}) {
   if (!Array.isArray(receipts)) return { problems: ["review receipts must be a list"], findings: [] };
   const problems = [];
   const findings = [];
@@ -123,7 +126,8 @@ export function reviewReceiptProblems(receipts, source) {
     const matched = receipts.filter(receipt => receipt?.role === role);
     if (matched.length !== 1) { problems.push(`${role}: need exactly one current launcher receipt`); continue; }
     const receipt = matched[0];
-    if (!validSourceIdentity(receipt.source) || receipt.source.treeSha256 !== source.treeSha256) problems.push(`${role}: review source differs from current source`);
+    if (!validSourceIdentity(receipt.source)
+      || (receipt.source.treeSha256 !== source.treeSha256 && !reusableRoles.has(role))) problems.push(`${role}: review source differs from current source`);
     if (receipt.kind === "native-final") {
       try {
         const helper = JSON.parse(readFileSync(path.join(receipt.orchDir, "helpers.json"), "utf8"))[receipt.helperName];

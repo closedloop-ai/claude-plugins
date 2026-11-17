@@ -207383,10 +207383,10 @@ ${options.prefix}` : "\n" : options.prefix
               if (this.log.isEnabled()) this.log.writeLine(`'${typing}':: '${typingKey}' is in missingTypingsSet - skipping...`);
               return void 0;
             }
-            const validationResult = ts_JsTyping_exports.validatePackageName(typing);
-            if (validationResult !== ts_JsTyping_exports.NameValidationResult.Ok) {
+            const validationResult2 = ts_JsTyping_exports.validatePackageName(typing);
+            if (validationResult2 !== ts_JsTyping_exports.NameValidationResult.Ok) {
               this.missingTypingsSet.add(typingKey);
-              if (this.log.isEnabled()) this.log.writeLine(ts_JsTyping_exports.renderPackageNameValidationFailure(validationResult, typing));
+              if (this.log.isEnabled()) this.log.writeLine(ts_JsTyping_exports.renderPackageNameValidationFailure(validationResult2, typing));
               return void 0;
             }
             if (!this.typesRegistry.has(typingKey)) {
@@ -219591,8 +219591,8 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
         }
         isKnownTypesPackageName(name) {
           var _a;
-          const validationResult = ts_JsTyping_exports.validatePackageName(name);
-          if (validationResult !== ts_JsTyping_exports.NameValidationResult.Ok) {
+          const validationResult2 = ts_JsTyping_exports.validatePackageName(name);
+          if (validationResult2 !== ts_JsTyping_exports.NameValidationResult.Ok) {
             return false;
           }
           if (!this.requestedRegistry) {
@@ -224148,7 +224148,7 @@ function compareIdentifier(left, right) {
 }
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.13";
+var VIBE_CORE_MIN = "1.0.14";
 var SELF = pluginInstall(import.meta.url);
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
@@ -224369,7 +224369,7 @@ var migrationSchema = external_exports.object({
   harnessSwitch: harnessSwitchSchema.extend({ from: external_exports.enum(["codex", "claude"]) }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
-async function readInput(stream = process.stdin) {
+async function readInput(stream = process.stdin, emptyError) {
   const buffers = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -224378,6 +224378,7 @@ async function readInput(stream = process.stdin) {
     if (size > 128 * 1024) throw new Error("Worker input exceeds the private input limit");
     buffers.push(bytes);
   }
+  if (size === 0 && emptyError) throw new Error(emptyError);
   return JSON.parse(Buffer.concat(buffers).toString("utf8"));
 }
 
@@ -224837,8 +224838,10 @@ var commandReceiptSchema = external_exports.object({
   exitCode: external_exports.number().int(),
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
-  comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+  comparison: mainComparisonSchema.optional(),
+  // A check the fleet's remote slot ran: `log` is the stored report, `logSha256` the remote run's own log digest.
+  remote: external_exports.object({ host: external_exports.string().min(1).max(255), commit: commitSchema, logSha256: digestSchema }).strict().optional()
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence").refine((item) => !item.remote || item.exitCode === 0 && !item.comparison, "Remote check evidence must be a passing run");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -224906,6 +224909,26 @@ var mainSyncReceiptSchema = external_exports.object({
   recipe: storedValidationRecipeSchema.optional(),
   deferredMain: external_exports.object({ mainSha: commitSchema, reason: external_exports.string().min(1).max(500) }).strict().optional()
 }).strict();
+var remoteCheckReportSchema = external_exports.object({
+  host: external_exports.string().trim().min(1).max(255),
+  validation: external_exports.object({
+    headSha: commitSchema,
+    treeSha: commitSchema,
+    inputSha256: digestSchema,
+    commands: external_exports.array(external_exports.object({
+      argv: external_exports.array(external_exports.string()).min(1).max(256),
+      bindings: external_exports.record(external_exports.string()).optional(),
+      cwd: external_exports.string().optional(),
+      timeoutMs: external_exports.number().int().optional(),
+      exitCode: external_exports.number().int(),
+      log: external_exports.string().min(1).max(4096),
+      sha256: digestSchema
+    }).strict()).min(1).max(128),
+    checkedAt: external_exports.string().datetime(),
+    e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
+  }).strict()
+}).strict();
+var mainSyncRemoteInputSchema = mainSyncInputSchema.extend({ report: remoteCheckReportSchema }).strict();
 var readinessStateSchema = external_exports.object({
   version: external_exports.literal(1),
   phase: external_exports.literal("input-readiness"),
@@ -228645,8 +228668,16 @@ function biomeCheckCommands(paths) {
 var GIT_NETWORK_MS = 15 * 60 * 1e3;
 var desktopSchema = external_exports.object({ ok: external_exports.boolean(), running: external_exports.boolean() }).passthrough();
 var TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/)/;
-async function readMainSyncInput(worktree) {
-  const input = mainSyncInputSchema.parse(await readInput());
+async function readMainSyncInput(worktree, stream = process.stdin) {
+  const input = mainSyncInputSchema.parse(await readInput(
+    stream,
+    "Main-sync operation context on stdin is missing; relaunch the prepare action through the owned vibe worker record turn so it pipes the granted context; do not run a plain git merge"
+  ));
+  if (realpathSync12(input.context.worktree) !== realpathSync12(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  return input;
+}
+async function readMainSyncRemoteInput(worktree) {
+  const input = mainSyncRemoteInputSchema.parse(await readInput());
   if (realpathSync12(input.context.worktree) !== realpathSync12(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
   return input;
 }
@@ -228778,17 +228809,7 @@ function validateMainSync(raw) {
   const receipt = requireSyncReceipt(value);
   if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
   let identity = committedInputs(value.place.root);
-  if (value.context.runtime === "claude") {
-    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
-    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
-  }
-  const recipe = checkRecipe(value, receipt);
-  const selectedIdentity = committedInputs(value.place.root);
-  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
-  if (value.context.runtime === "claude") {
-    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
-    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256 || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
-  }
+  const recipe = selectedRecipe(value, receipt, identity);
   let validation = receipt.validation;
   if (!value.context.mainSyncCiRun || !validation || !validationMatches(value, receipt, identity)) {
     validation = executeChecks(value, receipt, recipe);
@@ -228815,6 +228836,43 @@ function validateMainSync(raw) {
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
+  return validationResult(value, receipt, validation, ciEvidence);
+}
+function recordRemoteMainSync(raw) {
+  const { report, ...input } = mainSyncRemoteInputSchema.parse(raw);
+  const remote = report.validation;
+  const failing = remote.commands.find((command) => command.exitCode !== 0);
+  if (failing) throw new MainSyncError(`Remote check report has a failing check: ${failing.argv.join(" ")}`, "NEEDS_CHANGE");
+  const value = syncContext(input, "validate");
+  const receipt = requireSyncReceipt(value);
+  if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
+  const identity = committedInputs(value.place.root);
+  if (remote.treeSha !== identity.treeSha) throw new MainSyncError("Remote check report names another tree than committed HEAD", "NEEDS_CHANGE");
+  if (remote.inputSha256 !== identity.inputSha256) throw new MainSyncError("Remote check report names other committed inputs", "NEEDS_CHANGE");
+  const recipe = selectedRecipe(value, receipt, identity);
+  if (JSON.stringify(recipe.commands.map(commandIdentity)) !== JSON.stringify(remote.commands.map(commandIdentity)) || JSON.stringify(recipe.e2eLimitations) !== JSON.stringify(remote.e2eLimitations)) {
+    throw new MainSyncError("Remote check report ran another matrix than this session's recipe", "NEEDS_CHANGE");
+  }
+  throw new MainSyncError(
+    "Remote check report has no authenticated command artifacts; run canonical validation in this checkout",
+    "NEEDS_CHANGE"
+  );
+}
+function selectedRecipe(value, receipt, identity) {
+  if (value.context.runtime === "claude") {
+    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
+    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
+  }
+  const recipe = checkRecipe(value, receipt);
+  const selectedIdentity = committedInputs(value.place.root);
+  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
+  if (value.context.runtime === "claude") {
+    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
+    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256 || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
+  }
+  return recipe;
+}
+function validationResult(value, receipt, validation, ciEvidence) {
   const e2eLeftForCi = validation.e2eLimitations.filter((item) => isDesktopE2eLimitation(value.place.root, item)).map((item) => ({ argv: item.argv, coveredBy: desktopE2ePostMergeCoverage(value.place.root) }));
   const requiredE2eComplete = validation.e2eLimitations.length === e2eLeftForCi.length || Boolean(ciEvidence);
   const { mainPreexistingFailures, flakyChecks, machineLimitedChecks } = comparedChecks(validation.commands);
@@ -228936,11 +228994,8 @@ function validationMatches(value, receipt, identity) {
     return false;
   }
   const expected = checkRecipe(value, receipt);
-  const commandIdentity = (item) => ({
-    argv: item.argv,
-    ...item.bindings ? { bindings: item.bindings } : {},
-    ...item.cwd ? { cwd: item.cwd } : {}
-  });
+  const remote = proof.commands.filter((command) => command.remote).length;
+  if (remote) return false;
   if (JSON.stringify(expected.commands.map(commandIdentity)) !== JSON.stringify(proof.commands.map(commandIdentity)) || JSON.stringify(expected.e2eLimitations) !== JSON.stringify(proof.e2eLimitations)) {
     return false;
   }
@@ -228956,6 +229011,9 @@ function validationMatches(value, receipt, identity) {
     if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");
   }
   return true;
+}
+function commandIdentity(item) {
+  return { argv: item.argv, ...item.bindings ? { bindings: item.bindings } : {}, ...item.cwd ? { cwd: item.cwd } : {} };
 }
 function publicationTurn(value) {
   const { runtime, workerId, requestId, lease } = value.context;
@@ -229075,6 +229133,8 @@ export {
   pushMainSync,
   readMainSyncInput,
   readMainSyncProvenance,
+  readMainSyncRemoteInput,
+  recordRemoteMainSync,
   validateMainSync,
   workflowLaneDefinitions
 };

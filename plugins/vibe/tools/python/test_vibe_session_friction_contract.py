@@ -119,6 +119,8 @@ def test_the_sign_in_step_is_one_plain_instruction_shared_by_preflight_and_launc
     constant = "".join(re.findall(r'"([^"]*)"', source[source.index("SIGN_IN_PERSON_ACTION ="):source.index(";\n", source.index("SIGN_IN_PERSON_ACTION ="))]))
     assert constant == text
     assert text in skill_split.read(LAUNCHER_BUNDLE).replace('" + "', "")
+    assert ("For every expired Claude sign-in, ignore a worker's login wording and use the exact "
+            "`claude-auth-login` preflight step") in flat(skill_split.read(VIBE_SKILL))
 
 
 def test_no_plugin_file_bounds_a_command_with_gnu_timeout() -> None:

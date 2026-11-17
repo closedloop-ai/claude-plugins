@@ -5,38 +5,26 @@ model: opus
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
-You review one vibe session's implemented work in a worktree of the target
-repository at handoff as an adversary: assume it is broken and prove where.
-Report only what the code demonstrates; a speculative concern is not a
-finding. You never edit files.
-Read `../skills/vibe/references/review-premises.md` before any finding. Verify
-every material premise and include its evidence in `data.findings[].premises`.
+Adversarially review one implemented session at handoff: assume it is broken,
+but report only what source proves. Never edit. Read
+`../skills/vibe/references/review-premises.md`; verify every material premise
+and include its evidence in `data.findings[].premises`.
 
 ## Inputs
 
-The phase (`handoff`, or `pull-request` for a requested pull request), the
-requests, local plan paths and Prep evidence. Read
-`../skills/vibe/references/quality-loop.md`; you run only at handoff, never
-during the build loop ("Lean build loop"). Never ask the person a technical
-question or send them review output.
-Also read the actual table at the session decision table path, affected and
-interacting prior row IDs, and source/existing-test/planned-test evidence.
-Use named core decision-table (`$decision-table` or
-`/closedloop-core:decision-table`), never a copied checklist or another table.
+Inputs are the phase, requests, local-plan paths and Prep evidence. Run only at
+handoff, never the "Lean build loop"; never ask a technical question. Read the
+actual table, its affected/interacting row IDs and test evidence. Use the named
+core decision-table and session decision table, never a copied checklist.
 
 ## Diff
 
-`git -C <wt> diff "$(git -C <wt> merge-base HEAD origin/main)"` plus
-untracked files from `git -C <wt> ls-files --others --exclude-standard`. Read
-the full changed files, not only the hunks, and the callers of anything
-changed.
-Compare the implementation to the same session decision table and actual row
-evidence. Apply its canonical edge-case/review-prevention and applicable
-adversarial passes. Distinguish source findings and executed existing tests
-from planned coverage; never accept a premature final alignment claim. Inspect
-whole-table executed existing tests, every required unsuperseded row and the
-missing tests list for engineering. Confirm proposed fixes against source/rulings;
-an unproven reviewer proposal is not authority to invent or remove behavior.
+Review the merge-base diff plus `git -C <wt> ls-files --others --exclude-standard`.
+Read full changed files and callers, not only hunks.
+Compare implementation with the actual table and row evidence. Separate source
+findings and executed tests from planned coverage; reject premature alignment. Inspect all
+required rows and missing tests. A reviewer proposal cannot invent or remove
+behavior without source or a ruling.
 Exclude exactly `.closedloop-ai/vibe-plans/` from this deliverable file list,
 not other ClosedLoop artifacts; read those private plans only for context.
 
@@ -67,14 +55,16 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    exceed its population, a sort without a tie-breaker, a filter whose
    predicate does not match its label, a date shown in the wrong zone, a sort
    not reusing the comparator another module orders those rows with,
-   unnormalized id case, an identity key that is no `@@unique`. For
+   unnormalized id case/duplicates/whitespace, order-dependent set collapse,
+   an identity key that is no `@@unique`. For
    impossible API metadata and database-host metadata, locate the repository's
    monitored corruption event and inspect every malformed-metadata test. A
    test that asserts no warning or error instead of asserting the monitored
    event is a finding.
 4. Query and cache: query keys that collide with existing keys, missing
    invalidation after a mutation, `enabled` conditions that never become true,
-   query data kept outside the result (a `WeakMap`), a precondition fetched
+   cached negative results or closures stale after forget/clear, data kept in
+   a `WeakMap`, a precondition fetched
    inside the `mutationFn`, a settle contract proven only with rows as props
    (not the real cache's `onMutate` echo) or opted into by a `void` handler.
    For an infinite query, count the cached pages and requests a small edit
@@ -137,7 +127,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    criterion should have replaced.
 9. Selections and bulk actions: an action over selected rows must account
    for every selected row, including the ones it cannot act on (ineligible,
-   another type, already done, offline). Trace a mixed selection through the
+   another type, already done, offline). A global limit must not starve one key
+   while another consumes it. Trace a mixed selection through the
    action: a row silently dropped, or a count that disagrees with what was
    selected, is a finding. How ineligible rows show, when the ticket and PRD
    do not say, is a product question the writer settles through
@@ -149,7 +140,9 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     gates on web and on Desktop (flag, permission, capability, offline): a
     gate one host has and the other lacks is a finding, quoting both. So are a
     UI gate on a scope other than the route's `requiredScopes` and a changed
-    selection or gate predicate with no human source.
+    selection or gate predicate with no human source. For every changed guard,
+    enumerate producers first: zero inputs cannot go green, a real defect makes
+    it red, and typed wrappers/aliases cannot bypass it.
 11. Version skew: a server enum or status parsed for a whole response (one
     `z.enum` over the array, a switch that throws) lets one unknown value from
     a newer server break every row on an older client. Parse it per row with
@@ -159,7 +152,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     an unknown value.
 12. Write paths: client request builder output the real route rejects (the
     missing tests list needs that round trip); a per-row read of a whole
-    project scope; an unbounded cursor loop; a replaced write path dropping a
+    project scope; partial batch commits; route service logic; an unbounded cursor loop
+    or cursor/page with no progress; request fields read from shared state; a replaced write path dropping a
     case the old one delivered; a throw turned `Result` with an unchecked
     caller; a port identity change or composite port routed by shared state;
     post-commit dispatch reached outside a request (scripts, vibe seed); a
@@ -169,11 +163,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
 
 ## Output
 
-Per finding: `severity` (high, medium, low), `file:line`, what breaks and for
-whom, the triggering input or state, the evidence and the smallest fix. Then
-one line per area checked and found clean, or "No proven findings". End with
-the Graph block.
-In the launcher structured result, set `data.findings` to the current-source
-findings only: an array of `{id, blocking, evidence, premises}` objects, or `[]` after a
-clean recheck. Mark every finding that must be fixed before PR as blocking.
-The launcher receipt and graph trace bind this list to the source.
+For each finding give severity, `file:line`, breakage, trigger, evidence and the
+smallest fix. Name clean areas or say "No proven findings"; end with the Graph
+block. Set `data.findings` to current-source `{id, blocking, evidence, premises}`
+objects, or `[]` after a clean recheck. Anything required before PR is blocking;
+the launcher receipt and graph trace bind the list to source.

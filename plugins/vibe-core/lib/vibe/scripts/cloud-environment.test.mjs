@@ -129,9 +129,17 @@ test('the setup check reports each environment and API result with its fix, and 
   const gone = { get: () => { throw httpError(404); }, list: () => used };
   const ok = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { remote: fakeRemote(recorded).remote, standing, env: { FLEET_HOME: fleetHome(t) } });
   assert.equal(ok.ok, true);
-  assert.deepEqual(ok.checks.map(({ check, ok: passed }) => [check, passed]), [['environment', true], ['api', true], ['environment-use', true], ['github', null]]);
-  assert.match(ok.checks[2].detail, /routine trig_a on this account runs in env_01FromRequest/);
-  assert.match(ok.checks[3].detail, /no GitHub connection endpoint/);
+  assert.deepEqual(ok.checks.map(({ check, ok: passed }) => [check, passed]), [['environment', true], ['api', true], ['environment-setup', null], ['environment-use', true], ['github', null]]);
+  assert.match(ok.checks[2].detail, /not exercised.*did not run the environment setup script/);
+  assert.match(ok.checks[3].detail, /routine trig_a on this account runs in env_01FromRequest/);
+  assert.match(ok.checks[4].detail, /no GitHub connection endpoint/);
+
+  const setupFailed = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { standing,
+    remote: fakeRemote({ get: () => ({ trigger: { ...used.data[0], last_run: { status: 'archived', turn_count: 0, failure_reason: 'setup script exited 100' } } }) }).remote,
+    env: { FLEET_HOME: fleetHome(t) } });
+  assert.equal(setupFailed.ok, false);
+  assert.deepEqual([setupFailed.checks[2].check, setupFailed.checks[2].code], ['environment-setup', 'CLOUD_ENV_SETUP_FAILED']);
+  assert.match(setupFailed.checks[2].detail, /setup script exited 100.*Fix the environment setup script/);
 
   const unseen = checkCloudSetup({ claudeEnvironment: 'env_01Unseen' }, { remote: fakeRemote(gone).remote, standing, env: { FLEET_HOME: fleetHome(t) } });
   assert.equal(unseen.ok, true, 'an unverified environment is not a failure');
@@ -172,6 +180,13 @@ test('remoteTrigger carries the HTTP status of a refused call', (t) => {
   const recorded = { home, intent: 'intent_1' };
   assert.throws(() => remoteTrigger('create', {}, { ...recorded, run: run('HTTP 401\n{"error":"unauthorized"}') }), (error) => error.httpStatus === 401 && /create failed: HTTP 401/.test(error.message));
   assert.deepEqual(remoteTrigger('create', {}, { ...recorded, run: run('HTTP 200\n{"trigger":{"id":"t"}}') }), { trigger: { id: 't' } });
+  const mismatched = () => ({ status: 0, stderr: '', stdout: [
+    JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'RemoteTrigger', id: 'tool_1', input: { action: 'create', body: { echoed: 'differently' } } }] } }),
+    JSON.stringify({ message: { content: [{ type: 'tool_result', tool_use_id: 'tool_1', content: 'HTTP 200\n{"trigger":{"id":"t-created"}}' }] } }),
+  ].join('\n') });
+  assert.deepEqual(remoteTrigger('create', { body: {} }, { ...recorded, run: mismatched }), {
+    trigger: { id: 't-created' }, echoWarning: 'RemoteTrigger create called an unexpected action',
+  }, 'a confirmed created routine is returned for ledger adoption even when the echoed input differs');
 });
 
 const TOO_LARGE = 'CLOUD_RESULT_TOO_LARGE: the routine service answered, but the reply was too large to read here';
@@ -187,7 +202,8 @@ test('AC-7 (ISS-14140): the check reads this machine\'s recorded routine with ge
   assert.equal(result.ok, true);
   assert.deepEqual(calls.map((call) => call.action), ['get']);
   assert.match(result.checks[1].detail, /answers for this account \(routine trig_standing\)/);
-  assert.match(result.checks[2].detail, /routine trig_standing on this account runs in env_01FromRequest/);
+  assert.match(result.checks[2].detail, /not exercised.*setup script/);
+  assert.match(result.checks[3].detail, /routine trig_standing on this account runs in env_01FromRequest/);
   const gone = fakeRemote({ get: () => { throw httpError(404); }, list: () => ({ data: [] }) });
   const fallback = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { remote: gone.remote, standing, env: { FLEET_HOME: fleetHome(t) } });
   assert.deepEqual(gone.calls.map((call) => call.action), ['get', 'list'], 'a recorded routine gone from the account falls back to the list');

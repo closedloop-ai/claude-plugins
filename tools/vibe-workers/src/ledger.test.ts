@@ -218,7 +218,7 @@ describe("closed writer turns never wedge the queue (ISS-13043, ISS-13051)", () 
     expect(start("second").turn?.id).toBe("second");
     changeWriter("finish", { worktree: value.worktree, workerId: writer.workerId, requestId: "second",
       lease: readLedgerActiveLease(value.metadata), status: "NEEDS_PERSON" });
-    expect(() => start("third")).toThrow(/Continue the active request/);
+    expect(() => start("third")).toThrow(/requestId "second".*"continuation"/);
   });
   it("a turn whose launcher process is gone is closed by the next claim", async () => {
     const { value, start } = claudeWriter();

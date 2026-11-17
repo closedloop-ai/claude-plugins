@@ -61,7 +61,10 @@ const UI_FILE = /\.(?:tsx|jsx|css|scss)$/;
 const SOURCE = /\.(?:tsx?|jsx?|mjs|cjs)$/;
 const TS_FILE = /\.tsx?$/;
 const COMMENT = /^\s*(?:\/\/|\/\*|\*|\{\/\*)/;
-const HEX_COLOR = /(?<=["'`\s(:,=])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b(?![\w-])/;
+const HEX_VALUE = String.raw`#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b(?![\w-])`;
+const CSS_HEX_COLOR = new RegExp(String.raw`(?:^|[;{]\s*)[\w-]+\s*:\s*${HEX_VALUE}`);
+const TAILWIND_HEX_COLOR = new RegExp(String.raw`\b(?:bg|text|border|outline|fill|stroke|shadow)-\[${HEX_VALUE}\]`);
+const STYLE_HEX_COLOR = new RegExp(String.raw`(?:\bstyle\s*=\s*\{\{|\b(?:color|backgroundColor|borderColor|outlineColor|fill|stroke)\s*:)\s*["']?${HEX_VALUE}`);
 const CUSTOM_PROPERTY = /^\s*--[\w-]+\s*:/;
 const ARBITRARY_PIXEL = /\[-?\d+(?:\.\d+)?px\]/;
 const INLINE_STYLE = /\bstyle=\{\{/;
@@ -121,7 +124,9 @@ export function scanTokens(files) {
   for (const file of files.filter((entry) => entry.status !== "D" && UI_FILE.test(entry.path))) {
     for (const { line, text } of file.added) {
       if (COMMENT.test(text) || CUSTOM_PROPERTY.test(text)) continue;
-      if (HEX_COLOR.test(text)) found.push(finding(Check.Tokens, file.path, line, Severity.Medium, "hardcoded color; use the token the surface bundles", text.trim()));
+      const hardcodedColor = /\.(?:css|scss)$/.test(file.path) ? CSS_HEX_COLOR.test(text)
+        : TAILWIND_HEX_COLOR.test(text) || STYLE_HEX_COLOR.test(text);
+      if (hardcodedColor) found.push(finding(Check.Tokens, file.path, line, Severity.Medium, "hardcoded color; use the token the surface bundles", text.trim()));
       if (ARBITRARY_PIXEL.test(text)) found.push(finding(Check.Tokens, file.path, line, Severity.Medium, "arbitrary pixel value; use the spacing or sizing token", text.trim()));
       if (INLINE_STYLE.test(text)) found.push(finding(Check.Tokens, file.path, line, Severity.Medium, "inline style; use the token classes", text.trim()));
     }
@@ -145,6 +150,34 @@ export function renameLines(text) {
   return lines;
 }
 
+function matchingCallEnd(source, open) {
+  let depth = 0;
+  let quote = null;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = null;
+    } else if (["\"", "'", "`"].includes(char)) quote = char;
+    else if (char === "(") depth += 1;
+    else if (char === ")" && --depth === 0) return index;
+  }
+  return source.length - 1;
+}
+
+/** Lines inside Vitest mock factories, where a dynamic import is the supported way to read the real module. */
+function mockFactoryLines(source) {
+  const lines = new Set();
+  for (const match of source.matchAll(/\bvi\.(?:doMock|mock)\s*\(/g)) {
+    const open = source.indexOf("(", match.index);
+    const close = matchingCallEnd(source, open);
+    const first = source.slice(0, match.index).split("\n").length;
+    const last = source.slice(0, close).split("\n").length;
+    for (let line = first; line <= last; line += 1) lines.add(line);
+  }
+  return lines;
+}
+
 /** Findings from added lines in source files: enum, `as` casts, client `console`, raw internal anchors, inline imports. */
 export function scanConventions(files, readHead = () => undefined, unread = []) {
   const found = [];
@@ -152,6 +185,7 @@ export function scanConventions(files, readHead = () => undefined, unread = []) 
     const head = TS_FILE.test(file.path) ? readHead(file.path) : "";
     if (typeof head !== "string") unread.push(file.path);
     const renames = renameLines(head ?? "");
+    const mockLines = isTestFile(file.path) ? mockFactoryLines(head ?? "") : new Set();
     for (const { line, text } of file.added) {
       if (COMMENT.test(text)) continue;
       const code = codeOnly(text);
@@ -159,7 +193,7 @@ export function scanConventions(files, readHead = () => undefined, unread = []) 
       if (TS_FILE.test(file.path) && AS_CAST.test(code) && !renames.has(line) && !SPECIFIER_LINE.test(text) && !/^\s*import\b/.test(text)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "`as` cast; narrow or type it instead", text.trim()));
       if (CONSOLE_CALL.test(text) && !isTestFile(file.path)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "console call in source", text.trim()));
       if (RAW_ANCHOR.test(text)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "raw internal `<a href>`; use the navigation Link", text.trim()));
-      if (INLINE_IMPORT.test(code)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "inline import(); imports belong at the top of the file", text.trim()));
+      if (INLINE_IMPORT.test(code) && !mockLines.has(line)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "inline import(); imports belong at the top of the file", text.trim()));
     }
   }
   return found;

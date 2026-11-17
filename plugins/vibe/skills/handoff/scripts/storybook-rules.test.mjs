@@ -69,15 +69,19 @@ test("(a) new stories with no bump, and a release record that reuses a version, 
   assert.deepEqual(fixed.rules, []);
 });
 
-test("(a) a removed story needs a major, a new entry a minor, a story on an existing entry a patch (#8963)", () => {
+test("(a) a removed state needs a minor, a removed surface needs a major, a new entry a minor, and a new state a patch (#8963)", () => {
   const file = "packages/app/documents/components/table/documents-view.stories.tsx";
   const title = "Composites/Shared/Artifact List/Documents View";
   const before = { ...released("4.0.1"), [HISTORY]: history("4.0.1"), [file]: story({ title, extra: "  argTypes: {},", exports: ["Default", "Narrow"] }) };
   const removal = { ...before, [VERSION_FILE]: pkg("4.0.2"), [HISTORY]: history("4.0.2", "4.0.1"), [file]: story({ title, extra: "  argTypes: {},", exports: ["Default"] }) };
   const patch = run({ base: before, head: removal });
   assert.deepEqual(patch.rules, ["storybook-release"]);
-  assert.match(patch.findings[0].problem, /removes or renames .*Documents View › Narrow, which needs a major release, but 4\.0\.1 -> 4\.0\.2 is a patch/);
-  assert.deepEqual(run({ base: before, head: { ...removal, [VERSION_FILE]: pkg("5.0.0"), [HISTORY]: history("5.0.0", "4.0.1") } }).rules, []);
+  assert.match(patch.findings[0].problem, /removes or renames the states .*Documents View › Narrow, which needs a minor release, but 4\.0\.1 -> 4\.0\.2 is a patch/);
+  assert.deepEqual(run({ base: before, head: { ...removal, [VERSION_FILE]: pkg("4.1.0"), [HISTORY]: history("4.1.0", "4.0.1") } }).rules, []);
+  const surfaceRemoval = { ...before, [VERSION_FILE]: pkg("4.1.0"), [HISTORY]: history("4.1.0", "4.0.1") };
+  delete surfaceRemoval[file];
+  assert.match(run({ base: before, head: surfaceRemoval }).findings[0].problem, /removes or renames the entries .*Documents View, which needs a major release/);
+  assert.deepEqual(run({ base: before, head: { ...surfaceRemoval, [VERSION_FILE]: pkg("5.0.0"), [HISTORY]: history("5.0.0", "4.0.1") } }).rules, []);
   const added = { ...before, [VERSION_FILE]: pkg("4.0.2"), [HISTORY]: history("4.0.2", "4.0.1"), [file]: story({ title, extra: "  argTypes: {},", exports: ["Default", "Narrow", "Dark"] }) };
   assert.deepEqual(run({ base: before, head: added }).rules, []);
   const promoted = { ...added, [file]: story({ title, tags: ["preview"], extra: "  argTypes: {},", exports: ["Default", "Narrow"] }) };

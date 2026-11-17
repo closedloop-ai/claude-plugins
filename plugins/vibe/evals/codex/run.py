@@ -486,6 +486,33 @@ def trace_for(events: list[dict[str, Any]], home: Path) -> list[dict[str, Any]]:
     ]
 
 
+def retain_failed_sessions(
+    output: Path, home: Path, results: list[dict[str, Any]]
+) -> None:
+    """Keep only failed cases' rollout files, never the private home's credential link."""
+    for result in results:
+        session_id = result.get("session_id")
+        case = result.get("case")
+        if result.get("passed") or not isinstance(session_id, str) or not session_id:
+            continue
+        if not isinstance(case, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", case):
+            raise ValueError("failed eval case has no safe evidence directory name")
+        matches = list((home / "sessions").rglob("*" + session_id + "*.jsonl"))
+        if not matches:
+            continue
+        target_root = output / "failed-sessions" / case
+        for source in matches:
+            relative = source.relative_to(home)
+            target = target_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        result["retained_session"] = {
+            "id": session_id,
+            "path": str((target_root / "sessions").relative_to(output)),
+            "resume_command": f"codex resume {session_id}",
+        }
+
+
 def tool_text(call: dict[str, Any]) -> str:
     return (
         str(call.get("name", ""))
@@ -870,6 +897,13 @@ def run_case(
         result["infrastructure_invalid"] = str(error)
     except Exception as error:
         result["checks"].append(check("execution", False, str(error)))
+    thread_ids = [
+        event["thread_id"]
+        for event in read_events(work / "events.jsonl")
+        if event.get("type") == "thread.started" and isinstance(event.get("thread_id"), str)
+    ]
+    if thread_ids:
+        result["session_id"] = thread_ids[-1]
     for path in work.rglob("events.jsonl"):
         for event in read_events(path):
             if event.get("type") == "turn.completed":
@@ -1007,6 +1041,7 @@ def main() -> int:
             key: sum(r["usage"].get(key, 0) for r in results)
             for key in {k for r in results for k in r["usage"]}
         }
+        retain_failed_sessions(output, private_home, results)
         (output / "results.json").write_text(
             json.dumps(dict(run=metadata, cases=results), indent=2)
         )

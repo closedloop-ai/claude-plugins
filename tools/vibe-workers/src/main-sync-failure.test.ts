@@ -3,10 +3,12 @@ import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { MainSyncError } from "./main-sync-contracts.js";
 import { mainSyncFailure } from "./main-sync-failure.js";
+import { readMainSyncInput } from "./main-sync.js";
 import { bundleDirectory } from "./test-fixtures.js";
 
 const LEASE = "4f6c2a7e-1d3b-4c5a-9e8f-0a1b2c3d4e5f";
@@ -24,6 +26,14 @@ function thrown(action: () => unknown) {
 }
 
 describe("mainSyncFailure", () => {
+  it("ISS-14192 names an empty stdin operation context and its supported producer", async () => {
+    const error = await readMainSyncInput(tmpdir(), Readable.from([])).then(() => null, (failure) => failure);
+    const result = mainSyncFailure(error);
+    expect(result.status).toBe("BLOCKED");
+    expect(result.error).toMatch(/operation context on stdin is missing.*owned vibe worker record turn.*do not run a plain git merge at (?:contracts|main-sync)\.ts:\d+/);
+    expect(result.error).not.toContain("malformed JSON");
+  });
+
   it("keeps a canonical refusal's own status and message", () => {
     expect(mainSyncFailure(new MainSyncError("Input readiness belongs to another owned session", "NEEDS_CHANGE")))
       .toEqual({ status: "NEEDS_CHANGE", error: "Input readiness belongs to another owned session" });

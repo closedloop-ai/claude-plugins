@@ -17,6 +17,9 @@ created. Never commit or push.
 Read `../skills/vibe/references/review-premises.md` before placement advice
 or findings. Verify every material premise and include its evidence in
 `data.findings[].premises`.
+When ROOT supplied any graph read capability, make at least one graph call
+before returning; the native receipt rejects a completed review that leaves an
+available graph unused.
 
 ## Modes
 

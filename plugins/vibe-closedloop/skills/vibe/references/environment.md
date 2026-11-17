@@ -305,11 +305,9 @@ not silently included or discarded. A clean result needs no extra local commit.
    (`mainMerge: "deferred"`), conflicts included, and the branch's own base
    stands in as its main; a failing check is fixed on that base. It never commits or pushes. Retain the
    returned `transactionId`, `mainSha`, original base and imported-file facts.
-   If the launcher cannot mint a supported publisher grant, ROOT does not
-   invent one: fetch `origin main`, stage `git merge --no-commit --no-ff
-   origin/main`, keep conflicts with the same writer, then finish through
-   `commit-worktree.mjs`. This fallback prepares only the merge; publication
-   still waits for a real grant.
+   If the launcher cannot mint the publisher grant or pipe its owned operation
+   context, stop with the named refusal and relaunch that record action. Preserve
+   the source and private receipt; no plain Git merge substitutes for the grant.
 2. End that helper turn using actual stopped/completed evidence before any
    source continuation. The SAME registered writer extends its existing
    session table/local canonical plan before source fixes and checks frozen
@@ -359,6 +357,11 @@ not silently included or discarded. A clean result needs no extra local commit.
    its 15-minute default and 30-minute maximum, and only the Root-owned
    witness derives a finite Claude envelope. Missing, tampered, stale or
    canceled proof blocks, never an enlarged caller timeout.
+   A fleet remote report is diagnostic only until it carries authenticated
+   command artifacts. `main-sync-record-remote` validates its claimed scope
+   but refuses it with `NEEDS_CHANGE`; it never replaces validation. Run the
+   canonical `main-sync-validate` path in this checkout so every command log
+   is executed, bounded and bound to committed inputs before publication.
 4. Validation checks every tracked/index byte/mode and scoped executable
    overlay against committed input before/between/after checks and again at
    consumption. Managed `localFixes` remain commit exclusions, NEVER check
