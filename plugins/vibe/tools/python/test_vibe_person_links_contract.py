@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +47,7 @@ WORKER_POINTER = (
 
 
 def test_the_rule_is_stated_once_in_plain_words() -> None:
-    rule = section(PLAIN_WORDS.read_text(), RULE)
+    rule = section(skill_split.read(PLAIN_WORDS), RULE)
     for required in (
         "it gives a link that opens that exact thing in one click",
         "The link text is the plain name the person sees in the product",
@@ -69,12 +70,12 @@ def test_the_rule_is_stated_once_in_plain_words() -> None:
         "Never send the id or path in its place",
     ):
         assert required in rule, required
-    holders = [path.name for path in PLUGIN_ROOT.rglob("*.md") if RULE in path.read_text()]
+    holders = [path.name for path in PLUGIN_ROOT.rglob("*.md") if RULE in skill_split.read(path)]
     assert holders == ["plain-words.md"]
 
 
 def test_the_word_table_sends_ids_and_paths_to_the_rule() -> None:
-    table = flat(PLAIN_WORDS.read_text())
+    table = flat(skill_split.read(PLAIN_WORDS))
     assert (
         "| a story id, file path, component name or route pattern to look at | a link to that exact thing "
         f"({RULE_NAME}) |" in table
@@ -82,7 +83,7 @@ def test_the_word_table_sends_ids_and_paths_to_the_rule() -> None:
 
 
 def test_the_skills_and_storybook_rule_point_at_it() -> None:
-    skill = flat(VIBE_SKILL.read_text())
+    skill = flat(skill_split.read(VIBE_SKILL))
     for required in (
         "Anything you point the person at to look at or open is a link that opens that exact thing in one click, "
         f"named as the person sees it (`references/plain-words.md`, {RULE_NAME}, has the details)",
@@ -93,35 +94,35 @@ def test_the_skills_and_storybook_rule_point_at_it() -> None:
         "start it, and name no place to go look in the meantime",
     ):
         assert required in skill, required
-    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert "look at with a link to each changed page (`vibe-sessions.mjs link --page`;" in loop
-    deploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
+    deploy = section(skill_split.read(VIBE_SKILL), "## 6. Deploy each change")
     assert f"with a link to each changed page or component (`references/plain-words.md`, {RULE_NAME})" in deploy
-    handoff = flat(HANDOFF_SKILL.read_text())
+    handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert f'including its {RULE_NAME} (a story or page link comes from `../vibe/scripts/vibe-sessions.mjs link`)' in handoff
     assert f"Tell them, in a few lines, each as a link that opens it (`../vibe/references/plain-words.md`, {RULE_NAME})" in handoff
-    storybook = section(ENVIRONMENT.read_text(), "## Storybook links")
+    storybook = section(skill_split.read(ENVIRONMENT), "## Storybook links")
     assert "`scripts/vibe-sessions.mjs link --story <story-id>` builds the link from the session record" in storybook
     assert f"`plain-words.md`, {RULE_NAME}" in storybook
 
 
 def test_the_new_components_notice_links_each_story_by_its_gallery_name() -> None:
-    notices = section(VIBE_SKILL.read_text(), "### Notices that never wait")
+    notices = section(skill_split.read(VIBE_SKILL), "### Notices that never wait")
     assert "returns `STORIES_READY` with each new story's ID and the name the gallery shows for it" in notices
     assert '`node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <id> --local`' in notices
     assert "If it prints `url: null`, no local Storybook is running: dispatch `vibe-setup-worker` to start it, then run `link` again" in notices
     assert f"and never a bare id (`references/plain-words.md`, {RULE_NAME})" in notices
     assert "[<gallery name>](<link>)" in notices
-    writer = flat((AGENTS / "vibe-change-worker.md").read_text())
+    writer = flat(skill_split.read(AGENTS / "vibe-change-worker.md"))
     assert "`STORIES_READY` with each new story's ID and the name the gallery shows for it" in writer
 
 
 def test_every_worker_whose_words_reach_the_person_points_at_the_rule() -> None:
     for name in PERSON_FACING_WORKERS:
-        assert WORKER_POINTER in flat((AGENTS / f"{name}.md").read_text()), name
+        assert WORKER_POINTER in flat(skill_split.read(AGENTS / f"{name}.md")), name
 
 
 def test_the_session_script_offers_the_link_command() -> None:
-    text = SCRIPT.read_text()
+    text = skill_split.read(SCRIPT)
     assert '//   vibe-sessions.mjs link            --worktree <path> (--story <story id> [--local] | --page <path>)' in text
     assert 'case "link":\n      return personLink();' in text

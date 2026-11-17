@@ -8,7 +8,7 @@
 // Usage: review-page-check.mjs <review.md>
 
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const ROW = /^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|(.*)$/gm;
 const CODE_EVIDENCE = /checked in code:\s*[^\s|:]+:\d+/i;
@@ -42,7 +42,7 @@ function main(file) {
   return problems.length === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try { process.exit(main(process.argv[2])); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exit(2); }
 }

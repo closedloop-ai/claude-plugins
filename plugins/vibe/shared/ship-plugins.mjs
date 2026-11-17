@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Stages the vibe and vibe-core files some vibe scripts need on another host
-// (ISS-13869). fleet.sh and snapshot.sh ship scripts over ssh; since vibe's
+// Stages the vibe and vibe-core files some vibe scripts need on another host.
+// fleet.sh and snapshot.sh ship scripts over ssh; since vibe's
 // scripts load vibe-core's modules, the archive holds both plugins laid out as
 // a checkout (plugins/vibe, plugins/vibe-core), which plugin-roots.mjs reads.
 //
@@ -11,11 +11,10 @@
 // transitively) and both plugins' manifests, one stage-relative path per line.
 // Archive them with `tar -h -C <dir> $(cat <dir>/files)`, then remove <dir>.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { MANIFESTS, ownPluginRoot } from "./plugin-roots.mjs";
+import { isEntryPoint, MANIFESTS, ownPluginRoot } from "./plugin-roots.mjs";
 import { vibeCoreRoot } from "./vibe-core.mjs";
 
 const RELATIVE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s+)["'](\.{1,2}\/[^"']+)["']/gm;
@@ -63,7 +62,7 @@ export function stagePlugins(entries) {
   return stage;
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const entries = process.argv.slice(2);
     if (entries.length === 0) throw new Error("Usage: ship-plugins.mjs <vibe-relative entry>...");

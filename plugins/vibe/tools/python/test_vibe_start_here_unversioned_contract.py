@@ -32,7 +32,7 @@ EXEMPTION = (
 
 
 def test_guardrails_state_the_exemption_beside_the_freeze() -> None:
-    taxonomy = section(GUARDRAILS.read_text(), "## Storybook taxonomy")
+    taxonomy = section(skill_split.read(GUARDRAILS), "## Storybook taxonomy")
     assert EXEMPTION in taxonomy
     assert taxonomy.index("A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never edited") < taxonomy.index(
         EXEMPTION
@@ -40,13 +40,13 @@ def test_guardrails_state_the_exemption_beside_the_freeze() -> None:
 
 
 def test_the_placement_owner_states_the_exemption_in_its_v1_rule() -> None:
-    order = paragraph(DECOMPOSER.read_text(), "4. Decide in this order")
+    order = paragraph(skill_split.read(DECOMPOSER), "4. Decide in this order")
     assert EXEMPTION in order
     assert order.index("is frozen and never edited, not even to add a story") < order.index(EXEMPTION)
 
 
 def test_the_handoff_storybook_paragraph_states_the_exemption() -> None:
-    storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
+    storybook = section(skill_split.read(HANDOFF_SKILL), "## 4. Storybook")
     assert EXEMPTION in storybook
     assert storybook.index("the inventory's `v1Stories` and `retitledStories` block handoff") < storybook.index(
         EXEMPTION
@@ -67,8 +67,8 @@ def test_each_holder_states_the_exemption_once() -> None:
 
 
 def test_the_inventory_exempts_the_start_here_title_root_from_both_checks() -> None:
-    inventory = INVENTORY.read_text()
-    taxonomy = TAXONOMY_SCRIPT.read_text()
+    inventory = skill_split.read(INVENTORY)
+    taxonomy = skill_split.read(TAXONOMY_SCRIPT)
     assert 'export const UNVERSIONED_STORY_ROOT = "Start Here";' in taxonomy
     assert "storyTitleRoot(source) === UNVERSIONED_STORY_ROOT" in taxonomy
     assert 'return storyMetaTitle(source)?.split("/")[0].trim();' in taxonomy

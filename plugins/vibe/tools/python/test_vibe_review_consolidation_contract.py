@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import skill_split
 
 ROOT = Path(__file__).resolve().parents[2]
 HANDOFF = ROOT / "skills" / "handoff"
@@ -23,7 +24,7 @@ needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is no
 
 
 def read(path: Path) -> str:
-    return path.read_text()
+    return skill_split.read(path)
 
 
 def test_findings_fixture_pins_the_guardrails_findings_contract() -> None:

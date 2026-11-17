@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
-import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
+import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isFrozenStory, put, run } from "./diff-rules-test-fixture.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {
   const files = parseUnifiedDiff([
     "diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -3,1 +3,2 @@", "-old", "+new", "+more",
     "diff --git a/.closedloop-ai/vibe-plans/p.md b/.closedloop-ai/vibe-plans/p.md", "new file mode 100644",
     "--- /dev/null", "+++ b/.closedloop-ai/vibe-plans/p.md", "@@ -0,0 +1 @@", "+plan",
-  ].join("\n"));
+  ].join("\n"), localPlanPrefix(PROVIDER_BINDING));
   assert.deepEqual(files.map((file) => [file.path, file.removed, file.added]), [["a.ts", [{ line: 3, text: "old" }], [{ line: 3, text: "new" }, { line: 4, text: "more" }]]]);
   assert.deepEqual(transactionBodies("x\nwithDb.tx(async (tx) => {\n  a();\n});\n"), [[2, 4]]);
 });
@@ -294,7 +299,7 @@ test("in a shallow clone the restored-removal check deepens the history to find 
       git(checkout, ["remote", "set-url", "origin", `file://${path.join(root, "gone")}`], home);
     }
     put(checkout, { [toolbar]: withPill });
-    const result = runDiffRules({ worktree: checkout, base, isFrozenStory, changeLog: path.join(root, "no-log.md") });
+    const result = runDiffRules({ worktree: checkout, base, isFrozenStory, changeLog: path.join(root, "no-log.md"), binding: PROVIDER_BINDING });
     return { result, shallow: git(checkout, ["rev-parse", "--is-shallow-repository"], home) };
   };
   const deepened = shallowSession(true);
@@ -727,4 +732,25 @@ test("a change to a spec the base has needs a dated human source; a new spec or 
   assert.deepEqual(run(t, { base, head, changeLog: ruled }).found.filter(([rule]) => rule === "spec-change"), []);
   const prd = run(t, { base: { "docs/prds/board.md": "- Reject deep moves\n" }, head: { "docs/prds/board.md": null } }).found.filter(([rule]) => rule === "spec-change");
   assert.deepEqual(prd, [["spec-change", "docs/prds/board.md"]], "deleting a spec is a change");
+});
+
+test("with no provider bound, only the generic rules run: no repository path rules, and a ticket is a URL or a #number", (t) => {
+  const migration = "packages/database/prisma/migrations/20261021000000_link_kind/migration.sql";
+  const sql = "UPDATE \"artifact_links\" SET \"kind\" = 'x';\n";
+  const lane = "apps/desktop/src/main/agent-sync/placement-outbox.ts";
+  const generic = run(t, { binding: null, head: { [migration]: sql, [lane]: "export const delay = (n) => 2 ** n;\n" } });
+  assert.deepEqual(generic.found.filter(([rule]) => rule !== "unused-export"), [["migration-test", migration]],
+    "the migration-test rule is generic; precedent, backfill and lane rules are the provider's");
+  assert.deepEqual(generic.requiredChecks, []);
+  const bound = run(t, { head: { [migration]: sql, [lane]: "export const delay = (n) => 2 ** n;\n" } });
+  assert.ok(bound.found.some(([rule]) => rule === "migration-backfill"));
+  assert.ok(bound.found.some(([rule]) => rule === "desktop-sync-lane"));
+  assert.equal(bound.requiredChecks.length, 2);
+
+  const comment = (reference) => `// ${reference}: keep the id tiebreak so equal ranks stay stable\nexport const order = (a, b) => a.id.localeCompare(b.id);\n`;
+  const dropped = (reference, binding) => run(t, { binding, base: { "p/a.ts": comment(reference) },
+    head: { "p/a.ts": comment(reference).split("\n").slice(1).join("\n") }, commit: true }).found;
+  assert.deepEqual(dropped("#12", null), [["ticketed-comment", "p/a.ts"]]);
+  assert.deepEqual(dropped("ISS-12", null), [], "a tracker slug is not a reference without that tracker");
+  assert.deepEqual(dropped("ISS-12", undefined), [["ticketed-comment", "p/a.ts"]]);
 });

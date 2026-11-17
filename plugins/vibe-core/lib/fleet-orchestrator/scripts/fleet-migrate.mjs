@@ -5,7 +5,7 @@
 // keys are commented out of config.env, and symlinks beside the old dir or
 // inside the moved state that pointed at a moved file are repointed.
 //
-// ISS-14024: a flat dir whose LOCAL_STATE_DIR and own sessions/ both planned
+// A flat dir whose LOCAL_STATE_DIR and own sessions/ both planned
 // to programs/<slug>/sessions threw ENOTEMPTY on the second move and left the
 // tree half moved, with no relinks and no `current`; and with --home pointing
 // at an existing home, config.env and lessons.md were renamed over the home's

@@ -22,8 +22,9 @@ import {
 import { homedir, hostname } from 'node:os';
 import { waitsForPerson } from '../../vibe/scripts/session-questions.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
-const { classifyTurnError, connectViaProxy, daemonSocket, Failure, isEntryPoint, parseSession, readThreadState } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
+const { classifyTurnError, connectViaProxy, daemonSocket, Failure, parseSession, readThreadState } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 
 export const DEFAULT_BACKOFF_SECONDS = [120, 300, 600];
 export const DEFAULT_RESTART_COOLDOWN_SECONDS = 1800;

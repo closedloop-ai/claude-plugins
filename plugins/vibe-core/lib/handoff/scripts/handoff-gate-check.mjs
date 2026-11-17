@@ -2,7 +2,7 @@
 // final pull-request inventory, with its body and verifier run evidence, is
 // still what a pull request would open. The PR-create guard and the cloud
 // worker read it; vibe's handoff-gate.mjs records the witness. With member
-// tickets recorded on the session (ISS-13924), the witness keeps the member
+// tickets recorded on the session, the witness keeps the member
 // list, so a member added afterwards makes it stale, and the PR title and body
 // must name every member. A unit's review of the completed work, its PRD and
 // its plan (handoff-gate.mjs --review, --prd, --plan) are bound the same way.

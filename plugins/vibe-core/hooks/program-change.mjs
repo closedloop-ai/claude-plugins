@@ -10,14 +10,17 @@
 
 import { loadsSkill, readTranscript } from "./skill-transcript.mjs";
 import { readHookSkill } from "./hook-session-scope.mjs";
+import { eventCwd } from "./hook-dispatch.mjs";
+import { isProviderBroken, recordedBinding, ticketReference } from "../lib/vibe/scripts/provider.mjs";
 import os from "node:os";
 
 const PROGRAM_CHANGE = [
   /\b(?:don'?t|do not) want to (?:build|look at|work on|do|ship)\b/i,
   /\bstart (?:over|again|from scratch)\b|\bfrom scratch\b/i,
-  /\b(?:drop|abandon|forget|park|switch (?:to|from)|go back to|go back and look at|move (?:to|on to)|instead of)\s+(?:the\s+)?(?:PRD|ISS|PLN)-\d+/i,
   /\b(?:stop|no) build(?:ing)?\b|\bdesign only\b|\bdon'?t build\b/i,
 ];
+
+const WORK_ITEM_MOVE = String.raw`\b(?:drop|abandon|forget|park|switch (?:to|from)|go back to|go back and look at|move (?:to|on to)|instead of)`;
 
 export const PROGRAM_CHANGE_REMINDER = [
   "This operator message may change the program. If it does, record it before acting on it:",
@@ -28,7 +31,25 @@ export const PROGRAM_CHANGE_REMINDER = [
 /** The UserPromptSubmit result for a prompt: the reminder as context when it reads as a program change, or null. */
 export function programChange(event, home = os.homedir()) {
   const prompt = String(event?.prompt ?? "");
-  if (!PROGRAM_CHANGE.some((pattern) => pattern.test(prompt))) return null;
-  return loadsSkill(readTranscript(event?.transcript_path), "fleet-orchestrator")
-    || readHookSkill(event?.session_id, home) === "fleet-orchestrator" ? { context: PROGRAM_CHANGE_REMINDER } : null;
+  let warning = null;
+  let binding = null;
+  try {
+    binding = recordedBinding({ worktree: eventCwd(event), conversation: event?.session_id ?? null, home });
+    ticketReference(binding);
+  } catch (error) {
+    // A broken bound provider cannot name its tracker's references: say so, and match the generic ones.
+    if (!isProviderBroken(error)) throw error;
+    warning = `vibe program-change: provider-broken: ${error.message}`;
+    binding = null;
+  }
+  const fires = PROGRAM_CHANGE.some((pattern) => pattern.test(prompt)) || leavesWorkItem(prompt, binding);
+  const result = fires && (loadsSkill(readTranscript(event?.transcript_path), "fleet-orchestrator")
+    || readHookSkill(event?.session_id, home) === "fleet-orchestrator") ? { context: PROGRAM_CHANGE_REMINDER } : null;
+  return warning ? { ...result, systemMessage: warning } : result;
+}
+
+/** Whether the prompt moves away from or to a work item, named the way the session's tracker (`binding`) references one. */
+function leavesWorkItem(prompt, binding) {
+  const reference = ticketReference(binding).source;
+  return new RegExp(`${WORK_ITEM_MOVE}\\s+(?:the\\s+)?(?:${reference})`, "i").test(prompt);
 }

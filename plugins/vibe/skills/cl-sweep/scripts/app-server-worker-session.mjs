@@ -61,6 +61,7 @@ import {
   ticketOwnerReplacementStatus,
   validateModelName,
 } from './model-policy.mjs';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 export const SESSION_SCHEMA = 'CL_SWEEP_APP_SERVER_WORKER_SESSION v1';
 export const EVENT_PREFIX = 'CL_SWEEP_EVENT v1 ';
@@ -2392,7 +2393,7 @@ export {
   validateBinding,
 };
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

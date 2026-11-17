@@ -8,8 +8,8 @@
 // Prints {"ok":true,"commit":"<sha>","subject":"..."} or {"ok":false,"reason":"..."} (exit 1).
 
 import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 /** `{commit, subject}` of the commit that added `file`, or `{reason}` when history cannot say. */
 export function historyOrigin(repo, file) {
@@ -36,6 +36,6 @@ function main() {
   process.exit(origin.reason ? 1 : 0);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main();
 }

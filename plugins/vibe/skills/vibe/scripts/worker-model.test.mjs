@@ -31,6 +31,23 @@ const scratch = mkdtempSync(path.join(os.tmpdir(), "vibe-worker-model-"));
 process.env[MODELS_FILE_ENV] = path.join(scratch, "none.json");
 test.after(() => rmSync(scratch, { recursive: true, force: true }));
 
+const PLUGIN = path.resolve(HERE, "../../..");
+const RELATIVE_IMPORT = /\bfrom\s*["'](\.{1,2}\/[^"']+)["']|\bimport\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g;
+
+/** `files` (relative to the plugin) and every module they reach through relative imports, followed to the end. */
+function pluginModulesImportedBy(files) {
+  const found = new Set();
+  const visit = (file) => {
+    if (found.has(file)) return;
+    found.add(file);
+    for (const match of readFileSync(path.join(PLUGIN, file), "utf8").matchAll(RELATIVE_IMPORT)) {
+      visit(path.relative(PLUGIN, path.resolve(PLUGIN, path.dirname(file), match[1] ?? match[2])));
+    }
+  };
+  files.forEach(visit);
+  return [...found];
+}
+
 /** A models file of its own for one test, and the options that point the resolver at it. */
 function modelsAt(name, overrides) {
   const file = path.join(scratch, name);
@@ -63,8 +80,9 @@ test("AC-1: the evals policy file is the one source the agents' binding and cl-s
   // A copy of the policy scripts beside an edited policy file follows the file, so no script carries its own default.
   // The real path: the command only runs when its own path matches the path it was started with.
   const copy = path.join(realpathSync(scratch), "one-source");
-  for (const file of ["skills/cl-sweep/scripts/model-policy.mjs", "skills/vibe/scripts/agent-models.mjs", "skills/vibe/scripts/worker-model.mjs"]) {
-    cpSync(path.resolve(HERE, "../../..", file), path.join(copy, file));
+  // The policy scripts and every plugin module they import, found from their own import lines, so a new import is copied too.
+  for (const file of pluginModulesImportedBy(["skills/cl-sweep/scripts/model-policy.mjs", "skills/vibe/scripts/worker-model.mjs"])) {
+    cpSync(path.join(PLUGIN, file), path.join(copy, file));
   }
   mkdirSync(path.join(copy, "evals/codex"), { recursive: true });
   const copiedPolicy = path.join(copy, "evals/codex/model-policy.json");

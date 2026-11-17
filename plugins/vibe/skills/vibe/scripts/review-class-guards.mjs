@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASELINE_NAME = "review-class-guard-baseline.json";
@@ -143,7 +144,7 @@ function extractStringArray(text, name) {
 
 const startsWithAny = (file, prefixes) => prefixes.some((prefix) => file.startsWith(prefix));
 
-async function productionRedeployRelevant(root, file) {
+async function productionRedeployRelevant(root, file, providerRoot) {
   const environment = path.join(root, "plugins/vibe/skills/vibe/scripts/env-ctl.mjs");
   if (!existsSync(environment)) return null;
   const cacheBuster = `?guard=${Date.now()}-${Math.random()}`;
@@ -167,7 +168,10 @@ async function productionRedeployRelevant(root, file) {
     }
     return { status: 1, stdout: "", stderr: `unexpected guard command: ${line}` };
   };
-  await createEnvCtl({ run, env: { VIBE_REDEPLOY_UI_ONLY: "1" } }).redeploy({ worktree: "/wt", stdin: context });
+  // The corpus is the repository the fixture's provider serves: its environment recipe.
+  const provider = JSON.parse(readFileSync(path.join(root, providerRoot, "provider.json"), "utf8"));
+  await createEnvCtl({ run, env: { VIBE_REDEPLOY_UI_ONLY: "1" }, repo: "guard/repository",
+    environmentFor: () => provider.data.recipes.environment, planPrefixFor: () => null }).redeploy({ worktree: "/wt", stdin: context });
   return requested;
 }
 
@@ -201,17 +205,20 @@ export async function realPathClassifierFindings(root, fixture) {
   if (existsSync(areaPath)) {
     const cacheBuster = `?guard=${Date.now()}-${Math.random()}`;
     const area = await import(`${pathToFileURL(areaPath).href}${cacheBuster}`);
+    // The corpus is the repository the fixture's provider serves, so its areas are that provider's recipe.
+    const providerRoot = path.join(root, fixture.providerRoot);
+    const { name } = JSON.parse(readFileSync(path.join(providerRoot, "provider.json"), "utf8"));
+    const areas = area.repositoryAreas({ state: "bound", name, root: providerRoot, capabilities: ["recipes"] });
     for (const item of fixture.paths.filter((entry) => entry.backend)) {
-      area.BACKEND_PATH.lastIndex = 0;
-      if (!area.BACKEND_PATH.test(item.path)) findings.push(`area-backend:${item.id}:${item.path}`);
+      if (!areas.backend.test(item.path)) findings.push(`area-backend:${item.id}:${item.path}`);
     }
     for (const item of fixture.paths.filter((entry) => entry.ui)) {
-      if (!startsWithAny(item.path, area.UI_PREFIXES)) findings.push(`area-ui:${item.id}:${item.path}`);
+      if (!startsWithAny(item.path, areas.ui)) findings.push(`area-ui:${item.id}:${item.path}`);
     }
 
     if (existsSync(path.join(root, "plugins/vibe/skills/vibe/scripts/env-ctl.mjs"))) {
       for (const item of fixture.paths.filter((entry) => entry.deployRelevant)) {
-        const relevant = await productionRedeployRelevant(root, item.path);
+        const relevant = await productionRedeployRelevant(root, item.path, fixture.providerRoot);
         if (!relevant) findings.push(`deploy-relevant:${item.id}:${item.path}`);
       }
     }
@@ -254,7 +261,7 @@ function shrinkOnlyProblems(name, actual, baseline, initial) {
 /** Run every review-class guard and return stable diagnostics. */
 export async function reviewClassGuard(root, options = {}) {
   const baselinePath = options.baselinePath ?? path.join(root, "plugins/vibe/skills/vibe/scripts", BASELINE_NAME);
-  const fixturePath = options.fixturePath ?? path.join(root, "plugins/vibe/skills/vibe/scripts", PATH_FIXTURE_NAME);
+  const fixturePath = options.fixturePath ?? path.join(root, "plugins/vibe/skills/vibe/scripts/fixtures", PATH_FIXTURE_NAME);
   const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
   const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
   const subprocess = subprocessStatusFindings(root);
@@ -279,4 +286,4 @@ async function main() {
   if (!result.ok) process.exitCode = 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+if (isEntryPoint(import.meta.url)) await main();

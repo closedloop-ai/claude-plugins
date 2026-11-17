@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, section
+import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -47,7 +48,7 @@ def repair_modes(source: str) -> set[str]:
 
 
 def test_guardrails_allow_repairs_that_change_no_assertion() -> None:
-    rule = section(GUARDRAILS.read_text(), "### Repair, don't author")
+    rule = section(skill_split.read(GUARDRAILS), "### Repair, don't author")
     for required in ("breaks an EXISTING test or test fixture",
                      "an import, a renamed or retired symbol, setup, a type error",
                      "mechanically updates that existing file so the tree compiles and the commit hooks pass",
@@ -61,7 +62,7 @@ def test_guardrails_allow_repairs_that_change_no_assertion() -> None:
                      "that is not a repair", "otherwise the test stays unedited, goes on Missing tests",
                      "the blocked commit goes to engineering"):
         assert required in rule, required
-    tests = section(GUARDRAILS.read_text(), "## Tests")
+    tests = section(skill_split.read(GUARDRAILS), "## Tests")
     assert NO_ENGINEERING_QUESTIONS in tests
     assert "Without an explicit top-level pull-request or `testsRequired` grant, no worker authors a test in vibe or handoff" in tests
     assert "and no deleted test of live behavior" in tests
@@ -69,12 +70,12 @@ def test_guardrails_allow_repairs_that_change_no_assertion() -> None:
 
 def test_no_surface_asks_the_person_about_tests() -> None:
     for path in (VIBE_SKILL, HANDOFF_SKILL, QUALITY, GUARDRAILS):
-        text = flat(path.read_text())
+        text = flat(skill_split.read(path))
         assert NO_ENGINEERING_QUESTIONS in text or "never ask the person about tests" in text.lower(), path.name
     writer = section(agent("vibe-change-worker"), "## Tests: repair, don't author")
     assert "Never return `NEEDS_PERSON` about a test or any other engineering choice" in writer
     assert "return `BLOCKED` for engineering" in writer
-    escalation = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
+    escalation = section(skill_split.read(VIBE_SKILL), "## 6. Deploy each change")
     assert "resume the SAME persistent writer in fix mode with the error" in escalation
     assert "first check the alternative paths in `references/guardrails.md`" in escalation
     assert "record the exact cause and tried paths, then offer the supported pushed handover" in escalation
@@ -88,16 +89,16 @@ def test_the_writer_repairs_in_loop_and_handoff_turns_and_records_each_repair() 
                      "Change only what makes it compile; never what it asserts",
                      "Record each repaired file in the change log as a repair"):
         assert required in writer, required
-    loop = section(QUALITY.read_text(), "## Tests: repair, don't author")
+    loop = section(skill_split.read(QUALITY), "## Tests: repair, don't author")
     assert "repairs an existing test or fixture its own change broke" in loop
     assert "without changing what any test asserts" in loop
 
 
 def test_the_inventory_lists_repairs_and_rejects_authored_test_files() -> None:
-    inventory = INVENTORY.read_text()
-    classifier = PATH_CLASSIFIER.read_text()
+    inventory = skill_split.read(INVENTORY)
+    classifier = skill_split.read(PATH_CLASSIFIER)
     assert "testRepairs," in inventory
-    assert 'import { classifyHandoffPath, PathDisposition } from "./path-classifier.mjs"' in inventory
+    assert 'import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs"' in inventory
     assert 'classifications.get(file.path)?.reason === "test-repair"' in inventory
     assert 'file.status === "M" && !isSnapshot(file.path) && testLocationAllowed' in classifier
     assert 'phase === "pull-request" && pullRequestTest' in classifier
@@ -105,16 +106,16 @@ def test_the_inventory_lists_repairs_and_rejects_authored_test_files() -> None:
 
 
 def test_the_launcher_grants_repair_authority_separately_from_test_authoring() -> None:
-    launcher = (WORKERS_SRC / "claude-worker.ts").read_text()
+    launcher = skill_split.read(WORKERS_SRC / "claude-worker.ts")
     assert 'testAuthoringAuthorized: testAuthoringGranted(input)' in launcher
     assert 'input.testsRequired === true && testAuthoringModes.has(input.mode)' in launcher
     assert "testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode)" in launcher
     assert repair_modes(launcher) == {"request", "fix", "handoff", "pull-request"}
-    bundle = LAUNCHER_BUNDLE.read_text()
+    bundle = skill_split.read(LAUNCHER_BUNDLE)
     assert "testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode)" in bundle
     assert repair_modes(bundle) == {"request", "fix", "handoff", "pull-request"}
     assert "may only repair existing tests and fixtures your own change broke" in bundle
-    envelope = section(QUALITY.read_text(), "## One persistent writer and a serial queue")
+    envelope = section(skill_split.read(QUALITY), "## One persistent writer and a serial queue")
     assert "`authority.testRepairAuthorized`" in envelope
     assert "Plan, record and every other role's turns carry neither" in envelope
 
@@ -128,13 +129,13 @@ def test_reviewers_check_that_repairs_changed_no_assertion() -> None:
     # ISS-13353: the adversarial reviewer no longer repeats check 9's repair rule; it points at it.
     assert "check 9 of the guardrails reviewer, not repeated" in flat(agent("vibe-adversarial-reviewer"))
     assert "recorded repair that changes no assertion" in flat(agent("vibe-verify-worker"))
-    check = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
+    check = section(skill_split.read(HANDOFF_SKILL), "## 3. Guardrail check")
     assert "except the inventory's `testRepairs` whose diffs it confirms changed no assertion" in check
-    assert "the inventory's `testRepairs`" in section(HANDOFF_SKILL.read_text(), "## 6. Independent integrated review")
+    assert "the inventory's `testRepairs`" in section(skill_split.read(HANDOFF_SKILL), "## 6. Independent integrated review")
 
 
 def test_the_build_loop_is_lean() -> None:
-    lean = section(QUALITY.read_text(), "## Lean build loop")
+    lean = section(skill_split.read(QUALITY), "## Lean build loop")
     for required in ("quick prep, build and checks on uncommitted inputs, then the orchestrator's push-ready commit, "
                      "deploy and showing the person", "with no plan review",
                      "Biome on the changed files, the affected typecheck and the source gates",
@@ -144,7 +145,7 @@ def test_the_build_loop_is_lean() -> None:
         assert required in lean, required
     for heavy in HEAVY_VALIDATION:
         assert heavy in lean, heavy
-    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     for required in ("There is no plan review",
                      "The writer runs only the quick checks the commit hooks need",
                      "handoff runs them", "independent reviews come at handoff"):
@@ -163,15 +164,15 @@ def test_reviewers_run_only_at_handoff() -> None:
         assert "never during the build loop" in flat(agent(name)), name
     assert "on demand during a vibe session" not in agent("vibe-guardrails-reviewer")
     assert "## Plan mode" not in agent("vibe-adversarial-reviewer")
-    assert "## Quality depth at handoff" in DESIGN_PASS.read_text()
-    assert "Both run at handoff" in flat(DESIGN_PASS.read_text())
+    assert "## Quality depth at handoff" in skill_split.read(DESIGN_PASS)
+    assert "Both run at handoff" in flat(skill_split.read(DESIGN_PASS))
     writer = flat(agent("vibe-change-worker"))
     assert "do not run or request them in the loop" in writer
     assert "Wait for the separate adversarial plan review" not in writer
 
 
 def test_handoff_runs_the_heavy_validation_the_loop_skips() -> None:
-    skill = HANDOFF_SKILL.read_text()
+    skill = skill_split.read(HANDOFF_SKILL)
     qa = section(skill, "### Browser E2E and the repository's QA passes")
     assert "never in the build loop" in qa
     assert "Browser E2E runs headless" in qa
@@ -184,8 +185,8 @@ def test_handoff_runs_the_heavy_validation_the_loop_skips() -> None:
 
 
 def test_the_two_notices_stay_as_they_are() -> None:
-    notices = section(VIBE_SKILL.read_text(), "### Notices that never wait")
+    notices = section(skill_split.read(VIBE_SKILL), "### Notices that never wait")
     assert "Reference product." in notices
     assert "New Storybook components." in notices
     assert "`STORIES_READY`" in notices
-    assert "never approval gates" in flat(QUALITY.read_text())
+    assert "never approval gates" in flat(skill_split.read(QUALITY))

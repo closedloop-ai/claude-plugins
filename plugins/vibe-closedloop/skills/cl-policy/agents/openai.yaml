@@ -1,0 +1,4 @@
+interface:
+  display_name: "CL Policy"
+  short_description: "ClosedLoop access discovery and routing policy."
+  default_prompt: "Use $cl-policy to discover safe ClosedLoop access and resolve routing contacts and communication rules before ticket work."

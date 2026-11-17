@@ -2,12 +2,13 @@
 
 from pathlib import Path
 
-from vibe_contract_text import flat, section
+from vibe_contract_text import PROVIDER_REFERENCES, flat, section
+import skill_split
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
 GUARDRAILS = PLUGIN / "skills" / "vibe" / "references" / "guardrails.md"
-TICKET_TEMPLATE = PLUGIN / "skills" / "vibe" / "references" / "ticket-template.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
 CHANGE_WORKER = PLUGIN / "agents" / "vibe-change-worker.md"
 TICKET_WORKER = PLUGIN / "agents" / "vibe-ticket-worker.md"
 ENVIRONMENT_WORKER = PLUGIN / "agents" / "vibe-environment-worker.md"
@@ -17,7 +18,7 @@ VISUAL_TEMPLATE = PLUGIN / "skills" / "fleet-orchestrator" / "references" / "tem
 
 def test_screen_notes_have_one_owner_and_an_explicit_empty_case() -> None:
     """The writer records screen changes without editing a protected map."""
-    rule = flat(section(GUARDRAILS.read_text(), "## Feature map lines"))
+    rule = flat(section(skill_split.read(GUARDRAILS), "## Feature map lines"))
     for phrase in (
         "target repo's screen map and its writer policy",
         "never edits or regenerates a map reserved for a bot or refresh skill",
@@ -27,24 +28,24 @@ def test_screen_notes_have_one_owner_and_an_explicit_empty_case() -> None:
     ):
         assert phrase in rule, phrase
     assert "pnpm control" not in rule
-    assert "`Feature map:`" in flat(CHANGE_WORKER.read_text())
+    assert "`Feature map:`" in flat(skill_split.read(CHANGE_WORKER))
 
 
 def test_screen_notes_reach_the_ticket_and_requested_pr_verbatim() -> None:
     """Both existing record writers carry the same screen note text."""
-    handoff = flat(section(TICKET_TEMPLATE.read_text(), "## Handoff"))
+    handoff = flat(section(skill_split.read(TICKET_TEMPLATE), "## Handoff"))
     assert "- Feature map: <each `Feature map:` line from the writer's change log, verbatim" in handoff
     assert '"None: no screen behavior or reach changed"' in handoff
-    ticket = flat(section(TICKET_WORKER.read_text(), "## Handoff mode"))
+    ticket = flat(section(skill_split.read(TICKET_WORKER), "## Handoff mode"))
     assert "Feature map line: copies each `Feature map:` line from the writer's change log verbatim into Handoff" in ticket
-    summary = flat(section(ENVIRONMENT_WORKER.read_text(), "## Pull-request mode"))
+    summary = flat(section(skill_split.read(ENVIRONMENT_WORKER), "## Pull-request mode"))
     assert "Add each `Feature map:` line from the change log as a standalone line in Summary, verbatim" in summary
     assert "Add none when the log has none" in summary
 
 
 def test_fleet_discovers_screens_and_respects_the_repository_writer() -> None:
     """Fleet uses a target repo specialist and its protected file policy."""
-    skill = FLEET.read_text()
+    skill = skill_split.read(FLEET)
     roles = section(skill, "## Roles")
     assert "Running app reproduction and verification" in roles
     assert "run-and-drive skill (for example `control`)" in roles
@@ -55,4 +56,4 @@ def test_fleet_discovers_screens_and_respects_the_repository_writer() -> None:
     pushback = section(skill, "## Pushback")
     assert "reserved writer policy for generated files" in pushback
     assert "A generator change follows the repo's explicit exception" in pushback
-    assert "Where: <screen map entry ids when available, plus URLs or component story ids>" in VISUAL_TEMPLATE.read_text()
+    assert "Where: <screen map entry ids when available, plus URLs or component story ids>" in skill_split.read(VISUAL_TEMPLATE)

@@ -5,14 +5,22 @@ import { agentModels } from "./agent-models.ts";
 
 /** vibe 1.1.71 and later ship their hooks, and the modules those run, in this plugin (ISS-13869). */
 const HOOKS_PLUGIN = "vibe-core";
+/** The ClosedLoop build of vibe, the release `vibe@closedloop-ai` ships, which carries its provider. */
+const BUILT_VIBE = "vibe-closedloop";
+/** The name the snapshot's vibe runs under in every arm, as a release and main's baseline name it. */
+const VIBE_NAME = "vibe";
+const MANIFESTS = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
 
 /** Run-owned bytes of the pinned main plugin and its declared core dependency. */
 export interface PluginSnapshot {
   sha: string;
+  /** The generic plugins/vibe, named vibe, with its evals: the generic arm. */
   vibeDir: string;
   coreDir: string;
   /** vibe-core, when the pinned tree has it. */
   hooksDir?: string;
+  /** plugins/vibe-closedloop, when the pinned tree has it: the provider (ClosedLoop) arm. */
+  builtDir?: string;
   agentModels: Record<string, string>;
 }
 
@@ -35,6 +43,11 @@ function manifestVersion(path: string): string {
     throw new Error("eval-release-version-invalid");
   }
   return value.version;
+}
+
+/** The vibe a provider (ClosedLoop) arm runs: the build when the snapshot has one, else the plugins/vibe of an older tree. */
+export function providerVibeDir(snapshot: PluginSnapshot): string {
+  return snapshot.builtDir ?? snapshot.vibeDir;
 }
 
 /** Whether the tree at `sha` has the vibe-core plugin. */
@@ -62,13 +75,15 @@ export function archivePluginRelease(repo: string, ref: string, runRoot: string,
   if (sha !== ref) throw new Error("eval-release-ref-mismatch");
   mkdirSync(runRoot, { recursive: true });
   const withHooks = hasHooksPlugin(repo, sha);
+  // A release ships the ClosedLoop build as vibe once the tree has one; an older tree ships plugins/vibe.
+  const released = `plugins/${hasPlugin(repo, sha, BUILT_VIBE) ? BUILT_VIBE : VIBE_NAME}`;
   const archive = execFileSync("git", ["-C", repo, "archive", "--format=tar", sha,
-    ".claude-plugin/marketplace.json", "plugins/vibe", "plugins/closedloop-core",
+    ".claude-plugin/marketplace.json", released, "plugins/closedloop-core",
     ...(withHooks ? [`plugins/${HOOKS_PLUGIN}`] : []), "CHANGELOG.md"],
   { maxBuffer: 80 * 1024 * 1024 });
   const unpack = spawnSync("tar", ["-xf", "-"], { cwd: runRoot, input: archive, encoding: "utf8" });
   if (unpack.status !== 0) throw new Error(`eval-release-archive-failed:${unpack.stderr ?? "unknown"}`);
-  const vibeDir = realpathSync(join(runRoot, "plugins/vibe"));
+  const vibeDir = realpathSync(join(runRoot, released));
   const coreDir = realpathSync(join(runRoot, "plugins/closedloop-core"));
   const version = manifestVersion(join(vibeDir, ".claude-plugin/plugin.json"));
   if (expectedVersion !== undefined && version !== expectedVersion) {
@@ -113,7 +128,7 @@ export function archiveSnapshotTarget(repo: string, ref: string, runRoot: string
   const hooksDir = snapshot.hooksDir ? join(runRoot, "plugins", HOOKS_PLUGIN) : undefined;
   const claudeHooksRoot = hooksVersion ? claudeCacheRoot(runRoot, HOOKS_PLUGIN, hooksVersion) : undefined;
   for (const [source, archive, cache] of [
-    [snapshot.vibeDir, release.vibeDir, claudeVibeRoot],
+    [providerVibeDir(snapshot), release.vibeDir, claudeVibeRoot],
     [snapshot.coreDir, release.coreDir, claudeCoreRoot],
     [snapshot.hooksDir, hooksDir, claudeHooksRoot],
   ]) {
@@ -137,8 +152,8 @@ export function archiveSnapshotTarget(repo: string, ref: string, runRoot: string
 
 /** Read the candidate version from its sealed plugin snapshot, not the older HEAD manifest. */
 export function snapshotPluginVersion(snapshot: PluginSnapshot): string {
-  const version = manifestVersion(join(snapshot.vibeDir, ".claude-plugin/plugin.json"));
-  if (manifestVersion(join(snapshot.vibeDir, ".codex-plugin/plugin.json")) !== version) {
+  const version = manifestVersion(join(providerVibeDir(snapshot), ".claude-plugin/plugin.json"));
+  if (manifestVersion(join(providerVibeDir(snapshot), ".codex-plugin/plugin.json")) !== version) {
     throw new Error("eval-current-snapshot-version-mismatch");
   }
   return version;
@@ -150,13 +165,15 @@ function archivePlugins(repo: string, expectedSha: string, runRoot: string): Plu
   if (existsSync(snapshotDir)) throw new Error("benchmark-plugin-snapshot-exists");
   mkdirSync(snapshotDir, { recursive: true });
   const archive = execFileSync("git", ["-C", repo, "archive", "--format=tar", expectedSha,
-    "plugins/vibe", "plugins/closedloop-core", ...(hasHooksPlugin(repo, expectedSha) ? [`plugins/${HOOKS_PLUGIN}`] : [])],
+    "plugins/vibe", "plugins/closedloop-core", ...(hasHooksPlugin(repo, expectedSha) ? [`plugins/${HOOKS_PLUGIN}`] : []),
+    ...(hasPlugin(repo, expectedSha, BUILT_VIBE) ? [`plugins/${BUILT_VIBE}`] : [])],
   { maxBuffer: 80 * 1024 * 1024 });
   const unpack = spawnSync("tar", ["-xf", "-"], { cwd: snapshotDir, input: archive, encoding: "utf8" });
   if (unpack.status !== 0) throw new Error(`benchmark-plugin-archive-failed:${unpack.stderr ?? "unknown"}`);
   // Native evaluators resolve macOS aliases such as /tmp to /private/tmp in
   // their artifacts. Keep the launch and evidence identity physical too.
   const vibeDir = realpathSync(join(snapshotDir, "plugins/vibe"));
+  nameManifests(vibeDir);
   const coreDir = realpathSync(join(snapshotDir, "plugins/closedloop-core"));
   const vibeManifest = JSON.parse(readFileSync(join(vibeDir, ".claude-plugin/plugin.json"), "utf8")) as {
     name?: string; dependencies?: string[];
@@ -173,7 +190,31 @@ function archivePlugins(repo: string, expectedSha: string, runRoot: string): Plu
     agentModels: models,
   }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   sealSnapshotRepository(snapshotDir);
-  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), agentModels: models };
+  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), ...snapshotBuiltDir(snapshotDir), agentModels: models };
+}
+
+/** The ClosedLoop build in a snapshot, when the snapshot has it. */
+function snapshotBuiltDir(snapshotDir: string): { builtDir?: string } {
+  const builtDir = join(snapshotDir, "plugins", BUILT_VIBE);
+  return existsSync(builtDir) ? { builtDir: realpathSync(builtDir) } : {};
+}
+
+/**
+ * Names the snapshot's plugins/vibe `vibe`, as run.py's generic arm does, so the eval cases and skill ids that name
+ * `vibe:` resolve against it; the source keeps vibe-generic. A manifest already named vibe is left byte for byte.
+ */
+function nameManifests(vibeDir: string): void {
+  for (const relative of MANIFESTS) {
+    const file = join(vibeDir, relative);
+    if (!existsSync(file)) continue;
+    const manifest = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    if (manifest.name !== VIBE_NAME) writeFileSync(file, `${JSON.stringify({ ...manifest, name: VIBE_NAME }, null, 2)}\n`);
+  }
+}
+
+/** Whether the tree at `sha` has plugin `name`. */
+function hasPlugin(repo: string, sha: string, name: string): boolean {
+  return spawnSync("git", ["-C", repo, "cat-file", "-e", `${sha}:plugins/${name}`]).status === 0;
 }
 
 /** vibe-core in a snapshot, when the snapshot has it. */
@@ -215,11 +256,12 @@ export function snapshotPluginsAtWorktree(repo: string, expectedSha: string,
   if (existsSync(snapshotDir)) throw new Error("benchmark-plugin-snapshot-exists");
   mkdirSync(join(snapshotDir, "plugins"), { recursive: true });
   const copier = join(repo, "plugins/vibe/skills/vibe/scripts/tested-head.mjs");
-  for (const name of ["vibe", "closedloop-core", ...(existsSync(join(repo, "plugins", HOOKS_PLUGIN)) ? [HOOKS_PLUGIN] : [])]) {
+  for (const name of ["vibe", "closedloop-core", ...[HOOKS_PLUGIN, BUILT_VIBE].filter((plugin) => existsSync(join(repo, "plugins", plugin)))]) {
     execFileSync(process.execPath, [copier, "copy", join(repo, "plugins", name),
       join(snapshotDir, "plugins", name)], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
   }
   const vibeDir = realpathSync(join(snapshotDir, "plugins/vibe"));
+  nameManifests(vibeDir);
   const coreDir = realpathSync(join(snapshotDir, "plugins/closedloop-core"));
   const vibeManifest = JSON.parse(readFileSync(join(vibeDir, ".claude-plugin/plugin.json"), "utf8")) as {
     name?: string; dependencies?: string[];
@@ -233,7 +275,7 @@ export function snapshotPluginsAtWorktree(repo: string, expectedSha: string,
   writeFileSync(join(snapshotDir, "snapshot.json"), `${JSON.stringify({ sha: expectedSha,
     mode: "worktree", agentModels: models }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   sealSnapshotRepository(snapshotDir);
-  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), agentModels: models };
+  return { sha: expectedSha, vibeDir, coreDir, ...snapshotHooksDir(snapshotDir), ...snapshotBuiltDir(snapshotDir), agentModels: models };
 }
 
 /** Archive the latest accepted nightly, which may precede documentation-only main commits. */

@@ -15,9 +15,9 @@
 // snapshot fields come straight from it. It reads this machine's budget only; a remote machine
 // runs the same command there.
 
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { budgetDisabled, createBudget, resolveSettings } from "../../vibe/scripts/heavy-budget.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const DISPATCH_BUDGET_SCHEMA = "vibe.fleet-dispatch-budget/1";
 export const SWITCH_ENV = "FLEET_BUDGET_GUIDANCE";
@@ -48,7 +48,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

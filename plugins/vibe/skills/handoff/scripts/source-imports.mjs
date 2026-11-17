@@ -2,6 +2,9 @@
 // and the route rule's e2e import graph. Text reads only.
 
 import path from "node:path";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+
+const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|css|scss|sass|less|json|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot)$/;
 export const IMPORT_SPECIFIER = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
@@ -277,14 +280,15 @@ function sassModule(stem, specifier, from, files) {
   return indexes[0];
 }
 
-/** An import specifier resolved to a file in `files` (relative or `@repo/`), or undefined. */
+/** An import specifier resolved to a file in `files` (relative, or a workspace alias the provider names), or undefined. */
 export function resolveImport(from, specifier, files) {
   const target = STYLESHEET.test(from) ? specifier.split(/[?#]/, 1)[0] : specifier;
   let stems;
   if (target.startsWith(".")) {
     stems = [path.posix.join(path.posix.dirname(from), target)];
-  } else if (target.startsWith("@repo/")) {
-    stems = [`packages/${target.slice("@repo/".length)}`];
+  } else if (workspaceAlias(target)) {
+    const [, pkg, ...rest] = target.split("/");
+    stems = workspaceAlias(target).bases.map((base) => base.replace("{package}", pkg).replace("{rest}", rest.join("/") || "index").replace(/\/index$/, ""));
   } else if (target.startsWith("@/")) {
     const suffix = target.slice(2);
     const appRoot = /^(apps\/[^/]+)\//.exec(from)?.[1];
@@ -332,4 +336,9 @@ export function createImportClosure(files, readMany, include = () => true) {
 
 export function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The workspace import alias (the provider's `recipes.prEvidence.workspaceAliases`) a specifier starts with, or undefined. */
+function workspaceAlias(specifier) {
+  return (providerDataOr(sessionBinding(), "recipes", "prEvidence", null)?.workspaceAliases ?? []).find((alias) => specifier.startsWith(alias.prefix));
 }

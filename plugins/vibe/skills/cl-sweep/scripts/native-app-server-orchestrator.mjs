@@ -17,7 +17,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   AppServerClient,
   initializeClient,
@@ -31,6 +30,7 @@ import {
 import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 export const SESSION_SCHEMA = 'APP_SERVER_ORCHESTRATOR_SESSION v1';
 export const EVENT_SCHEMA = 'APP_SERVER_ORCHESTRATOR_EVENT v1';
@@ -1673,7 +1673,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

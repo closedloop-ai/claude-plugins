@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from vibe_contract_text import agent, flat
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = PLUGIN_ROOT / "skills" / "vibe" / "scripts"
@@ -26,7 +27,7 @@ DEFAULT_KEYS = ("targetUtilisation", "minWorkers", "maxWaitSeconds", "pollSecond
 
 
 def source(name: str) -> str:
-    return (SCRIPTS / name).read_text()
+    return skill_split.read(SCRIPTS / name)
 
 
 def headings(text: str) -> list[tuple[int, str, int]]:
@@ -120,7 +121,7 @@ def test_background_runs_never_read_a_dead_or_stale_run_as_passed() -> None:
 
 
 def test_handoff_starts_the_lane_run_before_the_reviews_and_joins_it_before_alignment() -> None:
-    text = HANDOFF_SKILL.read_text()
+    text = skill_split.read(HANDOFF_SKILL)
     start_title = "Start the lane run in the background"
     join_title = "Join the background lane run"
     titles = [name for _, name, _ in headings(text)]
@@ -149,9 +150,9 @@ def test_the_flags_the_skill_uses_exist_in_verify_run_and_the_worker_can_join() 
 
 def test_current_version_and_prior_release_notes() -> None:
     for manifest in (".claude-plugin", ".codex-plugin"):
-        assert json.loads((PLUGIN_ROOT / manifest / "plugin.json").read_text())["version"] == "1.1.87", manifest
-    assert "Version `1.1.87`" in (PLUGIN_ROOT / "README.md").read_text()
-    changelog = (PLUGIN_ROOT.parents[1] / "CHANGELOG.md").read_text()
+        assert json.loads(skill_split.read(PLUGIN_ROOT / manifest / "plugin.json"))["version"] == "1.1.99", manifest
+    assert "Version `1.1.99`" in skill_split.read(PLUGIN_ROOT / "README.md")
+    changelog = skill_split.read(PLUGIN_ROOT.parents[1] / "CHANGELOG.md")
     assert "### vibe v1.1.76" in changelog
     assert "### vibe v1.1.61" in changelog
     assert "### vibe v1.1.54" in changelog

@@ -4,13 +4,17 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
   testIntegrityCandidates,
   testIntegrityProblems,
   testIntegrityProofShapeProblems,
   proofSourceAt,
 } from "./test-integrity.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const COMMIT = "a".repeat(40);
 const RECEIPT_DIR = mkdtempSync(path.join(tmpdir(), "test-integrity-receipts-"));

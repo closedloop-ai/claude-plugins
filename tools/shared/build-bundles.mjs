@@ -37,6 +37,9 @@ export async function buildBundles({ build, toolDir, outdir, isEntry, banner, ex
     target: "node18",
     outExtension: { ".js": ".mjs" },
     banner: { js: banner },
+    // Paths in the bundle are relative to the tool, never to where the build was started, so it is byte-identical
+    // from any working directory.
+    absWorkingDir: toolDir,
     ...extra,
   });
   console.log(`built ${entries.length} entries to ${outdir}`);

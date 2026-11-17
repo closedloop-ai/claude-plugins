@@ -31,6 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, section
+import skill_split
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -47,11 +48,11 @@ PROPERTIES = "shadow and elevation, font size, weight, color, spacing, radius, b
 
 
 def rule() -> str:
-    return section(QUALITY.read_text(), HEADING)
+    return section(skill_split.read(QUALITY), HEADING)
 
 
 def check() -> str:
-    return section(QUALITY.read_text(), CHECK)
+    return section(skill_split.read(QUALITY), CHECK)
 
 
 def assert_all(text: str, required: tuple[str, ...]) -> None:
@@ -82,21 +83,21 @@ def test_an_attached_image_is_saved_recorded_and_forwarded_as_a_path_never_a_des
         "`local_image` input item",
         "`Read` in Claude Code, `view_image` in Codex",
     ))
-    loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
+    loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
     assert_all(loop, (
         "`node scripts/reference-images.mjs attached --worktree \"<wt>\" --request-id <id>`",
         "every saved reference image path",
         "Never send your own description of an image in place of its path.",
     ))
-    assert "a worker never sees what the person attached in chat" in section(VIBE_SKILL.read_text(), "## Harness notes")
+    assert "a worker never sees what the person attached in chat" in section(skill_split.read(VIBE_SKILL), "## Harness notes")
     assert (VIBE / "scripts" / "reference-images.mjs").is_file()
 
 
 def test_the_relay_carries_the_saved_paths_in_both_harnesses() -> None:
-    claude = (DIST / "claude-worker.mjs").read_text()
+    claude = skill_split.read(DIST / "claude-worker.mjs")
     assert "referenceImages" in claude
     assert '"vibe-change-worker", "vibe-requirements-worker", "vibe-verify-worker"' in claude
-    assert "referenceImages" in (DIST / "writer-state.mjs").read_text()
+    assert "referenceImages" in skill_split.read(DIST / "writer-state.mjs")
 
 
 def test_reading_the_reference_is_a_required_recorded_step() -> None:
@@ -129,10 +130,10 @@ def test_an_outside_product_screenshot_runs_reference_mode_with_visual_and_ux_re
         "goes to the existing missing-primitive path (`NEEDS_PRIMITIVE`",
         "Never copy the outside product's words",
     ))
-    notices = section(VIBE_SKILL.read_text(), "### Notices that never wait")
+    notices = section(skill_split.read(VIBE_SKILL), "### Notices that never wait")
     assert "gives a screenshot of another product whether or not they name it" in notices
     assert "the visual requirements are always extracted" in notices
-    assert_all(section((AGENTS / "vibe-requirements-worker.md").read_text(), "## Reference mode"), (
+    assert_all(section(skill_split.read(AGENTS / "vibe-requirements-worker.md"), "## Reference mode"), (
         "Open every reference image path yourself as an image",
         "never work from someone else's description of it",
         "When the product is named or identifiable from the image",
@@ -157,16 +158,16 @@ def test_the_check_runs_with_a_reference_image_and_never_without_one() -> None:
         "and the change renders UI. With no reference image",
         "With no reference image there is no render and no compare.",
     ))
-    lean = section(QUALITY.read_text(), "## Lean build loop")
+    lean = section(skill_split.read(QUALITY), "## Lean build loop")
     assert "The reference check before ready is the one exception to this rule, and it runs only with a reference image." in lean
     assert "- Reference check: only when the person gave a reference image" in lean
     assert "the one exception to its no-automated-visual-QA rule" in rule()
     assert "With no reference image there is no render or compare." in flat(agent("vibe-change-worker"))
-    assert "With no reference image there is no render or compare" in section(VIBE_SKILL.read_text(), "## 5. Build loop")
-    capture = section(ENVIRONMENT.read_text(), "## Capturing for the reference check")
+    assert "With no reference image there is no render or compare" in section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
+    capture = section(skill_split.read(ENVIRONMENT), "## Capturing for the reference check")
     assert "Only when the session has a reference image" in capture
     assert "with none, nothing here runs" in capture
-    for text in (rule(), flat(agent("vibe-change-worker")), flat(VIBE_SKILL.read_text())):
+    for text in (rule(), flat(agent("vibe-change-worker")), flat(skill_split.read(VIBE_SKILL))):
         assert "sanity look" not in text
 
 
@@ -195,20 +196,20 @@ def test_the_check_is_not_a_design_review() -> None:
 
 def test_the_result_gates_the_ready_message_and_never_claims_a_match_over_a_seen_gap() -> None:
     assert "The result gates the ready message. A difference still visible is not ready" in check()
-    says = section(QUALITY.read_text(), "### What the orchestrator says")
+    says = section(skill_split.read(QUALITY), "### What the orchestrator says")
     assert "never tells the person the result matches the reference, or that a visible property is done, when it has seen a gap" in says
-    deploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
+    deploy = section(skill_split.read(VIBE_SKILL), "## 6. Deploy each change")
     assert "When the session has a reference image, look at each touched screen beside it first" in deploy
     assert "a visible difference is not ready" in deploy
     assert "Never say it matches the reference when you have seen a gap" in deploy
 
 
 def test_capture_works_in_both_harnesses_with_named_fallbacks() -> None:
-    reference = section(ENVIRONMENT.read_text(), "## Capturing a reference")
+    reference = section(skill_split.read(ENVIRONMENT), "## Capturing a reference")
     assert "`Read` on the path in Claude Code, `view_image` on the path in Codex" in reference
     assert "throwaway headless Playwright script" in reference
     assert "Never sign in to another product or type a credential." in reference
-    assert_all(section(ENVIRONMENT.read_text(), "## Capturing for the reference check"), (
+    assert_all(section(skill_split.read(ENVIRONMENT), "## Capturing for the reference check"), (
         "local Storybook",
         "`pnpm control up desktop --mode e2e`",
         "never `--headed`, `--allow-write`, `eval` or `eval-main`",
@@ -230,13 +231,13 @@ def test_a_token_the_surface_lacks_is_logged_for_engineering_not_invented() -> N
 
 
 def test_a_visible_change_needing_an_outside_path_is_never_silently_reverted() -> None:
-    assert_all(flat(HANDOFF_SKILL.read_text()), (
+    assert_all(flat(skill_split.read(HANDOFF_SKILL)), (
         "A removal never silently undoes a visible change the person already saw",
         "tell the person in one plain line which part will look different until engineering makes it",
         "the affected criterion goes back to `not met yet` with that reason",
         "the touched screen is rendered again in the verify worker's control mode on the final commit",
     ))
-    assert_all(flat(GUARDRAILS.read_text()), (
+    assert_all(flat(skill_split.read(GUARDRAILS)), (
         "The same holds for a path outside the allowed table: the writer does not edit it in the loop either.",
         "so they never accept a change the branch cannot keep.",
         'A vibe tooling defect follows "Plugins and tooling" above; it does not stop the allowed work by itself.',

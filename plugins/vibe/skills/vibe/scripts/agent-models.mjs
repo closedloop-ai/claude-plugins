@@ -1,5 +1,5 @@
 // Each vibe agent's role, and the models a person chose in place of the
-// defaults. Every vibe agent's model is a default (ISS-14109; operator
+// defaults. Every vibe agent's model is a default (operator
 // rulings of 2026-11-12, "opus should be the default for code writing, sonnet for
 // exploration", "the user can override the model to whatever they want" and
 // "the models should be defaults, not mandatory"). Claude Code takes the
@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { vibeSkillOf } from "../../../shared/plugin-roots.mjs";
 
 /** The roles a Codex worker can have; `../../cl-sweep/scripts/model-policy.mjs` binds each to a model and effort. */
 export const CodexWorkerRole = Object.freeze({
@@ -74,7 +75,7 @@ export function isModelName(value) {
 
 /** The agent's bare name and role; an unknown agent is refused rather than given a default. */
 export function agentRole(agentName) {
-  const agent = typeof agentName === "string" ? agentName.replace(/^vibe:/, "") : agentName;
+  const agent = typeof agentName === "string" ? vibeSkillOf(agentName) ?? agentName : agentName;
   const role = Object.hasOwn(VIBE_AGENT_ROLES, agent) ? VIBE_AGENT_ROLES[agent] : undefined;
   if (!role) {
     throw new Error(`Unknown vibe agent: ${agentName}`);

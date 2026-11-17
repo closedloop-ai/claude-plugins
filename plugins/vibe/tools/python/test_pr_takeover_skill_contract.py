@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 import pytest
+import skill_split
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -22,15 +23,15 @@ def _section(text: str, heading: str) -> str:
 
 
 def test_both_manifests_publish_the_same_new_skill_version() -> None:
-    claude = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
-    codex = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text())
-    assert claude["version"] == codex["version"] == "1.1.87"
+    claude = json.loads(skill_split.read(PLUGIN / ".claude-plugin" / "plugin.json"))
+    codex = json.loads(skill_split.read(PLUGIN / ".codex-plugin" / "plugin.json"))
+    assert claude["version"] == codex["version"] == "1.1.99"
     assert codex["skills"] == "./skills/"
-    assert SKILL.read_text().startswith("---\nname: pr-takeover\n")
+    assert skill_split.read(SKILL).startswith("---\nname: pr-takeover\n")
 
 
 def test_url_only_entry_does_not_depend_on_a_prior_vibe_session() -> None:
-    skill = SKILL.read_text()
+    skill = skill_split.read(SKILL)
     entry = _section(skill, "## 1. Resolve the PR before launching work")
     assert "Input: one GitHub pull request URL" in skill
     assert "no vibe session" in skill
@@ -39,7 +40,7 @@ def test_url_only_entry_does_not_depend_on_a_prior_vibe_session() -> None:
 
 
 def test_unverified_premise_never_reaches_fix_or_confirmed_ticket() -> None:
-    review = _section(SKILL.read_text(), "## 2. Review the PR independently")
+    review = _section(skill_split.read(SKILL), "## 2. Review the PR independently")
     assert "independently reopens every cited source line" in review
     assert "any `UNVERIFIED` premise" in review
     assert "neither a confirmed bug to fix nor a confirmed vibe mistake to file" in review
@@ -47,7 +48,7 @@ def test_unverified_premise_never_reaches_fix_or_confirmed_ticket() -> None:
 
 
 def test_stack_review_and_main_conflict_are_separate() -> None:
-    skill = SKILL.read_text()
+    skill = skill_split.read(SKILL)
     review = _section(skill, "## 2. Review the PR independently")
     repair = _section(skill, "## 4. Repair the actual PR")
     assert "live base branch as the review diff base" in review
@@ -58,7 +59,7 @@ def test_stack_review_and_main_conflict_are_separate() -> None:
 
 
 def test_prevention_deduplicates_and_uses_claude_plugins_worktree() -> None:
-    section = _section(SKILL.read_text(), "## 3. Feed verified vibe mistakes back to vibe")
+    section = _section(skill_split.read(SKILL), "## 3. Feed verified vibe mistakes back to vibe")
     for phrase in (
         "Search recent open claude-plugins vibe tickets",
         "Do not create a duplicate",
@@ -73,7 +74,7 @@ def test_prevention_deduplicates_and_uses_claude_plugins_worktree() -> None:
 
 
 def test_push_threads_and_merge_boundary() -> None:
-    section = _section(SKILL.read_text(), "## 4. Repair the actual PR")
+    section = _section(skill_split.read(SKILL), "## 4. Repair the actual PR")
     assert "commit-worktree.mjs" in section
     assert "`git push origin HEAD:<source branch>`" in section
     assert "Never force push, skip hooks, merge the PR, or arm auto-merge" in section
@@ -82,7 +83,7 @@ def test_push_threads_and_merge_boundary() -> None:
 
 
 def test_e2e_requires_real_displayless_or_permitted_remote_evidence() -> None:
-    section = _section(SKILL.read_text(), "## 5. Run required E2E and record it on the PR")
+    section = _section(skill_split.read(SKILL), "## 5. Run required E2E and record it on the PR")
     for phrase in (
         "`pnpm test:lanes`",
         "pre-pr-lanes.mjs",
@@ -99,7 +100,7 @@ def test_e2e_requires_real_displayless_or_permitted_remote_evidence() -> None:
 
 
 def test_fleet_routes_engineer_pr_takeover_without_changing_dead_writer_route() -> None:
-    section = _section(FLEET.read_text(), "## Moving work between runtimes and accounts")
+    section = _section(skill_split.read(FLEET), "## Moving work between runtimes and accounts")
     assert "`vibe:pr-takeover`" in section and "`$pr-takeover`" in section
     assert "dead writer" in section and "does not start the PR review" in section
 
@@ -118,25 +119,25 @@ def test_fleet_routes_engineer_pr_takeover_without_changing_dead_writer_route() 
 def test_claude_and_codex_share_each_rehearsal_case(case: str) -> None:
     prompt = EVALS / case / "prompt.md"
     assert prompt.is_file()
-    text = prompt.read_text()
+    text = skill_split.read(prompt)
     assert "vibe:pr-takeover" in text
     assert "allowed_tools: [Skill, Read, Grep, Glob]" in text
     graders = list((prompt.parent / "graders").glob("*.md"))
     assert graders
     for grader in graders:
-        pattern = re.search(r"^pattern: '(.+)'$", grader.read_text(), re.MULTILINE)
+        pattern = re.search(r"^pattern: '(.+)'$", skill_split.read(grader), re.MULTILINE)
         assert pattern is not None, grader
         re.compile(pattern.group(1))
 
 
 def test_codex_runner_loads_takeover_skill_before_vibe_fallback() -> None:
-    runner = (EVALS / "codex" / "run.py").read_text()
+    runner = skill_split.read(EVALS / "codex" / "run.py")
     assert 'SKILLS = ("pr-takeover", "fleet-orchestrator", "handoff", "vibe")' in runner
 
 
 def _grader_matches(case: str, grader: str, answer: str) -> bool:
     path = EVALS / f"orch-pr-takeover-{case}" / "graders" / f"{grader}.md"
-    text = path.read_text()
+    text = skill_split.read(path)
     pattern = re.search(r"^pattern: '(.+)'$", text, re.MULTILINE)
     assert pattern is not None, path
     matched = re.search(pattern.group(1), answer, re.IGNORECASE) is not None
@@ -220,13 +221,13 @@ def test_delivery_grader_rejects_arming_auto_merge_on_an_open_pr() -> None:
 
 
 def test_takeover_prompts_use_the_codex_rewrite_form() -> None:
-    runner = (EVALS / "codex" / "run.py").read_text()
+    runner = skill_split.read(EVALS / "codex" / "run.py")
     assert "vibe|handoff|fleet-orchestrator|pr-takeover" in runner
     for prompt in sorted(EVALS.glob("orch-pr-takeover-*/prompt.md")):
-        assert "(`vibe:pr-takeover`)" in prompt.read_text(), prompt
+        assert "(`vibe:pr-takeover`)" in skill_split.read(prompt), prompt
 
 
 def test_codex_reviewer_path_names_managed_app_server_receipt() -> None:
-    review = _section(SKILL.read_text(), "## 2. Review the PR independently")
+    review = _section(skill_split.read(SKILL), "## 2. Review the PR independently")
     assert "managed App Server thread" in review
     assert "../handoff/SKILL.md" in review

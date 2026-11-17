@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibe_contract_text import flat
+from vibe_contract_text import PROVIDER_REFERENCES, flat
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -41,7 +41,7 @@ def test_handoff_change_worker_and_decomposer_point_at_the_command() -> None:
 
 
 def test_unstable_base_stories_go_on_the_ticket_as_known_main_failures() -> None:
-    template = flat((REFERENCES / "ticket-template.md").read_text())
+    template = flat((PROVIDER_REFERENCES / "ticket-template.md").read_text())
     assert "Each `unstable-on-base` story goes there as" in template
     assert "renders differently on two base renders at <base>; diff: <its cropped diff>" in template
 

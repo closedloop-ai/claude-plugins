@@ -22,12 +22,12 @@
 // {"ok":false,"error":...} and exit non-zero.
 
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 const { git, readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -120,7 +120,7 @@ export function attachedImageGroups(transcriptText) {
 
 /**
  * The current harness's own transcript file, from the conversation harness-identity.mjs
- * resolves; never the other harness's transcript under an inherited id (ISS-13834).
+ * resolves; never the other harness's transcript under an inherited id.
  */
 export function findTranscript(env = process.env, harness = {}) {
   const actor = harnessActor(env, harness);
@@ -238,7 +238,7 @@ function run(command, values) {
   throw new Error("Unknown command. Use one of: save, attached, list.");
 }
 
-if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
+if (isEntryPoint(import.meta.url)) {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
     options: {

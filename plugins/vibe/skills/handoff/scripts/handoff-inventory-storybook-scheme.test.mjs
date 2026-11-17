@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
-import { STORY_GROUP_ORDER_PATH, StorybookScheme, storybookSchemeOf } from "./storybook-taxonomy.mjs";
+import { StorybookScheme, storybookSchemeOf } from "./storybook-taxonomy.mjs";
+
+// The story group order file of the repository the ClosedLoop provider serves.
+const STORY_GROUP_ORDER_PATH = JSON.parse(readFileSync(new URL("../../../../vibe-closedloop-provider/provider.json", import.meta.url), "utf8"))
+  .data.recipes.layout.storyGroupOrder;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");

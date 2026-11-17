@@ -18,7 +18,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { commandSegments } from "./command-segments.mjs";
-import { deny, eventCwd, isMain } from "./hook-dispatch.mjs";
+import { deny, eventCwd } from "./hook-dispatch.mjs";
+import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 const SIGNAL_OPTION = /^-(?:[A-Za-z][A-Za-z0-9+-]*|\d+)$/;
 const BY_NAME = /^p?kill(?:all)?$/;
@@ -137,7 +138,7 @@ export function killGuard(event) {
   return problems.length === 0 ? null : deny(`Signal only processes this session started and recorded: ${problems.join("; ")}`);
 }
 
-if (isMain(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     if (process.argv[2] !== "own") throw new Error("usage: kill-guard.mjs own <pid>...");
     recordOwn(process.argv.slice(3), process.cwd());

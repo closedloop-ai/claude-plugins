@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Fleet Monitor"
+  short_description: "Get woken when a Codex session or PR needs attention"
+  default_prompt: "Use $codex-fleet-monitor to watch my Codex sessions and their pull requests."

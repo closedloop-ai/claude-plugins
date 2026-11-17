@@ -40,6 +40,8 @@ npm run build      # rebuild committed dist/*.mjs (written to plugins/code/skill
 
 Each plugin's manifest lives at `plugins/<name>/.claude-plugin/plugin.json` with `name`, `description`, `version`, and `author` fields. The `.claude-plugin/marketplace.json` at repo root registers all eight plugins.
 
+Where a vibe change goes: generic behavior goes in `plugins/vibe` (published as `vibe-generic`) and carries no ClosedLoop or symphony-alpha words, which `plugins/vibe/tools/python/vibe_generic_scan.py check` (`test_vibe_generic_scan.py`) enforces. ClosedLoop text and data go in `plugins/vibe-closedloop-provider` (provider blocks, `provider.json`, `build.json`). `plugins/vibe-closedloop` (published as `vibe`) is the output of `npm run build` in `tools/vibe-closedloop-build`: never edit it by hand; rebuild and commit it, and CI's `TypeScript (vibe-closedloop-build)` job fails when it differs from the build.
+
 ### Agent Definitions
 
 Markdown files with YAML frontmatter specifying `name`, `description`, `model`, `tools`, and `skills`. Model selection convention: **opus** for creative/planning, **sonnet** for implementation, **haiku** for lightweight coordination. Only reference tools listed in frontmatter — no hallucinated tool calls.

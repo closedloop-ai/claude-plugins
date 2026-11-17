@@ -11,7 +11,7 @@
 // programs/<slug>/. Given the home, the work dir is the active program's dir;
 // given programs/<slug> itself, that dir. Any other directory is a flat work
 // dir from before the home layout and is used as is. Given the home, a chat
-// bound to one of its programs (chat-binding.mjs, ISS-14028) gets its own
+// bound to one of its programs (chat-binding.mjs) gets its own
 // program; anything else gets `current`, unless another program of the home
 // is bound to a chat, when `current` may be another chat's: then it is
 // refused (AMBIGUOUS-HOME) and the caller passes the program dir. A chat whose
@@ -30,8 +30,8 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { ambiguousHome, canonicalHome, chatBinding, commandChat, takenOver } from "../../fleet-orchestrator/scripts/chat-binding.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const PER_PROGRAM_KEYS = ["LOCAL_STATE_DIR", "REQUESTS_DIR", "REMOTE_STATE_DIR", "REMOTE_REQUESTS_DIR"];
 
@@ -127,7 +127,7 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

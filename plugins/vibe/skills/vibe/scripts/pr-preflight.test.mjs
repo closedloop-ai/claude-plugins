@@ -3,11 +3,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { claimedCheckProblems, claimProblems, E2eKind, e2eClaimProblems, followUpTicketProblems, testedCommitProblems, titleProblems, workspacePackages } from "./pr-preflight.mjs";
 import { visualBaselineLedgerProblems } from "../../handoff/scripts/visual-baseline-ledger.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { bindProviderInProcess } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
