@@ -1,18 +1,16 @@
 import { z } from "zod";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 
-export const graphOperations = new Set([
-  "blast_radius_tickets", "code_architecture", "code_callers", "code_grep", "code_importers",
-  "code_projects", "code_snippet", "code_symbols", "code_tests_for", "fts_search", "get_entity_edge",
-  "get_routing_protocol", "graph_query", "query_collisions", "query_shipped", "query_wip",
-  "readonly_sql", "search_memory_facts", "search_nodes", "sync_status", "ticket_detail",
-]);
-export const recordOperations = new Set([
-  "create_document", "create_document_version", "update_document", "upload_attachment", "create_artifact_link",
-]);
-export const liveReadOperations = new Set([
-  "get_document", "get_document_version", "get_document_content", "get_document_comments", "search", "list_documents", "list_document_versions", "list_users",
-  "get_me", "list_projects", "get_project", "list_artifact_links", "list_templates", "get_template",
-]);
+// The MCP operations a launch may grant, per service: the bound provider's graph and tracker tools
+// (`data.graph.operations`, `data.tickets.readOperations` and `recordOperations`); none with no provider bound.
+export function capabilityOperations(binding: unknown = sessionBinding()) {
+  const operations = (capability: string, key: string) => new Set(providerDataOr<string[]>(binding, capability, key, []));
+  return { graph: operations("graph", "operations"), read: operations("tickets", "readOperations"),
+    record: operations("tickets", "recordOperations") };
+}
+// The tracker service's name on the wire; LEGACY_TRACKER_SERVICE, its name before vibe was generic, is still accepted.
+export const TRACKER_SERVICE = "tracker";
+const LEGACY_TRACKER_SERVICE = "closedloop";
 const capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
 
 /** Runtime-neutral identity for an MCP tool whose operation may use underscores or hyphens. */
@@ -32,17 +30,33 @@ export function mcpToolAliases(name: string): string[] {
 }
 export const capabilitySchema = z.object({
   name: z.string().regex(capabilityName),
-  service: z.enum(["graph", "closedloop"]),
+  service: z.enum(["graph", TRACKER_SERVICE, LEGACY_TRACKER_SERVICE]).transform((service) => (service === LEGACY_TRACKER_SERVICE ? TRACKER_SERVICE : service)),
   operation: z.string(),
   access: z.enum(["read", "write"]),
 }).strict().superRefine((value, ctx) => {
-  const validOperation = value.service === "graph"
-    ? value.access === "read" && graphOperations.has(value.operation)
-    : value.access === "read" ? liveReadOperations.has(value.operation) : recordOperations.has(value.operation);
-  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
+  // Shape only: a stored ledger stays readable whatever chat reads it. Whether the session's provider offers the
+  // operation is checked where a capability is granted (`unsupportedCapabilities`, at register and launch).
+  if (mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation || (value.service === "graph" && value.access !== "read")) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
+
+/** The capabilities whose operation the session's provider does not offer for their service and access. */
+export function unsupportedCapabilities(capabilities: readonly { name: string; service: string; operation: string; access: string }[],
+  binding: unknown) {
+  const operations = capabilityOperations(binding);
+  return capabilities.filter((value) => !(value.service === "graph" ? operations.graph.has(value.operation)
+    : value.access === "read" ? operations.read.has(value.operation) : operations.record.has(value.operation)));
+}
+
+/** Refuses a grant naming an operation the session's provider does not offer, as the schema refusal did. */
+export function requireSupportedCapabilities(capabilities: readonly { name: string; service: string; operation: string; access: string }[],
+  binding: unknown) {
+  const unsupported = unsupportedCapabilities(capabilities, binding);
+  if (unsupported.length) {
+    throw new z.ZodError([{ code: z.ZodIssueCode.custom, path: ["capabilities"], message: "Unsupported capability binding" }]);
+  }
+}
 export type Capability = z.infer<typeof capabilitySchema>;
 export const capabilitiesSchema = z.array(capabilitySchema).max(48).refine(
   (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,

@@ -1,4 +1,4 @@
-// Background verify runs (PRD-823, WS8 load-aware execution, W3, ISS-13586). The CPU-bound lane
+// Background verify runs (load-aware execution). The CPU-bound lane
 // run starts in the background and returns a run id at once, so the model-bound handoff work
 // (reviews, summary, ticket and plan work) proceeds while it runs; a join before Final Alignment
 // reads the result. verify-run.mjs wires these into `--background`, `--status <id>` and `--wait <id>`.

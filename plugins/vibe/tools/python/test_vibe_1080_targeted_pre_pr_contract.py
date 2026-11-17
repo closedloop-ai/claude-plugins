@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import skill_split
 from vibe_contract_text import flat
 
 
@@ -11,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def read(path: str) -> str:
-    return (ROOT / path).read_text()
+    return skill_split.read(ROOT / path)
 
 
 def test_handoff_requires_final_diff_inventory_before_pr_creation() -> None:

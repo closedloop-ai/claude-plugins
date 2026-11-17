@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isVibePlugin } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 
 /** Raised when a caller-supplied root cannot be the plugin these workers belong to. */
 export class AgentRootError extends Error {
@@ -60,7 +61,7 @@ export function resolveAgentRoot(supplied: string | undefined, installed: string
 
 function isPluginRoot(root: string): boolean {
   if (!existsSync(join(root, "agents"))) return false;
-  try { return readPluginManifest(root).name === "vibe"; }
+  try { return isVibePlugin(readPluginManifest(root).name); }
   catch { return false; }
 }
 

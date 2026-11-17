@@ -5,9 +5,8 @@
 // A prepared journal proves no App Server request only after its exact launcher has ended.
 import { linkSync, lstatSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
@@ -105,7 +104,7 @@ function probePreflight(claimPath, attempt, statePath, journalPath) {
   return 'preflight-dead';
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   const [, , action, claimPath, attempt, pidText, journalPath] = process.argv;
   try {
     if (action === 'journal' && process.argv.length === 7) process.stdout.write(preparedLauncherEvidence(claimPath, attempt, pidText, journalPath));

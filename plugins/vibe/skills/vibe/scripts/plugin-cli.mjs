@@ -1,11 +1,16 @@
-// Finding the Claude Code and Codex CLIs and reading which closedloop-ai plugins each lists.
+// Finding the Claude Code and Codex CLIs and reading which plugins from vibe's marketplace each lists.
 // It loads nothing from vibe-core, so plugin-version.mjs can still report a missing vibe-core.
 
 import { accessSync, constants, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pluginInstall, pluginMarketplace } from "../../../shared/plugin-roots.mjs";
 
-export const MARKETPLACE = "closedloop-ai";
+const SELF = pluginInstall(import.meta.url);
+/** The marketplace this vibe was installed from, read from its install path. */
+export const MARKETPLACE = pluginMarketplace(SELF);
+/** The name this vibe is published under (vibe or vibe-generic), read from its own manifest. */
+export const OWN_PLUGIN = SELF.name;
 export const BUNDLED_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
 /** harness-identity.mjs's Harness values, the names a harness goes by on the wire. */
 const CLAUDE = "claude";
@@ -18,7 +23,7 @@ export function findCli(harness, env = process.env, home = os.homedir()) {
   return onPath(harness, env) ?? fallbacks.find(isExecutable) ?? null;
 }
 
-/** The enabled closedloop-ai plugins one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
+/** The enabled plugins from vibe's marketplace one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
 export function installedPlugins(harness, listing) {
   const parsed = typeof listing === "string" ? JSON.parse(listing) : listing;
   if (harness === CLAUDE) {

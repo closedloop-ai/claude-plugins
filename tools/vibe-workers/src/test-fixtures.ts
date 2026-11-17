@@ -3,15 +3,20 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Capability } from "./contracts.js";
+import { type Capability, TRACKER_SERVICE } from "./contracts.js";
 
 export const graph: Capability[] = [{ name: "mcp__custom_graph__sync_status", service: "graph", operation: "sync_status", access: "read" }];
 export const liveReads: Capability[] = ["get_document", "get_me"].map((operation) => ({
-  name: `mcp__live_workspace__${operation}`, service: "closedloop", operation, access: "read" }));
-export const recordWrite: Capability = { name: "mcp__live_workspace__create_document_version", service: "closedloop", operation: "create_document_version", access: "write" };
+  name: `mcp__live_workspace__${operation}`, service: TRACKER_SERVICE, operation, access: "read" }));
+export const recordWrite: Capability = { name: "mcp__live_workspace__create_document_version", service: TRACKER_SERVICE, operation: "create_document_version", access: "write" };
 export const bundleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../../plugins/vibe/skills/vibe/scripts/dist");
 
 /** Owns a session repository's Git identity so later commits never depend on the host's configuration. */
+/** The ClosedLoop provider bound, as in the repository these fixtures model (its plans stay in `.closedloop-ai/`). */
+export const PROVIDER_BINDING = { state: "bound", name: "vibe-closedloop-provider",
+  root: resolve(import.meta.dirname, "../../../plugins/vibe-closedloop-provider"),
+  capabilities: ["tickets", "plans", "graph", "memory", "recipes"] };
+
 export function fixture() {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "vibe-workers-test-")));
   const worktree = join(base, "session");
@@ -22,7 +27,7 @@ export function fixture() {
   keepFixtureMaintenanceForeground(worktree);
   execFileSync("git", ["commit", "--allow-empty", "-m", "Fixture initial state"], { cwd: worktree, stdio: "ignore" });
   const metadata = join(worktree, ".git");
-  writeFileSync(join(metadata, "vibe-session.json"), JSON.stringify({ worktree, branch: "vibe/test" }));
+  writeFileSync(join(metadata, "vibe-session.json"), JSON.stringify({ worktree, branch: "vibe/test", provider: PROVIDER_BINDING }));
   const agentRoot = join(base, "vibe");
   mkdirSync(join(agentRoot, "agents"), { recursive: true });
   mkdirSync(join(agentRoot, ".claude-plugin"));

@@ -5,7 +5,7 @@ import { resolve, dirname, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
-import { fileURLToPath } from 'node:url';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 const phases = new Set(['coding', 'planning', 'reviewing', 'waiting', 'waiting_for_human', null]);
 const reviewKinds = new Set(['plan', 'code']);
 const automaticWaitKinds = new Set(['merge_queue', 'review', 'ci', 'monitoring', 'dependency', 'other']);
@@ -218,7 +218,7 @@ export function recordSessionDisplayEvent(sessionPath, session, detail) {
     return recordDisplayEvent(root.rootPath, { ...detail, sweepId: root.sweepId, workerId: session.ownerId, ownerGeneration: session.generation });
   } catch { return false; }
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const args = {};
     for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];

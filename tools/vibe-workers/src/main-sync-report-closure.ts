@@ -3,17 +3,19 @@ import { builtinModules } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { z } from "zod";
-import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { isPlanFile } from "./main-sync-plan-folder.js";
 import { MainSyncError } from "./main-sync-contracts.js";
 import { readInputModule, isInputModulePath, inputModuleReferences, referenceMatches, inputCallName, inputBuiltin, inputUnlocatedFileName,
   inputExpressionReference, inputKnownString, type NativeReferenceEnvironment } from "./main-sync-input-references.js";
-import { reportOutputs } from "./main-sync-input-catalog.js";
+import { reportOutputsFor } from "./main-sync-recipe.js";
 import { reportChildEntries, reportLoaderEntries, reportRelativeCwd, reportShellEntries, reportLiteralWords,
   workspaceDirectory, type ReportCommandEntry, type ReportCwd } from "./main-sync-report-command.js";
 import type { ReportExecution } from "./main-sync-report-execution.js";
 import { rejectReportReplay } from "./main-sync-report-execution.js";
 import { isolatedReportArgument } from "./main-sync-report-fixture.js";
 import { committedSet, withCommittedTree } from "./main-sync-committed-tree.js";
+
+const SCOPED_PACKAGE = /^@[^/]+\/[^/]+/;
 
 const MODULE_EXTENSIONS = ["", ".ts", ".tsx", ".mjs", ".js", ".cts", ".mts", "/index.ts", "/index.js"];
 const BUILTINS = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
@@ -42,7 +44,7 @@ function walkReportClosure(execution: ReportExecution, entries: readonly ReportC
     if (!contexts.has(contextIdentity) && contexts.size >= 4096) throw unproved("selected closure context bound");
     contexts.add(contextIdentity);
     seen.add(identity);
-    if (!tracked.has(entry.file) || isLocalPlanPath(entry.file)) throw unproved("selected entry is not public committed source");
+    if (!tracked.has(entry.file) || isPlanFile(execution.root, entry.file)) throw unproved("selected entry is not public committed source");
     if (entry.file.endsWith(".sh")) {
       pending.push(...reportShellEntries(execution, entry.file, entry.context));
       continue;
@@ -50,15 +52,15 @@ function walkReportClosure(execution: ReportExecution, entries: readonly ReportC
     const source = readInputModule(execution.root, entry.file, nativeEnvironment(entry.context, entry.argv));
     const collected = new Set<string>();
     if (inputModuleReferences(execution.root, entry.file, (file, reference) => {
-      // A file name under an unbound directory, such as a module's own `join(outDir, "results.json")`, locates no retained report (ISS-14015).
+      // A file name under an unbound directory, such as a module's own `join(outDir, "results.json")`, locates no retained report.
       if (inputUnlocatedFileName(reference)) return false;
       if (reference.kind !== "path") {
         for (const candidate of tracked) {
-          if (PUBLIC_MODULE.test(candidate) && !isLocalPlanPath(candidate)
+          if (PUBLIC_MODULE.test(candidate) && !isPlanFile(execution.root, candidate)
             && referenceMatches(execution.root, file, reference, [candidate])) collected.add(candidate);
         }
       }
-      return referenceMatches(execution.retainedRoot, file, reference, [...reportOutputs]);
+      return referenceMatches(execution.retainedRoot, file, reference, [...reportOutputsFor(execution.retainedRoot)]);
     }, source)) {
       throw new MainSyncError(`Selected committed reader consumes retained report evidence: ${entry.file}; no output-only admission`, "NEEDS_CHANGE");
     }
@@ -98,7 +100,7 @@ function walkReportClosure(execution: ReportExecution, entries: readonly ReportC
               const target = resolve(context.cwd.path, script);
               if (!target.startsWith(`${execution.root}/`)) throw unproved("isolated reader escapes owned root");
               const file = relative(execution.root, target);
-              if (!tracked.has(file) || isLocalPlanPath(file)) throw unproved("isolated reader is not committed source");
+              if (!tracked.has(file) || isPlanFile(execution.root, file)) throw unproved("isolated reader is not committed source");
               pending.push({ file, context: context.cwd, argv: [process.execPath, target, isolated] });
               ts.forEachChild(node, inspect);
               return;
@@ -132,9 +134,10 @@ function resolveImport(root: string, importer: string, specifier: string, tracke
     const path = resolve(dirname(join(root, importer)), specifier);
     if (!path.startsWith(`${root}/`)) throw unproved("selected import escapes owned root");
     const stem = relative(root, path);
-    return trackedModule(stem, tracked);
+    return trackedModule(root, stem, tracked);
   }
-  if (specifier.startsWith("@repo/") || specifier.startsWith("@closedloop-ai/")) {
+  // A scoped bare specifier may name a workspace package; one that names none resolves to nothing here.
+  if (SCOPED_PACKAGE.test(specifier)) {
     return workspaceImport(root, specifier, tracked, mode);
   }
   // Installed package internals are not a general filesystem non-read obligation.
@@ -157,7 +160,7 @@ function workspaceImport(root: string, specifier: string, tracked: ReadonlySet<s
     }
     const absolute = resolve(root, base, target);
     if (!absolute.startsWith(`${join(root, base)}/`)) throw unproved("workspace export escapes committed owner");
-    selected.push(...trackedModule(relative(root, absolute), tracked));
+    selected.push(...trackedModule(root, relative(root, absolute), tracked));
   }
   return [...new Set(selected)];
 }
@@ -170,8 +173,8 @@ function moduleCandidates(path: string) {
 }
 
 /** Public data imports such as stylesheets stay unparsed; private planning paths still reach the entry refusal. */
-function trackedModule(path: string, tracked: ReadonlySet<string>) {
-  const candidate = moduleCandidates(path).find(file => tracked.has(file) && (isInputModulePath(file) || isLocalPlanPath(file)));
+function trackedModule(root: string, path: string, tracked: ReadonlySet<string>) {
+  const candidate = moduleCandidates(path).find(file => tracked.has(file) && (isInputModulePath(file, root) || isPlanFile(root, file)));
   return candidate ? [candidate] : [];
 }
 

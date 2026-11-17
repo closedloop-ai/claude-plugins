@@ -11,8 +11,8 @@
 // gh cannot answer. `LESSONS_GH` overrides the gh binary.
 
 import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 /** Open PRs whose title or branch matches `pattern`. */
 export function openLessonsPrs(prs, pattern) {
@@ -36,7 +36,7 @@ function main(argv) {
   return open.length === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

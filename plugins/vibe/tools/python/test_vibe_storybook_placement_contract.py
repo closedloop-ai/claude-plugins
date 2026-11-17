@@ -26,7 +26,7 @@ import re
 from pathlib import Path
 
 import skill_split
-from vibe_contract_text import agent, flat, paragraph, section
+from vibe_contract_text import PROVIDER_REFERENCES, agent, flat, paragraph, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -37,8 +37,8 @@ VIBE_SKILL = VIBE / "SKILL.md"
 DESIGN_PASS = VIBE / "references" / "design-pass.md"
 QUALITY_LOOP = VIBE / "references" / "quality-loop.md"
 GUARDRAILS = VIBE / "references" / "guardrails.md"
-TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
-GRAPH = VIBE / "references" / "closedloop-graph.md"
+TICKET_TEMPLATE = PROVIDER_REFERENCES / "ticket-template.md"
+GRAPH = PROVIDER_REFERENCES / "closedloop-graph.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 README = PLUGIN_ROOT / "README.md"
@@ -65,14 +65,14 @@ def placement_passages() -> dict[str, str]:
     decomposer = agent("vibe-storybook-decomposer")
     return {
         "decomposer": section(decomposer, "## Precedent search") + section(decomposer, "## Modes"),
-        "vibe skill": paragraph(VIBE_SKILL.read_text(), "returns `NEEDS_STORYBOOK` with the capability"),
+        "vibe skill": paragraph(skill_split.read(VIBE_SKILL), "returns `NEEDS_STORYBOOK` with the capability"),
         "writer": paragraph(agent("vibe-change-worker"), "return `NEEDS_STORYBOOK` with the capability"),
-        "design pass": paragraph(DESIGN_PASS.read_text(), "5. Precedent:")
-        + paragraph(DESIGN_PASS.read_text(), "6. Placement:"),
-        "handoff": section(HANDOFF_SKILL.read_text(), "## 4. Storybook"),
-        "guardrails": paragraph(GUARDRAILS.read_text(), "is `vibe-storybook-decomposer`'s Placement"),
-        "ticket": paragraph(TICKET_TEMPLATE.read_text(), "- Storybook placement:"),
-        "readme": paragraph(README.read_text(), "the read-only `vibe-storybook-decomposer` places it"),
+        "design pass": paragraph(skill_split.read(DESIGN_PASS), "5. Precedent:")
+        + paragraph(skill_split.read(DESIGN_PASS), "6. Placement:"),
+        "handoff": section(skill_split.read(HANDOFF_SKILL), "## 4. Storybook"),
+        "guardrails": paragraph(skill_split.read(GUARDRAILS), "is `vibe-storybook-decomposer`'s Placement"),
+        "ticket": paragraph(skill_split.read(TICKET_TEMPLATE), "- Storybook placement:"),
+        "readme": paragraph(skill_split.read(README), "the read-only `vibe-storybook-decomposer` places it"),
     }
 
 
@@ -91,7 +91,7 @@ def test_the_existing_decomposer_owns_placement_and_stays_read_only() -> None:
     assert "`placement`, during `$vibe`: the writer returned `NEEDS_STORYBOOK`" in modes
     assert BEFORE_PLACING in modes
     assert "`handoff`:" in modes
-    duplicates = [path.name for path in AGENTS.glob("*.md") if "## Precedent search" in path.read_text()]
+    duplicates = [path.name for path in AGENTS.glob("*.md") if "## Precedent search" in skill_split.read(path)]
     assert duplicates == ["vibe-storybook-decomposer.md"]
 
 
@@ -116,7 +116,7 @@ def test_precedent_search_reports_everything_from_the_graph_and_the_built_index(
         assert required in search, required
     for line in ("- Capability:", "- Precedents:", "- Owner:", "- Stories:", "- Conflict:"):
         assert line in search, line
-    graph = flat(GRAPH.read_text())
+    graph = flat(skill_split.read(GRAPH))
     assert "`code_importers` on the precedent's providing component" in graph
 
 
@@ -159,12 +159,12 @@ def test_placement_has_no_ask_the_person_path() -> None:
     assert "never a question for the person" in passages["vibe skill"]
     assert "it is never a `NEEDS_PERSON` question" in passages["writer"]
     assert "never to the person" in passages["handoff"]
-    assert "Never route one to the person running the session." in flat(TICKET_TEMPLATE.read_text())
+    assert "Never route one to the person running the session." in flat(skill_split.read(TICKET_TEMPLATE))
     assert "never to the person" in passages["readme"]
 
 
 def test_vibe_runs_the_placement_owner_before_stories_like_its_other_advisors() -> None:
-    skill = VIBE_SKILL.read_text()
+    skill = skill_split.read(VIBE_SKILL)
     assert "| `vibe-storybook-decomposer` | read-only Storybook placement owner" in skill
     assert "`NEEDS_PRIMITIVE`, `NEEDS_BACKEND` or `NEEDS_STORYBOOK` can request read-only guidance only" in flat(skill)
     step = paragraph(skill, "returns `NEEDS_STORYBOOK` with the capability")
@@ -177,7 +177,7 @@ def test_vibe_runs_the_placement_owner_before_stories_like_its_other_advisors() 
     ):
         assert required in step, required
     assert step.index("NEEDS_STORYBOOK") < step.index("STORIES_READY")
-    loop = section(QUALITY_LOOP.read_text(), "## Lean build loop")
+    loop = section(skill_split.read(QUALITY_LOOP), "## Lean build loop")
     assert "read-only `vibe-storybook-decomposer` placement advice" in loop
     writer = flat(agent("vibe-change-worker"))
     assert "Before you create, retitle or move a story or add a shared component, return `NEEDS_STORYBOOK`" in writer
@@ -186,12 +186,12 @@ def test_vibe_runs_the_placement_owner_before_stories_like_its_other_advisors() 
 
 
 def test_the_launcher_accepts_the_placement_status() -> None:
-    assert '"NEEDS_STORYBOOK"' in CONTRACTS.read_text()
-    assert '"NEEDS_STORYBOOK"' in CLAUDE_WORKER_DIST.read_text()
+    assert '"NEEDS_STORYBOOK"' in skill_split.read(CONTRACTS)
+    assert '"NEEDS_STORYBOOK"' in skill_split.read(CLAUDE_WORKER_DIST)
 
 
 def test_owner_prep_looks_for_the_precedent_first_and_points_at_the_repo_rule() -> None:
-    text = DESIGN_PASS.read_text()
+    text = skill_split.read(DESIGN_PASS)
     precedent = paragraph(text, "5. Precedent:")
     for required in (
         "where the same capability already exists for a sibling entity",
@@ -211,10 +211,10 @@ def test_owner_prep_looks_for_the_precedent_first_and_points_at_the_repo_rule() 
 
 
 def test_handoff_and_ticket_record_the_placement() -> None:
-    storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
+    storybook = section(skill_split.read(HANDOFF_SKILL), "## 4. Storybook")
     assert "checked against the Placement blocks in the writer's local plan" in storybook
     assert "the live ticket's Storybook placement line" in storybook
-    ticket = paragraph(TICKET_TEMPLATE.read_text(), "- Storybook placement:")
+    ticket = paragraph(skill_split.read(TICKET_TEMPLATE), "- Storybook placement:")
     assert "its placement and the doc section or precedent it follows, from the writer's Placement blocks" in ticket
 
 
@@ -229,7 +229,7 @@ def test_page_scoped_story_check_is_judgment_only() -> None:
         assert required in check, required
     assert "blocking" not in check
     assert "precedent placement" in frontmatter(reviewer)
-    inventory = INVENTORY.read_text()
+    inventory = skill_split.read(INVENTORY)
     assert "precedent" not in inventory.lower()
     assert "pageScoped" not in inventory
 
@@ -247,13 +247,13 @@ def test_placement_owner_uses_the_repo_storybook_skill_instead_of_restating_it()
         assert required in inputs, required
     copied = ("Top-level entries", "Children per group", "Atomic design", "collapsedRoots", "no-title-property-in-meta")
     for path in sorted(PLUGIN_ROOT.rglob("*.md")):
-        text = path.read_text()
+        text = skill_split.read(path)
         for phrase in copied:
             assert phrase not in text, (path.name, phrase)
 
 
 def test_same_area_means_same_capability_not_same_folder() -> None:
-    rule = paragraph(GUARDRAILS.read_text(), "is `vibe-storybook-decomposer`'s Placement")
+    rule = paragraph(skill_split.read(GUARDRAILS), "is `vibe-storybook-decomposer`'s Placement")
     assert (
         'The "existing story files in the same area" that the repo skill\'s `workflows/author-stories.md` step 1 '
         "says to match are the stories for the same capability that block reports, read with "
@@ -288,11 +288,11 @@ def test_mirroring_copies_structure_never_root_or_version() -> None:
     ) in search
     assert "stories where its stories for that capability live" not in search
     assert "root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>" in search
-    assert "Storybook structure, never its root or version" in flat(DESIGN_PASS.read_text())
+    assert "Storybook structure, never its root or version" in flat(skill_split.read(DESIGN_PASS))
     assert "Storybook structure, never its root or version" in flat(agent("vibe-change-worker"))
-    assert "the structure a sibling entity's precedent set, never its root or version" in flat(GUARDRAILS.read_text())
+    assert "the structure a sibling entity's precedent set, never its root or version" in flat(skill_split.read(GUARDRAILS))
     for path in sorted(PLUGIN_ROOT.rglob("*.md")):
-        assert "ownership, component and Storybook placement" not in flat(path.read_text()), path.name
+        assert "ownership, component and Storybook placement" not in flat(skill_split.read(path)), path.name
 
 
 def test_the_precedent_tiebreak_order_is_stated_once() -> None:
@@ -302,13 +302,13 @@ def test_the_precedent_tiebreak_order_is_stated_once() -> None:
     holders = [
         path.name
         for path in sorted(PLUGIN_ROOT.rglob("*.md"))
-        if any(phrase in flat(path.read_text()) for phrase in ("same providing component", "most recently changed"))
+        if any(phrase in flat(skill_split.read(path)) for phrase in ("same providing component", "most recently changed"))
     ]
     assert holders == ["vibe-storybook-decomposer.md"]
 
 
 def test_the_template_routes_design_conflicts_to_design_review_and_the_rest_to_engineering() -> None:
-    template = TICKET_TEMPLATE.read_text()
+    template = skill_split.read(TICKET_TEMPLATE)
     rule = paragraph(template, "- Conflicts:")
     for required in (
         "goes in exactly one section, by its audience",
@@ -324,10 +324,10 @@ def test_the_template_routes_design_conflicts_to_design_review_and_the_rest_to_e
 
 
 def test_the_handoff_section_no_longer_collects_conflicts() -> None:
-    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    handoff = section(skill_split.read(TICKET_TEMPLATE), "## Handoff")
     assert "conflict" not in handoff.lower()
     assert "for engineering and design" not in handoff
-    storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
+    storybook = section(skill_split.read(HANDOFF_SKILL), "## 4. Storybook")
     assert "each placement and Conflict goes on the live ticket's Storybook placement line" not in storybook
 
 
@@ -335,16 +335,17 @@ def test_producers_carry_the_audience() -> None:
     decomposer = agent("vibe-storybook-decomposer")
     assert "- Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted" in decomposer
     conflict = paragraph(decomposer, "5. A precedent that disagrees")
-    assert f"its audience, `design` or `engineering`, by `../skills/vibe/references/ticket-template.md` {CONFLICTS_RULE}" in conflict
+    # The audience rule is stated in place, so it holds with or without a tracker's ticket template.
+    assert "its audience: `design` for Storybook placement, taxonomy, story granularity or a visual or UX choice, `engineering` for everything else" in conflict
     assert "when unsure it is `engineering`" in conflict
     writer = paragraph(agent("vibe-change-worker"), "return `NEEDS_STORYBOOK` with the capability")
     for required in (
         "Log each Conflict (the block's Conflict line, or a precedent that disagrees with the owner rules in Prep step 5)",
         "`Conflict (design|engineering): <what disagreed>; decided: <how>; evidence: <doc section or precedent paths>`",
-        f"`../skills/vibe/references/ticket-template.md` {CONFLICTS_RULE}, `engineering` when unsure",
+        "`design` for Storybook placement, taxonomy, story granularity or a visual or UX choice, `engineering` for everything else and when unsure",
     ):
         assert required in writer, required
-    skill = paragraph(VIBE_SKILL.read_text(), "returns `NEEDS_STORYBOOK` with the capability")
+    skill = paragraph(skill_split.read(VIBE_SKILL), "returns `NEEDS_STORYBOOK` with the capability")
     assert "logs a Conflict in it with its audience, `design` or `engineering`" in skill
 
 
@@ -356,7 +357,7 @@ def test_consumers_place_each_conflict_once_by_audience() -> None:
         "Never in the Handoff section, never in both, and never to the person.",
     ):
         assert required in ticket, required
-    storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
+    storybook = section(skill_split.read(HANDOFF_SKILL), "## 4. Storybook")
     assert "the ticket worker places it by that audience (`../vibe/references/ticket-template.md`, \"Conflicts\")" in storybook
-    readme = paragraph(README.read_text(), "the read-only `vibe-storybook-decomposer` places it")
+    readme = paragraph(skill_split.read(README), "the read-only `vibe-storybook-decomposer` places it")
     assert "design conflicts under Design Review and everything else on the Engineering checklist" in readme

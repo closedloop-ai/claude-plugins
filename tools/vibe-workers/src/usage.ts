@@ -1,19 +1,20 @@
-import { graphOperations, liveReadOperations, recordOperations } from "./contracts.js";
+import { capabilityOperations, TRACKER_SERVICE } from "./contracts.js";
 
-/** The words that ask a vibe worker CLI for its usage instead of running it (ISS-13291). */
+/** The words that ask a vibe worker CLI for its usage instead of running it. */
 export function asksForUsage(argv: string[]): boolean {
   return argv.length === 1 && ["help", "--help", "-h"].includes(argv[0]!);
 }
 
 /** Which MCP tools a writer binding may carry, from the same sets the capability schema checks. */
 export function capabilityUsage(): string {
-  const list = (values: Set<string>) => [...values].sort().join(", ");
+  const list = (values: Set<string>) => [...values].sort().join(", ") || "none (no provider bound)";
+  const operations = capabilityOperations();
   return [
     "Capabilities: a JSON array of at most 48 { name, service, access, operation } entries, one per MCP tool, no duplicates.",
     "  name       the tool as the harness lists it: mcp__<server>__<operation> (underscores or hyphens)",
-    `  graph      service "graph", access "read": ${list(graphOperations)}`,
-    `  live read  service "closedloop", access "read": ${list(liveReadOperations)}`,
-    `  record     service "closedloop", access "write": ${list(recordOperations)}`,
+    `  graph      service "graph", access "read": ${list(operations.graph)}`,
+    `  live read  service "${TRACKER_SERVICE}", access "read": ${list(operations.read)}`,
+    `  record     service "${TRACKER_SERVICE}", access "write": ${list(operations.record)}`,
     "  Any other tool is refused as an unsupported capability binding.",
   ].join("\n");
 }

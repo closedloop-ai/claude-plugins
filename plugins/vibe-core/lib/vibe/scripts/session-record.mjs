@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /** Executes bounded git reads and operations for the session's exact worktree. */
@@ -15,6 +15,11 @@ function recordPath(worktree) {
   return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-session.json");
 }
 
+/** Where `worktree`'s session record lives (its private git directory); throws outside a git checkout. */
+export function sessionRecordPath(worktree) {
+  return recordPath(worktree);
+}
+
 /** Reads the persisted record without adding surface-specific defaults. */
 export function readSessionRecord(worktree) {
   const file = recordPath(worktree);
@@ -25,11 +30,14 @@ export function readSessionRecord(worktree) {
 export function writeSessionRecord(worktree, record) {
   const file = recordPath(worktree);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(file, 0o600);
+  // Written whole and renamed into place, so a reader never sees a half-written record (provider.mjs reads one as broken).
+  const temporary = `${file}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, file);
 }
 
-/** Reads pre-ISS-12057 ticket records without inventing a ticket when neither field exists. */
+/** Reads older ticket records (`handoffTicket`) without inventing a ticket when neither field exists. */
 export function sessionLiveTicket(record) {
   return record.liveTicket ?? record.handoffTicket ?? null;
 }

@@ -9,8 +9,8 @@
 import { isE2ePath, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { moduleShape } from "./module-symbols.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 
-const API_ROUTE = /^apps\/api\/app\/(.*)\/route\.ts$/;
 const ROUTE_SPEC_HOPS = 3;
 const PASS_LIMIT = 50;
 const RUNS = "specs pin request bodies and untagged specs do not run on the pull request";
@@ -18,7 +18,8 @@ const RUNS = "specs pin request bodies and untagged specs do not run on the pull
 /** Required specs for every changed API route in `files`, each with its reason. */
 export function routeSpecs(files, repo) {
   const routes = files.flatMap((file) => {
-    const match = API_ROUTE.exec(file.path);
+    const apiRoutes = repositoryLayout().apiRoutes;
+    const match = apiRoutes ? new RegExp(apiRoutes).exec(file.path) : null;
     return match ? [{ route: file.path, pattern: endpointPattern(match[1]) }] : [];
   });
   if (routes.length === 0) {

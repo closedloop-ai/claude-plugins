@@ -20,8 +20,8 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const FAILED = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure"]);
 
@@ -84,7 +84,7 @@ function main(argv) {
   return ok ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

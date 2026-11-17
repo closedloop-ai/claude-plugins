@@ -55,6 +55,7 @@ test("each module vibe-core holds has one home: at most a thin command wrapper s
     "skills/vibe/scripts/e2e-lock.mjs",
     "skills/vibe/scripts/image-head.mjs",
     "skills/vibe/scripts/owned-state.mjs",
+    "skills/vibe/scripts/provider.mjs",
     "skills/vibe/scripts/tested-head.mjs",
   ]);
   assert.ok(!existsSync(path.join(VIBE, "hooks", "hooks.json")), "vibe registers no hooks; vibe-core's hooks.json does");
@@ -80,7 +81,7 @@ test("vibe's bundles load vibe-core's modules at run time instead of carrying co
     assert.deepEqual(inlined, [], path.basename(bundle));
   }
   assert.match(readFileSync(path.join(VIBE, "skills", "vibe", "scripts", "dist", "writer-state.mjs"), "utf8"),
-    /^\/\/ vibe-core:lib\/vibe\/scripts\/session-record\.mjs\nvar module = await vibeCore\("lib\/vibe\/scripts\/session-record\.mjs"\);$/m);
+    /^\/\/ vibe-core:lib\/vibe\/scripts\/session-record\.mjs\nvar module\d* = await vibeCore\("lib\/vibe\/scripts\/session-record\.mjs"\);$/m);
 });
 
 test("vibe asks vibe-core only for modules and names it has, at a release no older than VIBE_CORE_MIN", async () => {
@@ -118,6 +119,28 @@ test("the loader names a missing or too old vibe-core and how to fix it", (t) =>
   mkdirSync(path.join(core, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(core, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe-core", version: "0.9.0" }));
   assert.match(load().stderr, new RegExp(`vibe 1\\.1\\.71 needs vibe-core ${VIBE_CORE_MIN.replaceAll(".", "\\.")} or newer, but vibe-core 0\\.9\\.0 is installed; update it`));
+});
+
+test("the loader's fixes name the marketplace and the vibe they were installed from", (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-core-loader-cache-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cache = path.join(root, "codex", "plugins", "cache", "team-market");
+  const vibe = path.join(cache, "vibe-generic", "1.1.88");
+  mkdirSync(path.join(vibe, ".codex-plugin"), { recursive: true });
+  writeFileSync(path.join(vibe, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "vibe-generic", version: "1.1.88" }));
+  cpSync(path.join(VIBE, "shared"), path.join(vibe, "shared"), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
+  const load = () => spawnSync(process.execPath, ["--input-type=module", "-e",
+    `import { vibeCoreProblem, VIBE_CORE_INSTALL } from ${JSON.stringify(pathToFileURL(path.join(vibe, "shared", "vibe-core.mjs")).href)};
+process.stdout.write(JSON.stringify({ problem: vibeCoreProblem()?.message, install: VIBE_CORE_INSTALL }));`], { encoding: "utf8" });
+  const missing = JSON.parse(load().stdout);
+  assert.deepEqual(missing.install, { claude: "claude plugin install vibe-core@team-market", codex: "codex plugin add vibe-core@team-market" });
+  assert.equal(missing.problem, "vibe-core is not installed beside vibe-generic (codex layout); install it with "
+    + "`claude plugin install vibe-core@team-market` in Claude Code or `codex plugin add vibe-core@team-market` in Codex");
+  const core = path.join(cache, "vibe-core", "0.9.0");
+  mkdirSync(path.join(core, ".codex-plugin"), { recursive: true });
+  writeFileSync(path.join(core, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "vibe-core", version: "0.9.0" }));
+  assert.equal(JSON.parse(load().stdout).problem, `vibe-generic 1.1.88 needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core 0.9.0 is installed; `
+    + "update it with `claude plugin update vibe-core@team-market` in Claude Code or `codex plugin add vibe-core@team-market` in Codex");
 });
 
 test("each command wrapper behaves as running its vibe-core module directly", (t) => {

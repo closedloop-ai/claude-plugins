@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 from vibe_contract_text import hook_guard_routed
+import skill_split
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def read(path: str) -> str:
-    return (ROOT / path).read_text()
+    return skill_split.read(ROOT / path)
 
 
 def test_targeted_tests_are_the_lanes_test_lanes_names() -> None:
@@ -37,9 +40,11 @@ def test_bot_threads_and_holds_have_owned_rules() -> None:
 def test_env_less_sessions_push_and_qa_env_uses_vibe_up() -> None:
     environment = read("agents/vibe-environment-worker.md")
     assert "A session with no environment (no `lastRequestId`)" in environment
-    assert 'command: "pnpm vibe up"' in read("skills/handoff/scripts/parallel-prep.mjs")
+    recipes = json.loads(skill_split.read(ROOT.parent / "vibe-closedloop-provider" / "provider.json"))["data"]["recipes"]
+    assert recipes["localQa"]["command"] == "pnpm vibe up", "the provider's local QA command"
+    assert "localQa?.command" in read("skills/handoff/scripts/parallel-prep.mjs")
     verify = read("agents/vibe-verify-worker.md")
     assert "--head <HEAD> --source-hash <treeSha256>" in verify
     assert "`image-head.mjs` refuses stale images" in verify
     assert "position or scrolling the\n  diff changes, inspect every" in verify
-    assert "imageProblem(images)" in (ROOT.parent / "vibe-core" / "lib" / "vibe" / "scripts" / "e2e-lock.mjs").read_text()
+    assert "imageProblem(images)" in skill_split.read(ROOT.parent / "vibe-core" / "lib" / "vibe" / "scripts" / "e2e-lock.mjs")

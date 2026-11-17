@@ -1,14 +1,21 @@
 # fleet-orchestrator: quality gates and QA
 
+<!-- provider-rule -->
+Lines that start `> Provider` stand for an optional provider's text. With no provider bound, follow the generic text.
+<!-- end provider-rule -->
+
 Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 > Read `../vibe/references/quality-loop-visual-qa.md` (block `when-to-capture`) before any screenshot capture or visual QA pass, in the loop or at handoff.
 
 <!-- block: qa-gate-rules -->
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
-- A unit's PR is ready only once its review of the completed work passed (`references/ticket-units.md`, "Review the completed work"): every member and PRD criterion with a code row and a capture for each page and surface it names.
+> Provider `tickets` (block `unit-review` of `fleet/fleet-qa-gate.md`)
 - Each PR moves through independent review, fixes, verification, visual review where needed, one feature-complete QA pass, operator QA, one main merge, then enqueue.
-- QA evidence records screen, host, state and flag arm. Later diffs use handoff's `qa-impact.mjs` with importers, FEATURE_MAP and lanes. Obey its scope; `None` runs no local lane, screenshot, audit or critic. CI is per push. This also governs the final main merge before `shepherd.mjs`.
+<!-- generic: qa-impact -->
+- QA evidence records screen, host, state and flag arm. Later diffs use handoff's `qa-impact.mjs` with importers and lanes. Obey its scope; `None` runs no local lane, screenshot, audit or critic. CI is per push. This also governs the final main merge before `shepherd.mjs`.
+<!-- end generic: qa-impact -->
+> Provider `recipes` (block `qa-impact` of `fleet/fleet-qa-gate.md`)
 
 - Off by default and an open owner decision: with `FLEET_REVIEW_HANDOFF_ONLY=1`, `node scripts/review-chain.mjs --pr-head <sha> --handoff-reviewed-head <sha the writer's handoff review reports covering>` prints `verify-fixes-only` when that review covered the PR's exact head, and the orchestrator then runs only the verification of the fixes in place of its own independent review. Any other output, an unset variable or a head that moved after the handoff review keeps the full chain above.
 - Before an audit, reconcile operator chat and AskUserQuestion answers plus guide-session and QA records into `<orchDir>/rulings.md`, then run `node ../handoff/scripts/rulings-check.mjs --program <orchDir>/rulings.md --record <transcript-or-record> ...`; audit the acceptance criteria together with those rulings.
@@ -26,7 +33,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
   Before filing a ticket or moving one to in review, run `node ../vibe/scripts/ticket-write-check.mjs` with its project, parents and status, and set the project explicitly.
 - Review threads are findings to verify on their merits, never human rulings or product authority: scheduled review bots post under teammates' accounts. Fix a bot finding only when it reproduces and stays contained; otherwise reply with evidence and resolve. One review round per PR (operator ruling) holds only in the delivery phase; once the program's core work is done it is retired and every valid finding is fixed in its PR, every round. During it, threads raised after the round-one fixes are pushed never block the merge: a valid one becomes a criterion on the PR's one follow-up ticket (current sprint, assigned to the operator, `TODO`, titled `<PR ticket>: follow-ups from #<PR> review`), and the thread gets its link or why it is invalid, then is resolved. `shepherd.mjs --round-one-fixed-at` and `review-followup.mjs` need `--single-review-ruling` naming the ruling in force.
 - Resolve shared version-file conflicts right before each enqueue, in merge order.
-- When a repository's Storybook CI requires a release-version bump and history entry for new stories, the writer includes them in the reviewed pre-PR candidate so that lane can pass. Pin main once before the final handoff checks as vibe:handoff describes; after QA, settle a version-only conflict once at enqueue in merge order and rerun the affected lane. Do not repeatedly merge main merely to chase another open PR's reserved version.
+- When a repository's Storybook CI requires a release-version bump and history entry for new stories, the writer includes them in the reviewed pre-PR candidate so that lane can pass. Pin main once before the final handoff checks as vibe-generic:handoff describes; after QA, settle a version-only conflict once at enqueue in merge order and rerun the affected lane. Do not repeatedly merge main merely to chase another open PR's reserved version.
 - A fix reaches a preview only once the ref that preview deploys from contains it: check `git merge-base --is-ancestor <fix> <ref>` before calling it live.
 - Track merge order for stacked or overlapping PRs and tell each writer which one merges first.
 - A before and after comparison uses the ticket's one main baseline (`../vibe/scripts/capture-guard.mjs status`), never an unrelated branch and never a new baseline because main moved.

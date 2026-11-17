@@ -18,7 +18,7 @@ function sources(files) {
 /**
  * A new comparator needs `Comparator: <file>: tie test <test path>` naming a test that exists. Outside the
  * pull-request phase the session writes no tests, so there `Comparator: <file>: missing test listed`, with the
- * tie test on the Missing tests list, stands in for it (ISS-13321).
+ * tie test on the Missing tests list, stands in for it.
  */
 export function checkComparators(files, repo, logged, add, changeLog, phase = "pull-request") {
   for (const file of sources(files)) {

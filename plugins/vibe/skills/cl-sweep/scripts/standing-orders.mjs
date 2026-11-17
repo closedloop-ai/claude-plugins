@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 export const SCHEMA = 'CL_SWEEP_STANDING_ORDERS v1';
 export const FILE_NAME = 'standing-orders.json';
@@ -128,6 +128,6 @@ function main(argv) {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

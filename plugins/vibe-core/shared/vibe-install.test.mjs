@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HookStandDown, hookStandDown, vibeRoot } from "./vibe-install.mjs";
+import { recordHookSkill } from "../hooks/hook-session-scope.mjs";
 
 const CORE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const IMPORT = /(?:^|[^\w.])(?:import|export)\s[^;]*?from\s*["']([^"']+)["']|(?:^|[^\w.])import\s*\(\s*["']([^"']+)["']\s*\)|^\s*import\s*["']([^"']+)["']/gm;
@@ -130,8 +131,10 @@ test("a hook entry point runs once: never beside a vibe that still runs its own 
   mkdirSync(path.join(vibe, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.71" }));
   const hook = path.join(plugins, "vibe-core", "hooks", "pre-tool-use.mjs");
+  // The force-push refusal acts only in a chat that activated vibe (hooks/activation.mjs).
+  recordHookSkill("stand-down-chat", "vibe:vibe", root);
   const run = () => spawnSync(process.execPath, [hook], { encoding: "utf8", env: { ...process.env, HOME: root },
-    input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", cwd: root, tool_input: { command: FORCE_PUSH } }) });
+    input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", session_id: "stand-down-chat", cwd: root, tool_input: { command: FORCE_PUSH } }) });
   const decision = (result) => (result.stdout ? JSON.parse(result.stdout).hookSpecificOutput.permissionDecision : null);
   assert.equal(decision(run()), "deny", "beside a split vibe the hook runs");
   mkdirSync(path.join(vibe, "hooks"));
@@ -141,4 +144,66 @@ test("a hook entry point runs once: never beside a vibe that still runs its own 
   rmSync(vibe, { recursive: true });
   const alone = run();
   assert.deepEqual([alone.status, alone.stdout, alone.stderr], [0, "", ""], "with no vibe there is nothing to guard");
+});
+
+/** `{ name, root }` of the vibe install, and `vibeSkill("vibe")`, as the vibe-core copy at `core` finds them for a session in `cwd`. */
+function found(core, cwd) {
+  const script = `import { vibeInstall, vibeSkill } from ${JSON.stringify(pathToFileURL(path.join(core, "shared", "vibe-install.mjs")).href)};
+const install = vibeInstall(process.argv[1]);
+process.stdout.write(JSON.stringify({ name: install?.name ?? null, root: install?.root ?? null, skill: vibeSkill("vibe", process.argv[1]) }));`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script, cwd], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+test("vibe-core finds vibe under either name, and names its skills by the one it found", (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-install-names-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, "claude");
+  const roots = install(home, [{ name: "vibe", version: "1.1.88" }, { name: "vibe-generic", version: "1.1.88" }, { name: "vibe-core", version: "1.0.10" }]);
+  const core = roots["vibe-core@1.0.10"];
+  const write = (plugins) => writeFileSync(path.join(home, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2,
+    plugins: { "vibe-core@closedloop-ai": [{ scope: "user", installPath: core }], ...plugins } }));
+  write({ "vibe-generic@closedloop-ai": [{ scope: "user", installPath: roots["vibe-generic@1.1.88"] }] });
+  assert.deepEqual(found(core, root), { name: "vibe-generic", root: roots["vibe-generic@1.1.88"], skill: "vibe-generic:vibe" });
+  write({ "vibe@closedloop-ai": [{ scope: "user", installPath: roots["vibe@1.1.88"] }] });
+  assert.deepEqual(found(core, root), { name: "vibe", root: roots["vibe@1.1.88"], skill: "vibe:vibe" });
+  write({});
+  assert.deepEqual(found(core, root), { name: null, root: null, skill: "vibe:vibe" });
+});
+
+// Lead's ruling: with both installed, the ClosedLoop vibe serves the hooks and the binding, as main does for every
+// existing vibe@closedloop-ai user; a checkout still resolves the generic source first.
+test("with both installed, vibe wins in Claude Code and Codex whichever is listed first, unless it is disabled", (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-install-both-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const claudeHome = path.join(root, "claude");
+  const claude = install(claudeHome, [{ name: "vibe", version: "1.1.88" }, { name: "vibe-generic", version: "1.1.88" }, { name: "vibe-core", version: "1.0.10" }]);
+  const entry = (name) => [`${name}@closedloop-ai`, [{ scope: "user", installPath: claude[`${name}@1.1.88`] }]];
+  for (const order of [["vibe", "vibe-generic"], ["vibe-generic", "vibe"]]) {
+    writeFileSync(path.join(claudeHome, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2,
+      plugins: Object.fromEntries([...order.map(entry), ["vibe-core@closedloop-ai", [{ scope: "user", installPath: claude["vibe-core@1.0.10"] }]]]) }));
+    assert.deepEqual(found(claude["vibe-core@1.0.10"], root), { name: "vibe", root: claude["vibe@1.1.88"], skill: "vibe:vibe" }, order.join(" then "));
+  }
+  writeFileSync(path.join(claudeHome, "settings.json"), JSON.stringify({ enabledPlugins: { "vibe@closedloop-ai": false } }));
+  assert.equal(found(claude["vibe-core@1.0.10"], root).name, "vibe-generic", "a disabled vibe is passed over");
+  for (const first of ["vibe", "vibe-generic"]) {
+    const codexHome = path.join(root, `codex-${first}`);
+    // Codex lists its cache folders; create them in each order.
+    const second = first === "vibe" ? "vibe-generic" : "vibe";
+    const codex = install(codexHome, [{ name: first, version: "1.1.88" }, { name: second, version: "1.1.88" }, { name: "vibe-core", version: "1.0.10" }]);
+    assert.deepEqual(found(codex["vibe-core@1.0.10"], root), { name: "vibe", root: codex["vibe@1.1.88"], skill: "vibe:vibe" }, `codex, ${first} first`);
+  }
+});
+
+test("a checkout with both resolves the generic source, plugins/vibe, first", (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-install-checkout-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const plugins = path.join(root, "plugins");
+  cpSync(path.join(CORE, "shared"), path.join(plugins, "vibe-core", "shared"), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
+  for (const [folder, name] of [["vibe-core", "vibe-core"], ["vibe", "vibe-generic"], ["vibe-closedloop", "vibe"]]) {
+    mkdirSync(path.join(plugins, folder, ".claude-plugin"), { recursive: true });
+    writeFileSync(path.join(plugins, folder, ".claude-plugin", "plugin.json"), JSON.stringify({ name, version: "1.1.88" }));
+  }
+  assert.deepEqual(found(path.join(plugins, "vibe-core"), root), { name: "vibe-generic", root: path.join(plugins, "vibe"), skill: "vibe-generic:vibe" });
 });

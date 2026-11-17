@@ -4,14 +4,14 @@
 // installed plugin. This is the single preflight used by Codex fleet turns and
 // Claude reviewer/verifier helper briefs.
 
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { compareSkillVersions, isSkillReload, loadedSkillEvidenceProblem, loadedSkillRequired, reloadableSkill, SKILL_RELOAD } from "../../vibe/scripts/loaded-skill.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { installedPluginVersion, pluginScriptProblems } from "../../vibe/scripts/plugin-script-references.mjs";
 import { vibeRoot } from "../../../shared/vibe-install.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 
 function readJson(file) {
@@ -92,7 +92,7 @@ function skillStaleLines(stateDir, specs, pluginRoot = vibeRoot()) {
   });
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+if (isEntryPoint(import.meta.url)) {
   try { const result = await main(process.argv.slice(2)); process.stdout.write(Array.isArray(result) ? result.map(line => `${line}\n`).join('') : `${JSON.stringify(result)}\n`); }
   catch (error) { process.stderr.write(`skill-freshness: ${error.message}\n`); process.exitCode = 2; }
 }

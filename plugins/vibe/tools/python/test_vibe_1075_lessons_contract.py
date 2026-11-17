@@ -3,8 +3,9 @@
 import re
 from pathlib import Path
 
-from skill_split import assembled
+from skill_split import built
 from vibe_contract_text import flat
+import skill_split
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -18,7 +19,7 @@ TOP_LEVEL_DECLARATION = re.compile(r"^(?:export\s+)?(?:const|let|class)\s+(\w+)"
 
 
 def _text(path: Path) -> str:
-    return flat(path.read_text())
+    return flat(skill_split.read(path))
 
 
 def declarations_after_top_level_await(text: str) -> list[str]:
@@ -38,7 +39,7 @@ def test_no_plugin_script_declares_a_constant_below_its_top_level_await_main() -
     offenders = {
         str(path.relative_to(PLUGINS)): found
         for path in sorted(PLUGINS.rglob("*.mjs"))
-        if "node_modules" not in path.parts and (found := declarations_after_top_level_await(path.read_text()))
+        if "node_modules" not in path.parts and (found := declarations_after_top_level_await(skill_split.read(path)))
     }
     assert offenders == {}
 
@@ -50,9 +51,9 @@ def test_the_top_level_await_scan_catches_the_shape_that_hid_usage_limits() -> N
 
 
 def test_the_watcher_flags_model_drift_wider_questions_and_a_second_copy() -> None:
-    snapshot = (MONITOR / "scripts" / "snapshot.sh").read_text()
+    snapshot = skill_split.read(MONITOR / "scripts" / "snapshot.sh")
     assert snapshot.count("CODEX_MODEL=${CODEX_MODEL:-}") == 2, "local and remote liveness both get the configured model"
-    assert "watch.lock" in (MONITOR / "scripts" / "watch.sh").read_text()
+    assert "watch.lock" in skill_split.read(MONITOR / "scripts" / "watch.sh")
     assert "BLOCKED(unresolved threads)" in snapshot
     monitor = _text(MONITOR / "SKILL.md")
     for wired in ("BLOCKED(unresolved threads)", "MODEL(<model>/<effort>!=<want>)", "`notLoaded`", "permission, authorization or approval", "never with `&`", "resets"):
@@ -60,7 +61,7 @@ def test_the_watcher_flags_model_drift_wider_questions_and_a_second_copy() -> No
 
 
 def test_fleet_orchestrator_runs_each_new_check() -> None:
-    skill = flat(assembled(FLEET / "SKILL.md"))
+    skill = flat(built(FLEET / "SKILL.md"))
     for wired in (
         "checked in code: <file>:<line>",
         "New sessions require `$vibe`, a model and effort",
@@ -87,17 +88,17 @@ def test_fleet_orchestrator_runs_each_new_check() -> None:
 def test_vibe_writers_never_wait_for_authorization_on_in_scope_work() -> None:
     assert "Never stop for authorization on in-scope work" in _text(PLUGIN / "agents" / "vibe-change-worker.md")
     assert "permission to do in-scope work" in _text(VIBE / "SKILL.md")
-    assert "asksLeaveForInScopeWork" in (VIBE / "scripts" / "session-questions.mjs").read_text()
+    assert "asksLeaveForInScopeWork" in skill_split.read(VIBE / "scripts" / "session-questions.mjs")
     assert "executed-check.mjs --kind plan" in _text(PLUGIN / "agents" / "vibe-ticket-worker.md")
 
 
 def test_a_plan_no_human_approved_is_never_a_scope_ruling() -> None:
-    assert "planProblems" in (PLUGIN / "skills" / "handoff" / "scripts" / "rulings-check.mjs").read_text()
+    assert "planProblems" in skill_split.read(PLUGIN / "skills" / "handoff" / "scripts" / "rulings-check.mjs")
     assert "rulings-check.mjs --plan <json> --plan-body <text>" in _text(PLUGIN / "agents" / "vibe-ticket-worker.md")
     assert "--plan <each linked PLN's get-document JSON>" in _text(PLUGIN / "skills" / "handoff" / "SKILL.md")
     assert "rulings-check.mjs --plan <json> --plan-body <text>" in _text(FLEET / "SKILL.md")
     templates = _text(FLEET / "references" / "templates.md")
     assert templates.count("Inherited scope: trace every exclusion") == 2, "takeover preamble and resume prompt"
-    assert "SELF_APPROVED_MARKER}" in (VIBE / "scripts" / "session-plan.mjs").read_text()
+    assert "SELF_APPROVED_MARKER}" in skill_split.read(VIBE / "scripts" / "session-plan.mjs")
     assert "starts with the `Self-approved` line" in _text(PLUGIN / "agents" / "vibe-ticket-worker.md")
     assert "A self-approved plan or a handoff note never counts" in _text(FLEET / "SKILL.md")

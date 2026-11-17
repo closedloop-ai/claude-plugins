@@ -1,8 +1,8 @@
 // A write under ~/.codex/vibe that Codex's default sandbox refused. The startup
-// version check once swallowed that refusal (ISS-13315); the other vibe scripts
+// version check once swallowed that refusal; the other vibe scripts
 // that write there report it the same way, so the orchestrator reruns the same
-// command escalated (one "Allow once") instead of reading a generic failure
-// (ISS-13321). Codex sets CODEX_SANDBOX_NETWORK_DISABLED for every command of
+// command escalated (one "Allow once") instead of reading a generic failure.
+// Codex sets CODEX_SANDBOX_NETWORK_DISABLED for every command of
 // such a turn, escalated ones included, so the variable alone never decides it.
 
 const REFUSED = new Set(["EPERM", "EACCES", "EROFS"]);

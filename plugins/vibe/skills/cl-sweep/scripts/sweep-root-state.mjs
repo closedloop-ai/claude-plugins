@@ -27,6 +27,7 @@ import {
 } from './native-app-server-orchestrator.mjs';
 import { rebindParent as rebindLegacyAppServerParent } from './app-server-worker-session.mjs';
 import { monitorScript as resolveMonitorScript } from './core-client-process.mjs';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 export const REGISTRY_SCHEMA = 'CL_SWEEP_ROOT_REGISTRY v1';
 export const SCOPE_SCHEMA = 'CL_SWEEP_ROOT_SCOPE v1';
@@ -1322,7 +1323,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((error) => {
     process.stderr.write(`${error.stderr?.toString().trim() || error.message}\n`);
     process.exitCode = 1;

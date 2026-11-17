@@ -22,7 +22,9 @@ export function syncLocation(worktree: string) {
   readPrivateJson(join(place.dir, "vibe-session.json"));
   const session = sessionSchema.parse(readSessionRecord(place.root));
   if (session.branch !== place.branch || (session.worktree && realpathSync(session.worktree) !== place.root)
-    || (session.branch.startsWith("prototype/") ? session.mode !== null || !isOwnedPrototypeSession(session, place.branch) : session.mode === null)) {
+    || (session.branch.startsWith("prototype/") ? session.mode !== null || !isOwnedPrototypeSession(session, place.branch)
+      // A session with no hosted environment (no provider recipe names one) has no data mode.
+      : session.mode === null && session.vercel !== null && session.vercel !== undefined)) {
     throw new MainSyncError("Main-sync requires the exact active owned session branch and mode");
   }
   return { ...place, session };
@@ -57,7 +59,7 @@ export function syncContext(raw: unknown, operation: "prepare" | "inputs" | "val
   }
   const differing = ownerMismatches(actual, context, place.root);
   if (differing.length) {
-    // A rebuilt context refused twice with no hint of what differed (ISS-13321); the names, never the values.
+    // A rebuilt context refused twice with no hint of what differed; the names, never the values.
     throw new MainSyncError(`Main-sync requires the exact current owner, role, action and purpose; differs: ${differing.join(", ")}. `
       + "Pass the launch envelope's operationContext verbatim, never a rebuilt one");
   }

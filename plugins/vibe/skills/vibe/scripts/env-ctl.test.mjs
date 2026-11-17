@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   createEnvCtl, extractFailure, NO_ANALYTICS_KEY, NOT_CONFIRMED_READY, parseWorkflowInputs, runForRequest, Status, uncommittedDeliverables,
@@ -23,6 +24,10 @@ jobs:
   x:
     runs-on: ubuntu-latest
 `;
+// The ClosedLoop provider's environment recipe and repository, as a bound session in that repository has them.
+const ENVIRONMENT = JSON.parse(readFileSync(new URL("../../../../vibe-closedloop-provider/provider.json", import.meta.url), "utf8"))
+  .data.recipes.environment;
+const BOUND = { repo: "closedloop-ai/symphony-alpha", environmentFor: () => ENVIRONMENT, planPrefixFor: () => ".closedloop-ai/vibe-plans/" };
 const CTX = JSON.stringify({ context: { runtime: "codex", worktree: "/wt", workerId: "w1", requestId: "r1", mode: "record", recordAction: "redeploy", lease: "lease-1" } });
 const ok = (stdout = "") => ({ status: 0, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr: "" });
 const bad = (stderr = "boom") => ({ status: 1, stdout: "", stderr });
@@ -58,7 +63,7 @@ test("a failed job's log yields its error lines, the refusal and the orgs the wo
     `2026-10-29T10:00:02.1Z clerk_orgs_json=[{"id":"org_1","name":"Acme","isAdmin":true}]`,
     "2026-10-29T10:00:03.1Z ##[error]Process completed with exit code 1.",
   ].join("\n");
-  const failure = extractFailure(log);
+  const failure = extractFailure(log, ENVIRONMENT);
   assert.deepEqual(failure.errors, ["Process completed with exit code 1."]);
   assert.equal(failure.refusal, "clerk_org_ambiguous");
   assert.deepEqual(failure.orgs, [{ id: "org_1", name: "Acme", isAdmin: true }]);
@@ -74,13 +79,15 @@ test("a run is found by the request id in its title, never by position", () => {
 
 test("uncommitted deliverables leave out local fixes and the files a commit never takes", () => {
   const porcelain = " M apps/app/a.tsx\n?? .env.local\n?? .control/x.png\n M packages/fix.ts\n?? .closedloop-ai/vibe-plans/p.md\n";
-  assert.deepEqual(uncommittedDeliverables(porcelain, ["packages/fix.ts"]), ["apps/app/a.tsx"]);
+  assert.deepEqual(uncommittedDeliverables(porcelain, ["packages/fix.ts"], ".closedloop-ai/vibe-plans/"), ["apps/app/a.tsx"]);
+  assert.deepEqual(uncommittedDeliverables(porcelain, ["packages/fix.ts"]), ["apps/app/a.tsx", ".closedloop-ai/vibe-plans/p.md"],
+    "with the plans in the git directory, no worktree folder is left out");
 });
 
 test("flags saves the evaluated flags and never prints the key", async () => {
   const calls = [];
   const written = {};
-  const ctl = createEnvCtl({
+  const ctl = createEnvCtl({ ...BOUND,
     run: router([
       ["vibe-sessions.mjs repo", ok({ ok: true, repo: "/r" })],
       ["posthog-key.mjs", ok({ ok: true, key: "phc_secretsecretsecretsecret", host: "https://us.i.posthog.com" })],
@@ -104,7 +111,7 @@ test("flags saves the evaluated flags and never prints the key", async () => {
 });
 
 test("flags without a key returns the worker's own sentence and the error for engineering", async () => {
-  const ctl = createEnvCtl({ run: router([["vibe-sessions.mjs repo", ok({ repo: "/r" })], ["posthog-key.mjs", ok({ ok: false, error: "offline" })]]) });
+  const ctl = createEnvCtl({ ...BOUND, run: router([["vibe-sessions.mjs repo", ok({ repo: "/r" })], ["posthog-key.mjs", ok({ ok: false, error: "offline" })]]) });
   const result = await ctl.flags({ worktree: "/wt", distinctId: "u", orgId: "o" });
   assert.equal(result.status, Status.Blocked);
   assert.equal(result.message, NO_ANALYTICS_KEY);
@@ -130,7 +137,7 @@ function requestRoutes({ envView, requestView = { status: "completed", conclusio
 test("request follows both runs to success and records the verified result", async () => {
   const calls = [];
   const time = clock();
-  const ctl = createEnvCtl({ run: router(requestRoutes({ envView: { status: "completed", conclusion: "success", jobs: [] } }), calls), ...time, read: () => "{\"branch\":\"vibe/a\"}" });
+  const ctl = createEnvCtl({ ...BOUND, run: router(requestRoutes({ envView: { status: "completed", conclusion: "success", jobs: [] } }), calls), ...time, read: () => "{\"branch\":\"vibe/a\"}" });
   const result = await ctl.request({ stdin: CTX, worktree: "/wt", mode: "create", personEmail: "p@example.com" });
   assert.equal(result.status, Status.Done);
   assert.equal(result.appUrl, "https://app.example");
@@ -144,7 +151,7 @@ test("request follows both runs to success and records the verified result", asy
 
 test("flags mode asks the request workflow not to keep the snapshot", async () => {
   const calls = [];
-  const ctl = createEnvCtl({ run: router(requestRoutes({ envView: { status: "completed", conclusion: "success", jobs: [] } }), calls), ...clock(), read: () => "{}" });
+  const ctl = createEnvCtl({ ...BOUND, run: router(requestRoutes({ envView: { status: "completed", conclusion: "success", jobs: [] } }), calls), ...clock(), read: () => "{}" });
   await ctl.request({ stdin: CTX, worktree: "/wt", mode: "flags" });
   assert.match(calls.find((call) => call.line.includes("dispatch-inputs")).line, /--keep-flag-snapshot false/);
 });
@@ -152,7 +159,7 @@ test("flags mode asks the request workflow not to keep the snapshot", async () =
 test("a failed job stops the follow at once and an org refusal goes to the worker as evidence, with no words written", async () => {
   const jobs = [{ name: "seed", databaseId: 77, status: "completed", conclusion: "failure" }, { name: "later", databaseId: 78, status: "in_progress" }];
   const log = "clerk_org_refusal=clerk_org_ambiguous\nclerk_orgs_json=[{\"id\":\"org_1\",\"name\":\"A\",\"isAdmin\":true}]\n##[error]refused";
-  const ctl = createEnvCtl({
+  const ctl = createEnvCtl({ ...BOUND,
     run: router(requestRoutes({ envView: { status: "in_progress", jobs }, extra: [["jobs/77/logs", ok(log)]] })),
     ...clock(), read: () => "{}",
   });
@@ -167,7 +174,7 @@ test("a failed job stops the follow at once and an org refusal goes to the worke
 
 test("a failed job with no org evidence is BLOCKED with its error lines", async () => {
   const jobs = [{ name: "build", databaseId: 5, status: "completed", conclusion: "timed_out" }];
-  const ctl = createEnvCtl({ run: router(requestRoutes({ envView: { status: "in_progress", jobs }, extra: [["jobs/5/logs", ok("##[error]Build failed")]] })), ...clock(), read: () => "{}" });
+  const ctl = createEnvCtl({ ...BOUND, run: router(requestRoutes({ envView: { status: "in_progress", jobs }, extra: [["jobs/5/logs", ok("##[error]Build failed")]] })), ...clock(), read: () => "{}" });
   const result = await ctl.request({ stdin: CTX, worktree: "/wt", mode: "create" });
   assert.equal(result.status, Status.Blocked);
   assert.deepEqual(result.errors, ["Build failed"]);
@@ -175,7 +182,7 @@ test("a failed job with no org evidence is BLOCKED with its error lines", async 
 
 test("a run still going at the limit is BLOCKED naming the job, never DONE", async () => {
   const jobs = [{ name: "deploy-app", status: "in_progress" }];
-  const ctl = createEnvCtl({ run: router(requestRoutes({ envView: { status: "in_progress", jobs } })), ...clock(), read: () => "{}" });
+  const ctl = createEnvCtl({ ...BOUND, run: router(requestRoutes({ envView: { status: "in_progress", jobs } })), ...clock(), read: () => "{}" });
   const result = await ctl.request({ stdin: CTX, worktree: "/wt", mode: "create", giveUpSeconds: 60, pollSeconds: 15 });
   assert.equal(result.status, Status.Blocked);
   assert.deepEqual(result.stillRunning, ["deploy-app"]);
@@ -183,7 +190,7 @@ test("a run still going at the limit is BLOCKED naming the job, never DONE", asy
 
 test("a run that never appears is BLOCKED after the find window", async () => {
   const routes = requestRoutes({ envView: {} }).map(([matcher, result]) => matcher.includes("--workflow vibe-environment-dispatch.yml") ? [matcher, ok([])] : [matcher, result]);
-  const ctl = createEnvCtl({ run: router(routes), ...clock(), read: () => "{}" });
+  const ctl = createEnvCtl({ ...BOUND, run: router(routes), ...clock(), read: () => "{}" });
   const result = await ctl.request({ stdin: CTX, worktree: "/wt", mode: "create", findSeconds: 30, pollSeconds: 10 });
   assert.equal(result.status, Status.Blocked);
   assert.equal(result.error, "The request run did not appear.");
@@ -191,12 +198,12 @@ test("a run that never appears is BLOCKED after the find window", async () => {
 
 test("a missing result artifact or a refused record is BLOCKED with the worker's sentence and never a URL", async () => {
   const noArtifact = requestRoutes({ envView: { status: "completed", conclusion: "success", jobs: [] } }).map(([m, r]) => m === "run download" ? [m, bad("no artifact")] : [m, r]);
-  const first = await createEnvCtl({ run: router(noArtifact), ...clock(), read: () => "{}" }).request({ stdin: CTX, worktree: "/wt", mode: "create" });
+  const first = await createEnvCtl({ ...BOUND, run: router(noArtifact), ...clock(), read: () => "{}" }).request({ stdin: CTX, worktree: "/wt", mode: "create" });
   assert.equal(first.status, Status.Blocked);
   assert.equal(first.message, NOT_CONFIRMED_READY);
   assert.equal(first.appUrl, undefined);
   const refused = requestRoutes({ envView: { status: "completed", conclusion: "success", jobs: [] } }).map(([m, r]) => m === "environment-result" ? [m, ok({ ok: false, error: "headSha mismatch" })] : [m, r]);
-  const second = await createEnvCtl({ run: router(refused), ...clock(), read: () => "{}" }).request({ stdin: CTX, worktree: "/wt", mode: "create" });
+  const second = await createEnvCtl({ ...BOUND, run: router(refused), ...clock(), read: () => "{}" }).request({ stdin: CTX, worktree: "/wt", mode: "create" });
   assert.equal(second.message, NOT_CONFIRMED_READY);
   assert.equal(second.error, "headSha mismatch");
 });
@@ -204,7 +211,7 @@ test("a missing result artifact or a refused record is BLOCKED with the worker's
 test("a workflow input the session never sends is BLOCKED before anything starts", async () => {
   const calls = [];
   const routes = requestRoutes({ envView: {} }).map(([m, r]) => m === "dispatch-inputs" ? [m, ok({ ok: true, workflow: "w.yml", requestId: "r", inputNames: ["branch"] })] : [m, r]);
-  const result = await createEnvCtl({ run: router(routes, calls), ...clock(), read: () => "{}" }).request({ stdin: CTX, worktree: "/wt", mode: "create" });
+  const result = await createEnvCtl({ ...BOUND, run: router(routes, calls), ...clock(), read: () => "{}" }).request({ stdin: CTX, worktree: "/wt", mode: "create" });
   assert.equal(result.status, Status.Blocked);
   assert.match(result.error, /request_id/);
   assert.ok(!calls.some((call) => call.line.includes("workflow run")));
@@ -213,7 +220,7 @@ test("a workflow input the session never sends is BLOCKED before anything starts
 test("an already published head makes no request", async () => {
   const calls = [];
   const routes = requestRoutes({ envView: {} }).map(([m, r]) => m === "dispatch-inputs" ? [m, ok({ ok: true, mainSync: { status: "DONE", alreadyPublished: true, pushed: false } })] : [m, r]);
-  const result = await createEnvCtl({ run: router(routes, calls), ...clock() }).request({ stdin: CTX, worktree: "/wt", mode: "redeploy" });
+  const result = await createEnvCtl({ ...BOUND, run: router(routes, calls), ...clock() }).request({ stdin: CTX, worktree: "/wt", mode: "redeploy" });
   assert.equal(result.status, "DONE");
   assert.equal(result.requested, false);
   assert.ok(!calls.some((call) => call.line.includes("workflow run")));
@@ -231,12 +238,12 @@ function publishRoutes(overrides = {}) {
 
 test("publish stops on a committed plan, an unsafe migration or an uncommitted file, and pushes nothing", () => {
   const calls = [];
-  const plans = createEnvCtl({ run: router(publishRoutes({ plans: ok({ ok: false, committedLocalPlans: [".closedloop-ai/vibe-plans/a.md"] }) }), calls) }).publish({ stdin: CTX, worktree: "/wt" });
+  const plans = createEnvCtl({ ...BOUND, run: router(publishRoutes({ plans: ok({ ok: false, committedLocalPlans: [".closedloop-ai/vibe-plans/a.md"] }) }), calls) }).publish({ stdin: CTX, worktree: "/wt" });
   assert.equal(plans.status, Status.Blocked);
   assert.deepEqual(plans.problems, [".closedloop-ai/vibe-plans/a.md"]);
-  const migrations = createEnvCtl({ run: router(publishRoutes({ migrations: ok({ ok: false, problems: ["no test"] }) }), calls) }).publish({ stdin: CTX, worktree: "/wt" });
+  const migrations = createEnvCtl({ ...BOUND, run: router(publishRoutes({ migrations: ok({ ok: false, problems: ["no test"] }) }), calls) }).publish({ stdin: CTX, worktree: "/wt" });
   assert.deepEqual(migrations.problems, ["no test"]);
-  const dirty = createEnvCtl({ run: router(publishRoutes({ status: ok(" M apps/app/a.tsx\n") }), calls) }).publish({ stdin: CTX, worktree: "/wt" });
+  const dirty = createEnvCtl({ ...BOUND, run: router(publishRoutes({ status: ok(" M apps/app/a.tsx\n") }), calls) }).publish({ stdin: CTX, worktree: "/wt" });
   assert.equal(dirty.status, Status.NeedsCommit);
   assert.deepEqual(dirty.files, ["apps/app/a.tsx"]);
   assert.ok(!calls.some((call) => call.line.includes("main-sync-push")));
@@ -244,25 +251,25 @@ test("publish stops on a committed plan, an unsafe migration or an uncommitted f
 
 test("publish passes the parent context on stdin and forwards a refusal's own status", () => {
   const calls = [];
-  const clean = createEnvCtl({ run: router(publishRoutes(), calls) }).publish({ stdin: CTX, worktree: "/wt", stdin: CTX });
+  const clean = createEnvCtl({ ...BOUND, run: router(publishRoutes(), calls) }).publish({ stdin: CTX, worktree: "/wt", stdin: CTX });
   assert.equal(clean.status, Status.Done);
   assert.equal(clean.pushed, true);
   assert.equal(calls.find((call) => call.line.includes("main-sync-push")).options.input, CTX);
-  const refused = createEnvCtl({ run: router(publishRoutes({ push: ok({ ok: false, status: "NEEDS_DESKTOP_STOP", error: "desktop running" }) })) }).publish({ stdin: CTX, worktree: "/wt" });
+  const refused = createEnvCtl({ ...BOUND, run: router(publishRoutes({ push: ok({ ok: false, status: "NEEDS_DESKTOP_STOP", error: "desktop running" }) })) }).publish({ stdin: CTX, worktree: "/wt" });
   assert.equal(refused.status, "NEEDS_DESKTOP_STOP");
 });
 
 test("an already published head is reported as such and redeploy then requests nothing", async () => {
   const routes = publishRoutes({ push: ok({ ok: true, mainSync: { alreadyPublished: true, pushed: false } }) });
-  const published = createEnvCtl({ run: router(routes) }).publish({ stdin: CTX, worktree: "/wt" });
+  const published = createEnvCtl({ ...BOUND, run: router(routes) }).publish({ stdin: CTX, worktree: "/wt" });
   assert.deepEqual([published.alreadyPublished, published.pushed], [true, false]);
-  const result = await createEnvCtl({ run: router(routes), ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  const result = await createEnvCtl({ ...BOUND, run: router(routes), ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
   assert.equal(result.requested, false);
   assert.equal(result.alreadyPublished, true);
 });
 
 test("redeploy with no environment stops after the push", async () => {
-  const result = await createEnvCtl({ run: router(publishRoutes()), ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  const result = await createEnvCtl({ ...BOUND, run: router(publishRoutes()), ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
   assert.equal(result.status, Status.Done);
   assert.equal(result.requested, false);
   assert.equal(result.progress, "pushed");
@@ -275,32 +282,32 @@ test("VIBE_REDEPLOY_UI_ONLY=1 skips the environment request only when every chan
   const requested = (calls) => calls.some((call) => call.line.includes("workflow view"));
   const on = { VIBE_REDEPLOY_UI_ONLY: "1" };
   const calls = [];
-  const docs = await createEnvCtl({ run: router(run(ok("docs/a.md\nREADME.md\n")), calls), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  const docs = await createEnvCtl({ ...BOUND, run: router(run(ok("docs/a.md\nREADME.md\n")), calls), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
   assert.deepEqual([docs.status, docs.requested, docs.progress, docs.skippedRedeploy], [Status.Done, false, "pushed", { since: deployed, files: 2 }]);
   assert.ok(calls.some((call) => call.line.includes("main-sync-push")), "the push still happens");
   assert.ok(!requested(calls));
   for (const file of ["apps/app/a.tsx", "packages/design-system/b.ts", "apps/api/route.ts", "packages/database/prisma/schema.prisma", "packages/auth/client.ts", "packages/lib/x.ts", "package.json", "pnpm-lock.yaml", "apps/desktop/prisma/migrations/migration_lock.toml", "apps/web/content/page.md"]) {
     const touched = [];
-    await createEnvCtl({ run: router(run(ok(`docs/a.md\n${file}\n`), [["workflow view", bad()]]), touched), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+    await createEnvCtl({ ...BOUND, run: router(run(ok(`docs/a.md\n${file}\n`), [["workflow view", bad()]]), touched), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
     assert.ok(requested(touched), file);
   }
   const off = [];
-  await createEnvCtl({ run: router(run(ok("docs/a.md\n"), [["workflow view", bad()]]), off), env: {}, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  await createEnvCtl({ ...BOUND, run: router(run(ok("docs/a.md\n"), [["workflow view", bad()]]), off), env: {}, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
   assert.ok(requested(off), "off by default: the request is made as before");
   const unknown = [];
-  await createEnvCtl({ run: router(run(bad("bad object"), [["workflow view", bad()]]), unknown), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  await createEnvCtl({ ...BOUND, run: router(run(bad("bad object"), [["workflow view", bad()]]), unknown), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
   assert.ok(requested(unknown), "a diff git cannot compute never skips");
 });
 
 test("the pull request is opened only when origin is at the verified commit, and an open one is reused", () => {
   const sha = "c".repeat(40);
   const base = [["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)]];
-  const stale = createEnvCtl({ run: router([["ls-remote", ok(`${"d".repeat(40)}\trefs/heads/vibe/a`)]]) });
+  const stale = createEnvCtl({ ...BOUND, run: router([["ls-remote", ok(`${"d".repeat(40)}\trefs/heads/vibe/a`)]]) });
   assert.equal(stale.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }).status, Status.Blocked);
-  const reuse = createEnvCtl({ run: router([...base, ["pr list", ok([{ url: "https://github.com/x/pull/3", number: 3 }])]]) });
+  const reuse = createEnvCtl({ ...BOUND, run: router([...base, ["pr list", ok([{ url: "https://github.com/x/pull/3", number: 3 }])]]) });
   assert.deepEqual(reuse.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }), { status: Status.Done, created: false, url: "https://github.com/x/pull/3", number: 3 });
   const calls = [];
-  const create = createEnvCtl({ run: router([...base, ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/4\n")]], calls) });
+  const create = createEnvCtl({ ...BOUND, run: router([...base, ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/4\n")]], calls) });
   const made = create.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", bodyFile: "/b.md", base: "e".repeat(40) });
   assert.deepEqual(made, { status: Status.Done, created: true, url: "https://github.com/x/pull/4" });
   assert.ok(!calls.some((call) => call.line.includes("--draft") || call.line.includes("merge")));
@@ -309,7 +316,7 @@ test("the pull request is opened only when origin is at the verified commit, and
 test("--draft opens the pull request as a draft and is never the default (ISS-13947)", () => {
   const sha = "c".repeat(40);
   const calls = [];
-  const create = createEnvCtl({ run: router([["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/5\n")]], calls) });
+  const create = createEnvCtl({ ...BOUND, run: router([["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/5\n")]], calls) });
   const made = create.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", bodyFile: "/b.md", base: "e".repeat(40), draft: true });
   assert.deepEqual(made, { status: Status.Done, created: true, url: "https://github.com/x/pull/5" });
   assert.ok(calls.some((call) => call.line.includes("pr create") && call.line.includes("--draft")));
@@ -318,8 +325,39 @@ test("--draft opens the pull request as a draft and is never the default (ISS-13
 test("a title or body the preflight refuses opens nothing", () => {
   const sha = "c".repeat(40);
   const calls = [];
-  const ctl = createEnvCtl({ run: router([["ls-remote", ok(`${sha}\trefs/heads/vibe/a`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: false, problems: ["title is 80 characters"] })]], calls) });
+  const ctl = createEnvCtl({ ...BOUND, run: router([["ls-remote", ok(`${sha}\trefs/heads/vibe/a`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: false, problems: ["title is 80 characters"] })]], calls) });
   const result = ctl.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha, title: "t", bodyFile: "/b", base: sha });
   assert.deepEqual(result, { status: Status.Blocked, problems: ["title is 80 characters"] });
   assert.ok(!calls.some((call) => call.line.includes("pr create")));
+});
+
+test("with no environment recipe, requests are refused before any gh call and a failed log yields no org lines", async () => {
+  const calls = [];
+  const generic = { environmentFor: () => null };
+  const ctl = createEnvCtl({ ...generic, run: router([["config --get remote.origin.url", ok("git@github.com:acme/widgets.git\n")]], calls) });
+  const requested = await ctl.request({ worktree: "/wt", mode: "create", stdin: CTX });
+  assert.equal(requested.status, Status.Blocked);
+  assert.match(requested.error, /no hosted environment/);
+  const flagged = await ctl.flags({ worktree: "/wt", distinctId: "u1", orgId: "o1" });
+  assert.match(flagged.error, /no hosted environment/);
+  assert.ok(!calls.some((call) => call.line.startsWith("gh ")), "nothing reaches GitHub");
+  const log = "clerk_org_refusal=clerk_org_ambiguous\nclerk_orgs_json=[]\n##[error]refused";
+  assert.deepEqual(extractFailure(log), { errors: ["refused"], refusal: null, orgs: null, orgLines: [] });
+});
+
+test("the pull request opens in the repository origin names, against its default branch", () => {
+  const sha = "c".repeat(40);
+  const calls = [];
+  const ctl = createEnvCtl({ environmentFor: () => null, run: router([
+    ["config --get remote.origin.url", ok("https://github.com/acme/widgets.git\n")],
+    ["rev-parse --abbrev-ref origin/HEAD", ok("origin/trunk\n")],
+    ["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })],
+    ["pr create", ok("https://github.com/acme/widgets/pull/4\n")]], calls) });
+  const made = ctl.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha, title: "Do it", bodyFile: "/b.md", base: sha });
+  assert.equal(made.status, Status.Done);
+  const create = calls.find((call) => call.line.includes("pr create")).line;
+  assert.match(create, /--repo acme\/widgets /);
+  assert.match(create, /--base trunk /);
+  const remoteless = createEnvCtl({ environmentFor: () => null, run: router([["config --get remote.origin.url", ok("/srv/git/widgets.git\n")]]) });
+  assert.throws(() => remoteless.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }), /not a GitHub repository/);
 });

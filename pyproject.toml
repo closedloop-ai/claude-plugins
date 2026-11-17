@@ -5,9 +5,13 @@ requires-python = ">=3.13"
 
 [tool.ruff]
 target-version = "py311"
+# Generated from plugins/vibe by tools/vibe-closedloop-build; its sources are linted there.
+extend-exclude = ["plugins/vibe-closedloop"]
 
 [tool.pyright]
 pythonVersion = "3.11"
+# pyright's defaults, plus the generated plugins/vibe-closedloop (checked through its sources in plugins/vibe).
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "plugins/vibe-closedloop"]
 extraPaths = [
   "plugins/code/tools/python",
   "plugins/code/skills/plan-validate/scripts",

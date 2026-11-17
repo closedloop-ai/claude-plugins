@@ -11,16 +11,16 @@
 // declaration runs none. Viewport registration is the one intrinsic Storybook
 // contract: whenever the declaration exists it recognizes MINIMAL_VIEWPORTS,
 // standard preview config, and optional additional config paths below:
-//   {"release": {"versionFile": "apps/storybook/package.json", "versionField": "version",
-//                "historyFiles": ["apps/storybook/stories/start-here-version-history*"]},
+//   {"release": {"versionFile": "storybook/package.json", "versionField": "version",
+//                "historyFiles": ["storybook/stories/version-history*"]},
 //    "frozenRoots": {"titlePattern": "^[^/]+ v1\\.0/", "tags": ["deprecated"]},
 //    "tagRoots": {"preview": "(^|/)Labs(/|$)"},
 //    "noOpHandler": {"pattern": "\\bonUpdate\\w*:\\s*\\(\\)\\s*=>\\s*undefined", "exemptPaths": []},
 //    "handRolledCells": {"patterns": ["<td\\b"], "canonical": "TableTextCell from ..."},
 //    "controlsDecision": {"comment": "No controls:", "exemptTags": ["deprecated"], "allowlist": "..."},
 //    "literalOptions": true,
-//    "viewportOptions": {"configPaths": ["apps/storybook/config/**"]},
-//    "storySupportPaths": ["apps/storybook/stories/**"],
+//    "viewportOptions": {"configPaths": ["storybook/config/**"]},
+//    "storySupportPaths": ["storybook/stories/**"],
 //    "checks": [{"name": "validate-catalog", "command": "pnpm ...", "paths": ["..."]}]}
 // Paths are path-gates.mjs globs. `checks` become required tests whose path is
 // the command when a story file or a listed path changes, so the evidence gate

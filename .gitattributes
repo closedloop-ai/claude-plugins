@@ -1,0 +1,4 @@
+# Build output and vendored bundles; GitHub collapses them in review.
+plugins/vibe-closedloop/** linguist-generated=true
+plugins/vibe/skills/vibe/scripts/dist/** linguist-generated=true
+plugins/vibe/skills/cl-work-report/assets/mermaid-11.16.0.min.js linguist-generated=true

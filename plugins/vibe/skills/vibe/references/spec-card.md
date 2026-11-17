@@ -45,9 +45,9 @@ was seeded.
 ```json
 {
   "version": 1,
-  "source": "ISS-123",
+  "source": "request",
   "criteria": [
-    { "id": "AC-1", "text": "exact words", "source": "ISS-123", "evidence": "test" }
+    { "id": "AC-1", "text": "exact words", "source": "request", "evidence": "test" }
   ],
   "assumptions": [
     {
@@ -85,7 +85,7 @@ was seeded.
     "notTouched": [{ "path": "path/it/leaves", "reason": "why it stays" }],
     "justifications": [
       { "path": "extra/file.ts", "cites": "AC-2" },
-      { "path": "other/file.ts", "requirement": "the quoted requirement", "source": "PRD-9" }
+      { "path": "other/file.ts", "requirement": "the quoted requirement", "source": "request" }
     ]
   }
 }
@@ -169,8 +169,8 @@ removes a requirement-driven addition and never fails the change.
 `node scripts/spec-card.mjs budget --card <card> --worktree <wt> --base <sha>`
 prints `{blocks: false, planned, outsidePlan, cited, uncited}` and always
 exits 0. The writer runs it before `DONE`, and the uncited files go to the
-writer and into the handoff Assumptions field. Session artifacts under
-`.closedloop-ai/` are not counted.
+writer and into the handoff Assumptions field. Session artifacts in vibe's
+private plan folder are not counted.
 
 ## Freshness
 

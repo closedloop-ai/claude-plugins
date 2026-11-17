@@ -15,8 +15,8 @@
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const MIGRATION = /^(.*?(?:^|\/)migrations)\/(\d{8,})[^/]*(?:\/|$)/;
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -83,6 +83,6 @@ function main() {
   process.exit(result.problems.length === 0 ? 0 : 1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main();
 }

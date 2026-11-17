@@ -4,7 +4,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, mainSyncAdmission, mainSyncRecipeFiles, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+import { bindProvider, git, mainSyncAdmission, mainSyncRecipeFiles, makeCheckout, makeHome,
+  runNode as runFixtureNode } from "./test-fixtures.mjs";
+import { readAssembled } from "./skill-split.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
@@ -14,6 +16,13 @@ const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..", "..");
 const FLAG_KEYS = path.join(path.dirname(fileURLToPath(import.meta.url)), "flag-keys.mjs");
 const SPACED_CHECKOUT = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
 const OPERATOR_ARGS = ["--operator-id", "user-operator", "--operator-email", "operator@example.com", "--operator-name", "Sample Operator"];
+
+// The fixture runs sessions with the ClosedLoop provider bound; the generic tests pass `GENERIC` to run with none.
+const GENERIC = { CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
+// They run from the home folder, outside every checkout, so the remembered checkout is the one found.
+function runNode(script, args, home, extraEnv = {}, input, options = {}) {
+  return runFixtureNode(script, args, home, extraEnv, input, { cwd: home, ...options });
+}
 
 function rememberRepo(home, repo) {
   const dir = path.join(home, ".codex", "vibe");
@@ -64,6 +73,19 @@ test("repo, list, and new use the remembered checkout, including a path with spa
     listed.json.sessions.map((session) => [session.slug, session.localFixes]),
     [["board-chips", []]]
   );
+});
+
+test("the working directory's checkout wins over the remembered one, and a worktree names its main checkout", (t) => {
+  const { root, home, checkout } = setup(t);
+  const other = path.join(root, "elsewhere", "widgets");
+  makeCheckout({ root, home, checkout: other });
+  rememberRepo(home, checkout);
+  assert.equal(runNode(SCRIPT, ["repo"], home, {}, undefined, { cwd: path.join(other) }).json.repo, other);
+  const worktree = path.join(other, ".claude", "worktrees", "side");
+  git(other, ["worktree", "add", "-q", "-b", "side", worktree], home);
+  assert.equal(runNode(SCRIPT, ["repo"], home, {}, undefined, { cwd: worktree }).json.repo, other);
+  assert.equal(runNode(SCRIPT, ["repo", "--repo", checkout], home, {}, undefined, { cwd: other }).json.repo, checkout);
+  assert.equal(runNode(SCRIPT, ["repo"], home).json.repo, checkout);
 });
 
 test("--repo wins over the remembered checkout", (t) => {
@@ -127,7 +149,7 @@ test("local-fix rejects paths outside the worktree and missing inputs", (t) => {
     [["--ticket", "ISS-1", "--path", "../outside.ts"], /relative to the worktree/],
     [["--ticket", "ISS-1"], /--path is required/],
     [["--path", "scripts/a.sh"], /--ticket is required/],
-    [["--ticket", "not a slug", "--path", "scripts/a.sh"], /ClosedLoop slug/],
+    [["--ticket", "not a slug", "--path", "scripts/a.sh"], /tracker slug/],
   ];
   for (const [args, message] of cases) {
     const result = runNode(SCRIPT, ["local-fix", "--worktree", worktree, ...args], home);
@@ -231,8 +253,8 @@ test("a session started from ISS-12820 binds that issue as its live ticket", (t)
   assert.equal(prd.json.session.ticket, "PRD-729");
   assert.equal(prd.json.session.liveTicket, null);
 
-  const skill = readFileSync(path.join(path.dirname(SCRIPT), "..", "SKILL.md"), "utf8");
-  const ticketWorker = readFileSync(path.join(path.dirname(SCRIPT), "..", "..", "..", "agents", "vibe-ticket-worker.md"), "utf8");
+  const skill = readAssembled(path.join(path.dirname(SCRIPT), "..", "SKILL.md"));
+  const ticketWorker = readAssembled(path.join(path.dirname(SCRIPT), "..", "..", "..", "agents", "vibe-ticket-worker.md"));
   assert.match(skill, /When the returned\s+`session\.liveTicket` is the originating issue,[\s\S]*do not dispatch\s+`vibe-ticket-worker`[\s\S]*never queue `create` mode/);
   assert.match(skill, /liveTicketCreatedBySession[\s\S]*leave the bound ticket's status and owner untouched/);
   assert.doesNotMatch(skill, /`vibe-ticket-worker` in `bind` mode/);
@@ -280,7 +302,9 @@ test("new refuses while this conversation's plugin check is outdated and unanswe
   rememberRepo(home, checkout);
   const env = { CLAUDE_CODE_SESSION_ID: "conversation-version", CODEX_THREAD_ID: "" };
   const startup = path.join(home, ".codex", "vibe", "plugin-version", "conversation-version.json");
-  const outdated = { status: "outdated", versions: "vibe: you have 1.0.84, the latest is 1.0.85", outdated: [{ harness: "codex", plugin: "vibe", installed: "1.0.84", latest: "1.0.85" }] };
+  bindProvider(home, { conversation: "conversation-version" });
+  const { provider } = JSON.parse(readFileSync(startup, "utf8"));
+  const outdated = { provider, status: "outdated", versions: "vibe: you have 1.0.84, the latest is 1.0.85", outdated: [{ harness: "codex", plugin: "vibe", installed: "1.0.84", latest: "1.0.85" }] };
   writeJson(startup, outdated);
   const args = ["new", "--slug", "version-gate", "--summary", "x", "--mode", "blank", ...OPERATOR_ARGS];
   const refused = runNode(SCRIPT, args, home, env);
@@ -754,10 +778,10 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   assert.equal(seededInputs.person_email, "operator@example.com");
   assert.equal("clerk_org_id" in seededInputs, false);
 
-  const badOrgChoice = runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "Acme"], home);
+  const badOrgChoice = runNode(SCRIPT, ["touch", "--worktree", worktree, "--environment-org", "Acme"], home);
   assert.equal(badOrgChoice.status, 1);
   assert.match(badOrgChoice.json.error, /org_/);
-  runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--environment-org", "org_2abc"], home);
   const chosenOrg = request(["--person-email", "operator@example.com"]);
   assert.equal(chosenOrg.status, 0, chosenOrg.stderr);
   const chosenInputs = JSON.parse(readFileSync(out, "utf8"));
@@ -816,10 +840,13 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
     gatewayId: "gw-1",
   });
 
+  // The option's earlier name still records the org.
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
+  const stored = JSON.parse(readFileSync(path.join(git(worktree, ["rev-parse", "--absolute-git-dir"], home), "vibe-session.json"), "utf8"));
+  assert.deepEqual([stored.environmentOrgId, stored.clerkOrgId], ["org_2abc", "org_2abc"], "an older vibe still reads the org under its earlier field");
   const blankOrg = request(["--person-email", "operator@example.com"]);
   assert.equal(blankOrg.status, 1);
-  assert.match(blankOrg.json.error, /Clerk org is only sent for a seeded session/);
+  assert.match(blankOrg.json.error, /environment org is only sent for a seeded session/);
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded"], home);
   const seeded = request(["--person-email", "operator@example.com"]);
@@ -988,7 +1015,7 @@ test("desktop-launched records the running launch and its Desktop tab URL, and d
   assert.deepEqual([open.json.running, open.json.url], [true, bridgeUrl(51229, BRIDGE_TOKEN_B)]);
 
   const sections = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
-  assert.equal(sections.status, 0, sections.stderr);
+  assert.equal(sections.status, 0, JSON.stringify(sections.json));
   assert.equal(sections.json.markdown.includes(BRIDGE_TOKEN_B), false);
 
   runNode(SCRIPT, ["desktop-launched", "--worktree", worktree, "--pid", String(exitedPid()), "--log", log], home);
@@ -1162,4 +1189,89 @@ test("touch records a fleet unit's member tickets, only ever adding, and refuses
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "kept"], home);
   assert.deepEqual(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.memberTickets, ["ISS-124", "ISS-125", "ISS-126"]);
   assert.notEqual(runNode(SCRIPT, ["touch", "--worktree", worktree, "--member-ticket", "iss-1"], home).status, 0);
+});
+
+test("with no provider bound a session has no hosted environment or tracker, and its operator is the GitHub user", (t) => {
+  const { root, home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  git(checkout, ["config", "user.email", "dev@example.com"], home);
+  const dir = path.join(root, "gh-user");
+  mkdirSync(dir);
+  const log = path.join(dir, "calls.log");
+  writeFileSync(path.join(dir, "gh"), `#!/bin/sh\necho "$*" >> "${log}"\n[ "$1 $2" = "api user" ] && printf '{"login":"dev-one","name":"Dev One"}'\nexit 0\n`,
+    { mode: 0o755 });
+  const env = { ...GENERIC, PATH: `${dir}${path.delimiter}${process.env.PATH}` };
+
+  const seeded = runNode(SCRIPT, ["new", "--slug", "plain", "--summary", "Plain", "--mode", "seeded"], home, env);
+  assert.equal(seeded.status, 1);
+  assert.match(seeded.json.error, /--mode needs a hosted environment/);
+
+  const created = runNode(SCRIPT, ["new", "--slug", "plain", "--summary", "Plain", "--ticket", "ISS-7"], home, env);
+  assert.equal(created.status, 0, JSON.stringify(created.json));
+  const { session } = created.json;
+  assert.equal(session.mode, null);
+  assert.equal(session.vercel, null);
+  assert.equal(session.liveTicket, null, "no tracker binds a live ticket");
+  assert.deepEqual(session.operator, { id: "dev-one", email: "dev@example.com", name: "Dev One" });
+  const worktree = session.worktree;
+  assert.equal(JSON.parse(readFileSync(recordFile(worktree, home), "utf8")).provider, undefined);
+  const exclude = path.join(git(checkout, ["rev-parse", "--path-format=absolute", "--git-common-dir"], home).trim(), "info", "exclude");
+  assert.ok(readFileSync(exclude, "utf8").split("\n").includes("/.claude/worktrees/"), "a repository that does not ignore session worktrees excludes them locally");
+  assert.equal(git(checkout, ["status", "--porcelain"], home).trim(), "", "the checkout never shows the session worktree");
+
+  const ticket = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-7"], home, env);
+  assert.equal(ticket.status, 1);
+  assert.match(ticket.json.error, /--live-ticket needs a bound provider with tickets/);
+  const plan = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-plan", "PLN-7"], home, env);
+  assert.match(plan.json.error, /--live-plan needs a bound provider with plans/);
+  const org = runNode(SCRIPT, ["touch", "--worktree", worktree, "--environment-org", "org_2abc"], home, env);
+  assert.match(org.json.error, /needs a hosted environment/);
+
+  const fix = runNode(SCRIPT, ["local-fix", "--worktree", worktree, "--ticket", "#12", "--path", "scripts/a.sh"], home, env);
+  assert.equal(fix.status, 0, fix.stderr);
+  assert.deepEqual(fix.json.session.localFixes.map((entry) => entry.ticket), ["#12"]);
+  const spaced = runNode(SCRIPT, ["local-fix", "--worktree", worktree, "--ticket", "a bug", "--path", "scripts/a.sh"], home, env);
+  assert.match(spaced.json.error, /reference without spaces/);
+
+  const out = path.join(root, "inputs.json");
+  const request = runNode(SCRIPT, ["dispatch-inputs", "--worktree", worktree, "--out", out], home, env);
+  assert.equal(request.status, 1);
+  assert.match(request.json.error, /no hosted environment/);
+  assert.equal(existsSync(out), false);
+
+  const sections = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home, env);
+  assert.equal(sections.status, 0, JSON.stringify(sections.json));
+
+  git(worktree, ["push", "--quiet", "-u", "origin", "vibe/plain"], home);
+  const done = runNode(SCRIPT, ["discard", "--worktree", worktree, "--confirm"], home, env);
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.json.schemaCleanupRequested, false);
+  assert.equal(done.json.remoteBranchDeleted, true);
+  assert.equal(readFileSync(log, "utf8").includes("workflow run"), false, "no cleanup workflow is requested without a recipe");
+});
+
+test("a bound tracker still requires the operator from its user lookup", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const refused = runNode(SCRIPT, ["new", "--slug", "needs-operator", "--summary", "x", "--mode", "blank"], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /--operator-id and --operator-email are required: the person running the session, from the bound tracker's user lookup/);
+});
+
+test("new refuses while this chat's check left the installed provider unprobed, and starts once the check binds", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const env = bindProvider(home, { conversation: "conversation-unprobed" });
+  const startup = path.join(home, ".codex", "vibe", "plugin-version", "conversation-unprobed.json");
+  const bound = JSON.parse(readFileSync(startup, "utf8"));
+  writeJson(startup, { ...bound, provider: { state: "unprobed", name: "vibe-closedloop-provider", capabilities: [] } });
+  const args = ["new", "--slug", "unprobed-gate", "--summary", "x", "--mode", "blank", ...OPERATOR_ARGS];
+  const refused = runNode(SCRIPT, args, home, env);
+  assert.equal(refused.status, 1);
+  assert.equal(refused.json.error, "the plugin version check ran without connection states; make the calls it named and run it again first");
+  assert.equal(git(checkout, ["branch", "--list", "vibe/unprobed-gate"], home), "", "a refused start creates nothing");
+  writeJson(startup, bound);
+  const created = runNode(SCRIPT, args, home, env);
+  assert.equal(created.status, 0, created.stderr);
+  assert.equal(JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8")).provider.state, "bound");
 });

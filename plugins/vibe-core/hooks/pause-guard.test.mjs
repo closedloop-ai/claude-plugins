@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { holdReminder, pauseGuard, TASKSTOP_REMINDER } from "./pause-guard.mjs";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
+import { activatedChat } from "./activation-test-support.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
@@ -24,8 +25,9 @@ test("ordinary freeze and stop instructions, and a hold already done with TaskSt
   assert.equal(holdReminder({ to: "lead", message: { type: "shutdown_response", request_id: "1", approve: true } }), null);
 });
 
-test("the SendMessage hook adds the reminder as context, never refuses, and is registered", () => {
-  const run = (message) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: "SendMessage", tool_input: { to: "w", message } }), encoding: "utf8" });
+test("the SendMessage hook adds the reminder as context, never refuses, and is registered", (t) => {
+  const chat = activatedChat(t);
+  const run = (message) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(chat.payload({ tool_name: "SendMessage", tool_input: { to: "w", message } })), encoding: "utf8", env: chat.env });
   const output = JSON.parse(run("HOLD everything").stdout).hookSpecificOutput;
   assert.equal(output.hookEventName, "PreToolUse");
   assert.equal(output.additionalContext, TASKSTOP_REMINDER);

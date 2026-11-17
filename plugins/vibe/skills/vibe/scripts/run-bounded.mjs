@@ -8,12 +8,12 @@
 //
 // A CPU-heavy command (a test, typecheck, lint or build run, vitest, turbo, playwright
 // and the like; `isHeavyCommand` in heavy-budget.mjs) first takes a worker budget:
-// what is left of the machine after the heavy runs already on it (ISS-13584). The
+// what is left of the machine after the heavy runs already on it. The
 // command gets that concurrency through TURBO_TEST_CONCURRENCY and VITEST_MAX_WORKERS,
 // never above what the caller already set, and a lease for its lifetime. When the machine
 // has no capacity to spare it waits for some, then proceeds at the minimum; a failure with
 // a load signature (exit 137, out of memory, a timeout under load) is retried once at half
-// the workers (ISS-13585, load-admission.mjs). A final stderr line `run-bounded-result: {json}`
+// the workers (load-admission.mjs). A final stderr line `run-bounded-result: {json}`
 // carries the attempts. Any other
 // command is untouched. This is opt-in: without VIBE_HEAVY_BUDGET=on a heavy command runs exactly as before.
 // Waiting and the retry count inside the time limit, so a caller's outer limit of `seconds` plus a margin still holds.
@@ -24,10 +24,9 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { budgetDisabled, createBudget, isHeavyCommand } from "./heavy-budget.mjs";
 import { runAdmitted } from "./load-admission.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export const TIMED_OUT_EXIT = 124;
 /** The stderr line that carries a heavy run's attempts, first-failure signature and load at start. */
@@ -137,7 +136,7 @@ async function main(argv) {
   return code;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {

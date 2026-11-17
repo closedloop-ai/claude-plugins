@@ -12,8 +12,8 @@
 // failing block and exits 1; exits 0 when every block passes.
 
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const MOCK_CALL = /\bvi\.mock\(\s*(["'`])([^"'`]+)\1/g;
 
@@ -62,7 +62,7 @@ function main(argv) {
   return gaps === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

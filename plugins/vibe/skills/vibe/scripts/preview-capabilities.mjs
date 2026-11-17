@@ -3,8 +3,8 @@
 // worker result boundary before that worker can report DONE.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { pathToFileURL } from "node:url";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { sourceIdentity, validSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
@@ -41,7 +41,7 @@ export function previewCapabilityProblems(receipt, expected) {
   return problems;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   const { values } = parseArgs({ options: { file: { type: "string" }, worktree: { type: "string" }, "request-id": { type: "string" }, "environment-id": { type: "string" }, required: { type: "string", multiple: true } } });
   if (!values.file || !values.worktree || !values["request-id"] || !values["environment-id"]) {
     throw new Error("Usage: preview-capabilities.mjs --file <provider receipt> --worktree <wt> --request-id <id> --environment-id <id> --required <capability>...");

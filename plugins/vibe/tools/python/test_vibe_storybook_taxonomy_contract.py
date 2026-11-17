@@ -34,7 +34,7 @@ POINTER = '"Storybook taxonomy"'
 
 
 def test_the_rule_defers_to_the_repo_taxonomy_doc_and_states_only_the_minimum() -> None:
-    text = section(GUARDRAILS.read_text(), "## Storybook taxonomy")
+    text = section(skill_split.read(GUARDRAILS), "## Storybook taxonomy")
     for required in (
         f"Read the repo's {TAXONOMY_DOC} and follow it",
         "that doc is the authority, so its rules are not copied here",
@@ -73,7 +73,7 @@ def test_every_story_author_and_advisor_points_at_the_doc_and_the_rule() -> None
     primitive = flat(agent("vibe-primitive-worker"))
     assert f"Place them per the repo's {TAXONOMY_DOC}" in primitive
     assert f"(`guardrails-ui.md`, {POINTER})" in primitive
-    primitives = section(GUARDRAILS.read_text(), "## Missing primitives")
+    primitives = section(skill_split.read(GUARDRAILS), "## Missing primitives")
     assert (
         'Stories follow "Storybook taxonomy" below: a current root, the page tree and a lifecycle tag, never a v1.0 root.'
         in primitives
@@ -97,13 +97,13 @@ def test_the_guardrails_reviewer_blocks_v1_placement() -> None:
 
 
 def test_handoff_blocks_on_the_inventory_check() -> None:
-    storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
+    storybook = section(skill_split.read(HANDOFF_SKILL), "## 4. Storybook")
     assert f"(`../vibe/references/guardrails-ui.md`, {POINTER})" in storybook
     assert "the inventory's `v1Stories` and `retitledStories` block handoff, judged by the scheme of the session's base" in storybook
-    inventory = INVENTORY.read_text()
+    inventory = skill_split.read(INVENTORY)
     assert "storiesInV2Taxonomy: v1Stories.length === 0," in inventory
-    assert "storybookSchemeOf(readBaseFile(STORY_GROUP_ORDER_PATH))" in inventory
-    taxonomy = TAXONOMY_SCRIPT.read_text()
+    assert "storybookSchemeOf(groupOrder ? readBaseFile(groupOrder) : null)" in inventory
+    taxonomy = skill_split.read(TAXONOMY_SCRIPT)
     assert "(?:Foundations|Primitives|Composites|Surfaces)\\//" in taxonomy
     assert "const\\s+StorybookLifecycle" in taxonomy
     assert "const\\s+storybookBaselineVersion" in taxonomy
@@ -125,12 +125,12 @@ def test_every_role_judges_a_session_by_the_scheme_its_base_uses() -> None:
     assert (
         "after a main sync your own new entries move to the plain root with a lifecycle tag, which is not a retitle"
     ) in writer
-    readme = flat((PLUGIN_ROOT / "README.md").read_text())
+    readme = flat(skill_split.read(PLUGIN_ROOT / "README.md"))
     assert (
         "Handoff judges story files by the scheme of the session's base, read from that base's "
         "`apps/storybook/story-group-order.ts`, so a session still based before symphony-alpha #8867 keeps the "
         "`v1.0`/`v2.0` rules until it syncs main, and a sync is never blamed for the renames it imported."
     ) in readme
-    inventory = INVENTORY.read_text()
+    inventory = skill_split.read(INVENTORY)
     assert "  storybookScheme: storybookScheme.summary,\n" in inventory
     assert "...(storybookSchemeUnreadable ? { storybookSchemeRecognized: false } : {})," in inventory

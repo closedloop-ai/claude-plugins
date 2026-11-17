@@ -2,7 +2,7 @@
 // An e2e run that reuses built images tests the commit those images were built
 // from, not the worktree's HEAD. On 2026-10-24 a queued rerun reused images
 // built from a spec-only baseline worktree, which would have reported baseline
-// code as the fix run (ISS-13067, #9241), and a `--no-build` baseline half
+// code as the fix run, and a `--no-build` baseline half
 // later reused the fix's images. So a build records, per compose project, the
 // commit and worktree its images came from, and a run that reuses images
 // (`--no-build`) starts only when that record names the same commit and
@@ -23,7 +23,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const NO_BUILD = /(?:^|[\s"'=])--no-build(?=$|[\s"'])/;
 const SHA = /^[0-9a-f]{7,40}$/i;
@@ -107,6 +107,6 @@ function main(argv) {
 
 export const ESCALATION_JUSTIFICATION = "Record which version the automatic checks' setup was built from";
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

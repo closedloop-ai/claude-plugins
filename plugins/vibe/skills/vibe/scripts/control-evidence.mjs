@@ -3,9 +3,9 @@
 
 import { existsSync, mkdirSync, realpathSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
@@ -30,7 +30,7 @@ export function relocateControlEvidence(worktree, run) {
   return { path: target };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: { worktree: { type: "string" }, run: { type: "string" } } });
     if (!values.worktree || !values.run) throw new Error("Usage: control-evidence.mjs --worktree <path> --run <owned .control/runs directory>");

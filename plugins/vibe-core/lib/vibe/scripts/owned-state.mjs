@@ -4,9 +4,9 @@ import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdir
   readdirSync, realpathSync, renameSync, rmSync, writeSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readProcessIdentity } from '../../../shared/process-identity.mjs';
+import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 export const OWNERSHIP_VERSION = 1;
 
@@ -206,7 +206,7 @@ export function dockerResult(args, run = dockerRun) {
 }
 
 // slot-lock.sh invokes this adapter only after it has recorded its slot, before preflight or job startup.
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const [action, slot, rawPid, name] = process.argv.slice(2);
     if (action !== 'admit-heavy' || !slot || !name || !Number.isSafeInteger(Number(rawPid)) || Number(rawPid) <= 1) throw new Error('Usage: owned-state.mjs admit-heavy <slot> <pid> <owner>');

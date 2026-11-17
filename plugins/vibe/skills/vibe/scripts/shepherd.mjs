@@ -33,9 +33,9 @@
 // reviewer and do not stop the shepherd.
 
 import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { readThreads } from "./pr-threads.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const FIELDS = "state,mergeable,headRefOid,statusCheckRollup";
 const FAILED = new Set(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR", "STARTUP_FAILURE"]);
@@ -118,6 +118,6 @@ async function main() {
   process.exit(EXIT[result.event]);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   await main();
 }

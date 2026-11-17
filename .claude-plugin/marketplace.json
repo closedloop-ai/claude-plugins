@@ -16,8 +16,13 @@
     },
     {
       "name": "vibe",
-      "source": "./plugins/vibe",
+      "source": "./plugins/vibe-closedloop",
       "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows"
+    },
+    {
+      "name": "vibe-generic",
+      "source": "./plugins/vibe",
+      "description": "Vibe sessions and handoff in any git repository, with fleet orchestration, seed refresh and ticket workflows"
     },
     {
       "name": "bootstrap",

@@ -1,22 +1,32 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
 import { z } from "zod";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
 import { sessionLiveTicket } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { identifierSchema } from "./contracts.js";
 import { checkoutLocation, location, sessionPlace } from "./ledger.js";
 import { validationWitnessSchema } from "./main-sync-validation-contracts.js";
 
-export const recordModes: Record<string, Record<string, readonly string[]>> = {
-  "vibe-setup-worker": { create: ["create_document"], progress: ["create_document_version"], discard: [] },
-  "vibe-change-worker": { progress: ["create_document_version"] },
-  "vibe-ticket-worker": { create: ["create_document", "create_artifact_link"],
-    plan: ["create_document", "create_document_version", "create_artifact_link", "update_document"],
-    handoff: ["create_document", "create_document_version", "create_artifact_link", "update_document", "upload_attachment"],
-    assign: ["update_document"], cancel: ["create_document_version", "update_document"] },
-  "vibe-environment-worker": { create: ["create_document_version"], redeploy: ["create_document_version"],
-    flags: ["create_document_version"], desktop: ["create_document_version"], handover: ["create_document_version"], "pull-request": [] },
-  "vibe-prototype-worker": { share: ["create_document_version"] },
+// Each owned role's canonical record actions. What an action may write in the tracker is the bound provider's
+// (`data.tickets.recordWrites[role][action]`); with no tracker bound an action writes nothing there.
+const RECORD_ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  "vibe-setup-worker": ["create", "progress", "discard"],
+  "vibe-change-worker": ["progress"],
+  "vibe-ticket-worker": ["create", "plan", "handoff", "assign", "cancel"],
+  "vibe-environment-worker": ["create", "redeploy", "flags", "desktop", "handover", "pull-request"],
+  "vibe-prototype-worker": ["share"],
 };
+
+/** Each owned role's record actions, each with the tracker operations it may write under `binding`. */
+export function recordModes(binding: unknown = sessionBinding()): Record<string, Record<string, readonly string[]>> {
+  const writes = providerDataOr<Record<string, Record<string, string[]>>>(binding, "tickets", "recordWrites", {});
+  return Object.fromEntries(Object.entries(RECORD_ACTIONS).map(([role, actions]) =>
+    [role, Object.fromEntries(actions.map((action) => [action, writes[role]?.[action] ?? []]))]));
+}
+
+/** A live ticket named in parent evidence must be a ticket of the bound tracker (`data.tickets.keyPattern`). */
+const liveTicketSchema = z.string().refine((ticket) =>
+  new RegExp(`^(?:${providerDataOr(sessionBinding(), "tickets", "keyPattern", "(?!)")})$`).test(ticket), "not a ticket of the bound tracker");
 
 export const recordActionSchema = z.enum(["progress", "create", "plan", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share",
   "discard", "handover", "pull-request"]);
@@ -36,14 +46,14 @@ export const recordContextSchema = z.object({
   mainSyncCiRun: ciRunLocatorSchema.optional(),
   mainSyncValidation: validationWitnessSchema.optional(),
   discardTarget: z.object({ worktree: z.string().min(1), confirmed: z.literal(true),
-    branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: z.string().regex(/^[A-Z]+-\d+$/).optional(),
+    branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: liveTicketSchema.optional(),
     liveTicketCreatedBySession: z.boolean(),
     operatorId: z.string().min(1), operatorEmail: z.string().email(),
   }).strict().optional(),
   sessionless: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("startup") }).strict(),
     z.object({ kind: z.literal("discarded"), evidence: z.object({ discarded: z.literal(true),
-      branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: z.string().regex(/^[A-Z]+-\d+$/),
+      branch: z.string().regex(/^(?:vibe|prototype)\/[^\s]+$/), liveTicket: liveTicketSchema,
       liveTicketCreatedBySession: z.literal(true),
       operatorId: z.string().min(1), operatorEmail: z.string().email(),
     }).strict() }).strict(),
@@ -66,7 +76,7 @@ export function isPublisherContext(input: Pick<RecordContext, "agentName" | "mod
 
 /**
  * A vibe tooling stop hands the work to engineering: the environment worker pushes the orchestrator's commit through
- * the repo's normal pre-push checks, with no main sync and no environment request (ISS-13321).
+ * the repo's normal pre-push checks, with no main sync and no environment request.
  */
 export function isHandoverContext(input: Pick<RecordContext, "agentName" | "mode" | "recordAction" | "exclusiveRecordTurn">) {
   return input.mode === "record" && input.exclusiveRecordTurn === true && input.agentName === "vibe-environment-worker"

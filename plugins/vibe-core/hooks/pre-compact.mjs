@@ -7,6 +7,7 @@
 // Usage (hook): reads the PreCompact JSON on stdin; prints the instructions or nothing.
 
 import { compactionInstructions } from "./context-guard.mjs";
-import { isMain, runHookScript } from "./hook-dispatch.mjs";
+import { runHookScript } from "./hook-dispatch.mjs";
+import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
-if (isMain(import.meta.url)) runHookScript("pre-compact", (event) => compactionInstructions(event));
+if (isEntryPoint(import.meta.url)) runHookScript("pre-compact", (event) => compactionInstructions(event));

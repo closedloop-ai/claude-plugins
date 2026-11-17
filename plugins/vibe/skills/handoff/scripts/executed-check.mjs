@@ -22,10 +22,13 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { criteriaStates } from "./criteria-audit.mjs";
 import { rulingNamesScope } from "./rulings-check.mjs";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+
+const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 export const SECTION = "Production visual QA";
 const HEADING = /^##\s+(.+?)\s*$/;
@@ -105,6 +108,7 @@ function main() {
   process.exit(problems.length === 0 ? 0 : 1);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
+  exitOnProviderBroken();
   main();
 }

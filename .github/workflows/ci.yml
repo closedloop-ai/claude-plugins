@@ -124,6 +124,12 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --frozen --group dev
+      # The vibe contract tests read the ClosedLoop vibe's text from its build (tools/vibe-closedloop-build).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: tools/vibe-closedloop-build
       - run: uv run pytest plugins/
 
   node-tests:
@@ -205,6 +211,10 @@ jobs:
           - tool: vibe-workers
             dist: plugins/vibe/skills/vibe/scripts/dist
             min_bundles: 2
+          # The ClosedLoop vibe: plugins/vibe with the provider's text built in, committed whole.
+          - tool: vibe-closedloop-build
+            dist: plugins/vibe-closedloop
+            min_bundles: 100
     defaults:
       run:
         working-directory: tools/${{ matrix.tool }}

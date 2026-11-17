@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import functools
+import http.server
 import importlib.util
 import json
 import hashlib
@@ -54,9 +58,112 @@ def default_codex_model() -> str:
     return model
 
 
+ARMS = ("provider", "generic", "provider-installed")
+# The arms that model symphony-alpha: both install the committed built folder as `vibe`, as a release ships it.
+# `provider-installed` also binds its provider through the real version check before the model starts; `provider`
+# leaves the binding to the model's own session.
+PROVIDER_ARMS = ("provider", "provider-installed")
+BUILT_VIBE = "vibe-closedloop"
+EVAL_MARKETPLACE = "vibe-eval"
+# symphony-alpha commits this opt-in (abe87d83), so the working copy of a case that models it holds it too.
+OPT_IN_FILE = ".closedloop-ai/vibe-recipes.json"
+OPT_IN_TEXT = '{ "schema": 1, "provider": "vibe-closedloop-provider" }\n'
+
+
 def payload_plugins(plugins: Path) -> list[str]:
-    """The plugins a payload installs: vibe and closedloop-core, and vibe-core where the payload has it (older ones do not)."""
+    """The plugins a payload installs: vibe and closedloop-core, and vibe-core where the payload has it (older ones
+    do not). No arm installs a separate provider plugin, not even from an older payload that has one."""
     return ["vibe", "closedloop-core"] + (["vibe-core"] if (plugins / "vibe-core").is_dir() else [])
+
+
+def payload_source(plugin: Path, name: str, arm: str) -> Path:
+    """The folder the market copy of `name` is made from: in a provider arm vibe is the committed built folder beside
+    `plugin` (an older payload has none and installs `plugin`), and anywhere else each plugin's own folder."""
+    if name != "vibe":
+        return plugin.parent / name
+    built = plugin.parent / BUILT_VIBE
+    return built if arm in PROVIDER_ARMS and built.is_dir() else plugin
+
+
+def name_manifests(plugin: Path, name: str) -> None:
+    """Give a snapshot's manifests the marketplace entry's name, since Codex refuses an entry whose name differs from
+    its manifest's. A manifest that already carries it is left byte for byte."""
+    for relative in MANIFESTS:
+        manifest = plugin / relative
+        if not manifest.is_file():
+            continue
+        data = json.loads(manifest.read_text())
+        if data.get("name") != name:
+            data["name"] = name
+            manifest.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def write_opt_in(work: Path) -> None:
+    """Commit-equivalent arm setup: the case's working copy gets the opt-in file the modelled repository holds."""
+    target = work / OPT_IN_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(OPT_IN_TEXT)
+
+
+def case_arm(case: dict[str, Any]) -> str:
+    """A case tagged `generic` runs in the generic arm; every other case models the provider's repository."""
+    return "generic" if "generic" in case["meta"].get("tags", []) else "provider"
+
+
+def runs_case(arm: str, case: dict[str, Any]) -> bool:
+    """Whether `arm` runs `case`: the provider-installed arm runs the provider arm's cases."""
+    return case_arm(case) == ("provider" if arm == "provider-installed" else arm)
+
+
+def installed_version_script(codex_home: Path, market: Path) -> Path:
+    """The version check of the vibe Codex installed from the eval marketplace (the copy the model's session runs), or
+    the marketplace copy when Codex keeps none of its own."""
+    installed = sorted(codex_home.glob(f"plugins/cache/{EVAL_MARKETPLACE}/vibe/*/skills/vibe/scripts/plugin-version.mjs"))
+    return installed[0] if len(installed) == 1 else market / "plugins/vibe/skills/vibe/scripts/plugin-version.mjs"
+
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: Any) -> None:
+        return None
+
+
+@contextmanager
+def served(folder: Path) -> Iterator[str]:
+    """`folder` over HTTP on the loopback, for as long as the block runs: the version check reads its release catalog
+    from the eval marketplace instead of GitHub."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(QuietHandler, directory=str(folder)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def bind_installed_provider(
+    name: str, work: Path, output: Path, env: dict[str, str], budget: Budget, codex_binary: str = "codex",
+) -> dict[str, Any]:
+    """The provider-installed arm binds as a session does: the real version check, once, in the case's folder before
+    the model starts, with every provider connection answered. It runs under the
+    HOME and CODEX_HOME the model's shell sees, so its binding is where the session reads it. Its output is kept with the run's evidence; a check that did not bind fails the case."""
+    market = output / "market"
+    checks = output / "provider-checks"
+    checks.mkdir(exist_ok=True)
+    record = checks / f"{name}.json"
+    with served(market) as base:
+        command(
+            ["node", str(installed_version_script(Path(env["CODEX_HOME"]), market)), "check", "--runtime", "codex",
+             "--codex", codex_binary, "--closedloop", "connected", "--graph", "connected",
+             "--latest-base", base],
+            work, env, budget, 90, record,
+        )
+    checked = json.loads(record.read_text())
+    provider = checked.get("provider") or {}
+    if provider.get("state") != "bound":
+        raise RuntimeError(f"the version check did not bind the provider: {provider.get('reason') or provider.get('state')}")
+    return checked
 
 
 def snapshot_metadata(output: Path) -> dict[str, Any]:
@@ -235,10 +342,12 @@ def command(
 
 def install(
     output: Path, plugin: Path, env: dict[str, str], budget: Budget,
-    codex_binary: str = "codex",
+    codex_binary: str = "codex", arm: str = "provider",
 ) -> dict[str, str]:
     """Install worktree snapshots in a private CODEX_HOME, never the user's live install."""
-    home = Path(tempfile.mkdtemp(prefix="vibe-codex-home-"))
+    if arm not in ARMS:
+        raise ValueError(f"unknown eval arm {arm}")
+    home = private_dir("vibe-codex-home-")
     home.chmod(0o700)
     auth_home = Path(env.get("CODEX_HOME", str(Path.home() / ".codex")))
     auth = auth_home / "auth.json"
@@ -247,20 +356,26 @@ def install(
         # disposable link, so a hard kill cannot strand a copied credential.
         (home / "auth.json").symlink_to(auth.resolve())
     env = {**env, "CODEX_HOME": str(home)}
+    if arm == "provider-installed":
+        # The model's shell inherits this HOME, so the version check run before each case writes where it reads.
+        user_home = home / "home"
+        user_home.mkdir(mode=0o700)
+        env["HOME"] = str(user_home)
     try:
         market = output / "market"
         catalog = market / ".agents/plugins"
         catalog.mkdir(parents=True)
         entries = []
         for name in payload_plugins(plugin.parent):
-            source = plugin if name == "vibe" else plugin.parent / name
             target = market / "plugins" / name
             target.parent.mkdir(exist_ok=True)
             # Both runtimes use the same Git-selected, symlink-confined copier.
             subprocess.check_output(
-                ["node", str(IDENTITY), "copy", str(source), str(target)],
+                ["node", str(IDENTITY), "copy", str(payload_source(plugin, name, arm)), str(target)],
                 text=True, timeout=min(60, budget.remaining()),
             )
+            if name == "vibe" and arm == "generic":
+                name_manifests(target, name)
             entries.append(
                 dict(
                     name=name,
@@ -270,7 +385,7 @@ def install(
                 )
             )
         (catalog / "marketplace.json").write_text(
-            json.dumps({"name": "vibe-eval", "plugins": entries})
+            json.dumps({"name": EVAL_MARKETPLACE, "plugins": entries})
         )
         subprocess.check_output(
             ["node", str(IDENTITY), "copy", str(plugin / "evals"), str(output / "suite")],
@@ -292,7 +407,7 @@ def install(
         )
         for name in payload_plugins(market / "plugins"):
             command(
-                [codex_binary, "plugin", "add", name + "@vibe-eval", "--json"],
+                [codex_binary, "plugin", "add", f"{name}@{EVAL_MARKETPLACE}", "--json"],
                 output,
                 env,
                 budget,
@@ -620,6 +735,7 @@ def run_case(
     grader_model: str,
     deterministic_only: bool = False,
     codex_binary: str = "codex",
+    arm: str = "provider",
 ) -> dict[str, Any]:
     """Run one case, optionally omitting only paid wording, and keep evidence."""
     started = time.monotonic()
@@ -639,6 +755,10 @@ def run_case(
                 30,
                 work / "scaffold.log",
             )
+        if arm in PROVIDER_ARMS:
+            write_opt_in(work)
+        if arm == "provider-installed":
+            bind_installed_provider(case["name"], work, output, env, budget, codex_binary)
         skill = next(name for name in SKILLS if "vibe:" + name in case["prompt"] or name == "vibe")
         # The source's Claude-only Skill instruction maps to the installed Codex skill.
         prompt = case["prompt"].replace(
@@ -792,13 +912,17 @@ def main() -> int:
         "--deterministic-only", action="store_true",
         help="Skip paid wording grading while retaining every deterministic check",
     )
+    parser.add_argument("--arm", choices=ARMS, default="provider",
+                        help="provider: install the built vibe-closedloop folder as vibe and run the provider cases; "
+                             "generic: install plugins/vibe as vibe, the generic cases; provider-installed: as provider, "
+                             "and bind the provider through the real version check before each case")
     parser.add_argument("--concurrency", type=int, choices=[1, 2], default=2)
     parser.add_argument("--max-seconds", type=int, default=1800)
     args = parser.parse_args()
     subject_plugin = args.plugin.resolve()
     selected = [
         c for c in cases(subject_plugin / "evals")
-        if not args.case or c["name"] in args.case
+        if runs_case(args.arm, c) and (not args.case or c["name"] in args.case)
     ]
     if not selected or any(n not in [c["name"] for c in selected] for n in args.case):
         parser.error("unknown or empty case selection")
@@ -819,7 +943,7 @@ def main() -> int:
     output = (
         args.output.resolve()
         if args.output
-        else Path(tempfile.mkdtemp(prefix="vibe-codex-eval-"))
+        else private_dir("vibe-codex-eval-")
     )
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
@@ -835,7 +959,7 @@ def main() -> int:
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
             prior_handlers[signum] = signal.signal(signum, interrupt)
-        env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin)
+        env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin, args.arm)
         private_home = Path(env["CODEX_HOME"])
         identity_script = IDENTITY
         snapshot = json.loads((output / "snapshot.json").read_text())
@@ -872,7 +996,7 @@ def main() -> int:
                 pool.map(
                     lambda c: run_case(
                         c, output, env, budget, args.model, args.grader_model,
-                        args.deterministic_only, args.codex_bin,
+                        args.deterministic_only, args.codex_bin, args.arm,
                     ),
                     selected,
                 )
@@ -893,6 +1017,12 @@ def main() -> int:
             shutil.rmtree(private_home, ignore_errors=True)
         for signum, handler in prior_handlers.items():
             signal.signal(signum, handler)
+
+
+def private_dir(prefix: str) -> Path:
+    """A new temporary directory by its real path. macOS's temporary root sits under the /var symlink, and Codex and
+    node report real paths (a script's main guard compares them with argv), so a path through the link matches none."""
+    return Path(tempfile.mkdtemp(prefix=prefix)).resolve()
 
 
 if __name__ == "__main__":

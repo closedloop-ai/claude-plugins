@@ -1,4 +1,4 @@
-// How a Codex thread the fleet starts appears in the person's Codex app sidebar (ISS-13279, operator ruling
+// How a Codex thread the fleet starts appears in the person's Codex app sidebar (operator ruling,
 // 2026-10-28): it carries a readable name, sits in one "Fleet workers" section, and is archived only after
 // the fleet has recorded the worker stopped or merged. Every thread started through the App Server is an
 // ordinary sidebar chat, titled by its first prompt, so a fleet once filled the person's chat list.

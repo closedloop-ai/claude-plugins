@@ -3,9 +3,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes } from "./pre-pr-lanes.mjs";
+import { bindProvider, PROVIDER_BINDING } from "./test-fixtures.mjs";
+import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
 import { spawnSync } from "node:child_process";
+
+// The ClosedLoop provider's staging identity key, as a session it is bound to reads it.
+const STAGING_IDENTITY_KEY = stagingIdentity(PROVIDER_BINDING).key;
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-pr-lanes.mjs");
 const REPORT = [
@@ -163,7 +167,8 @@ test("without the staging e2e identities the local web e2e lane is recorded not 
   const web = "pnpm test:e2e";
   const report = path.join(root, "lanes.txt");
   writeFileSync(report, ["OUTSIDE THE TURBO GRAPH: 2 lane(s).", `    ${web}      (2 changed path(s) under e2e/)`, `    ${DESKTOP_E2E} (1 changed path(s))`, ""].join("\n"));
-  const env = { ...process.env, HOME: home };
+  // The staging identity is the ClosedLoop provider's e2e recipe, so the run is bound to it.
+  const env = { ...process.env, HOME: home, ...bindProvider(home) };
   delete env[STAGING_IDENTITY_KEY];
   const run = (extra = {}) => spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report], { encoding: "utf8", env: { ...env, ...extra } });
   assert.equal(run().status, HARNESS ? 1 : 0, "the Desktop e2e lane is required only where the displayless harness exists");
@@ -308,4 +313,12 @@ test("a changed story in a package with no typecheck script adds the story typec
   writeFileSync(path.join(bin, "status"), "0");
   for (const command of ["pnpm --filter storybook test", lane]) assert.equal(run("run", "--worktree", worktree, "--head", head, "--command", command, "--report", report).status, 0);
   assert.equal(run("check", "--worktree", worktree, "--report", report).status, 0);
+});
+
+
+test("a repository with no e2e recipe needs no staging identity", (t) => {
+  const { root, cleanup } = makeHome("vibe-pre-pr-lanes-no-identity-");
+  t.after(cleanup);
+  assert.equal(hasStagingE2eIdentity(root, {}, null), true);
+  assert.equal(hasStagingE2eIdentity(root, {}, stagingIdentity(PROVIDER_BINDING)), false);
 });

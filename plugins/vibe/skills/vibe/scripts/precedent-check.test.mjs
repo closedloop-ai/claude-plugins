@@ -3,10 +3,14 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, checkReport, precedentPrompt, precedentRoot, summarize } from "./precedent-check.mjs";
+import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, checkReport, precedentPrompt, precedentRoot, precedentRule, summarize } from "./precedent-check.mjs";
 import { makeHome } from "./test-fixtures.mjs";
+import { bindProviderInProcess } from "./test-fixtures.mjs";
+
+// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
+bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "precedent-check.mjs");
 const QUESTION = "What should the settings page show when someone cancels the GitHub authorization halfway?";
@@ -146,7 +150,8 @@ test("without --out the report folder is under the vibe home a reboot keeps, nev
   const root = path.join(fixture.home, ".codex", "vibe", "precedent");
   assert.equal(path.dirname(path.dirname(json.report)), root);
   assert.equal(precedentRoot("/Users/someone"), path.join("/Users/someone", ".codex", "vibe", "precedent"));
-  assert.ok(!precedentRoot().startsWith(os.tmpdir()));
+  // This file binds the provider under a throwaway HOME in the temp folder, so the default is checked against the home.
+  assert.equal(precedentRoot(), path.join(os.homedir(), ".codex", "vibe", "precedent"), "the default follows the person's home, never the temp folder");
 });
 
 test("check always refuses an undocumented or help-center-only answer until a live look ran", (t) => {
@@ -200,4 +205,19 @@ test("run saves the disputed behaviors beside the report, and check reads them",
   const checked = spawnSync(process.execPath, [SCRIPT, "check", "--report", path.join(out, "report.md")], { encoding: "utf8" });
   assert.equal(checked.status, 1);
   assert.match(JSON.parse(checked.stdout).error, /does not settle B1/);
+});
+
+test("with no provider rule any established app is checked, live only: documentation never settles the answer", () => {
+  const generic = precedentRule(null);
+  assert.deepEqual(generic, { product: null });
+  const prompt = precedentPrompt({ question: "q", codeEvidence: "a.ts:1", rule: generic });
+  assert.match(prompt, /^1\. An established app with the same flow, in Chrome/m);
+  assert.match(prompt, /Never use a public help center or documentation page as precedent/);
+  assert.doesNotMatch(prompt, /documentation URL|own documentation/);
+  const documented = "Answer: children are included\nSource: https://example.invalid/help/bulk-actions\n";
+  assert.equal(checkReport(documented).ok, false, "documentation is not a live look");
+  const observed = "Answer: children are included\nSource: Some app, observed 2026-10-16\n";
+  assert.equal(checkReport(observed).ok, true);
+  const named = precedentPrompt({ question: "q", codeEvidence: "a.ts:1", rule: { product: "Acme", liveOnly: false } });
+  assert.match(named, /Never use a public help center or documentation page as precedent/, "no rule key opens a documentation path");
 });

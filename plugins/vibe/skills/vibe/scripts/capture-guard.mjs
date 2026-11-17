@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Refuses a screenshot capture that repeats a ticket's main baseline or is too
-// big (ISS-14158). One ticket's proof scripts once ran more than 30 capture
+// big. One ticket's proof scripts once ran more than 30 capture
 // runs through the fleet heavy slot in a day, re-shooting main after every
 // main merge; one run was 1632 shots. This guard only ever refuses a capture;
 // nothing here asks for one (`../references/quality-loop-visual-qa.md`, block
@@ -65,15 +65,15 @@ import { randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { workItem } from "./tracker-key.mjs";
 
 const CAPTURE_BUDGET = Object.freeze({ maxShots: 240, maxMinutes: 20, floorSecondsPerShot: 5 });
 const REFUSED_EXIT = 79;
 const USAGE_EXIT = 2;
 const EntryStatus = Object.freeze({ Running: "running", Ok: "ok", Failed: "failed" });
 
-const TICKET = /^[A-Z]+-\d+$/;
 const SHA = /^[0-9a-f]{40}$/;
 const SPEC_KEYS = new Set(["ticket", "ref", "pages", "states", "override"]);
 const OVERRIDE_MARKER = /capture-guard override: (baseline|budget)\b/g;
@@ -138,7 +138,7 @@ function parseSpec(text) {
   }
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw invalid("spec");
   for (const key of Object.keys(spec)) if (!SPEC_KEYS.has(key)) throw invalid(`spec key ${key}`);
-  if (typeof spec.ticket !== "string" || !TICKET.test(spec.ticket)) throw invalid("ticket");
+  if (typeof spec.ticket !== "string" || !workItem().test(spec.ticket)) throw invalid("ticket");
   if (typeof spec.ref !== "string" || !spec.ref.trim()) throw invalid("ref");
   if (!positiveInteger(spec.pages)) throw invalid("pages");
   if (!positiveInteger(spec.states)) throw invalid("states");
@@ -200,7 +200,7 @@ function measuredSecondsPerShot(ledger) {
 /**
  * A ruling line's fixed override shape, or null: a Ruling record line (rulings-check.mjs's `recordRulings`) whose decision
  * text, everything after the source parenthesis (the first `)` immediately followed by `:`, so a source such as
- * `ticket: ISS-1` or a `~07:10Z` time keeps its colons), begins with the one ASCII double-quoted span holding the
+ * `ticket: #42` or a `~07:10Z` time keeps its colons), begins with the one ASCII double-quoted span holding the
  * operator's words, and the line has exactly
  * two ASCII double quotes and no curly double quotes (U+201C, U+201D). Any other shape is ambiguous (operator words in
  * other quote marks can carry an ASCII-quoted phrase, a ticket and a marker) and counts for nothing. `inside` is the
@@ -332,7 +332,7 @@ function defaultLedgerDir(repo) {
 }
 
 function ledgerFile(dir, ticket) {
-  if (!TICKET.test(ticket)) throw invalid("ticket");
+  if (!workItem().test(ticket)) throw invalid("ticket");
   return path.join(dir, `${ticket}.json`);
 }
 
@@ -528,16 +528,7 @@ async function main(argv) {
   throw invalid("command");
 }
 
-function isEntry() {
-  if (!process.argv[1]) return false;
-  try {
-    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
-  } catch {
-    return false;
-  }
-}
-
-if (isEntry()) {
+if (isEntryPoint(import.meta.url)) {
   try {
     process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)))}\n`);
   } catch (error) {
