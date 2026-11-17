@@ -55,10 +55,13 @@ const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORT_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 const DONE_CLAIMS = /^\s*Done:/m;
 const REVERIFY = /^\s*Re-verify:\s*\S/m;
+// A cold inventory took 53.6 seconds on the operator laptop while the warm cache took 1.2 seconds.
+// The inventory is required authority for the plugin root, so wait for the cold path instead of making reload impossible.
+export const PLUGIN_LIST_TIMEOUT_MS = 120_000;
 
 /** A root hint is transport data, never authority: verify it against this host's enabled installation. */
 export function verifiedPluginRoot(requested, { list = () => JSON.parse(execFileSync('codex', ['plugin', 'list', '--json'],
-  { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] })) } = {}) {
+  { encoding: 'utf8', timeout: PLUGIN_LIST_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] })) } = {}) {
   const installed = list().installed?.filter(row => row.name === OWN_PLUGIN && row.installed === true && row.enabled === true);
   if (installed?.length !== 1 || typeof installed[0].source?.path !== 'string') throw new Error('cannot establish one verified installed root for vibe');
   const root = realpathSync(installed[0].source.path);

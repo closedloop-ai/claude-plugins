@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { observedCodexTurn, readCodexReviewTurn } from "./codex-review-runtime.mjs";
+import { codexGraphSetupProblem, observedCodexTurn, readCodexReviewTurn } from "./codex-review-runtime.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
 
 test("managed Codex reviewer calls come only from its completed App Server turn items", async () => {
@@ -11,6 +11,7 @@ test("managed Codex reviewer calls come only from its completed App Server turn 
   ] }] };
   assert.deepEqual(observedCodexTurn(thread, "thread-1", "turn-1"), {
     sessionId: "thread-1", turnId: "turn-1", status: "completed", toolCalls: ["mcp__custom_graph__sync-status"],
+    failedToolCalls: [{ name: "mcp__custom_graph__claimed-only", error: "tool call failed" }],
   });
   const calls = [];
   let turnPages = 0;
@@ -30,6 +31,15 @@ test("managed Codex reviewer calls come only from its completed App Server turn 
   assert.throws(() => observedCodexTurn(thread, "other", "turn-1"), /another native reviewer thread/);
   assert.throws(() => observedCodexTurn({ ...thread, turns: [{ ...thread.turns[0], status: "inProgress" }] }, "thread-1", "turn-1"), /no loaded completed/);
   assert.throws(() => observedCodexTurn({ ...thread, turns: [{ ...thread.turns[0], items: [], itemsView: "notLoaded" }] }, "thread-1", "turn-1"), /no loaded completed/);
+});
+
+test("a managed Codex reviewer names an unapproved graph setup before its receipt can pass", () => {
+  const runtime = observedCodexTurn({ id: "thread-1", turns: [{ id: "turn-1", status: "completed", items: [
+    { type: "mcpToolCall", server: "closedloop-graph", tool: "code_symbols", status: "failed",
+      error: { message: "MCP tool call requires approval, but approval policy is never" } },
+  ] }] }, "thread-1", "turn-1");
+  assert.match(codexGraphSetupProblem(runtime, ["mcp__closedloop_graph__code_symbols"]), /Approve the graph read tools.*relaunch/);
+  assert.equal(codexGraphSetupProblem(runtime, ["mcp__other__code_symbols"]), null);
 });
 
 test("native reviewer receipt refuses absent items after a completed summary", async () => {
@@ -69,4 +79,5 @@ test("native MCP server separators match recorded aliases without trusting comma
   assert.ok(!observed.toolCalls.includes("mcp__closedloop_graph__code_callers"), "failed calls and command text do not count");
   assert.ok(observed.toolCalls.includes("mcp__closedloop_other__code_symbols"), "a different server remains distinct");
   assert.ok(observed.toolCalls.includes("mcp__closedloop_graph__code_symbols_extra"), "a different operation remains distinct");
+  assert.deepEqual(observed.failedToolCalls, [{ name: "mcp__closedloop_graph__code_callers", error: "tool call failed" }]);
 });

@@ -359,7 +359,8 @@ path merely because another rule describes how its content should look.
     an `engineering decision` finding. A mechanism the ticket named is held to
     the same test (`vibe-change-worker.md`, "Plan before code"). When the
     session's local plan has a Cost Scaling table, check it against the diff;
-    a row that does not match what was built is a finding.
+    a row that does not match what was built is a finding. Consolidated batch
+    transactions measure limit duration, lock hold and effective/ambient timeout.
 13. Main syncs: check every main-sync merge in the session, not only the
     latest (`mainSync` provenance and
     `git -C <wt> log --merges --format='%H %P' <original base>..HEAD`). For

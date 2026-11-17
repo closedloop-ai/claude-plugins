@@ -368,6 +368,17 @@ test("malformed or duplicate declarations fail closed with a target-owned diagno
   assert.match(ambiguous.json.pathPolicyProblem, /found 2/);
 });
 
+test("ISS-14221 path policy treats bracket segments literally instead of as glob syntax", (t) => {
+  const policy = JSON.stringify({ ...JSON.parse(SYMPHONY_PATH_POLICY), allowedPrefixes: ["apps/[orgSlug]/"] });
+  const { home, worktree } = setup(t, "policy-bracket-literal", { "vibe-handoff-paths.json": policy });
+  const route = "apps/[orgSlug]/page.tsx";
+  write(worktree, route, "export const page = 2;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.pathPolicyProblem, undefined);
+  assert.deepEqual(result.json.changedFiles, [{ path: route, status: "A" }]);
+  assert.equal(result.json.blocking.forbiddenPaths, true);
+});
+
 function write(worktree, file, content) {
   const absolute = path.join(worktree, file);
   mkdirSync(path.dirname(absolute), { recursive: true });

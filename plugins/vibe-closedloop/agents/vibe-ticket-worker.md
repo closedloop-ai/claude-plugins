@@ -27,6 +27,9 @@ receipt, with branch, live ticket, `liveTicketCreatedBySession: true` and exact 
 partial discard can authorize cancellation. Lookup: the person's exact words naming who picks the work up next.
 Assign: the next owner's user id and email from lookup. Create: the
 requirements worker's brief, the originating ticket if any, and the mode.
+The mutating worker modes are launcher record actions: the launcher envelope
+uses `mode: "record"`, this name as `recordAction`, and
+`exclusiveRecordTurn: true`. Lookup stays read-only.
 Handoff: the inventory path, the confirmed summary and the person's
 corrections, the footprint, check, and review summaries, the decision tables
 if any, the next owner (full name and email, from lookup), and every answer the person gave during handoff:
@@ -111,8 +114,10 @@ implementation plan document (PLN) that the ticket produces, in the ticket's
 project and assigned to the ticket's assignee. The record keeps `livePlan`
 (the PLN slug) and `livePlanStatus` next to `liveTicket`. Every step lists
 before it writes, so a resumed session or a repeated run never creates a
-second PLN or a duplicate link. `<gitdir>` is
-`$(git -C "<wt>" rev-parse --absolute-git-dir)`.
+second PLN or a duplicate link. Before any evidence write, run
+`node ../skills/vibe/scripts/session-plan.mjs paths --worktree "<wt>"` once.
+Its `root` is `<plan-state>` and its other fields are the exact files below.
+Use only those returned paths. Never derive an evidence path from Git metadata.
 
 On startup, resume or takeover, step C reuses one linked PLN or publishes the
 criterion-complete local plan without pausing source work.
@@ -127,7 +132,7 @@ A. Source link. The source is the record's `ticket`, the ClosedLoop document
    `targetId: <live ticket>`, `linkType: "PRODUCES"`, then list again to
    confirm it.
 B. Render the plan:
-   `node ../skills/vibe/scripts/session-plan.mjs --worktree "<wt>" --out "<gitdir>/vibe-live-plan.md"`.
+   `node ../skills/vibe/scripts/session-plan.mjs --worktree "<wt>"`.
    The rendered file is the PLN's only content. It applies the live ticket's
    safety rules (`publishable-text.mjs`): paths in the session's checkout
    become repo-relative, and a local absolute path, the local username, a
@@ -154,8 +159,8 @@ C. Find or create the PLN. `get-document` the live ticket for its
    `closedloop-ai/symphony-alpha` on the session's branch. Record it at once:
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-plan <PLN slug> --live-plan-status <its status>`.
 D. Keep it current. Save the PLN's latest version text (`get-document-content`,
-   every chunk, following `cursor`) to `<gitdir>/vibe-live-plan-published.md`
-   and run B again with `--published "<gitdir>/vibe-live-plan-published.md"`.
+   every chunk, following `cursor`) to the returned `published` path and run
+   B again with `--published "<published>"`.
    `current: false` is a material change: run `list-document-versions`, and
    when its latest version is the one you compared against, append the
    rendered file with `create-document-version`; a newer version from someone
@@ -188,8 +193,9 @@ F. Status. The PLN's status follows the work:
    shows a human `approverId`, or when the published text starts with the
    `Self-approved` line `session-plan.mjs` renders (version an older text
    in D first). Before setting it, save the PLN's
-   `get-document` JSON and its latest text and run
-   `node ../skills/handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`.
+   `get-document` JSON to the returned `planDocument` path and its latest text
+   to the returned `published` path, then run
+   `node ../skills/handoff/scripts/rulings-check.mjs --plan "<planDocument>" --plan-body "<published>"`.
    Every nonempty `session-plan.mjs` render starts with that `Self-approved`
    line, so a current published render already meets that prerequisite. Run
    `rulings-check.mjs` yourself; do not block because its result was not
@@ -279,7 +285,7 @@ which goes under Missing tests as engineering's scope of work. The table covers
 the whole session, not just backend/latest work. Never author its rows or treat
 planned or missing tests as executed coverage.
 For a source PRD, reread every child and reconcile it explicitly before any
-complete claim. Write `<gitdir>/vibe-child-evidence.json` yourself (you are not
+complete claim. Write the returned `childEvidence` path yourself (you are not
 the writer; its audit is never evidence): `{"reviewer": "vibe-ticket-worker",
 "pullRequest": "<the session's pull request URL, when one exists>", "children": [...]}`, each child `delivered`, `active-elsewhere`, `superseded`
 or `uncovered`, and for a delivered one every acceptance criterion and work
@@ -457,7 +463,7 @@ historical inspections accurately. Preserve the existing grading block.
 8. `node ../skills/handoff/scripts/rulings-check.mjs --ticket <new body> --criteria-before <current latest text>`
    must pass (a reworded or dropped criterion is restored unless a human
    ruling amends it). Write the body back with `create-document-version`, then save it to
-   `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
+   the returned `liveTicket` path and run
    `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit> --worktree "<wt>"`.
    Fix every problem you can from the session; a problem only the person can
    resolve (acceptance criteria they never stated, an unclear scope line)
@@ -473,7 +479,7 @@ Finds the next owner; reads only, and never touches the ticket.
 1. Page `list-users` with `limit: 100` from `offset: 0`, following
    `nextOffset` until `hasMore` is false. Save each response verbatim as JSON
    to its own file under
-   `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-users/` (empty the
+   the returned `users` directory (empty the
    folder first).
 2. Run `node ../skills/handoff/scripts/match-assignee.mjs --name "<the person's words>" --users <page file>`,
    one `--users` per saved page, passing their words as a single argument.

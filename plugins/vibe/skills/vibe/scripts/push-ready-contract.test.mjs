@@ -80,7 +80,7 @@ test('writer E2E guidance separates dirty local receipts from the clean remote w
   assert.match(writer, /HEAD-only.*prepush/s);
   assert.match(verifier, /e2e-lock\.mjs[\s\S]*--source-hash/);
   assert.match(verifier, /vibe-e2e-results/);
-  assert.match(verifier, /external `e2e-slot\.sh --head <HEAD> <owner> <command\.\.\.>`[\s\S]*clean/i);
+  assert.match(verifier, /`fleet\.sh <orchDir> remote slot heavy <owner> <worktree>[^`]*`[\s\S]*clean/i);
   assert.doesNotMatch(verifier, /external `e2e-slot\.sh`[^\n]*--source-hash/);
   assert.match(fleet, /--source-hash/);
   assert.match(verifier, /working-tree/);

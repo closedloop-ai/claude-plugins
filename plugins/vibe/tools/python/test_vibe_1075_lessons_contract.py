@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from skill_split import built
-from vibe_contract_text import flat
+from vibe_contract_text import PROVIDER_REFERENCES, flat
 import skill_split
 
 
@@ -94,9 +94,11 @@ def test_vibe_writers_never_wait_for_authorization_on_in_scope_work() -> None:
 
 def test_a_plan_no_human_approved_is_never_a_scope_ruling() -> None:
     assert "planProblems" in skill_split.read(PLUGIN / "skills" / "handoff" / "scripts" / "rulings-check.mjs")
-    assert "rulings-check.mjs --plan <json> --plan-body <text>" in _text(PLUGIN / "agents" / "vibe-ticket-worker.md")
+    ticket_worker = _text(PROVIDER_REFERENCES / "agents" / "vibe-ticket-worker.md")
+    assert "rulings-check.mjs --plan" in ticket_worker and "--plan-body" in ticket_worker
     assert "--plan <each linked PLN's get-document JSON>" in _text(PLUGIN / "skills" / "handoff" / "SKILL.md")
-    assert "rulings-check.mjs --plan <json> --plan-body <text>" in _text(FLEET / "SKILL.md")
+    fleet_provider = _text(PROVIDER_REFERENCES / "fleet-skill.md")
+    assert "rulings-check.mjs --plan <json> --plan-body <text>" in fleet_provider
     templates = _text(FLEET / "references" / "templates.md")
     assert templates.count("Inherited scope: trace every exclusion") == 2, "takeover preamble and resume prompt"
     assert "SELF_APPROVED_MARKER}" in skill_split.read(VIBE / "scripts" / "session-plan.mjs")

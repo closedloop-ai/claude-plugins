@@ -101,9 +101,15 @@ fi
 
 # The command runs in the background so a signal reaches the traps at once instead of after it exits;
 # the explicit <&0 keeps its stdin, which bash would otherwise point at /dev/null for a background job.
+started=$SECONDS
 "$@" <&0 &
 child=$!
 wait "$child"
 status=$?
 child=
+if [ "$status" -ne 0 ] && [ $((SECONDS - started)) -le 5 ]; then
+  printf 'slot-lock: worker command failed immediately after slot grant (exit %s):' "$status" >&2
+  printf ' %q' "$@" >&2
+  printf '\n' >&2
+fi
 exit "$status"

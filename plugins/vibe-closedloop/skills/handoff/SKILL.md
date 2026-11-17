@@ -279,7 +279,8 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names. A `frozen-render` finding is settled
 only by `scripts/frozen-render.mjs`, run in step 4 by
-`vibe-storybook-decomposer`: the writer records the `Frozen render
+`vibe-storybook-decomposer`: on a remote runner it uses fleet's
+`--shipped-plugin-script handoff/scripts/frozen-render.mjs`; the writer records the `Frozen render
 unchanged` line that command prints, and nobody captures frozen stories any
 other way. Give it the prepared base worktree, never base or head server URLs:
 the renderer starts both through the verifier's owned run wrapper and stops
@@ -521,7 +522,7 @@ step 5's checks and step 7's validation:
 - Run every e2e spec the session touched, and every spec covering a touched
   screen, and no other spec.
 - Run them through the repo's containerized path (the `local-ci` skill's
-  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  `zsh -lic 'e2e/run-containerized.sh ...'`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
   "Existing checks"), never natively on the person's Mac. The lock gives
   each run its own compose project, so a teardown removes only its own
   stack; `--foreign-compose <project>` names a stack started outside the

@@ -89,6 +89,31 @@ test("a new Desktop sync lane needs the shared give-up, the shared backoff, a Su
   assert.deepEqual(done.found, []);
 });
 
+test("ISS-14128 moved and explicitly non-sync Desktop files are not invented sync lanes", (t) => {
+  const lane = "apps/desktop/src/main/agent-sync/placement-outbox.ts";
+  const moved = ["export function one() {}", "export function two() {}", "export function three() {}"].join("\n");
+  assert.deepEqual(run(t, { base: { "apps/desktop/src/main/large.ts": `${moved}\n` }, head: {
+    "apps/desktop/src/main/large.ts": "", [lane]: `${moved}\n`,
+  } }).found.filter(([rule]) => rule === "desktop-sync-lane"), []);
+  assert.deepEqual(run(t, { head: { [lane]: "export const sendOnce = () => true;\n" },
+    changeLog: "Synchronizing-susan: not a sync lane; one-attempt Session Mesh queue\n" }).found.filter(([rule]) => rule === "desktop-sync-lane"), []);
+});
+
+test("ISS-14171 a Storybook version-only manifest bump does not affect every frozen story", (t) => {
+  const story = "apps/storybook/stories/frozen.stories.tsx";
+  const manifest = "apps/storybook/package.json";
+  const frozen = 'export default { title: "Composites v1.0/Frozen" };\nexport const Default = {};\n';
+  const baseManifest = JSON.stringify({ version: "1.0.0", dependencies: { react: "1" } });
+  const versionOnly = run(t, { base: { [story]: frozen, [manifest]: baseManifest }, head: {
+    [story]: frozen, [manifest]: JSON.stringify({ version: "1.1.0", dependencies: { react: "1" } }),
+  } });
+  assert.deepEqual(versionOnly.found.filter(([rule]) => rule === "frozen-render"), []);
+  const dependency = run(t, { base: { [story]: frozen, [manifest]: baseManifest }, head: {
+    [story]: frozen, [manifest]: JSON.stringify({ version: "1.1.0", dependencies: { react: "2" } }),
+  } });
+  assert.equal(dependency.found.filter(([rule]) => rule === "frozen-render").length, 1);
+});
+
 test("a dropped ticketed comment blocks while its code survives; moved, reworded or deleted with its code it does not", (t) => {
   const comment = (slug) => `// ${slug}: keep the id tiebreak so equal ranks stay stable\nexport const order${slug.slice(4)} = (a, b) => a.id.localeCompare(b.id);\n`;
   const result = run(t, {
@@ -417,6 +442,11 @@ test("a #8922-shaped capability composed by sibling list adapters needs one shar
       .blocking.filter((finding) => finding.rule === "shared-capability-owner"),
     []
   );
+  for (const unauthorized of ["recorded debt", "orchestrator ruling"]) {
+    assert.equal(run(t, { base, head, changeLog: `Shared capability exception: FilterPopover: ${unauthorized}\n` })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner").length, 1,
+    `${unauthorized} cannot expand human waiver authority without an operator decision`);
+  }
 
   const owner = "packages/app/shared/components/generic-artifact-list-shell.tsx";
   const inherited = {
@@ -732,6 +762,59 @@ test("a change to a spec the base has needs a dated human source; a new spec or 
   assert.deepEqual(run(t, { base, head, changeLog: ruled }).found.filter(([rule]) => rule === "spec-change"), []);
   const prd = run(t, { base: { "docs/prds/board.md": "- Reject deep moves\n" }, head: { "docs/prds/board.md": null } }).found.filter(([rule]) => rule === "spec-change");
   assert.deepEqual(prd, [["spec-change", "docs/prds/board.md"]], "deleting a spec is a change");
+});
+
+test("ISS-14252 consolidated batch transactions require measured limit, timeout and lock evidence", (t) => {
+  const service = "apps/api/app/items/service.ts";
+  const limit = "packages/api/src/types/batch-limits.ts";
+  const scaleTest = "apps/api/__tests__/unit/items-scale.test.ts";
+  const head = {
+    [service]: "export async function moveBatch(tx, ids) {\n  return withDb.tx(async (tx) => tx.item.updateMany({ where: { id: { in: ids } } }));\n}\n",
+    [limit]: "export const BATCH_ITEM_LIMIT = 500;\n",
+    [scaleTest]: "test('500 items stay inside " + "timeout', () => {});\n",
+  };
+  const missing = run(t, { head });
+  assert.ok(missing.blocking.some((finding) => finding.rule === "transaction-scale" && finding.file === service));
+  const record = `Transaction scale: ${service}: limit 500; duration 4100ms; ${"time" + "out"} 30000ms; ambient timeout ignored; lock hold 3900ms; test ${scaleTest}\n`;
+  const measured = run(t, { head, changeLog: record });
+  assert.deepEqual(measured.blocking.filter((finding) => finding.rule === "transaction-scale"), []);
+  assert.ok(measured.requiredTests.some((entry) => entry.path === scaleTest));
+});
+
+test("ISS-14252 user id collapse requires order, case, duplicate and whitespace proof", (t) => {
+  const service = "apps/api/app/items/collapse-selection.ts";
+  const proof = "apps/api/__tests__/unit/collapse-selection.test.ts";
+  const head = {
+    [service]: "export function collapseSelectionToRoots(selectedIds) {\n  return [...new Set(selectedIds)];\n}\n",
+    [proof]: "test('selection permutations and normalization', () => {});\n",
+  };
+  assert.ok(run(t, { head }).blocking.some((finding) => finding.rule === "input-set-proof"));
+  const incomplete = run(t, { head, changeLog: `Input set: ${service}: order permutations; case; duplicates; test ${proof}\n` });
+  assert.ok(incomplete.blocking.some((finding) => finding.rule === "input-set-proof"), "whitespace is required too");
+  const record = `Input set: ${service}: order permutations; case; duplicates; whitespace; test ${proof}\n`;
+  const covered = run(t, { head, changeLog: record });
+  assert.deepEqual(covered.blocking.filter((finding) => finding.rule === "input-set-proof"), []);
+  assert.ok(covered.requiredTests.some((entry) => entry.path === proof));
+});
+
+test("ISS-14137 repository owner E2E rules require each mounted shell and verify their source sentence", (t) => {
+  const appOwner = "packages/app/AGENTS.md";
+  const desktopOwner = "apps/desktop/AGENTS.md";
+  const surface = "packages/app/documents/components/move-dialog.tsx";
+  const base = {
+    [appOwner]: "### E2E Coverage\nUI bug fix ⇒ regression e2e that would fail without the fix.\n",
+    [desktopOwner]: "### E2E Coverage\na `packages/app` surface needs this Electron spec and the web `e2e/` spec.\n",
+    [surface]: "export const Dialog = () => null;\n",
+  };
+  const head = { [surface]: "export const Dialog = () => <button>Move</button>;\n" };
+  const missing = run(t, { base, head, changeLog: "Request kind: bug fix\n" });
+  assert.equal(missing.blocking.filter((finding) => finding.rule === "owner-test-rule").length, 2);
+  const listed = run(t, { base, head, changeLog: ["Request kind: bug fix",
+    `Owner test: ${appOwner}: missing tests web regression E2E`,
+    `Owner test: ${desktopOwner}: missing tests Desktop regression E2E`, ""].join("\n") });
+  assert.deepEqual(listed.blocking.filter((finding) => finding.rule.startsWith("owner-test-rule")), []);
+  const drifted = run(t, { base: { ...base, [desktopOwner]: "rule moved\n" }, head, changeLog: "Request kind: bug fix\n" });
+  assert.ok(drifted.blocking.some((finding) => finding.rule === "owner-test-rule-source" && finding.file === desktopOwner));
 });
 
 test("with no provider bound, only the generic rules run: no repository path rules, and a ticket is a URL or a #number", (t) => {

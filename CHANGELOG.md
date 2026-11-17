@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe-closedloop-provider v1.0.4
+
+#### Changed
+- Updated the ClosedLoop provider’s worker, fleet, handoff and repository recipes for targeted test receipts, displayless E2E placement, ticket rulings, environment evidence and main-sync validation.
+
+### vibe v1.1.101
+
+#### Added
+- Added fleet-wide duplicate/full-corpus admission, atomic remote plugin shipment, remote plugin preflight, retired-writer records and bounded cold plugin inventory checks.
+- Added handoff checks for review reuse, decision-table alignment, session-only comments, test-only stand-ins, no-environment rulings and exact targeted-lane receipts.
+
+#### Fixed
+- Preserved failed cloud and eval evidence for inspection and continuation, reconciled archived cloud runs, and surfaced worker refusals with their own codes and reasons instead of a generic turn failure.
+- Corrected reload freshness, Claude sign-in recovery, pull-request body validation, environment setup proof, live-ticket URL validation and grader wording variants while retaining mutation-backed coverage.
+
 ### vibe-closedloop-provider v1.0.0
 
 #### Added

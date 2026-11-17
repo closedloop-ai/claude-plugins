@@ -11,5 +11,5 @@ Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criteri
 <!-- end: inherited-scope-b -->
 
 <!-- block: graph-first -->
-Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
+Graph first: ticket/PRD, collisions, blast radius, then shared callers/importers. Tests use `code_tests_for_changes` over the diff (`code_tests_for` for one file); E2E uses lanes/behavior refs. A managed Codex reviewer reads graph first or returns its approval refusal.
 <!-- end: graph-first -->

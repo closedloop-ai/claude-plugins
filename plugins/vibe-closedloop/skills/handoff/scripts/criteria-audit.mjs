@@ -71,7 +71,6 @@ const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
 const waitsRef = () => new RegExp(String.raw`^not met yet: waits on(?:\s+(${trackerKey()})\b)?`);
 const CLOSED_TICKET = new Set(["DONE", "CANCELED"]);
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
-const RUNTIME_REF = /\be2e\b|\.spec\.[cm]?[jt]sx?\b|\bplaywright\b|\bcontrol\b/i;
 
 /** Criteria with no valid MET row, rows that are not MET or are unproven, and rows for criteria the ticket does not list. */
 export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.Worktree, { passingOn = false, statuses = {}, waiting = [] } = {}) {
@@ -93,7 +92,7 @@ export function auditProblems(audit, criteria, worktree = null, at = EvidenceAt.
     }
     if (rowProblems.length === 0 && !entries.some((row) => row.verdict === "MET")) problems.push(`${id}: no MET audit row`);
     else if (rowProblems.length === 0 && RUNTIME_CRITERION.test(text ?? "") && !entries.some((row) => row.verdict === "MET" && isRuntimeRow(row))) {
-      problems.push(`${id}: it needs the product running on a surface, so typecheck, unit-test or source evidence alone does not meet it; add a screenshot, e2e or control row`);
+      problems.push(`${id}: it names a user-visible surface, so code, typecheck, unit, e2e, or text control evidence alone does not meet its visual review; add a screenshot row`);
     }
   }
   const known = new Set(criteria.map(({ id }) => id));
@@ -149,9 +148,9 @@ function waitingRowProblems(id, row, { passingOn, statuses }) {
   return [];
 }
 
-/** A row that saw the product run: a screenshot, or a test or script run through e2e or the repo's control skill. */
+/** Unit review requires an image per visible page and surface, so the criteria audit accepts the same evidence. */
 function isRuntimeRow(row) {
-  return row.type === "screenshot" || ((row.type === "test" || row.type === "script") && RUNTIME_REF.test(row.ref));
+  return row.type === "screenshot";
 }
 
 function auditRowProblems(id, row, worktree, at) {

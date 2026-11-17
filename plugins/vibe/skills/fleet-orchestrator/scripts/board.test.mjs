@@ -143,6 +143,18 @@ test('remote writers report NO-HEAD without blocking status or push-check', t =>
   assert.match(push.stdout, /^READY remote-w /);
 });
 
+test('a retired merged writer row produces no push-readiness warning', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'merged', '--tickets', 'ISS-1', '--worktree', '/gone/worktree', '--pr', '42', '--repo', 'acme/app']).status, 0);
+  const before = run([dir, 'status']);
+  assert.match(before.stdout, /PUSH-READY-UNKNOWN merged/);
+  assert.equal(run([dir, 'retire', 'merged', '--reason', 'pull request 42 merged']).status, 0);
+  const after = run([dir, 'status']);
+  assert.doesNotMatch(after.stdout, /PUSH-READY-UNKNOWN merged|NO-HEAD merged/);
+  const row = JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8')).writers.merged;
+  assert.equal(row.retiredReason, 'pull request 42 merged');
+});
+
 test('the pushed head is read from gh for a row with a PR and repo', (t) => {
   const dir = tempDir(t);
   const gh = path.join(dir, 'gh');

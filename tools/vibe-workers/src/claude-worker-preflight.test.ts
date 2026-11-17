@@ -189,6 +189,17 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
     expect(String(result.json.summary)).toContain("pending");
     expect(proofCount(value)).toBe(0);
   });
+  it("ISS-14116 retains an MCP_TOOLS_MISSING request and teaches the same-ID continuation", () => {
+    const value = setup();
+    const first = launch(value, { agentRoot: value.agentRoot, input: "Build it", timeoutMs: 1000 },
+      { FAKE_CLAUDE_PENDING_FOREVER: "1" });
+    expect(first.json.code).toBe("MCP_TOOLS_MISSING");
+    const duplicate = launch(value, { agentRoot: value.agentRoot, input: "Retry the same request" });
+    expect(duplicate.json.code).toBe("REQUEST_ID_EXISTS");
+    expect(String(duplicate.json.summary)).toContain("continuation");
+    const continued = launch(value, { agentRoot: value.agentRoot, continuation: "Continue after restoring the connection" });
+    expect(continued.status, JSON.stringify(continued.json)).toBe(0);
+  });
   it("ISS-13563 refuses a failed graph without a startup retry", () => {
     const value = setup();
     const result = launch(value, { agentRoot: value.agentRoot, input: "Build it" },

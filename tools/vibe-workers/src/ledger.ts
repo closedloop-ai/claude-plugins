@@ -9,6 +9,7 @@ import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/prov
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { installedPluginRoot, readPluginManifest } from "./plugin-root.js";
 import { readReferenceImages } from "./reference-images.js";
+import { WorkerRefusal } from "./worker-refusal.js";
 
 /** Resolves an exact existing checkout for pre-session operations or a parent-authorized cancellation. */
 export function checkoutLocation(worktree: string) {
@@ -88,6 +89,12 @@ function definitionUpgradeEvidence(ledger: Ledger, installedRoot: string) {
 /** Read-only upgrade decision for the installed Claude launcher; migration uses the same evidence under the ledger lock. */
 export function readWriterUpgradeEvidence(worktree: string, installedRoot: string) {
   return definitionUpgradeEvidence(readLedger(writerLocation(worktree)), installedRoot);
+}
+
+/** Resume and migration use one compatibility predicate for the recorded and installed definitions. */
+export function writerUpgradeCompatible(evidence: ReturnType<typeof definitionUpgradeEvidence>) {
+  const unchangedUpgrade = evidence.provenNewer && evidence.installedDigest === evidence.recordedDigest;
+  return evidence.observedDigest === evidence.recordedDigest && (evidence.sameRelease || unchangedUpgrade);
 }
 
 /** Checks the existing active source lease atomically without returning private request text. */
@@ -186,7 +193,7 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     const reason = harnessSwitch ? "harness-switch" as const : provenDefinitionChange(evidence);
     const releasedRecord = retained && data.retainedRecord && verifyRetained
       ? verifyRetained(lock, ledger, data.retainedRecord) : undefined;
-    const block = migratableBlock(ledger, observedDigest, releasedRecord);
+    const block = migratableBlock(ledger, evidence, releasedRecord);
     const runtime = harnessSwitch?.to ?? data.runtime;
     const workerId = runtime === "claude" ? randomUUID() : data.workerId;
     if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
@@ -233,16 +240,17 @@ function provenDefinitionChange(evidence: ReturnType<typeof definitionUpgradeEvi
  * A BLOCKED request whose recorded cause is the removed definition migrates. A ledger written before block
  * reasons existed carries none; there the writer's own unreleasable grant for that request, under an absent
  * definition, is the mechanical proof of that cause.
- * Any other BLOCKED request migrates only when the recorded definition is absent: the old writer can never run
- * again to settle it, so it moves unchanged, still the active request, to the new writer, and `claim` lets that
- * writer take nothing else until it continues it. While the old writer can still run, the refusal stays.
+ * Any other BLOCKED request migrates when the recorded definition is absent, or when an intact cached definition
+ * belongs to a proven older release and differs from the installed definition. In either state the launcher refuses
+ * the old writer, so migration carries the request unchanged and `claim` admits nothing else until it is continued.
  */
-function migratableBlock(ledger: Ledger, observedDigest: string | null,
+function migratableBlock(ledger: Ledger, evidence: ReturnType<typeof definitionUpgradeEvidence>,
   releasedRecord: ReturnType<StrandedRecordVerifier> | undefined) {
   const active = ledger.active;
   if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
-  if (active.blockReason === undefined && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
-  if (observedDigest === null) return "carried";
+  if (active.blockReason === undefined && evidence.observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
+  if (evidence.observedDigest === null
+    || (!writerUpgradeCompatible(evidence) && evidence.provenNewer && evidence.observedDigest === evidence.recordedDigest)) return "carried";
   throw new Error("Migration cannot bypass a writer refusal while the recorded writer can still run; resolve the blocked request first");
 }
 
@@ -258,23 +266,21 @@ function isNewerRelease(current: string, previous: string) {
 }
 
 /** Serialized mutations preserve active requests across review, person and commit continuations. */
-export function changeWriter(action: "enqueue" | "claim" | "finish", input: unknown) {
+export function changeWriter(action: "enqueue" | "start" | "claim" | "finish", input: unknown) {
   const data = actionSchema.parse(input);
   const place = writerLocation(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
-    if (data.workerId !== ledger.workerId) throw new Error("Request must name the registered persistent writer");
+    if (data.workerId !== ledger.workerId) throw new WorkerRefusal("WRITER_ID_MISMATCH",
+      "The request must name the registered persistent writer.");
     const requestId = data.requestId;
-    if (!requestId) throw new Error("Request ID is required");
-    if (action === "enqueue") {
-      if (!data.input || data.continuation) throw new Error("Enqueue requires one original request input");
-      if (ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId)) {
-        throw new Error("Request ID already exists");
+    if (!requestId) throw new WorkerRefusal("REQUEST_ID_REQUIRED", "A requestId is required.");
+    const duplicateRequest = () => ledger.pending.some((item) => item.id === requestId)
+      || ledger.active?.id === requestId || ledger.completed.includes(requestId);
+    const prepareClaim = () => {
+      if (existsSync(join(place.dir, "vibe-record-turn.lock"))) {
+        throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; retain the queued writer request.");
       }
-      if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
-      ledger.pending.push({ id: requestId, input: data.input });
-    } else if (action === "claim") {
-      if (existsSync(join(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
         ledger.active.status = "FAILED";
         ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
@@ -283,7 +289,31 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
         delete ledger.active.processGroupId;
         delete ledger.active.continuation;
       }
-      if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
+      if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
+    };
+    if (action === "enqueue") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
+      if (duplicateRequest()) throw new WorkerRefusal("REQUEST_ID_EXISTS",
+        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work.");
+      if (ledger.pending.length >= 32) throw new WorkerRefusal("REQUEST_QUEUE_FULL",
+        "The pending queue is full; keep the new input with the parent.");
+      ledger.pending.push({ id: requestId, input: data.input });
+    } else if (action === "start") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
+      if (duplicateRequest()) throw new WorkerRefusal("REQUEST_ID_EXISTS",
+        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work.");
+      prepareClaim();
+      if (ledger.active?.status === "FAILED") {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (ledger.active) throw new WorkerRefusal("ACTIVE_REQUEST_PENDING",
+        "Continue the current request before consuming queued work.");
+      if (ledger.pending.length) throw new WorkerRefusal("REQUEST_ORDER_INVALID",
+        "Claim the oldest pending request before starting new work.");
+      ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
+    } else if (action === "claim") {
+      prepareClaim();
       // A stopped or rejected turn finishes FAILED. A new request supersedes it
       // instead of waiting on a continuation nobody sends.
       if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
@@ -296,12 +326,14 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
         ledger.completed = ledger.completed.slice(0, -1);
         ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
       } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
+        if (ledger.active.id !== requestId || !data.continuation) throw new WorkerRefusal("ACTIVE_REQUEST_PENDING",
+          "Continue the current request before consuming queued work.");
         ledger.active.continuation = data.continuation;
       } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new Error("Claim must take the oldest pending request");
+        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID",
+          "Claim must take the oldest pending request.");
         const next = ledger.pending.shift();
-        if (!next) throw new Error("No pending request");
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
         ledger.active = { ...next, status: "PLAN" };
       }
       ledger.active.lease = randomUUID();
@@ -334,7 +366,7 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...(action === "claim" ? { turn: ledger.active } : {}) };
+    return { ...summary(ledger), ...(["start", "claim"].includes(action) ? { turn: ledger.active } : {}) };
   });
 }
 

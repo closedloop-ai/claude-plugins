@@ -76,7 +76,6 @@ const OUTSIDE: Record<string, string[]> = {
     "skills/vibe/references/quality-loop.md: resources/plan_template.md",
   ],
   "a file a session, sweep or fleet program writes at run time": [
-    "agents/vibe-environment-worker.md: pr-body.md",
     "skills/cl-execute/references/implementation-review-pr.md: pr-body.md",
     "skills/cl-sweep/references/durable-ticket-state.md: queue.md",
     "skills/fleet-orchestrator/SKILL.md: rulings.md",

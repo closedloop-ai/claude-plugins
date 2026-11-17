@@ -158,6 +158,39 @@ test("responsive, mocked-owner absence, premature absence, and count-only layout
   assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: mockedOwner }).join("\n"), /ownerBoundary: "production"/);
 });
 
+test("ISS-14128 viewport words in lint fixtures do not invent responsive render candidates", () => {
+  const fixture = changed("src/viewport-rule.test.ts", [
+    'test("rejects unknown viewport names", () => {',
+    '  const names = ["Narrow", "mobile2"];',
+    "  expect(check(names)).toBe(false);",
+    "});",
+  ].join("\n"), ["Narrow", "mobile2"]);
+  const candidates = testIntegrityCandidates([fixture.file], (file) => file === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "responsive"), []);
+});
+
+test("ISS-14128 test-only E2E stand-ins are not production absence-proof candidates", () => {
+  const spec = "apps/desktop/test/e2e/project.spec.ts";
+  const standIn = "apps/desktop/test/e2e/helpers/active-project.ts";
+  const source = [
+    'import { activeProjectOrNull } from "./helpers/active-project";',
+    'test("no active project", async () => {',
+    '  expect(await activeProjectOrNull()).toBeNull();',
+    '});',
+  ].join("\n");
+  const files = [{ path: spec, status: "M", added: [{ line: 3, text: '  expect(await activeProjectOrNull()).toBeNull();' }] }];
+  const read = file => file === spec ? source : file === standIn
+    ? "export async function activeProjectOrNull() { return null; }\n" : null;
+  assert.deepEqual(testIntegrityCandidates(files, read).filter(({ kind }) => kind === "absence"), []);
+
+  const production = source.replace("./helpers/active-project", "../../src/main/active-project");
+  const productionPath = "apps/desktop/src/main/active-project.ts";
+  const readProduction = file => file === spec ? production : file === productionPath
+    ? "export async function activeProjectOrNull() { return null; }\n" : null;
+  assert.equal(testIntegrityCandidates(files, readProduction).filter(({ kind }) => kind === "absence").length, 1,
+    "a production owner still requires ownerBoundary production");
+});
+
 test("AC-4 absence assertions reject missing or unrun proof and accept an executed failure", () => {
   const fixture = changed(
     "apps/desktop/test/e2e/branches-page.spec.ts",

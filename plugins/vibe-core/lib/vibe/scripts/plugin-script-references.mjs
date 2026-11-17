@@ -51,6 +51,18 @@ function relativeOnly(prefix) {
   return prefix === "" || prefix.split("/").every((segment) => segment === "." || segment === "..");
 }
 
+/** A script present inside the reviewed worktree belongs to that source tree, regardless of how the brief prefixes it. */
+function existsInWorktree(candidate, worktree) {
+  if (!worktree) return false;
+  try {
+    const root = realpathSync(worktree);
+    const resolved = realpathSync(path.isAbsolute(candidate) ? candidate : path.resolve(root, candidate));
+    return resolved.startsWith(`${root}${path.sep}`) && lstatSync(resolved).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Vibe plugin script references in `text`, normalized to `skills/<skill>/scripts/<file>`.
  * A path counts only when <skill> is a skill of the installed plugin and either it has no
@@ -65,8 +77,8 @@ export function pluginScriptReferences(text, pluginRoot, worktree = null) {
     if (!match) continue;
     const [candidate, prefix, explicit, skill, rest] = match;
     if (!isDirectory(path.join(pluginRoot, "skills", skill))) continue;
+    if (existsInWorktree(candidate, worktree)) continue;
     if (relativeOnly(prefix)) {
-      if (worktree && existsSync(path.resolve(worktree, candidate))) continue;
     } else {
       const base = path.resolve(worktree ?? "/", prefix);
       if (!explicit || !isVibePluginRoot(base)) continue;

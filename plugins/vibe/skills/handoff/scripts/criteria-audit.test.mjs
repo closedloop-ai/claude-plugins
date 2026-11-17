@@ -148,12 +148,12 @@ test("a fleet unit's member tickets are audited with the session's ticket, as <s
 test("a criterion that needs the product running on a surface is not met by typecheck or unit tests alone", () => {
   const criteria = [{ id: "AC-1", text: "Bulk Favorite works and is verified on web and Desktop" }, { id: "AC-2", text: "The batch route returns per-item results" }];
   const row = (id, type, ref) => `| ${id} | MET | ${type} | ${ref} |\n`;
-  const runtime = "AC-1: it needs the product running on a surface, so typecheck, unit-test or source evidence alone does not meet it; add a screenshot, e2e or control row";
+  const runtime = "AC-1: it names a user-visible surface, so code, typecheck, unit, e2e, or text control evidence alone does not meet its visual review; add a screenshot row";
   assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm typecheck") + row("AC-1", "script", "pnpm test --filter app") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
   assert.deepEqual(auditProblems(row("AC-1", "source-trace", "packages/app/bar.tsx:40") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
   assert.deepEqual(auditProblems(row("AC-1", "screenshot", "desktop-bulk-favorite.png") + row("AC-2", "script", "pnpm test"), criteria), []);
-  assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm control web screenshot sessions") + row("AC-2", "script", "pnpm test"), criteria), []);
-  assert.deepEqual(auditProblems(row("AC-1", "script", "dagger call e-2-e --spec bulk.spec.ts") + row("AC-2", "script", "pnpm test"), criteria), []);
+  assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm control web screenshot sessions") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
+  assert.deepEqual(auditProblems(row("AC-1", "script", "dagger call e-2-e --spec bulk.spec.ts") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
   // A criterion waiting on another ticket's work follows the waiting rules alone; the runtime rule adds nothing to it.
   const waiting = `| AC-1 | PARTIAL | source-trace | not met yet: waits on ISS-9 |\n${row("AC-2", "script", "pnpm test")}`;
   assert.deepEqual(auditProblems(waiting, criteria, null, undefined, { passingOn: true, statuses: { "ISS-9": "IN_PROGRESS" } }), []);

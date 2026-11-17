@@ -25,6 +25,7 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { reusableReviewRoles } from "./review-impact.mjs";
 
 const { sameSource, sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
@@ -42,7 +43,8 @@ function fetchCurrentMain(worktree) {
 
 /** The criteria audit's unit review arguments: the review of the completed work and the PRD and plan bodies it reads. */
 export function unitReviewArgs({ review, prds = [], plans = [] }) {
-  return [...(review ? ["--review", review] : []), ...prds.flatMap((prd) => ["--prd", prd]), ...plans.flatMap((plan) => ["--plan", plan])];
+  return [...(review ? ["--review", review] : []), ...prds.flatMap((prd) => ["--prd", prd]),
+    ...plans.flatMap((plan) => ["--plan", plan])];
 }
 
 /** Run the canonical inventory with PR body and verifier evidence before recording readiness. */
@@ -54,7 +56,10 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
   const mergeProblem = checkedMergeProblem(worktree, targets);
   if (mergeProblem) throw new Error(mergeProblem);
   const source = sourceIdentity(worktree);
-  const verified = reviewReceiptProblems(readReviewReceipts(receipts), source);
+  const parsedReceipts = readReviewReceipts(receipts);
+  const runsEvidence = JSON.parse(readFileSync(runs, "utf8"));
+  const reusableRoles = reusableReviewRoles(worktree, parsedReceipts, runsEvidence.qaImpactRequest);
+  const verified = reviewReceiptProblems(parsedReceipts, source, { reusableRoles });
   const reviewProblems = [...verified.problems, ...reviewFindingProblems({ source, findings: verified.findings }, source)];
   if (reviewProblems.length) throw new Error(reviewProblems.join("; "));
   if (ticket && (!audit || !matrix)) throw new Error("criteria audit and matrix are required with a ticket");
@@ -90,7 +95,9 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
   const current = mergeTargets(worktree, base);
   if (current.base.oid !== targets.base.oid) throw new Error("PR base moved during the handoff gate");
   if (current.main?.oid !== targets.main?.oid) throw new Error("current main moved during the handoff gate");
-  writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts, memberTickets, unitReviewPassed: Boolean(review), inventoryPassed: true, prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
+  writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts,
+    reviewCarry: [...reusableRoles].sort(), memberTickets, unitReviewPassed: Boolean(review), inventoryPassed: true,
+    prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
   return { branch, source };
 }
 

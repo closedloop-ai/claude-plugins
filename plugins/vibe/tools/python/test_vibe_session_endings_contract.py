@@ -165,6 +165,9 @@ def test_the_environment_worker_opens_the_pull_request_from_the_template_and_nev
     assert '"vibe-environment-worker": ["create", "redeploy", "flags", "desktop", "handover", "pull-request"],' in record
     assert '"pull-request"]);' in record
     assert "pull-request" not in PROVIDER_DATA["tickets"]["recordWrites"]["vibe-environment-worker"]
+    assert PROVIDER_DATA["tickets"]["recordWrites"]["vibe-environment-worker"]["create"] == [
+        "create_branch_artifact", "create_document_version"
+    ]
 
 
 def test_the_ticket_stays_with_the_person_on_the_pull_request_path() -> None:

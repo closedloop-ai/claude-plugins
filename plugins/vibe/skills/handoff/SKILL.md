@@ -280,7 +280,8 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names. A `frozen-render` finding is settled
 only by `scripts/frozen-render.mjs`, run in step 4 by
-`vibe-storybook-decomposer`: the writer records the `Frozen render
+`vibe-storybook-decomposer`: on a remote runner it uses fleet's
+`--shipped-plugin-script handoff/scripts/frozen-render.mjs`; the writer records the `Frozen render
 unchanged` line that command prints, and nobody captures frozen stories any
 other way. Give it the prepared base worktree, never base or head server URLs:
 the renderer starts both through the verifier's owned run wrapper and stops

@@ -52,10 +52,13 @@ export const commandReceiptSchema = z.object({ argv: z.array(z.string()).min(1).
   bindings: z.record(z.string()).optional(), cwd: z.string().optional(),
   timeoutMs: z.number().int().min(1000).max(2 ** 31 - 1).optional(),
   exitCode: z.number().int(), log: z.string().min(1), sha256: z.string().length(64),
-  comparison: mainComparisonSchema.optional() }).strict()
+  comparison: mainComparisonSchema.optional(),
+  // A check the fleet's remote slot ran: `log` is the stored report, `logSha256` the remote run's own log digest.
+  remote: z.object({ host: z.string().min(1).max(255), commit: commitSchema, logSha256: digestSchema }).strict().optional() }).strict()
   // Only a check that also fails on the captured main, or runs out of time there too, may stand in a receipt with a failing exit.
   .refine((item) => (item.exitCode === 0) === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "")
-    && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+    && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence")
+  .refine((item) => !item.remote || (item.exitCode === 0 && !item.comparison), "Remote check evidence must be a passing run");
 const failedCheckSchema = z.object({ argv: z.array(z.string()).min(1).max(256), bindings: z.record(z.string()).optional(),
   cwd: z.string().optional(), comparison: mainComparisonSchema }).strict();
 export const e2eLimitationSchema = z.object({ argv: z.array(z.string()).min(1).max(256),
@@ -88,6 +91,14 @@ export const mainSyncReceiptSchema = z.object({
   deferredMain: z.object({ mainSha: commitSchema, reason: z.string().min(1).max(500) }).strict().optional(),
 }).strict();
 export type MainSyncReceipt = z.infer<typeof mainSyncReceiptSchema>;
+/** The validation the fleet's remote slot recorded for its own commit of a tree, plus the host it ran on. */
+export const remoteCheckReportSchema = z.object({ host: z.string().trim().min(1).max(255),
+  validation: z.object({ headSha: commitSchema, treeSha: commitSchema, inputSha256: digestSchema,
+    commands: z.array(z.object({ argv: z.array(z.string()).min(1).max(256), bindings: z.record(z.string()).optional(),
+      cwd: z.string().optional(), timeoutMs: z.number().int().optional(), exitCode: z.number().int(),
+      log: z.string().min(1).max(4096), sha256: digestSchema }).strict()).min(1).max(128),
+    checkedAt: z.string().datetime(), e2eLimitations: z.array(e2eLimitationSchema).max(128).default([]) }).strict() }).strict();
+export const mainSyncRemoteInputSchema = mainSyncInputSchema.extend({ report: remoteCheckReportSchema }).strict();
 export const readinessStateSchema = z.object({ version: z.literal(1), phase: z.literal("input-readiness"),
   transactionId: z.string().uuid(), worktree: z.string(), branch: z.string(),
   operator: z.object({ id: z.string().min(1), email: z.string().email() }).strict(),

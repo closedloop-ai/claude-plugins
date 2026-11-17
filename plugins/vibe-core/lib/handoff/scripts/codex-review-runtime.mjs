@@ -17,7 +17,17 @@ export function observedCodexTurn(thread, sessionId, turnId) {
   const toolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "completed"
     && typeof item.server === "string" && typeof item.tool === "string")
     .map(nativeMcpName);
-  return { sessionId, turnId, status: "completed", toolCalls };
+  const failedToolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "failed"
+    && typeof item.server === "string" && typeof item.tool === "string")
+    .map(item => ({ name: nativeMcpName(item), error: String(item.error?.message ?? item.error ?? item.message ?? "tool call failed") }));
+  return { sessionId, turnId, status: "completed", toolCalls, failedToolCalls };
+}
+
+/** A managed reviewer probes graph first; an approval refusal stops before its findings can be accepted. */
+export function codexGraphSetupProblem(runtime, aliases) {
+  const refusal = runtime?.failedToolCalls?.find(call => aliases.includes(call.name)
+    && /approval|not approved|requires approval/i.test(call.error));
+  return refusal ? `Codex reviewer graph tool ${refusal.name} was refused by the approval policy before review. Approve the graph read tools for managed Codex reviewers, then relaunch the review.` : null;
 }
 
 /** Read one exact thread through the repository's existing App Server client. */

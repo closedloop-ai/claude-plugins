@@ -80,7 +80,7 @@ def test_green_watch_fixes_bind_clean_and_dirty_e2e_evidence_to_real_inputs() ->
     assert "sameSource(enteredSource, source)" in lock, "queued edits must invalidate E2E evidence"
     assert "testedSource" in lanes and "testedHead" in lanes, "dirty candidate and clean captured-main boundaries stay distinct"
     assert "DIRTY-WORKTREE" in identity and "export function testedHead" in identity
-    assert "external `e2e-slot.sh --head <HEAD> <owner> <command...>`" in verifier
+    assert "`fleet.sh <orchDir> remote slot heavy <owner> <worktree>" in verifier
     assert "imported `testedHead` enforces that boundary" in verifier
 
 

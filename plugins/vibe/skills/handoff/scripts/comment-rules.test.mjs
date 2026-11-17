@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkStaleCitations, citationPattern } from "./comment-rules.mjs";
+import { checkAgentDecisionCitations, checkCommentClaims, checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkSessionPointers, checkStaleCitations, citationPattern } from "./comment-rules.mjs";
 import { bindProvider, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -126,6 +126,31 @@ test("citation and removed-name candidates find the PR #9732 DI-13 lines and lef
   const stale = "// Builds the editRow for the lead.\nconst toolbarParts = {};\n";
   assert.deepEqual(collect((add) => checkRemovedNameComments(removedDiff, { head: () => stale }, add)).map(({ rule, line }) => [rule, line]), [["removed-name-comment", 1]]);
   assert.deepEqual(collect((add) => checkRemovedNameComments(removedDiff, { head: () => "// Builds the toolbar parts.\nconst toolbarParts = {};\n" }, add)), []);
+});
+
+test("ISS-14137 comment claims are checked against all current readers", () => {
+  const source = "/** Read at ONE site. */\nexport const FLAG_KEY = 'flag';\n";
+  const changed = files("diff --git a/key.ts b/key.ts\n--- a/key.ts\n+++ b/key.ts\n@@ -0,0 +1,2 @@\n+/** Read at ONE site. */\n+export const FLAG_KEY = 'flag';\n");
+  const found = collect((add) => checkCommentClaims(changed, { head: () => source,
+    wordFiles: () => ["key.ts", "a.ts", "b.ts", "c.ts"] }, add));
+  assert.equal(found[0].rule, "claim-vs-readers");
+  assert.match(found[0].problem, /3 reader files.*a\.ts, b\.ts, c\.ts/);
+});
+
+test("ISS-14137 session pointers and agent product decisions are blocking in test comments too", () => {
+  const changed = files("diff --git a/x.test.ts b/x.test.ts\n--- a/x.test.ts\n+++ b/x.test.ts\n@@ -0,0 +1,3 @@\n+// rulings.md 578\n+// DT-CUSTOM-7\n+// orchestrator decision: Remove project goes first\n");
+  const repo = { sessionIds: ["DT-CUSTOM-7"], rules: RULES };
+  const pointers = collect((add) => checkSessionPointers(changed, repo, add));
+  assert.deepEqual(pointers.map((entry) => entry.rule), ["session-internal-pointer", "session-internal-pointer"]);
+  assert.equal(collect((add) => checkAgentDecisionCitations(changed, repo, add))[0].rule, "agent-decision-citation");
+  const cited = files("diff --git a/x.test.ts b/x.test.ts\n--- a/x.test.ts\n+++ b/x.test.ts\n@@ -0,0 +1 @@\n+// ISS-13590: Remove project goes first\n");
+  assert.deepEqual(collect((add) => checkAgentDecisionCitations(cited, repo, add)), []);
+});
+
+test("ISS-14137 diff-rules derives private row ids from the session evidence", (t) => {
+  const result = run(t, { head: { "x.test.ts": "// DT-CUSTOM-7 is the reason\nexport {};\n" },
+    changeLog: "Affected rows: DT-CUSTOM-7\n" });
+  assert.ok(result.blocking.some((finding) => finding.rule === "session-internal-pointer" && finding.problem.includes("DT-CUSTOM-7")));
 });
 
 test("the command prints blocking findings and reviewer candidates for a worktree diff", (t) => {

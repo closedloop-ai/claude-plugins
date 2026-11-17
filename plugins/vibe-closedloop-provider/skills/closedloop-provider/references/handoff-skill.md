@@ -87,7 +87,7 @@ restore its bytes and record the passing run. Never handle or bypass a credentia
 
 <!-- block: e2e-path -->
 - Run them through the repo's containerized path (the `local-ci` skill's
-  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  `zsh -lic 'e2e/run-containerized.sh ...'`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
   "Existing checks"), never natively on the person's Mac. The lock gives
 <!-- end: e2e-path -->
 

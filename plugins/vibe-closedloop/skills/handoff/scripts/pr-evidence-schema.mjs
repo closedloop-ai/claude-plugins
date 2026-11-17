@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 import { proofSourceAt, testIntegrityProofShapeProblems } from "./test-integrity.mjs";
+import { RUNNER_HOST } from "./e2e-tier.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -14,7 +15,8 @@ const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs")
 
 // The selector a graph's test lookup records (the evidence file's version-skewed contract keeps its name).
 export const GRAPH_SELECTOR = "code_tests_for";
-export const TEST_SELECTORS = Object.freeze([GRAPH_SELECTOR, "related", "e2e-reference"]);
+export const GRAPH_CHANGE_SELECTOR = "change-tests";
+export const TEST_SELECTORS = Object.freeze([GRAPH_SELECTOR, GRAPH_CHANGE_SELECTOR, "related", "e2e-reference"]);
 
 /**
  * Read canonical per-source test selections without discarding malformed
@@ -22,7 +24,8 @@ export const TEST_SELECTORS = Object.freeze([GRAPH_SELECTOR, "related", "e2e-ref
  * A graph selector's null list means the graph did not establish coverage and
  * requires a separate `related` row for that file.
  */
-export function readTestSelection(evidence) {
+export function readTestSelection(evidence, extraSelectors = []) {
+  const selectors = [...new Set([...TEST_SELECTORS, ...extraSelectors])];
   if (!Array.isArray(evidence?.testSelection)) {
     return { entries: [], problems: ["testSelection must be an array of {file, selector, tests} entries; rerun the verifier. A codeTestsFor object with basename tests cannot prove exact selected paths"] };
   }
@@ -33,13 +36,13 @@ export function readTestSelection(evidence) {
       problems.push(`testSelection entry ${index} needs a repo-relative file path`);
       continue;
     }
-    if (!TEST_SELECTORS.includes(entry.selector)) {
-      problems.push(`testSelection entry for ${entry.file} has selector ${JSON.stringify(entry.selector)}; use one of ${TEST_SELECTORS.join(", ")}`);
+    if (!selectors.includes(entry.selector)) {
+      problems.push(`testSelection entry for ${entry.file} has selector ${JSON.stringify(entry.selector)}; use one of ${selectors.join(", ")}`);
       continue;
     }
     if (!(Array.isArray(entry.tests) && entry.tests.every((test) => typeof test === "string" && test.trim()))
-      && !(entry.selector === GRAPH_SELECTOR && entry.tests === null)) {
-      problems.push(`testSelection entry for ${entry.file}: tests must be an array of exact repo-relative paths${entry.selector === GRAPH_SELECTOR ? " or null when the graph found none" : ""}`);
+      && !([GRAPH_SELECTOR, GRAPH_CHANGE_SELECTOR, ...extraSelectors].includes(entry.selector) && entry.tests === null)) {
+      problems.push(`testSelection entry for ${entry.file}: tests must be an array of exact repo-relative paths${[GRAPH_SELECTOR, GRAPH_CHANGE_SELECTOR, ...extraSelectors].includes(entry.selector) ? " or null when the graph found none" : ""}`);
       continue;
     }
     entries.push(entry);
@@ -52,9 +55,9 @@ export function readTestSelection(evidence) {
  * The Part B path-only object is not a documented older version: it lacks the
  * cases, commands, lane report and full test paths needed for safe conversion.
  */
-export function prEvidenceShapeProblems(evidence, receiptDir, readSource) {
+export function prEvidenceShapeProblems(evidence, receiptDir, readSource, extraSelectors = []) {
   const problems = [
-    ...readTestSelection(evidence).problems,
+    ...readTestSelection(evidence, extraSelectors).problems,
     ...testIntegrityProofShapeProblems(evidence, receiptDir, readSource),
     ...(evidence?.treeEquivalentCarry === undefined ? [] : treeEquivalentCarryShapeProblems(evidence.treeEquivalentCarry)),
   ];
@@ -92,7 +95,12 @@ export function prEvidenceShapeProblems(evidence, receiptDir, readSource) {
 
 /** @typedef {{kind: "command", command: string} | {kind: "github-workflow", path: string}} RepositoryLaneSource */
 /** @typedef {{ref: string, commit: string, gitTree: string, source: {head: string, diffSha256: string, treeSha256: string}}} CarryPoint */
-/** @typedef {{kind: "tree-equivalent", version: 1, proof: CarryPoint, published: CarryPoint, proofs?: CarryPoint[], laneKey: string,
+/**
+ * A proof commit that exists only on the host that ran it: bound by its Git tree and content hash,
+ * which must equal the publication's; `proofCommit` names the run's commit and is never resolved locally.
+ * @typedef {{kind: "tree", host: string, proofCommit: string, gitTree: string, treeSha256: string, command: string}} TreeCarryPoint
+ */
+/** @typedef {{kind: "tree-equivalent", version: 1, proof: CarryPoint | TreeCarryPoint, published: CarryPoint, proofs?: CarryPoint[], laneKey: string,
  * runs: Array<{scopeKey: string, result: {lane: string, command: string, commit: string, laneKey?: string, status: "passed", exitCode: 0},
  * coveredFiles: Array<{path: string, sha256: string}>, receipt: {path: string, sha256: string}}>}} TreeEquivalentCarry */
 const HASH = /^[a-f0-9]{64}$/;
@@ -130,12 +138,17 @@ export function treeEquivalentCarryShapeProblems(carry) {
     return ["tree-equivalent carry needs its complete versioned contract"];
   }
   if (carry.proofs !== undefined && (!Array.isArray(carry.proofs) || carry.proofs.length > 100)) return ["tree carry proofs must be a bounded list of pinned points"];
-  const points = [["proof", carry.proof], ["published", carry.published], ...(carry.proofs ?? []).map((point, index) => [`proofs[${index}]`, point])];
-  const commits = new Set([carry.proof?.commit, carry.published?.commit]);
+  const treeProof = carry.proof?.kind === "tree";
+  const points = [...(treeProof ? [] : [["proof", carry.proof]]), ["published", carry.published], ...(carry.proofs ?? []).map((point, index) => [`proofs[${index}]`, point])];
+  const commits = new Set([treeProof ? carry.proof.proofCommit : carry.proof?.commit, carry.published?.commit]);
   for (const point of carry.proofs ?? []) {
     if (commits.has(point?.commit)) problems.push("tree carry proof commits must be unambiguous");
     commits.add(point?.commit);
   }
+  if (treeProof && (!exactKeys(carry.proof, ["kind", "host", "proofCommit", "gitTree", "treeSha256", "command"])
+    || typeof carry.proof.host !== "string" || !RUNNER_HOST.test(carry.proof.host) || !COMMIT.test(carry.proof.proofCommit ?? "")
+    || !COMMIT.test(carry.proof.gitTree ?? "") || !HASH.test(carry.proof.treeSha256 ?? "")
+    || typeof carry.proof.command !== "string" || !carry.proof.command.trim())) problems.push("tree carry proof tree point needs its host, proof commit, Git tree, tree hash and command");
   for (const [name, point] of points) {
     if (!exactKeys(point, ["ref", "commit", "gitTree", "source"]) || !/^refs\/(?:heads|remotes)\/[A-Za-z0-9_./-]+$/.test(point?.ref ?? "")
       || !COMMIT.test(point?.commit ?? "") || !COMMIT.test(point?.gitTree ?? "") || !validSourceIdentity(point?.source)

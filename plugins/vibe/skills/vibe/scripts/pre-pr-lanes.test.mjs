@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { bindProvider, PROVIDER_BINDING } from "./test-fixtures.mjs";
-import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes } from "./pre-pr-lanes.mjs";
+import { fleetLaneInvocation, lanePreflightProblem, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
 import { spawnSync } from "node:child_process";
 
@@ -58,6 +58,22 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   assert.equal(run("check", "--worktree", worktree, "--report", report, "--skip", "e2e").status, 2, "a skip needs the operator ruling that waives it");
   const waived = run("check", "--worktree", worktree, "--report", report, "--skip", "test:e2e", "--skip-ruling", "deadline mode, operator, 2026-10-22, rulings.md");
   assert.match(waived.stdout, /^SKIPPED-LANE DESKTOP_E2E_SPECS=.* \(deadline mode, operator, 2026-10-22, rulings.md\)$/m);
+  const rulings = path.join(root, "rulings.md");
+  writeFileSync(rulings, "## R-TARGETED-TESTS (operator, 2026-10-23)\n- Run the diff-targeted tests and carry other test lanes to CI.\n");
+  const targeted = run("check", "--worktree", worktree, "--report", report, "--targeted", "@repo/app",
+    "--targeted-ruling-id", "R-TARGETED-TESTS", "--targeted-ruling-source", "rulings", "--rulings", rulings);
+  assert.equal(targeted.status, 1);
+  assert.match(targeted.stdout, /^MISSING-LANE pnpm --filter @repo\/app test:/m);
+  assert.match(targeted.stdout, /^RULED-LANE pnpm test:desktop-renderer \(R-TARGETED-TESTS, rulings:/m);
+  assert.doesNotMatch(targeted.stdout, /^MISSING-LANE pnpm test:desktop-renderer:/m);
+  const ruledRecords = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
+  assert.ok(ruledRecords.some((row) => row.command === "pnpm test:desktop-renderer" && row.result === "not-run"
+    && row.ruling === "R-TARGETED-TESTS" && row.rulingSource === "rulings"));
+  writeFileSync(rulings, "## R-TARGETED-TESTS (orchestrator, 2026-10-23)\n- Run targeted tests.\n");
+  const unruled = run("check", "--worktree", worktree, "--report", report, "--targeted", "@repo/app",
+    "--targeted-ruling-id", "R-TARGETED-TESTS", "--targeted-ruling-source", "rulings", "--rulings", rulings);
+  assert.equal(unruled.status, 2);
+  assert.match(unruled.stderr, /orchestrator direction, not an operator ruling/);
   const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
   for (const lane of reportLanes(REPORT)) assert.equal(run("record", "--worktree", worktree, "--head", head, "--command", lane, "--result", "pass", "--report", report).status, 0);
   assert.equal(run("check", "--worktree", worktree, "--report", report).status, 0);
@@ -92,6 +108,84 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   writeFileSync(selected, JSON.stringify({ lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
     featureMap: { entries: [] }, laneSelections: { files: { [testFile]: [] } }, config: { docs: [] } }));
   assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 2, "an empty lane list for the changed file is refused");
+});
+
+test("ISS-14172 a lane can run through a fleet heavy slot and remote fleet binds exact HEAD", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-fleet-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "base"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const command = "pnpm test:affected";
+  const orch = path.join(root, "orch");
+  mkdirSync(orch);
+  const source = { head, diffSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" };
+  const local = fleetLaneInvocation({ worktree, command, "fleet-where": "local", "fleet-orch": orch, "fleet-owner": "ISS-14172" }, source);
+  assert.deepEqual(local.args.slice(1, 8), [orch, "local", "slot", "heavy", "ISS-14172", worktree, "sh"]);
+  assert.equal(local.args.at(-1), command);
+  assert.deepEqual(local.receipt, { where: "local", owner: "ISS-14172", head });
+  const remote = fleetLaneInvocation({ worktree, command: "pnpm test", "fleet-where": "remote", "fleet-orch": orch, "fleet-owner": "ISS-14172" }, source);
+  assert.equal(remote.args[2], "remote");
+  assert.match(remote.args.at(-1), new RegExp(head));
+  assert.throws(() => fleetLaneInvocation({ worktree, command: "pnpm test", "fleet-where": "remote", "fleet-orch": orch, "fleet-owner": "ISS-14172" },
+    { head, diffSha256: "1".repeat(64) }), /clean worktree/);
+});
+
+test("ISS-14193 containerized web lane preflight names the missing login-shell identity", () => {
+  const recipe = { sandboxOrgIdentityKey: "SEED_SANDBOX_CLERK_ORG_ID" };
+  assert.match(lanePreflightProblem("e2e/run-containerized.sh", {}, recipe) ?? "", /SEED_SANDBOX_CLERK_ORG_ID.*login shell/);
+  assert.equal(lanePreflightProblem("e2e/run-containerized.sh", { SEED_SANDBOX_CLERK_ORG_ID: "org_1" }, recipe), null);
+});
+
+test("ISS-14307: a repository-authorized targeted E2E receipt is scope-bound and includes changed specs", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-targeted-e2e-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  mkdirSync(path.join(worktree, "e2e"));
+  writeFileSync(path.join(worktree, "AGENTS.md"), [
+    "An e2e lane (`e2e`, `desktop-e2e`) is the exception: locally it is satisfied by the specs closedloop-graph selects for the diff (`code_tests_for_changes`), plus every spec the PR adds or edits.",
+    "The full lane runs after merge.",
+  ].join("\n"));
+  writeFileSync(path.join(worktree, "e2e/existing.spec.ts"), "export const existing = true;\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], home);
+  const base = git(worktree, ["rev-parse", "HEAD"], home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", base], home);
+  writeFileSync(path.join(worktree, "e2e/added.spec.ts"), "export const added = true;\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "change"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home);
+  const lane = "pnpm test:e2e";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `    ${lane}\n`);
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const record = (...specs) => run("record", "--worktree", worktree, "--head", head, "--command", lane, "--result", "pass",
+    "--report", report, "--base", base, "--targeted-specs", JSON.stringify(specs), "--graph-query", "code_tests_for_changes repo=symphony-alpha");
+
+  const missingChangedSpec = record("e2e/existing.spec.ts");
+  assert.equal(missingChangedSpec.status, 2);
+  assert.match(missingChangedSpec.stderr, /e2e\/added\.spec\.ts/);
+  const recorded = record("e2e/existing.spec.ts", "e2e/added.spec.ts");
+  assert.equal(recorded.status, 0, recorded.stderr);
+  const checked = run("check", "--worktree", worktree, "--report", report, "--base", base);
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+  assert.match(checked.stdout, /^TARGETED-LANE pnpm test:e2e \(2 specs\)$/m);
+
+  writeFileSync(path.join(worktree, "README.md"), "scope moved\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "moved"], home);
+  const stale = run("check", "--worktree", worktree, "--report", report, "--base", base);
+  assert.equal(stale.status, 1);
+  assert.match(stale.stdout, /^MISSING-LANE pnpm test:e2e:/m);
+
+  writeFileSync(path.join(worktree, "AGENTS.md"), "Every lane runs in full locally.\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "remove policy"], home);
+  const unruled = run("check", "--worktree", worktree, "--report", report, "--base", base);
+  assert.equal(unruled.status, 1);
+  assert.doesNotMatch(unruled.stdout, /^TARGETED-LANE/m);
 });
 
 test("a result names the commit it ran: a run refuses another HEAD or a modified tracked file (23/23 reported for an untested PR)", (t) => {
@@ -321,4 +415,49 @@ test("a repository with no e2e recipe needs no staging identity", (t) => {
   t.after(cleanup);
   assert.equal(hasStagingE2eIdentity(root, {}, null), true);
   assert.equal(hasStagingE2eIdentity(root, {}, stagingIdentity(PROVIDER_BINDING)), false);
+});
+
+test("ISS-14225: record binds a lane that ran on another host to the head by Git tree, never by a proof commit this clone lacks", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-ran-on-");
+  t.after(cleanup);
+  const wt = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", wt], home);
+  writeFileSync(path.join(wt, "a.txt"), "one\n");
+  git(wt, ["add", "a.txt"], home);
+  git(wt, ["commit", "--quiet", "-m", "base"], home);
+  git(wt, ["commit", "--quiet", "--allow-empty", "-m", "published head"], home);
+  const head = git(wt, ["rev-parse", "HEAD"], home);
+  const tree = git(wt, ["rev-parse", "HEAD^{tree}"], home);
+  const slot = path.join(root, "slot");
+  git(root, ["clone", "--quiet", wt, slot], home);
+  const proof = git(slot, ["commit-tree", tree, "-p", "HEAD~1", "-m", "proof made on the heavy slot"], home);
+  assert.throws(() => git(wt, ["cat-file", "-e", `${proof}^{commit}`], home), undefined, "the proof commit exists only on the slot");
+  const pass = 'node -e "process.exit(0)"';
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `    ${pass}\n`);
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const record = (...extra) => run("record", "--worktree", wt, "--head", head, "--command", pass, "--result", "pass", "--report", report, ...extra);
+  const ranOn = ["--ran-on", "heavy-slot", "--proof-commit", proof, "--git-tree", tree];
+  assert.equal(run("check", "--worktree", wt, "--report", report).status, 1);
+  const recorded = record(...ranOn);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  assert.equal(run("check", "--worktree", wt, "--report", report).status, 0, "check keys on the lane scope and the source tree");
+  const row = JSON.parse(readFileSync(path.join(wt, ".git", "vibe-lane-results.json"), "utf8")).find((item) => item.command === pass);
+  assert.deepEqual(row.ranOn, { host: "heavy-slot", proofCommit: proof, gitTree: tree, command: pass });
+  assert.equal(row.source.head, head, "the row's source is this clean head, whose content the proof shares");
+  const otherTree = git(wt, ["mktree"], home);
+  git(wt, ["commit", "--quiet", "--allow-empty", "-m", "same tree, other commit"], home);
+  const moved = git(wt, ["rev-parse", "HEAD"], home);
+  const refused = (args, pattern, why) => {
+    const result = run("record", "--worktree", wt, "--head", moved, "--command", pass, "--result", "pass", "--report", report, ...args);
+    assert.equal(result.status, 2, why);
+    assert.match(result.stderr, pattern, why);
+  };
+  refused(["--ran-on", "heavy-slot", "--proof-commit", proof, "--git-tree", otherTree], /Git tree/, "a proof tree that is not HEAD's tree");
+  refused(["--ran-on", "heavy-slot", "--proof-commit", proof], /--git-tree/, "a host without the proof tree");
+  refused(["--proof-commit", proof, "--git-tree", tree], /--ran-on/, "a proof without its host");
+  refused(["--ran-on", "heavy slot;", "--proof-commit", proof, "--git-tree", tree], /host/, "a host that is not a plain name");
+  refused([...ranOn, "--source", JSON.stringify(row.source)], /--source/, "a remote record never carries a local dirty identity");
+  writeFileSync(path.join(wt, "a.txt"), "uncommitted\n");
+  refused(ranOn, /clean/, "uncommitted inputs are not the proof tree");
 });

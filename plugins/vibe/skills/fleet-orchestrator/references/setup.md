@@ -26,6 +26,7 @@ CODEX_MODEL=<model for each Codex writer thread>
 CODEX_EFFORT=<the high effort level, not the maximum>
 
 HEAVY_SLOTS=<concurrent heavy checks this machine can take>
+LOCAL_HEAVY_BARRED=1                        # set only when the operator bars heavy work here; absent or any other value means not barred
 MAX_LOAD_PER_CORE=1.5                       # a heavy slot refuses this machine above this load per core
 MOVE_AT_PERCENT=<codex-usage band at which to move writers off a machine>
 USAGE_STALE_SECONDS=1800                   # reader freshness limit; absent defaults to 30 minutes
@@ -48,6 +49,13 @@ REMOTE_MAX_LOAD_PER_CORE=1.5
 inputs read by `fleet.sh` and `load-check.sh`; only the operator sets them, and
 they are never stored in `config.env`. With either absent, heavy work uses the
 normal load routing and a busy machine is refused.
+
+`LOCAL_HEAVY_BARRED=1` is the operator's placement order that this machine (usually
+their daily laptop) takes no heavy work: `fleet.sh <orchDir> local slot heavy`
+refuses with exit 78 and names `fleet.sh <orchDir> remote slot heavy`, which is
+where the affected typecheck and every other heavy check then run. It is not a load
+reading, so `FLEET_FORCE_HERE` does not lift it; the operator removes the key to
+allow local heavy work again. `HEAVY_SLOTS` keeps its meaning either way.
 
 Session, request and remote state dirs are derived per program. `fleet.sh` uses `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot and load keys, and the `REMOTE_*` keys. Vibe's worker-model policy owns sub-agent models. `MOVE_AT_PERCENT` is yours to compare with each `codex-usage` line.
 

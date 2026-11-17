@@ -72,6 +72,7 @@ const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mj
 const { unitReviewFile } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { gateOverrideEntries, readPrBodyFile } = await vibeCore("lib/handoff/scripts/gate-override.mjs");
 
 export const Part = Object.freeze({ Code: "code", Visual: "visual", Measured: "measured" });
 export const Origin = Object.freeze({ Ticket: "ticket", Prd: "prd" });
@@ -352,7 +353,7 @@ function anchorSlug(worktree) {
 }
 
 /** Reviews a unit's completed work from files: the criteria, the gaps and the operator's lines. */
-export function reviewUnit({ worktree, ticket, review, slug, members = [], prds = [], plans = [], at, unitTickets }) {
+export function reviewUnit({ worktree, ticket, review, body, slug, members = [], prds = [], plans = [], at, unitTickets }) {
   const session = anchorSlug(worktree);
   const anchor = slug ?? session.slug;
   if (!anchor || !slugPattern().test(anchor)) throw new Error("name the ticket with --slug <slug>; the worktree has no session ticket");
@@ -361,23 +362,35 @@ export function reviewUnit({ worktree, ticket, review, slug, members = [], prds 
   if (Array.isArray(parsed?.rows)) parsed.rows = parsed.rows.map((row) => (/^AC-\d+$/.test(row?.criterion ?? "") ? { ...row, criterion: `${anchor}:${row.criterion}` } : row));
   const result = reviewGaps(criteria, parsed, { codeRef: codeRefChecker(worktree, at), capture: captureChecker(path.dirname(path.resolve(review))), anchor });
   result.problems.unshift(...criteriaProblems);
+  const overrideTickets = new Set(body ? gateOverrideEntries(readPrBodyFile(body, 8 * 1024 * 1024), sessionBinding(worktree))
+    .flatMap((entry) => entry.tickets) : []);
+  const coveredGaps = [];
+  result.gaps = result.gaps.filter((gap) => {
+    const criterion = `${gap.ticket}:${gap.criterion}`;
+    const row = parsed.rows?.find((entry) => entry?.criterion === criterion && typeof entry.override === "string"
+      && overrideTickets.has(entry.override));
+    if (!row) return true;
+    coveredGaps.push({ ...gap, override: row.override });
+    return false;
+  });
   const tickets = [anchor, ...members.map((entry) => entry.slice(0, entry.indexOf("=")))];
   for (const missing of (unitTickets ?? []).filter((entry) => !tickets.includes(entry))) result.problems.push(`unit ticket ${missing} has no criteria in this review; pass --member ${missing}=<its body>`);
   const ok = result.gaps.length === 0 && result.problems.length === 0;
   const headRead = spawnSync("git", ["-C", worktree, "rev-parse", "--verify", "HEAD"], { encoding: "utf8" });
   const head = headRead.status === 0 ? headRead.stdout.trim() : null;
   const lines = [...gapLines(result), `unit review: ${criteria.length - result.outOfScope.length} criteria, ${result.gaps.length} with gaps, ${result.problems.length} problems, ${result.outOfScope.length} out of scope`];
-  return { ok, head, tickets, criteria: criteria.map(({ id }) => id), outOfScope: result.outOfScope.map(({ id }) => id), notVisible: result.notVisible, gaps: result.gaps, problems: result.problems, lines };
+  return { ok, head, tickets, criteria: criteria.map(({ id }) => id), outOfScope: result.outOfScope.map(({ id }) => id), notVisible: result.notVisible,
+    gaps: result.gaps, coveredGaps, problems: result.problems, lines };
 }
 
 function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
     worktree: { type: "string" }, ticket: { type: "string" }, review: { type: "string" }, slug: { type: "string" },
-    member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, at: { type: "string" },
+    member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, body: { type: "string" }, at: { type: "string" },
     json: { type: "boolean" }, record: { type: "string" }, unit: { type: "string" },
   } });
   if (!values.worktree || !values.ticket || !values.review || Boolean(values.record) !== Boolean(values.unit)) {
-    throw new Error("Usage: unit-review.mjs --worktree <wt> --ticket <body> --review <review.json> [--slug <ticket>] [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--at head] [--json] [--record <orchDir> --unit <name>]");
+    throw new Error("Usage: unit-review.mjs --worktree <wt> --ticket <body> --review <review.json> [--body <PR body>] [--slug <ticket>] [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--at head] [--json] [--record <orchDir> --unit <name>]");
   }
   let unitTickets;
   if (values.record) {

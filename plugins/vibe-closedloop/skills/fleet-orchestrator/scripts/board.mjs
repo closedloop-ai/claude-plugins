@@ -5,6 +5,7 @@
 // reached one writer as text while another PR rendered the same behavior.
 //
 // Usage: board.mjs <orchDir> writer <name> [--tickets <a,b>] [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+//        board.mjs <orchDir> retire <writer> --reason <merged or otherwise terminal reason>
 //        board.mjs <orchDir> placement <ticket> --evidence <file> | --keep-local <the operator's reason>
 //        board.mjs <orchDir> push-check <writer> --head <sha>
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
@@ -353,6 +354,7 @@ function pairs(texts, flag) {
 function threadCounts(board, texts) {
   const threads = Object.fromEntries(Object.entries(pairs(texts, "--threads")).map(([name, n]) => [name, Number(n)]));
   for (const [name, row] of Object.entries(board.writers)) {
+    if (row.retiredAt) continue;
     if (threads[name] === undefined && row.runtime === "codex" && row.pr && row.repo) {
       const count = ghThreads(row);
       if (count !== null) threads[name] = count;
@@ -381,7 +383,7 @@ function pushedHeads(board, texts) {
 export function unreadyCommits(board, pushed = {}) {
   const problems = [];
   for (const [name, row] of Object.entries(board.writers)) {
-    if (!row.worktree || row.where === 'remote') continue;
+    if (!row.worktree || row.where === 'remote' || row.retiredAt) continue;
     const git = (...args) => repositoryGit(row.worktree, args);
     try {
       let base = pushed[name];
@@ -407,11 +409,11 @@ export function unreadyCommits(board, pushed = {}) {
 }
 
 function noHeadRows(board) {
-  return Object.entries(board.writers).filter(([, row]) => row.where === 'remote')
+  return Object.entries(board.writers).filter(([, row]) => row.where === 'remote' && !row.retiredAt)
     .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
 }
 
-const ACTIONS = ["writer", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
+const ACTIONS = ["writer", "retire", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
 
 /** A scope delivery's acknowledgements and each recipient's worktree head when it was sent; refuses a recipient status cannot watch. */
 function scopeBase(board, to, values, previous) {
@@ -506,6 +508,7 @@ function main(argv) {
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
       worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" }, tickets: { type: "string" }, writer: { type: "string" }, closed: { type: "string" },
       evidence: { type: "string" }, "keep-local": { type: "string" },
+      reason: { type: "string" },
     },
   });
   if (!workDir || !ACTIONS.includes(action)) {
@@ -639,6 +642,14 @@ function main(argv) {
     const decision = recordPlacement(board.placements, name, { evidence, keepLocal: values["keep-local"] }, at);
     write(orchDir, board, `placement ${name}: ${decision.placement}${decision.keepLocal ? `, kept local: ${decision.keepLocal.reason}` : ""} (${decision.reason})`, at);
     process.stdout.write(`PLACEMENT ${name} ${decision.placement}: ${decision.reason}\n`);
+    return 0;
+  }
+  if (action === "retire") {
+    const row = board.writers[name];
+    if (!row) throw new Error(`no board writer ${name} is recorded`);
+    if (!values.reason?.trim()) throw new Error("retire needs --reason <merged or otherwise terminal reason>");
+    board.writers[name] = { ...row, retiredAt: at, retiredReason: values.reason.trim(), updatedAt: at };
+    write(orchDir, board, `${name}: retired (${values.reason.trim()})`, at);
     return 0;
   }
   if (action === "writer") {

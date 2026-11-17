@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import {
-  assertVibeSession, lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, requireResumeSession, run, saveState,
+  assertVibeSession, lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, PLUGIN_LIST_TIMEOUT_MS, requireResumeSession, run, saveState,
 } from './codex-session.mjs';
 import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 import * as sessions from './codex-session.mjs';
@@ -14,7 +14,7 @@ import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
-const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
+const { LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
 const ownership = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 
@@ -534,7 +534,7 @@ test('stale running writer accepts only reload steer and stays stale until deliv
   await assert.rejects(run(active, f.options('steer')), /loaded 1\.1\.38/);
 });
 
-test('idle migration requires actor acknowledgements and replays the retained brief through App Server', async (t) => {
+test('idle migration updates the load record after actor acknowledgements and replays retained work', async (t) => {
   const f = reloadFixture(t); const server = reloadServer(f);
   writeFileSync(join(f.dir, 'board.json'), '{"w1":"unchanged"}');
   const sessionBefore = readFileSync(join(f.dir, '.git/vibe-session.json'), 'utf8');
@@ -564,6 +564,8 @@ test('idle migration requires actor acknowledgements and replays the retained br
   const saved = loadState(f.dir, 'w1');
   assert.equal(saved.loadedSkill.version, '1.1.48');
   assert.equal(saved.loadedSkill.basis, 'reload-acknowledged');
+  assert.equal(loadedSkillEvidenceProblem(saved.loadedSkill, { actorId: saved.threadId, pluginRoot: f.pluginRoot }), null,
+    'the next turn sees the acknowledged release as current instead of starting another reload');
   assert.equal(saved.reload, undefined);
   assert.match(server.sent().at(-1), /^Original requested work\nVIBE_RETAINED_BRIEF v1 /);
   assert.equal(saved.reloadReceipt.turnId, server.turn());
@@ -571,6 +573,10 @@ test('idle migration requires actor acknowledgements and replays the retained br
   assert.equal(readFileSync(join(f.dir, 'board.json'), 'utf8'), '{"w1":"unchanged"}');
   assert.equal(readFileSync(join(f.dir, '.git/vibe-session.json'), 'utf8'), sessionBefore);
   assert.equal(assertVibeSession(f.dir).branch, 'vibe/original');
+});
+
+test('a cold plugin inventory has enough time to finish before launch or reload', () => {
+  assert.ok(PLUGIN_LIST_TIMEOUT_MS >= 60_000, `cold codex plugin list needs at least 60s, got ${PLUGIN_LIST_TIMEOUT_MS}`);
 });
 
 /** App Server answers as a live daemon does: a not-loaded turn summary, then newest-first item pages for that turn. */

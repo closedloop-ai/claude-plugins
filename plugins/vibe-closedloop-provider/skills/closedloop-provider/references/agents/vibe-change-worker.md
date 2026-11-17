@@ -76,8 +76,10 @@ nothing agent-written goes into public docs (`guardrails.md`, "Copy" and
 <!-- end: copy-docs -->
 
 <!-- block: lane-discovery -->
-- Use existing structured lane-owner discovery, not blind
-  `test:lanes --exec`.
+- Use `code_tests_for_changes` on the whole diff, including unedited importers;
+  `code_tests_for` is one-file only. Empty results add related tests; E2E uses
+  lanes/behavior refs. A UI bug records each shell as `Owner test: <AGENTS.md>:
+  test <path>` or `Owner test: <AGENTS.md>: missing tests <shell and behavior>`.
 <!-- end: lane-discovery -->
 
 <!-- block: desktop-lane -->

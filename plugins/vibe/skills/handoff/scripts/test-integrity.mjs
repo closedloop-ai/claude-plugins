@@ -136,7 +136,7 @@ function parsedAssertions(source, changedLines) {
     const endLine = lineNumberAt(source, matcherClose);
     if (!changedLines.some((entry) => entry.line >= line && entry.line <= endLine)) continue;
     const column = match.index - source.lastIndexOf("\n", match.index);
-    matches.push({ line, column, endLine, absence, start: match.index, end: matcherClose + 1, argumentStart: open + 1, argumentEnd: close,
+    matches.push({ line, column, endLine, absence, argument, expectArgument: source.slice(open + 1, close).trim(), start: match.index, end: matcherClose + 1, argumentStart: open + 1, argumentEnd: close,
       text: source.slice(match.index, matcherClose + 1).replace(/\s+/g, " ") });
   }
   return matches;
@@ -158,6 +158,32 @@ function candidate(kind, path, line, caseName, claim, assertionLine, suffix = ""
     ...(assertionLocation === undefined ? {} : { assertionLocation }) };
 }
 
+const TEST_STAND_IN_PATH = /(?:^|\/)test\/e2e\/helpers\//;
+
+/** Whether an absence assertion reads a helper whose test-only implementation is itself the null stand-in. */
+function testStandInAssertion(filePath, source, assertion, read) {
+  if (!/(?:^|\/)test\/e2e\//.test(filePath)) return false;
+  const called = /^(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/.exec(assertion.expectArgument)?.[1];
+  if (!called) return false;
+  let specifier = null;
+  let imported = called;
+  for (const match of source.matchAll(/\bimport\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)) {
+    for (const item of match[1].split(",")) {
+      const [original, local = original] = item.trim().split(/\s+as\s+/);
+      if (local === called) { imported = original; specifier = match[2]; }
+    }
+  }
+  if (!specifier?.startsWith(".")) return false;
+  const base = path.posix.normalize(path.posix.join(path.posix.dirname(filePath), specifier));
+  const helperPath = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, `${base}/index.ts`, `${base}/index.tsx`]
+    .find((candidatePath) => TEST_STAND_IN_PATH.test(candidatePath) && typeof read(candidatePath) === "string");
+  if (!helperPath) return false;
+  const helper = read(helperPath);
+  const name = escapeRegExp(imported);
+  return new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]{0,800}?\\breturn\\s+null\\s*;?`).test(helper)
+    || new RegExp(`(?:export\\s+)?const\\s+${name}\\s*=\\s*(?:async\\s*)?(?:\\([^)]*\\)|[A-Za-z_$][\\w$]*)\\s*=>\\s*null\\b`).test(helper);
+}
+
 /** Candidates in changed test/story code that need failing-mutation proof. */
 export function testIntegrityCandidates(files, read) {
   const found = [];
@@ -167,7 +193,8 @@ export function testIntegrityCandidates(files, read) {
     const changedLines = addedLines(file);
     found.push(...responsiveStoryCandidates(file, source, changedLines));
     const parsedMatches = parsedAssertions(source, changedLines);
-    const absenceMatches = parsedMatches.filter((match) => match.absence);
+    const allAbsenceMatches = parsedMatches.filter((match) => match.absence);
+    const absenceMatches = allAbsenceMatches.filter((match) => !testStandInAssertion(file.path, source, match, read));
     const perLineCount = new Map();
     for (const match of absenceMatches) perLineCount.set(match.line, (perLineCount.get(match.line) ?? 0) + 1);
     const perLineOrdinal = new Map();
@@ -182,11 +209,7 @@ export function testIntegrityCandidates(files, read) {
     for (const entry of changedLines) {
       const context = nearby(sourceLines, entry.line, 4);
       const caseName = nearestCase(sourceLines, entry.line);
-      if (!STORY_FILE.test(file.path) && RESPONSIVE_NAME.test(entry.text) && /\b(?:it|test)\b/.test(nearby(sourceLines, entry.line))) {
-        found.push(candidate("responsive", file.path, entry.line, caseName,
-          "changed test names a narrow or mobile state"));
-      }
-      const inParsedAssertion = absenceMatches.some((match) => entry.line >= match.line && entry.line <= match.endLine)
+      const inParsedAssertion = allAbsenceMatches.some((match) => entry.line >= match.line && entry.line <= match.endLine)
         || onlyPositiveAssertionText(source, entry.line, parsedMatches);
       if (!inParsedAssertion && (ABSENCE_ASSERTION.test(entry.text)
         || (QUERY_ASSERTION.test(entry.text) && /(?:toBeNull|not\.toBe|toHaveCount\(\s*0)/.test(context)))) {

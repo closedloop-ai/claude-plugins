@@ -11,6 +11,7 @@ import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
+const ADMISSION = join(SCRIPTS, 'fleet-admission.sh');
 const LOAD_CHECK = join(SCRIPTS, 'load-check.sh');
 const TIMEOUT = { timeout: 20_000 };
 const RELATIVE_IMPORT = /^import [^;]*? from (['"])(\.{1,2}\/[^'"]+)\1;/gms;
@@ -104,7 +105,7 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   ]);
   assert.equal(remoteArgv.at(-2), '--fleet-claim');
   assert.match(remoteArgv.at(-1), /\/w1\.preflight\.[^/]+\.json$/);
-  for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs']) {
+  for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs', 'fleet-orchestrator/scripts/fleet-admission.sh', 'fleet-orchestrator/scripts/fleet-atomic-install.sh']) {
     assert.ok(existsSync(join(shipped, "plugins", "vibe", "skills", file)), file);
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), '$vibe ISS-1\n');
@@ -547,6 +548,42 @@ test('a remote slot uses REMOTE_HEAVY_SLOTS and the remote dir', TIMEOUT, () => 
   assert.equal(result.stdout, `${dir}\nheavy-1.lock\nheavy-2.lock\n`);
 });
 
+test('duplicate heavy work and full-corpus passes are refused fleet-wide before queueing twice', { timeout: 30_000 }, async () => {
+  const f = fixture();
+  const marker = join(f.root, 'first-heavy-started');
+  const first = spawn('bash', [ADMISSION, f.orch, 'same-owner', f.root, 'ordinary', 'bash', '-c', `touch ${marker}; sleep 3`]);
+  await waitFor(() => existsSync(marker));
+  const duplicate = spawnSync('bash', [ADMISSION, f.orch, 'same-owner', f.root, 'ordinary', 'true'], { encoding: 'utf8' });
+  assert.equal(duplicate.status, 75);
+  assert.match(duplicate.stderr, /duplicate heavy work/);
+  assert.equal(await new Promise((resolve) => first.once('exit', resolve)), 0);
+
+  const fullMarker = join(f.root, 'full-corpus-started');
+  const full = spawn('bash', [ADMISSION, f.orch, 'eval-a', f.root, 'full-corpus', 'bash', '-c', `touch ${fullMarker}; sleep 3`]);
+  await waitFor(() => existsSync(fullMarker));
+  const overlap = spawnSync('bash', [ADMISSION, f.orch, 'eval-b', f.root, 'full-corpus', 'true'], { encoding: 'utf8' });
+  assert.equal(overlap.status, 75);
+  assert.match(overlap.stderr, /another full-corpus pass/);
+  assert.equal(await new Promise((resolve) => full.once('exit', resolve)), 0);
+  assert.match(readFileSync(FLEET, 'utf8'), /fleet-admission\.sh.*--fleet-admitted/s,
+    'local and remote slot calls both pass through the coordinator admission wrapper');
+});
+
+test('remote slot stages and invokes one plugin script with both plugin roots', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const result = f.run(['remote', 'slot', 'shared', 'writer', f.root, '--shipped-plugin-script',
+    'handoff/scripts/frozen-render.mjs', '--worktree', f.root]);
+  assert.equal(result.status, 0, result.stderr);
+  const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator', 'plugins');
+  assert.ok(existsSync(join(shipped, 'vibe', 'skills', 'handoff', 'scripts', 'frozen-render.mjs')));
+  assert.ok(existsSync(join(shipped, 'vibe-core', '.codex-plugin', 'plugin.json')));
+  assert.match(result.stdout, /frozen-render\.mjs/);
+  const escaped = f.run(['local', 'slot', 'shared', 'writer', f.root, '--shipped-plugin-script', '../handoff/scripts/frozen-render.mjs']);
+  assert.equal(escaped.status, 2);
+  assert.match(escaped.stderr, /skills-relative mjs path/);
+});
+
 test('typed local and remote E2E build slots route a post-acquisition disk preflight', TIMEOUT, () => {
   const f = fixture();
   const local = f.run(['local', 'slot', 'heavy', 'writer', f.root, '--containerized-e2e-build',
@@ -646,6 +683,48 @@ test('a heavy slot refuses a machine whose load per core is over the limit and n
   const skill = readAssembled(join(SCRIPTS, '..', 'SKILL.md'));
   assert.match(skill, /Writers never set `FLEET_FORCE_HERE`[\s\S]*or `FLEET_LOAD`/);
   assert.doesNotMatch(readFileSync(LOAD_CHECK, 'utf8'), /FLEET_LOAD/, 'production admission has no caller-supplied load override');
+});
+
+/** Unpack the shipped archive on the loopback remote, then remove one shipped gate script as a stale or partial copy would. */
+function dropOnRemoteUnpack(f, script) {
+  const realTar = spawnSync('sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).stdout.trim();
+  writeFileSync(join(f.root, 'bin', 'tar'), `#!/usr/bin/env bash\n${JSON.stringify(realTar)} "$@" || exit $?\nif [ "$1" = -C ] && [ "$3" = -xf ]; then rm -f "$2/plugins/vibe/skills/fleet-orchestrator/scripts/${script}"; fi\n`);
+  chmodSync(join(f.root, 'bin', 'tar'), 0o755);
+}
+
+test('a remote heavy slot refuses with 78 and runs nothing when a shipped gate script is missing there', TIMEOUT, () => {
+  for (const script of ['load-check.sh', 'slot-lock.sh']) {
+    const f = fixture();
+    writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+    dropOnRemoteUnpack(f, script);
+    for (const typed of [[], ['--containerized-e2e-build']]) {
+      const result = f.run(['remote', 'slot', 'heavy', 'w2 tests', f.root, ...typed, 'echo', 'must-not-run']);
+      assert.equal(result.status, 78, `${script} ${typed}: ${result.stdout}${result.stderr}`);
+      assert.doesNotMatch(result.stdout, /must-not-run/, script);
+      assert.match(result.stderr, new RegExp(`fleet: remote ${script.replace('.', '\\.')} is missing; heavy slot refused`), script);
+    }
+  }
+});
+
+test('LOCAL_HEAVY_BARRED=1 refuses a local heavy slot with 78 and points at the remote slot; nothing else changes', TIMEOUT, () => {
+  const f = fixture('LOCAL_HEAVY_BARRED=1\n');
+  for (const env of [{}, { FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator wants it here' }]) {
+    const barred = f.run(['local', 'slot', 'heavy', 'w1 typecheck', f.root, 'echo', 'must-not-run'], env);
+    assert.equal(barred.status, 78, JSON.stringify(env) + barred.stdout + barred.stderr);
+    assert.doesNotMatch(barred.stdout, /must-not-run/);
+    assert.match(barred.stderr, /LOCAL_HEAVY_BARRED=1.*fleet\.sh <orchDir> remote slot heavy/);
+  }
+  assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran']).stdout, 'ran\n', 'only heavy slots are barred');
+  for (const config of [undefined, 'LOCAL_HEAVY_BARRED=0\n', 'LOCAL_HEAVY_BARRED=yes\n', 'HEAVY_SLOTS=2\n']) {
+    const g = fixture(config);
+    const ran = g.run(['local', 'slot', 'heavy', 'w1 typecheck', g.root, 'echo', 'ran']);
+    assert.equal(ran.status, 0, `${config}: ${ran.stderr}`);
+    assert.equal(ran.stdout, 'ran\n', String(config));
+  }
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'LOCAL_HEAVY_BARRED=1\n'));
+  const remote = f.run(['remote', 'slot', 'heavy', 'w2 typecheck', f.root, 'echo', 'ran']);
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.match(remote.stdout, /^ran$/m, 'the bar is for this machine only');
 });
 
 /** A fleet fixture whose node runs capture-guard.mjs for real, with a capture worktree cloned from a bare origin. */
@@ -869,7 +948,7 @@ test('a --capture spec that is missing or unreadable is a usage error before any
   const missing = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', join(f.root, 'no-such-spec.json'), 'bash', '-c', `touch ${ran}`],
     { FLEET_TEST_LOAD: '1000' });
   assert.equal(missing.status, 2, missing.stderr);
-  assert.match(missing.stderr, /slot <lockName> <owner> <dir> \[--containerized-e2e-build\] \[--capture <spec\.json>\] <command\.\.\.>/);
+  assert.match(missing.stderr, /slot <lockName> <owner> <dir> \[--full-corpus\].*\[--capture <spec\.json>\].*<command\.\.\.>/);
   assert.doesNotMatch(missing.stderr, /load-check|slot-lock/, 'a missing spec is refused before the load check and the slot');
   const unreadable = f.spec({});
   chmodSync(unreadable, 0o000);

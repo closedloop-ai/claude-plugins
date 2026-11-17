@@ -58,6 +58,19 @@ test("tokens: a fragment link and a deleted file are not colors", () => {
   assert.deepEqual(scanTokens(files(diff("apps/app/b.tsx", [], ["const c = \"#ff0000\";"], { status: "M" }))), []);
 });
 
+test("ISS-14128: issue numbers in strings are not colors, while CSS, Tailwind, and style values remain findings", () => {
+  const testTitles = scanTokens(files(diff("apps/app/a.test.tsx", [
+    'it("keeps the row (PR #9898)", () => {});',
+    'test("regression from #123 and #1234", () => {});',
+  ])));
+  assert.deepEqual(testTitles, []);
+  const styles = scanTokens(files(
+    diff("apps/app/a.tsx", ['const a = <div className="bg-[#fff]" />;', 'const b = <div style={{ color: "#ff0000" }} />;']),
+    diff("apps/app/a.css", [".a { color: #fff; }"]),
+  ));
+  assert.equal(styles.filter((item) => item.message.startsWith("hardcoded color")).length, 3);
+});
+
 test("conventions: enum, as cast, console, raw anchor and inline import; import renames, as const and test console are not", () => {
   const found = scanConventions(files(
     diff("packages/app/a.tsx", [
@@ -79,6 +92,18 @@ test("conventions: enum, as cast, console, raw anchor and inline import; import 
     "raw internal `<a href>`; use the navigation Link",
   ]);
   assert.equal(found.find((item) => item.message.startsWith("TypeScript enum")).severity, Severity.High);
+});
+
+test("ISS-14128: dynamic imports inside vi.mock factories are allowed, but other dynamic imports still block", () => {
+  const source = [
+    'vi.mock("./x", async () => {',
+    '  const actual = await import("./x");',
+    "  return actual;",
+    "});",
+    'const lazy = await import("./lazy");',
+  ].join("\n");
+  const found = scanConventions(files(diff("packages/app/a.test.ts", source.split("\n"))), () => source);
+  assert.deepEqual(found.filter((item) => item.message.startsWith("inline import")).map((item) => item.line), [5]);
 });
 
 const repairFile = (path = "apps/app/a.test.tsx") => files(diff(path, ["x"]));
@@ -214,7 +239,7 @@ test("a failing wrapped gate gives one finding per file:line it names, or one fo
 
 test("the full gate: exact shape, wrapped gates run bounded in the worktree, diff-rules wrapped, reviewer checks listed as skipped", () => {
   const { gate, calls } = gateFor({
-    diffText: diff("apps/app/a.tsx", ["const c = \"#ff0000\";"]),
+    diffText: diff("apps/app/a.tsx", ['const c = <div style={{ color: "#ff0000" }} />;']),
     routes: [["pnpm check:source-gates", { status: 1, stdout: "", stderr: "gate rule failed at apps/app/a.tsx:5" }]],
     diffRulesFn: () => ({ blocking: [{ rule: "env-dump", file: "scripts/x.mjs", line: 2, problem: "dumps env", fix: "name keys" }] }),
   });

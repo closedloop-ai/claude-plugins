@@ -50,7 +50,11 @@ Keep your context for the conversation and session state; NEVER do the work:
   around credentials. Never force-push; this covers every remote. Proof and
 <!-- end generic: brief-auth -->
 > Provider `recipes` (block `brief-auth` of `vibe-skill.md`)
-  scratch commits use a fresh `proof/<sha>-<n>` ref.
+  scratch commits use a fresh `proof/<sha>-<n>` ref. It also carries this
+  line: Scratch files: Each worker gets its own scratch directory named with
+  its worker id (`<scratch>/<worker-id>/`), creates its files there, and
+  deletes only exact paths it created; an orchestrator brief never asks a
+  worker to delete by prefix or glob.
 
 Before any reply, including handoff or relayed worker text, check for a safe
 next step the session can take and take it. Do not tell the person they need
@@ -135,6 +139,9 @@ for an optional provider's text. With no provider bound, follow the generic text
 
 ## Harness notes
 
+- For every expired Claude sign-in, ignore a worker's login wording and use the exact
+  `claude-auth-login` preflight step. It says `claude auth login`; never relay
+  `claude /login` from a worker result.
 - Codex reads files through shell output, which keeps the start and end of a
   long file and drops its middle; one read of this file loses the build loop.
   Read this file, each agent file and each reference to its last line, in
@@ -345,6 +352,7 @@ a plugin script the installed release no longer has.
   release it replaced: `migrated` needs nothing more, and `on-resume` is
   migrated when that session resumes (`references/quality-loop.md`,
   "Recorded definition migration"). Neither is news for the person. When its
+  migration runs, preserve the original recorded binding and actual writer ID until the supported command replaces them.
   output has `hookApproval`, tell the person that line in plain words (it
   appears only when Codex says a vibe-core hook needs approval).
   Whatever its status, tell the person, for each harness in its `restart`,

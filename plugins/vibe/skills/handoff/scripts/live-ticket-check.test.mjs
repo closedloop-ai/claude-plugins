@@ -65,6 +65,25 @@ test("a complete ticket passes", () => {
   assert.deepEqual(checkLiveTicket(completeTicket()), { ok: true, problems: [] });
 });
 
+test("ISS-14304: a classified no-UI diff accepts a recorded no-environment ruling, never fake URLs", () => {
+  const ruling = "- No environment: operator, 2026-11-16, approved code-only handoff";
+  const noEnvironment = completeTicket({
+    Environment: `${ENVIRONMENT.split("\n").slice(0, 2).join("\n")}\n${ruling}`,
+    "Production flag snapshot": ruling,
+  });
+  assert.deepEqual(checkLiveTicket(noEnvironment, { diffFiles: [{ path: "tools/vibe-workers/src/ledger.ts", status: "M" }] }),
+    { ok: true, problems: [] });
+  const orchestratorOnly = noEnvironment.replace("operator, 2026-11-16, approved", "(orchestrator), approved");
+  assert.ok(checkLiveTicket(orchestratorOnly, { diffFiles: [{ path: "tools/vibe-workers/src/ledger.ts", status: "M" }] }).problems
+    .some(({ problem }) => /needs human authority/.test(problem)));
+  const ui = checkLiveTicket(noEnvironment, { diffFiles: [{ path: "packages/app/issues/page.tsx", status: "M" }] });
+  assert.ok(ui.problems.some(({ problem }) => /diff touches a UI path/.test(problem)));
+
+  const fake = completeTicket({ Environment: ENVIRONMENT.replaceAll("preview.closedloop-stage.ai", "preview.closedloop-stage.ai (not deployed)") });
+  const problems = checkLiveTicket(fake).problems.filter(({ section }) => section === "Environment");
+  assert.deepEqual(problems.map(({ problem }) => problem), ["has no App URL", "has no API URL", "has no Storybook URL"]);
+});
+
 test("a real Claude orchestrator session satisfies the Sessions contract without a Codex thread", () => {
   const id = "36ee02c3-2de3-45a8-8c33-ae3e5302f554";
   const claude = completeTicket({ Sessions: "- Implementation writer: claude `7b7bdd07-4820-4def-bb4a-0d0fc6de5b1c`\n- Claude Code session (orchestrator): `" + id + "`" });

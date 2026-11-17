@@ -152,6 +152,28 @@ export function readContract(root) {
 const CONTRACT_CACHE_LIMIT = 8;
 const contracts = new Map();
 
+/**
+ * Each guard rule's shape as vibe-core's hooks read it (`data.guards[key]`, shell-safety-guard.mjs). vibe-core updates
+ * apart from the vibe release that carries the provider, so a key it does not know is left to the release that reads it.
+ */
+const GUARD_RULES = Object.freeze({
+  e2eSlot: (rule) => isBasename(rule.script) && typeof rule.headFlag === "string" && rule.headFlag.startsWith("-")
+    && (rule.refusedFlags === undefined || (Array.isArray(rule.refusedFlags) && rule.refusedFlags.every((flag) => typeof flag === "string"))),
+  heavySlot: (rule) => Array.isArray(rule.refusedScripts) && rule.refusedScripts.length > 0 && rule.refusedScripts.every(isBasename)
+    && typeof rule.gatedCommand === "string" && rule.gatedCommand.trim() !== "",
+});
+
+function guardRulesValid(guards) {
+  if (guards === undefined) return true;
+  if (!guards || typeof guards !== "object" || Array.isArray(guards)) return false;
+  return Object.entries(GUARD_RULES).every(([key, valid]) => guards[key] === undefined
+    || (guards[key] !== null && typeof guards[key] === "object" && valid(guards[key])));
+}
+
+function isBasename(name) {
+  return typeof name === "string" && name !== "" && !name.includes("/");
+}
+
 function parseContract(root, text) {
   try {
     const contract = JSON.parse(text);
@@ -166,6 +188,7 @@ function parseContract(root, text) {
     const connections = contract.connections ?? {};
     if (typeof connections !== "object" || Object.entries(connections).some(([name, spec]) => !CONNECTION_NAME.test(name)
       || typeof spec?.label !== "string" || typeof spec?.check !== "string")) return null;
+    if (!guardRulesValid(contract.data?.guards)) return null;
     return contract;
   } catch {
     return null;
