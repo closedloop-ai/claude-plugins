@@ -227,10 +227,12 @@ def test_vibe_and_the_fleet_show_the_setup_check_once_per_conversation() -> None
     # ISS-13315: the connection states ride on the version check itself, one escalated command in Codex.
     # The connections are the bound provider's (operator rulings, 2026-11-11: vibe runs without one), so the
     # calls come from the check's own `connectionsNeeded`, and the provider's contract still names the same two.
+    # The ClosedLoop build keeps main's command form (ISS-13446: a ClosedLoop session matches main on the evals).
     version = section(built(VIBE / "SKILL.md"), "### Plugin version")
     for phrase in (
+        "Call ClosedLoop `get-me` and closedloop-graph `sync_status` yourself first",
+        "`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`",
         "make each call its `connectionsNeeded` names",
-        "`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]...`",
         "`connected` only when that call answered in this conversation",
         "never assume either",
     ):

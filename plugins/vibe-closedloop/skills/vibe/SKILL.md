@@ -275,14 +275,15 @@ person is asked to do").
 
 ### Plugin version
 
-Every `$vibe` start, new or resume, first checks whether the plugins from
-vibe's marketplace installed on this machine, in Claude Code and in Codex, are
-the latest release, binds the optional provider, and shows the setup check, in
-one command:
-`node scripts/plugin-version.mjs check --runtime codex [--connection <name>=<state>]...`
-in Codex, or `--runtime claude` in Claude Code. Each `<state>` is `connected`
-only when that call answered in this conversation, otherwise
-`not-connected`; never assume either. A check printing `"state":"unprobed"`
+Every `$vibe` start, new or resume, first checks whether the ClosedLoop
+plugins installed on this machine, in Claude Code and in Codex, are the latest
+release, and shows the setup check, in one command. Call ClosedLoop `get-me`
+and closedloop-graph `sync_status` yourself first, then run
+`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`
+in Codex, or `--runtime claude` in Claude Code, where each `<state>` is
+`connected` only when that call answered in this conversation, otherwise
+`not-connected`; never assume either.
+A check printing `"state":"unprobed"`
 had no states for the provider this vibe carries and bound nothing: make each
 call its `connectionsNeeded` names and run the check once more with one
 `--connection` per entry before you reply. In Codex, run it with escalated
