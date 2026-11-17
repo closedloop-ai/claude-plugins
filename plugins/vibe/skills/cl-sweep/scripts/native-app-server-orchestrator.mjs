@@ -24,7 +24,10 @@ import {
   readThreadState,
   sendInput,
 } from './core-client-process.mjs';
-import { LEGACY_UNVERSIONED_MODEL, MECHANICAL_SUPPORT_MODEL, TICKET_OWNER_MODEL } from './model-policy.mjs';
+import {
+  availableCodexModel, MECHANICAL_SUPPORT_MODEL, TICKET_OWNER_MODEL, ticketOwnerModel, validateModelName,
+} from './model-policy.mjs';
+import { readModelCatalog } from './model-catalog.mjs';
 import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
@@ -34,7 +37,6 @@ export const SESSION_SCHEMA = 'APP_SERVER_ORCHESTRATOR_SESSION v1';
 export const EVENT_SCHEMA = 'APP_SERVER_ORCHESTRATOR_EVENT v1';
 export const EVENT_PREFIX = `${EVENT_SCHEMA} `;
 export const DEFAULT_WORKER_MODEL = TICKET_OWNER_MODEL;
-export const LEGACY_WORKER_MODEL = LEGACY_UNVERSIONED_MODEL;
 export const BOUNDED_EXPLORATION_MODELS = Object.freeze([MECHANICAL_SUPPORT_MODEL]);
 
 const STARTABLE_STATES = new Set(['READY', 'AWAITING_FIRST_TURN', 'IDLE', 'FAILED', 'INTERRUPTED', 'DISCONNECTED']);
@@ -221,18 +223,12 @@ function turnOptions(session) {
 
 function validateModelOption(value, label = 'model') {
   if (value === null || value === undefined) return null;
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value)) {
-    fail(`${label} must be a compact model identifier`);
-  }
-  return value;
+  return validateModelName(value, label);
 }
 
 function validateNewSessionModel(value) {
-  const model = validateModelOption(value ?? DEFAULT_WORKER_MODEL);
-  if (model === LEGACY_WORKER_MODEL) {
-    fail(`New worker sessions cannot use legacy model ${LEGACY_WORKER_MODEL}; use ${DEFAULT_WORKER_MODEL}`);
-  }
-  return model;
+  // An explicit model is the caller's choice; with none, the session takes the ticket-owner default or this machine's.
+  return validateModelOption(value ?? ticketOwnerModel());
 }
 
 function validateThreadName(value) {
@@ -258,7 +254,10 @@ function assertThreadBinding(thread, session) {
   }
 }
 
-/** Create a durable cwd-bound session without starting a daemon thread. */
+/**
+ * Create a durable cwd-bound session without starting a daemon thread. `options.modelCatalog` is the Codex CLI's
+ * model list (`model-catalog.mjs`); a chosen model it does not name runs on its fallback.
+ */
 export function initializeSession(options) {
   const stateFile = resolve(options.stateFile);
   if (existsSync(stateFile)) fail('Session state file already exists');
@@ -270,6 +269,7 @@ export function initializeSession(options) {
     fail('transport must be proxy, direct, or desktop');
   }
   const createdAt = now();
+  const available = availableCodexModel(validateNewSessionModel(options.model), options.modelCatalog);
   const session = {
     schema: SESSION_SCHEMA,
     sessionId: options.sessionId || randomUUID(),
@@ -286,9 +286,11 @@ export function initializeSession(options) {
       sandbox: options.sandbox || null,
       serviceName: options.serviceName || null,
       threadName: validateThreadName(options.threadName),
-      model: validateNewSessionModel(options.model),
+      model: available.model,
       effort: validateEffortOption(options.effort),
     },
+    // Written only when this Codex did not list the chosen model.
+    ...(available.fallbackFrom ? { modelFallbackFrom: available.fallbackFrom } : {}),
     eventsFile: resolve(options.eventsFile || `${stateFile}.events.jsonl`),
     threadId: null,
     threadMaterialized: false,
@@ -1603,6 +1605,14 @@ function usage() {
   ].join('\n');
 }
 
+/** `init` from the command line: reads the Codex CLI's model list first and prints the fallback note once. */
+async function initializeWithCatalog(options) {
+  const modelCatalog = await readModelCatalog({ codex: options.codex || 'codex' });
+  const session = initializeSession({ ...options, modelCatalog });
+  const { note } = session.modelFallbackFrom ? availableCodexModel(session.modelFallbackFrom, modelCatalog) : {};
+  return note ? { ...session, modelNote: note } : session;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.command || ['help', '--help', '-h'].includes(args.command)) {
@@ -1612,7 +1622,7 @@ async function main() {
   let result;
   if (args.command === 'daemon') result = managedDaemon({ codex: args.codex || 'codex' });
   else if (args.command === 'probe') result = await probe({ codex: args.codex, socket: args.socket, transport: args.transport });
-  else if (args.command === 'init') result = initializeSession({
+  else if (args.command === 'init') result = await initializeWithCatalog({
     stateFile: required(args, 'state'),
     cwd: required(args, 'cwd'),
     parentThreadId: args['parent-thread-id'],

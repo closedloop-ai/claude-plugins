@@ -47,7 +47,8 @@ export const MANIFESTS = [".claude-plugin/plugin.json", ".codex-plugin/plugin.js
  * the source plugin. Every test-support module listed by name has no importer outside tests.
  */
 export const EXCLUDED: readonly { pattern: RegExp; why: string }[] = [
-  { pattern: /^evals\//, why: "eval cases and their runner" },
+  // Not the Codex model policy: cl-sweep/scripts/model-policy.mjs reads it at load as the one default model source.
+  { pattern: /^evals\/(?!codex\/model-policy\.json$)/, why: "eval cases and their runner" },
   { pattern: /^tools\//, why: "contract tests and the modules only they use" },
   { pattern: /\.test\.(?:mjs|cjs|js|ts)$/, why: "node and vitest tests" },
   { pattern: /(?:^|\/)test_[^/]*\.py$/, why: "pytest tests" },
