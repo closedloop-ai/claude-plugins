@@ -86,10 +86,11 @@ Use `compare` for a local trend comparison between immutable benchmark artifacts
 `eval-local` remains available for an explicitly requested focused local investigation. It is not a gate:
 
 ```sh
-<heavy-slot> vibe-eval-diagnosis <node> --experimental-strip-types tools/vibe-bench/src/cli.ts eval-local <claude-plugins-checkout> <full-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [case ...]
+<heavy-slot> vibe-eval-diagnosis <node> --experimental-strip-types tools/vibe-bench/src/cli.ts eval-local <claude-plugins-checkout> <full-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [--runtime=claude|codex|both] [--result-file=<repo-relative.json>] [case ...]
 ```
 
 Omit case names for the full snapshot corpus. The command writes native result trees plus one hashed JSON and Markdown summary. Deterministic mode skips only the paid Codex wording grader and records every skip.
+`--runtime=claude --result-file=<path>` is the Claude-cloud form: it runs no Codex process and copies the complete hashed JSON to the exact result-only branch path that cloud validation returns.
 
 Run one upgrade-resume observation in distinct run and output roots through the diagnosis heavy slot:
 

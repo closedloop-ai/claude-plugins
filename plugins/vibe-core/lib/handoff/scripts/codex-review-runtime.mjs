@@ -30,8 +30,8 @@ export function codexGraphSetupProblem(runtime, aliases) {
   return refusal ? `Codex reviewer graph tool ${refusal.name} was refused by the approval policy before review. Approve the graph read tools for managed Codex reviewers, then relaunch the review.` : null;
 }
 
-/** Read one exact thread through the repository's existing App Server client. */
-export async function readCodexReviewTurn(sessionId, turnId, client) {
+/** Read one exact completed turn and its raw App Server items. */
+export async function readCodexTurnItems(sessionId, turnId, client) {
   const owned = client ?? connectViaProxy(daemonSocket());
   try {
     if (!client) await owned.initialize();
@@ -51,9 +51,15 @@ export async function readCodexReviewTurn(sessionId, turnId, client) {
       items.push(...(page?.data ?? []).map(entry => entry?.item).filter(Boolean));
       cursor = page?.nextCursor ?? null;
     } while (cursor);
-    // The summary marker describes thread/turns/list, before these item pages were loaded.
-    const loadedTurn = { ...turn, items };
-    delete loadedTurn.itemsView;
-    return observedCodexTurn({ ...thread, turns: [loadedTurn] }, sessionId, turnId);
+    return { thread, turn, items };
   } finally { if (!client) owned.close(); }
+}
+
+/** Read one exact thread through the repository's existing App Server client. */
+export async function readCodexReviewTurn(sessionId, turnId, client) {
+  const { thread, turn, items } = await readCodexTurnItems(sessionId, turnId, client);
+  // The summary marker describes thread/turns/list, before these item pages were loaded.
+  const loadedTurn = { ...turn, items };
+  delete loadedTurn.itemsView;
+  return observedCodexTurn({ ...thread, turns: [loadedTurn] }, sessionId, turnId);
 }

@@ -72,6 +72,14 @@ test("model processes inherit only the explicit environment allow-list", () => {
   assert.deepEqual(inherited, { PATH: "/bin" });
   assert.throws(() => evalModelProcessEnv({ PATH: "/bin", ANTHROPIC_API_KEY: "secret" }),
     /eval-model-api-credential-forbidden:ANTHROPIC_API_KEY/);
+  const cloud = evalModelProcessEnv({ PATH: "/bin", CLAUDE_CODE_REMOTE: "true", AWS_ACCESS_KEY_ID: "session-access",
+    AWS_SECRET_ACCESS_KEY: "session-secret", AWS_SESSION_TOKEN: "session-token", ANTHROPIC_BASE_URL: "https://cloud.invalid" });
+  assert.deepEqual(cloud, { PATH: "/bin", CLAUDE_CODE_REMOTE: "true", AWS_ACCESS_KEY_ID: "session-access",
+    AWS_SECRET_ACCESS_KEY: "session-secret", AWS_SESSION_TOKEN: "session-token", ANTHROPIC_BASE_URL: "https://cloud.invalid" });
+  assert.throws(() => evalModelProcessEnv({ CLAUDE_CODE_REMOTE: "true", AWS_ACCESS_KEY_ID: "session-access", ANTHROPIC_API_KEY: "user-key" }),
+    /eval-model-api-credential-forbidden:ANTHROPIC_API_KEY/);
+  assert.throws(() => evalModelProcessEnv({ CLAUDE_CODE_REMOTE: "false", AWS_ACCESS_KEY_ID: "user-access" }),
+    /eval-model-api-credential-forbidden:AWS_ACCESS_KEY_ID/);
 });
 
 test("ISS-13760 AC-003 Claude final replies use the private Codex case shape and clean temp traces", () => {

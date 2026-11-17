@@ -69,14 +69,17 @@ export interface EvalCommands {
 
 /** Give model and grader processes only the documented local-runtime environment. */
 export function evalModelProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const forbidden = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "ANTHROPIC_BASE_URL",
+  const cloudSession = env.CLAUDE_CODE_REMOTE === "true";
+  const alwaysForbidden = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY",
     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"];
+  const cloudInfrastructure = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "ANTHROPIC_BASE_URL"];
+  const forbidden = [...alwaysForbidden, ...(cloudSession ? [] : cloudInfrastructure)];
   const present = forbidden.find((name) => env[name]?.trim());
   if (present) throw new Error(`eval-model-api-credential-forbidden:${present}`);
   const allowed = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "TMP", "TEMP", "SHELL",
     "LANG", "LC_ALL", "LC_CTYPE", "TERM", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
-    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"];
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+    ...(cloudSession ? ["CLAUDE_CODE_REMOTE", ...cloudInfrastructure] : [])];
   return Object.fromEntries(allowed.flatMap((name) => env[name] === undefined
     ? [] : [[name, env[name]]])) as NodeJS.ProcessEnv;
 }
@@ -98,7 +101,7 @@ class SystemEvalCommands implements EvalCommands {
     try {
       const result = await runOwnedProcess(command, args, { cwd, deadline: options.deadline,
         signal: abort.signal, maxBuffer: 16 * 1024 * 1024,
-        env: { ...evalModelProcessEnv(), ...options.env } });
+        env: evalModelProcessEnv({ ...process.env, ...options.env }) });
       return { status: result.exitCode ?? 128, stdout: result.stdout, stderr: result.stderr };
     } finally {
       options.signal?.removeEventListener("abort", onAbort);

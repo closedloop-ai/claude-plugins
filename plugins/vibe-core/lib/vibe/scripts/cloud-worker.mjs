@@ -24,9 +24,9 @@
  * `validate` needs no Vibe session or ticket: its request names branch, full
  * commit, model, lanes [{name, command}] and worktree (a local checkout, for its
  * origin and receipt), and optionally repository and install
- * (cloud-repository.mjs resolves them; no repository is named in the plugin). It runs the lanes on that
- * exact commit, changes nothing, and refuses a result bound to another commit
- * or showing a changed file.
+ * (cloud-repository.mjs resolves them; no repository is named in the plugin). An optional
+ * resultArtifact {path,branch} permits one JSON-only child commit so a complete eval result returns without
+ * relying on condensed logs. It runs the lanes on the exact commit and refuses any other change or identity.
  * A Claude dispatch runs in the environment cloud-environment.mjs resolves
  * (request `claudeEnvironment`, VIBE_CLOUD_CLAUDE_ENV, then CLOUD_CLAUDE_ENV in
  * the fleet home's config.env) and is refused with a named error without one.
@@ -761,6 +761,16 @@ export function validateValidationRequest(request) {
   if (!Array.isArray(request.lanes) || request.lanes.length === 0) throw new Error("at least one lane is required");
   if (request.lanes.some((lane) => !/^[a-z0-9][a-z0-9:_-]*$/.test(lane?.name ?? "") || !isCheckCommand(lane.command) || lane.command.length > 1000)) throw new Error("each lane needs a name and a documented check entry point without shell control");
   if (new Set(request.lanes.map((lane) => lane.name)).size !== request.lanes.length) throw new Error("lane names must be unique");
+  if (request.resultArtifact !== undefined) {
+    const artifact = request.resultArtifact;
+    if (!artifact || typeof artifact !== "object" || typeof artifact.path !== "string"
+      || !/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/-]+\.json$/.test(artifact.path)
+      || /(?:^|\/)auth\.json$/i.test(artifact.path)) throw new Error("resultArtifact.path must be a safe repository-relative JSON path and never auth.json");
+    if (typeof artifact.branch !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(artifact.branch)
+      || artifact.branch.includes("..") || artifact.branch.endsWith("/") || artifact.branch === request.branch) {
+      throw new Error("resultArtifact.branch must be a distinct pushed result branch");
+    }
+  }
   checkPollingBounds(request);
   return request;
 }
@@ -777,6 +787,14 @@ export const LANE_DISCIPLINE = "Run every lane in the foreground and wait for it
 /** The validation-only brief: exact checkout, install, lanes, no changes, one bound result line. */
 export function validationBrief(request) {
   validateValidationRequest(request);
+  const artifact = request.resultArtifact;
+  const finish = artifact
+    ? [
+      `The full eval result must exist at \`${artifact.path}\`. It is the only tracked file this validation may change. Refuse if it is missing, malformed JSON, or named auth.json.`,
+      `Run \`git add -- ${artifact.path}\`, commit only that file with message \`chore(vibe): record cloud eval result\`, then push \`HEAD:refs/heads/${artifact.branch}\`. Record the result commit and \`shasum -a 256 ${artifact.path}\`.`,
+      "After that commit, run `git status --porcelain`; it must be empty.",
+    ]
+    : ["Change no files. Do not edit, create or delete a tracked file, commit or push. After the lanes, run `git status --porcelain` and keep its lines."];
   return [
     `Validation only. Repository: ${requireRepository(request)}. Branch: ${request.branch}. Commit: ${request.commit}.`,
     `Check out the exact commit: run \`git fetch origin refs/heads/${request.branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
@@ -784,8 +802,9 @@ export function validationBrief(request) {
     installInstruction(request),
     "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + request.lanes.map((lane) => `- ${lane.name}: ${lane.command}`).join("\n"),
     LANE_DISCIPLINE,
-    "Change no files. Do not edit, create or delete a tracked file, commit, push, open a pull request or trigger a review. After the lanes, run `git status --porcelain` and keep its lines.",
-    `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the output of git rev-parse HEAD), "provenance" ({"host", "remote", "origin", "commit"}, each the value from its line of that command, an empty string when the line is empty), "lanes" (one {"name", "exitCode"} per lane above, in order) and "status" (the git status --porcelain lines, an empty list when there are none).`,
+    ...finish,
+    "Do not open a pull request or trigger a review.",
+    `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the validated commit, before any result commit), "provenance" ({"host", "remote", "origin", "commit"}, each the value from its line of that command, an empty string when the line is empty), "lanes" (one {"name", "exitCode"} per lane above, in order), "status" (the final git status --porcelain lines, an empty list when there are none)${artifact ? `, and "artifact" ({"path":"${artifact.path}","branch":"${artifact.branch}","commit":"<full result commit>","sha256":"<full file SHA-256>"})` : ""}.`,
   ].join("\n\n") + "\n";
 }
 
@@ -806,8 +825,36 @@ export function parseValidationResult(text, request) {
     if (reported?.name !== lane.name || !Number.isInteger(reported.exitCode)) throw new Error(`cloud validation lane ${lane.name} has no exit code; result refused`);
     return { name: lane.name, command: lane.command, exitCode: reported.exitCode, passed: reported.exitCode === 0 };
   });
+  let artifact;
+  if (request.resultArtifact) {
+    artifact = result.artifact;
+    if (artifact?.path !== request.resultArtifact.path || artifact?.branch !== request.resultArtifact.branch
+      || !/^[0-9a-f]{40}$/.test(artifact?.commit ?? "") || !/^[0-9a-f]{64}$/.test(artifact?.sha256 ?? "")) {
+      throw new Error("cloud validation result artifact identity is missing or differs from the request");
+    }
+  } else if (result.artifact !== undefined) throw new Error("cloud validation returned an unrequested result artifact");
   const { host, remote, origin } = result.provenance;
-  return { commit: request.commit, branch: request.branch, repository: request.repository, provenance: { host, remote, origin, commit: request.commit }, lanes, passed: lanes.every((lane) => lane.passed) };
+  return { commit: request.commit, branch: request.branch, repository: request.repository, provenance: { host, remote, origin, commit: request.commit }, lanes, passed: lanes.every((lane) => lane.passed), ...(artifact ? { artifact } : {}) };
+}
+
+/** Fetch and verify the result-only child commit, then return its complete JSON payload. */
+export function readValidationArtifact(request, artifact, { run = runCommand, gitRead = git } = {}) {
+  const ref = `refs/vibe/cloud-validation/${sha256(`${request.commit}:${artifact.branch}`)}`;
+  const fetched = run("git", ["-C", request.worktree, "fetch", "--force", "origin", `refs/heads/${artifact.branch}:${ref}`], { cwd: request.worktree, timeout: COMMAND_MS });
+  if (fetched.status !== 0) throw new Error(`cloud validation result branch fetch failed: ${firstLine(fetched.stderr || fetched.error?.message)}`);
+  const commit = gitRead(request.worktree, ["rev-parse", ref]);
+  if (commit !== artifact.commit || gitRead(request.worktree, ["rev-parse", `${commit}^`]) !== request.commit) {
+    throw new Error("cloud validation result commit is not the requested commit's direct child");
+  }
+  const files = gitRead(request.worktree, ["diff-tree", "--no-commit-id", "--name-only", "-r", commit]).split("\n").filter(Boolean);
+  if (files.length !== 1 || files[0] !== artifact.path) throw new Error("cloud validation result commit changes files outside the requested artifact");
+  const shown = run("git", ["-C", request.worktree, "show", `${commit}:${artifact.path}`], { cwd: request.worktree, timeout: COMMAND_MS });
+  if (shown.status !== 0) throw new Error(`cloud validation result artifact read failed: ${firstLine(shown.stderr || shown.error?.message)}`);
+  const bytes = shown.stdout;
+  if (sha256(bytes) !== artifact.sha256) throw new Error("cloud validation result artifact SHA-256 differs");
+  let result;
+  try { result = JSON.parse(bytes); } catch { throw new Error("cloud validation result artifact is not JSON"); }
+  return { ...artifact, result };
 }
 
 /** Every string in a run log, whatever its shape, so the worker's final message can be found. */
@@ -821,7 +868,7 @@ function logText(value) {
 function validationReceiptPath(request, digest) { return path.join(gitDir(request.worktree), validationReceiptName(request.commit, digest)); }
 
 /** Start (or resume) a Claude cloud session on the commit, poll it, and return results bound to that commit. */
-export async function validateCommit(request, { remote = cliRemote(request.worktree), sleep, now, home = os.homedir(), executor = chromeRemoval(), stderr } = {}) {
+export async function validateCommit(request, { remote = cliRemote(request.worktree), sleep, now, home = os.homedir(), executor = chromeRemoval(), stderr, artifactReader = readValidationArtifact } = {}) {
   validateValidationRequest(request);
   const routed = { ...request, repository: verifyRepository(request.worktree, request.repository) };
   const digest = sha256(JSON.stringify(request));
@@ -842,7 +889,8 @@ export async function validateCommit(request, { remote = cliRemote(request.workt
   if (started.status !== finished.status) await markRun(home, finished.runId ?? finished.taskId, finished.status, DEFAULT_WALL_MS);
   if (finished.status !== "completed") throw new Error(`cloud validation ended ${finished.status}`);
   const result = parseValidationResult(logText(remote("get_run_log", { session_id: finished.sessionId })), routed);
-  return { ...result, provider: "claude", taskId: finished.taskId, sessionId: finished.sessionId, wallMs: finished.wallMs, receipt: file };
+  const artifact = result.artifact ? artifactReader(routed, result.artifact) : null;
+  return { ...result, ...(artifact ? { artifact } : {}), provider: "claude", taskId: finished.taskId, sessionId: finished.sessionId, wallMs: finished.wallMs, receipt: file };
 }
 
 if (isEntryPoint(import.meta.url)) {
