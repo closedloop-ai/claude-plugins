@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { BUILD_DATA, buildClosedLoopVibe, type BuildPaths, builtText, DEFAULT_PATHS, isExcluded, REPO, sourceFiles } from "./build.js";
+import { BUILD_DATA, BUILD_MARKER, buildClosedLoopVibe, type BuildPaths, builtText, DEFAULT_PATHS, isExcluded, REPO, sourceFiles } from "./build.js";
 
 const made: string[] = [];
 afterEach(() => {
@@ -193,6 +193,14 @@ describe("the ClosedLoop vibe from this repository", () => {
     expect(tree(output())).toEqual(tree(output()));
   });
 
+  it("ISS-14162 writes a generated marker at its root naming the directory it was built from", () => {
+    const dir = output();
+    expect(readdirSync(dir)).toContain(BUILD_MARKER);
+    expect(JSON.parse(readFileSync(join(dir, BUILD_MARKER), "utf8"))).toEqual({ builtFrom: "plugins/vibe" });
+    expect(readFileSync(join(REPO, "plugins/vibe-closedloop", BUILD_MARKER), "utf8"), "the committed plugin carries the same marker")
+      .toBe(readFileSync(join(dir, BUILD_MARKER), "utf8"));
+  });
+
   it("holds no stub, no rule region, no provider name and no generic prefix (references.test.ts resolves every path)", () => {
     const dir = output();
     for (const [file] of tree(dir)) {
@@ -222,9 +230,18 @@ describe("the ClosedLoop vibe from this repository", () => {
       }
     }
     const description = (text: string) => /^---\n[\s\S]*?^description: (.*)$/m.exec(text)?.[1];
+    // The one deliberate change since the base: the vibe skill description is harness-neutral and says it covers
+    // every turn, as the operator approved on 2026-11-17. Every other description stays exactly main's.
+    const changed: Record<string, [string, string]> = {
+      "skills/vibe/SKILL.md": ["working in the Codex Desktop in-app browser.",
+        "working in Codex Desktop or Claude Code; it applies to every turn of a vibe session, including mid-session build turns."],
+    };
     for (const file of ["skills/vibe/SKILL.md", "agents/vibe-ticket-worker.md", "agents/vibe-environment-worker.md",
       "agents/vibe-requirements-worker.md", "agents/vibe-verify-worker.md", "skills/handoff/SKILL.md"]) {
-      expect(description(readFileSync(join(dir, file), "utf8")), file).toBe(description(show(file)));
+      const main = description(show(file)) ?? "";
+      const [from, to] = changed[file] ?? ["", ""];
+      if (from) expect(main, file).toContain(from);
+      expect(description(readFileSync(join(dir, file), "utf8")), file).toBe(from ? main.replace(from, to) : main);
     }
   });
 

@@ -73,7 +73,7 @@ export function checkDuplicateHelpers(files, repo, add) {
       if (!name) continue;
       const body = helperBody(repo.head(file.path), name);
       if (!body || body.length < 16) continue;
-      const duplicate = repo.wordFiles(name).filter((other) => other !== file.path && SOURCE_FILE.test(other)
+      const duplicate = repo.wordFiles(name).filter((other) => other !== file.path && SOURCE_FILE.test(other) && !isBuiltMirror(file.path, other, repo)
         && !isTestFile(other) && !/\.stories\.[jt]sx?$/.test(other))
         .sort().find((other) => (!changed.has(other) || other < file.path)
           && helperBody(repo.head(other) ?? repo.base(other), name) === body);
@@ -82,4 +82,32 @@ export function checkDuplicateHelpers(files, repo, add) {
         `move the shared behavior to one owner and import it from ${duplicate}`);
     }
   }
+}
+
+// The generated file a build writes at the root of its output, `{"builtFrom": "<source dir from the repo root>"}`.
+const BUILD_MARKER = ".vibe-build.json";
+
+/**
+ * Whether one of two files is the other's build output: it sits under a directory whose root holds a valid
+ * build marker, and the other is the file at the same relative path under the marker's `builtFrom`. A missing or
+ * malformed marker, or a source that exists neither at head nor at base, makes no pair, so the copy is still flagged.
+ */
+function isBuiltMirror(one, other, repo) {
+  return builtSource(one, repo) === other || builtSource(other, repo) === one;
+}
+
+/** The source path of a built file, from the nearest build marker above it; null when there is none or it proves nothing. */
+function builtSource(file, repo) {
+  const parts = file.split("/");
+  for (let depth = parts.length - 1; depth > 0; depth -= 1) {
+    const marker = `${parts.slice(0, depth).join("/")}/${BUILD_MARKER}`;
+    const text = repo.head(marker) ?? repo.base(marker);
+    if (text == null) continue;
+    let builtFrom;
+    try { builtFrom = JSON.parse(text)?.builtFrom; } catch { return null; }
+    if (typeof builtFrom !== "string" || !/^[^/]/.test(builtFrom) || builtFrom.split("/").some((part) => !part || part === "." || part === "..")) return null;
+    const source = `${builtFrom}/${parts.slice(depth).join("/")}`;
+    return (repo.head(source) ?? repo.base(source)) == null ? null : source;
+  }
+  return null;
 }

@@ -81,7 +81,9 @@ must not be written as if it had been made. Without the script, work as below.
    title and request text, then `search_nodes` and `fts_search` on its key
    terms. Inspect every matching PRD even when it is `EXECUTED`: report its
    `DONE` children and the shipped rules they established so the session does
-   not reclaim delivered work. For every overlapping live child whose stated
+   not reclaim delivered work, one line per `DONE` child in this shape:
+   `EXECUTED PRD <slug>: DONE child <slug>: shipped rule: <the rule it
+   established>`. For every overlapping live child whose stated
    outcome matches the request, return the required reconciliation: include
    it, cite a human supersession ruling, or leave it uncovered with its current
    status and owner. Discovery alone is incomplete.
@@ -102,7 +104,10 @@ must not be written as if it had been made. Without the script, work as below.
 4. Note in-flight work on that code: run `blast_radius_tickets` on its route
    and main component files. List open GitHub pull requests and inspect their
    changed files, reporting every open pull request that touches any of those
-   same files or a module they import; resolve each named dependency ("Roadmap
+   same files or a module they import, after the lineage lines, one line for
+   each shared path of each such pull request:
+   `open pull request #<n> touches the same file: <path>`. Whoever picks the
+   work up needs the number and the shared path. Resolve each named dependency ("Roadmap
    N", "Dependencies:") to its PRD and open pull requests. A ticket-only
    collision result is incomplete.
 <!-- end: in-flight -->
@@ -143,9 +148,11 @@ data direction flagged `data direction (new)`; the Newest ruling and Prior remov
 acceptance criterion of the ticket and its PRD, quoted exactly with its source
 slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives and the
 `likelyFiles` (each `path` with its `source`, or none), for change workers (not
-shown to the person); overlapping or in-flight tickets
-(slug and title), open pull requests touching the same files, and each matched
-`EXECUTED` PRD with its `DONE` children and shipped rules; for a source PRD,
+shown to the person); the overlap report, which leads with each matched
+`EXECUTED` PRD with its `DONE` children and shipped rules, one line per child
+in step 2's shape, then overlapping or in-flight tickets (slug and title) and
+open pull requests touching the same files, one line each in step 4's shape;
+for a source PRD,
 every child with its scope classification, current status, owner and activity
 evidence; and whether this is a change to an existing screen or a
 net-new screen. Or

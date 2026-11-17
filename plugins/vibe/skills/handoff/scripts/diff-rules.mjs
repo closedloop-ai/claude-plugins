@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isLocalPlanPath, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
+import { lineIndex } from "./line-index.mjs";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
@@ -242,6 +243,7 @@ function checkNewControls(files, allFiles, changeLog, add, { criterionSource }) 
 /** Import declarations with their original exported names and one-based line range. */
 function componentImports(source) {
   const imports = [];
+  const lineOf = lineIndex(source);
   for (const match of source.matchAll(IMPORT_DECLARATION)) {
     const clause = match[1].trim();
     if (clause.startsWith("type ")) continue;
@@ -256,7 +258,7 @@ function componentImports(source) {
     }
     const defaultName = clause.split(/[,{]/)[0].trim();
     if (defaultName && !defaultName.startsWith("*")) names.push(defaultName);
-    const start = source.slice(0, match.index).split("\n").length;
+    const start = lineOf(match.index);
     const end = start + match[0].split("\n").length - 1;
     imports.push({ source: match[2], names, start, end });
   }
@@ -350,6 +352,7 @@ function checkActivityCapture(file, head, logged, add, { fix }) {
 /** Line ranges (1-based, inclusive) of each `withDb.tx(` callback body in `head`. */
 export function transactionBodies(head) {
   const bodies = [];
+  const lineAt = lineIndex(head);
   for (const open of head.matchAll(TX_OPEN)) {
     const start = head.indexOf("{", open.index);
     if (start < 0) {
@@ -359,16 +362,12 @@ export function transactionBodies(head) {
     for (let index = start; index < head.length; index += 1) {
       depth += head[index] === "{" ? 1 : head[index] === "}" ? -1 : 0;
       if (depth === 0) {
-        bodies.push([lineAt(head, start), lineAt(head, index)]);
+        bodies.push([lineAt(start), lineAt(index)]);
         break;
       }
     }
   }
   return bodies;
-}
-
-function lineAt(text, offset) {
-  return text.slice(0, offset).split("\n").length;
 }
 
 function checkTransactions(file, head, add) {

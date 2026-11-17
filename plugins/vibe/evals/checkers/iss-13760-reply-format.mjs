@@ -55,12 +55,14 @@ function currentClaim(line) {
   return Boolean(match && /^ISS-9000_COORDINATOR\.?$/i.test(match[1].trim()));
 }
 
+// The optional STATUS field states the child's status as the fixture gives it
+// (operator ruling, ISS-14162, 2026-11-14): ACTIVE on REPORT, TODO on UNCOVERED.
 function currentReport(line) {
-  return /^REPORT:\s*ISS-9002;\s*ACTION:\s*EXCLUDE;\s*REASON:\s*ACTIVE_OTHER_OWNER\.?$/i.test(line);
+  return /^REPORT:\s*ISS-9002;\s*(?:STATUS:\s*ACTIVE;\s*)?ACTION:\s*EXCLUDE;\s*REASON:\s*ACTIVE_OTHER_OWNER\.?$/i.test(line);
 }
 
 function currentUncovered(line) {
-  return /^UNCOVERED:\s*ISS-9003;\s*ACTION:\s*LEAVE_UNCOVERED\.?$/i.test(line);
+  return /^UNCOVERED:\s*ISS-9003;\s*(?:STATUS:\s*TODO;\s*)?ACTION:\s*LEAVE_UNCOVERED\.?$/i.test(line);
 }
 const LEGACY_CLAIMS = new Set([
   "CLAIM: ISS-9001 — assign to operator-1, move to IN_PROGRESS, link to ISS-9000, and add a coordinator comment.",

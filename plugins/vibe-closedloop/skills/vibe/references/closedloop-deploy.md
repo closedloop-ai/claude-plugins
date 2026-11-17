@@ -56,7 +56,9 @@ that waited, and one deploy after the last of them carries them all. A
    SAME writer with it and redeploy before saying ready. Never say it
    matches the reference when you have seen a gap
    (`references/quality-loop.md`, "The reference check before ready" and
-   "What the orchestrator says"). Whenever you open
+   "What the orchestrator says"). A property the render could not show is
+   named as not verified yet; never ask the person to look at or check it.
+   Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "The
    component gallery needs you to sign in to Vercel with your team account first."

@@ -28,6 +28,7 @@ import { parseArgs } from "node:util";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
+import { lineIndex } from "./line-index.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -120,15 +121,16 @@ export function checkGuardedConstants(files, repo, add) {
   for (const file of codeFiles(files)) {
     const head = repo.head(file.path) ?? "";
     const touched = new Set(file.added.map((entry) => entry.line));
+    const lineOf = lineIndex(head);
+    const readsOf = identifierReads(head);
     for (const definition of head.matchAll(DEFINITION)) {
       const name = definition[1];
       const start = definition.index + definition[0].length;
       const end = initializerEnd(head, start);
       const initializer = head.slice(start, end);
-      const uses = [...head.matchAll(new RegExp(`(?<![\\w$.])${escape(name)}\\b(?!\\s*(?:=(?![=>])|\\())`, "g"))]
+      const uses = readsOf(name)
         .filter((use) => (use.index < definition.index || use.index >= end) && !isObjectKey(head, use.index, name));
       if (!uses.length) continue;
-      const lineOf = (offset) => head.slice(0, offset).split("\n").length;
       const span = [lineOf(definition.index), lineOf(end)];
       const reached = uses.some((use) => touched.has(lineOf(use.index))) || [...touched].some((line) => line >= span[0] && line <= span[1]);
       if (!reached) continue;
@@ -158,6 +160,40 @@ export function commentCandidates(files, repo) {
   return found;
 }
 
+const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
+const WORD = /\w/;
+// What makes a matched name an assignment target or a call instead of a read.
+const NOT_A_READ = /\s*(?:=(?![=>])|\()/y;
+
+/**
+ * The reads of each name in `text`, found in one pass: a function from a name to the `{index}` of every place
+ * the pattern `(?<![\w$.])<name>\b(?!\s*(?:=(?![=>])|\())` matches, in order. Every such place starts an
+ * identifier run (`[A-Za-z_$][\w$]*`) that no `\w`, `$` or `.` precedes, and the name is that whole run, or a
+ * part of it that ends just before or just after a `$` where the `\b` still holds.
+ */
+function identifierReads(text) {
+  const starts = new Map();
+  const note = (name, index) => {
+    const list = starts.get(name);
+    if (list) list.push(index);
+    else starts.set(name, [index]);
+  };
+  for (const match of text.matchAll(IDENTIFIER)) {
+    const index = match.index;
+    if (index > 0 && /[\w$.]/.test(text[index - 1])) continue;
+    const run = match[0];
+    for (let dollar = run.indexOf("$"); dollar !== -1; dollar = run.indexOf("$", dollar + 1)) {
+      if (dollar > 0 && WORD.test(run[dollar - 1])) note(run.slice(0, dollar), index);
+      if (dollar + 1 < run.length && WORD.test(run[dollar + 1])) note(run.slice(0, dollar + 1), index);
+    }
+    if (WORD.test(run.at(-1))) note(run, index);
+  }
+  return (name) => (starts.get(name) ?? []).filter((index) => {
+    NOT_A_READ.lastIndex = index + name.length;
+    return !NOT_A_READ.test(text);
+  }).map((index) => ({ index }));
+}
+
 /** End offset of an initializer: its balanced bracket group, else the end of its statement line. */
 function initializerEnd(text, start) {
   let index = start;
@@ -178,9 +214,20 @@ function initializerEnd(text, start) {
   return text.length;
 }
 
-/** Whether `name` at `offset` is a key in an object literal (`{ name: value }`), not a read. */
+const SPACE = /\s/;
+const KEY_COLON = /\s*:/y;
+
+/**
+ * Whether `name` at `offset` is a key in an object literal (`{ name: value }`), not a read: within the 200
+ * characters before it, the last one that is not white space is `{` or `,`, and a `:` follows the name.
+ */
 function isObjectKey(text, offset, name) {
-  return /[{,]\s*$/.test(text.slice(Math.max(0, offset - 200), offset)) && /^\s*:/.test(text.slice(offset + name.length));
+  const floor = Math.max(0, offset - 200);
+  let index = offset - 1;
+  while (index >= floor && SPACE.test(text[index])) index -= 1;
+  if (index < floor || (text[index] !== "{" && text[index] !== ",")) return false;
+  KEY_COLON.lastIndex = offset + name.length;
+  return KEY_COLON.test(text);
 }
 
 function escape(value) {

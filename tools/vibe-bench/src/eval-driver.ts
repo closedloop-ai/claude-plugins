@@ -448,6 +448,105 @@ function addClosureToStagedCase(caseDir: string, closureDirs: () => string[]): v
   writeFileSync(file, lines.join("\n"));
 }
 
+const SYSTEM_PROMPT_LINE = /^append_system_prompt:[ \t]*(.*)$/;
+const CLAUDE_EVAL_SKILLS = ["pr-takeover", "fleet-orchestrator", "handoff", "vibe"] as const;
+
+/**
+ * The skill-use line for one staged Claude case, the parity of the Codex
+ * runner's "Use the installed $<skill> skill" line (operator ruling
+ * Q-14162-4, 2026-11-14): a real Claude vibe session has the skill loaded.
+ */
+function claudeEvalSkillLine(prompt: string): string {
+  // The Codex runner's choice (codex/run.py SKILLS): the first one the prompt invokes, else vibe.
+  const skill = CLAUDE_EVAL_SKILLS.find((name) => prompt.includes(`vibe:${name}`)) ?? "vibe";
+  return `Use the installed vibe:${skill} skill.`;
+}
+
+// The role sentence the visual cases give the stand-in, e.g. "do the persistent writer's work yourself".
+const WRITER_ROLE = /\bwriter's work yourself\b/;
+
+/**
+ * The writer line for a staged Claude case whose system prompt makes the
+ * stand-in do the writer's work, else null (orchestrator ruling Q-14162-10 (A),
+ * 2026-11-15): a real writer is launched with agents/vibe-change-worker.md.
+ * The file is named relative to the installed plugin, never by an absolute
+ * path, so a reply that quotes it holds no private path (orchestrator ruling).
+ */
+function claudeEvalWriterLine(systemPrompt: string): string | null {
+  if (!WRITER_ROLE.test(systemPrompt)) return null;
+  // Q-14162-13 (2026-11-15): one combined line, skill first, so the stand-in still loads the
+  // skill; it replaces the separate skill line for writer-role cases.
+  return "Use the installed vibe:vibe skill. You are that skill's implementation writer: also read " +
+    "agents/vibe-change-worker.md in the installed vibe plugin (two folders up from the skill's base " +
+    "directory) and the quality-loop.md sections it names, 'Visual references' and 'The reference check " +
+    "before ready', before you plan.";
+}
+
+const CLAUDE_EVAL_LATER_TURN_LINE =
+  "This is a later turn of a session that is already running, not its first reply.";
+
+/**
+ * Whether a staged case's history already holds an earlier assistant turn
+ * (orchestrator ruling Q-14162-14 (2), 2026-11-15). The history is the file
+ * case.yaml's context.history_file names, else the case's history.jsonl, the
+ * same file the Codex runner replays; one JSON record per line.
+ */
+function stagedCaseHasPriorAssistantTurn(caseDir: string): boolean {
+  const caseYaml = join(caseDir, "case.yaml");
+  const named = existsSync(caseYaml)
+    ? /^[ \t]*history_file:[ \t]*["']?([^"'\s]+)["']?[ \t]*$/m.exec(readFileSync(caseYaml, "utf8"))?.[1] : undefined;
+  if (named !== undefined && (named.includes("/") || named.includes("\\") || named.startsWith("."))) {
+    throw new Error("eval-focused-case-history-invalid");
+  }
+  const file = join(caseDir, named ?? "history.jsonl");
+  if (!existsSync(file)) return false;
+  return readFileSync(file, "utf8").split("\n").some((text) => {
+    if (!text.trim()) return false;
+    let record: unknown;
+    try { record = JSON.parse(text); } catch { throw new Error("eval-focused-case-history-invalid"); }
+    const item = record as { type?: unknown; message?: { role?: unknown } } | null;
+    return item?.type === "assistant" || item?.message?.role === "assistant";
+  });
+}
+
+/**
+ * Append the skill-use line, and for a writer stand-in the writer line, to one
+ * staged case's system prompt: case.yaml's append_system_prompt when it has
+ * one, otherwise prompt.md's front matter, adding the key when the front
+ * matter has none. Only the staged copy is written.
+ */
+function addSkillLineToStagedCase(caseDir: string, requireWriterAgent: () => void): void {
+  const promptFile = join(caseDir, "prompt.md");
+  const prompt = readFileSync(promptFile, "utf8");
+  // A case already mid-session is told so, beside the skill line (Q-14162-14 (2)).
+  const laterTurn = stagedCaseHasPriorAssistantTurn(caseDir) ? `\n\n${CLAUDE_EVAL_LATER_TURN_LINE}` : "";
+  const line = claudeEvalSkillLine(prompt) + laterTurn;
+  const caseYaml = join(caseDir, "case.yaml");
+  const target = existsSync(caseYaml) && /^append_system_prompt:/m.test(readFileSync(caseYaml, "utf8"))
+    ? caseYaml : promptFile;
+  const lines = readFileSync(target, "utf8").split("\n");
+  // A prompt.md without front matter gets one holding only the line.
+  if (target === promptFile && lines[0] !== "---") lines.unshift("---", "---");
+  const end = target === promptFile ? lines.indexOf("---", 1) : lines.length;
+  if (end < 0) throw new Error("eval-focused-case-front-matter-invalid");
+  const start = target === promptFile ? 1 : 0;
+  const at = lines.slice(start, end).flatMap((text, index) => SYSTEM_PROMPT_LINE.test(text) ? [index + start] : []);
+  if (at.length > 1) throw new Error("eval-focused-case-system-prompt-invalid");
+  if (at.length === 0) {
+    lines.splice(end, 0, `append_system_prompt: ${JSON.stringify(line)}`);
+  } else {
+    let existing: unknown;
+    try { existing = JSON.parse(SYSTEM_PROMPT_LINE.exec(lines[at[0]!]!)![1]!); }
+    catch { throw new Error("eval-focused-case-system-prompt-invalid"); }
+    if (typeof existing !== "string") throw new Error("eval-focused-case-system-prompt-invalid");
+    const writer = claudeEvalWriterLine(existing);
+    if (writer) requireWriterAgent();
+    const added = writer ? writer + laterTurn : line;
+    lines[at[0]!] = `append_system_prompt: ${JSON.stringify(`${existing}\n\n${added}`)}`;
+  }
+  writeFileSync(target, lines.join("\n"));
+}
+
 /**
  * Copy a focused Claude corpus into the run-owned plugin snapshot.
  *
@@ -455,10 +554,14 @@ function addClosureToStagedCase(caseDir: string, closureDirs: () => string[]): v
  * a copied suite is the only exact multi-case selection that also preserves
  * each case's relative sibling-plugin paths and shared fixture directory.
  * Each staged case manifest also lists every plugin vibe depends on,
- * transitively; the source manifests are never changed.
+ * transitively, and carries the skill-use line, plus the writer line for a
+ * writer stand-in; the source files are never changed. No selection stages
+ * every prompt-backed case.
  */
 export function stageFocusedClaudeEvalCases(vibeDir: string, selectedCases: string[]): string {
-  if (selectedCases.length === 0) return "vibe/evals";
+  // No selection is the full suite: every prompt-backed case is staged the same way.
+  const cases = selectedCases.length ? selectedCases
+    : evalCaseCatalog(vibeDir).filter((item) => item.kind !== "upgrade-resume").map((item) => item.id);
   const focused = join(vibeDir, "evals-focused");
   if (existsSync(focused)) throw new Error("eval-focused-suite-exists");
   mkdirSync(focused);
@@ -470,11 +573,16 @@ export function stageFocusedClaudeEvalCases(vibeDir: string, selectedCases: stri
   let closure: string[] | null = null;
   const closureDirs = () => closure ??= evalPluginClosure(dirname(vibeDir), basename(vibeDir))
     .map((plugin) => join(dirname(vibeDir), plugin.name));
-  for (const id of [...selectedCases].sort()) {
+  // A staged writer line names an agent file the snapshot must hold.
+  const requireWriterAgent = () => {
+    if (!existsSync(join(vibeDir, "agents", "vibe-change-worker.md"))) throw new Error("eval-writer-agent-missing");
+  };
+  for (const id of [...cases].sort()) {
     const source = join(vibeDir, "evals", id);
     if (!existsSync(join(source, "prompt.md"))) throw new Error("eval-focused-case-missing");
     cpSync(source, join(focused, id), { recursive: true, errorOnExist: true, force: false });
     addClosureToStagedCase(join(focused, id), closureDirs);
+    addSkillLineToStagedCase(join(focused, id), requireWriterAgent);
   }
   return "vibe/evals-focused";
 }

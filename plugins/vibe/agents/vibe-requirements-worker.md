@@ -87,7 +87,10 @@ questions"), or produce an upfront summary for the person.
 <!-- generic: in-flight -->
 4. Note in-flight work on that code: list open GitHub pull requests and
    inspect their changed files, reporting every open pull request that
-   touches any of those same files or a module they import.
+   touches any of those same files or a module they import, one line for
+   each shared path of each such pull request:
+   `open pull request #<n> touches the same file: <path>`. Whoever picks the
+   work up needs the number and the shared path.
 <!-- end generic: in-flight -->
 > Provider `graph+tickets` (block `in-flight` of `agents/vibe-requirements-worker.md`)
 
@@ -189,7 +192,7 @@ flagged `data direction (new)`; every acceptance criterion, quoted exactly
 with its source, or "none stated"; the route where the relevant code lives
 and the `likelyFiles` (each `path` with its `source`, or none), for change
 workers (not shown to the person); open pull requests touching the same files
-or delivering the same outcome; and whether this is a change to an existing
+or delivering the same outcome, one line each in step 4's shape; and whether this is a change to an existing
 screen or a net-new screen. Or `NEEDS_PERSON` with questions only the person
 can answer, with decision-research evidence and why the answer is absolutely
 necessary.

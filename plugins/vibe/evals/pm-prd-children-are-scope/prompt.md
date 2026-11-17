@@ -21,6 +21,6 @@ the session operator has id `operator-1`.
   progress comments, and its exact outcome overlaps the request.
 - ISS-9003 is TODO and untouched, but its outcome is not in the request.
 
-Return exactly four lines using this schema: `CLAIM: <child>; ASSIGN:<assignee>; STATUS:<status>; LINK:<parent>; COMMENT:<comment-state>`, `REPORT: <child>; ACTION:<decision>; REASON:<reason>`, `UNCOVERED: <child>; ACTION:<decision>`, `SUPERSEDE: <decision>`.
-Allowed tokens: `COMMENT = ISS-9000_COORDINATOR`; `ACTION = EXCLUDE | LEAVE_UNCOVERED`; `REASON = ACTIVE_OTHER_OWNER | NONE`; `SUPERSEDE = None`.
+Return exactly four lines using this schema: `CLAIM: <child>; ASSIGN:<assignee>; STATUS:<status>; LINK:<parent>; COMMENT:<comment-state>`, `REPORT: <child>; STATUS:<child-status>; ACTION:<decision>; REASON:<reason>`, `UNCOVERED: <child>; STATUS:<child-status>; ACTION:<decision>`, `SUPERSEDE: <decision>`.
+Allowed tokens: `COMMENT = ISS-9000_COORDINATOR`; `status = TRIAGE | BACKLOG | TODO | IN_PROGRESS | IN_REVIEW | DONE | BLOCKED | CANCELED` (CLAIM only: the issue status to set); `child-status = ACTIVE | TODO` (REPORT and UNCOVERED only: ACTIVE when the child has live work, TODO when it has none yet); `ACTION = EXCLUDE | LEAVE_UNCOVERED`; `REASON = ACTIVE_OTHER_OWNER | NONE`; `SUPERSEDE = None`, in exactly that casing.
 ---

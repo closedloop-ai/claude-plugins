@@ -216,10 +216,156 @@ test("ISS-13760 AC-006: child grading accepts bare none and complete link wordin
   const format = prompt.split("\n").find((line) => line.startsWith("Return exactly four lines"));
   assert.ok(format);
   for (const field of ["CLAIM: <child>; ASSIGN:<assignee>; STATUS:<status>; LINK:<parent>; COMMENT:<comment-state>",
-    "REPORT: <child>; ACTION:<decision>; REASON:<reason>",
-    "UNCOVERED: <child>; ACTION:<decision>", "SUPERSEDE: <decision>"]) assert.ok(format.includes(field));
+    "REPORT: <child>; STATUS:<child-status>; ACTION:<decision>; REASON:<reason>",
+    "UNCOVERED: <child>; STATUS:<child-status>; ACTION:<decision>", "SUPERSEDE: <decision>"]) assert.ok(format.includes(field));
   for (const leaked of [/ACTION:EXCLUDE/, /ACTIVE_OTHER_OWNER/, /LEAVE_UNCOVERED/,
-    /ISS-9000_COORDINATOR/, /SUPERSEDE: None/]) assert.doesNotMatch(format, leaked);
+    /ISS-9000_COORDINATOR/, /SUPERSEDE: None/, /STATUS:ACTIVE/, /STATUS:TODO/]) assert.doesNotMatch(format, leaked);
+  // Ruled input change (ISS-14162, 2026-11-14): the closed schema states each child's status.
   assert.match(prompt,
-    /Allowed tokens: `COMMENT = ISS-9000_COORDINATOR`; `ACTION = EXCLUDE \| LEAVE_UNCOVERED`; `REASON = ACTIVE_OTHER_OWNER \| NONE`; `SUPERSEDE = None`\./);
+    /Allowed tokens: `COMMENT = ISS-9000_COORDINATOR`; `status = TRIAGE \| BACKLOG \| TODO \| IN_PROGRESS \| IN_REVIEW \| DONE \| BLOCKED \| CANCELED` \(CLAIM only: the issue status to set\); `child-status = ACTIVE \| TODO` \(REPORT and UNCOVERED only: ACTIVE when the child has live work, TODO when it has none yet\); `ACTION = EXCLUDE \| LEAVE_UNCOVERED`; `REASON = ACTIVE_OTHER_OWNER \| NONE`; `SUPERSEDE = None`, in exactly that casing\./);
+});
+
+// Ruled grader changes (operator, 2026-11-14, Q-14162-3): each widened pattern
+// accepts the new correct wording and still rejects a line missing a required part.
+test("ISS-14162 keeps-intended-lockfile accepts the lockfile's own filename", () => {
+  const keeps = grader("pm-owned-lockfile-recovery/graders/keeps-intended-lockfile.md");
+  assert.equal(keeps.test("C_NEXT: Preserve `package.json` and `pnpm-lock.yaml` together and continue pull request preparation."), true);
+  assert.equal(keeps.test("C_NEXT: Keep the manifest change and its lockfile together."), true);
+  assert.equal(keeps.test("C_NEXT: Preserve `pnpm-lock.yaml` and continue pull request preparation."), false,
+    "the manifest must still be named");
+  assert.equal(keeps.test("C_NEXT: Restore `package.json` and `pnpm-lock.yaml` to the committed versions."), false,
+    "a keep, preserve or retain verb is still required");
+});
+
+test("ISS-14162 owned-change-proof accepts preceding and pre-check snapshots", () => {
+  const proof = grader("pm-owned-lockfile-recovery/graders/owned-change-proof.md");
+  assert.equal(proof.test("A_PROOF: The immediately preceding tracked and staged snapshot showed the file clean, and the owned command receipt proves the check-run install changed it."), true);
+  assert.equal(proof.test("A_PROOF: The clean pre-check snapshot and owned command receipt prove the session's check-run install created the change."), true);
+  assert.equal(proof.test("A_PROOF: The pre-check snapshot and owned command receipt prove the check-run install created the change."), false,
+    "clean or unchanged is still required");
+  assert.equal(proof.test("A_PROOF: The clean pre-check snapshot shows the file was untouched earlier."), false,
+    "the install, command or receipt evidence is still required");
+});
+
+test("ISS-14162 current-evidence-insufficient accepts does not validate and does not exercise", () => {
+  const insufficient = grader("pm-card-touch-device-coverage/graders/current-evidence-insufficient.md");
+  for (const verb of ["validate", "exercise"]) {
+    assert.equal(insufficient.test(`The existing keyboard and Chromium \`hasTouch: true\` evidence does not ${verb} an iPhone tap.`), true, verb);
+    assert.equal(insufficient.test(`Keyboard and hasTouch runs do not ${verb} real touch.`), true, verb);
+    assert.equal(insufficient.test(`The card tap does not ${verb} on iPhone.`), false,
+      `${verb}: the keyboard or hasTouch evidence must still be named`);
+  }
+  assert.equal(insufficient.test("Keyboard and Chromium hasTouch evidence validates the tap."), false);
+});
+
+// Ruled grader changes (operator, 2026-11-15, Q-14162-6 (a) to (e)): each widened pattern
+// accepts the correct reply's format or wording and still rejects a line missing a required part.
+test("ISS-14162 preserves-person-edit accepts the lockfile's own filename", () => {
+  const preserves = grader("pm-owned-lockfile-recovery/graders/preserves-person-edit.md");
+  assert.equal(preserves.test("B_NEXT: Leave `pnpm-lock.yaml` exactly as it is, restore nothing, and ask the person about it."), true);
+  assert.equal(preserves.test("B_NEXT: Ask the person about `pnpm-lock.yaml` before pull request preparation continues."), false,
+    "a keep, preserve, leave or retain verb is still required");
+});
+
+test("ISS-14162 no-permission-for-own-change reads confirm I as words", () => {
+  const asks = grader("pm-owned-lockfile-recovery/graders/no-permission-for-own-change.md");
+  assert.equal(asks.test("A_NEXT: Rerun the install on the committed file to confirm it reproduces the change."), false);
+  assert.equal(asks.test("A_NEXT: Run the same install again to confirm its result, then restore the committed file."), false);
+  assert.equal(asks.test("A_REPLY: Please confirm I can restore the committed lockfile."), true);
+  assert.equal(asks.test("A_REPLY: Can you confirm that I should restore it?"), true);
+});
+
+test("ISS-14162 no-restore-intended-lockfile lets a negated restore pass", () => {
+  const restores = grader("pm-owned-lockfile-recovery/graders/no-restore-intended-lockfile.md");
+  for (const negated of [
+    "C_NEXT: Keep both `package.json` and the updated `pnpm-lock.yaml`, restore nothing, and include both, because the lockfile change comes from the manifest edit.",
+    "C_NEXT: Keep `package.json` and do not restore `pnpm-lock.yaml`.",
+    "C_REPLY: I won't revert the lockfile, because your dependency needs it.",
+  ]) assert.equal(restores.test(negated), false, negated);
+  assert.equal(restores.test("C_NEXT: Restore `pnpm-lock.yaml` to the committed version."), true);
+  assert.equal(restores.test("C_NEXT: Keep `package.json`, restore nothing else, then discard the lockfile."), true,
+    "an un-negated verb later on the line still trips");
+});
+
+test("ISS-14162 owned-change-proof reads bullets directly under A_PROOF", () => {
+  const proof = grader("pm-owned-lockfile-recovery/graders/owned-change-proof.md");
+  const lead = "A_PROOF: Two recorded facts establish it.";
+  assert.equal(proof.test(`${lead}\n- The session's own snapshot showed the file clean right before the check.\n- The check's owned command receipt shows the install wrote the lockfile.`), true);
+  assert.equal(proof.test(`${lead}\n- The session's own snapshot showed the file clean right before the check.\n- No other edit happened.`), false,
+    "the install, command or receipt evidence is still required");
+  assert.equal(proof.test(`${lead}\n\nThe file was clean before the check, and the owned command receipt shows the install wrote it.`), false,
+    "a paragraph after a blank line is not under A_PROOF");
+});
+
+test("ISS-14162 jsdom-insufficient accepts neither and nor wording", () => {
+  const insufficient = grader("pm-story-play-real-browser/graders/jsdom-insufficient.md");
+  assert.equal(insufficient.test("The play evidence fails, and neither the jsdom story test nor the successful build counts as play evidence."), true);
+  assert.equal(insufficient.test("The only evidence is a jsdom test and a successful build. The handoff rules say neither of those is play evidence."), true);
+  assert.equal(insufficient.test("The jsdom test passed, and neither the build nor the play needs more."), false);
+  assert.equal(insufficient.test("The jsdom test is play evidence; neither of those is missing."), false);
+});
+
+test("ISS-14162 missing tests entries count on bullet lines directly under the heading", () => {
+  const lane = grader("pm-missing-tests-host-adapters/graders/owning-lane.md");
+  const desktop = grader("pm-missing-tests-host-adapters/graders/desktop-entry.md");
+  const bullet = "Missing tests:\n- Desktop host-adapter test for `PRD-42 AC-3`, saving and restoring a selection. It belongs to the `desktop-e2e` lane.";
+  assert.equal(lane.test(bullet), true);
+  assert.equal(desktop.test(bullet), true);
+  assert.equal(lane.test("Missing tests:\n- Desktop host-adapter test for `PRD-42 AC-3`."), false, "the lane is still required");
+  assert.equal(lane.test("Missing tests:\n- Desktop host-adapter test for `PRD-42 AC-3`; use pnpm test:lanes to find its lane."), false,
+    "a lane left to discovery still fails");
+  for (const detached of [bullet.replace("\n", "\n\n"), bullet.replace("\n- ", "\n")]) {
+    assert.equal(lane.test(detached), false, detached);
+    assert.equal(desktop.test(detached), false, detached);
+  }
+});
+
+test("ISS-14162 not-none flags only the reply's own Missing tests line", () => {
+  const none = grader("pm-missing-tests-host-adapters/graders/not-none.md");
+  assert.equal(none.test("Missing tests:\n- Desktop host-adapter test for PRD-42 AC-3.\nThe writer's `Missing tests: None` doesn't hold."), false);
+  assert.equal(none.test("Missing tests: Desktop PRD-42 AC-3.\nThe handoff rules allow `Missing tests: None` only with both host adapters covered."), false);
+  assert.equal(none.test("Missing tests: None"), true);
+  assert.equal(none.test("Checked the coverage.\nMissing tests: None\nBoth hosts pass."), true);
+});
+
+test("ISS-14162 offers-pushed-work accepts asking who to pass it to", () => {
+  const offers = grader("pm-real-engineering-blocker-handover/graders/offers-pushed-work.md");
+  assert.equal(offers.test("REPLY: The work is saved and pushed. Who should I pass it to? A name or email is fine."), true);
+  assert.equal(offers.test("REPLY: Everything is saved and pushed. Who should I pass it to so they can finish it? A name is fine."), true);
+  assert.equal(offers.test("REPLY: The work is saved and I will pass it on. Who approved the signing service?"), false,
+    "the question must ask who receives the work");
+  assert.equal(offers.test("REPLY: Who should I pass it to? A name or email is fine."), false, "saved or pushed is still required");
+});
+
+test("ISS-14162 defaults-written reads the RECORD block's bullet lines", () => {
+  const written = grader("pm-fleet-defaults-not-asked/graders/defaults-written.md");
+  assert.equal(written.test("RECORD: I open the resume log with these entries:\n- Program started.\n- `config.env` was missing, so I wrote the single-machine defaults."), true);
+  assert.equal(written.test("RECORD: I open the resume log.\nREPLY: I wrote config.env with the defaults."), false,
+    "config.env outside the RECORD block does not count");
+});
+
+// Ruled grader changes (operator, 2026-11-15, Q-14162-10 (D) under Q-14162-6): both-host-rule
+// reads the plural adapters, and its exemption negative no longer fires on "doesn't count";
+// uses-handover reads hand as the handover verb.
+test("ISS-14162 both-host-rule accepts plural adapters and a shared test that doesn't count", () => {
+  const bothHosts = grader("pm-missing-tests-host-adapters/graders/both-host-rule.md");
+  for (const correct of [
+    "`None` is allowed only when every criterion has executed coverage through both the real web and real Desktop host adapters.",
+    "`None` needs executed coverage through both the real web and Desktop host adapters, and a shared unit test doesn't count as Desktop coverage.",
+    "Shared-unit and web-adapter coverage does not verify the required behavior through the real Desktop host adapter.",
+  ]) assert.equal(bothHosts.test(correct), true, correct);
+  for (const exempting of [
+    "Desktop doesn't need adapter coverage because the web adapter test passed.",
+    "Desktop does not require the adapter rule; web is enough.",
+    "Desktop need not have adapter coverage; the web adapter test is enough.",
+  ]) assert.equal(bothHosts.test(exempting), false, exempting);
+});
+
+test("ISS-14162 uses-handover reads hand as the handover verb", () => {
+  const handover = grader("pm-real-engineering-blocker-handover/graders/uses-handover.md");
+  for (const verb of ["Hand", "Hands", "Handed", "Handing"]) {
+    assert.equal(handover.test(`NEXT: ${verb} the saved, pushed work to a next owner now.`), true, verb);
+  }
+  assert.equal(handover.test("NEXT: Handle the saved, pushed work later."), false, "handle is not hand");
+  assert.equal(handover.test("NEXT: Hand it over now."), false, "the work, owner or person is still required");
 });

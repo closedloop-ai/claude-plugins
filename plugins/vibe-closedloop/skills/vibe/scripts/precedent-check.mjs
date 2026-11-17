@@ -74,7 +74,7 @@ export function precedentPrompt({ question, situation, codeEvidence, behaviors =
 Disputed behaviors, every one required. Perform each interaction in the app, verify the result, and capture a screenshot of it. One that only a change to existing data could show is not performed: mark it for the operator.
 ${behaviors.map((behavior, index) => `B${index + 1}. ${behavior}`).join("\n")}
 `;
-  return `You are checking how established apps handle one situation, to answer a product question in a vibe session. Report what you see; never change anything that already exists.
+  return `You are checking how ${rule.product ? `live ${rule.product}` : "an established app with the same flow"} handles one situation, to answer a product question in a vibe session. Report what you see; never change anything that already exists.
 
 Question: ${question}
 Situation to reproduce: ${situation || question}
@@ -84,7 +84,7 @@ Order:
 1. ${rule.product ?? "An established app with the same flow"}, in Chrome, with the account already signed in there. Never sign in, create an account or type a credential.
 2. If this actor cannot use that signed-in browser, stop with NEEDS_PERSON so the orchestrator or browser-holder can run the live check. Never use a public help center or documentation page as precedent.
 
-Safety, in every app:
+Safety:
 - Never touch anything that already exists: no edits, moves, completions, comments, invitations or setting changes.
 - When you need test data, create one new private project named "${TEMP_PROJECT}", with no members and notifications off, and put everything in it. Prefix every task you create with "${TASK_PREFIX}".
 - A flow that would connect an app, invite or notify someone, share, pay or change a setting: go only as far as its confirmation step, then cancel it.
