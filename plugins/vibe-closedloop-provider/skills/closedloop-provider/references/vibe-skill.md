@@ -12,6 +12,17 @@ Each block replaces the stub of the same id there, in a session bound to this pr
   precedent or accepted visual QA (`references/quality-loop.md`); and dispatch.
 <!-- end: root-may -->
 
+<!-- block: version-check -->
+Every `$vibe` start, new or resume, first checks whether the ClosedLoop
+plugins installed on this machine, in Claude Code and in Codex, are the latest
+release, and shows the setup check, in one command. Call ClosedLoop `get-me`
+and closedloop-graph `sync_status` yourself first, then run
+`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`
+in Codex, or `--runtime claude` in Claude Code, where each `<state>` is
+`connected` only when that call answered in this conversation, otherwise
+`not-connected`; never assume either.
+<!-- end: version-check -->
+
 <!-- block: brief-auth -->
   around credentials. On a machine without the staging e2e identities the
   local web e2e lane is never run, so its sign-in failure never happens: it is

@@ -228,6 +228,21 @@ describe("the ClosedLoop vibe from this repository", () => {
     }
   });
 
+  it("gives main's version check command, naming --closedloop and --graph, in the Plugin version section", () => {
+    // ISS-13446: a ClosedLoop session must match main on the evals; executive-setup-check-block-first-reply grades
+    // `--closedloop connected --graph not-connected`, and a nameless `--connection <name>=<state>` lost it 0/3.
+    const version = (text: string) => /^### Plugin version\n([\s\S]*?)^#{2,3} /m.exec(text)?.[1] ?? "";
+    const opening = (text: string) => /^Every `\$vibe` start[\s\S]*?never assume either\./m.exec(version(text))?.[0];
+    const built = version(builtText("skills/vibe/SKILL.md"));
+    expect(built).toContain("`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`");
+    expect(built).toContain("Call ClosedLoop `get-me`\nand closedloop-graph `sync_status` yourself first");
+    expect(built).not.toContain("check --runtime codex [--connection");
+    const base = "716a5683";
+    let main: string;
+    try { main = execFileSync("git", ["-C", REPO, "show", `${base}:plugins/vibe/skills/vibe/SKILL.md`], { encoding: "utf8" }); } catch { return; } // A shallow clone has no base commit to compare with.
+    expect(opening(builtText("skills/vibe/SKILL.md"))).toBe(opening(main));
+  });
+
   it("binds its bundled provider when installed from a marketplace", async () => {
     const dir = output();
     const home = temp();
