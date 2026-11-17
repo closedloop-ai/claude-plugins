@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface ClaudeEvalIsolation {
@@ -57,8 +57,10 @@ export function createClaudeEvalIsolation(root: string, claudeExecutable: string
   };
   writeFileSync(mcpConfigFile, `${JSON.stringify({ mcpServers }, null, 2)}\n`,
     { flag: "wx", mode: 0o600 });
-  const script = `#!/bin/sh\nPATH=${shellQuote(binDir)}:\"$PATH\"\nexport PATH\n` +
-    `exec ${shellQuote(claudeExecutable)} --setting-sources '' --mcp-config ` +
+  const command = isAbsolute(claudeExecutable) ? `CLAUDE_EVAL_REAL=${shellQuote(claudeExecutable)}\n`
+    : `CLAUDE_EVAL_REAL=$(command -v ${shellQuote(claudeExecutable)}) || exit 127\n`;
+  const script = `#!/bin/sh\n${command}PATH=${shellQuote(binDir)}:\"$PATH\"\nexport PATH\n` +
+    `exec \"$CLAUDE_EVAL_REAL\" --setting-sources '' --mcp-config ` +
     `${shellQuote(mcpConfigFile)} --strict-mcp-config \"$@\"\n`;
   writeFileSync(executable, script, { flag: "wx", mode: 0o700 });
   chmodSync(executable, 0o700);
