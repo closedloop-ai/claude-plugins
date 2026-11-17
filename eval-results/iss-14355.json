@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "pluginSha": "ac27c35bc1892c4038f03c79672f18fbf30e85ee",
+  "createdAt": "2026-11-17T17:50:49.049Z",
+  "wallMs": 3012,
+  "deterministicOnly": false,
+  "selectedCases": [
+    "pm-agent-docs-draft-blocked"
+  ],
+  "runtimes": [
+    {
+      "runtime": "claude",
+      "exitCode": 1,
+      "result": null,
+      "invalidReason": "eval-claude-run-incomplete"
+    }
+  ],
+  "success": false,
+  "resultHash": "5c1b399fe0e34576752ff0cdc22149726a6cea109765f9a0433df871ea6e44a0"
+}
