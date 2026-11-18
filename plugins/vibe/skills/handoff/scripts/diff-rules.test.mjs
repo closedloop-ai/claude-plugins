@@ -730,6 +730,20 @@ test("ISS-14127 AC-1: a new source helper is not a duplicate of the committed bu
   assert.deepEqual(duplicateHelpers(sourceAdded), []);
 });
 
+test("ISS-14127 AC-1: a bundle's helper is not a duplicate of the built copy of the source it inlined", (t) => {
+  // A build copies plugins/vibe to plugins/vibe-closedloop (marker at its root), bundle and agent-models.mjs included.
+  const marker = { "plugins/vibe-closedloop/.vibe-build.json": `${JSON.stringify({ builtFrom: "plugins/vibe" })}\n` };
+  const builtSource = "plugins/vibe-closedloop/skills/vibe/scripts/agent-models.mjs";
+  const builtBundle = "plugins/vibe-closedloop/skills/vibe/scripts/dist/claude-worker.mjs";
+  const rebuilt = run(t, { base: { ...marker, [BUNDLED_SOURCE]: BUNDLED_HELPER, [builtSource]: BUNDLED_HELPER },
+    head: { [BUNDLE]: bundleOf(BUNDLED_SOURCE), [builtBundle]: bundleOf(BUNDLED_SOURCE) } });
+  assert.deepEqual(duplicateHelpers(rebuilt), [], "both bundles inline plugins/vibe's source, whose built copy is the other file");
+  // Without the marker the plugins/vibe-closedloop copy is hand-written as far as the rule can tell, so it is still flagged.
+  const unmarked = run(t, { base: { [BUNDLED_SOURCE]: BUNDLED_HELPER, [builtSource]: BUNDLED_HELPER },
+    head: { [BUNDLE]: bundleOf(BUNDLED_SOURCE) } });
+  assert.deepEqual(duplicateHelpers(unmarked), [[BUNDLE, `new helper resolveRoleModel duplicates ${builtSource}`]]);
+});
+
 test("ISS-14127 AC-2: a hand-written copy is still flagged, also beside a bundle of the same source", (t) => {
   const copy = "plugins/vibe/skills/vibe/scripts/worker-model.mjs";
   const copied = run(t, { base: { [BUNDLED_SOURCE]: BUNDLED_HELPER, [BUNDLE]: bundleOf(BUNDLED_SOURCE) }, head: { [copy]: BUNDLED_HELPER } });

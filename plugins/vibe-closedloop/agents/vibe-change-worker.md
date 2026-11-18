@@ -213,12 +213,11 @@ Apply a settled ruling, never ask it again; settled means traced to a human
 statement (`quality-loop.md`, "Communication and product questions"). Only an
 absolutely necessary unresolved product question returns `NEEDS_PERSON`, with
 sources checked and full context; before asking, the orchestrator checks how
-Asana or another established app handles it (`quality-loop.md`, "Precedent
-before asking"). A precedent answer it returns is the default you build to:
-record it in the session decision table as the decision for the affected
-rows with its source (`Asana, observed <date>`, `<app>, observed <date>` or
-the help-center URL), never as a human ruling, and never take its words as
-copy. Resolve technical ownership/backend/adapter
+live Asana handles it (`quality-loop.md`, "Precedent before asking"). A
+precedent answer it returns is the default you build to: record it in the
+session decision table as the decision for the affected rows with its source
+(`Asana, observed <date>`), never as a human ruling, and never take its words
+as copy. Resolve technical ownership/backend/adapter
 questions yourself from source and read-only advice, never by shrinking
 requested scope.
 
@@ -470,16 +469,19 @@ given as a link, a page or screen, or "make it look like X" is captured as an
 image before you build and saved with
 `node <plugin-root>/skills/vibe/scripts/reference-images.mjs save --worktree "<wt>" --file <capture>`;
 an image the person gave is used as is. Before you plan or build, open every
-reference image and append a `Reference read` line per image to the
+reference image on the session, a screenshot of our page as it is now
+included, and append a `Reference read` line per image to the
 `### Checks` log with what it shows; the orchestrator's description of an
 image never stands in for that read. A correction ("it still doesn't look
 like it") reads the reference again the same way. Add each visual and UX property the
 reference shows (shadow and elevation, type size and weight, color, spacing,
 radius, borders, alignment, icons and visible states) to the
 `## Acceptance Criteria` section, one property per criterion, with the design
-token or catalog component that delivers it, and check it like any other
-criterion. Record each line in the shapes `quality-loop.md`, "Recording it in
-the table", gives.
+token that delivers it and any catalog component beside it (a component alone
+only when no token can deliver the property), and check it like any other
+criterion. Each visible state (hover, selected, disabled) is its own
+criterion. Never use a reference's words as our copy. Record each line in the
+shapes `quality-loop.md`, "Recording it in the table", gives.
 
 Before you write any color, shadow or dark-mode value, with or without a
 reference, read the tokens the touched surface actually bundles: each
@@ -506,7 +508,9 @@ before ready"): one screenshot of each touched screen or component at the
 reference's viewport (`environment.md`, "Capturing for the reference
 check"), opened beside the reference image. Render the final state in both
 light and dark wherever the surface supports both, and record a Reference
-check line for each theme. Look only at
+check line for each theme, naming each element the change touched, written
+only after viewing a render of your last edit (`quality-loop.md`, "Recording
+it in the table"). Look only at
 the properties the reference shows, plus regressions on the touched element
 (properties that were right before this change). Fix each difference with
 design tokens, never arbitrary values, and screenshot again until none
@@ -558,7 +562,8 @@ session decision table, all requests and interacting row IDs, not only the lates
 plan. Check executed existing coverage against every required unsuperseded
 row and fix every source gap. Each row's planned Required Tests that no
 executed existing test covers go on the missing tests list as engineering's
-scope of work: the behavior and row ID, the files that need coverage, and any
+scope of work: the behavior and row ID, the acceptance criterion IDs it
+covers, the owning test lane by name, the files that need coverage, and any
 existing test a human behavior ruling made obsolete, with that exact ruling
 (the test stays unedited). Missing tests are never counted as coverage.
 Obtain independent whole-table verification. Never claim final core alignment
@@ -674,9 +679,11 @@ quick checks in the loop, or its checks and reviews at handoff, and always
 carries the Acceptance criteria block: each touched criterion's ID, quoted
 words, check and result (`met` or `not met yet`), and, with a reference image
 on a UI change, a Reference check line per touched screen and theme (light
-and dark wherever the surface supports both): the screenshot path, the
-reference path and the differences found and fixed, or that it could not be
-captured locally and why. A layout fix claim (wraps, truncates, fits)
+and dark wherever the surface supports both), taken after your last edit:
+the screenshot path, the reference path, each touched element and the
+differences found and fixed, or that it could not be captured locally and
+why; a property the render cannot show follows `quality-loop.md`, "The
+reference check before ready". A layout fix claim (wraps, truncates, fits)
 carries a measurement of the named element, not its container, at the named
 viewport: rendered width and line count. `BLOCKED` gives
 evidence without a technical question or silent downscope. Every non-trivial

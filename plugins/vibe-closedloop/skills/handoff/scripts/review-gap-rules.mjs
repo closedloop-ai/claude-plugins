@@ -90,6 +90,16 @@ function labels(label, source) {
 }
 
 /**
+ * True when a bundle whose module label is `label` inlined `file`: the label names the file, or names the source
+ * the file is a built copy of under a build marker (a launcher bundle against the built copy of its own source).
+ */
+function inlines(label, file, repo) {
+  if (labels(label, file)) return true;
+  const source = builtSource(file, repo);
+  return source !== null && labels(label, source);
+}
+
+/**
  * A newly added helper must not copy an identical existing or fellow-diff helper. A bundle and the
  * source it inlined are one definition, whichever of the two the diff adds, and so are two bundles that
  * inlined it from the same source.
@@ -103,7 +113,7 @@ export function checkDuplicateHelpers(files, repo, add) {
       const own = repo.head(file.path);
       const body = helperBody(own, name);
       if (!body || body.length < 16) continue;
-      const duplicate = repo.wordFiles(name).filter((other) => other !== file.path && SOURCE_FILE.test(other)
+      const duplicate = repo.wordFiles(name).filter((other) => other !== file.path && SOURCE_FILE.test(other) && !isBuiltMirror(file.path, other, repo)
         && !isTestFile(other) && !/\.stories\.[jt]sx?$/.test(other))
         .sort().find((other) => {
           if (changed.has(other) && other > file.path) return false;
@@ -111,8 +121,8 @@ export function checkDuplicateHelpers(files, repo, add) {
           if (helperBody(text, name) !== body) return false;
           const ownSource = bundledFrom(own, name);
           const otherSource = bundledFrom(text, name);
-          if (ownSource && labels(ownSource, other)) return false;
-          if (otherSource && labels(otherSource, file.path)) return false;
+          if (ownSource && inlines(ownSource, other, repo)) return false;
+          if (otherSource && inlines(otherSource, file.path, repo)) return false;
           return !(ownSource && otherSource && ownSource === otherSource);
         });
       if (duplicate) add("duplicate-helper", file.path, entry.line,
@@ -120,4 +130,32 @@ export function checkDuplicateHelpers(files, repo, add) {
         `move the shared behavior to one owner and import it from ${duplicate}`);
     }
   }
+}
+
+// The generated file a build writes at the root of its output, `{"builtFrom": "<source dir from the repo root>"}`.
+const BUILD_MARKER = ".vibe-build.json";
+
+/**
+ * Whether one of two files is the other's build output: it sits under a directory whose root holds a valid
+ * build marker, and the other is the file at the same relative path under the marker's `builtFrom`. A missing or
+ * malformed marker, or a source that exists neither at head nor at base, makes no pair, so the copy is still flagged.
+ */
+function isBuiltMirror(one, other, repo) {
+  return builtSource(one, repo) === other || builtSource(other, repo) === one;
+}
+
+/** The source path of a built file, from the nearest build marker above it; null when there is none or it proves nothing. */
+function builtSource(file, repo) {
+  const parts = file.split("/");
+  for (let depth = parts.length - 1; depth > 0; depth -= 1) {
+    const marker = `${parts.slice(0, depth).join("/")}/${BUILD_MARKER}`;
+    const text = repo.head(marker) ?? repo.base(marker);
+    if (text == null) continue;
+    let builtFrom;
+    try { builtFrom = JSON.parse(text)?.builtFrom; } catch { return null; }
+    if (typeof builtFrom !== "string" || !/^[^/]/.test(builtFrom) || builtFrom.split("/").some((part) => !part || part === "." || part === "..")) return null;
+    const source = `${builtFrom}/${parts.slice(depth).join("/")}`;
+    return (repo.head(source) ?? repo.base(source)) == null ? null : source;
+  }
+  return null;
 }

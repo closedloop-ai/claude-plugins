@@ -60,6 +60,8 @@ test("the brief checks live Asana only and carries every safety rule", () => {
   assert.deepEqual([...positions].sort((a, b) => a - b), positions);
   assert.match(prompt, new RegExp(`Code/data-model check: ${CODE_EVIDENCE}`));
   assert.match(prompt, /Never use a public help center or documentation page as precedent/);
+  assert.doesNotMatch(prompt, /established apps?|another (?:established )?app|in every app/i,
+    "precedent is live Asana only (#334); the brief names no other app");
   for (const rule of [
     "Never sign in, create an account or type a credential.",
     "Never touch anything that already exists",

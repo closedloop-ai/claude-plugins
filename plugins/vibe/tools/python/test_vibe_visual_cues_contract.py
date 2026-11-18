@@ -128,7 +128,7 @@ def test_an_outside_product_screenshot_runs_reference_mode_with_visual_and_ux_re
         "mapped to the existing catalog component and design token that delivers it",
         "never copy pixel values or another product's markup",
         "goes to the existing missing-primitive path (`NEEDS_PRIMITIVE`",
-        "Never copy the outside product's words",
+        "Never copy a reference's words as our copy",
     ))
     notices = section(skill_split.read(VIBE_SKILL), "### Notices that never wait")
     assert "gives a screenshot of another product whether or not they name it" in notices

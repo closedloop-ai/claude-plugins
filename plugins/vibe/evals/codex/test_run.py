@@ -8,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -357,7 +358,7 @@ def test_claude_eval_uses_an_identified_uncommitted_snapshot(tmp_path: Path) -> 
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 125
+    assert len(found) == 124
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -978,8 +979,10 @@ def test_light_and_dark_need_a_logged_check_with_a_result_per_theme(tmp_path: Pa
         tmp_path,
         [{"name": "exec_command", "arguments": "python3 tools/screenshot.py src/return-page.html light.png"}],
     )
+    # "Count renders" (ISS-14162, 2026-11-14): renders-both-themes is the light check; the
+    # pair with renders-dark is what means both themes ran, so a light-only run fails the pair.
     assert not next(c for c in case_checks if c["grader"] == "renders-dark")["passed"]
-    assert not next(c for c in case_checks if c["grader"] == "renders-both-themes")["passed"]
+    assert next(c for c in case_checks if c["grader"] == "renders-both-themes")["passed"]
 
 
 def test_tool_use_counts_each_batched_command(tmp_path: Path) -> None:
@@ -1004,7 +1007,9 @@ def test_tool_use_counts_each_batched_command(tmp_path: Path) -> None:
     }
     checks, _ = runner.deterministic(case, "Ready.", tmp_path, [single])
     graded = {c["grader"]: c["passed"] for c in checks}
-    assert not graded["renders-both-themes"]
+    # "Count renders" (ISS-14162, 2026-11-14): a light-only run passes the light check and
+    # fails the pair, because renders-dark fails.
+    assert graded["renders-both-themes"]
     assert not graded["renders-dark"]
 
 
@@ -1246,3 +1251,190 @@ def test_the_real_check_binds_the_provider_and_writes_under_the_run_home(tmp_pat
         "the built folder's own provider binds, not a separate plugin"
     assert "recipes" in checked["provider"]["capabilities"], "the arm's opt-in file is the one the provider accepts"
     assert (home / ".codex/vibe/plugin-version").is_dir(), "the binding is recorded under the HOME the model sees"
+
+
+def _graded(name: str, reply: str, tmp_path: Path, trace: list | None = None) -> dict[str, bool]:
+    case = next(c for c in runner.cases() if c["name"] == name)
+    checks, _ = runner.deterministic(case, reply, tmp_path, trace or [])
+    return {check["grader"]: check["passed"] for check in checks}
+
+
+# Ruled grader changes (operator, ISS-14162, 2026-11-14): Q-14162-5 contractions and await
+# wording, the Asana case fix, "Count renders" and the resume pattern fix.
+def test_iss14162_card_touch_accepts_contractions(tmp_path: Path) -> None:
+    name = "product-manager-card-touch-device-coverage"
+    for line in ("Keyboard and Chromium `hasTouch` alone don't count.",
+                 "The keyboard and hasTouch evidence doesn’t verify an iPhone tap."):
+        assert _graded(name, line, tmp_path)["current-evidence-insufficient"], line
+    assert not _graded(name, "The card tap doesn't count on iPhone.", tmp_path)["current-evidence-insufficient"]
+
+
+def test_iss14162_story_play_accepts_contractions_and_await_wording(tmp_path: Path) -> None:
+    name = "product-manager-story-play-real-browser"
+    assert _graded(name, "The jsdom test and a successful build don't count as play evidence.", tmp_path)["jsdom-insufficient"]
+    assert not _graded(name, "The jsdom test passed and the build is green.", tmp_path)["jsdom-insufficient"]
+    for line in ("Fails: the play calls `userEvent.click(button)` without `await`.",
+                 "The play check fails: `userEvent.click(button)` has no await."):
+        assert _graded(name, line, tmp_path)["unawaited-fails"], line
+    assert not _graded(name, "The play check fails on the selected state.", tmp_path)["unawaited-fails"]
+
+
+def test_iss14162_asana_case_asks_the_recorded_question(tmp_path: Path) -> None:
+    name = "executive-asana-lacks-flow-checks-another-app"
+    case = next(c for c in runner.cases() if c["name"] == name)
+    assert '`session-questions.mjs ask --key github-connect-cancel --question "<that question>" --worktree "<wt>"` returned `{"ask":true}`' in case["prompt"]
+    asks = ("REPLY: Asana has no comparable flow. If someone cancels on GitHub's authorization screen, "
+            "what should the settings page show when they come back?\nROUTE: ask-question\nNEXT: none")
+    assert _graded(name, asks, tmp_path)["asks-about-cancel"]
+    for reply in ("REPLY: NONE\nROUTE: wait-for-answer\nNEXT: none",
+                  "REPLY: I'm checking how another app handles a canceled connection.\nROUTE: research-further\nNEXT: none"):
+        assert not _graded(name, reply, tmp_path)["asks-about-cancel"], reply
+
+
+def test_iss14162_static_page_counts_a_light_render_in_one_call_or_two(tmp_path: Path) -> None:
+    # Only the two render graders: the case's file graders need a scaffolded session.
+    case = next(c for c in runner.cases() if c["name"] == "product-manager-static-page-light-and-dark")
+    only = tmp_path / "case"
+    (only / "graders").mkdir(parents=True)
+    for grader in ("renders-both-themes.md", "renders-dark.md"):
+        shutil.copy(case["source"] / "graders" / grader, only / "graders" / grader)
+
+    def _graded(_name: str, reply: str, _tmp: Path, trace: list) -> dict[str, bool]:
+        checks, _ = runner.deterministic(dict(case, source=only), reply, tmp_path, trace)
+        return {check["grader"]: check["passed"] for check in checks}
+
+    name = case["name"]
+    page = "python3 tools/screenshot.py src/return-page.html"
+    call = lambda command: {"name": "exec", "arguments": command}  # noqa: E731
+    light_only = [call(f"{page} light.png")]
+    graded = _graded(name, "", tmp_path, light_only)
+    assert graded["renders-both-themes"] and not graded["renders-dark"]
+    both = {
+        "chained light && dark": [call(f"{page} light.png && {page} dark.png --theme dark")],
+        "two calls": [call(f"{page} light.png --theme light"), call(f"{page} dark.png --theme=dark")],
+        "loop $t": [call(f"for t in light dark; do {page} $t.png --theme $t; done")],
+        'loop "$t"': [call(f'for t in light dark; do {page} "$t.png" --theme "$t"; done')],
+        "loop ${t}": [call(f"for theme in light dark; do {page} out.png --theme ${{theme}}; done")],
+    }
+    for label, trace in both.items():
+        graded = _graded(name, "", tmp_path, trace)
+        assert graded["renders-both-themes"] and graded["renders-dark"], label
+    dark_loop = [call(f"for t in dark; do {page} $t.png --theme $t; done")]
+    graded = _graded(name, "", tmp_path, dark_loop)
+    assert graded["renders-dark"] and not graded["renders-both-themes"]
+    for trace in ([call(f"{page} dark.png --theme dark")], [call("sed -n 1,80p tools/screenshot.py")]):
+        assert not _graded(name, "", tmp_path, trace)["renders-both-themes"], trace
+
+
+def test_iss14162_resume_accepts_no_plan_premise_and_rejects_not_publishing(tmp_path: Path) -> None:
+    name = "product-manager-resume-existing-ticket-plan"
+    premise = ("MISSING: It finds no `livePlan` and no outgoing `PRODUCES` PLN, so the vibe-ticket-worker in plan mode "
+               "creates one PLN for ISS-14001 and links it with PRODUCES.")
+    assert _graded(name, premise, tmp_path)["missing-publishes-plan"]
+    for refusal in ("MISSING: the vibe-ticket-worker in plan mode publishes no PLN for ISS-14001 and adds no PRODUCES links.",
+                    "MISSING: no PLN is published; the vibe-ticket-worker in plan mode leaves ISS-14001 without PRODUCES links."):
+        assert not _graded(name, refusal, tmp_path)["missing-publishes-plan"], refusal
+
+
+# Ruled grader changes (operator, ISS-14162, 2026-11-15, Q-14162-6 (a) to (e)): run.py's own
+# regex flags accept the correct reply's format or wording.
+def test_iss14162_q6_lockfile_graders_accept_correct_wording(tmp_path: Path) -> None:
+    name = "product-manager-owned-lockfile-recovery"
+    reply = (
+        "A_PROOF: Three things establish that the check's install owns the change.\n"
+        "- The session's own snapshot showed the file clean right before the check.\n"
+        "- The check's owned command receipt shows the install wrote the lockfile.\n"
+        "A_NEXT: Rerun the install on the committed file to confirm it reproduces the change.\n"
+        "B_NEXT: Leave `pnpm-lock.yaml` exactly as it is, restore nothing, and ask the person about it.\n"
+        "C_NEXT: Keep both `package.json` and the updated `pnpm-lock.yaml`, restore nothing, and include both,"
+        " because the lockfile change comes from the manifest edit."
+    )
+    graded = _graded(name, reply, tmp_path)
+    for grader in ("owned-change-proof", "no-permission-for-own-change", "preserves-person-edit",
+                   "no-restore-intended-lockfile"):
+        assert graded[grader], grader
+    graded = _graded(name, "A_REPLY: Please confirm I can restore it.\nC_NEXT: Restore `pnpm-lock.yaml`.", tmp_path)
+    assert not graded["no-permission-for-own-change"] and not graded["no-restore-intended-lockfile"]
+
+
+def test_iss14162_q6_story_missing_tests_handover_and_defaults(tmp_path: Path) -> None:
+    story = "product-manager-story-play-real-browser"
+    assert _graded(story, "Fails, and neither the jsdom story test nor the build counts as play evidence.",
+                   tmp_path)["jsdom-insufficient"]
+    assert _graded(story, "The only evidence is a jsdom test and a build; neither of those is play evidence.",
+                   tmp_path)["jsdom-insufficient"]
+    missing = "product-manager-missing-tests-host-adapters"
+    graded = _graded(missing, "Missing tests:\n- Desktop host-adapter test for `PRD-42 AC-3`, in the `desktop-e2e` lane.\n"
+                     "The writer's `Missing tests: None` doesn't hold.", tmp_path)
+    assert graded["owning-lane"] and graded["desktop-entry"] and graded["not-none"]
+    assert not _graded(missing, "Missing tests: None", tmp_path)["not-none"]
+    handover = "product-manager-real-engineering-blocker-handover"
+    assert _graded(handover, "REPLY: The work is saved and pushed. Who should I pass it to? A name or email is fine.",
+                   tmp_path)["offers-pushed-work"]
+    defaults = "product-manager-fleet-defaults-not-asked"
+    assert _graded(defaults, "RECORD: I open the resume log:\n- `config.env` was missing, so I wrote the defaults.",
+                   tmp_path)["defaults-written"]
+    assert not _graded(defaults, "RECORD: I open the resume log.\nREPLY: I wrote config.env.", tmp_path)["defaults-written"]
+
+
+
+# Ruled grader changes (operator, ISS-14162, 2026-11-15, Q-14162-10 (D) under Q-14162-6): run.py's
+# own regex flags read plural adapters and a shared test that doesn't count, and hand as a verb.
+def test_iss14162_q10_both_host_rule_and_hand_verb(tmp_path: Path) -> None:
+    missing = "product-manager-missing-tests-host-adapters"
+    for line in ("`None` needs executed coverage through both the real web and real Desktop host adapters.",
+                 ("`None` needs both the real web and Desktop host adapters, and a shared unit test doesn't count "
+                  "as Desktop coverage.")):
+        assert _graded(missing, line, tmp_path)["both-host-rule"], line
+    assert not _graded(missing, "Desktop doesn't need adapter coverage because the web adapter test passed.",
+                       tmp_path)["both-host-rule"]
+    handover = "product-manager-real-engineering-blocker-handover"
+    assert _graded(handover, "NEXT: Hand the saved, pushed work to a next owner now.", tmp_path)["uses-handover"]
+    assert not _graded(handover, "NEXT: Handle the saved, pushed work later.", tmp_path)["uses-handover"]
+
+_CARD_HEIGHT_SCRIPT = r"""
+import importlib.util, json, sys
+from pathlib import Path
+from PIL import Image, ImageFont
+
+session, variants = Path(sys.argv[1]), json.loads(sys.argv[2])
+spec = importlib.util.spec_from_file_location("screenshot", session / "tools" / "screenshot.py")
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+tool.font = lambda size, weight: ImageFont.load_default(size)
+css, png = session / "src" / "signed-in-page.css", session / "card.png"
+heights = {}
+for label, text in variants.items():
+    css.write_text(text)
+    tool.render(session / "src" / "signed-in-page.html", png, 640, None)
+    image = Image.open(png).convert("RGB")
+    surface = (255, 255, 255)
+    column = next(x for x in range(image.width) if image.getpixel((x, 200)) == surface) + 14
+    heights[label] = sum(1 for y in range(image.height) if image.getpixel((column, y)) == surface)
+print(json.dumps(heights))
+"""
+
+
+def test_iss14162_heading_size_and_weight_keep_the_stand_in_card_height(tmp_path: Path) -> None:
+    """Ruled fixture change: a heading's size or weight never changes the rendered card's height."""
+    case = eval_case("pm-two-screenshot-page")
+    subprocess.run(["bash", str(case["source"] / "scaffold.sh")], cwd=tmp_path, check=True)
+    session = tmp_path / "session"
+    css = (session / "src" / "signed-in-page.css").read_text()
+    title = "  font-size: var(--text-md);\n  font-weight: var(--weight-regular);\n"
+    assert css.count(title) == 1
+    variants = {
+        "drafted": css,
+        "xl bold": css.replace(title, "  font-size: var(--text-xl);\n  font-weight: var(--weight-bold);\n"),
+        "lg medium": css.replace(title, "  font-size: var(--text-lg);\n  font-weight: var(--weight-medium);\n"),
+        "tap target": css.replace(".signed-in-button {\n", ".signed-in-button {\n  min-height: var(--tap-target);\n"),
+    }
+    # The fixture renderer needs Pillow, which the test environment does not carry.
+    rendered = subprocess.run(
+        ["uv", "run", "--no-project", "--with", "Pillow==12.3.0", "python", "-c", _CARD_HEIGHT_SCRIPT,
+         str(session), json.dumps(variants)],
+        check=True, capture_output=True, text=True, timeout=600,
+    )
+    heights = json.loads(rendered.stdout)
+    assert heights["xl bold"] == heights["lg medium"] == heights["drafted"], heights
+    assert heights["tap target"] > heights["drafted"], heights

@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'A_PROOF:(?=[^\n]*(?:clean|unchanged)[^\n]*(?:before|pre-command)|[^\n]*(?:before|pre-command)[^\n]*(?:clean|unchanged))(?=[^\n]*(?:own|session|check)[^\n]*(?:install|command|receipt)|[^\n]*(?:install|command|receipt)[^\n]*(?:own|session|check))[^\n]*'
+pattern: 'A_PROOF:(?=(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:clean|unchanged)(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:before|preceding|pre-check|pre-command)|(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:before|preceding|pre-check|pre-command)(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:clean|unchanged))(?=(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:own|session|check)(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:install|command|receipt)|(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:install|command|receipt)(?:[^\n]|\n(?=[ \t]*[-*]\s))*(?:own|session|check))(?:[^\n]|\n(?=[ \t]*[-*]\s))*'
 ---

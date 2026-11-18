@@ -42,7 +42,9 @@ answer:
 
 Apply settled decisions; never ask them again. Only after all six fail,
 ask one absolutely necessary question with the checked sources and a
-recommendation. The Spec Card (`spec-card.md`, "Fork checkpoint") names which
+recommendation. That question is sent only after `node
+scripts/session-questions.mjs ask` has run for it and returned `"ask": true`
+(`SKILL.md`, "Questions are asked once"); never presume its result. The Spec Card (`spec-card.md`, "Fork checkpoint") names which
 unresolved items may stop code, with 2 to 3 options and a recommendation; it
 adds no question this section would not allow. Under fleet orchestration a writer returns `NEEDS_PERSON` to
 the orchestrator, which finishes the remaining steps before asking. In a
@@ -337,8 +339,9 @@ At handoff use the whole table, all requests and cross-request interactions
 for final verification. A `Covered` disposition needs a named executed
 existing test and its fail-closed negative case through the claimed boundary;
 `not applicable` needs source evidence. A required test that does not exist
-gets the `Missing test (engineering)` disposition with its row ID, behavior
-and files to cover, and the ticket lists it under Missing tests; it is never
+gets the `Missing test (engineering)` disposition with its row ID, behavior,
+acceptance criterion IDs, owning test lane by name and files to cover, and
+the ticket lists it under Missing tests; it is never
 counted as coverage. Run the canonical internal consistency, review-prevention
 and independent adversarial passes. Never claim `Final Alignment Status:
 Aligned` while source, existing-test, review or evidence gaps remain; a row
@@ -594,7 +597,8 @@ drop shadow, a larger text size, bold type). This
 section is the rule's one canonical statement; the skills and workers point
 at it. The build loop stays lean: the reference check below is the one
 exception to its no-automated-visual-QA rule, and it runs only when there is
-a reference image.
+a reference image. Never copy a reference's words as our copy; user copy
+follows `guardrails.md`, "Copy".
 
 It serves every person running a session, and nobody is asked which kind
 they are. Someone who works from references (a screenshot or image, a
@@ -615,17 +619,24 @@ above `### Checks`; only check lines go below it.
   now included), before any criterion or code for that request, a correction
   included.
 - `## Acceptance Criteria`: `AC-n (source: <request ID>, reference <image
-  path>): <one property as the reference shows it>; <the design token or
-  catalog component that delivers it>`. One property per criterion: a shadow,
-  a type size and a type weight are three criteria, never one "match the
-  reference". A correction ("it still doesn't look like it") adds a criterion
+  path>): <one property as the reference shows it>; <the design token that
+  delivers it, with any catalog component beside it; a component alone only
+  when no token can deliver the property>`. One property per criterion: a
+  shadow, a type size and a type weight are three criteria, never one "match
+  the reference". Each state the reference shows or implies (hover, selected,
+  disabled) is a property with its own criterion. A correction ("it still doesn't look like it") adds a criterion
   for each property the reference shows that no criterion names yet, even
   when a broad one such as "make ours like the second one" exists, before it
   fixes anything.
 - `### Checks`: `<request ID>, AC-n, AC-m: reference check (<light|dark>),
-  compared <screenshot path> with <image path> after the last edit:
-  <differences found and fixed>; met`, or `not met yet` with the difference
-  that remains, one line per theme the surface supports.
+  compared <screenshot path> with <image path> after the last edit; touched
+  elements: <each element the change touched, by the name the person sees,
+  such as the Save button or the card heading>: <differences found and
+  fixed, regressions on those elements included>; met`, or `not met yet`
+  with the difference that remains, one line per theme the surface
+  supports. Any edit after a comparison voids it: render again, open the new
+  screenshots beside the reference and look at them, and only then write this
+  line.
 
 With no reference image, a criterion from the person's words quotes them,
 `AC-n (source: <request ID>): "<their words>"`, and is checked with the
@@ -704,12 +715,9 @@ first").
 The log line:
 `Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`
 
-Never copy the outside product's words; user copy follows `guardrails.md`,
-"Copy".
-
 The writer adds each requirement to the session's `## Acceptance Criteria`
-as a criterion (source: the request ID and the reference image path), naming
-its token or component. A correction adds each property the reference shows
+as a criterion (source: the request ID and the reference image path), in the shape
+"Recording it in the table" gives. A correction adds each property the reference shows
 that the list still lacks, before it fixes anything. The same applies to a reference in our own product:
 each visible property becomes a criterion. A visual criterion with a
 reference image is met by the reference check below, never by a source trace
@@ -737,13 +745,16 @@ this change and are not now, such as a removed tap-target minimum height or
 button text turned too bold by a font change. It fixes each difference with
 design tokens, never arbitrary values, and takes the screenshots again until
 no difference remains in either theme. Each comparison is a line in the
-`### Checks` log: request ID, criterion IDs, the theme, both image paths and
-the result. `DONE` on such a change carries a Reference check line per
+`### Checks` log: request ID, criterion IDs, the theme, both image paths,
+each touched element and the result. `DONE` on such a change carries a Reference check line per
 touched screen and theme (the screenshot path, the reference path and the
 differences found and fixed); without them the `DONE` is incomplete. When
 the writer cannot screenshot a touched screen locally, it says so in that
 line and the orchestrator's look after the deploy is the comparison
-(`SKILL.md`, section 6, step 5).
+(`SKILL.md`, section 6, step 5). A single property the render cannot show
+is logged in the `### Checks` log as an engineering note for the
+orchestrator's look after the deploy; the writer's result names it as not
+verified yet, and the person is never asked to look at it or confirm it.
 
 The result gates the ready message. A difference still visible is not ready:
 it goes back to the SAME writer in the same request and is deployed again

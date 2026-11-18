@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for anyone (an executive, designer, product manager or engineer) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for anyone (an executive, designer, product manager or engineer) working in Codex Desktop or Claude Code; it applies to every turn of a vibe session, including mid-session build turns. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
@@ -79,11 +79,15 @@ remains. Name a narrowed or CI-deferred check in the existing progress or
 handoff summary, in plain words.
 When a check-run install changes an install-managed file, compare its state
 before that command and the requested dependency manifests. Keep a lockfile
-change required by an intended manifest edit. For accidental drift proven
-to come from the check-run install, back up the changed file in the session's
-private area, restore the committed file, and continue without asking. Ask
-about restoration only for an earlier or person-owned edit, in plain words
-with a recommendation (`references/guardrails.md`, "Checks").
+change required by an intended manifest edit. Any other change belongs to the
+check-run install only when the file was clean in the session's snapshot
+before that command and the same install, run again on the committed file,
+reproduces it. For accidental drift proven to come from the check-run
+install, back up the changed file in the session's private area, restore the
+committed file, and continue without asking. An earlier or person-owned edit
+stays as it is. Ask about restoration only for an earlier or person-owned
+edit, in plain words with a recommendation (`references/guardrails.md`,
+"Checks").
 
 Every word the person sees follows `references/plain-words.md`, including
 worker text you relay. Anything you point the person at to look at or open
@@ -501,7 +505,9 @@ mention it to the person.
 Once the person picks a session, record this conversation's version check
 and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
 "<wt>"`. Before its first request or fleet takeover, apply
-`references/quality-loop.md`, "Local plan". Then follow "Resuming" below.
+`references/quality-loop.md`, "Local plan". Publishing or reconciling that
+plan never pauses the build: the build continues while it runs in its own
+record turn (section 5, step 6). Then follow "Resuming" below.
 
 ### Starting new
 
@@ -739,7 +745,9 @@ evidence, never by replacing the writer.
 5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate
    and the precedent check (`references/quality-loop.md`, "Communication and
    product questions"). Ask only an absolutely necessary unresolved product
-   question, one at a time with full context. Its answer continues this active request in the SAME
+   question, one at a time with full context. Asking means running
+   `session-questions.mjs ask` first and sending the question only when it
+   returns `"ask": true` ("Questions are asked once"). Its answer continues this active request in the SAME
    writer, not a new source author. Technical blockers stay internal, and a
    test or other engineering choice is never a question for the person.
 6. Record scope/progress/backend facts through the writer's explicit serial
@@ -770,9 +778,12 @@ evidence, never by replacing the writer.
    request and deploy it under section 6 without being asked (requests that
    waited through a running deploy go out together after the last of them);
    when the deploy is done, tell the person only the completed feature, that it's ready to
-   look at with a link to each changed page (`vibe-sessions.mjs link --page`;
-   `references/plain-words.md`, "Links to what the person should look at"), and the next work, in their own terms, plus, plainly, each
-   criterion the writer reported `not met yet` as not done yet; never claim it. The next queued
+   look at with a link to each changed page (`references/plain-words.md`,
+   "Links to what the person should look at"), and the next work, in their own terms, plus, plainly, each
+   criterion the writer reported `not met yet` as not done yet; never claim it.
+   Each link is the `url` that `link` printed. With no URL in hand, name the
+   page in words and give no link, no placeholder and no script or command
+   name (`references/plain-words.md` has the rest). The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
    External dependencies are part of this gate: a criterion or plan task that

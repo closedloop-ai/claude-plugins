@@ -20,6 +20,7 @@ Session state:
 - The writer's open question, already checked against the code and data model, ticket, PRD, rulings, graph/live decisions, product-owner direction and approved prototype with no answer: "If someone starts connecting GitHub and cancels on GitHub's authorization screen, what should the settings page show when they come back?"
 - You ran `node scripts/precedent-check.mjs prompt --question "<that question>" --code-evidence "packages/integrations/state.ts:42"` and followed its brief through the browser-holder. Asana does not have this situation: its integrations do not connect a GitHub account through GitHub's authorization screen (observed 2026-10-16). Nothing was created.
 - `session-questions.mjs list --worktree "<wt>"` returns `[]`.
+- `session-questions.mjs ask --key github-connect-cancel --question "<that question>" --worktree "<wt>"` returned `{"ask":true}`.
 
 The person has not said anything new.
 

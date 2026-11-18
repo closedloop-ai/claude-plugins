@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.98
+### vibe v1.1.101
 
 #### Added
 - `skills/handoff/scripts/criterion-surface.mjs` holds the surface decisions of the criteria audit and the unit review (the word tests that were in `criteria-audit.mjs` and `unit-review.mjs`), the "no surface" mark that overrides both (operator ruling, 2026-11-13), the audit row reader, the `NO-SURFACE` line and the evidence point (`EvidenceAt`, moved here from `criteria-audit.mjs`): whether a test file exists there, checked as before, and its text, read only for a mark's test name. `criteria-audit.mjs` asks `needsRunningSurface` and `unit-review.mjs` asks `namedSurfaces`; an unmarked criterion keeps each script's existing rule. A member criterion's id is the bound tracker's key (`trackerKey`) before `:AC-n`, as in the audit rows.
@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - A reviewer may mark a criterion as having no surface, with a reason and a named test: a line `No surface: <criterion id>: <reason>` in the audit file, with a row `| <criterion id> | MET | test | <file>::<test name> |`. For a marked criterion, `criteria-audit.mjs` asks for that test instead of an app run and prints the mark under `noSurface`, and `unit-review.mjs` needs no capture whatever the criterion's words name, still requires its code review row, prints `NO-SURFACE <ticket> <criterion>: <reason>`, and reads the marks from `--audit <audit .md>` when it runs on its own. An unmarked criterion keeps the rule it had. The mark is accepted only with a reason and a test that exists: the file is in the worktree or at HEAD and holds an `it(` or `test(` call, or a Python `def`, titled with that name, outside a comment and not a skipped or todo form. A refused mark names what is missing and leaves the criterion unmarked; a line that starts with the words no surface and a colon but is not a mark in that exact form is reported as `"<line>": a no-surface mark reads "No surface: <id>: <reason>"`. Only ticket and member criteria can be marked. The named-test check reads one line at a time, so it does not see a title split over lines or built from a template string, a test inside a skipped `describe`, a Python skip decorator, or a block comment opened on an earlier line.
 - The criteria reader (`skills/handoff/scripts/criteria-list.mjs`) reports checkboxes outside the acceptance criteria section whose heading or list label names criteria, or whose text leads with a criterion id, instead of dropping them. `criteria-audit.mjs` and `unit-review.mjs` refuse them with a message that names the heading, for the ticket and for each member ticket. Other checklists, such as Environment and the Engineering checklist, are still not criteria, and the numbering of the criteria that are read does not change.
-- The duplicate-helper rule (`checkDuplicateHelpers` in `skills/handoff/scripts/review-gap-rules.mjs`) treats a bundle and the source it inlined as one definition, whichever of the two the diff adds, and two bundles that inlined a helper from the same source likewise. A copy counts as bundled when its file starts with a generated banner and the helper sits under a bundler module label; the label matches a whole repository path or its tail from a directory on, never a bare file name. A `dist/` path alone exempts nothing: a hand-written copy under `dist/`, or in a generated file that does not bundle the other file, is still flagged.
+- The duplicate-helper rule (`checkDuplicateHelpers` in `skills/handoff/scripts/review-gap-rules.mjs`) treats a bundle and the source it inlined as one definition, whichever of the two the diff adds, and two bundles that inlined a helper from the same source likewise. A copy counts as bundled when its file starts with a generated banner and the helper sits under a bundler module label; the label matches a whole repository path or its tail from a directory on, never a bare file name. A `dist/` path alone exempts nothing: a hand-written copy under `dist/`, or in a generated file that does not bundle the other file, is still flagged. With the built-copy rule from 1.1.100, a bundle also covers the built copy (under a build marker) of the source it inlined, so the launcher bundle in `plugins/vibe` and its built twin are not flagged against the built `agent-models.mjs`; without the marker that copy is still flagged.
 - The review-class guard (`skills/vibe/scripts/review-class-guards.mjs`) checks for a gate that classifies by bare words. In `skills/handoff/scripts` and `skills/vibe/scripts`, a module-level regular expression that is only plain words matched in any letter case (whitespace classes, escaped punctuation and `\w+` or `\w*` each read as a space or a word) fails unless the guard lists it in its code and its reason is in `review-class-guard-baseline.json`. As with the sibling baselines, the list only shrinks: a new one fails as new, a gone one as stale, and a key in the JSON outside the list in code as baseline-grew; a blank reason fails too. An exact-case pattern is taken as a fixed grammar and is not flagged. The list holds the 50 patterns found today, each with its reason, which names who listed it and when and carries no ticket id; none of them is changed here.
 - `references/spec-card.md` ("Audit rows") says how to record a no-surface mark, and states the audit row rules in fewer words. In the provider, the `candidate-audits` block of `handoff-skill.md` points to `ticket-units.md` step 4 for what the unit review holds instead of restating it, and `ticket-units.md` says a marked criterion needs no capture and passes the audit with `--audit`; `vibe_generic_mapping.json` records the changed `ticket-units.md` line.
 - The default Codex model for vibe's writer, operational, reviewer and verifier workers and for cl-sweep ticket owners is `gpt-6.2-sol`, in place of `gpt-6-sol` (ISS-14112; operator rulings 2026-11-12 and 2026-11-17). Explorers stay on `gpt-5.6-terra` and mechanical support on `gpt-6-luna`.
@@ -39,17 +39,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CodexWorkerRole` moves from `model-policy.mjs` to `agent-models.mjs`, and the Claude launcher bundle (`claude-worker.mjs`) is rebuilt without the Codex model policy.
 - The cl-sweep skill and its `execution-surfaces.md` and `cli-worker-protocol.md` references, the cl-execute plan-review and support-lane references, the Codex harness notes and the README name `gpt-6.2-sol` as the default and say how a planning or review lane's model is chosen and when it falls back, say "the resolved model" where a ticket-owner session's model is meant, and state the saved-session rule in place of the legacy model list. The README says cl-sweep ticket-owner sessions use the Codex writer model, including an override.
 - The published `vibe` (`plugins/vibe-closedloop`, built by `tools/vibe-closedloop-build`) now ships `evals/codex/model-policy.json`, the one file of `evals/` the build keeps, because `model-policy.mjs` reads it when it loads; every other eval file stays out of the build.
-- The README version line and the Python and vibe-bench release-pin tests move to 1.1.98, and `plugins/vibe-closedloop` is rebuilt from `plugins/vibe` and the provider and carries 1.1.98 in its manifests.
-- Measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs` against 1.1.97 (origin/main at this update, 7d5bacfc), over each plugin's Markdown below its top directory: `plugins/vibe` is about 318 words longer, and the vibe-closedloop-provider folder is about 71 words shorter. Counted the same way, the built `vibe` is about 247 words longer. Across all plugin Markdown, including eval prompts and graders and each plugin's README (`--path plugins`), with every file under the generated `plugins/vibe-closedloop` left out, this change is about 289 words longer.
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.101, and `plugins/vibe-closedloop` is rebuilt from `plugins/vibe` and the provider and carries 1.1.101 in its manifests.
+- Measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs` against 1.1.100 (origin/main at this update, 0057c43a), over each plugin's Markdown below its top directory: `plugins/vibe` is about 318 words longer, and the vibe-closedloop-provider folder is about 71 words shorter. Counted the same way, the built `vibe` is about 247 words longer. Across all plugin Markdown, including eval prompts and graders and each plugin's README (`--path plugins`), with every file under the generated `plugins/vibe-closedloop` left out, this change is about 289 words longer.
 
 #### Removed
 - `isLegacyTicketOwnerModel` and `LEGACY_UNVERSIONED_MODEL` from `model-policy.mjs`, `LEGACY_COMPATIBLE_WORKER_MODEL` from `app-server-worker-session.mjs`, and `LEGACY_WORKER_MODEL` from `native-app-server-orchestrator.mjs`.
 
-### vibe-closedloop-provider v1.0.1
+### vibe-closedloop-provider v1.0.4
 
 #### Changed
 - `references/ticket-units.md` says a criterion marked `No surface:` in the audit (`../vibe/references/spec-card.md`, "Audit rows") needs no capture, and its `unit-review.mjs` command passes the audit with `--audit <audit>`.
 - The `candidate-audits` block of `references/handoff-skill.md` points to `ticket-units.md` step 4 for what the unit review holds instead of restating it, and points to the spec card's "Audit rows" and `spec-card.mjs audit-skeleton` for the audit rows.
+
+### vibe v1.1.100
+
+#### Changed
+- The vibe skill description no longer names one host. It says vibe runs in Codex Desktop or Claude Code and applies to every turn of a session, mid-session build turns included. The published `vibe` carries the same description through `build.json`.
+- Missing test entries name the uncovered host, the acceptance criterion IDs each covers and the owning test lane by name, in the change worker, quality loop, handoff skill and ticket template. Handoff states this once and points to it rather than repeating it.
+- A pull request body or evidence that the handoff gate refuses (`blocking.prBody` or `blocking.prEvidence`) creates nothing. The environment worker returns `NEEDS_CHANGE` with the problems, and the same writer fixes them before the gate runs again. Any other failed gate is still `BLOCKED`.
+- The requirements worker reports each overlapping open pull request with one line per shared path, `open pull request #<n> touches the same file: <path>`.
+- The ready message gives each link as the `url` that `vibe-sessions.mjs link` printed. With no URL, it names the page in words and gives no link, placeholder, or script or command name. `plain-words.md` adds the matching rows.
+- Reference image checks:
+  - Each visual property and each visible state (hover, selected, disabled) is its own criterion, delivered by a design token, with a catalog component alone only when no token can deliver it.
+  - A Reference check line names each touched element and is written only after viewing a render of the last edit, because any edit after a comparison voids it.
+  - A property the render cannot show is reported as not verified yet. The person is never asked to look at it.
+- A question to the person is sent only after `session-questions.mjs ask` has run for it and returned `"ask": true`. Publishing or reconciling the local plan never pauses the build.
+- Story play checks fail without a real-browser run of each touched story's play. An unawaited `storybook/test` interaction, a jsdom result or a successful build is not play evidence. Touch checks use real touch on WebKit iPhone and Chromium Pixel, and an iOS tap is judged by its result.
+- A human-only blocker's next action is the handover itself. The person is asked who picks the work up only when no one is named.
+- The precedent check brief names the product the bound provider gives (`live <product>`). It falls back to an established app with the same flow only when the provider names none.
+- Measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs` against 1.1.97 (origin/main at this update, 7d5bacfc): `plugins/vibe` is about 591 words longer, and the vibe-closedloop-provider folder adds 208 words. Across all plugin Markdown, including eval prompts and graders, under `plugins`, with every file under the generated `plugins/vibe-closedloop` left out, this change is 799 words longer.
+
+#### Fixed
+- The handoff diff rules no longer stall on a large changed code file such as a bundled script (ISS-14325). The guarded-constant check in `comment-rules.mjs` used to split the file's whole prefix for every line lookup, search the whole file again for every definition, and test a 200-character window with a regex for every use. It now makes one line index per file (the new `line-index.mjs`: newline offsets found once, then a binary search), one pass over the file's identifiers that gives the reads of every name, and a backward scan for the object-key test. The import and transaction line lookups in `diff-rules.mjs` use the same line index. The findings, files, lines and messages are unchanged.
+- The duplicate-helper rule no longer flags a helper against its own built copy, a new sighting of the ISS-14136 class: #426's built mirror, the ClosedLoop `vibe` that `tools/vibe-closedloop-build` copies from `plugins/vibe`. The build now writes a generated `.vibe-build.json` at the built plugin's root, `{"builtFrom": "plugins/vibe"}`, computed from its source path. `checkDuplicateHelpers` in `review-gap-rules.mjs` treats a file under such a marker and the file at the same relative path under `builtFrom` as one definition, but only when that source exists at head or base. A missing or malformed marker, a marker naming a missing source, or a copy at any other path is still flagged.
+- Eval cases and graders now agree with vibe's written rules:
+  - The `pm-prd-children-are-scope` prompt states each line's allowed status values separately.
+  - The reply-format checker accepts the optional status field.
+  - The missing-tests, lockfile, handover, touch, play, light-and-dark and plan graders match the current rules.
+  - `exec-asana-lacks-flow-checks-another-app` asks its open question through `session-questions.mjs ask`.
+  - The described-change stand-in relays the writer's result as the orchestrator, with a deployed live copy to link to.
+  - The `ref-card` and `return-page` reference images are re-rendered.
+
+#### Removed
+- The `exec-precedent-answer-recorded-not-asked` eval case.
+
+### vibe-closedloop-provider v1.0.3
+
+#### Changed
+- The provider's precedent block checks live Asana only and records `Asana, observed <date>` as the source.
+- The provider's requirements worker lists matched `EXECUTED` PRDs before open tickets, one `EXECUTED PRD <slug>: DONE child <slug>: shipped rule: <rule>` line per `DONE` child. The graph reference points to that rule.
+- The handoff Workers table keeps its running app checks row and adds a Desktop row:
+  - Run `pnpm -C apps/desktop build` first, then check that `apps/desktop/dist` holds the documented Electron entry.
+  - If the build fails or the entry is missing, abort the Desktop check without any Electron launch and return the limitation.
+  - `handoff-ui.md` points to that row.
+- The provider ticket template's missing tests list carries acceptance criterion IDs and the owning test lane. The provider's environment worker carries the same `NEEDS_CHANGE` gate rule as the generic one.
 
 ### vibe-closedloop-provider v1.0.0
 

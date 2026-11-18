@@ -184,6 +184,33 @@ test("ISS-13760 child checker separates claim and no-supersession semantics", ()
   }
 });
 
+test("ISS-14162 child checker accepts an optional STATUS that matches each child", () => {
+  const claim = "CLAIM: ISS-9001; ASSIGN: operator-1; STATUS: IN_PROGRESS; " +
+    "LINK: ISS-9000; COMMENT:ISS-9000_COORDINATOR";
+  const verdicts = (reply) => ["claims-untouched", "no-supersession"].map((graderName) =>
+    gradeReply({ caseId: "pm-prd-children-are-scope", graderName, reply }).passed);
+  // The shape accepted before the ruling still passes unchanged.
+  assert.deepEqual(verdicts(child(claim)), [true, true]);
+  // Ruled shape (operator, 2026-11-14): STATUS before ACTION, either spacing.
+  for (const [report, uncovered] of [
+    ["REPORT: ISS-9002; STATUS:ACTIVE; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER",
+      "UNCOVERED: ISS-9003; STATUS:TODO; ACTION:LEAVE_UNCOVERED"],
+    ["REPORT: ISS-9002; STATUS: ACTIVE; ACTION: EXCLUDE; REASON: ACTIVE_OTHER_OWNER",
+      "UNCOVERED: ISS-9003; STATUS: TODO; ACTION: LEAVE_UNCOVERED"],
+    ["REPORT: ISS-9002; STATUS:ACTIVE; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER",
+      "UNCOVERED: ISS-9003; ACTION:LEAVE_UNCOVERED"],
+  ]) assert.deepEqual(verdicts(child(claim, report, uncovered)), [true, true], `${report} / ${uncovered}`);
+  // A status that contradicts the child's line is refused.
+  for (const [report, uncovered] of [
+    ["REPORT: ISS-9002; STATUS:TODO; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER",
+      "UNCOVERED: ISS-9003; STATUS:TODO; ACTION:LEAVE_UNCOVERED"],
+    ["REPORT: ISS-9002; STATUS:ACTIVE; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER",
+      "UNCOVERED: ISS-9003; STATUS:ACTIVE; ACTION:LEAVE_UNCOVERED"],
+    ["REPORT: ISS-9002; STATUS:IN_PROGRESS; ACTION:EXCLUDE; REASON:ACTIVE_OTHER_OWNER",
+      "UNCOVERED: ISS-9003; STATUS:TODO; ACTION:LEAVE_UNCOVERED"],
+  ]) assert.deepEqual(verdicts(child(claim, report, uncovered)), [false, false], `${report} / ${uncovered}`);
+});
+
 test("ISS-13760 checker normalizes common modal contractions once", () => {
   assert.equal(normalizeCheckerText(
     "shouldn’t mustn’t couldn’t wouldn’t can’t won’t don’t doesn't didn't"),

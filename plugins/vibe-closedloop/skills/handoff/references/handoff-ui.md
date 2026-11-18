@@ -43,7 +43,9 @@ Before the first commit or push, dispatch read-only `vibe-verify-worker` control
 mode on every locally served uncommitted candidate screen, naming HEAD plus
 diff/tree hashes. Use the repository's control skill
 (`<repo-root>/.claude/skills/control/SKILL.md`, `pnpm control`): hidden browser
-and displayless Desktop only, never `--headed` or `--allow-write`. Close owned
+and displayless Desktop only, never `--headed` or `--allow-write`. Desktop
+follows the build-first rule on the "Desktop running app checks" row of the
+Workers table in `SKILL.md`. Close owned
 sessions with `pnpm control down`; its throwaway Desktop profile stays separate
 from the session's stopped profile. Relocate captures with
 `../vibe/scripts/control-evidence.mjs` into private Git storage. Return captures,

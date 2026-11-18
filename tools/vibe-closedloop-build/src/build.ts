@@ -8,7 +8,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, posix, resolve } from "node:path";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assembleProviderText,
@@ -36,6 +36,12 @@ export const DEFAULT_PATHS: BuildPaths = {
   provider: join(REPO, "plugins/vibe-closedloop-provider"),
   output: join(REPO, "plugins/vibe-closedloop"),
 };
+
+/**
+ * The generated file at the built plugin's root that names the directory it was built from, relative to the
+ * repository root, so a reader can tell a built copy from a hand-written one (review-gap-rules.mjs).
+ */
+export const BUILD_MARKER = ".vibe-build.json";
 
 /** The built plugin's manifest name, whatever the source plugin calls itself. */
 export const BUILT_NAME = "vibe";
@@ -173,6 +179,7 @@ export class ClosedLoopBuild {
       } else add(relative, { kind: "copy", relative });
     }
     add(`${BUNDLED_PROVIDER_DIR}/${CONTRACT_FILE}`, { kind: "contract", relative: CONTRACT_FILE });
+    add(BUILD_MARKER, { kind: "marker", relative: BUILD_MARKER });
     for (const [target, file] of placed) add(target, { kind: "reference", relative: file });
     return new Map([...entries].sort(([a], [b]) => compare(a, b)));
   }
@@ -188,6 +195,8 @@ export class ClosedLoopBuild {
         return json({ ...this.contract, references: BUNDLED_REFERENCES, placed: this.data.place });
       case "manifest":
         return json(this.manifest(entry.relative));
+      case "marker":
+        return json({ builtFrom: relative(REPO, this.paths.source).split(sep).join("/") });
       case "markdown":
         return Buffer.from(this.markdown(entry.relative, target));
       case "cold":
@@ -305,7 +314,7 @@ interface Assembled {
 }
 
 export type Entry =
-  | { kind: "copy" | "markdown" | "manifest" | "reference" | "contract"; relative: string }
+  | { kind: "copy" | "markdown" | "manifest" | "reference" | "contract" | "marker"; relative: string }
   | { kind: "cold"; relative: string; id: string };
 
 /** Builds into `paths.output`. */

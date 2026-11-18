@@ -38,7 +38,7 @@ checklist, talk to the person, run this skill's inventory script, the
 vibe session script, and the vibe commit script (short JSON), and dispatch
 workers. You commit, through `../vibe/scripts/commit-worktree.mjs`; no worker
 ever commits, because a commit runs the repository's commit hooks. Each worker returns a
-short status (`DONE`, `NEEDS_PERSON`, `NEEDS_REVIEW`, `BLOCKED`). Apply
+short status (`DONE`, `NEEDS_PERSON`, `NEEDS_REVIEW`, `NEEDS_CHANGE` for a fix the session's own work needs, such as a pull request body or evidence the gate refused, `BLOCKED`). Apply
 `../vibe/references/quality-loop.md` before relaying any question: research
 product decisions first, then the precedent check ("Precedent before
 asking"), and ask only an absolutely necessary unresolved one, never a
@@ -68,14 +68,16 @@ plugin's repository to run other tooling (`../vibe/references/guardrails.md`,
 `../vibe/SKILL.md` before a handoff reply or relaying worker text. If a
 human-only blocker remains after both worker and vibe root exhausted safe
 paths, the handoff reply must offer to pass saved or pushed work to a named next owner
-now. Never end that reply with only a stop or wait (`../vibe/references/guardrails.md`,
+now. The session's next action is that handover itself: pass the saved,
+pushed work to the next owner, asking the person who it is only when none is
+named. Never end that reply with only a stop or wait (`../vibe/references/guardrails.md`,
 "Plugins and tooling"). A check
 that also fails on the main the session captured is not a needed
 fix and never stops the handoff: it is recorded for engineering and the handoff
 goes on (`../vibe/references/quality-loop.md`, "Failures already on main").
 Only a failure the session caused blocks.
 
-Handoff authors no tests without an explicit top-level test-authoring grant (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests; on a failure the SAME persistent `vibe-change-worker` fixes the session's own code, never what the test asserts, and, without that grant, repairs only an existing test or fixture the change broke ("Repair, don't author"). Tests still needed go on the live ticket under Missing tests. Verification/review helpers are read-only, and no check is weakened. Never ask the person about tests or any other engineering choice.
+Handoff authors no tests without an explicit top-level test-authoring grant (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests; on a failure the SAME persistent `vibe-change-worker` fixes the session's own code, never what the test asserts, and, without that grant, repairs only an existing test or fixture the change broke ("Repair, don't author"). Tests still needed go on the live ticket under Missing tests, each entry naming the uncovered host, the acceptance criterion ID it covers and the lane that owns it by name (for example `desktop-e2e` for a Desktop host-adapter test). Verification/review helpers are read-only, and no check is weakened. Never ask the person about tests or any other engineering choice.
 
 The build loop is lean (`../vibe/references/quality-loop.md`, "Lean build
 loop"), so the guardrails and adversarial reviews, browser E2E, visual QA, logical QA and product-contract QA run here. Handoff opens a pull request only when the person asks for one ("A
@@ -377,8 +379,8 @@ session's own code when one fails, never what a test asserts (it only repairs
 an existing test the session's change broke), leaves a failure that also fails
 on the captured main to step 7's comparison and engineering, and lists every missing
 test as engineering's scope of work: the behavior and row ID that needs it,
-the files to cover, and any existing test a recorded human behavior ruling
-made obsolete, with that ruling. The verify worker never writes or fixes tests.
+the host, criterion ID and lane ("Your role" above), the files to cover, and any
+existing test a recorded human behavior ruling made obsolete, with that ruling. The verify worker never writes or fixes tests.
 The same writer checks implementation and executed existing coverage against
 every required unsuperseded row, including earlier requests. Planned coverage
 is not executed coverage; a row without an existing test goes on the missing
@@ -439,7 +441,7 @@ ticket completion; Not aligned is a stop, not a success with a test-later note.
 The missing tests list may say `None` only when every acceptance criterion has
 executed coverage through both the real web host adapter and the real Desktop
 host adapter. Coverage on one host, a shared unit test or a mocked router
-leaves a named missing test for the uncovered host.
+leaves a missing test entry for the uncovered host ("Your role" above).
 <!-- generic: alignment-2 -->
 No criterion or plan task that depends on external work is complete until the
 <!-- end generic: alignment-2 -->
@@ -584,8 +586,13 @@ canonical single design review instead.
 > Provider `recipes` (block `qa-passes` of `handoff-skill.md`)
 
 Storybook plays run in a real browser, and card or narrow-layout
-interactions on WebKit iPhone and Chromium Pixel, as the verify worker's
-checks mode says; a requested pull request cannot open without them (step 9).
+interactions with real touch on WebKit iPhone and Chromium Pixel, as the verify
+worker's checks mode says; keyboard or Chromium `hasTouch` alone is
+insufficient, and an iOS tap is judged by its result: its click may report
+`pointerType` `mouse`. A requested pull request cannot open without them (step 9).
+Without a real-browser run (Storybook test runner or Playwright) of each
+touched story's play, the play check fails: an unawaited `storybook/test`
+interaction, a jsdom result or a successful build is not play evidence.
 
 ### Running app verification
 
@@ -783,6 +790,10 @@ Use the accepted uncommitted evidence from step 6. Publication only binds it
 to the pushed tree; it never substitutes a new source-validation round.
 
 > Read `references/handoff-pr.md` (block `step-9-pull-request`) when the person asked for a pull request.
+
+A drafted pull request body the inventory reports `blocking.prBody` false
+for is never created: the environment worker returns `NEEDS_CHANGE` with the
+problems, and the SAME writer fixes them before the gate runs again.
 
 <!-- generic: hand-over -->
 When they chose passing it on, dispatch `vibe-environment-worker` in

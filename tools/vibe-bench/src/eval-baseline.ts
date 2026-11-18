@@ -91,15 +91,21 @@ function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-/** Load the reviewed main-failure quarantine with its shared owner and deadline. */
-export function loadEvalQuarantine(): EvalQuarantineEntry[] {
-  const raw = JSON.parse(readFileSync(new URL("../eval-quarantine.json", import.meta.url), "utf8")) as {
+const EVAL_QUARANTINE_FILE = new URL("../eval-quarantine.json", import.meta.url);
+
+/**
+ * Load the reviewed main-failure quarantine with its shared owner and deadline.
+ * An empty entries list is valid (orchestrator ruling Q-14162-15 (A)): every
+ * case passed its bar. `file` is a test seam; callers use the committed file.
+ */
+export function loadEvalQuarantine(file: string | URL = EVAL_QUARANTINE_FILE): EvalQuarantineEntry[] {
+  const raw = JSON.parse(readFileSync(file, "utf8")) as {
     schemaVersion?: unknown; owner?: unknown; deadline?: unknown;
     entries?: Array<{ runtime?: unknown; case?: unknown; reason?: unknown }>;
   };
   if (raw.schemaVersion !== 1 || typeof raw.owner !== "string" || !raw.owner ||
       typeof raw.deadline !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw.deadline) ||
-      !Array.isArray(raw.entries) || raw.entries.length === 0) {
+      !Array.isArray(raw.entries)) {
     throw new Error("eval-quarantine-invalid");
   }
   const entries = raw.entries.map((entry): EvalQuarantineEntry => {
@@ -294,11 +300,11 @@ export function evalBaselineModelsMatchPolicy(result: EvalBaselineArtifact): boo
 }
 
 /** Load source-owned quarantine and identify entries whose waiver has expired. */
-export function evalQuarantineStatus(now = new Date()): {
+export function evalQuarantineStatus(now = new Date(), file: string | URL = EVAL_QUARANTINE_FILE): {
   entries: EvalQuarantineEntry[];
   expired: EvalQuarantineEntry[];
 } {
-  const entries = loadEvalQuarantine();
+  const entries = loadEvalQuarantine(file);
   const today = now.toISOString().slice(0, 10);
   return { entries, expired: entries.filter((entry) => entry.deadline < today) };
 }
