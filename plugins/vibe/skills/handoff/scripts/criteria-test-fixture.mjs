@@ -56,4 +56,4 @@ export function proofFolder(t) {
   return dir;
 }
 
-export const UNREAD = (name) => `the ticket has checkboxes under "${name}" that read as acceptance criteria, outside the section this audit reads; move them under the "Acceptance criteria" heading or the "- Acceptance criteria:" list`;
+export const UNREAD = (name) => `the ticket has checkboxes under "${name}" that read as acceptance criteria in a form or place this audit does not read; write each as a "- [ ]" box directly in the "Acceptance criteria" section or the "- Acceptance criteria:" list`;

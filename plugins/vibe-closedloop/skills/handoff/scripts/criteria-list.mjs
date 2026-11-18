@@ -1,10 +1,14 @@
 // A ticket's acceptance criteria, read from its body: the template's
 // `- Acceptance criteria:` checklist, or the checkboxes under an `Acceptance
 // criteria` heading. criteria-audit.mjs and unit-review.mjs both read them;
-// criteria-audit.mjs re-exports these for its other importers. A checkbox
-// outside those sections that still reads as a criterion (its heading or list
-// label names criteria, or its text leads with a criterion id) is reported,
-// never dropped silently.
+// criteria-audit.mjs re-exports these for its other importers. A checkbox that
+// reads as a criterion but that the reader does not read is reported, never
+// dropped silently: one in another list form (`+`, `1.`, `1)`) or another
+// position (under a sub-heading, a nested criteria heading or a list label)
+// inside a criteria section of either form, one at list level right after the
+// template list, and one elsewhere whose heading or list label names criteria
+// or whose text leads with a criterion id. What is read, and so every id, is
+// unchanged.
 
 import { readFileSync } from "node:fs";
 import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
@@ -36,38 +40,53 @@ export function criteriaStates(ticket) {
 }
 
 /**
- * One problem per heading or list label, outside the sections read above, whose checkboxes read as
- * acceptance criteria: the heading or label names criteria, or a checkbox leads with a criterion id.
+ * One problem per section, heading or list label holding checkboxes that read as acceptance criteria but that the
+ * reader does not read: a box inside a criteria section in a form or position it does not read (filed under that
+ * section), or a box elsewhere whose heading or label names criteria or whose text leads with a criterion id.
  */
 export function unreadCriteriaProblems(ticket) {
   const under = checkboxes(ticket).filter((box) => !box.read && (NAMES_CRITERIA.test(box.under) || LEADS_WITH_ID.test(box.text))).map((box) => box.under);
-  return [...new Set(under)].map((name) => `the ticket has checkboxes under "${name}" that read as acceptance criteria, outside the section this audit reads; move them under the "Acceptance criteria" heading or the "- Acceptance criteria:" list`);
+  return [...new Set(under)].map((name) => `the ticket has checkboxes under "${name}" that read as acceptance criteria in a form or place this audit does not read; write each as a "- [ ]" box directly in the "Acceptance criteria" section or the "- Acceptance criteria:" list`);
 }
 
-/** Every checkbox of the ticket: whether the criteria sections hold it, and the heading or list label it sits under. */
+/**
+ * Every checkbox of the ticket: whether the criteria sections hold it, and the name it is reported under. Reading
+ * (`inList`, `headingLevel`) is unchanged from before the report rule, so ids do not move. Reporting uses one
+ * criteria section rule for both forms: a criteria heading's section stays open, at its outermost level, through
+ * deeper headings (a nested criteria heading included); the template list's section stays open through lines
+ * indented deeper than its `- Acceptance criteria:` line. An unread box inside either is filed under the section.
+ */
 function checkboxes(ticket) {
   const found = [];
   let inList = false;
   let headingLevel = 0;
   let headingName = "the top of the ticket";
-  let criteriaHeading = null;
   let label = null;
+  // The open criteria section reports are filed under: a heading's outermost level and name, or the template list's indent.
+  let sectionLevel = 0;
+  let sectionName = null;
+  let listIndent = null;
   for (const line of ticket.split("\n")) {
     const heading = HEADING.exec(line);
     if (heading) {
+      const level = heading[1].length;
+      const name = line.slice(level).trim();
       inList = false;
-      headingLevel = CRITERIA_HEADING.test(line) ? heading[1].length : headingLevel && heading[1].length > headingLevel ? headingLevel : 0;
-      headingName = line.slice(heading[1].length).trim();
-      if (CRITERIA_HEADING.test(line)) criteriaHeading = headingName;
+      listIndent = null;
+      headingLevel = CRITERIA_HEADING.test(line) ? level : headingLevel && level > headingLevel ? headingLevel : 0;
+      if (!(sectionLevel && level > sectionLevel)) [sectionLevel, sectionName] = CRITERIA_HEADING.test(line) ? [level, name] : [0, null];
+      headingName = name;
       label = null;
       continue;
     }
     if (CRITERIA_START.test(line)) {
       inList = true;
-      // A box the list does not read (another marker, or one at list level right after it) is reported under it.
+      listIndent = line.length - line.trimStart().length;
+      // A box at list level right after the list is reported under it too.
       label = "Acceptance criteria";
       continue;
     }
+    if (listIndent !== null && line.trim() !== "" && line.length - line.trimStart().length <= listIndent) listIndent = null;
     const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;
     if (item) {
       found.push({ read: true, text: item[2], checked: item[1] !== " " });
@@ -75,9 +94,8 @@ function checkboxes(ticket) {
     }
     if (inList && line.trim() !== "" && !/^\s{4,}\S/.test(line)) inList = false;
     const stray = ANY_CHECKBOX.exec(line);
-    // Inside an open Acceptance criteria section (sub-headings and list labels included) a box the section does not
-    // read is reported under that heading, never dropped.
-    if (stray) found.push({ read: false, text: stray[2], checked: stray[1] !== " ", under: headingLevel ? criteriaHeading : label ?? headingName });
+    const section = sectionLevel ? sectionName : listIndent !== null ? "Acceptance criteria" : null;
+    if (stray) found.push({ read: false, text: stray[2], checked: stray[1] !== " ", under: section ?? label ?? headingName });
     else if (LIST_LABEL.test(line)) label = LIST_LABEL.exec(line)[1];
     else if (/^\S/.test(line)) label = null;
   }

@@ -28,12 +28,31 @@ test("ISS-14136 AC-4: under an Acceptance criteria heading only - and * boxes ar
   assert.deepEqual(unreadCriteriaProblems(ticket), [UNREAD("Acceptance criteria")], "the numbered and plus boxes are reported, never dropped");
 });
 
-test("ISS-14136 AC-4: inside the Acceptance criteria section, a + or ordered box under a sub-heading or a list label is reported under that heading, and ids match main", () => {
-  for (const [ticket, why] of [
-    ["### Acceptance criteria\n\n- [ ] a\n\n#### Web\n\n+ [ ] plus\n1. [ ] num\n- [ ] b\n", "under a deeper sub-heading"],
-    ["## Acceptance criteria\n\n- [ ] a\n- Notes:\n  + [ ] plus\n- [ ] b\n", "under a list label"],
-  ]) {
-    assert.deepEqual(criteriaStates(ticket).map(({ id, text }) => [id, text]), [["AC-1", "a"], ["AC-2", "b"]], why);
-    assert.deepEqual(unreadCriteriaProblems(ticket), [UNREAD("Acceptance criteria")], why);
-  }
+// Each case holds exactly one box the reader does not read, so each assertion pins that one box. The ids are the ones
+// main 0057c43a's reader gives the same text (checked against it when these cases were written).
+const SECTION_CASES = [
+  ["a + box under a sub-heading of the criteria heading", "### Acceptance criteria\n\n- [ ] a\n\n#### Web\n\n+ [ ] plus\n- [ ] b\n", ["a", "b"]],
+  ["a 1. box under a sub-heading of the criteria heading", "### Acceptance criteria\n\n- [ ] a\n\n#### Web\n\n1. [ ] num\n- [ ] b\n", ["a", "b"]],
+  ["a 1) box under a sub-heading of the criteria heading", "### Acceptance criteria\n\n- [ ] a\n\n#### Web\n\n1) [ ] num\n- [ ] b\n", ["a", "b"]],
+  ["a + box under a list label in the criteria heading's section", "## Acceptance criteria\n\n- [ ] a\n- Notes:\n  + [ ] plus\n- [ ] b\n", ["a", "b"]],
+  ["a 1. box under a list label in the criteria heading's section", "## Acceptance criteria\n\n- [ ] a\n- Notes:\n  1. [ ] num\n- [ ] b\n", ["a", "b"]],
+  ["a - box under a sibling of a nested criteria heading", "## Acceptance criteria\n\n- [ ] a\n\n### Acceptance criteria for web\n\n- [ ] b\n\n### Desktop\n\n- [ ] c\n", ["a", "b"]],
+  ["a + box under a sibling of a nested criteria heading", "## Acceptance criteria\n\n- [ ] a\n\n### Acceptance criteria for web\n\n- [ ] b\n\n### Desktop\n\n+ [ ] p2\n", ["a", "b"]],
+  ["a 1) box under a sibling of a nested criteria heading", "## Acceptance criteria\n\n- [ ] a\n\n### Acceptance criteria for web\n\n- [ ] b\n\n### Desktop\n\n1) [ ] n\n", ["a", "b"]],
+  ["a + box under a list label nested in the template list", "- Acceptance criteria:\n  - [ ] a\n    - Notes:\n      + [ ] plus\n  - [ ] b\n", ["a", "b"]],
+  ["a 1. box under a list label nested in the template list", "- Acceptance criteria:\n  - [ ] a\n    - Notes:\n      1. [ ] num\n  - [ ] b\n", ["a", "b"]],
+  ["a 1) box under a list label nested in the template list", "- Acceptance criteria:\n  - [ ] a\n    - Notes:\n      1) [ ] num\n  - [ ] b\n", ["a", "b"]],
+  ["a - box after a list label at item level in the template list", "- Acceptance criteria:\n  - [ ] a\n  - Notes:\n  - [ ] b\n", ["a"]],
+];
+
+for (const [what, ticket, read] of SECTION_CASES) {
+  test(`ISS-14136 AC-4: inside a criteria section, ${what} is reported under the section, never read, and ids match main`, () => {
+    assert.deepEqual(criteriaStates(ticket).map(({ id, text }) => [id, text]), read.map((text, index) => [`AC-${index + 1}`, text]));
+    assert.deepEqual(unreadCriteriaProblems(ticket), [UNREAD("Acceptance criteria")]);
+  });
+}
+
+test("ISS-14136 AC-4: once the template list or criteria section has ended, an unrelated checklist is not reported", () => {
+  assert.deepEqual(unreadCriteriaProblems("- Acceptance criteria:\n  - [ ] a\n- Environment:\n  - [ ] run the app\n  1. [ ] check the logs\n"), [], "a sibling list label closes the template list");
+  assert.deepEqual(unreadCriteriaProblems("## Acceptance criteria\n\n- [ ] a\n\n## Environment\n\n+ [ ] run the app\n1. [ ] check the logs\n"), [], "a heading at the section's level closes it");
 });
