@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { DEFAULT_WORKER_MODEL, endSession, initializeSession, startThread, startTurn } from './native-app-server-orchestrator.mjs';
 import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
@@ -213,4 +215,22 @@ test('ISS-14112 AC-2: a new native session with an explicit gpt-5.5 model starts
   const started = await startTurn({ stateFile, prompt: 'next' }, { client: runner, ...initialized, ...liveRead(root, 'idle') });
   assert.equal(started.turnId, 'turn-2');
   assert.equal(runner.calls.find((call) => call.method === 'turn/start').params.model, 'gpt-5.5');
+});
+
+test('ISS-14112 AC-6: on a Codex whose model list lacks gpt-6.2-sol, the generic orchestrator\'s init saves the fallback and prints its note once', (t) => {
+  const root = realpathSync(mkdtempSync(resolve(tmpdir(), 'orchestrator-fallback-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const script = fileURLToPath(new URL('./native-app-server-orchestrator.mjs', import.meta.url));
+  const init = (name, codex) => spawnSync(process.execPath, [script, 'init', '--state', resolve(root, name), '--cwd', root, '--codex', codex], { encoding: 'utf8' });
+  const older = init('older.json', withModelCatalog(['gpt-6-sol', 'gpt-5.6-sol']));
+  assert.equal(older.status, 0, older.stderr);
+  const printed = JSON.parse(older.stdout);
+  assert.deepEqual([printed.options.model, printed.requestedModelFallbackFrom], ['gpt-5.6-sol', 'gpt-6.2-sol']);
+  assert.equal(printed.modelNote, "gpt-6.2-sol is not in this Codex's model list, so this worker runs on gpt-5.6-sol.");
+  assert.equal(older.stdout.split('modelNote').length - 1, 1, 'the note is printed once');
+  const saved = JSON.parse(readFileSync(resolve(root, 'older.json'), 'utf8'));
+  assert.deepEqual([saved.options.model, saved.requestedModelFallbackFrom, Object.hasOwn(saved, 'modelNote')], ['gpt-5.6-sol', 'gpt-6.2-sol', false]);
+  const listed = JSON.parse(init('listed.json', withModelCatalog(LISTED_MODELS)).stdout);
+  assert.deepEqual([listed.options.model, Object.hasOwn(listed, 'requestedModelFallbackFrom'), Object.hasOwn(listed, 'modelNote')],
+    ['gpt-6.2-sol', false, false]);
 });

@@ -21,10 +21,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { escapeRegExp } from "./source-imports.mjs";
 import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
-import { TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
-
-// A pytest module: test_*.py or *_test.py.
-const PYTHON_TEST_FILE = /(?:^|\/)(?:test_[^/]*|[^/]*_test)\.py$/;
+import { isCollectedTestFile } from "../../vibe/scripts/test-files.mjs";
 
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
 export const ACROSS_PAGES = /\b(?:every|each|all|across)(?: the| all)?(?: \w+)? pages?\b|\bwhere(?:ver)? (?:it is |they are )?available\b/i;
@@ -98,11 +95,6 @@ export function noSurfaceLine(id, reason, slug = null) {
   return `NO-SURFACE ${where}: ${reason}`;
 }
 
-/** True when `file` is a test file a runner collects: a node or vitest spec, or a pytest module. */
-function isRunnableTestFile(file) {
-  return TEST_SPEC_PATTERN.test(file) || PYTHON_TEST_FILE.test(file);
-}
-
 /**
  * True when `text` declares a live test titled `name`: not in a comment, not a skip or todo form. A Python test is
  * a `def` pytest collects, so its name starts with `test`.
@@ -158,7 +150,7 @@ export function noSurfaceMarks(audit, criteria, { worktree = null, at = Evidence
         if (!rowsAudited) refused.push(missingTestProblem(id, test.file, at));
         return false;
       }
-      if (!isRunnableTestFile(test.file)) {
+      if (!isCollectedTestFile(test.file)) {
         refused.push(`${id}: ${test.file} is not a test file a test runner collects`);
         return false;
       }

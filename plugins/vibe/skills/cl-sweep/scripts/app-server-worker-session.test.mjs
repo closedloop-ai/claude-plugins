@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -2059,4 +2060,27 @@ test('end refuses a worker whose turn is running, then records the merge before 
   const stored = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
   assert.equal(stored.ended.reason, 'merged');
   assert.ok(stored.archivedAt);
+});
+
+test('ISS-14112 AC-6: on a Codex whose model list lacks gpt-6.2-sol, App Server init saves the fallback and prints its note once', (t) => {
+  const worktree = createRepo();
+  const directory = mkdtempSync(join(tmpdir(), 'cl-sweep-app-server-fallback-'));
+  t.after(() => { rmSync(worktree, { recursive: true, force: true }); rmSync(directory, { recursive: true, force: true }); });
+  const init = (name, codex) => spawnSync(process.execPath, [workerScript, 'init', '--session-file', join(directory, name),
+    '--worktree', worktree, '--ticket', 'ISS-1', '--parent-thread-id', 'parent-thread', '--parent-cwd', worktree,
+    '--owner-id', 'worker-1', '--generation', '1', '--lease-id', 'lease-1', '--lease-token-hash', 'a'.repeat(64),
+    '--protocol-schema-sha256', 'c'.repeat(64), '--codex', codex], { encoding: 'utf8' });
+  const older = init('older.json', withModelCatalog(['gpt-6-sol', 'gpt-5.6-sol']));
+  assert.equal(older.status, 0, older.stderr);
+  const printed = JSON.parse(older.stdout);
+  assert.deepEqual([printed.requestedModel, printed.requestedModelFallbackFrom, printed.modelBinding.requestedModel],
+    ['gpt-5.6-sol', 'gpt-6.2-sol', 'gpt-5.6-sol']);
+  assert.equal(printed.modelNote, "gpt-6.2-sol is not in this Codex's model list, so this worker runs on gpt-5.6-sol.");
+  assert.equal(older.stdout.split('modelNote').length - 1, 1, 'the note is printed once');
+  const saved = JSON.parse(readFileSync(join(directory, 'older.json'), 'utf8'));
+  assert.equal(saved.requestedModelFallbackFrom, 'gpt-6.2-sol');
+  assert.equal(Object.hasOwn(saved, 'modelNote'), false, 'the note is launch output, not session state');
+  const listed = JSON.parse(init('listed.json', withModelCatalog(LISTED_MODELS)).stdout);
+  assert.deepEqual([listed.requestedModel, Object.hasOwn(listed, 'requestedModelFallbackFrom'), Object.hasOwn(listed, 'modelNote')],
+    ['gpt-6.2-sol', false, false]);
 });

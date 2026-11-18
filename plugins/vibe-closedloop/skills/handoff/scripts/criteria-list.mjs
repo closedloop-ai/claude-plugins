@@ -13,8 +13,10 @@ const CRITERIA_START = /^\s*-\s*Acceptance criteria:\s*$/;
 const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
 const HEADING = /^(#{1,6})\s/;
 const CHECKBOX = /^\s+-\s*\[([ xX])\]\s*(\S.*)$/;
-// Any list marker: -, *, + or an ordered 1. or 1), so no checkbox form is dropped unseen.
-const TOP_CHECKBOX = /^\s*(?:[-*+]|\d+[.)])\s*\[([ xX])\]\s*(\S.*)$/;
+// The boxes read under an Acceptance criteria heading: - and * only, so the criterion ids do not move.
+const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
+// Any list marker: -, *, + or an ordered 1. or 1). A box in a form the sections do not read is reported, never dropped.
+const ANY_CHECKBOX = /^\s*(?:[-*+]|\d+[.)])\s*\[([ xX])\]\s*(\S.*)$/;
 const LIST_LABEL = /^\s*[-*]\s+([^[\s].*?):\s*$/;
 const NAMES_CRITERIA = /\bcriteri(?:a|on)\b/i;
 const LEADS_WITH_ID = /^AC-\d+\b/;
@@ -70,7 +72,7 @@ function checkboxes(ticket) {
       continue;
     }
     if (inList && line.trim() !== "" && !/^\s{4,}\S/.test(line)) inList = false;
-    const stray = TOP_CHECKBOX.exec(line);
+    const stray = ANY_CHECKBOX.exec(line);
     if (stray) found.push({ read: false, text: stray[2], checked: stray[1] !== " ", under: label ?? headingName });
     else if (LIST_LABEL.test(line)) label = LIST_LABEL.exec(line)[1];
     else if (/^\S/.test(line)) label = null;

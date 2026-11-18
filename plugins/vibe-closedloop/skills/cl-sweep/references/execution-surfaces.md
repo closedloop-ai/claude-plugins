@@ -98,8 +98,8 @@ Never rewrite its model binding or interrupt that turn. When its model differs
 from the model resolved for that session (an explicitly requested model, else this machine's override, else the default), replace its owner/session at the next
 authoritatively verified idle/no-active-turn boundary
 under the CLI lease replacement protocol before another turn.
-A new session's model is checked once, at `init`, against the running Codex's model list: when the list lacks
-the resolved model or cannot be read, `init` saves the policy's named fallback as `requestedModel` (with
+A new session's model is checked once, at `init` or `replace`, against the running Codex's model list: when the
+list lacks the resolved model or cannot be read, the command saves the policy's named fallback as `requestedModel` (with
 `requestedModelFallbackFrom`) and prints `modelNote`. The sweep root shows that note once and treats the fallback
 as that session's model. No other fallback or model-family reroute is allowed.
 
