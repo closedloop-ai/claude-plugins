@@ -31,6 +31,30 @@ const VERSION_CHOICE = /\b(?:proceed|continue|keep going|update now|upgrade now|
 const CODE_CITATION = /checked in code:\s*(\S+):(\d+)/i;
 const RECORD_MARKER = "sessionquestionsmjsask";
 const RECORD_WINDOW = 400;
+const FOLD_LABEL = /\b(?:fold|absorb|join|combine with|merge into|add to|include in|keep in)\b/i;
+const SEPARATE_LABEL = /\b(?:separate|new|follow[- ]up)\b[^.]*\b(?:ticket|issue|pull request|PR)\b|^\s*(?:file|open|create)\b[^.]*\b(?:ticket|issue|pull request|PR)\b/i;
+const FOLD_COST = /\bbloat\w*\b|\bscope growth\b|\b(?:grow|expand|increase|widen)(?:s|ing|ed)?\b[^.!?;]*\bscope\b/i;
+const SEPARATE_COSTS = [/\b(?:test|validation) lanes?\b/i, /\bCI\b/i, /\breviews?\b/i, /\bmerge[- ]queue\b/i];
+
+/** Verify the full question and option text before offering a separate delivery. */
+function deliveryFramingProblem(input) {
+  const questions = Array.isArray(input?.questions) ? input.questions : [input];
+  for (const question of questions) {
+    const options = Array.isArray(question?.options) ? question.options : [];
+    const fold = options.find((option) => FOLD_LABEL.test(option?.label ?? ""));
+    const separate = options.find((option) => option !== fold && SEPARATE_LABEL.test(option?.label ?? ""));
+    if (!fold || !separate) continue;
+    const text = (option) => `${option.label ?? ""} ${option.description ?? ""}`;
+    if (SEPARATE_COSTS.some((cost) => !cost.test(text(separate)))) return "the separate ticket or PR needs its own test lanes, CI, reviews and merge-queue time in its option";
+    if (FOLD_COST.test(text(fold)) || options.some((option) => option !== fold && FOLD_LABEL.test(text(option)) && FOLD_COST.test(text(option)))) {
+      return "describe the delivery options without calling folding bloat or scope growth";
+    }
+    const unrelated = /\bunrelated to\b[^.!?;]*\bbecause\b\s+\S/i.test(`${question?.question ?? ""} ${text(separate)}`);
+    const recommended = (option) => /\b(?:recommended|default)\b/i.test(option.label ?? "") || option.recommended === true;
+    if (!unrelated && (!recommended(fold) || recommended(separate))) return "recommend folding into the open unit unless the work is unrelated and the question gives the reason";
+  }
+  return null;
+}
 
 /** The question texts a question tool call carries. */
 export function questionTexts(input) {
@@ -82,6 +106,10 @@ export function questionGuard(event, home = os.homedir()) {
   // The skill loaded last decides, so an orchestrator that read vibe's files, or a vibe
   // session started after a fleet chat, gets its own rule (PR #350 review).
   const skill = latestSkill(text, ["vibe", "fleet-orchestrator"]);
+  if (skill === "vibe" || skill === "fleet-orchestrator") {
+    const placement = deliveryFramingProblem(event.tool_input);
+    if (placement) return deny(placement);
+  }
   let startup = null;
   try { if (typeof event?.session_id === "string") startup = readStartupRecord(event.session_id, home); }
   catch { /* An invalid session id never grants the startup exception. */ }

@@ -28,6 +28,7 @@ import { isEntryPoint, isVibePlugin, ownPluginRoot, pluginManifest, siblingInsta
 import { vibeRoot as installedVibeRoot } from "../../../shared/vibe-install.mjs";
 import { harnessActor } from "./harness-identity.mjs";
 import { sessionRecordPath } from "./session-record.mjs";
+import { assertIsolatedTestRead } from "./test-state-isolation.mjs";
 import { startupFile } from "./startup-record.mjs";
 
 export const PROVIDER_PROTOCOL = 1;
@@ -412,6 +413,7 @@ export function recordedBinding({ worktree = null, conversation = null, home } =
 
 function recordBinding(file) {
   if (!existsSync(file)) return null;
+  assertIsolatedTestRead(file);
   try {
     return JSON.parse(readFileSync(file, "utf8"))?.provider ?? null;
   } catch (error) {

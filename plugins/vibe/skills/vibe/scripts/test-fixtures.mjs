@@ -30,7 +30,7 @@ export function seedAlignedDecisionTable(worktree) {
     const rule = `/${relativeDirectory.replaceAll(path.sep, "/")}/`;
     if (!current.split("\n").includes(rule)) writeFileSync(exclude, `${current.trimEnd()}\n${rule}\n`);
   }
-  writeFileSync(file, "# Fixture decision table\n\n## Missing tests\n\n- None\n\n## Frozen Behavior\n\n- Fixture behavior is unchanged.\n\n## Final Alignment Status\n\nAligned\n");
+  writeFileSync(file, "# Fixture decision table\n\n## Verification Findings\n\n- Checked the fixture behavior.\n\n## Adversarial Review\n\n- Checked the fixture negative path.\n\n## Fixes Applied\n\n- None required by the fixture review.\n\n## Missing tests\n\n- None\n\n## Frozen Behavior\n\n- Fixture behavior is unchanged.\n\n## Final Alignment Status\n\nAligned\n");
   return file;
 }
 
@@ -71,6 +71,12 @@ export function makeHome(prefix) {
   const home = path.join(root, "home");
   mkdirSync(home, { recursive: true });
   return { root, home, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+/** Give a test and its children a fixture home and no inherited harness conversation. */
+export function isolatedVibeEnvironment(home, env = process.env) {
+  return { ...env, HOME: home, CODEX_HOME: path.join(home, ".codex"), CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
+    FLEET_HOME: path.join(home, "fleet-orchestrator"), CODEX_THREAD_ID: "", CLAUDE_CODE_SESSION_ID: "" };
 }
 
 export function gitEnv(home) {

@@ -5,6 +5,7 @@ import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkPublishableText } from "./publishable-text.mjs";
+import { localPlanPaths } from "./local-plans.mjs";
 import { localPlanFiles, planDigest, renderSessionPlan, SELF_APPROVED_MARKER, sessionPlanEvidencePaths } from "./session-plan.mjs";
 import { bindProviderInProcess, git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
@@ -87,6 +88,23 @@ test("plans are the top-level markdown files in request ID order; subfolders sta
   assert.deepEqual(localPlanFiles(checkout), [".closedloop-ai/vibe-plans/request-2.md", ".closedloop-ai/vibe-plans/request-10.md"]);
   const rendered = renderSessionPlan(checkout, { roots: [checkout] });
   assert.equal(rendered.body, `${SELF_APPROVED_MARKER}\n\n# Two\n\n---\n\n# Ten\n`);
+  assert.deepEqual(rendered.problems, []);
+});
+
+test("AC-018 an adopted provider-neutral session still renders its 1.1.94 local plans", (t) => {
+  const { checkout, home } = setup(t);
+  const metadata = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
+  writeFileSync(path.join(metadata, "vibe-session.json"), JSON.stringify({ slug: "adopted", provider: { state: "none" } }));
+  writePlan(checkout, "request-2.md", "# Legacy plan\n");
+  writePlan(checkout, "request-10.md", "# Superseded copy\n");
+  const current = localPlanPaths(checkout, { requestId: "request-10" });
+  assert.equal(current.inWorktree, false);
+  mkdirSync(current.plans, { recursive: true });
+  writeFileSync(current.plan, "# Canonical plan\n");
+
+  assert.deepEqual(localPlanFiles(checkout), [".closedloop-ai/vibe-plans/request-2.md", current.plan]);
+  const rendered = renderSessionPlan(checkout, { roots: [checkout] });
+  assert.equal(rendered.body, `${SELF_APPROVED_MARKER}\n\n# Legacy plan\n\n---\n\n# Canonical plan\n`);
   assert.deepEqual(rendered.problems, []);
 });
 

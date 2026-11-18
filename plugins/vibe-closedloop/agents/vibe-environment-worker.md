@@ -501,8 +501,10 @@ changes and gates fields.
    <verifier receipt> --ticket
    <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
    file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`; the body must name every member while the title may name the lead, and add `--rulings <program rulings file>` when the evidence cites a targeted-tests ruling recorded there) immediately before creation. Use the paths step 9 of handoff passed;
-   when there is no ticket, omit the ticket/audit/matrix arguments. A failed
-   gate is `BLOCKED`, not a reason to bypass the hook, except through the
+   when there is no ticket, omit the ticket/audit/matrix arguments. A gate
+   that fails on `blocking.prBody` or `blocking.prEvidence` creates nothing
+   and returns `NEEDS_CHANGE` with those problems; any other failed gate is
+   `BLOCKED`. Neither is a reason to bypass the hook, except through the
    exception the hook's refusal names. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file "<prBody>"`.
    Read the returned `prBody` file back right before the `gh` command and confirm

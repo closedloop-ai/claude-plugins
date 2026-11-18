@@ -961,7 +961,9 @@ function parseConnections(args) {
 /**
  * The binding a session keeps when a chat adopts it. A session keeps the binding it has (a generic session stays
  * generic, a bound one stays bound), except that a provider that was bound but disconnected, or bound with a connection
- * missing, rebinds when this chat bound the same provider with more capabilities. A session with none takes this chat's, unless it is a provider session from before
+ * missing, rebinds when this chat bound the same provider with more capabilities, and one whose recorded provider folder a
+ * plugin update removed rebinds to this chat's binding of the same provider where it is installed now (a harness switch
+ * or an update otherwise strands the session). A session with none takes this chat's, unless it is a provider session from before
  * bindings were recorded and this chat bound nothing: it then waits for a chat that binds, and is never written as
  * generic.
  */
@@ -971,7 +973,9 @@ export function adoptedProvider(session, chat) {
   if (current) {
     const more = (chat?.capabilities?.length ?? 0) > (current.capabilities?.length ?? 0);
     const partial = current.state === "bound-disconnected" || (current.state === "bound" && (current.missing?.length ?? 0) > 0 && more);
-    const rebinds = partial && chat?.state === "bound" && chat.name === current.name;
+    const stranded = current.state === "bound" && typeof current.root === "string" && !existsSync(current.root)
+      && typeof chat?.root === "string" && existsSync(chat.root);
+    const rebinds = (partial || stranded) && chat?.state === "bound" && chat.name === current.name;
     return rebinds ? chat : current;
   }
   if (!chat) return null;

@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { setTimeout as delay } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import {
   assertVibeSession, lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, PLUGIN_LIST_TIMEOUT_MS, requireResumeSession, run, saveState,
 } from './codex-session.mjs';
@@ -13,10 +13,28 @@ import * as sessions from './codex-session.mjs';
 import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
+import { isolatedVibeEnvironment, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
 const { LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
 const ownership = await vibeCore("lib/vibe/scripts/owned-state.mjs");
+
+const suite = makeHome('codex-session-suite-');
+const originalCwd = process.cwd();
+const fixtureEnv = isolatedVibeEnvironment(suite.home, {});
+const originalEnv = Object.fromEntries(Object.keys(fixtureEnv).map((key) => [key, process.env[key]]));
+before(() => {
+  Object.assign(process.env, fixtureEnv);
+  process.chdir(suite.root);
+});
+after(() => {
+  process.chdir(originalCwd);
+  for (const [key, value] of Object.entries(originalEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  suite.cleanup();
+});
 
 // A writer recorded its parent orchestrator's capacity stop as a human ruling (2026-10-26); every turn and steer
 // this client sends says who it is from.

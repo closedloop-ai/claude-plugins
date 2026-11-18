@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 # Publish one complete staged plugin generation and atomically switch its pointer.
 set -euo pipefail
-[ "$#" -eq 2 ] || { echo "usage: fleet-atomic-install.sh <stage> <target>" >&2; exit 2; }
-stage=$1 target=$2 lock=$2.ship-lock pointer=$2.current generations=$2.generations
+if [ "${1:-}" != --locked ]; then
+  [ "$#" -eq 2 ] || { echo "usage: fleet-atomic-install.sh <stage> <target>" >&2; exit 2; }
+  stage=$1 target=$2 lock=$2.ship-lock
+  if command -v flock >/dev/null 2>&1; then
+    exec flock -x -w 30 "$lock" bash "$0" --locked "$stage" "$target"
+  elif command -v lockf >/dev/null 2>&1; then
+    exec lockf -k -t 30 "$lock" bash "$0" --locked "$stage" "$target"
+  fi
+  echo "fleet atomic install: this host has neither flock nor lockf" >&2
+  exit 75
+fi
+[ "$#" -eq 3 ] || { echo "fleet atomic install: malformed locked invocation" >&2; exit 2; }
+shift
+stage=$1 target=$2 pointer=$2.current generations=$2.generations
 [ -f "$stage/files" ] || { echo "fleet atomic install: staged files manifest is missing" >&2; exit 2; }
 [ ! -L "$stage" ] && [ -d "$stage" ] || { echo "fleet atomic install: stage must be a real directory" >&2; exit 2; }
 [ -z "$(find "$stage" -type l -print -quit)" ] || { echo "fleet atomic install: staged symlinks are not allowed" >&2; exit 2; }
@@ -11,27 +23,13 @@ while IFS= read -r relative; do
   [ -f "$stage/$relative" ] || { echo "fleet atomic install: staged file is missing: $relative" >&2; exit 2; }
 done < "$stage/files"
 mkdir -p "$generations"
-candidate=$lock.candidate.$$
 cleanup() {
-  if [ -f "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = "$$" ]; then rm -f "$lock"; fi
-  rm -f "$candidate"
   rm -rf "$stage"
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-printf '%s\n' "$$" > "$candidate"
-acquired=
-for _ in $(seq 1 600); do
-  if ln "$candidate" "$lock" 2>/dev/null; then
-    acquired=1
-    break
-  fi
-  if [ -f "$lock" ] && ! kill -0 "$(cat "$lock")" 2>/dev/null; then rm -f "$lock"; fi
-  sleep 0.05
-done
-[ -n "$acquired" ] || { echo "fleet atomic install: host-wide ship lock stayed held" >&2; exit 75; }
 
 current=
 if [ -L "$pointer" ]; then

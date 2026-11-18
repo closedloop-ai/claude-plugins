@@ -444,8 +444,13 @@ test("test selection covers the whole branch diff, and every selected, required 
   const wholeLane = { testSelection: [], testRuns: [lane], qaImpactRequest: {
     laneSelections: { files: Object.fromEntries(SOURCES.map((file) => [file, [lane.lane]])) },
   } };
-  assert.deepEqual(selectionProblemsBound(wholeLane, SOURCES.map((path) => ({ path, status: "M" })), [], commit), [],
-    "a passing whole lane at the published head covers each source file assigned to it");
+  const sources = SOURCES.map((path) => ({ path, status: "M" }));
+  const missingReferences = selectionProblemsBound(wholeLane, sources, [], commit);
+  assert.equal(missingReferences.length, sources.length);
+  assert.ok(missingReferences.every((problem) => problem.includes("no e2e by-reference selection")));
+  const references = SOURCES.map((file) => ({ file, selector: "e2e-reference", tests: [] }));
+  assert.deepEqual(selectionProblemsBound({ ...wholeLane, testSelection: references }, sources, [], commit), [],
+    "a passing whole unit lane covers import selection when each source still has E2E reference discovery");
   assert.match(selectionProblemsBound({ ...wholeLane, testRuns: [{ ...lane, commit: "b".repeat(40) }] },
     SOURCES.map((path) => ({ path, status: "M" })), [], commit).join(), /no import selection/,
   "an earlier whole lane without carry evidence does not cover the current source");

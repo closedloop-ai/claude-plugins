@@ -117,7 +117,9 @@ and the check results.
    must pass. Fetch the current PR base and run
    `node ../skills/handoff/scripts/handoff-gate.mjs --worktree "<wt>" --base "<fetched base ref>" --body <file> --runs <verifier evidence file> --receipt <guardrails receipt> --receipt <adversarial receipt> --receipt <Storybook receipt> --receipt <verifier receipt>`
    immediately before creation, with the paths step 9 of handoff passed. A
-   failed gate is `BLOCKED`, not a reason to bypass the hook. Create it with
+   gate that fails on `blocking.prBody` or `blocking.prEvidence` creates
+   nothing and returns `NEEDS_CHANGE` with those problems; any other failed
+   gate is `BLOCKED`. Neither is a reason to bypass the hook. Create it with
    `gh pr create --base <the repository's default branch> --head <branch> --title "<title>" --body-file <file>`
    in the worktree, the body file in the session's private git directory and
    named for the session (`pr-body-<session slug>.md`). Read the file back

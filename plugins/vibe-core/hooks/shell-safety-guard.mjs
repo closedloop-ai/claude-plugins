@@ -90,7 +90,7 @@ function forcesPush(words) {
 }
 
 /** The refusal for a git call that skips its hooks (--no-verify, commit or am -n, or a core.hooksPath override), or null. */
-export function noVerifyProblem(command) {
+function noVerifyProblem(command) {
   for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
     const call = gitCall(words);
     if (!call) continue;
@@ -154,7 +154,7 @@ function* gitOptions(args, grammar) {
  * The refusal for deleting by pattern: `rm` or `unlink` of a path the shell globs or brace-expands, or `find` deleting
  * (-delete, -exec rm) from a globbed start path or a wildcard -name/-path/-regex test; null for exact paths.
  */
-export function globDeleteProblem(command) {
+function globDeleteProblem(command) {
   for (const { words, globWords = new Set() } of commandSegments(command, { expandShellPayloads: true })) {
     const start = invocationIndex(words);
     const program = path.basename(words[start] ?? "");

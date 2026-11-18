@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { BUILD_DATA, buildClosedLoopVibe, type BuildPaths, builtText, DEFAULT_PATHS, isExcluded, REPO, sourceFiles } from "./build.js";
+import { BUILD_DATA, BUILD_MARKER, buildClosedLoopVibe, type BuildPaths, builtText, DEFAULT_PATHS, isExcluded, REPO, sourceFiles } from "./build.js";
 
 const made: string[] = [];
 afterEach(() => {
@@ -61,6 +61,16 @@ function tree(dir: string): Map<string, string> {
 }
 
 describe("the files the build reads", () => {
+  it("AC-018 refuses duplicate marketplace display names before replacing the output", () => {
+    const codex = ".codex-plugin/plugin.json";
+    const paths = fixture({ [codex]: JSON.stringify({ name: "vibe-generic", interface: { displayName: "Acme Vibe" } }) }, {},
+      { manifests: { [codex]: { interface: { displayName: " acme vibe " } } } });
+    const marker = join(paths.output, "existing.txt");
+    write(marker, "prior generation\n");
+    expect(() => buildClosedLoopVibe(paths)).toThrow(/same marketplace display name/);
+    expect(readFileSync(marker, "utf8")).toBe("prior generation\n");
+  });
+
   it("leaves out tests, evals, fixtures, caches and test support, and keeps runtime files that only look like tests", () => {
     const paths = fixture({
       "evals/case/prompt.md": "x", "tools/python/test_a.py": "x", "tools/python/skill_split.py": "x",
@@ -183,6 +193,15 @@ describe("assembly", () => {
 });
 
 describe("the ClosedLoop vibe from this repository", () => {
+  it("AC-018 exposes distinct marketplace names for the generic and provider variants", () => {
+    const codex = ".codex-plugin/plugin.json";
+    const generic = JSON.parse(readFileSync(join(DEFAULT_PATHS.source, codex), "utf8"));
+    const built = JSON.parse(builtText(codex));
+    expect(generic.interface.displayName).toBe("Vibe Generic");
+    expect(generic.interface.shortDescription).toBe("Start a vibe session in any Git repository.");
+    expect(built.interface.displayName).toBe("ClosedLoop Vibe");
+  });
+
   const output = () => {
     const dir = join(temp(), "vibe");
     buildClosedLoopVibe({ ...DEFAULT_PATHS, output: dir });
@@ -191,6 +210,14 @@ describe("the ClosedLoop vibe from this repository", () => {
 
   it("is the same bytes and modes on every build", () => {
     expect(tree(output())).toEqual(tree(output()));
+  });
+
+  it("ISS-14162 writes a generated marker at its root naming the directory it was built from", () => {
+    const dir = output();
+    expect(readdirSync(dir)).toContain(BUILD_MARKER);
+    expect(JSON.parse(readFileSync(join(dir, BUILD_MARKER), "utf8"))).toEqual({ builtFrom: "plugins/vibe" });
+    expect(readFileSync(join(REPO, "plugins/vibe-closedloop", BUILD_MARKER), "utf8"), "the committed plugin carries the same marker")
+      .toBe(readFileSync(join(dir, BUILD_MARKER), "utf8"));
   });
 
   it("holds no stub, no rule region, no provider name and no generic prefix (references.test.ts resolves every path)", () => {
@@ -222,10 +249,34 @@ describe("the ClosedLoop vibe from this repository", () => {
       }
     }
     const description = (text: string) => /^---\n[\s\S]*?^description: (.*)$/m.exec(text)?.[1];
+    // The one deliberate change since the base: the vibe skill description is harness-neutral and says it covers
+    // every turn, as the operator approved on 2026-11-17. Every other description stays exactly main's.
+    const changed: Record<string, [string, string]> = {
+      "skills/vibe/SKILL.md": ["working in the Codex Desktop in-app browser.",
+        "working in Codex Desktop or Claude Code; it applies to every turn of a vibe session, including mid-session build turns."],
+    };
     for (const file of ["skills/vibe/SKILL.md", "agents/vibe-ticket-worker.md", "agents/vibe-environment-worker.md",
       "agents/vibe-requirements-worker.md", "agents/vibe-verify-worker.md", "skills/handoff/SKILL.md"]) {
-      expect(description(readFileSync(join(dir, file), "utf8")), file).toBe(description(show(file)));
+      const main = description(show(file)) ?? "";
+      const [from, to] = changed[file] ?? ["", ""];
+      if (from) expect(main, file).toContain(from);
+      expect(description(readFileSync(join(dir, file), "utf8")), file).toBe(from ? main.replace(from, to) : main);
     }
+  });
+
+  it("gives main's version check command, naming --closedloop and --graph, in the Plugin version section", () => {
+    // ISS-13446: a ClosedLoop session must match main on the evals; executive-setup-check-block-first-reply grades
+    // `--closedloop connected --graph not-connected`, and a nameless `--connection <name>=<state>` lost it 0/3.
+    const version = (text: string) => /^### Plugin version\n([\s\S]*?)^#{2,3} /m.exec(text)?.[1] ?? "";
+    const opening = (text: string) => /^Every `\$vibe` start[\s\S]*?never assume either\./m.exec(version(text))?.[0];
+    const built = version(builtText("skills/vibe/SKILL.md"));
+    expect(built).toContain("`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`");
+    expect(built).toContain("Call ClosedLoop `get-me`\nand closedloop-graph `sync_status` yourself first");
+    expect(built).not.toContain("check --runtime codex [--connection");
+    const base = "716a5683";
+    let main: string;
+    try { main = execFileSync("git", ["-C", REPO, "show", `${base}:plugins/vibe/skills/vibe/SKILL.md`], { encoding: "utf8" }); } catch { return; } // A shallow clone has no base commit to compare with.
+    expect(opening(builtText("skills/vibe/SKILL.md"))).toBe(opening(main));
   });
 
   it("binds its bundled provider when installed from a marketplace", async () => {

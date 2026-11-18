@@ -4,7 +4,27 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe-closedloop-provider v1.0.4
+### closedloop-core v1.6.3
+
+#### Changed
+- `prevent-recurrence` checks when each harness loads instructions and records which harnesses will see a rule. It checks instruction size before adding a rule and describes when a path-scoped Claude rule can supplement the owning `AGENTS.md`. A shared tool hook can provide advisory context to both harnesses.
+
+### vibe v1.1.102
+
+#### Added
+- Added fleet-wide duplicate/full-corpus admission, immutable-generation remote plugin shipment, remote plugin preflight, retired-writer records and bounded cold plugin inventory checks.
+- Added handoff checks for review reuse, decision-table alignment, session-only comments, test-only stand-ins, no-environment rulings and exact targeted-lane receipts.
+
+#### Fixed
+- Preserved failed cloud and eval evidence for inspection and continuation, reconciled archived cloud runs, and surfaced worker refusals with their own codes and reasons instead of a generic turn failure.
+- Corrected reload freshness, Claude sign-in recovery, pull-request body validation, environment setup proof, live-ticket URL validation and grader wording variants while retaining mutation-backed coverage.
+- Handoff diff rules judge build output that the base's `.gitattributes` marks `linguist-generated` through its source; the input-set rule fires only when a transform touches an id collection on its line or a wrapped continuation, and reads every `Input set:` record; the agent-decision rule fires only on a comment naming an agent, lane or session as the decider.
+- The decision-table gate holds a table whose later section says Final Alignment Status is Not aligned; `plugin-version.mjs adopt` rebinds a session whose recorded provider folder a plugin update removed; remote shipments again place prompt evidence and rulings at the stable path briefs name.
+- Let Claude-cloud evals use only their session-owned infrastructure while continuing to refuse user API keys, and return complete eval JSON through a verified result-only branch.
+- Extended prevention for shared-consumer tests, Storybook sweeps, premise and ruling provenance, ticket handoff attachment grants, and fresh relaunch guidance for timed-out or continued read-only reviewers.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, the generic vibe and provider text together are about 22,943 words longer than the 1.1.94 base (716a5683), as measured before the main merge, excluding the generated `plugins/vibe-closedloop` copy.
+
+### vibe-closedloop-provider v1.0.5
 
 #### Changed
 - Updated the ClosedLoop provider’s worker, fleet, handoff and repository recipes for targeted test receipts, displayless E2E placement, ticket rulings, environment evidence and main-sync validation.
@@ -14,17 +34,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - Hardened cloud and fleet cleanup, PR and shell guards, native review receipts, provider loading and worker scope so failed operations retain their evidence and surface their exact refusal.
 
-### vibe v1.1.101
+### vibe v1.1.100
 
-#### Added
-- Added fleet-wide duplicate/full-corpus admission, immutable-generation remote plugin shipment, remote plugin preflight, retired-writer records and bounded cold plugin inventory checks.
-- Added handoff checks for review reuse, decision-table alignment, session-only comments, test-only stand-ins, no-environment rulings and exact targeted-lane receipts.
+#### Changed
+- The vibe skill description no longer names one host. It says vibe runs in Codex Desktop or Claude Code and applies to every turn of a session, mid-session build turns included. The published `vibe` carries the same description through `build.json`.
+- Missing test entries name the uncovered host, the acceptance criterion IDs each covers and the owning test lane by name, in the change worker, quality loop, handoff skill and ticket template. Handoff states this once and points to it rather than repeating it.
+- A pull request body or evidence that the handoff gate refuses (`blocking.prBody` or `blocking.prEvidence`) creates nothing. The environment worker returns `NEEDS_CHANGE` with the problems, and the same writer fixes them before the gate runs again. Any other failed gate is still `BLOCKED`.
+- The requirements worker reports each overlapping open pull request with one line per shared path, `open pull request #<n> touches the same file: <path>`.
+- The ready message gives each link as the `url` that `vibe-sessions.mjs link` printed. With no URL, it names the page in words and gives no link, placeholder, or script or command name. `plain-words.md` adds the matching rows.
+- Reference image checks:
+  - Each visual property and each visible state (hover, selected, disabled) is its own criterion, delivered by a design token, with a catalog component alone only when no token can deliver it.
+  - A Reference check line names each touched element and is written only after viewing a render of the last edit, because any edit after a comparison voids it.
+  - A property the render cannot show is reported as not verified yet. The person is never asked to look at it.
+- A question to the person is sent only after `session-questions.mjs ask` has run for it and returned `"ask": true`. Publishing or reconciling the local plan never pauses the build.
+- Story play checks fail without a real-browser run of each touched story's play. An unawaited `storybook/test` interaction, a jsdom result or a successful build is not play evidence. Touch checks use real touch on WebKit iPhone and Chromium Pixel, and an iOS tap is judged by its result.
+- A human-only blocker's next action is the handover itself. The person is asked who picks the work up only when no one is named.
+- The precedent check brief names the product the bound provider gives (`live <product>`). It falls back to an established app with the same flow only when the provider names none.
+- Measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs` against 1.1.97 (origin/main at this update, 7d5bacfc): `plugins/vibe` is about 591 words longer, and the vibe-closedloop-provider folder adds 208 words. Across all plugin Markdown, including eval prompts and graders, under `plugins`, with every file under the generated `plugins/vibe-closedloop` left out, this change is 799 words longer.
 
 #### Fixed
-- Preserved failed cloud and eval evidence for inspection and continuation, reconciled archived cloud runs, and surfaced worker refusals with their own codes and reasons instead of a generic turn failure.
-- Corrected reload freshness, Claude sign-in recovery, pull-request body validation, environment setup proof, live-ticket URL validation and grader wording variants while retaining mutation-backed coverage.
-- Extended prevention for shared-consumer tests, Storybook sweeps, premise and ruling provenance, ticket handoff attachment grants, and fresh relaunch guidance for timed-out or continued read-only reviewers.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, the generic vibe and provider text together are about 22,943 words longer than 1.1.94 (origin/main at this update, 716a5683), excluding the generated `plugins/vibe-closedloop` copy.
+- The handoff diff rules no longer stall on a large changed code file such as a bundled script (ISS-14325). The guarded-constant check in `comment-rules.mjs` used to split the file's whole prefix for every line lookup, search the whole file again for every definition, and test a 200-character window with a regex for every use. It now makes one line index per file (the new `line-index.mjs`: newline offsets found once, then a binary search), one pass over the file's identifiers that gives the reads of every name, and a backward scan for the object-key test. The import and transaction line lookups in `diff-rules.mjs` use the same line index. The findings, files, lines and messages are unchanged.
+- The duplicate-helper rule no longer flags a helper against its own built copy, a new sighting of the ISS-14136 class: #426's built mirror, the ClosedLoop `vibe` that `tools/vibe-closedloop-build` copies from `plugins/vibe`. The build now writes a generated `.vibe-build.json` at the built plugin's root, `{"builtFrom": "plugins/vibe"}`, computed from its source path. `checkDuplicateHelpers` in `review-gap-rules.mjs` treats a file under such a marker and the file at the same relative path under `builtFrom` as one definition, but only when that source exists at head or base. A missing or malformed marker, a marker naming a missing source, or a copy at any other path is still flagged.
+- Eval cases and graders now agree with vibe's written rules:
+  - The `pm-prd-children-are-scope` prompt states each line's allowed status values separately.
+  - The reply-format checker accepts the optional status field.
+  - The missing-tests, lockfile, handover, touch, play, light-and-dark and plan graders match the current rules.
+  - `exec-asana-lacks-flow-checks-another-app` asks its open question through `session-questions.mjs ask`.
+  - The described-change stand-in relays the writer's result as the orchestrator, with a deployed live copy to link to.
+  - The `ref-card` and `return-page` reference images are re-rendered.
+
+#### Removed
+- The `exec-precedent-answer-recorded-not-asked` eval case.
+
+### vibe-closedloop-provider v1.0.3
+
+#### Changed
+- The provider's precedent block checks live Asana only and records `Asana, observed <date>` as the source.
+- The provider's requirements worker lists matched `EXECUTED` PRDs before open tickets, one `EXECUTED PRD <slug>: DONE child <slug>: shipped rule: <rule>` line per `DONE` child. The graph reference points to that rule.
+- The handoff Workers table keeps its running app checks row and adds a Desktop row:
+  - Run `pnpm -C apps/desktop build` first, then check that `apps/desktop/dist` holds the documented Electron entry.
+  - If the build fails or the entry is missing, abort the Desktop check without any Electron launch and return the limitation.
+  - `handoff-ui.md` points to that row.
+- The provider ticket template's missing tests list carries acceptance criterion IDs and the owning test lane. The provider's environment worker carries the same `NEEDS_CHANGE` gate rule as the generic one.
 
 ### vibe-closedloop-provider v1.0.0
 
@@ -63,6 +114,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Each stubbed file keeps a short rule region saying that `> Provider` lines stand for an optional provider's text and that a reader with no provider bound follows the generic text; `references/provider-text.md` is removed.
 - Adopting a session keeps its binding (a generic session stays generic), and a session repository that does not ignore `.claude/worktrees/` gets a local exclude rule for them. The plan folder of every provider built into an installed or checked-out vibe, under either vibe name and enabled or not, stays private whether or not that vibe is the one bound: `knownLocalPlanPrefixes` reads vibe-core's `knownProviderContracts` instead of `installedProviders`, so a `vibe-generic` checkout beside the ClosedLoop build still keeps `.closedloop-ai/vibe-plans/` private. The Claude launcher resolves any provider stub left in a role's definition against the session binding, and `codex-session.mjs` and the Claude launcher refuse a writer brief whose `Provider:` line differs from the lead's. The vibe-workers bundles build byte-identically from any working directory.
 - Without an areas recipe a UI file is known by its extension, so a UI diff is never treated as server-only. A handoff or prototype main sync that has no check to run (no recipe and no AGENTS.md test command) reports NEEDS_REVIEW with that reason, never DONE. Without a lane declaration a workflow lane source must be the repository's only workflow. Generic plans and decision tables live in `<git common dir>/vibe/<slug>/`, which removing the session worktree keeps. A record from before bindings were recorded (a ticket, plan, hosted environment or flag snapshot) waits for a chat that binds instead of being written generic, and a session record keeps `clerkOrgId` beside `environmentOrgId` for an older vibe.
+- The ClosedLoop build's Plugin version section gives 1.1.94's command, `plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`, after calling ClosedLoop `get-me` and closedloop-graph `sync_status` (the `version-check` provider block); generic vibe keeps `[--connection <name>=<state>]...`. With no connection named, ClosedLoop sessions invented connection names.
 - The setup worker's restore flow runs whenever the check lists anything under `missing`, including a session that is bound with only the graph withheld.
 - `vibe-preflight.sh` reads the repository's remote and the remotes `--repo` accepts from the bound provider; with no provider it takes `--repo`, the checkout it runs in, or the remembered one.
 - vibe now needs vibe-core 1.0.13 (`VIBE_CORE_MIN`) for the provider built into vibe, its placed references, the `vibe-generic` name and the retired-command answers; the committed vibe-workers bundles are rebuilt with it, and the README version line and the Python and vibe-bench release-pin tests move to 1.1.97.

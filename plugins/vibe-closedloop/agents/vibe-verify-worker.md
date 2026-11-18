@@ -328,9 +328,15 @@ Three more rules:
 - When the target repository's root rule permits graph-selected local E2E,
   use `code_tests_for_changes` over the whole diff. If it answers `RUN_ALL`,
   use its `start_here` and direct-evidence specs, then add every E2E spec the
-  pull request adds or edits. After those specs pass, record the owning lane
+  pull request adds or edits. The graph request must name the checkout's
+  repository and the whole changed-file set, including deletions. Query whole
+  files or use `change` with the exact clean commit and its base. Caller-supplied
+  hunks and incomplete spec lists cannot establish targeted evidence. After
+  those specs pass, record the owning lane
   with `pre-pr-lanes.mjs record --targeted-specs '<JSON list>' --graph-query
-  '<exact query>' --graph-result '<normalized RUN_ALL or SELECTED JSON>'`;
+  '<exact code_tests_for_changes arguments JSON>' --graph-session '<native thread>'
+  --graph-turn '<completed turn>'` in Codex, or `--graph-launcher-result '<owned result>'`
+  in Claude; the recorder re-reads the successful tool result from App Server or the fingerprinted launcher trace.
   `check` must print `TARGETED-LANE`. In symphony-alpha the
   full lane runs after merge, not on the pull request.
 - Before you claim that CI runs, or ran, a check or test, read
@@ -340,7 +346,8 @@ Three more rules:
 - For every new or changed story with a `play` function, and every story
   file with a `play` on a component whose layout, position or scrolling the
   diff changes, inspect every
-  `storybook/test` interaction and report any call that is not awaited. Then
+  `storybook/test` interaction and report any call that is not awaited as a
+  failing play. Then
   execute the touched stories' plays in a real browser with the repository's
   Storybook test runner or Playwright against its containerized Storybook
   service. A jsdom result, source inspection or successful build is not play
@@ -364,9 +371,9 @@ Three more rules:
   comment exposes them.
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium
-  Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not
-  count, and neither do a Storybook fixture standing in for the consumed
-  surface or synthetic `dispatchEvent` pointer events for the gesture under
+  Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone are
+  insufficient evidence, and so are a Storybook fixture standing in for the
+  consumed surface or synthetic `dispatchEvent` pointer events for the gesture under
   test. Judge an iOS tap by its user-visible result in both device runs, even
   when its click reports `pointerType` as `mouse`.
   Record runs of the inventory's `requiredLanes` (with `webkit-iphone` and

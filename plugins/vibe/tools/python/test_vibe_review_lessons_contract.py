@@ -268,7 +268,7 @@ def test_an_outdated_plugin_question_comes_before_the_endings_line() -> None:
     endings = flat(skill_split.read(VIBE_SKILL))
     assert "The one thing that comes before it is an outdated plugin's version question" in endings
     order = [
-        endings.index("Every `$vibe` start, new or resume, first checks whether the plugins from vibe's marketplace installed on this machine"),
+        endings.index("Every `$vibe` start, new or resume, first checks whether the ClosedLoop plugins installed on this machine"),
         endings.index("1. Your first reply to the new session carries the endings line"),
     ]
     assert order == sorted(order)

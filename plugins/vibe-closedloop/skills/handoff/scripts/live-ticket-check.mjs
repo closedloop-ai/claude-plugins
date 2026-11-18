@@ -29,7 +29,7 @@
 //          [--child-evidence <map .json>] [--now <iso>]
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { flagKeyProblems } from "../../vibe/scripts/flag-keys.mjs";
@@ -124,7 +124,7 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
   const noEnvironment = Boolean(noEnvironmentMatch && humanNoEnvironmentAuthority(noEnvironmentMatch[1], rulingsText));
   const noUi = Array.isArray(diffFiles) && !touchesUiPath(diffFiles);
   if (noEnvironmentMatch && !noEnvironment) {
-    problems.push({ section: "Environment", problem: "a no-environment ruling needs a dated human identity and source copied exactly from a separate rulings record" });
+    problems.push({ section: "Environment", problem: "a no-environment ruling needs a dated human identity and source copied exactly from the session's canonical private vibe-changes.md" });
   }
   if (noEnvironment && !noUi) {
     problems.push({ section: "Environment", problem: Array.isArray(diffFiles)
@@ -237,7 +237,6 @@ function main() {
       "base-commit": { type: "string" },
       worktree: { type: "string" },
       "child-evidence": { type: "string" },
-      rulings: { type: "string" },
       now: { type: "string" },
     },
   });
@@ -245,10 +244,8 @@ function main() {
     if (!values.file) {
       throw new Error("--file is required.");
     }
-    if (values.rulings && realpathSync(path.resolve(values.rulings)) === realpathSync(path.resolve(values.file))) {
-      throw new Error("--rulings must be a separate human-source record, not the candidate ticket body.");
-    }
     const record = values.worktree ? readSessionRecord(values.worktree) : undefined;
+    const rulingsFile = values.worktree ? path.join(git(values.worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md") : null;
     const result = checkLiveTicket(readFileSync(path.resolve(values.file), "utf8"), {
       baseCommit: values["base-commit"],
       record,
@@ -258,7 +255,7 @@ function main() {
       planPrefix: values.worktree ? sessionLocalPlanPrefix(path.resolve(values.worktree)) : null,
       diffFiles: values.worktree && values["base-commit"]
         ? parseUnifiedDiff(git(values.worktree, ["diff", "--unified=0", values["base-commit"], "--"])) : null,
-      rulingsText: values.rulings ? readFileSync(path.resolve(values.rulings), "utf8") : null,
+      rulingsText: rulingsFile && existsSync(rulingsFile) ? readFileSync(rulingsFile, "utf8") : null,
     });
     if (values["child-evidence"]) {
       result.children = checkChildren(values, record);

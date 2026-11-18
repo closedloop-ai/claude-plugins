@@ -11764,6 +11764,17 @@ var actionSchema = external_exports.object({
   blockReason: blockReasonSchema.optional(),
   stoppedTurn: stoppedTurnSchema.optional()
 }).strict();
+var queueEvidenceSchema = external_exports.object({
+  source: external_exports.string().trim().min(1).max(1024),
+  reason: external_exports.string().trim().min(1).max(2048),
+  inputSha256: external_exports.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
+var dropPendingSchema = external_exports.object({
+  worktree: external_exports.string().min(1),
+  workerId: workerIdSchema,
+  requestId: identifierSchema,
+  evidence: queueEvidenceSchema
+}).strict();
 var bindingSchema = external_exports.object({
   agentRoot: external_exports.string(),
   agentName: identifierSchema,
@@ -11802,7 +11813,8 @@ var ledgerStateSchema = external_exports.object({
     resultSummary: external_exports.string().max(4096).optional(),
     blockReason: blockReasonSchema.optional()
   }).strict().optional(),
-  completed: external_exports.array(identifierSchema).max(64)
+  completed: external_exports.array(identifierSchema).max(64),
+  dropped: external_exports.array(queueEvidenceSchema.extend({ id: identifierSchema, at: external_exports.string().datetime() })).max(64).optional()
 }).strict();
 var migrationSchema = external_exports.object({
   id: external_exports.string().uuid(),
@@ -12133,9 +12145,13 @@ function observeDefinitionDigest(agentRoot, agentName, capabilities) {
 
 // src/ledger.ts
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash as createHash2, randomUUID } from "node:crypto";
 import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync5, realpathSync as realpathSync6, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename as basename2, dirname as dirname3, isAbsolute, join as join5 } from "node:path";
+
+// vibe-core:lib/vibe/scripts/test-state-isolation.mjs
+var module2 = await vibeCore("lib/vibe/scripts/test-state-isolation.mjs");
+var { assertIsolatedTestRead } = module2;
 
 // src/reference-images.ts
 import { existsSync as existsSync2, readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
@@ -12150,6 +12166,7 @@ var recordSchema = external_exports.object({ referenceImages: external_exports.a
 function readReferenceImages(metadataDir) {
   const file = join4(metadataDir, "vibe-session.json");
   if (!existsSync2(file)) return [];
+  assertIsolatedTestRead(file);
   const record = recordSchema.safeParse(JSON.parse(readFileSync4(file, "utf8")));
   if (!record.success) return [];
   const owned = join4(metadataDir, REFERENCE_DIR);
@@ -12190,8 +12207,10 @@ function location(worktree) {
   return sessionPlace(checkoutLocation(worktree));
 }
 function sessionPlace(place) {
+  const file = join5(place.dir, "vibe-session.json");
+  assertIsolatedTestRead(file);
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync5(join5(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync5(file, "utf8"))
   );
   if (record.worktree && realpathSync6(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
@@ -12289,6 +12308,17 @@ function isNewerRelease(current, previous) {
 function activeContinuationSummary(requestId) {
   return `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}; the refused request was not queued.`;
 }
+function oldestPendingSummary(ledger) {
+  const next = ledger.pending[0]?.id;
+  return next ? `Claim the oldest pending requestId "${next}" without input or continuation.` : "There is no oldest pending request to claim. Use a new requestId with original input.";
+}
+function duplicateRefusal(ledger, requestId) {
+  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id) : oldestPendingSummary(ledger);
+  return new WorkerRefusal("REQUEST_ID_EXISTS", `Request ID "${requestId}" already exists. ${recovery}`);
+}
+function inputDigest(input) {
+  return createHash2("sha256").update(input).digest("hex");
+}
 function changeWriter(action, input) {
   const data = actionSchema.parse(input);
   const place = writerLocation(data.worktree);
@@ -12300,7 +12330,7 @@ function changeWriter(action, input) {
     );
     const requestId = data.requestId;
     if (!requestId) throw new WorkerRefusal("REQUEST_ID_REQUIRED", "A requestId is required.");
-    const duplicateRequest = () => ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId);
+    const duplicateRequest = () => ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId) || ledger.dropped?.some((item) => item.id === requestId);
     const prepareClaim = () => {
       if (existsSync3(join5(place.dir, "vibe-record-turn.lock"))) {
         throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; retain the queued writer request.");
@@ -12317,10 +12347,7 @@ function changeWriter(action, input) {
     };
     if (action === "enqueue") {
       if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
-      if (duplicateRequest()) throw new WorkerRefusal(
-        "REQUEST_ID_EXISTS",
-        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work."
-      );
+      if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
       if (ledger.pending.length >= 32) throw new WorkerRefusal(
         "REQUEST_QUEUE_FULL",
         "The pending queue is full; keep the new input with the parent."
@@ -12328,10 +12355,7 @@ function changeWriter(action, input) {
       ledger.pending.push({ id: requestId, input: data.input });
     } else if (action === "start") {
       if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
-      if (duplicateRequest()) throw new WorkerRefusal(
-        "REQUEST_ID_EXISTS",
-        "This requestId already exists. Use continuation to resume the active request, or use a new requestId for new work."
-      );
+      if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
       prepareClaim();
       if (ledger.active?.status === "FAILED") {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
@@ -12341,10 +12365,7 @@ function changeWriter(action, input) {
         "ACTIVE_REQUEST_PENDING",
         activeContinuationSummary(ledger.active.id)
       );
-      if (ledger.pending.length) throw new WorkerRefusal(
-        "REQUEST_ORDER_INVALID",
-        "Claim the oldest pending request before starting new work."
-      );
+      if (ledger.pending.length) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
       ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
     } else if (action === "claim") {
       prepareClaim();
@@ -12362,10 +12383,7 @@ function changeWriter(action, input) {
         );
         ledger.active.continuation = data.continuation;
       } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal(
-          "REQUEST_ORDER_INVALID",
-          "Claim must take the oldest pending request."
-        );
+        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
         const next = ledger.pending.shift();
         if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
         ledger.active = { ...next, status: "PLAN" };
@@ -12491,6 +12509,8 @@ function summary(ledger) {
     worktree: ledger.worktree,
     queuedRequestIds: ledger.pending.map((item) => item.id),
     activeRequestId: ledger.active?.id,
+    queuedRequests: ledger.pending.map((item) => ({ requestId: item.id, inputSha256: inputDigest(item.input) })),
+    droppedRequestIds: ledger.dropped?.map((item) => item.id) ?? [],
     status: ledger.active?.status,
     running: Boolean(ledger.active?.lease),
     processGroupId: ledger.active?.processGroupId,
@@ -12559,12 +12579,12 @@ function bindTakeoverWriter(worktree, binding) {
 }
 
 // vibe-core:lib/vibe/scripts/plugin-script-references.mjs
-var module2 = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
-var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScriptReferences } = module2;
+var module3 = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
+var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScriptReferences } = module3;
 
 // vibe-core:lib/vibe/scripts/provider-brief.mjs
-var module3 = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
-var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, briefWithProviderLine, providerLine } = module3;
+var module4 = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
+var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, briefWithProviderLine, providerLine } = module4;
 
 // ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
@@ -12695,16 +12715,16 @@ function isRecord(value) {
 }
 
 // vibe-core:lib/vibe/scripts/worker-scope.mjs
-var module4 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
-var { launcherWorker, recordWorkerScope } = module4;
+var module5 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
+var { launcherWorker, recordWorkerScope } = module5;
 
 // src/record-context.ts
 import { existsSync as existsSync5, readFileSync as readFileSync7, realpathSync as realpathSync7 } from "node:fs";
 import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
-var module5 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module5;
+var module6 = await vibeCore("lib/vibe/scripts/session-record.mjs");
+var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module6;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -12892,7 +12912,7 @@ function discardLocation(input, stable) {
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
-    JSON.parse(readFileSync7(join6(target.dir, "vibe-session.json"), "utf8"))
+    readSessionRecord(target.root)
   );
   const recordedTicket = sessionLiveTicket(record);
   const recordedCreated = record.liveTicketCreatedBySession ?? recordedTicket !== null;
@@ -12931,7 +12951,7 @@ function missingSessionRoute(agentName) {
 }
 
 // src/main-sync-state.ts
-import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
 
 // ../../plugins/vibe/skills/vibe/scripts/area-paths.mjs
 var { providerDataOr: providerDataOr2, sessionBinding: sessionBinding2 } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -13180,7 +13200,7 @@ var claudeOwnerSchema = external_exports.object({
   primaryOwner: external_exports.object({ workerId: external_exports.string(), lease: external_exports.string().uuid() }).strict().optional()
 }).strict();
 function digest(text) {
-  return createHash2("sha256").update(text).digest("hex");
+  return createHash3("sha256").update(text).digest("hex");
 }
 
 // src/main-sync-validation-envelope.ts
@@ -13251,6 +13271,7 @@ async function deriveValidationEnvelope(context, dir, branch, canceled) {
   return validationEnvelopeMs(receipt.recipe);
 }
 async function privateData(file) {
+  assertIsolatedTestRead(file);
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = await handle.stat();
@@ -13284,7 +13305,7 @@ function claudeWorkerUsage() {
     "the launch request is one JSON object on stdin.",
     "",
     "Fields: worktree, agentName, mode, requestId, capabilities, and input for a new request or continuation",
-    "for the active request. Reusing an active requestId with input is refused and names continuation.",
+    "for the active request. To claim the oldest pending request, name its requestId and send neither field.",
     "Optional: agentRoot, timeoutMs (default and maximum 1800000 ms), allowCredits, and the record fields.",
     "A record action uses mode record, recordAction, and exclusiveRecordTurn true.",
     "Prints one JSON result; exits 1 when the status is BLOCKED or FAILED.",
@@ -13630,7 +13651,7 @@ async function runWorker(rawInput) {
     input.worktree,
     input.input ?? input.continuation ?? ""
   );
-  if (dispatchProblem) throw new Error(dispatchProblem);
+  if (dispatchProblem) throw new WorkerRefusal("DISPATCH_SCRIPT_INVALID", dispatchProblem);
   if (receiptRoles.has(input.agentName) && input.continuation) {
     throw new WorkerRefusal(
       "REVIEWER_RELAUNCH_REQUIRED",

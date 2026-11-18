@@ -13,13 +13,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isLocalPlanPath, localPlanPaths, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
+import { lineIndex } from "./line-index.mjs";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
-import { checkCommentRules, citationPattern } from "./comment-rules.mjs";
+import { checkCommentRules, citationPattern, commentBody } from "./comment-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
+import { checkFlagRetirement } from "./flag-retirement.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { createImportClosure, escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
 import { frozenGlobalInputAffectsRender, frozenInputs, storybookPreviewImportClosure } from "./frozen-render.mjs";
@@ -42,9 +44,12 @@ const TX_WRITE = /\btx\.(?:\w+\.(?:create|createMany|update|updateMany|upsert|de
 const RESULT_ERR_RETURN = /\breturn\s+(?:Result\.)?err\(/;
 const BATCH_LIMIT_SIGNAL = /\b(?:BATCH|BULK)[A-Z0-9_]*LIMIT\b|\b(?:batch|bulk)\s+limit\b/i;
 const SET_TRANSFORM_SIGNAL = /\b(?:collapse|dedupe|deduplicate|normaliz|distinct|unique)[A-Za-z0-9_]*\b/i;
-const USER_ID_SET_SIGNAL = /\b(?:selected|selection|input|request|artifact|entity)[A-Za-z0-9_]*(?:Ids?|UUIDs?)\b|\b(?:Ids?|UUIDs?)\b/i;
+// A collection of ids on the transform line or the two added lines after it (a wrapped call): `selectedIds`,
+// `artifactUUIDs`, `ids`, or a user's `selection`. A lone `id` field or a file that merely mentions ids elsewhere is
+// not a set of user-supplied ids.
+const ID_COLLECTION_SIGNAL = /[a-z0-9_](?:Ids|IDs|UUIDs|Uuids)\b|\b(?:ids|uuids|IDs|UUIDs|selection)\b/;
 const TRANSACTION_SCALE_RECORD = /^\s*(?:[-*]\s+)?Transaction scale:\s*(\S+):\s*limit\s+\d+;\s*duration\s+\d+(?:\.\d+)?ms;\s*timeout\s+\d+ms;\s*ambient timeout\s+(?:honored|ignored);\s*lock hold\s+\d+(?:\.\d+)?ms;\s*test\s+(\S+)\s*$/im;
-const INPUT_SET_RECORD = /^\s*(?:[-*]\s+)?Input set:\s*(\S+):(?=[^\n]*\border permutations\b)(?=[^\n]*\bcase\b)(?=[^\n]*\bduplicates\b)(?=[^\n]*\bwhitespace\b)[^\n]*;\s*test\s+(\S+)\s*$/im;
+const INPUT_SET_RECORD = /^\s*(?:[-*]\s+)?Input set:\s*(\S+):(?=[^\n]*\border permutations\b)(?=[^\n]*\bcase\b)(?=[^\n]*\bduplicates\b)(?=[^\n]*\bwhitespace\b)[^\n]*;\s*test\s+(\S+)\s*$/gim;
 const LINK_DELETE = /\.artifactLink\.deleteMany\(|\bDELETE\s+FROM\s+"?artifact_links"?/i;
 const LINK_EDGE_KEYS = [/\bsourceId\b|\bsource_id\b/, /\btargetId\b|\btarget_id\b/, /\blinkType\b|\blink_type\b/];
 const SYNC_TABLE = /outbox|sync/i;
@@ -150,7 +155,8 @@ export function touchesUiPath(files) {
 /**
  * Applies every rule. `repo` supplies reads: `head(path)` and `base(path)` file
  * text or null, `headFiles`
- * (tracked paths at head) and `importerCounts(paths)` (non-test files importing each).
+ * (tracked paths at head), `importerCounts(paths)` (non-test files importing each) and optional `generatedFiles`
+ * (head paths the repository marks `linguist-generated`).
  */
 export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   const blocking = [];
@@ -159,6 +165,9 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   const logged = (prefix, file) => changeLog.split("\n").some((line) => line.includes(prefix) && (file === undefined || line.includes(file)));
   const add = (rule, file, line, problem, fix) => blocking.push({ rule, file, line, problem, fix });
   const live = files.filter((file) => file.status !== "D");
+  // Build output the base's `.gitattributes` marks `linguist-generated` repeats its hand-written source; the source
+  // carries the finding, and the build lanes byte-check the output.
+  const authored = live.filter((file) => !repo.generatedFiles?.has(file.path));
 
   if (repo.rules?.migrations) checkMigrations(live, repo, logged, add, requiredChecks);
   const newMigrations = live.filter((file) => file.status === "A" && migrationId(file.path)).map((file) => ({ path: file.path, sql: repo.head(file.path) ?? "" }));
@@ -183,11 +192,11 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
     checkTransactions(file, head, add);
     checkLinkDeletes(file, head, add);
   }
-  checkHighRiskBatchChanges(live, changeLog, repo, add, requiredTests);
+  checkHighRiskBatchChanges(authored, changeLog, repo, add, requiredTests);
   checkOwnerTestRules(live, changeLog, repo, add, requiredTests);
   if (rules.desktopLane) checkDesktopLane(live, repo, logged, add, rules);
   checkTicketedComments(files, repo, logged, add, rules);
-  checkCommentRules(live, repo, add);
+  checkCommentRules(authored, repo, add);
   checkStories(live, files, repo, logged, add);
   checkFrozenRenders(files, repo, changeLog, add);
   checkLostStoryIds(files, repo, logged, add);
@@ -200,13 +209,14 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   }
   checkCapabilityRemovals(live, files, repo, logged, add);
   checkSpecChanges(files, changeLog, add);
+  const flagRetirements = checkFlagRetirement(files, repo, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
-  checkComparators(live, repo, logged, add, changeLog, phase);
-  checkUnusedExports(live, repo, logged, add);
-  checkDuplicateHelpers(live, repo, add);
+  checkComparators(authored, repo, logged, add, changeLog, phase);
+  checkUnusedExports(authored, repo, logged, add);
+  checkDuplicateHelpers(authored, repo, add);
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo, add), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
-  return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
+  return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks, ...(flagRetirements.length ? { flagRetirements } : {}) };
 }
 
 /** Consolidated transactions and user-id set transforms need measured, mutation-backed evidence before review. */
@@ -225,12 +235,16 @@ function checkHighRiskBatchChanges(files, changeLog, repo, add, requiredTests) {
       requiredTests.push({ path: record[2], reason: `transaction scale evidence for ${transaction.path}` });
     }
   }
-  for (const file of source.filter((candidate) => candidate.added.some((entry) => SET_TRANSFORM_SIGNAL.test(entry.text))
-    && USER_ID_SET_SIGNAL.test(repo.head(candidate.path) ?? ""))) {
-    const record = INPUT_SET_RECORD.exec(changeLog);
-    if (!record || record[1] !== file.path || repo.head(record[2]) === null) {
-      add("input-set-proof", file.path, file.added.find((entry) => SET_TRANSFORM_SIGNAL.test(entry.text))?.line ?? 1,
-        "adds set, dedupe, normalization or collapse logic over user-supplied ids without order and normalization evidence",
+  const inputSetRecords = [...changeLog.matchAll(INPUT_SET_RECORD)];
+  for (const file of source) {
+    const code = file.added.filter((entry) => !COMMENT_LINE.test(entry.text));
+    const transform = code.find((entry, index) => SET_TRANSFORM_SIGNAL.test(entry.text)
+      && code.slice(index, index + 3).some((next) => next.line - entry.line <= 2 && ID_COLLECTION_SIGNAL.test(next.text)));
+    if (!transform) continue;
+    const record = inputSetRecords.find((match) => match[1] === file.path && repo.head(match[2]) != null);
+    if (!record) {
+      add("input-set-proof", file.path, transform.line,
+        "adds set, dedupe, normalization or collapse logic over a user-supplied id collection without order and normalization evidence",
         "test order permutations plus case, duplicates and whitespace, then record `Input set: <file>: order permutations; case; duplicates; whitespace; test <path>`");
     } else {
       requiredTests.push({ path: record[2], reason: `input set evidence for ${file.path}` });
@@ -310,6 +324,7 @@ function checkNewControls(files, allFiles, changeLog, add, { criterionSource }) 
 /** Import declarations with their original exported names and one-based line range. */
 function componentImports(source) {
   const imports = [];
+  const lineOf = lineIndex(source);
   for (const match of source.matchAll(IMPORT_DECLARATION)) {
     const clause = match[1].trim();
     if (clause.startsWith("type ")) continue;
@@ -324,7 +339,7 @@ function componentImports(source) {
     }
     const defaultName = clause.split(/[,{]/)[0].trim();
     if (defaultName && !defaultName.startsWith("*")) names.push(defaultName);
-    const start = source.slice(0, match.index).split("\n").length;
+    const start = lineOf(match.index);
     const end = start + match[0].split("\n").length - 1;
     imports.push({ source: match[2], names, start, end });
   }
@@ -418,6 +433,7 @@ function checkActivityCapture(file, head, logged, add, { fix }) {
 /** Line ranges (1-based, inclusive) of each `withDb.tx(` callback body in `head`. */
 export function transactionBodies(head) {
   const bodies = [];
+  const lineAt = lineIndex(head);
   for (const open of head.matchAll(TX_OPEN)) {
     const start = head.indexOf("{", open.index);
     if (start < 0) {
@@ -427,16 +443,12 @@ export function transactionBodies(head) {
     for (let index = start; index < head.length; index += 1) {
       depth += head[index] === "{" ? 1 : head[index] === "}" ? -1 : 0;
       if (depth === 0) {
-        bodies.push([lineAt(head, start), lineAt(head, index)]);
+        bodies.push([lineAt(start), lineAt(index)]);
         break;
       }
     }
   }
   return bodies;
-}
-
-function lineAt(text, offset) {
-  return text.slice(0, offset).split("\n").length;
 }
 
 function checkTransactions(file, head, add) {
@@ -501,10 +513,6 @@ function checkDesktopLane(files, repo, logged, add, { desktopLane: lane, migrati
   if (syncTables.length > 0 && !logged(`Engineering needed (forbidden path): ${lane.roster}`)) {
     add("desktop-sync-lane", syncTables[0].file, 1, `new sync table ${syncTables[0].table} is not on the lane roster`, `record \`Engineering needed (forbidden path): ${lane.roster}; why: the lane roster names the new lane\``);
   }
-}
-
-function commentBody(text) {
-  return text.replace(/^\s*(?:\/\/+|\/\*+|\*+)\s?/, "").replace(/\*\/\s*$/, "").trim();
 }
 
 /**
@@ -848,6 +856,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules, sessio
   let deepened = 0;
   const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
+  const generatedFiles = linguistGenerated(worktree, headFiles, base);
   const blobs = new Map();
   const baseBlobs = (paths) => {
     const missing = [...new Set(paths)].filter((file) => !blobs.has(file) && baseFiles.has(file));
@@ -882,6 +891,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules, sessio
     },
     headFiles,
     baseFiles,
+    generatedFiles,
     baseBlobs,
     wordFiles: (word) => lines(() => git(worktree, ["grep", "-l", "-w", "-F", "--untracked", "-e", word])),
     sessionIds,
@@ -938,6 +948,28 @@ function memoize(read) {
     }
     return cache.get(key);
   };
+}
+
+/**
+ * Head paths whose `linguist-generated` attribute is set by the `.gitattributes` at `base`, so a diff cannot mark its
+ * own hand-written files generated and skip the rules that read them. A git that cannot read attributes at a commit
+ * (`--source` needs git 2.40) marks nothing generated, so every rule still reads every file.
+ */
+export function linguistGenerated(worktree, files, base) {
+  if (files.length === 0) return new Set();
+  let output;
+  try {
+    output = execFileSync("git", ["-C", worktree, "check-attr", "-z", "--stdin", "--source", base, "linguist-generated"],
+      { input: files.join("\0"), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
+  } catch {
+    return new Set();
+  }
+  const fields = output.split("\0");
+  const generated = new Set();
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    if (fields[index + 2] === "set" || fields[index + 2] === "true") generated.add(fields[index]);
+  }
+  return generated;
 }
 
 /** Non-empty output lines of a git read; a command that matches nothing (grep's exit 1) or a missing path is empty. */
@@ -1056,6 +1088,7 @@ export function compileDiffRules(data, binding = null) {
     desktopLane: lane?.files ? { ...lane, files: pattern(lane.files), giveUpImport: pattern(lane.giveUpImport),
       importPrefix: typeof lane.importPrefix === "string" ? lane.importPrefix : "\0" } : null,
     sharedPaths: pattern(data?.sharedPaths),
+    flagRetirementRegistry: data?.flagRetirementRegistry,
     ownerTestRules: ownerTests?.paths ? { paths: pattern(ownerTests.paths), bugSignal: pattern(ownerTests.bugSignal),
       requirements: (ownerTests.requirements ?? []).map((item) => ({ ...item, tests: pattern(item.tests) })) } : null,
     hostParity: parity?.gridTest ? { ...parity, gridTable: pattern(parity.gridTable), gridSymbol: pattern(parity.gridSymbol),

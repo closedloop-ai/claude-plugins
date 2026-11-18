@@ -100,7 +100,7 @@ def test_the_table_records_each_reference_read_criterion_and_check_in_one_shape(
     section = recording()
     for phrase in (
         "`Reference read <request ID>: <image path>: <what it shows>`, one per reference image on the session, every one the person gave and not only the one the latest request names (a screenshot of our page as it is now included), before any criterion or code for that request, a correction included",
-        "`AC-n (source: <request ID>, reference <image path>): <one property as the reference shows it>; <the design token or catalog component that delivers it>`",
+        "`AC-n (source: <request ID>, reference <image path>): <one property as the reference shows it>; <the design token that delivers it, with any catalog component beside it; a component alone only when no token can deliver the property>`",
         'a shadow, a type size and a type weight are three criteria, never one "match the reference"',
         'A correction ("it still doesn\'t look like it") adds a criterion for each property the reference shows that no criterion names yet, even when a broad one such as "make ours like the second one" exists, before it fixes anything',
         # operator ruling, 2026-10-16: one reference check line per theme the surface supports.
@@ -126,5 +126,5 @@ def test_with_no_reference_a_criterion_quotes_the_words_and_nothing_renders() ->
 
 def test_the_writer_records_one_property_per_criterion_in_those_shapes() -> None:
     writer = flat(WRITER.read_text())
-    assert "one property per criterion, with the design token or catalog component that delivers it" in writer
+    assert "one property per criterion, with the design token that delivers it and any catalog component beside it" in writer
     assert 'Record each line in the shapes `quality-loop.md`, "Recording it in the table", gives' in writer

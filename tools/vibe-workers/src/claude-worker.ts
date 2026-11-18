@@ -313,7 +313,7 @@ export async function runWorker(rawInput: unknown) {
   const agentRoot = unchangedUpgrade && resolvedRoot === installedRoot ? recorded! : resolvedRoot;
   const dispatchProblem = dispatchFreshnessProblem(unchangedUpgrade ? installedRoot : agentRoot,
     installedRoot, input.worktree, input.input ?? input.continuation ?? "");
-  if (dispatchProblem) throw new Error(dispatchProblem);
+  if (dispatchProblem) throw new WorkerRefusal("DISPATCH_SCRIPT_INVALID", dispatchProblem);
   if (receiptRoles.has(input.agentName) && input.continuation) {
     throw new WorkerRefusal("REVIEWER_RELAUNCH_REQUIRED",
       `Read-only role ${input.agentName} has no persistent continuation. Relaunch that same role fresh with a new requestId and input; do not continue the session writer.`);

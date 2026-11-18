@@ -3,6 +3,7 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { mainSyncStateSchema, sessionSchema, MainSyncError, type OperationContext } from "./main-sync-contracts.js";
 import { verifyRecipeWitness, validationEnvelopeMs } from "./main-sync-validation-recipe.js";
+import { assertIsolatedTestRead } from "../../../plugins/vibe-core/lib/vibe/scripts/test-state-isolation.mjs";
 
 /** Prelaunch option A reads bounded existing private data only; no source import, Git or other child execution. */
 export async function deriveValidationEnvelope(context: OperationContext, dir: string, branch: string,
@@ -29,6 +30,7 @@ export async function deriveValidationEnvelope(context: OperationContext, dir: s
 }
 
 async function privateData(file: string): Promise<unknown> {
+  assertIsolatedTestRead(file);
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = await handle.stat();

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join, resolve } from "node:path";
 import { ensureGitCommits } from "../../shared/git-commit-fixture.mjs";
@@ -20,13 +20,22 @@ export default function setup() {
  */
 function bindProviderForRun() {
   const chat = `vitest-vibe-workers-${process.pid}`;
-  const records = join(os.homedir(), ".codex", "vibe", "plugin-version");
+  const home = realpathSync(mkdtempSync(join(os.tmpdir(), "vibe-workers-suite-")));
+  const records = join(home, ".codex", "vibe", "plugin-version");
   const file = join(records, `${chat}.json`);
   mkdirSync(records, { recursive: true });
   writeFileSync(file, JSON.stringify({ conversation: chat, status: "current", provider: { state: "bound",
     name: "vibe-closedloop-provider", root: resolve(import.meta.dirname, "../../../plugins/vibe-closedloop-provider"),
     capabilities: ["tickets", "plans", "graph", "memory", "recipes"] } }));
-  process.env.CLAUDE_CODE_SESSION_ID = chat;
-  process.env.CODEX_THREAD_ID = "";
-  return () => rmSync(file, { force: true });
+  const fixtureEnv = { HOME: home, CODEX_HOME: join(home, ".codex"), CLAUDE_CONFIG_DIR: join(home, ".claude"),
+    FLEET_HOME: join(home, "fleet-orchestrator"), CLAUDE_CODE_SESSION_ID: chat, CODEX_THREAD_ID: "" };
+  const previous = Object.fromEntries(Object.keys(fixtureEnv).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, fixtureEnv);
+  return () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(home, { recursive: true, force: true });
+  };
 }

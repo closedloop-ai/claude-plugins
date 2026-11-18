@@ -6,6 +6,7 @@ import { LoadBasis, loadedSkillEvidence } from "../lib/vibe/scripts/loaded-skill
 import { latestSkill, readTranscript } from "./skill-transcript.mjs";
 import { vibeSkillOf } from "../shared/plugin-roots.mjs";
 import { vibeRoot } from "../shared/vibe-install.mjs";
+import { assertIsolatedTestRead } from "../lib/vibe/scripts/test-state-isolation.mjs";
 
 const SESSION = /^[A-Za-z0-9_.:-]{1,128}$/;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -85,6 +86,7 @@ function fresh(recordedAt, now) {
 }
 
 function readSmallJson(file) {
+  assertIsolatedTestRead(file);
   try {
     const stat = lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) return null;
@@ -104,6 +106,7 @@ export function readHookSkill(sessionId, home = os.homedir(), now = new Date()) 
 export function readHookSkillRecord(sessionId, home = os.homedir()) {
   const file = scopePath(sessionId, home);
   if (!file) return null;
+  assertIsolatedTestRead(file);
   try { return JSON.parse(readFileSync(file, "utf8")); }
   catch { return null; }
 }

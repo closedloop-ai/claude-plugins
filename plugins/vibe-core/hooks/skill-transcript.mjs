@@ -5,6 +5,7 @@
 
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { VIBE_NAME_PATTERN, vibeSkillPattern } from "../shared/plugin-roots.mjs";
+import { assertIsolatedTestRead } from "../lib/vibe/scripts/test-state-isolation.mjs";
 
 /**
  * How much of a transcript a hook reads: all of it up to TRANSCRIPT_LIMIT_BYTES, else its first
@@ -34,6 +35,7 @@ const SKILL_MARKERS = Object.freeze({
 /** The transcript text at `file` (both ends of one past TRANSCRIPT_LIMIT_BYTES), or null when there is none to read. */
 export function readTranscript(file) {
   if (typeof file !== "string" || file === "") return null;
+  assertIsolatedTestRead(file);
   let fd = null;
   try {
     fd = openSync(file, "r");

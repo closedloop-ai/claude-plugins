@@ -205,13 +205,16 @@ test("with no provider bound there is no slot rule, so the wrapper's name means 
   assert.equal(heavySlotProblem("heavy-slot.sh ISS-1 run", undefined), null);
 });
 
+// A directory outside any vibe session, so a run from inside a session worktree never reads that session's binding.
+const NEUTRAL_CWD = mkdtempSync(path.join(os.tmpdir(), "vibe-guard-cwd-"));
+
 /** The guard's reason for `command` in a chat with no provider bound and no launcher record, or null. */
-const guardReason = (command, event = {}) => shellSafetyGuard({ ...event, tool_input: { command } })?.reason ?? null;
+const guardReason = (command, event = {}) => shellSafetyGuard({ cwd: NEUTRAL_CWD, ...event, tool_input: { command } })?.reason ?? null;
 
 /** Runs pre-tool-use.mjs for `command` in `chat` (as session `session`, when given); returns its hookSpecificOutput, or null. */
 function runHook(chat, command, session) {
   const event = chat.payload({ ...(session ? { session_id: session } : {}), tool_name: "Bash", tool_input: { command } });
-  const result = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(event), encoding: "utf8", env: chat.env });
+  const result = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(event), encoding: "utf8", env: chat.env, cwd: NEUTRAL_CWD });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout ? JSON.parse(result.stdout).hookSpecificOutput ?? null : null;
 }

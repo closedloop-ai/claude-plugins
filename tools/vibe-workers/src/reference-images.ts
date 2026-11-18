@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { assertIsolatedTestRead } from "../../../plugins/vibe-core/lib/vibe/scripts/test-state-isolation.mjs";
 
 /** Where `reference-images.mjs` stores the person's visual references, beside the session record. */
 export const REFERENCE_DIR = "vibe-reference-images";
@@ -23,6 +24,7 @@ export type ReferenceImage = { path: string; mediaType: string; requestId?: stri
 export function readReferenceImages(metadataDir: string): ReferenceImage[] {
   const file = join(metadataDir, "vibe-session.json");
   if (!existsSync(file)) return [];
+  assertIsolatedTestRead(file);
   const record = recordSchema.safeParse(JSON.parse(readFileSync(file, "utf8")));
   if (!record.success) return [];
   const owned = join(metadataDir, REFERENCE_DIR);

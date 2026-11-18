@@ -104,7 +104,6 @@ import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-s
 import { unexplainedLockfileEntries } from "./lockfile-manifest.mjs";
 import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
-import { decisionTableProblems } from "./decision-table-gate.mjs";
 import { buildInventoryBundle } from "./inventory-bundle.mjs";
 import { isPortableSurfaceAllowlistEdit, portableSurfaceChecker } from "./prototype-allowlist.mjs";
 import { loadOpenPrs, proofCorpusBase, pullRequestFacts } from "./pr-facts.mjs";
@@ -120,6 +119,8 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { decisionTableProblems } = await vibeCore("lib/handoff/scripts/decision-table-gate.mjs");
+const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "vibe/";
@@ -184,6 +185,8 @@ const result = withStableSource(worktree, () => {
   const baseCommit = proofCorpusBase(worktree, () => getComparison().operand);
   const { policy: pathPolicy, file: pathPolicyFile, problem: pathPolicyProblem,
     source: pathPolicySource } = readPathPolicy();
+  let repository = null;
+  try { repository = githubRepository(git(["config", "--get", "remote.origin.url"])); } catch { /* No origin means no repository exception. */ }
   const allChangedFiles = listChangedFiles(baseCommit);
   const planPrefix = sessionLocalPlanPrefix(worktree);
   const localPlans = allChangedFiles.filter((file) => isLocalPlanPath(file.path, planPrefix));
@@ -239,7 +242,7 @@ const result = withStableSource(worktree, () => {
   const prFacts = values.phase === "build" ? null : readPullRequestFacts();
   const deferredToHandoff = values.phase === "build" ? diffRules.blocking.filter((finding) => HANDOFF_ONLY_RULES.has(finding.rule)) : [];
   const diffRulesBlocking = diffRules.blocking.filter((finding) => !deferredToHandoff.includes(finding));
-  const decisionTables = values.phase === "build" ? [] : decisionTableProblems(worktree);
+  const decisionTables = decisionTableProblems(worktree);
 
   const blocking = {
     forbiddenPaths: !pathPolicyProblem && forbidden.length === 0 && outsideAllowed.length === 0 && unexplainedLockfile.length === 0,
@@ -291,8 +294,10 @@ const result = withStableSource(worktree, () => {
     v1Stories,
     compileOnlyV1Repairs,
     retitledStories,
-    diffRules: { blocking: diffRulesBlocking, deferredToHandoff, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
+    diffRules: { blocking: diffRulesBlocking, deferredToHandoff, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks,
+      ...(diffRules.flagRetirements ? { flagRetirements: diffRules.flagRetirements } : {}) },
     decisionTableProblems: decisionTables,
+    decisionTableReadyForHandoff: decisionTables.length === 0,
     ...(values.phase === "build" ? {} : { bundle: buildBundle() }),
     ...prFacts,
   };
@@ -463,6 +468,7 @@ const result = withStableSource(worktree, () => {
       file,
       phase: values.phase,
       policy: pathPolicy,
+      repository,
       prototype: { owned: prototype, slug: record?.slug },
       portableSurfaceAllowed: portableSurfaceEditAllowed(file),
       retiredDeletion: isRetiredDeletion(file),

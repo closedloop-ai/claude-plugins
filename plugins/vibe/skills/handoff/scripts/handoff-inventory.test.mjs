@@ -61,6 +61,22 @@ function useMasterDefault({ home, checkout, origin, worktree }) {
 const PATH_POLICY = "vibe-handoff-paths.json";
 const CLAUDE_PLUGIN_POLICY = readFileSync(path.resolve(HERE, "../../../../..", PATH_POLICY), "utf8");
 
+test("AC-019 build inventory reports when the table cannot advance to handoff", (t) => {
+  const { home, worktree } = setup(t, "stale-table");
+  const table = seedAlignedDecisionTable(worktree);
+  const verified = readFileSync(table, "utf8");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  writeFileSync(table, verified.replace("- Checked the fixture behavior.", "(post-implementation)"));
+  const build = runNode(INVENTORY, ["--worktree", worktree, "--phase", "build"], home);
+  assert.equal(build.json.decisionTableReadyForHandoff, false);
+  assert.match(build.json.decisionTableProblems.join("\n"), /Verification Findings is empty/);
+  const blocked = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(blocked.json.blocking.decisionTablesCurrent, false);
+  writeFileSync(table, verified);
+  const reconciled = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(reconciled.json.blocking.decisionTablesCurrent, true);
+});
+
 test("target repository declaration admits claude-plugins source, tools, evals, changelog and docs", (t) => {
   const { home, worktree } = setup(t, "claude-paths", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
     repoName: "claude-plugins", remoteUrl: "git@github.com:closedloop-ai/claude-plugins.git", declared: false,
@@ -78,6 +94,38 @@ test("target repository declaration admits claude-plugins source, tools, evals, 
   const blocked = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
   assert.equal(blocked.json.blocking.forbiddenPaths, false);
   assert.deepEqual(blocked.json.forbidden, [{ path: "plugins/vibe/AGENTS.md", status: "A" }]);
+});
+
+test("the claude-plugins handoff exception admits only edits to its existing root AGENTS.md", (t) => {
+  const { home, worktree } = setup(t, "root-instructions", {
+    [PATH_POLICY]: CLAUDE_PLUGIN_POLICY,
+    "AGENTS.md": "Root instructions\n",
+    "CLAUDE.md": "Load AGENTS.md\n",
+    "plugins/vibe/AGENTS.md": "Nested instructions\n",
+  }, { repoName: "claude-plugins", remoteUrl: "git@github.com:closedloop-ai/claude-plugins.git", declared: false });
+  git(worktree, ["config", "vibe.baseRef", "main"], home);
+  write(worktree, "AGENTS.md", "Root instructions, edited\n");
+  const inventory = (phase = "pull-request") => runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home).json;
+  for (const phase of ["handoff", "pull-request"]) {
+    const result = inventory(phase);
+    assert.equal(result.blocking.forbiddenPaths, true, JSON.stringify(result.forbidden));
+    assert.deepEqual(result.outsideAllowed, []);
+  }
+
+  for (const file of ["CLAUDE.md", "plugins/vibe/AGENTS.md", "plugins/vibe/CLAUDE.md", "AGENTS.override.md", ".github/workflows/ci.yml"]) {
+    write(worktree, file, "Still protected\n");
+  }
+  const blocked = inventory();
+  assert.equal(blocked.blocking.forbiddenPaths, false);
+  assert.deepEqual(blocked.forbidden.map(({ path }) => path).sort(), [
+    ".github/workflows/ci.yml", "AGENTS.override.md", "CLAUDE.md", "plugins/vibe/AGENTS.md", "plugins/vibe/CLAUDE.md",
+  ]);
+  unlinkSync(path.join(worktree, "AGENTS.md"));
+  assert.ok(inventory().forbidden.some(({ path, status }) => path === "AGENTS.md" && status === "D"));
+
+  write(worktree, "AGENTS.md", "Root instructions, edited\n");
+  git(worktree, ["config", "remote.origin.url", "git@github.com:example/claude-plugins.git"], home);
+  assert.ok(inventory().forbidden.some(({ path, status }) => path === "AGENTS.md" && status === "M"));
 });
 
 test("root declaration uses the verified origin default when the captured base lacks one", (t) => {

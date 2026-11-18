@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { assertIsolatedTestRead } from "./test-state-isolation.mjs";
 
 /** Executes bounded git reads and operations for the session's exact worktree. */
 export function git(cwd, args, options = {}) {
@@ -23,6 +24,7 @@ export function sessionRecordPath(worktree) {
 /** Reads the persisted record without adding surface-specific defaults. */
 export function readSessionRecord(worktree) {
   const file = recordPath(worktree);
+  assertIsolatedTestRead(file);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
 }
 

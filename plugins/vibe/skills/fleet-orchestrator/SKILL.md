@@ -27,6 +27,11 @@ You run a program (several PRs at once, one writer on one PR, or research and de
 
 2. **Sanity-check every worker output; never just relay it.** When a change looks absurd, oversized or irrational (several flags for one screen, a docs file nobody asked for, a plugin PR that only adds, a stale head, a weakened test, a claim the evidence does not support), push back to the worker with a simpler alternative before the operator sees it, then tell the operator what you caught.
 
+<!-- generic: related-delivery-principle -->
+3. **Fold related work into the in-flight unit or pull request.** Recommend folding when asking about both paths. The separate option names its own test lanes, CI, reviews, and merge-queue time.
+<!-- end generic: related-delivery-principle -->
+> Provider `tickets` (block `related-delivery-principle` of `fleet-skill.md`)
+
 Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come from the repo's own docs or the team knowledge base; never assume them. Machine specifics (hosts, paths, model names, slot counts) come from `<fleetHome>/config.env`.
 
 - Before replying with remaining work, use [Remaining work report](./references/templates.md#remaining-work-report). Name every selected lane that starts now, its machine, true dependencies, all parallel and queued work, any capacity move, and time to ready from the longest dependent path rather than a serial sum. Include these even when a lane already started; never send only its start action. Audit the reply for every fact before sending.
@@ -103,7 +108,7 @@ Decide from evidence, not guesses (vibe's [repository-intelligence reference](..
 ## Related tickets become one unit
 
 <!-- generic: units -->
-With no provider, each work item the operator gives goes to its own writer, branch and PR; nothing groups items into units. A provider that has the `tickets` capability supplies the grouping.
+With no provider, use the fleet board and existing pull requests to fold related work into its current writer. An unrelated item gets its own writer, branch and PR. A provider that has the `tickets` capability also supplies tracker-backed grouping.
 <!-- end generic: units -->
 > Provider `tickets` (block `units` of `fleet-skill.md`)
 ## State and persistence

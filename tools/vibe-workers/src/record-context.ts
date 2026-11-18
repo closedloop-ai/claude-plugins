@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
 import { z } from "zod";
 import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
-import { sessionLiveTicket } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
+import { readSessionRecord, sessionLiveTicket } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
 import { identifierSchema } from "./contracts.js";
 import { checkoutLocation, location, sessionPlace } from "./ledger.js";
 import { validationWitnessSchema } from "./main-sync-validation-contracts.js";
@@ -151,7 +151,7 @@ function discardLocation(input: RecordContext, stable: ReturnType<typeof checkou
     liveTicketCreatedBySession: z.boolean().optional(),
     handoffTicket: z.string().nullable().optional(),
     operator: z.object({ id: z.string().min(1), email: z.string().email() }).passthrough() }).passthrough().parse(
-      JSON.parse(readFileSync(join(target.dir, "vibe-session.json"), "utf8")));
+      readSessionRecord(target.root));
   const recordedTicket = sessionLiveTicket(record);
   const recordedCreated = record.liveTicketCreatedBySession ?? (recordedTicket !== null);
   if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`)

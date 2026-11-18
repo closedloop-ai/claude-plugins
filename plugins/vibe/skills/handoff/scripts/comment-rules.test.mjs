@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { checkAgentDecisionCitations, checkCommentClaims, checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkSessionPointers, checkStaleCitations, citationPattern } from "./comment-rules.mjs";
 import { bindProvider, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -147,6 +148,47 @@ test("ISS-14137 session pointers and agent product decisions are blocking in tes
   assert.deepEqual(collect((add) => checkAgentDecisionCitations(cited, repo, add)), []);
 });
 
+test("ISS-14137 a comment that only mentions a session or lane is not an agent decision citation", () => {
+  const repo = { sessionIds: [], rules: RULES };
+  const mentions = files("diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -0,0 +1,3 @@\n+// One captured session serves every case; the admission case runs last.\n+// The binding is read once, on the first key a lane asks for.\n+export {};\n");
+  assert.deepEqual(collect((add) => checkAgentDecisionCitations(mentions, repo, add)), []);
+  const citing = files("diff --git a/y.ts b/y.ts\n--- a/y.ts\n+++ b/y.ts\n@@ -0,0 +1,2 @@\n+// Ruled by the agent: archived rows show last.\n+export {};\n");
+  assert.equal(collect((add) => checkAgentDecisionCitations(citing, repo, add))[0].rule, "agent-decision-citation");
+  // Every layout raised in review: a citation names an agent, lane or session as the decider; a mention, a role list or
+  // a tuple does not, whatever ordering word sits beside it.
+  const cases = [
+    ["// Orchestrator decisions: archived rows show last.", true],
+    ["// Archived rows show last (orchestrator, 2026-11-17).", true],
+    ["// Archived rows show last (agent; decided).", true],
+    ["// Archived rows show last (orchestrator: ruling).", true],
+    ["// Archived rows show last (writer, chose).", true],
+    ["// Rows show last (session expired).", false],
+    ["// Copy the token (session storage) first.", false],
+    ["// Show the badge (agent header) last.", false],
+    ["// Idle helper panes hide first when a helper (reviewer, verifier, QA prep, poller) stops.", false],
+    ["// Sort by (session, index), newest first.", false],
+    ["// Group findings by (session, rule) first.", false],
+    ["// Sort by (reviewer, rule id), oldest first.", false],
+    ["// Show rows last (orchestrator 2026-11-18).", false],
+    ["// Show one row per session, newest first.", false],
+    ["// Show the decision table rows first.", false],
+    ["// Show rows first, per the decision table.", true],
+  ];
+  for (const [comment, cited] of cases) {
+    const diff = files(`diff --git a/m.ts b/m.ts\n--- a/m.ts\n+++ b/m.ts\n@@ -0,0 +1,2 @@\n+${comment}\n+export {};\n`);
+    assert.equal(collect((add) => checkAgentDecisionCitations(diff, repo, add)).length, cited ? 1 : 0, comment);
+  }
+  // A citation wrapped across comment lines is still one sentence.
+  for (const [lines, cited] of [
+    [["// Archived rows show last (orchestrator,", "// 2026-11-17)."], true],
+    [["// Archived rows show last, as decided by the", "// orchestrator."], true],
+    [["// Archived rows show last.", "// Sorted by (session, index)."], false],
+  ]) {
+    const diff = files(`diff --git a/w.ts b/w.ts\n--- a/w.ts\n+++ b/w.ts\n@@ -0,0 +1,3 @@\n${lines.map((line) => `+${line}`).join("\n")}\n+export {};\n`);
+    assert.equal(collect((add) => checkAgentDecisionCitations(diff, repo, add)).length, cited ? 1 : 0, lines.join(" "));
+  }
+});
+
 test("ISS-14137 diff-rules derives private row ids from the session evidence", (t) => {
   const result = run(t, { head: { "x.test.ts": "// DT-CUSTOM-7 is the reason\nexport {};\n" },
     changeLog: "Affected rows: DT-CUSTOM-7\n" });
@@ -164,4 +206,63 @@ test("the command prints blocking findings and reviewer candidates for a worktre
   assert.deepEqual(output.blocking.map(({ rule, file }) => [rule, file]), [["excuse-comment", STORY]]);
   assert.deepEqual(output.candidates.map(({ rule, file, line }) => [rule, file, line]), [["stale-citation", LEAD, 1]]);
   assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: "utf8" }).status, 2);
+});
+
+// A large changed file: 100 definitions, each read 400 times, then one guarded constant and one near miss at the
+// end, where the diff touches. Each definition looks up the line of every use, so a per-lookup split of the
+// file's whole prefix takes many seconds here, while one line index per file finishes well inside the bound.
+function largeGuardedFile() {
+  const lines = [];
+  for (let i = 0; i < 100; i += 1) lines.push(`const value${i} = compute(${i});`);
+  for (let j = 0; j < 400; j += 1) for (let i = 0; i < 100; i += 1) lines.push(`use(value${i}, ${j});`);
+  const guardedAt = lines.length + 2;
+  lines.push("const controls = (", "  <T readOnly={!mode.isEditing} />", ");", "const a = { bar: mode.isEditing ? controls : null };");
+  lines.push("const near = (", "  <T readOnly={!mode.isEditing} />", ");", "const b = { bar: session.ready ? near : null };", "");
+  return { text: lines.join("\n"), lines, guardedAt, touched: [lines.length - 5, lines.length - 1] };
+}
+
+// A changed file with many definitions, as a bundled script has: 60,000 definitions read once each, then the
+// same guarded constant and near miss. A search of the whole file per definition needs several times the case
+// timeout here, while one pass over the file's identifiers stays far inside it.
+function manyDefinitionsFile() {
+  const lines = [];
+  for (let i = 0; i < 60_000; i += 1) lines.push(`const value${i} = compute(${i});`, `use(value${i});`);
+  const guardedAt = lines.length + 2;
+  lines.push("const controls = (", "  <T readOnly={!mode.isEditing} />", ");", "const a = { bar: mode.isEditing ? controls : null };");
+  lines.push("const near = (", "  <T readOnly={!mode.isEditing} />", ");", "const b = { bar: session.ready ? near : null };", "");
+  return { text: lines.join("\n"), lines, guardedAt, touched: [lines.length - 5, lines.length - 1] };
+}
+
+// The check runs in a worker so the case timeout can end a run that never yields.
+function guardedConstantsInWorker(t, text, files) {
+  const source = `import { parentPort, workerData } from "node:worker_threads";
+const { checkGuardedConstants } = await import(workerData.module);
+const found = [];
+checkGuardedConstants(workerData.files, { head: () => workerData.text }, (rule, file, line, problem) => found.push({ rule, file, line, problem }));
+parentPort.postMessage(found);`;
+  const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(source)}`),
+    { workerData: { module: new URL("./comment-rules.mjs", import.meta.url).href, text, files } });
+  worker.unref();
+  t.after(() => worker.terminate());
+  return new Promise((resolve, reject) => {
+    worker.once("message", resolve);
+    worker.once("error", reject);
+  });
+}
+
+test("ISS-14325 a large changed file with many definitions and uses finishes inside the case timeout with the same findings", { timeout: 5_000 }, async (t) => {
+  const { text, lines, guardedAt, touched } = largeGuardedFile();
+  const changed = [{ path: "big.tsx", status: "M", added: touched.map((line) => ({ line, text: lines[line - 1] })), removed: [] }];
+  const found = await guardedConstantsInWorker(t, text, changed);
+  assert.deepEqual(found.map(({ rule, file, line }) => [rule, file, line]), [["guarded-constant", "big.tsx", guardedAt]]);
+  assert.match(found[0].problem, /`controls` is used only where `mode.isEditing` is true/);
+  assert.ok(!found.some(({ problem }) => problem.includes("`near`")), "the near miss, guarded by another condition, reports nothing");
+});
+
+test("ISS-14325 a changed file with many definitions finishes inside the case timeout with the same findings", { timeout: 5_000 }, async (t) => {
+  const { text, lines, guardedAt, touched } = manyDefinitionsFile();
+  const changed = [{ path: "bundle.mjs", status: "M", added: touched.map((line) => ({ line, text: lines[line - 1] })), removed: [] }];
+  const found = await guardedConstantsInWorker(t, text, changed);
+  assert.deepEqual(found.map(({ rule, file, line }) => [rule, file, line]), [["guarded-constant", "bundle.mjs", guardedAt]]);
+  assert.ok(!found.some(({ problem }) => problem.includes("`near`")), "the near miss, guarded by another condition, reports nothing");
 });

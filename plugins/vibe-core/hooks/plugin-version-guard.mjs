@@ -130,6 +130,7 @@ export function pluginVersionGuard(event, home = os.homedir()) {
     || (tool === "Bash" && (launchesWorker(event?.tool_input?.command) || /(?:^|\s)claude\s+-p\b/.test(String(text ?? ""))));
   if (!writerLaunch && tool !== "Agent" && tool !== "SendMessage") return null;
   if (!writerLaunch && !inVibeConversation(event, home)) return null;
-  const problem = versionProblem(event?.session_id, home, eventCwd(event)) ?? pluginScriptProblems(String(text ?? ""), vibeRoot(eventCwd(event)), event?.cwd).at(0);
+  const cwd = eventCwd(event);
+  const problem = versionProblem(event?.session_id, home, cwd) ?? pluginScriptProblems(String(text ?? ""), vibeRoot(cwd), cwd).at(0);
   return problem ? deny(problem) : null;
 }

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { handoffGateProblem, mergeabilityProblem, resolvePrBase, reviewFindingProblems } from "../lib/handoff/scripts/handoff-gate-check.mjs";
 import { recordHandoffGate } from "../../vibe/skills/handoff/scripts/handoff-gate.mjs";
@@ -13,6 +13,17 @@ import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 import { createsPullRequest, prCreateGuard, vibeWorktree } from "./pr-create-guard.mjs";
 import { readHookSkill, recordHookSkill } from "./hook-session-scope.mjs";
 import { pluginVersionPromptStart } from "./plugin-version-guard.mjs";
+import { seedAlignedDecisionTable } from "../../vibe/skills/vibe/scripts/test-fixtures.mjs";
+
+const fleetHome = mkdtempSync(path.join(tmpdir(), "pr-create-fleet-home-"));
+const originalFleetHome = process.env.FLEET_HOME;
+process.env.FLEET_HOME = fleetHome;
+after(() => {
+  if (originalFleetHome === undefined) delete process.env.FLEET_HOME;
+  else process.env.FLEET_HOME = originalFleetHome;
+  rmSync(fleetHome, { recursive: true, force: true });
+});
+const PLACEMENT = "Delivery placement: unrelated: no in-flight unit owns this standalone fixture change.\n";
 
 test("PR guard separates payload words from direct and nested commands", (t) => {
   const home = mkdtempSync(path.join(tmpdir(), "pr-command-home-"));
@@ -198,8 +209,9 @@ test("PR guard separates payload words from direct and nested commands", (t) => 
   assert.equal(guard(vibe, `cd ${ordinary} <<EOF\n$(gh pr create --fill)\nEOF`)?.decision, "deny");
 });
 
-test("vibe PR creation requires a current handoff witness", () => {
+test("vibe PR creation requires a current handoff witness and delivery placement", (t) => {
   const worktree = mkdtempSync(path.join(tmpdir(), "vibe-pr-create-"));
+  t.after(() => rmSync(worktree, { recursive: true, force: true }));
   execFileSync("git", ["init", "-q", "-b", "vibe/example", worktree]);
   writeFileSync(path.join(worktree, "file.txt"), "base\n");
   execFileSync("git", ["-C", worktree, "add", "."]);
@@ -211,7 +223,12 @@ test("vibe PR creation requires a current handoff witness", () => {
   execFileSync("git", ["init", "--bare", "-q", origin]);
   execFileSync("git", ["-C", worktree, "remote", "add", "origin", origin]);
   execFileSync("git", ["-C", worktree, "push", "-q", "origin", "HEAD:refs/heads/main"]);
+  const originUrl = "https://github.com/acme/guard-fixture.git";
+  execFileSync("git", ["-C", worktree, "remote", "set-url", "origin", originUrl]);
+  execFileSync("git", ["-C", worktree, "config", `url.${origin}.insteadOf`, originUrl]);
   writeFileSync(path.join(gitDir, "vibe-session.json"), "{}\n");
+  const table = seedAlignedDecisionTable(worktree);
+  const aligned = readFileSync(table, "utf8");
   const transcript = path.join(gitDir, "transcript.jsonl");
   writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { content: "Base directory for this skill: /cache/vibe/skills/vibe" } })}\n`);
   const otherTranscript = path.join(gitDir, "other-transcript.jsonl");
@@ -238,6 +255,12 @@ test("vibe PR creation requires a current handoff witness", () => {
   assert.throws(() => mark({ ok: true, blocking: { prBody: true, prEvidence: false } }), /did not pass body and verifier/);
   mark({ ok: true, blocking: { prBody: true, prEvidence: true } });
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile }), null);
+  assert.match(prCreateGuard(event)?.reason ?? "", /Delivery placement/);
+  writeFileSync(bodyFile, `PR body\n${PLACEMENT}`);
+  mark({ ok: true, blocking: { prBody: true, prEvidence: true } });
+  writeFileSync(table, aligned.replace("- Checked the fixture negative path.", "(post-implementation)"));
+  assert.match(prCreateGuard(event)?.reason ?? "", /decision table needs reconciliation/);
+  writeFileSync(table, aligned);
   assert.equal(prCreateGuard(event), null);
   assert.equal(prCreateGuard({ ...event, tool_input: { command: `gh pr create -B=main -F=${bodyFile}` } }), null,
     "equals-attached short base and body forms use the same handoff witness");
@@ -255,7 +278,7 @@ test("vibe PR creation requires a current handoff witness", () => {
   assert.match(prCreateGuard({ cwd: worktree, transcript_path: transcript, tool_input: { command: `gh pr create --base main --body-file ${receipts[0]}` } })?.reason ?? "", /body file/);
   writeFileSync(bodyFile, "edited PR body\n");
   assert.match(prCreateGuard(event)?.reason ?? "", /body evidence changed/);
-  writeFileSync(bodyFile, "PR body\n");
+  writeFileSync(bodyFile, `PR body\n${PLACEMENT}`);
   assert.equal(prCreateGuard(event), null);
   const oldBase = execFileSync("git", ["-C", worktree, "rev-parse", "refs/remotes/origin/main"], { encoding: "utf8" }).trim();
   const tree = execFileSync("git", ["-C", worktree, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
@@ -490,6 +513,7 @@ test("AC-2 AC-6: an explicit proven non-vibe PR head is allowed from a vibe conv
   writeFileSync(path.join(ordinaryRepo, "file.txt"), "base\n");
   execFileSync("git", ["-C", ordinaryRepo, "add", "."]);
   execFileSync("git", ["-C", ordinaryRepo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "base"]);
+  execFileSync("git", ["-C", ordinaryRepo, "remote", "add", "origin", "https://github.com/me/fork.git"]);
   writeFileSync(path.join(ordinaryRepo, "body.md"), "## Summary\nFixture body.\n");
   execFileSync("git", ["-C", ordinaryRepo, "branch", "vibe/new"]);
   const sessionLessHeads = ["gh pr create --head vibe/new --body-file body.md", "gh pr create -H=vibe/new -F=body.md",
@@ -501,7 +525,7 @@ test("AC-2 AC-6: an explicit proven non-vibe PR head is allowed from a vibe conv
     assert.equal(prCreateGuard({ cwd: ordinaryRepo, session_id: "fleet-head", tool_input: { command } }, home)?.decision, "deny",
       `${command}: a vibe-scoped conversation still refuses a session-less vibe head without the override`);
   }
-  writeFileSync(path.join(ordinaryRepo, "override.md"), "Vibe gate override: #13846: the session record was lost.\n");
+  writeFileSync(path.join(ordinaryRepo, "override.md"), `Vibe gate override: #13846: the session record was lost.\n${PLACEMENT}`);
   assert.equal(prCreateGuard({ cwd: ordinaryRepo, session_id: "fleet-head", tool_input: { command: "gh pr create --head vibe/new --body-file override.md" } }, home), null,
     "the ticketed override also clears the missing-record refusal");
   execFileSync("git", ["-C", ordinaryRepo, "checkout", "-q", "vibe/new"]);
@@ -512,7 +536,6 @@ test("AC-2 AC-6: an explicit proven non-vibe PR head is allowed from a vibe conv
   execFileSync("git", ["-C", ordinaryRepo, "checkout", "-q", "fix/ordinary"]);
   assert.equal(prCreateGuard({ cwd: ordinaryRepo, session_id: "fleet-head", tool_input: { command: "gh pr create --head remote-only --body-file body.md" } }, home), null,
     "a non-vibe head that exists only on the remote is judged by the ordinary command worktree");
-  execFileSync("git", ["-C", ordinaryRepo, "remote", "add", "origin", "https://github.com/me/fork.git"]);
   assert.equal(prCreateGuard({ cwd: ordinaryRepo, session_id: "fleet-head", tool_input: { command: "gh pr create -R up/repo --head fix/ordinary --body-file body.md" } }, home), null,
     "a fork checkout opening a non-vibe PR upstream is judged by the ordinary command worktree");
   execFileSync("git", ["-C", ordinaryRepo, "branch", "fix/claimed"]);
@@ -621,6 +644,7 @@ test("ISS-13855: every PR guard refusal names a supported retry, and gate refusa
   writeFileSync(path.join(repo, "file.txt"), "base\n");
   git("add", ".");
   git("commit", "-qm", "base");
+  git("remote", "add", "origin", "https://github.com/acme/retry-fixture.git");
   git("branch", "vibe/orphan");
   git("branch", "fix/corrupt");
   git("worktree", "add", "-q", "-b", "vibe/session", session);
@@ -632,7 +656,7 @@ test("ISS-13855: every PR guard refusal names a supported retry, and gate refusa
   const plain = path.join(outside, "plain.md");
   const ticketed = path.join(outside, "ticketed.md");
   writeFileSync(plain, "## Summary\nNo override line.\n");
-  writeFileSync(ticketed, "Vibe gate override: #13846: the gate refuses a verified change.\n");
+  writeFileSync(ticketed, `Vibe gate override: #13846: the gate refuses a verified change.\n${PLACEMENT}`);
   const guard = (cwd, command) => prCreateGuard({ cwd, session_id: "retry", tool_input: { command } }, home);
   const retry = /; (if every real check and review passed and known Vibe gate bugs are the only blocker|run gh pr create on this machine from a checkout|cd to a literal checkout path|run gh pr create as a plain command|run the final handoff gate on the published source, or if every real check|pass the handoff gate, then finish the cloud task)/;
   const refusals = {

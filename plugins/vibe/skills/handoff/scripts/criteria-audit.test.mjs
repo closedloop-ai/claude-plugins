@@ -169,7 +169,7 @@ test("a criterion waiting on another open ticket is accepted only when the work 
   const open = { passingOn: true, statuses: { "ISS-9": "IN_PROGRESS" } };
   assert.deepEqual(run("not met yet: waits on ISS-9", open), { problems: [], waiting: ["AC-1 waits on ISS-9"] });
   assert.deepEqual(run("not met yet: waits on ISS-9", { statuses: open.statuses }).problems,
-    ["AC-1: waits on ISS-9, but a pull request needs every criterion met; only a session passed on to its next owner may leave a criterion waiting"], "a pull request needs every criterion met");
+    ["AC-1: waits on ISS-9, but handoff-gate does not pass --passing-on for a requested pull request; complete the criterion before PR creation, or pass the session to its next owner and rerun criteria-audit with --passing-on"], "the refusal names the missing mode and both supported actions");
   assert.deepEqual(run("not met yet: waits on the API team", open).problems, ["AC-1: a waiting row names the ticket it waits on: not met yet: waits on <ticket>"]);
   assert.deepEqual(run("not met yet: waits on ISS-9", { passingOn: true, statuses: { "ISS-9": "DONE" } }).problems,
     ["AC-1: waits on ISS-9, which is DONE; check the criterion against the shipped work instead"]);
@@ -194,6 +194,17 @@ test("the CLI reads --passing-on and --ticket-status and prints the waiting crit
     assert.deepEqual(JSON.parse(passedOn.stdout).waiting, ["AC-1 waits on ISS-9"]);
     assert.equal(run("--ticket-status", "ISS-9=TODO").status, 1, "the pull request path refuses it");
     assert.equal(run("--passing-on", "--ticket-status", "ISS-9=DONE").status, 1);
+
+    const noProviderHome = path.join(dir, "no-provider-home");
+    execFileSync("mkdir", ["-p", noProviderHome]);
+    const noProviderEnv = { ...process.env, HOME: noProviderHome };
+    delete noProviderEnv.CLAUDE_CODE_SESSION_ID;
+    delete noProviderEnv.CODEX_THREAD_ID;
+    writeFileSync(audit, "| AC-1 | PARTIAL | source-trace | not met yet: waits on #9 |\n");
+    const providerNone = spawnSync(process.execPath, [SCRIPT, "--worktree", dir, "--ticket", ticket, "--audit", audit, "--matrix", matrix,
+      "--passing-on", "--ticket-status", "#9=TODO"], { encoding: "utf8", env: noProviderEnv });
+    assert.equal(providerNone.status, 0, providerNone.stdout + providerNone.stderr);
+    assert.deepEqual(JSON.parse(providerNone.stdout).waiting, ["AC-1 waits on #9"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

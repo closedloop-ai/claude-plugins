@@ -903,6 +903,23 @@ test("adopting keeps a session's binding: generic stays generic, bound stays bou
   assert.deepEqual(adoptedProvider({ mode: null, vercel: null, livePlan: null }, none), none, "a generic record's empty fields are no marker");
 });
 
+test("adopting rebinds a session whose recorded provider folder a plugin update removed to this chat's installed one", async (t) => {
+  const { adoptedProvider } = await import("./plugin-version.mjs");
+  const dir = mkdtempSync(path.join(os.tmpdir(), "vibe-stranded-provider-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const installed = path.join(dir, "vibe", "1.1.100", "provider");
+  mkdirSync(installed, { recursive: true });
+  const removed = path.join(dir, "vibe", "1.1.97", "provider");
+  const recorded = { state: "bound", name: "vibe-closedloop-provider", capabilities: ["tickets"], missing: [], root: removed };
+  const chat = { ...recorded, root: installed };
+  assert.deepEqual(adoptedProvider({ provider: recorded }, chat), chat, "a removed folder rebinds to the installed one");
+  assert.deepEqual(adoptedProvider({ provider: recorded }, { ...chat, name: "other-provider" }), recorded, "never to another provider");
+  assert.deepEqual(adoptedProvider({ provider: recorded }, { ...chat, root: path.join(dir, "absent") }), recorded,
+    "never to a binding whose own folder is missing");
+  assert.deepEqual(adoptedProvider({ provider: { ...recorded, root: installed } }, { ...chat, root: removed }),
+    { ...recorded, root: installed }, "a session whose folder is still there keeps it");
+});
+
 const PROVIDER = "vibe-closedloop-provider";
 const BOTH = ["--runtime", "codex", "--latest-base", UNREACHABLE];
 

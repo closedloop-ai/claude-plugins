@@ -588,6 +588,55 @@ test('remote slot stages and invokes one plugin script with both plugin roots', 
   assert.match(escaped.stderr, /skills-relative mjs path/);
 });
 
+test('two fleet remote commands survive overlapping extraction into separate stages', TIMEOUT, async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.root, { recursive: true, force: true }));
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const probe = join(f.root, 'extract');
+  mkdirSync(probe);
+  const tar = join(f.root, 'bin', 'tar');
+  // Report the historical tar collision if both real remote shell invocations target one directory.
+  writeFileSync(tar, `#!/usr/bin/env bash
+if [[ "\${1:-}" != -C || "\${3:-}" != -xf ]]; then exec /usr/bin/tar "$@"; fi
+probe=${JSON.stringify(probe)}
+destination=$2
+collision_guard=$destination.extracting
+printf '%s\n' "$destination" > "$probe/$SHIP_TEST_SIDE.path"
+if ! mkdir "$collision_guard" 2>/dev/null; then
+  touch "$probe/$SHIP_TEST_SIDE.ready"
+  printf "tar: Can't create 'plugins/vibe-core/.codex-plugin/plugin.json': File exists\n" >&2
+  exit 1
+fi
+trap 'rmdir "$collision_guard"' EXIT
+touch "$probe/$SHIP_TEST_SIDE.ready"
+for (( attempt=0; attempt<150; attempt++ )); do
+  if [[ -f "$probe/first.ready" && -f "$probe/second.ready" ]]; then /usr/bin/tar "$@"; exit $?; fi
+  sleep 0.05
+done
+exit 72
+`, { mode: 0o755 });
+
+  const start = (side, script) => startFleet(f, ['remote', 'slot', side, side, f.root,
+    '--shipped-plugin-script', script, '--help'], { SHIP_TEST_SIDE: side, CODEX_THREAD_ID: '', CLAUDE_CODE_SESSION_ID: '' });
+  const firstScript = 'handoff/scripts/frozen-render.mjs';
+  const secondScript = 'handoff/scripts/review-gap-rules.mjs';
+  const runs = [start('first', firstScript), start('second', secondScript)];
+  const results = await Promise.all(runs.map((run) => run.exited));
+  assert.deepEqual(results.map(({ code }) => code), [0, 0], results.map(({ stderr }) => stderr).join('\n'));
+  const destinations = ['first', 'second'].map((side) => readFileSync(join(probe, `${side}.path`), 'utf8').trim());
+  assert.notEqual(...destinations, 'each archive has a private destination during forced overlap');
+  for (const [index, script] of [firstScript, secondScript].entries()) {
+    const args = f.argv(results[index]);
+    const suffix = `/plugins/vibe/skills/${script}`;
+    const command = args.find((arg) => arg.endsWith(suffix));
+    assert.ok(command, `dispatched ${script}`);
+    const generation = command.slice(0, -suffix.length);
+    assert.ok(existsSync(command));
+    assert.ok(existsSync(join(generation, 'plugins/vibe-core/.codex-plugin/plugin.json')));
+    assert.ok(generation.startsWith(join(f.root, 'remote', 'sessions', '.fleet-orchestrator.generations', 'generation-')));
+  }
+});
+
 test('typed local and remote E2E build slots route a post-acquisition disk preflight', TIMEOUT, () => {
   const f = fixture();
   const local = f.run(['local', 'slot', 'heavy', 'writer', f.root, '--containerized-e2e-build',
@@ -831,8 +880,10 @@ function startFleet(f, args, env = {}) {
     env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}`, SLOT_LOCK_DIR: join(f.root, 'locks'), ...f.bound, ...env },
   });
   let stderr = '';
+  let stdout = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal, stderr })));
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  const exited = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal, stderr, stdout })));
   return { child, exited };
 }
 

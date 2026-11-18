@@ -325,6 +325,13 @@ No agent creates or adds a flag on its own.
 - An agent never adds or edits a flag registration attestation (a ledger row
   or verification date only a human makes); the
   approval and "Keys to see this work" tell the human which key to ledger.
+- A retirement inventory covers the base specs and stories, including callers
+  that reach the surface without naming the flag. Use the `flagRetirements`
+  candidates from `diff-rules.mjs`. Record one `Flag retirement: <key>:
+  <updated|removed|retained|pinned|unrelated> <path>: <evidence>` line per
+  candidate. Verify route/helper reachability for unrelated cases and update or
+  remove each case that used the retired arm. Record `Flag retirement: <key>:
+  none: <evidence>` only when the computed base list is empty.
 
 ## Accessibility
 

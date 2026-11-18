@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test, { after } from "node:test";
-import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
+import { linguistGenerated, parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
 import { git, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
@@ -795,6 +795,65 @@ test("ISS-14252 user id collapse requires order, case, duplicate and whitespace 
   const covered = run(t, { head, changeLog: record });
   assert.deepEqual(covered.blocking.filter((finding) => finding.rule === "input-set-proof"), []);
   assert.ok(covered.requiredTests.some((entry) => entry.path === proof));
+});
+
+test("a git that cannot read attributes at the base marks nothing generated", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-generated-");
+  t.after(cleanup);
+  const checkout = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
+  put(checkout, { ".gitattributes": "dist/** linguist-generated=true\n" });
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], home);
+  assert.deepEqual([...linguistGenerated(checkout, ["dist/a.mjs", "src/a.mjs"], "HEAD")], ["dist/a.mjs"]);
+  assert.deepEqual([...linguistGenerated(checkout, ["dist/a.mjs"], "no-such-commit")], [], "an unreadable base exempts nothing");
+});
+
+test("build output marked linguist-generated is judged through its source, not as a second author", (t) => {
+  const helper = "export function inputDigest(input) {\n  return createHash(\"sha256\").update(input).digest(\"hex\");\n}\n";
+  const head = {
+    "tools/worker/src/ledger.ts": `import { createHash } from "node:crypto";\n${helper}export const ledger = (input) => inputDigest(input);\n`,
+    "plugins/worker/dist/a.mjs": `${helper}export const a = (input) => inputDigest(input);\n`,
+    "plugins/worker/dist/b.mjs": `${helper}export const b = (input) => inputDigest(input);\n`,
+  };
+  const unmarked = run(t, { head });
+  assert.ok(unmarked.found.some(([rule, file]) => rule === "duplicate-helper" && file.startsWith("plugins/worker/dist/")));
+  const marked = run(t, { base: { ".gitattributes": "plugins/worker/dist/** linguist-generated=true\n" }, head });
+  assert.deepEqual(marked.found.filter(([rule]) => rule === "duplicate-helper"), []);
+  const selfMarked = run(t, { head: { ...head, ".gitattributes": "plugins/worker/dist/** linguist-generated=true\n" } });
+  assert.ok(selfMarked.found.some(([rule, file]) => rule === "duplicate-helper" && file.startsWith("plugins/worker/dist/")),
+    "a diff cannot mark its own files generated: the base's attributes decide");
+  const copied = run(t, { base: { ".gitattributes": "plugins/worker/dist/** linguist-generated=true\n" },
+    head: { ...head, "tools/worker/src/copy.ts": `${helper}export const copy = (input) => inputDigest(input);\n` } });
+  assert.deepEqual(copied.found.filter(([rule]) => rule === "duplicate-helper"), [["duplicate-helper", "tools/worker/src/ledger.ts"]]);
+});
+
+test("ISS-14252 input-set proof reads every record and needs the id collection on the transform line", (t) => {
+  const first = "apps/api/app/items/collapse-selection.ts";
+  const second = "apps/api/app/items/dedupe-members.ts";
+  const proof = "apps/api/__tests__/unit/collapse-selection.test.ts";
+  const head = {
+    [first]: "export function collapseSelectionToRoots(selectedIds) {\n  return [...new Set(selectedIds)];\n}\n",
+    [second]: "export const dedupeMembers = (memberIds) => [...new Set(memberIds)];\n",
+    [proof]: "test('selection permutations and normalization', () => {});\n",
+  };
+  const records = [first, second].map((file) => `Input set: ${file}: order permutations; case; duplicates; whitespace; test ${proof}`);
+  const both = run(t, { head, changeLog: `${records.join("\n")}\n` });
+  assert.deepEqual(both.blocking.filter((finding) => finding.rule === "input-set-proof"), []);
+  const onlySecond = run(t, { head, changeLog: `${records[1]}\n` });
+  assert.deepEqual(onlySecond.blocking.filter((finding) => finding.rule === "input-set-proof").map((finding) => finding.file), [first]);
+  const unrelated = {
+    "packages/tools/paths.ts": "export const resolve = (item) => path.posix.normalize(item.id);\n// dedupe selectedIds before the request\nexport const message = \"must be a distinct branch\";\n",
+  };
+  assert.deepEqual(run(t, { head: unrelated }).blocking.filter((finding) => finding.rule === "input-set-proof"), []);
+  const wrapped = {
+    "apps/api/app/items/wrapped.ts": "export const roots = (input) => collapseSelectionToRoots(\n  input.artifactIds,\n);\n",
+    "apps/api/app/items/by-item.ts": "export const unique = (selection) => dedupeBy(selection, (item) => item.id);\n",
+  };
+  assert.deepEqual(run(t, { head: wrapped }).blocking.filter((finding) => finding.rule === "input-set-proof").map((finding) => finding.file).sort(),
+    ["apps/api/app/items/by-item.ts", "apps/api/app/items/wrapped.ts"], "a wrapped call and a selection of items are id sets too");
+  const combobox = { "packages/ui/combobox.ts": "const normalized = query.trim().toLowerCase();\nconst selected = options.find((option) => option.label === normalized);\n" };
+  assert.deepEqual(run(t, { head: combobox }).blocking.filter((finding) => finding.rule === "input-set-proof"), [], "a selected option is not an id set");
 });
 
 test("ISS-14137 repository owner E2E rules require each mounted shell and verify their source sentence", (t) => {

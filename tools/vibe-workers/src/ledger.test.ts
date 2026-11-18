@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,6 +24,42 @@ function nativeFinish(input: { worktree: string; workerId: string; requestId: st
 }
 
 describe("persistent writer ledger", () => {
+  it("AC-020 queue refusals name the next claim and a parent can drop only its evidenced pending input", () => {
+    const value = registered();
+    const owner = { worktree: value.worktree, workerId: value.workerId };
+    const file = join(value.metadata, "vibe-writer.json");
+    const cli = (action: string, requestId: string, extra = {}) => spawnSync(process.execPath,
+      [join(bundleDirectory, "writer-state.mjs"), action], { input: JSON.stringify({ ...owner, requestId, ...extra }), encoding: "utf8", timeout: 8000 });
+    changeWriter("enqueue", { ...owner, requestId: "oldest", input: "PRIVATE_OLD" });
+    changeWriter("enqueue", { ...owner, requestId: "next", input: "PRIVATE_NEXT" });
+    const prior = readFileSync(file, "utf8");
+    for (const [action, code, extra] of [
+      ["claim", "REQUEST_ORDER_INVALID", {}], ["start", "REQUEST_ID_EXISTS", { input: "A duplicate request" }],
+    ] as const) {
+      const attempted = cli(action, "next", extra);
+      expect(attempted.status).toBe(1);
+      const refusal = JSON.parse(attempted.stdout);
+      expect(refusal.code).toBe(code);
+      expect(refusal.summary).toMatch(/oldest pending requestId "oldest".*without input or continuation/);
+      expect(attempted.stdout).not.toContain("PRIVATE_");
+      expect(readFileSync(file, "utf8")).toBe(prior);
+    }
+    const inputSha256 = createHash("sha256").update("PRIVATE_OLD").digest("hex");
+    const evidence = { source: "Parent triage record R-7", reason: "The operator superseded this request", inputSha256 };
+    expect(cli("drop-pending", "oldest").status).toBe(1);
+    const mismatch = cli("drop-pending", "oldest", { evidence: { ...evidence, inputSha256: "0".repeat(64) } });
+    expect(JSON.parse(mismatch.stdout).code).toBe("PENDING_INPUT_MISMATCH");
+    expect(readFileSync(file, "utf8")).toBe(prior);
+    const dropped = cli("drop-pending", "oldest", { evidence });
+    expect(dropped.status, dropped.stderr).toBe(0);
+    expect(dropped.stdout).not.toContain("PRIVATE_");
+    expect(JSON.parse(dropped.stdout).queuedRequestIds).toEqual(["next"]);
+    expect(JSON.parse(readFileSync(file, "utf8")).dropped[0]).toMatchObject({ id: "oldest", ...evidence });
+    expect(JSON.parse(cli("start", "oldest", { input: "Trying to reuse dropped ID" }).stdout).code).toBe("REQUEST_ID_EXISTS");
+    const active = changeWriter("claim", { ...owner, requestId: "next" });
+    expect(active.turn?.input).toBe("PRIVATE_NEXT");
+    expect(JSON.parse(cli("drop-pending", "next", { evidence }).stdout).code).toBe("REQUEST_NOT_PENDING");
+  });
   it("reopens the request that just returned DONE for its follow-up step instead of refusing it (ISS-13321)", () => {
     const value = registered();
     const owner = { worktree: value.worktree, workerId: value.workerId };

@@ -24,11 +24,16 @@ export function classifyHandoffPath({
   file,
   phase,
   policy,
+  repository = null,
   prototype = null,
   portableSurfaceAllowed = false,
   retiredDeletion = false,
 }) {
   if (isForbiddenHandoffPath(policy, file.path)) {
+    // Operator ruling, 2026-11-18: permit edits to the publisher repository's existing root AGENTS.md.
+    if (repository?.toLowerCase() === "closedloop-ai/claude-plugins" && file.path === "AGENTS.md" && file.status === "M") {
+      return { disposition: PathDisposition.Allowed, reason: "root-instruction-edit" };
+    }
     return { disposition: PathDisposition.Forbidden, reason: "forbidden" };
   }
   const allowedPath = isAllowedSourcePath({

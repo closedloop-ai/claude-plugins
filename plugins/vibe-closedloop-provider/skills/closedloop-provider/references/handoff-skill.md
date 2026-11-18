@@ -27,6 +27,7 @@ follows `provider:ticket-template.md`. You and every worker leave
 
 <!-- block: control-row -->
 | Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
+| Desktop running app checks, before any launch | the same worker runs `pnpm -C apps/desktop build` first, then checks that `apps/desktop/dist` holds the documented Electron entry; if the build fails or that entry is missing, it aborts the Desktop check without any Electron or `control up desktop` launch and returns the limitation |
 <!-- end: control-row -->
 
 <!-- block: pick-session -->

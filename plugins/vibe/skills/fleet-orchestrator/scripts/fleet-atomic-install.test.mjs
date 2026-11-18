@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -78,30 +78,55 @@ test("an incomplete staged generation cannot replace the current pointer", () =>
   }
 });
 
+test("simultaneous remote shipments never fail with File exists or publish a mixed tree", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "fleet-atomic-install-concurrent-"));
+  try {
+    const target = path.join(root, "target");
+    install(staged(root, "A"), target);
+    const run = (token) => new Promise((resolve) => {
+      const child = spawn("bash", [INSTALL, staged(root, token), target]);
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.once("close", (code) => resolve({ code, stderr }));
+    });
+    const results = await Promise.all([run("B"), run("C")]);
+    assert.deepEqual(results.map(({ code }) => code), [0, 0]);
+    assert.ok(results.every(({ stderr }) => !/File exists/i.test(stderr)), JSON.stringify(results));
+    const current = pair(realpathSync(`${target}.current`));
+    assert.ok(JSON.stringify(current) === JSON.stringify(["B:0", "B:1"])
+      || JSON.stringify(current) === JSON.stringify(["C:0", "C:1"]), `complete generation: ${current}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("an interrupted lock waiter leaves no ownerless ship lock", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "fleet-atomic-install-lock-"));
+  let holder;
   try {
     const target = path.join(root, "target");
     const initial = install(staged(root, "A"), target);
     const lock = `${target}.ship-lock`;
-    writeFileSync(lock, `${process.pid}\n`);
+    const hasFlock = spawnSync("sh", ["-c", "command -v flock"], { encoding: "utf8" }).status === 0;
+    holder = hasFlock
+      ? spawn("flock", ["-x", lock, "sleep", "30"], { detached: true })
+      : spawn("lockf", ["-k", "-t", "0", lock, "sleep", "30"], { detached: true });
+    await new Promise((resolve) => setTimeout(resolve, 500));
     const child = spawn("bash", [INSTALL, staged(root, "B"), target]);
-    const prefix = `${path.basename(lock)}.candidate.`;
-    for (let attempt = 0; attempt < 100 && !readdirSync(root).some((name) => name.startsWith(prefix)); attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    assert.ok(readdirSync(root).some((name) => name.startsWith(prefix)), "the complete candidate exists before lock publication");
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     assert.equal(child.exitCode, null, "the live owner's lock keeps the waiter queued");
     assert.deepEqual(pair(initial), ["A:0", "A:1"]);
     assert.equal(realpathSync(`${target}.current`), realpathSync(initial));
     child.kill("SIGTERM");
     await new Promise((resolve) => child.once("close", resolve));
-    assert.equal(readFileSync(lock, "utf8"), `${process.pid}\n`, "an interrupted waiter never removes the live owner's lock");
-    assert.deepEqual(readdirSync(root).filter((name) => name.startsWith(prefix)), []);
-    rmSync(lock);
+    assert.ok(holder.pid > 1, "only the test-owned lock process group is signalled");
+    process.kill(-holder.pid, "SIGTERM");
+    await new Promise((resolve) => holder.once("close", resolve));
     install(staged(root, "C"), target);
   } finally {
+    if (holder?.pid > 1 && holder.exitCode === null) {
+      try { process.kill(-holder.pid, "SIGTERM"); } catch { /* already gone */ }
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -3,6 +3,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, 
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { git, readSessionRecord } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
+import { assertIsolatedTestRead } from "../../../plugins/vibe-core/lib/vibe/scripts/test-state-isolation.mjs";
 import { isOwnedPrototypeSession } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { checkoutLocation, readWriterSummary, verifySourceTurn } from "./ledger.js";
 import { nativeRecordOwnerSchema } from "./native-record.js";
@@ -90,6 +91,7 @@ export function syncContext(raw: unknown, operation: "prepare" | "inputs" | "val
 
 /** Reads bounded regular private metadata, refusing symlink and partial/malformed proof inputs. */
 export function readPrivateJson(file: string): unknown {
+  assertIsolatedTestRead(file);
   const stat = lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_PRIVATE_BYTES) throw new MainSyncError("Private main-sync evidence must be a bounded regular file");
   return JSON.parse(readFileSync(file, "utf8"));

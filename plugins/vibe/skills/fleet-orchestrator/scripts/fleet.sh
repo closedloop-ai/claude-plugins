@@ -50,10 +50,18 @@ extra=()
 
 # Runs a shell command line on REMOTE_HOST after unpacking the shipped scripts (and `extra`) into remote_dir.
 run_remote() {
-  local outer stage files status=0 remote_stage_prefix pinned_command
+  local outer stage files status=0 remote_stage_prefix pinned_command mirror='' skip='' item
   remote_stage_prefix=$(printf %q "$remote_store.ship")
   pinned_command=${1//"$remote_dir"/'$FLEET_SHIPPED_ROOT'}
-  outer="stage=$remote_stage_prefix.\$\$; rm -rf \"\$stage\" && mkdir -p \"\$stage\" && tar -C \"\$stage\" -xf - && FLEET_SHIPPED_ROOT=\$(bash \"\$stage/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-atomic-install.sh\" \"\$stage\" $(printf %q "$remote_store")) || exit 78; export FLEET_SHIPPED_ROOT; ${REMOTE_SHELL:-zsh -lic} $(printf %q "$pinned_command")"
+  # Prompts, their evidence and the rulings are also copied to the stable store, where briefs name them; each
+  # generation holds only its own shipment, so the next one would hide them.
+  for item in ${extra[@]+"${extra[@]}"}; do
+    if [ -n "$skip" ]; then skip=; continue; fi
+    if [ "$item" = -C ]; then skip=1; continue; fi
+    mirror+=" $(printf %q "$item")"
+  done
+  if [ -n "$mirror" ]; then mirror="mkdir -p $(printf %q "$remote_store") && (cd \"\$FLEET_SHIPPED_ROOT\" && cp -R$mirror $(printf %q "$remote_store")/) || exit 78; "; fi
+  outer="stage=$remote_stage_prefix.\$\$; rm -rf \"\$stage\" && mkdir -p \"\$stage\" && tar -C \"\$stage\" -xf - && FLEET_SHIPPED_ROOT=\$(bash \"\$stage/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-atomic-install.sh\" \"\$stage\" $(printf %q "$remote_store")) || exit 78; export FLEET_SHIPPED_ROOT; $mirror${REMOTE_SHELL:-zsh -lic} $(printf %q "$pinned_command")"
   # The shipped scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).
   stage=$(node "$skills/../shared/ship-plugins.mjs" "${ship[@]}") || return 2
   files=$(cat "$stage/files")

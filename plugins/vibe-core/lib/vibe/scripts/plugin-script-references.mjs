@@ -5,6 +5,7 @@
 // repository's own `.claude/skills/control/scripts/app.mjs` was refused as a
 // missing vibe script).
 
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { isVibePlugin } from "../../../shared/plugin-roots.mjs";
@@ -51,39 +52,68 @@ function relativeOnly(prefix) {
   return prefix === "" || prefix.split("/").every((segment) => segment === "." || segment === "..");
 }
 
-/** A script present inside the reviewed worktree belongs to that source tree, regardless of how the brief prefixes it. */
-function existsInWorktree(candidate, worktree) {
-  if (!worktree) return false;
+function repositoryScope(worktree) {
+  if (!worktree) return null;
+  let cwd;
+  try { cwd = realpathSync(worktree); }
+  catch { return null; }
   try {
-    const root = realpathSync(worktree);
-    const resolved = realpathSync(path.isAbsolute(candidate) ? candidate : path.resolve(root, candidate));
+    const root = realpathSync(gitScope(cwd, ["rev-parse", "--show-toplevel"]).trim());
+    return { cwd, root, git: true };
+  } catch { return { cwd, root: cwd, git: false }; }
+}
+
+function gitScope(cwd, args) {
+  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 2500,
+    maxBuffer: 512 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+}
+
+function containedFile(absolute, root) {
+  try {
+    const resolved = realpathSync(absolute);
     return resolved.startsWith(`${root}${path.sep}`) && lstatSync(resolved).isFile();
-  } catch {
-    return false;
-  }
+  } catch { return false; }
+}
+
+/** A path can be relative to the dispatch cwd or to its verified Git root. */
+function existsInWorktree(candidate, scope) {
+  return scope && [scope.cwd, scope.root].some((directory) => containedFile(path.resolve(directory, candidate), scope.root));
+}
+
+/** Only a unique, contained repository suffix can resolve an otherwise missing script shorthand. */
+function uniqueRepositoryShorthand(scope, suffix) {
+  if (!scope?.git || suffix.split("/").some((segment) => !segment || segment === "." || segment === "..")) return false;
+  try {
+    const matches = gitScope(scope.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", `:(glob)**/${suffix}`]);
+    const existing = new Set(matches.split("\0").filter((file) => file && containedFile(path.resolve(scope.root, file), scope.root)));
+    return existing.size === 1;
+  } catch { return false; }
 }
 
 /**
  * Vibe plugin script references in `text`, normalized to `skills/<skill>/scripts/<file>`.
  * A path counts only when <skill> is a skill of the installed plugin and either it has no
- * directory prefix (or only `./`/`../`) and does not exist in the target repository, or its
+ * directory prefix (or only `./`/`../`) and has no exact or unambiguous repository match, or its
  * prefix is itself a vibe plugin root. A repository path such as
  * `.claude/skills/control/scripts/app.mjs` is never a plugin reference.
  */
 export function pluginScriptReferences(text, pluginRoot, worktree = null) {
   const refs = [];
+  let scope;
   for (const [token] of String(text ?? "").matchAll(TOKEN)) {
     const match = SCRIPT_PATH.exec(trimToken(token));
     if (!match) continue;
     const [candidate, prefix, explicit, skill, rest] = match;
     if (!isDirectory(path.join(pluginRoot, "skills", skill))) continue;
-    if (existsInWorktree(candidate, worktree)) continue;
+    if (scope === undefined) scope = repositoryScope(worktree);
+    if (existsInWorktree(candidate, scope)) continue;
+    const relative = `skills/${skill}/scripts/${rest}`;
     if (relativeOnly(prefix)) {
+      if (!existsSync(path.join(pluginRoot, relative)) && uniqueRepositoryShorthand(scope, `${skill}/scripts/${rest}`)) continue;
     } else {
       const base = path.resolve(worktree ?? "/", prefix);
       if (!explicit || !isVibePluginRoot(base)) continue;
     }
-    const relative = `skills/${skill}/scripts/${rest}`;
     if (!refs.includes(relative)) refs.push(relative);
   }
   return refs;

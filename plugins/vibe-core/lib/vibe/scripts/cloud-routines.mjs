@@ -28,6 +28,7 @@ import { spawnSync } from "node:child_process";
 import { acquire, release } from "./e2e-lock.mjs";
 import { legacyRoutineName, RECEIPT_NAME, TERMINAL } from "./cloud-receipts.mjs";
 import { regularJson, writeAtomic } from "./owned-state.mjs";
+import { CloudSetupError } from "./cloud-environment.mjs";
 
 export const ROUTINE_NAME = "vibe cloud worker";
 const LEDGER_SCHEMA = "vibe.cloud-routines/1";
@@ -70,7 +71,7 @@ export function pendingLine(count) {
 export function ledgerPath(home = os.homedir()) { return path.join(home, ".codex", "vibe", "cloud", "routines.json"); }
 export function routineLockDir(home = os.homedir()) { return path.join(home, ".codex", "vibe", "locks", "cloud-routine"); }
 
-function emptyLedger() { return { schema: LEDGER_SCHEMA, standing: null, intents: [], removal: [], removed: [], runs: [], connectorRefreshes: [] }; }
+function emptyLedger() { return { schema: LEDGER_SCHEMA, standing: null, intents: [], removal: [], removed: [], runs: [], connectorRefreshes: [], githubTokenMissingAt: null }; }
 
 /** The ledger, or an empty one when none exists; an unreadable or unknown one is refused, never overwritten. */
 export function readLedger(home = os.homedir()) {
@@ -136,6 +137,7 @@ function createStanding(ledger, { home, remote, ccr, environment, refusal }) {
   } catch (error) {
     if (error?.httpStatus >= 400 && error.httpStatus < 500) {
       ledger.intents = ledger.intents.filter((intent) => intent.token !== token);
+      if (error?.code === CloudSetupError.GitHubTokenMissing) ledger.githubTokenMissingAt = new Date().toISOString();
       writeLedger(home, ledger);
     }
     throw refusal ? refusal(error) : error;
@@ -143,6 +145,7 @@ function createStanding(ledger, { home, remote, ccr, environment, refusal }) {
   const id = created?.trigger?.id;
   if (!id) throw new Error("RemoteTrigger create returned no routine id");
   ledger.intents = ledger.intents.filter((intent) => intent.token !== token);
+  ledger.githubTokenMissingAt = null;
   ledger.standing = {
     id, name: ROUTINE_NAME, environmentId: environment.id, createdAt: new Date().toISOString(),
     // Connector descriptors exist only in a create answer; an allow-listed run attaches them by update.

@@ -11,7 +11,7 @@ const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scrip
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { gatePath, handoffGateProblem } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
-import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess, seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
 
 // These read live tracker tickets, so they run bound to the ClosedLoop provider (spawned scripts inherit it).
 bindProviderInProcess(after);
@@ -47,6 +47,7 @@ function fixture(t) {
   git("fetch", "-q", "origin");
   git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
   writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ ticket: "ISS-123", memberTickets: ["ISS-124"] }));
+  seedAlignedDecisionTable(worktree);
   const file = (name, text) => {
     const target = path.join(gitDir, name);
     writeFileSync(target, text);

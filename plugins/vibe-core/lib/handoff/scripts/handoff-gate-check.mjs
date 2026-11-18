@@ -16,6 +16,7 @@ import { reviewReceiptProblems } from "./review-receipts.mjs";
 import { missingTicketNames } from "./ticket-names.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { BodyFileError, readPrBodyFile } from "./gate-override.mjs";
+import { decisionTableProblems } from "./decision-table-gate.mjs";
 
 const GATE_FILE = "vibe-handoff-gate.json";
 export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "rulings", "audit", "matrix", "review"]);
@@ -68,6 +69,8 @@ export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
       return "handoff gate has no passing pull-request inventory for this branch";
     }
     if (!sameSource(record.source, sourceIdentity(worktree))) return "handoff gate is stale for the current source";
+    const tableProblems = decisionTableProblems(worktree);
+    if (tableProblems.length) return `handoff decision table needs reconciliation: ${tableProblems.join("; ")}`;
     if (base && base.replace(/^origin\//, "") !== record.base?.name) return "PR base does not match the handoff gate";
     const currentBase = resolvePrBase(worktree, base);
     if (record.base?.name !== currentBase.name || record.base?.oid !== currentBase.oid) return "handoff gate is stale for the PR base";

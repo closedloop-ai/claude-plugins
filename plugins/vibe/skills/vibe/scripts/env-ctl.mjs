@@ -40,6 +40,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { NON_BUILD_PATH } from "./area-paths.mjs";
+import { MAIN_SYNC_REQUEST_TIMEOUT_MS } from "./dist/main-sync.mjs";
 import { isLocalPlanPath, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { execCommand, parseJson, stdoutOf, tailLines } from "./ws3-exec.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -48,6 +49,8 @@ import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { deliveryPlacementProblem } = await vibeCore("lib/fleet-orchestrator/scripts/delivery-placement.mjs");
+const { commandChat } = await vibeCore("lib/fleet-orchestrator/scripts/chat-binding.mjs");
 export const REDEPLOY_UI_ONLY_ENV = "VIBE_REDEPLOY_UI_ONLY";
 export const RUN_FAILURES = new Set(["failure", "cancelled", "timed_out"]);
 // agents/vibe-environment-worker.md, the sentence it returns when no analytics key can be found.
@@ -266,9 +269,19 @@ export function createEnvCtl({
     const keep = workflowInputs.declared.has("keep_flag_snapshot") ? (keepFlagSnapshot ?? (mode === "flags" ? "false" : "true")) : undefined;
     const out = path.join(gitDir(worktree), "vibe-dispatch-inputs.json");
     const args = ["dispatch-inputs", "--worktree", worktree, "--out", out, ...(personEmail ? ["--person-email", personEmail] : []), ...(keep ? ["--keep-flag-snapshot", keep] : [])];
-    const dispatched = parseJson(sessions(args, { input: stdin }).stdout, {});
-    if (dispatched.mainSync) return { ...dispatched.mainSync, status: dispatched.mainSync.status ?? Status.Done, requested: false };
-    if (dispatched.ok !== true) return { status: dispatched.status ?? Status.Blocked, error: dispatched.error ?? "dispatch-inputs refused", ...(dispatched.problems ? { problems: dispatched.problems } : {}) };
+    // The child revalidates committed inputs and performs a bounded remote HEAD lookup before it writes request inputs.
+    const prepared = sessions(args, { input: stdin, timeoutMs: MAIN_SYNC_REQUEST_TIMEOUT_MS });
+    const processDetail = tailLines(prepared.stderr ?? "", 3);
+    if (prepared.status === 124) return { status: Status.Blocked, code: "DISPATCH_INPUTS_TIMEOUT",
+      error: `dispatch-inputs timed out after ${MAIN_SYNC_REQUEST_TIMEOUT_MS / 1000} seconds. The environment workflow was not started.`,
+      ...(processDetail ? { detail: processDetail } : {}) };
+    if (prepared.status === 127) return { status: Status.Blocked, code: "DISPATCH_INPUTS_SPAWN_FAILED",
+      error: processDetail || "dispatch-inputs could not start" };
+    const dispatched = parseJson(prepared.stdout, {}) ?? {};
+    if (prepared.status === 0 && dispatched.mainSync) return { ...dispatched.mainSync, status: dispatched.mainSync.status ?? Status.Done, requested: false };
+    if (prepared.status !== 0 || dispatched.ok !== true) return { status: dispatched.status ?? Status.Blocked,
+      error: dispatched.error ?? (processDetail || `dispatch-inputs returned no usable reply (status ${prepared.status})`),
+      ...(dispatched.code ? { code: dispatched.code } : {}), ...(dispatched.problems ? { problems: dispatched.problems } : {}) };
     const missing = [...workflowInputs.required].filter((name) => !dispatched.inputNames.includes(name));
     if (missing.length > 0) return { status: Status.Blocked, error: `The request workflow requires inputs the session does not send: ${missing.join(", ")}.` };
     const started = gh(["workflow", "run", dispatched.workflow, "--repo", activeRepo, "--ref", dispatched.ref ?? "main", "--json"], { input: read(out) });
@@ -354,6 +367,8 @@ export function createEnvCtl({
     if (existing.length > 0) return { status: Status.Done, created: false, url: existing[0].url, number: existing[0].number };
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--base", base]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
+    const placement = deliveryPlacementProblem({ content: read(bodyFile), repository: activeRepo, operation: "pull-request", chat: commandChat(env), env });
+    if (placement) return { status: Status.Blocked, error: placement };
     const created = gh(["pr", "create", "--repo", activeRepo, "--head", branch, "--base", defaultBranch(worktree), "--title", title, "--body-file", bodyFile, ...(draft ? ["--draft"] : [])]);
     if (created.status !== 0) return { status: Status.Blocked, error: tailLines(created.stderr, 3) };
     return { status: Status.Done, created: true, url: created.stdout.trim().split("\n").pop() };

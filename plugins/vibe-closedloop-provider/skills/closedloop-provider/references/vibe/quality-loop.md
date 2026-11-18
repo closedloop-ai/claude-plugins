@@ -2,6 +2,10 @@
 
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
+<!-- block: related-delivery -->
+Operator ruling, 2026-11-17: “group that work into a single PR”. Fold a new ask on the same surface into its in-flight unit. When both options are offered, recommend folding and name the separate delivery's own test lanes, CI, reviews, and merge-queue time.
+<!-- end: related-delivery -->
+
 <!-- block: research-order -->
 2. The ticket's acceptance criteria, its PRD and sourced rulings.
 3. `ticket_detail`, `fts_search`, `search_memory_facts` and material decisions

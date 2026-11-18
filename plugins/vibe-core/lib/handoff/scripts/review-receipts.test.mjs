@@ -11,6 +11,7 @@ import { gatePath, handoffGateProblem, memberNameProblems, mergeabilityProblem }
 import { recordHandoffGate } from "../../../../vibe/skills/handoff/scripts/handoff-gate.mjs";
 import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
 import { vibeRoot } from "../../../shared/vibe-install.mjs";
+import { seedAlignedDecisionTable } from "../../../../vibe/skills/vibe/scripts/test-fixtures.mjs";
 
 function gateReceipts(worktree) {
   const source = sourceIdentity(worktree);
@@ -151,6 +152,7 @@ test("Codex native FINAL helper artifacts reach the same four-role handoff gate"
   const runs = path.join(orchDir, "runs.json");
   writeFileSync(body, "PR body\n");
   writeFileSync(runs, "{}\n");
+  seedAlignedDecisionTable(worktree);
   recordHandoffGate({ worktree, base: "main", body, runs, receipts }, { runScript: () => ({ status: 0,
     stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: "" }) });
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }), null);
@@ -202,6 +204,7 @@ test("AC-001 DT-12 R4 R5: stacked gate checks and stores one main identity", (t)
   git("update-ref", "refs/remotes/origin/main", base);
   assert.equal(mergeabilityProblem(worktree, "parent"), null);
   const receipts = gateReceipts(worktree);
+  seedAlignedDecisionTable(worktree);
   recordHandoffGate({ worktree, base: "parent", body, runs, receipts }, { runScript: acceptedInventory });
   assert.equal(JSON.parse(readFileSync(gatePath(worktree), "utf8")).main.oid, base);
   assert.equal(handoffGateProblem(worktree, { base: "parent", bodyFile: body }), null);

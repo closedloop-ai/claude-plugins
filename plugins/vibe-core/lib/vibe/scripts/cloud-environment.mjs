@@ -11,6 +11,7 @@
  * a list page that can outgrow the tool's inline limit) and shows
  * the environment it runs in; with none recorded it says so and reads nothing,
  * and when the recorded one is gone from the account it reads the routine list.
+ * It reports a verified GitHub connection refusal retained by the create path.
  * A refused create or a fire that leaves no run is reported with its named error.
  */
 import { existsSync, readFileSync } from "node:fs";
@@ -26,6 +27,7 @@ export const CloudSetupError = Object.freeze({
   EnvInvalid: "CLOUD_ENV_INVALID",
   EnvUnknown: "CLOUD_ENV_UNKNOWN",
   AuthRefused: "CLOUD_AUTH_REFUSED",
+  GitHubTokenMissing: "CLOUD_GITHUB_TOKEN_MISSING",
   RunNotCreated: "CLOUD_RUN_NOT_CREATED",
   ApiError: "CLOUD_API_ERROR",
   ResultTooLarge: "CLOUD_RESULT_TOO_LARGE",
@@ -35,10 +37,17 @@ const ENV_ID = /^env_[A-Za-z0-9]+$/;
 const REFUSED = new Set([401, 403]);
 const SET_IT = `set ${CLAUDE_ENV_VAR}=<env id>, or ${CLAUDE_ENV_CONFIG_KEY}=<env id> in the fleet home's config.env, or "claudeEnvironment" in the request, to an environment of this account (Claude Code cloud environments on claude.ai); cloud-worker.mjs check lists the ones its routines use`;
 const SIGN_IN = "sign in to Claude Code again with /login, using the claude.ai account that owns the cloud environment, then run cloud-worker.mjs check";
+const CONNECT_GITHUB = "Connect GitHub to your claude.ai account before saving a scheduled task using a GitHub repository.";
 
 /** An Error whose message starts with its code, and carries it as `code`. */
 export function cloudSetupError(code, message) {
   return Object.assign(new Error(`${code}: ${message}`), { code });
+}
+
+/** The verified GitHub connection refusal, distinct from Claude account authentication. */
+export function githubTokenMissing(diagnostic = "") {
+  const error = cloudSetupError(CloudSetupError.GitHubTokenMissing, `HTTP 401 github_token_missing. ${CONNECT_GITHUB}${diagnostic ? ` (${diagnostic})` : ""}`);
+  return Object.assign(error, { httpStatus: 401 });
 }
 
 /** The environment id and where it came from; refuses a missing or malformed one with its fix. */
@@ -67,6 +76,7 @@ function statusOf(error) {
  * this environment, otherwise the sign-in itself was refused.
  */
 export function createRefusal(error, environment, remote) {
+  if (error?.code === CloudSetupError.GitHubTokenMissing) return error;
   const status = statusOf(error);
   if (status === 404 || (REFUSED.has(status) && accountAnswers(remote))) {
     return cloudSetupError(CloudSetupError.EnvUnknown, `RemoteTrigger create was refused (HTTP ${status}) for Claude environment ${environment.id} (${environment.source}) while this account's routine list answers, so the id is not one this account can use. Fix: ${SET_IT}.`);
@@ -138,7 +148,7 @@ function environmentSetupCheck(routine) {
  * (`standing`, from the routine ledger) runs in; `pending` is the routine-removal line when routines vibe
  * created are still recorded for removal.
  */
-export function checkCloudSetup(request, { remote, env = process.env, standing = null, pending = null, ledgerProblem = null } = {}) {
+export function checkCloudSetup(request, { remote, env = process.env, standing = null, pending = null, ledgerProblem = null, githubTokenMissingAt = null } = {}) {
   const checks = [];
   let environment = null;
   try {
@@ -148,6 +158,9 @@ export function checkCloudSetup(request, { remote, env = process.env, standing =
     checks.push({ check: "environment", ok: false, code: error.code, detail: error.message });
   }
   let routines = null;
+  const refusedAt = typeof githubTokenMissingAt === "string" && Number.isFinite(Date.parse(githubTokenMissingAt))
+    ? new Date(githubTokenMissingAt).toISOString() : null;
+  let githubRefused = Boolean(refusedAt);
   try {
     // An unreadable ledger is its own failure, never "nothing recorded".
     if (ledgerProblem) checks.push({ check: "ledger", ok: false, detail: ledgerProblem });
@@ -163,7 +176,10 @@ export function checkCloudSetup(request, { remote, env = process.env, standing =
       checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (${routines.length} routines)` });
     }
   } catch (error) {
-    checks.push(apiFailure(error));
+    if (error?.code === CloudSetupError.GitHubTokenMissing) {
+      githubRefused = true;
+      checks.push({ check: "api", ok: true, detail: "the routine API answered with a GitHub connection refusal" });
+    } else checks.push(apiFailure(error));
   }
   if (environment && routines) {
     const used = [...new Set(routines.map((routine) => routine?.job_config?.ccr?.environment_id).filter(Boolean))];
@@ -172,7 +188,9 @@ export function checkCloudSetup(request, { remote, env = process.env, standing =
       ? { check: "environment-use", ok: true, detail: `routine ${owner.id} on this account runs in ${environment.id}` }
       : { check: "environment-use", ok: null, detail: `no routine on this account uses ${environment.id} yet, so it is unverified until the first dispatch, which names CLOUD_ENV_UNKNOWN if it is not this account's${used.length ? `; this account's routines use ${used.join(", ")}` : ""}` });
   }
-  checks.push({ check: "github", ok: null, detail: "not checkable here: the routine API has no GitHub connection endpoint; a fire that fails repository access leaves no run, which dispatch and validate report as CLOUD_RUN_NOT_CREATED with the fix" });
+  checks.push(githubRefused ? { check: "github", ok: false, code: CloudSetupError.GitHubTokenMissing,
+    detail: `The routine API reported github_token_missing${refusedAt ? ` on ${refusedAt}` : ""}. ${CONNECT_GITHUB}` }
+    : { check: "github", ok: null, detail: "No GitHub connection refusal is recorded. This read-only check does not create a task to test repository access." });
   if (pending) checks.push({ check: "routine-removal", ok: null, detail: pending });
   return { ok: checks.every((entry) => entry.ok !== false), environment, checks };
 }

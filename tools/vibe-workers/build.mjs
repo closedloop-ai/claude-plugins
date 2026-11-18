@@ -53,6 +53,17 @@ await build({
   banner: { js: banner },
   plugins: [loadVibeCoreAtRunTime],
 });
+await build({
+  entryPoints: [resolve(toolDir, "src/workflow-lane-definitions.ts")],
+  outfile: resolve(vibeCoreDir, "lib/vibe/scripts/workflow-lane-definitions.mjs"),
+  absWorkingDir: toolDir,
+  bundle: true,
+  minify: true,
+  platform: "node",
+  format: "esm",
+  target: "node18",
+  banner: { js: banner },
+});
 console.log(`built the bundled QA-impact parser to ${outdir}`);
 // Preserve the bundled Apache notice while removing its upstream whitespace-only comment lines.
 for (const name of readdirSync(outdir).filter((file) => file.endsWith(".mjs"))) {

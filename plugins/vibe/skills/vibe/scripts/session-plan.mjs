@@ -28,7 +28,7 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSyn
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { localPlanPaths, sessionLocalPlanPrefix } from "./local-plans.mjs";
+import { knownLocalPlanPrefixes, localPlanPaths, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { checkPublishableText } from "./publishable-text.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
@@ -71,7 +71,24 @@ export function sessionPlanEvidencePaths(worktree, home = os.homedir()) {
  */
 export function localPlanFiles(worktree) {
   const prefix = sessionLocalPlanPrefix(worktree);
-  const folder = prefix ? path.join(worktree, prefix) : localPlanPaths(worktree).plans;
+  const folder = localPlanPaths(worktree).plans;
+  const plans = new Map(planNames(folder).map((name) => [name, prefix ? `${prefix}${name}` : path.join(folder, name)]));
+  if (!prefix) {
+    const top = git(worktree, ["rev-parse", "--show-toplevel"]);
+    const canonicalNames = new Set(plans.keys());
+    for (const legacyPrefix of knownLocalPlanPrefixes(null)) {
+      const legacy = path.join(top, legacyPrefix);
+      for (const name of legacyPlanNames(legacy)) {
+        if (canonicalNames.has(name)) continue;
+        if (plans.has(name)) throw new Error(`Multiple legacy plan folders contain the request ${name}.`);
+        plans.set(name, `${legacyPrefix}${name}`);
+      }
+    }
+  }
+  return [...plans.entries()].sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true })).map(([, file]) => file);
+}
+
+function planNames(folder) {
   let entries;
   try {
     entries = readdirSync(folder, { withFileTypes: true });
@@ -81,8 +98,20 @@ export function localPlanFiles(worktree) {
   }
   return entries
     .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
-    .map((entry) => (prefix ? `${prefix}${entry.name}` : path.join(folder, entry.name)))
-    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+    .map((entry) => entry.name);
+}
+
+/** Existing provider-layout plans are read in place after adoption into a provider-neutral worktree. */
+function legacyPlanNames(folder) {
+  for (const dir of [path.dirname(folder), folder]) {
+    try {
+      if (!lstatSync(dir).isDirectory()) throw new Error("Legacy plan folder must be a regular directory.");
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    }
+  }
+  return planNames(folder);
 }
 
 /** Whitespace-insensitive identity of a plan body; equal digests mean no material change. */

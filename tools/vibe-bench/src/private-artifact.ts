@@ -1,7 +1,10 @@
 import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-const LOCAL_PATH = /(?:^|[\s("'=\[{`])\/(?!\/)[^\s"'<>]+|[A-Za-z]:\\|\\\\[^\s\\]+\\/i;
+// Q-14162-6 (f): only a real absolute path counts, so a slash command, a JSX comment or a
+// URL query value that merely starts with "/" is not private. Q-14162-11: system tool roots
+// (usr, bin, sbin, lib, etc, dev, proc, sys, boot) hold no user data, so `/usr/bin/git` is not private.
+const LOCAL_PATH = /(?:^|[\s("'=\[{`])\/(?:Users|home|private|tmp|var|opt|Volumes|Applications|Library|System|root|mnt|media|srv|run|nix|snap|cores)\/[^\s"'<>]|[A-Za-z]:\\|\\\\[^\s\\]+\\/i;
 const LOCAL_FILE_URI = /\bfile:(?:\/\/[^/\s"'<>]*\/|\/)[^\s"'<>]+/i;
 const CREDENTIAL = /(?:\bBearer\s+[A-Za-z0-9._~+\/-]{8,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\b(?:AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY)\s*[=:]\s*\S+|\b(?:sk_live|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{8,})/i;
 

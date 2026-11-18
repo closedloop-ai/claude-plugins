@@ -31,6 +31,17 @@ function writeRecord(checkout, home, record) {
   writeFileSync(path.join(gitDir, "vibe-session.json"), `${JSON.stringify(record)}\n`);
 }
 
+test("ISS-14116 prepare-main-sync names the missing stdin context and supported publisher turn", (t) => {
+  const { home, checkout } = setup(t);
+  const result = runNode(SCRIPT, ["--worktree", checkout, "--prepare-main-sync"], home);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.status, "BLOCKED");
+  assert.match(result.json.error, /operation context on stdin is missing/);
+  assert.match(result.json.error, /owned vibe worker record turn.*pipes the granted context/);
+  assert.match(result.json.error, /do not run a plain git merge/);
+  assert.doesNotMatch(result.json.error, /malformed JSON/);
+});
+
 test("commits the session's changes but never its local fixes or files that never belong in a commit", (t) => {
   const { home, checkout } = setup(t);
   writeRecord(checkout, home, { localFixes: [{ ticket: "ISS-1", paths: ["scripts/fix.sh", "tools/patched"] }] });

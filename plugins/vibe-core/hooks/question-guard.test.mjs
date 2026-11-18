@@ -72,6 +72,26 @@ test("an orchestrator's question to the operator names where it checked the code
   assert.equal(ask(file, "The commit helper stages every file (checked in code: plugins/vibe/skills/vibe/scripts/commit-worktree.mjs:73). Move them?"), null);
 });
 
+test("AC-020 a choice to split related delivery carries its own costs and recommends folding", (t) => {
+  const file = transcript(t, fleetSkill);
+  const cwd = path.dirname(file);
+  execFileSync("git", ["init", "-q", cwd]);
+  writeFileSync(path.join(cwd, "surface.ts"), "export const shared = true;\n");
+  const checked = "Both changes use one surface. checked in code: surface.ts:1";
+  const folded = { label: "Fold into the open unit (Recommended)", description: "Keep the shared tests together." };
+  const separate = { label: "File a separate ticket", description: "This adds its own test lanes, CI, reviews and merge-queue time." };
+  const one = (options, question = checked, tool_name = "AskUserQuestion") => questionGuard({ tool_name, cwd,
+    transcript_path: file, tool_input: { questions: [{ question, options }] } }, cwd);
+
+  assert.equal(one([folded, separate]), null);
+  assert.match(one([folded, { ...separate, description: "Keep the work independent." }])?.reason ?? "", /test lanes, CI, reviews and merge-queue time/);
+  assert.match(one([{ ...folded, label: "Fold into the open unit" }, { ...separate, label: "Separate ticket (Recommended)" }])?.reason ?? "", /recommend folding/);
+  assert.match(one([{ ...folded, description: "This grows that PR's scope and test surface." }, separate])?.reason ?? "", /bloat or scope growth/);
+  assert.match(one([folded, { ...separate, description: "This adds test lanes, CI, and reviews." }], checked, "request_user_input")?.reason ?? "", /merge-queue time/);
+  assert.equal(one([{ ...folded, label: "Fold into the open unit" }, { ...separate, label: "Separate ticket (Recommended)" }],
+    "The export is unrelated to the active unit because it runs on an independent command. checked in code: surface.ts:1"), null);
+});
+
 test("a code citation must point at a real regular line in the event repository", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "question-citation-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

@@ -199,6 +199,7 @@ function isAlive(pid) {
 
 const OWN_OPTIONS = new Set(["--source-hash", "--head", "--owner", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
 const REPEATED_OPTIONS = new Set(["--foreign-compose"]);
+const COMMAND_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /** The first of `projects` that `docker compose ls` lists as running, or null; no Docker means none. */
 export function runningForeignCompose(projects, docker = process.env.VIBE_E2E_DOCKER || "docker") {
@@ -261,20 +262,7 @@ function runCommand(command, args, env, record) {
       ? spawn(process.execPath, [path.resolve(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), 'e2e-lock.mjs'),
         'child-gate', gate, command, ...args], { stdio: 'inherit', env, detached: true })
       : spawn(command, args, { stdio: 'inherit', env });
-    try {
-      if (record) {
-        recordE2EChild(record, child.pid);
-        writeFileSync(gate, record.token, { mode: 0o600, flag: 'wx' });
-        record.launchPending = false;
-        writeAtomic(record.file, record);
-      }
-    }
-    catch (error) {
-      if (record && child.pid > 1) process.kill(-child.pid, 'SIGTERM');
-      else child.kill('SIGTERM');
-      child.once("close", () => reject(error));
-      return;
-    }
+    let failure;
     let signalForwarded = false;
     const forward = (signal) => {
       if (signalForwarded) {
@@ -283,19 +271,28 @@ function runCommand(command, args, env, record) {
         return;
       }
       signalForwarded = true;
-      if (record && child.pid > 1) { try { process.kill(-child.pid, signal); } catch { /* Group exited. */ } }
-      else child.kill(signal);
+      // Send the first signal to the gate itself. A group signal here can land
+      // before the command joins the group, leaving a running command that missed it.
+      child.kill(signal);
     };
-    process.on("SIGINT", forward);
-    process.on("SIGTERM", forward);
-    process.on("SIGHUP", forward);
-    child.once("error", reject);
+    for (const signal of COMMAND_SIGNALS) process.on(signal, forward);
+    child.once("error", (error) => { failure ??= error; });
     child.once("close", (code, signal) => {
-      process.off("SIGINT", forward);
-      process.off("SIGTERM", forward);
-      process.off("SIGHUP", forward);
-      resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
+      for (const name of COMMAND_SIGNALS) process.off(name, forward);
+      if (failure) reject(failure);
+      else resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
     });
+    try {
+      if (record) {
+        recordE2EChild(record, child.pid);
+        writeFileSync(gate, record.token, { mode: 0o600, flag: 'wx' });
+        record.launchPending = false;
+        writeAtomic(record.file, record);
+      }
+    } catch (error) {
+      failure = error;
+      forward('SIGTERM');
+    }
   });
 }
 
@@ -489,26 +486,37 @@ function recordImagesOrSay(images) {
 export const ESCALATION_JUSTIFICATION = "Reserve the shared setup for the automatic checks";
 
 async function runChildGate([gate, command, ...args]) {
-  const until = Date.now() + 60_000;
-  while (Date.now() < until) {
-    try {
-      const token = readFileSync(gate, 'utf8');
-      if (/^[a-f0-9]{32}$/i.test(token) && gate.endsWith(`e2e-gate-${token}.ready`)) {
-        return new Promise((resolve, reject) => {
-          const child = spawn(command, args, { stdio: 'inherit', env: process.env });
-          const waitForGroupSignal = () => {};
-          for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, waitForGroupSignal);
-          child.once('error', reject);
-          child.once('close', (code, signal) => {
-            for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(name, waitForGroupSignal);
-            resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
-          });
+  let commandChild;
+  let interrupted;
+  const receive = (signal) => {
+    if (interrupted) return;
+    interrupted = signal;
+    if (!commandChild) return;
+    // The gate is the owned group leader. Its own copy of the relayed signal is ignored above.
+    try { process.kill(-process.pid, signal); }
+    catch (error) { if (error?.code === 'ESRCH') commandChild.kill(signal); else throw error; }
+  };
+  for (const signal of COMMAND_SIGNALS) process.on(signal, receive);
+  try {
+    const until = Date.now() + 60_000;
+    while (!interrupted && Date.now() < until) {
+      let token;
+      try { token = readFileSync(gate, 'utf8'); }
+      catch (error) { if (error?.code !== 'ENOENT') throw error; }
+      if (token && /^[a-f0-9]{32}$/i.test(token) && gate.endsWith(`e2e-gate-${token}.ready`)) {
+        return await new Promise((resolve, reject) => {
+          commandChild = spawn(command, args, { stdio: 'inherit', env: process.env });
+          commandChild.once('error', reject);
+          commandChild.once('close', (code, signal) => resolve(code ?? 128 + (os.constants.signals[signal] ?? 0)));
         });
       }
-    } catch (error) { if (error?.code !== 'ENOENT') throw error; }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+      await pause(50);
+    }
+    if (interrupted) return 128 + (os.constants.signals[interrupted] ?? 0);
+    throw new Error('E2E child launch was never acknowledged');
+  } finally {
+    for (const signal of COMMAND_SIGNALS) process.off(signal, receive);
   }
-  throw new Error('E2E child launch was never acknowledged');
 }
 
 /** Bounded cleanup CLI entry shared by root handoff and fleet terminal events. */

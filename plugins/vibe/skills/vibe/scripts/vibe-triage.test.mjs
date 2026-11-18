@@ -8,7 +8,7 @@ import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify as classifyIn, parsePathList, pathKind as kindIn, switchOn, validateManifest } from "./vibe-triage.mjs";
 import { repositoryAreas } from "./area-paths.mjs";
-import { bindProvider, bindProviderInProcess, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+import { bindProvider, bindProviderInProcess, makeHome, PROVIDER_BINDING, seedAlignedDecisionTable } from "./test-fixtures.mjs";
 
 // The repository the ClosedLoop provider serves, whose areas these cases name.
 const AREAS = repositoryAreas(PROVIDER_BINDING);
@@ -26,6 +26,7 @@ const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scrip
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const PLACEMENT = 'Delivery placement: unrelated: no in-flight unit owns this standalone fixture change.\n';
 
 // The in-process cloud dispatch cases name tracker tickets, which need a tracker bound.
 bindProviderInProcess(after);
@@ -574,7 +575,7 @@ test('DT-16: a fabricated git-init Vibe record is not a creation witness', () =>
   assert.throws(() => importResult({ ...cloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' }, { provider: 'claude', status: 'completed' }), /Vibe-created linked worktree/);
 });
 
-test('AC-4 and AC-5: Claude branch imports its one operator-authored commit into Vibe without committing', () => {
+test('AC-4 AC-5 AC-019: Claude import preserves source and reports stale-table handoff refusal', () => {
   const { worktree, gitDir } = vibeFixture();
   gitAt(worktree, 'switch', '-c', 'cloud/iss-13804-cloud');
   writeFileSync(path.join(worktree, 'existing.txt'), 'cloud edit\n');
@@ -589,10 +590,17 @@ test('AC-4 and AC-5: Claude branch imports its one operator-authored commit into
   const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${preImportBody}` } };
   assert.match(prCreateGuard(event)?.reason ?? '', /no imported source witness/);
   const before = gitAt(worktree, 'rev-parse', 'HEAD');
+  const table = seedAlignedDecisionTable(worktree);
+  const aligned = readFileSync(table, 'utf8');
+  writeFileSync(table, aligned.replace('- Checked the fixture negative path.', '(post-implementation)'));
   const imported = importResult(request, receipt);
   assert.match(imported.changed, /existing.txt/);
   assert.equal(readFileSync(path.join(worktree, 'existing.txt'), 'utf8'), 'cloud edit\n');
   assert.equal(gitAt(worktree, 'rev-parse', 'HEAD'), before);
+  assert.equal(imported.handoff.decisionTableCurrent, false);
+  assert.match(imported.handoff.decisionTableProblems.join('\n'), /Adversarial Review is empty/);
+  assert.match(imported.next, /Reconcile the session decision table.*before handoff/);
+  writeFileSync(table, aligned);
   assert.throws(() => readyForPr(request, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }), /stale for the current source/);
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   writeFileSync(path.join(gitDir, 'vibe-handoff-gate.json'), '{}\n');
@@ -684,8 +692,9 @@ test('ISS-14039: a Claude import accepts a Codex or trace-proven Fable 5.2 revie
   assert.match(cloudPrProblem(worktree, { gate }), missing, 'a trace changed after capture no longer proves the model');
 });
 
-test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.log', async () => {
-  const { worktree, gitDir } = vibeFixture();
+test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.log', async (t) => {
+  const { worktree, gitDir, remote } = vibeFixture();
+  seedAlignedDecisionTable(worktree);
   const request = sourcedCloudRequest(worktree);
   const receipt = completedReceipt(request, gitDir, 'task_abc');
   let current = 1000;
@@ -715,18 +724,20 @@ test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.
   gitAt(worktree, 'add', 'existing.txt');
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   const bodyFile = path.join(gitDir, 'body.md');
-  writeFileSync(bodyFile, 'PR body\n');
+  writeFileSync(bodyFile, `PR body\n${PLACEMENT}`);
   const reviews = claudeReviewReceipts(worktree, gitDir);
   recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: reviews[0], receipts: reviews }, { runScript: () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: '' }) });
   refreshImportWitness(worktree, { bodyFile });
+  placementReady(t, worktree, remote);
   const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${bodyFile}` } };
   assert.equal(prCreateGuard(event), null, 'the actual PR hook admits the imported source after handoff and an independent Claude review');
   writeFileSync(path.join(worktree, 'existing.txt'), 'changed after review\n');
   assert.match(prCreateGuard(event)?.reason ?? '', /cloud import witness is stale for the current source/);
 });
 
-test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted-tests ruling refreshes and opens its PR without an override', () => {
-  const { worktree, gitDir } = vibeFixture();
+test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted-tests ruling refreshes and opens its PR without an override', (t) => {
+  const { worktree, gitDir, remote } = vibeFixture();
+  seedAlignedDecisionTable(worktree);
   const request = sourcedCloudRequest(worktree);
   const receipt = completedReceipt(request, gitDir, 'task_ruled');
   importResult(request, receipt, { run: (_command, args) => {
@@ -737,7 +748,7 @@ test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted
   gitAt(worktree, 'add', 'existing.txt');
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   const bodyFile = path.join(gitDir, 'body.md');
-  writeFileSync(bodyFile, 'PR body\n');
+  writeFileSync(bodyFile, `PR body\n${PLACEMENT}`);
   const runsFile = path.join(gitDir, 'vibe-pr-evidence.json');
   writeFileSync(runsFile, JSON.stringify(ruledEvidence('rulings')));
   const rulingsFile = path.join(gitDir, 'rulings.md');
@@ -759,14 +770,16 @@ test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted
   gate(rulingsFile);
   refreshImportWitness(worktree, { bodyFile });
   assert.equal(cloudPrProblem(worktree, { bodyFile }), null);
+  placementReady(t, worktree, remote);
   assert.equal(prCreateGuard(event), null, 'the PR opens with no gate override in its body');
   writeFileSync(rulingsFile, RULINGS.replace('TARGETED inventory', 'full suites'));
   assert.match(prCreateGuard(event)?.reason ?? '', /handoff rulings evidence changed/, 'the witness binds the rulings file it was judged with');
   assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: handoff rulings evidence changed/);
 });
 
-test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refreshes and opens its PR when the PR title names them', () => {
-  const { worktree, gitDir } = vibeFixture();
+test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refreshes and opens its PR when the PR title names them', (t) => {
+  const { worktree, gitDir, remote } = vibeFixture();
+  seedAlignedDecisionTable(worktree);
   // What `vibe-sessions.mjs touch --member-ticket` leaves on the session record.
   writeSessionRecord(worktree, { ...readSessionRecord(worktree), memberTickets: ['ISS-13805', 'ISS-13806'] });
   const request = sourcedCloudRequest(worktree);
@@ -779,7 +792,7 @@ test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refre
   gitAt(worktree, 'add', 'existing.txt');
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   const bodyFile = path.join(gitDir, 'body.md');
-  writeFileSync(bodyFile, 'Delivers ISS-13804, ISS-13805 and ISS-13806.\n');
+  writeFileSync(bodyFile, `Delivers ISS-13804, ISS-13805 and ISS-13806.\n${PLACEMENT}`);
   const title = 'ISS-13804, ISS-13805, ISS-13806: Cloud dispatch';
   const oneMember = 'ISS-13804, ISS-13805: Cloud dispatch';
   const reviews = claudeReviewReceipts(worktree, gitDir);
@@ -796,6 +809,7 @@ test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refre
   assert.equal(readyForPr(request, { bodyFile, title }).ready, true);
   assert.equal(readyForPr(request, { bodyFile, title: oneMember }).ready, true);
 
+  placementReady(t, worktree, remote);
   const create = (prTitle) => prCreateGuard({ cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --title "${prTitle}" --body-file ${bodyFile}` } });
   assert.equal(create(title), null, 'the PR hook admits the import with no gate override in its body');
   assert.equal(create(oneMember), null, 'member tickets fit in the body without consuming the PR title');
@@ -823,3 +837,16 @@ test("with no provider bound, a file in no known area is unknown and Desktop rel
   assert.equal(kindIn("db/migrations/001.sql"), "backend");
   assert.equal(kindIn("apps/prototypes/a/page.ts"), "other");
 });
+
+/** A GitHub-shaped origin (served by the local bare remote) and an empty fleet home, as the PR hook's placement check reads them. */
+function placementReady(t, worktree, remote) {
+  const url = 'https://github.com/acme/cloud-fixture.git';
+  gitAt(worktree, 'remote', 'set-url', 'origin', url);
+  gitAt(worktree, 'config', `url.${remote}.insteadOf`, url);
+  const previous = process.env.FLEET_HOME;
+  process.env.FLEET_HOME = path.join(mkdtempSync(path.join(tmpdir(), 'vibe-cloud-fleet-')), 'absent');
+  t.after(() => {
+    if (previous === undefined) Reflect.deleteProperty(process.env, 'FLEET_HOME');
+    else process.env.FLEET_HOME = previous;
+  });
+}

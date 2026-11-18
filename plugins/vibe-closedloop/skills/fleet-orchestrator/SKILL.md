@@ -20,6 +20,8 @@ You run a program (several PRs at once, one writer on one PR, or research and de
 
 2. **Sanity-check every worker output; never just relay it.** When a change looks absurd, oversized or irrational (several flags for one screen, a docs file nobody asked for, a plugin PR that only adds, a stale head, a weakened test, a claim the evidence does not support), push back to the worker with a simpler alternative before the operator sees it, then tell the operator what you caught.
 
+3. **Fold related work into the in-flight unit or pull request.** Operator ruling, 2026-11-17: “we need to group work into less tickets and PRs”. Recommend folding. The separate option names its own test lanes, CI, reviews, and merge-queue time.
+
 Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come from the repo's own docs or the team knowledge base; never assume them. Machine specifics (hosts, paths, model names, slot counts) come from `<fleetHome>/config.env`.
 
 - Before replying with remaining work, use [Remaining work report](./references/templates.md#remaining-work-report). Name every selected lane that starts now, its machine, true dependencies, all parallel and queued work, any capacity move, and time to ready from the longest dependent path rather than a serial sum. Include these even when a lane already started; never send only its start action. Audit the reply for every fact before sending.

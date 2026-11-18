@@ -19,6 +19,8 @@ import { comparisonLogs } from "./main-sync-main-comparison.js";
 import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 
 const GIT_NETWORK_MS = 15 * 60 * 1000;
+/** One remote HEAD lookup plus two minutes for local source and receipt verification. */
+export const MAIN_SYNC_REQUEST_TIMEOUT_MS = GIT_NETWORK_MS + 2 * 60 * 1000;
 const desktopSchema = z.object({ ok: z.boolean(), running: z.boolean() }).passthrough();
 const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/)/;
 export { MainSyncError };

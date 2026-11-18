@@ -22,11 +22,14 @@
  * The fleet coordinator fills it from live ticket criteria and local graph
  * research; the script checks it against the Vibe session before dispatch.
  * `validate` needs no Vibe session or ticket: its request names branch, full
- * commit, model, lanes [{name, command}] and worktree (a local checkout, for its
- * origin and receipt), and optionally repository and install
- * (cloud-repository.mjs resolves them; no repository is named in the plugin). It runs the lanes on that
- * exact commit, changes nothing, and refuses a result bound to another commit
- * or showing a changed file.
+ * commit, model and worktree (a local checkout, for its origin and receipt). Lanes are
+ * either caller-safe [{name, command}] entries or named [{name}] recipes with
+ * laneSource {kind:"github-workflow",path,commit,sha256}; the latter are resolved
+ * from the immutable workflow at the requested commit, never from caller shell. The
+ * request may also name repository and install
+ * (cloud-repository.mjs resolves them; no repository is named in the plugin). An optional
+ * resultArtifact {path,branch} permits one JSON-only child commit so a complete eval result returns without
+ * relying on condensed logs. It runs the lanes on the exact commit and refuses any other change or identity.
  * A Claude dispatch runs in the environment cloud-environment.mjs resolves
  * (request `claudeEnvironment`, VIBE_CLOUD_CLAUDE_ENV, then CLOUD_CLAUDE_ENV in
  * the fleet home's config.env) and is refused with a named error without one.
@@ -41,13 +44,15 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import { decideCloudPlacement } from "../../fleet-orchestrator/scripts/cloud-placement.mjs";
 import { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } from "./session-record.mjs";
 import { gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
+import { decisionTableProblems } from "../../handoff/scripts/decision-table-gate.mjs";
 import { verifiedReviewModel } from "../../handoff/scripts/review-receipts.mjs";
 import { FABLE_REVIEW_MODELS } from "./review-models.mjs";
 import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
-import { checkCloudSetup, cloudSetupError, CloudSetupError, createRefusal, resolveClaudeEnvironment, runNotCreated } from "./cloud-environment.mjs";
+import { checkCloudSetup, cloudSetupError, CloudSetupError, createRefusal, githubTokenMissing, resolveClaudeEnvironment, runNotCreated } from "./cloud-environment.mjs";
 import { adoptStanding, chromeRemoval, hasIntent, markRun, NO_EXECUTOR, pendingCount, pendingLine, readLedger, retireRoutine, runOnStanding, sweepRemovals } from "./cloud-routines.mjs";
 import { dispatchReceiptName, TERMINAL, validationReceiptName } from "./cloud-receipts.mjs";
 import { codexEnvironment, installInstruction, PROVENANCE_COMMAND, provenanceProblem, resolveRepository } from "./cloud-repository.mjs";
+import { workflowLaneDefinitions } from "./workflow-lane-definitions.mjs";
 import { connectionLabel, providerDataOr, sessionBinding } from "./provider.mjs";
 import { failScript } from "./provider.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
@@ -82,6 +87,12 @@ function firstLine(value) { return String(value ?? "").trim().split("\n")[0]; }
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 
 function git(worktree, args) { return checked("git", ["-C", worktree, ...args]); }
+
+function committedFile(worktree, commit, file) {
+  const result = runCommand("git", ["-C", worktree, "show", `${commit}:${file}`], { cwd: worktree });
+  if (result.status !== 0) throw new Error(`committed workflow ${file} could not be read at ${commit}`);
+  return result.stdout;
+}
 
 /** Run Codex in its repository and remove only the regular error.log it created in this call. */
 function runCodex(args, { run = runCommand, cwd, timeout = COMMAND_MS } = {}) {
@@ -228,46 +239,81 @@ function toolResultText(body, structured) {
   return text;
 }
 
-/**
- * Use the signed-in Claude client's RemoteTrigger tool, never `claude --cloud` creation. A create is sent only
- * with an intent the routine ledger recorded first (cloud-routines.mjs), so no routine exists off the record.
- */
-export function remoteTrigger(action, payload, { run = runCommand, cwd, intent, home = os.homedir() } = {}) {
-  if (action === "create" && !hasIntent(home, intent)) throw new Error(`RemoteTrigger ${action} called an unexpected action`);
-  // Compared as the JSON the model was given, so a field left undefined here is not a difference.
-  const sent = JSON.parse(JSON.stringify({ action, ...payload }));
-  const prompt = `Call RemoteTrigger exactly once with this complete tool input: ${JSON.stringify(sent)}. Do not call any other tool or take any other action.`;
-  const result = run("claude", ["-p", prompt, "--no-session-persistence", "--tools", "RemoteTrigger", "--allowedTools", "RemoteTrigger", "--max-turns", "3", "--output-format", "stream-json", "--verbose"], { cwd, timeout: COMMAND_MS });
-  if (result.status !== 0) throw new Error(`Claude RemoteTrigger ${action} failed: ${firstLine(result.stderr || result.error?.message || result.stdout)}`);
-  let toolId;
-  let toolResult;
-  let structured;
-  let echoProblem = null;
-  for (const line of result.stdout.split("\n")) {
+/** Match execution evidence to tool calls. Proposed tool use without a result never proves an execution. */
+function remoteTriggerStream(stdout) {
+  const proposed = new Map();
+  const executed = [];
+  let terminal = null;
+  for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     let event;
     try { event = JSON.parse(line); } catch { continue; }
-    for (const item of event?.message?.content ?? []) {
-      if (item?.type === "tool_use" && item.name === "RemoteTrigger") {
-        // The tool input is the model's copy of ours: a different id or body would act on, or prove, another routine.
-        if (toolId) throw new Error(`RemoteTrigger ${action} called an unexpected action`);
-        toolId = item.id;
-        if (!isDeepStrictEqual(item.input, sent)) echoProblem = `RemoteTrigger ${action} called an unexpected action`;
+    if (event?.type === "result") terminal = event;
+    const content = event?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const item of content) {
+      if (item?.type === "tool_use" && item.name === "RemoteTrigger" && typeof item.id === "string") {
+        proposed.set(item.id, proposed.has(item.id) ? undefined : item.input);
       }
-      if (item?.type === "tool_result" && item.tool_use_id === toolId) {
-        toolResult = item.content;
-        structured = event.tool_use_result;
+      if (item?.type === "tool_result" && proposed.has(item.tool_use_id)) {
+        const raw = typeof item.content === "string" ? item.content : Array.isArray(item.content)
+          ? item.content.map((entry) => entry?.text ?? "").join("\n") : "";
+        executed.push({ input: proposed.get(item.tool_use_id), raw, structured: event.tool_use_result });
       }
     }
   }
-  if (!toolId || !toolResult) throw new Error(`RemoteTrigger ${action} returned no verified tool result`);
-  const body = toolResultText(typeof toolResult === "string" ? toolResult : Array.isArray(toolResult) ? toolResult.map((item) => item.text ?? "").join("\n") : "", structured);
-  if (echoProblem && action !== "create") throw new Error(echoProblem);
+  return { terminal, executed };
+}
+
+/** Keep failure evidence bounded and omit lookalike lifecycle events and credential strings. */
+function triggerDiagnostic(result, terminal, last) {
+  const clean = (value) => typeof value === "string" ? value
+    .replace(/\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+|\bBearer\s+[A-Za-z0-9._~+-]+/gi, "[redacted]")
+    .replace(/[\x00-\x20\x7f]+/g, " ").trim().slice(0, 400) : "";
+  const errors = Array.isArray(terminal?.errors) ? terminal.errors.slice(0, 3).map((error) => clean(error?.message ?? error)).filter(Boolean) : [];
+  const end = [clean(terminal?.subtype), ...errors].filter(Boolean).join(": ");
+  const tool = clean(last?.raw);
+  const stderr = clean(result.stderr);
+  const spawn = clean(result.error?.message);
+  return [end && `result ${end}`, tool && `last tool_result ${tool}`, stderr && `stderr ${stderr}`, spawn && `process ${spawn}`].filter(Boolean).join(" | ");
+}
+
+/**
+ * Use the signed-in Claude client's RemoteTrigger tool. Create requires an intent already recorded in the routine ledger.
+ */
+export function remoteTrigger(action, payload, { run = runCommand, cwd, intent, home = os.homedir() } = {}) {
+  const unexpected = `RemoteTrigger ${action} called an unexpected action`;
+  if (action === "create" && !hasIntent(home, intent)) throw new Error(unexpected);
+  const sent = JSON.parse(JSON.stringify({ action, ...payload }));
+  const prompt = `Call RemoteTrigger exactly once with this complete tool input: ${JSON.stringify(sent)}. Do not call any other tool or take any other action.`;
+  const result = run("claude", ["-p", prompt, "--no-session-persistence", "--tools", "RemoteTrigger", "--allowedTools", "RemoteTrigger", "--max-turns", "3", "--output-format", "stream-json", "--verbose"], { cwd, timeout: COMMAND_MS });
+  const { terminal, executed } = remoteTriggerStream(result.stdout ?? "");
+  const last = executed.at(-1);
+  const diagnostic = triggerDiagnostic(result, terminal, last);
+  const details = diagnostic ? ` (${diagnostic})` : "";
+  const processFailed = result.status !== 0 || terminal?.is_error === true || String(terminal?.subtype ?? "").startsWith("error_");
+  if (executed.length !== 1 || !last?.raw.trim()) {
+    if (processFailed) throw new Error(`Claude RemoteTrigger ${action} failed: ${diagnostic || `exit ${result.status}`}`);
+    throw new Error(`${executed.length > 1 ? unexpected : `RemoteTrigger ${action} returned no verified tool result`}${details}`);
+  }
+  if (!last.input || Object.hasOwn(last.input, "__unparsedToolInput")) throw new Error(`${unexpected}${processFailed ? details : ""}`);
+  const echoProblem = !isDeepStrictEqual(last.input, sent) ? unexpected : null;
+  if (echoProblem && action !== "create") throw new Error(`${echoProblem}${processFailed ? details : ""}`);
+  const body = toolResultText(last.raw, last.structured);
   const [statusLine, jsonLine] = body.split("\n");
   if (statusLine !== "HTTP 200" || !jsonLine) {
+    if (echoProblem) throw new Error(`${echoProblem}${processFailed ? details : ""}`);
     const status = Number(/^HTTP (\d{3})\b/.exec(statusLine ?? "")?.[1]);
-    throw Object.assign(new Error(`RemoteTrigger ${action} failed: ${firstLine(body)}`), Number.isInteger(status) ? { httpStatus: status } : {});
+    if (status === 401 && jsonLine) {
+      let error;
+      try { error = JSON.parse(jsonLine); } catch { /* an unstructured 401 is still an ordinary HTTP refusal */ }
+      if ([error?.error, error?.code, error?.type, error?.error?.code, error?.error?.type].includes("github_token_missing")) {
+        throw githubTokenMissing(diagnostic);
+      }
+    }
+    throw Object.assign(new Error(`RemoteTrigger ${action} failed: ${firstLine(body)}${details}`), Number.isInteger(status) ? { httpStatus: status } : {});
   }
+  if (processFailed) throw new Error(`Claude RemoteTrigger ${action} failed: ${diagnostic || `exit ${result.status}`}`);
   const parsed = parseJsonOutput(jsonLine, `RemoteTrigger ${action}`);
   if (echoProblem) {
     const createdId = parsed?.trigger?.id;
@@ -515,7 +561,11 @@ export function importResult(request, receipt, { run = runCommand, gitRead = git
     importedSource: sourceIdentity(request.worktree), importedAt: new Date().toISOString(),
   };
   writeFileSync(importWitnessPath(request.worktree), `${JSON.stringify(witness, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  return { provider: request.provider, worktree: request.worktree, changed: gitRead(request.worktree, ["status", "--short"]), witness: importWitnessPath(request.worktree), next: "Run the unchanged Vibe handoff, the independent review (Codex or Fable 5.2 for a Claude import, Claude for a Codex import) and full local lanes before ready or PR." };
+  const tableProblems = decisionTableProblems(request.worktree);
+  return { provider: request.provider, worktree: request.worktree, changed: gitRead(request.worktree, ["status", "--short"]), witness: importWitnessPath(request.worktree),
+    handoff: { decisionTableCurrent: tableProblems.length === 0, decisionTableProblems: tableProblems },
+    next: tableProblems.length ? "Reconcile the session decision table against the imported code before handoff."
+      : "Run Vibe handoff, the independent review (Codex or Fable 5.2 for a Claude import, Claude for a Codex import) and full local lanes before ready or PR." };
 }
 
 /** Each handoff review receipt's harness, the model its trace proves (null when unproven) and its session identities. */
@@ -682,7 +732,8 @@ async function main(argv) {
     const request = values.request ? JSON.parse(readFileSync(values.request, "utf8")) : {};
     const { ledger, problem } = ledgerForCheck(os.homedir());
     const pending = ledger && pendingCount(ledger) > 0 ? pendingLine(pendingCount(ledger)) : null;
-    const result = checkCloudSetup(request, { remote: cliRemote(request.worktree), standing: ledger?.standing ?? null, pending, ledgerProblem: problem });
+    const result = checkCloudSetup(request, { remote: cliRemote(request.worktree), standing: ledger?.standing ?? null,
+      pending, ledgerProblem: problem, githubTokenMissingAt: ledger?.githubTokenMissingAt });
     if (!result.ok) process.exitCode = 1;
     return result;
   }
@@ -748,6 +799,34 @@ async function main(argv) {
   throw new Error("action must be brief, dispatch, poll, import, followup, ready, validate, abandon, routines or check");
 }
 
+/** Resolve caller-safe commands or immutable, repository-owned workflow lane recipes. */
+export function validationLanes(request) {
+  if (request.laneSource === undefined) {
+    if (request.lanes.some((lane) => !/^[a-z0-9][a-z0-9:_-]*$/.test(lane?.name ?? "") || !isCheckCommand(lane.command) || lane.command.length > 1000)) {
+      throw new Error("each lane needs a name and a documented check entry point without shell control");
+    }
+    return { lanes: request.lanes.map((lane) => ({ name: lane.name, command: lane.command })), laneSource: null };
+  }
+  const source = request.laneSource;
+  if (!source || Object.keys(source).some((key) => !["kind", "path", "commit", "sha256"].includes(key))
+    || source.kind !== "github-workflow" || !/^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/.test(source.path ?? "")
+    || source.commit !== request.commit || !/^[0-9a-f]{64}$/.test(source.sha256 ?? "")) {
+    throw new Error("laneSource must name the committed GitHub workflow path, validation commit and SHA-256");
+  }
+  if (request.lanes.some((lane) => !lane || Object.keys(lane).length !== 1 || typeof lane.name !== "string")) {
+    throw new Error("workflow validation lanes name committed recipes; caller commands are refused");
+  }
+  const text = committedFile(request.worktree, request.commit, source.path);
+  if (sha256(text) !== source.sha256) throw new Error("committed workflow SHA-256 differs from laneSource");
+  const definitions = workflowLaneDefinitions(text);
+  const lanes = request.lanes.map(({ name }) => {
+    const matches = definitions.filter((definition) => definition.name === name);
+    if (matches.length !== 1) throw new Error(`workflow lane ${name} is missing or ambiguous at ${request.commit}`);
+    return { name, command: matches[0].command, workflow: { path: source.path, commit: source.commit, sha256: source.sha256 } };
+  });
+  return { lanes, laneSource: { kind: source.kind, path: source.path, commit: source.commit, sha256: source.sha256 } };
+}
+
 /** Check a validation-only request; Codex Cloud returns no task report to bind lane results to. */
 export function validateValidationRequest(request) {
   if (!request || typeof request !== "object") throw new Error("structured validation request is required");
@@ -759,8 +838,18 @@ export function validateValidationRequest(request) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(request.model ?? "")) throw new Error("a pinned model is required");
   if (typeof request.worktree !== "string" || !request.worktree) throw new Error("a local checkout of the repository is required as worktree");
   if (!Array.isArray(request.lanes) || request.lanes.length === 0) throw new Error("at least one lane is required");
-  if (request.lanes.some((lane) => !/^[a-z0-9][a-z0-9:_-]*$/.test(lane?.name ?? "") || !isCheckCommand(lane.command) || lane.command.length > 1000)) throw new Error("each lane needs a name and a documented check entry point without shell control");
   if (new Set(request.lanes.map((lane) => lane.name)).size !== request.lanes.length) throw new Error("lane names must be unique");
+  validationLanes(request);
+  if (request.resultArtifact !== undefined) {
+    const artifact = request.resultArtifact;
+    if (!artifact || typeof artifact !== "object" || typeof artifact.path !== "string"
+      || !/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/-]+\.json$/.test(artifact.path)
+      || /(?:^|\/)auth\.json$/i.test(artifact.path)) throw new Error("resultArtifact.path must be a safe repository-relative JSON path and never auth.json");
+    if (typeof artifact.branch !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(artifact.branch)
+      || artifact.branch.includes("..") || artifact.branch.endsWith("/") || artifact.branch === request.branch) {
+      throw new Error("resultArtifact.branch must be a distinct pushed result branch");
+    }
+  }
   checkPollingBounds(request);
   return request;
 }
@@ -777,20 +866,34 @@ export const LANE_DISCIPLINE = "Run every lane in the foreground and wait for it
 /** The validation-only brief: exact checkout, install, lanes, no changes, one bound result line. */
 export function validationBrief(request) {
   validateValidationRequest(request);
+  const resolved = validationLanes(request);
+  const artifact = request.resultArtifact;
+  const finish = artifact
+    ? [
+      `The full eval result must exist at \`${artifact.path}\`. It is the only tracked file this validation may change. Refuse if it is missing, malformed JSON, or named auth.json.`,
+      `Run \`git add -- ${artifact.path}\`, commit only that file with message \`chore(vibe): record cloud eval result\`, then push \`HEAD:refs/heads/${artifact.branch}\`. Record the result commit and \`shasum -a 256 ${artifact.path}\`.`,
+      "After that commit, run `git status --porcelain`; it must be empty.",
+    ]
+    : ["Change no files. Do not edit, create or delete a tracked file, commit or push. After the lanes, run `git status --porcelain` and keep its lines."];
   return [
     `Validation only. Repository: ${requireRepository(request)}. Branch: ${request.branch}. Commit: ${request.commit}.`,
     `Check out the exact commit: run \`git fetch origin refs/heads/${request.branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
     `After checkout, run \`${PROVENANCE_COMMAND}\` as one call, exactly as written, and keep its four lines.`,
     installInstruction(request),
-    "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + request.lanes.map((lane) => `- ${lane.name}: ${lane.command}`).join("\n"),
+    ...(resolved.laneSource ? [
+      `The lanes below are immutable recipes read from ${resolved.laneSource.path} at ${resolved.laneSource.commit} (SHA-256 ${resolved.laneSource.sha256}), not caller shell. For each recipe, apply its workflow/job environment, defaults, matrix row, working directories and conditions; perform its committed setup/action steps, then run its committed run steps in order. Refuse rather than substitute or omit an unsupported step.`,
+    ] : []),
+    "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + resolved.lanes.map((lane) => `- ${lane.name}: ${lane.command}`).join("\n"),
     LANE_DISCIPLINE,
-    "Change no files. Do not edit, create or delete a tracked file, commit, push, open a pull request or trigger a review. After the lanes, run `git status --porcelain` and keep its lines.",
-    `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the output of git rev-parse HEAD), "provenance" ({"host", "remote", "origin", "commit"}, each the value from its line of that command, an empty string when the line is empty), "lanes" (one {"name", "exitCode"} per lane above, in order) and "status" (the git status --porcelain lines, an empty list when there are none).`,
+    ...finish,
+    "Do not open a pull request or trigger a review.",
+    `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the validated commit, before any result commit), "provenance" ({"host", "remote", "origin", "commit"}, each the value from its line of that command, an empty string when the line is empty), "lanes" (one {"name", "exitCode"} per lane above, in order), "status" (the final git status --porcelain lines, an empty list when there are none)${artifact ? `, and "artifact" ({"path":"${artifact.path}","branch":"${artifact.branch}","commit":"<full result commit>","sha256":"<full file SHA-256>"})` : ""}.`,
   ].join("\n\n") + "\n";
 }
 
 /** Bind the worker's last result line to the requested commit and lanes; refuse any changed file. */
 export function parseValidationResult(text, request) {
+  const resolved = validationLanes(request);
   const lines = [...String(text ?? "").matchAll(RESULT_LINE)];
   if (lines.length === 0) throw new Error("cloud validation returned no result line");
   let result;
@@ -800,14 +903,43 @@ export function parseValidationResult(text, request) {
   if (unproven) throw new Error(`cloud validation ${unproven}; result refused`);
   if (!Array.isArray(result.status)) throw new Error("cloud validation result has no git status; result refused");
   if (result.status.length > 0) throw new Error(`cloud validation changed files (${result.status.join(", ")}); result refused`);
-  if (!Array.isArray(result.lanes) || result.lanes.length !== request.lanes.length) throw new Error("cloud validation did not report every requested lane; result refused");
-  const lanes = request.lanes.map((lane, index) => {
+  if (!Array.isArray(result.lanes) || result.lanes.length !== resolved.lanes.length) throw new Error("cloud validation did not report every requested lane; result refused");
+  const lanes = resolved.lanes.map((lane, index) => {
     const reported = result.lanes[index];
     if (reported?.name !== lane.name || !Number.isInteger(reported.exitCode)) throw new Error(`cloud validation lane ${lane.name} has no exit code; result refused`);
     return { name: lane.name, command: lane.command, exitCode: reported.exitCode, passed: reported.exitCode === 0 };
   });
+  let artifact;
+  if (request.resultArtifact) {
+    artifact = result.artifact;
+    if (artifact?.path !== request.resultArtifact.path || artifact?.branch !== request.resultArtifact.branch
+      || !/^[0-9a-f]{40}$/.test(artifact?.commit ?? "") || !/^[0-9a-f]{64}$/.test(artifact?.sha256 ?? "")) {
+      throw new Error("cloud validation result artifact identity is missing or differs from the request");
+    }
+  } else if (result.artifact !== undefined) throw new Error("cloud validation returned an unrequested result artifact");
   const { host, remote, origin } = result.provenance;
-  return { commit: request.commit, branch: request.branch, repository: request.repository, provenance: { host, remote, origin, commit: request.commit }, lanes, passed: lanes.every((lane) => lane.passed) };
+  return { commit: request.commit, branch: request.branch, repository: request.repository, provenance: { host, remote, origin, commit: request.commit }, lanes,
+    ...(resolved.laneSource ? { laneSource: resolved.laneSource } : {}), passed: lanes.every((lane) => lane.passed), ...(artifact ? { artifact } : {}) };
+}
+
+/** Fetch and verify the result-only child commit, then return its complete JSON payload. */
+export function readValidationArtifact(request, artifact, { run = runCommand, gitRead = git } = {}) {
+  const ref = `refs/vibe/cloud-validation/${sha256(`${request.commit}:${artifact.branch}`)}`;
+  const fetched = run("git", ["-C", request.worktree, "fetch", "--force", "origin", `refs/heads/${artifact.branch}:${ref}`], { cwd: request.worktree, timeout: COMMAND_MS });
+  if (fetched.status !== 0) throw new Error(`cloud validation result branch fetch failed: ${firstLine(fetched.stderr || fetched.error?.message)}`);
+  const commit = gitRead(request.worktree, ["rev-parse", ref]);
+  if (commit !== artifact.commit || gitRead(request.worktree, ["rev-parse", `${commit}^`]) !== request.commit) {
+    throw new Error("cloud validation result commit is not the requested commit's direct child");
+  }
+  const files = gitRead(request.worktree, ["diff-tree", "--no-commit-id", "--name-only", "-r", commit]).split("\n").filter(Boolean);
+  if (files.length !== 1 || files[0] !== artifact.path) throw new Error("cloud validation result commit changes files outside the requested artifact");
+  const shown = run("git", ["-C", request.worktree, "show", `${commit}:${artifact.path}`], { cwd: request.worktree, timeout: COMMAND_MS });
+  if (shown.status !== 0) throw new Error(`cloud validation result artifact read failed: ${firstLine(shown.stderr || shown.error?.message)}`);
+  const bytes = shown.stdout;
+  if (sha256(bytes) !== artifact.sha256) throw new Error("cloud validation result artifact SHA-256 differs");
+  let result;
+  try { result = JSON.parse(bytes); } catch { throw new Error("cloud validation result artifact is not JSON"); }
+  return { ...artifact, result };
 }
 
 /** Every string in a run log, whatever its shape, so the worker's final message can be found. */
@@ -821,7 +953,7 @@ function logText(value) {
 function validationReceiptPath(request, digest) { return path.join(gitDir(request.worktree), validationReceiptName(request.commit, digest)); }
 
 /** Start (or resume) a Claude cloud session on the commit, poll it, and return results bound to that commit. */
-export async function validateCommit(request, { remote = cliRemote(request.worktree), sleep, now, home = os.homedir(), executor = chromeRemoval(), stderr } = {}) {
+export async function validateCommit(request, { remote = cliRemote(request.worktree), sleep, now, home = os.homedir(), executor = chromeRemoval(), stderr, artifactReader = readValidationArtifact } = {}) {
   validateValidationRequest(request);
   const routed = { ...request, repository: verifyRepository(request.worktree, request.repository) };
   const digest = sha256(JSON.stringify(request));
@@ -842,7 +974,8 @@ export async function validateCommit(request, { remote = cliRemote(request.workt
   if (started.status !== finished.status) await markRun(home, finished.runId ?? finished.taskId, finished.status, DEFAULT_WALL_MS);
   if (finished.status !== "completed") throw new Error(`cloud validation ended ${finished.status}`);
   const result = parseValidationResult(logText(remote("get_run_log", { session_id: finished.sessionId })), routed);
-  return { ...result, provider: "claude", taskId: finished.taskId, sessionId: finished.sessionId, wallMs: finished.wallMs, receipt: file };
+  const artifact = result.artifact ? artifactReader(routed, result.artifact) : null;
+  return { ...result, ...(artifact ? { artifact } : {}), provider: "claude", taskId: finished.taskId, sessionId: finished.sessionId, wallMs: finished.wallMs, receipt: file };
 }
 
 if (isEntryPoint(import.meta.url)) {

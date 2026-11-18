@@ -75,19 +75,19 @@ test("ISS-14304: a classified no-UI diff accepts a recorded no-environment rulin
   assert.deepEqual(checkLiveTicket(noEnvironment, { diffFiles: [{ path: "tools/vibe-workers/src/ledger.ts", status: "M" }], rulingsText }),
     { ok: true, problems: [] });
   assert.ok(checkLiveTicket(noEnvironment, { diffFiles: [{ path: "tools/vibe-workers/src/ledger.ts", status: "M" }] }).problems
-    .some(({ problem }) => /separate rulings record/.test(problem)));
+    .some(({ problem }) => /canonical private vibe-changes/.test(problem)));
   const orchestratorOnly = noEnvironment.replace("operator, 2026-11-16, AskUserQuestion: approved", "(orchestrator), approved");
   assert.ok(checkLiveTicket(orchestratorOnly, { diffFiles: [{ path: "tools/vibe-workers/src/ledger.ts", status: "M" }], rulingsText }).problems
-    .some(({ problem }) => /separate rulings record/.test(problem)));
+    .some(({ problem }) => /canonical private vibe-changes/.test(problem)));
   for (const untrusted of [
     "reviewer, 2026-11-16, chat: approved code-only handoff",
     "vibe agent, 2026-11-16, ticket: approved code-only handoff",
-    "Daniel, approved code-only handoff",
-    "Daniel, 2026-11-16, approved code-only handoff",
+    "operator, approved code-only handoff",
+    "operator, 2026-11-16, approved code-only handoff",
   ]) {
     const body = noEnvironment.replace("operator, 2026-11-16, AskUserQuestion: approved code-only handoff", untrusted);
     assert.ok(checkLiveTicket(body, { diffFiles: [{ path: "tools/vibe-workers/src/ledger.ts", status: "M" }], rulingsText }).problems
-      .some(({ problem }) => /separate rulings record/.test(problem)), untrusted);
+      .some(({ problem }) => /canonical private vibe-changes/.test(problem)), untrusted);
   }
   const ui = checkLiveTicket(noEnvironment, { diffFiles: [{ path: "packages/app/issues/page.tsx", status: "M" }], rulingsText });
   assert.ok(ui.problems.some(({ problem }) => /diff touches a UI path/.test(problem)));
@@ -99,6 +99,38 @@ test("ISS-14304: a classified no-UI diff accepts a recorded no-environment rulin
   const fake = completeTicket({ Environment: ENVIRONMENT.replaceAll("preview.closedloop-stage.ai", "preview.closedloop-stage.ai (not deployed)") });
   const problems = checkLiveTicket(fake).problems.filter(({ section }) => section === "Environment");
   assert.deepEqual(problems.map(({ problem }) => problem), ["has no App URL", "has no API URL", "has no Storybook URL"]);
+});
+
+test("ISS-14304: the CLI trusts only the worktree's canonical private rulings log", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "live-ticket-no-environment-"));
+  try {
+    const worktree = path.join(root, "wt");
+    mkdirSync(worktree);
+    git(worktree, ["init", "--quiet", "--initial-branch=main"], process.env.HOME);
+    mkdirSync(path.join(worktree, "src"));
+    writeFileSync(path.join(worktree, "src/logic.ts"), "export const value = 1;\n");
+    git(worktree, ["add", "."], process.env.HOME);
+    git(worktree, ["-c", "user.name=t", "-c", "user.email=fixture.invalid", "commit", "--quiet", "-m", "base"], process.env.HOME);
+    const base = git(worktree, ["rev-parse", "HEAD"], process.env.HOME);
+    writeFileSync(path.join(worktree, "src/logic.ts"), "export const value = 2;\n");
+    const ruling = "- No environment: operator, 2026-11-16, AskUserQuestion: approved code-only handoff";
+    const ticket = path.join(root, "ticket.md");
+    writeFileSync(ticket, completeTicket({
+      Environment: `${ENVIRONMENT.split("\n").slice(0, 2).join("\n")}\n${ruling}`,
+      "Production flag snapshot": ruling,
+    }).replace("abcdef1234", base.slice(0, 10)));
+    const gitDir = git(worktree, ["rev-parse", "--absolute-git-dir"], process.env.HOME);
+    writeFileSync(path.join(gitDir, "vibe-changes.md"), `${ruling}\n`);
+    const run = () => runNode(SCRIPT, ["--file", ticket, "--worktree", worktree, "--base-commit", base], process.env.HOME);
+    const accepted = run();
+    assert.equal(accepted.status, 0, JSON.stringify(accepted.json) + accepted.stderr);
+    writeFileSync(path.join(gitDir, "vibe-changes.md"), "No human no-environment ruling.\n");
+    const refused = run();
+    assert.equal(refused.status, 1);
+    assert.match(JSON.stringify(refused.json), /canonical private vibe-changes/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("a real Claude orchestrator session satisfies the Sessions contract without a Codex thread", () => {

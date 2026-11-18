@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { codexGraphSetupProblem, observedCodexTurn, readCodexReviewTurn } from "./codex-review-runtime.mjs";
+import { codexGraphSetupProblem, observedCodexTurn, readCodexReviewTurn, readCodexTurnItems } from "./codex-review-runtime.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
 
 test("managed Codex reviewer calls come only from its completed App Server turn items", async () => {
@@ -24,7 +24,12 @@ test("managed Codex reviewer calls come only from its completed App Server turn 
     if (method === "thread/items/list") return { data: thread.turns[0].items.slice(1).map(item => ({ item })) };
     throw new Error(method);
   } };
-  assert.deepEqual(await readCodexReviewTurn("thread-1", "turn-1", client), observedCodexTurn(thread, "thread-1", "turn-1"));
+  const raw = await readCodexTurnItems("thread-1", "turn-1", client);
+  assert.deepEqual(raw.items, thread.turns[0].items);
+  const loadedTurn = { ...raw.turn, items: raw.items };
+  delete loadedTurn.itemsView;
+  assert.deepEqual(observedCodexTurn({ ...raw.thread, turns: [loadedTurn] }, "thread-1", "turn-1"),
+    observedCodexTurn(thread, "thread-1", "turn-1"));
   assert.equal(calls.some(([method, args]) => method === "thread/read" && args.includeTurns === true), false);
   assert.equal(calls.filter(([method]) => method === "thread/turns/list").length, 2, "turn pages are read until the exact turn");
   assert.equal(calls.filter(([method]) => method === "thread/items/list").length, 2, "all item pages are read");

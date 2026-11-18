@@ -95,7 +95,7 @@ def test_the_skills_and_storybook_rule_point_at_it() -> None:
     ):
         assert required in skill, required
     loop = section(skill_split.read(VIBE_SKILL), "## 5. Build loop")
-    assert "look at with a link to each changed page (`vibe-sessions.mjs link --page`;" in loop
+    assert f"look at with a link to each changed page (`references/plain-words.md`, {RULE_NAME})" in loop
     deploy = section(skill_split.read(VIBE_SKILL), "## 6. Deploy each change")
     assert f"with a link to each changed page or component (`references/plain-words.md`, {RULE_NAME})" in deploy
     handoff = flat(skill_split.read(HANDOFF_SKILL))

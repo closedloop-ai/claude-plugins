@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -12,6 +12,7 @@ import {
   acquireLock, DEFAULT_CONTINUE_PROMPT, lockHolder, readConfig, recoverPass, reportLine,
 } from './recover.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isolatedVibeEnvironment, makeHome } from '../../vibe/scripts/test-fixtures.mjs';
 
 const { connectDirect, decodeFrames } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 
@@ -50,7 +51,12 @@ async function waitForReadyLine(child, text, step, timeoutMs = 60_000) {
       child.removeListener('error', onError);
       child.removeListener('exit', onExit);
       child.stdout?.removeListener('data', onData);
-      if (error) { await stopChild(child, step, Math.min(500, timeoutMs)); reject(new Error(`${error}; stdout=${stdout.trim()}; stderr=${stderr.trim()}`)); }
+      if (error) {
+        let cleanup = '';
+        try { await stopChild(child, step, Math.min(500, timeoutMs)); }
+        catch (failure) { cleanup = `; cleanup: ${failure.message}`; }
+        reject(new Error(`${error}; stdout=${stdout.trim()}; stderr=${stderr.trim()}${cleanup}`));
+      }
       else resolve({ stdout, stderr });
     };
     const onError = (error) => void done(`${step} failed to start: ${error.message}`);
@@ -63,10 +69,13 @@ async function waitForReadyLine(child, text, step, timeoutMs = 60_000) {
   });
 }
 
-function runStep(step, command, args, options = {}) {
-  const result = spawnSync(command, args, { ...options, encoding: 'utf8', timeout: options.timeout ?? 60_000 });
-  if (result.error) throw new Error(`${step} did not exit: ${result.error.message}; stdout=${result.stdout ?? ''}; stderr=${result.stderr ?? ''}`);
-  return result;
+function runStep(step, command, args, { timeoutMs = 25_000, ...options } = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { ...options, encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL' }, (error, stdout, stderr) => {
+      if (error && typeof error.code !== 'number') reject(new Error(`${step} did not exit: ${error.message}; stdout=${stdout}; stderr=${stderr}`));
+      else resolve({ status: error?.code ?? 0, stdout, stderr });
+    });
+  });
 }
 
 function serverFrame(text) {
@@ -366,23 +375,27 @@ test('a lock refuses a second holder while the first lives, and a dead holder is
 });
 
 test('a second supervisor on the host exits while the first holds the lock', { timeout: 150_000 }, async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'fleet-supervise-'));
-  const env = { ...process.env, FLEET_SUPERVISOR_LOCK: join(dir, 'supervisor.lock'), LOCAL_STATE_DIR: dir };
-  const first = spawn(process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-  t.after(() => stopChild(first, 'first supervisor cleanup', 30_000, true));
+  const fixture = makeHome('fleet-supervise-');
+  const dir = fixture.root;
+  const env = { ...isolatedVibeEnvironment(fixture.home), FLEET_SUPERVISOR_LOCK: join(dir, 'supervisor.lock'), LOCAL_STATE_DIR: dir, PATH: '' };
+  const first = spawn(process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  t.after(async () => {
+    try { await stopChild(first, 'first supervisor cleanup', 5000, true); }
+    finally { fixture.cleanup(); }
+  });
   try {
     await waitForReadyLine(first, 'supervise: pid', 'first supervisor');
     assert.equal(lockHolder(env.FLEET_SUPERVISOR_LOCK), first.pid);
-    const second = runStep('second supervisor', process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { env });
+    const second = await runStep('second supervisor', process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { cwd: dir, env });
     assert.equal(second.status, 3);
     assert.match(second.stderr, new RegExp(`another supervisor \\(pid ${first.pid}\\)`));
 
     // While a supervisor runs, a watcher's own pass steps aside without touching the App Server.
-    const watcherPass = runStep('watcher pass', process.execPath, [join(HERE, 'recover.mjs'), dir, 'w1=T1'], { env: { ...env, PATH: '' } });
+    const watcherPass = await runStep('watcher pass', process.execPath, [join(HERE, 'recover.mjs'), dir, 'w1=T1'], { cwd: dir, env });
     assert.equal(watcherPass.status, 0);
     assert.equal(watcherPass.stdout, '');
   } finally {
-    await stopChild(first, 'first supervisor cleanup', 30_000, true);
+    await stopChild(first, 'first supervisor cleanup', 5000, true);
   }
   for (let attempt = 0; attempt < 40 && existsSync(env.FLEET_SUPERVISOR_LOCK); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -398,6 +411,11 @@ test('ISS-14184 a stalled supervisor ready line fails by step name and is killed
     /first supervisor never printed its ready line within 250ms; stdout=; stderr=/);
   assert.ok(Date.now() - started < 1_000);
   assert.notEqual(first.signalCode, null, 'the stalled supervisor is dead after the deadline');
+});
+
+test('AC-020 a stalled supervisor probe reports the bounded subprocess by name', { timeout: 5000 }, async () => {
+  await assert.rejects(runStep('watcher pass', process.execPath, ['-e', 'setTimeout(() => process.exit(0), 1000)'], { timeoutMs: 250 }),
+    /watcher pass did not exit/);
 });
 
 test('a recovery pass reads each thread status and newest turn, never the history', async () => {

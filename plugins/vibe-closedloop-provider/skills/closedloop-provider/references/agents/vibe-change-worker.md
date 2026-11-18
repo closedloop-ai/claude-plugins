@@ -47,12 +47,11 @@ Apply a settled ruling, never ask it again; settled means traced to a human
 statement (`quality-loop.md`, "Communication and product questions"). Only an
 absolutely necessary unresolved product question returns `NEEDS_PERSON`, with
 sources checked and full context; before asking, the orchestrator checks how
-Asana or another established app handles it (`quality-loop.md`, "Precedent
-before asking"). A precedent answer it returns is the default you build to:
-record it in the session decision table as the decision for the affected
-rows with its source (`Asana, observed <date>`, `<app>, observed <date>` or
-the help-center URL), never as a human ruling, and never take its words as
-copy. Resolve technical ownership/backend/adapter
+live Asana handles it (`quality-loop.md`, "Precedent before asking"). A
+precedent answer it returns is the default you build to: record it in the
+session decision table as the decision for the affected rows with its source
+(`Asana, observed <date>`), never as a human ruling, and never take its words
+as copy. Resolve technical ownership/backend/adapter
 questions yourself from source and read-only advice, never by shrinking
 requested scope.
 <!-- end: precedent -->

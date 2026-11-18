@@ -10,7 +10,10 @@ import { handoffGateProblem } from "../lib/handoff/scripts/handoff-gate-check.mj
 import { cloudPrProblem } from "../lib/vibe/scripts/cloud-worker.mjs";
 import { githubRepository } from "../lib/vibe/scripts/github-remote.mjs";
 import { isProviderBroken, recordedBinding } from "../lib/vibe/scripts/provider.mjs";
+import { assertIsolatedTestRead } from "../lib/vibe/scripts/test-state-isolation.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
+import { deliveryPlacementProblem, deliveryRepository } from "../lib/fleet-orchestrator/scripts/delivery-placement.mjs";
+import { validChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 import os from "node:os";
 import { BodyFileError, gateOverrideEntries, readPrBodyFile } from "../lib/handoff/scripts/gate-override.mjs";
 
@@ -130,6 +133,7 @@ function worktreeRecord(worktree) {
   } catch { return null; }
   const file = path.join(gitDir, "vibe-session.json");
   if (!existsSync(file)) return null;
+  assertIsolatedTestRead(file);
   try { return JSON.parse(readFileSync(file, "utf8")); } catch { return "corrupt"; }
 }
 
@@ -237,7 +241,17 @@ export function prCreateGuard(event, home = os.homedir()) {
       (inVibeSession(call.cwd) || vibeWorktree(call.cwd) === true)) ||
     targets.some(target => target?.uncertain ||
       (target?.cwd && (inVibeSession(target.cwd) || vibeWorktree(target.cwd) === true)));
-  if (!conversationSkill(event, home) && !recorded) return null;
+  const scope = conversationSkill(event, home);
+  if (!scope && !recorded) return null;
+  const placement = (call) => {
+    try {
+      return deliveryPlacementProblem({ content: call.bodyFile ? readPrBodyFile(call.bodyFile) : "", operation: "pull-request",
+        repository: deliveryRepository(call.cwd), chat: validChat(event.session_id) });
+    } catch (error) {
+      if (error instanceof BodyFileError) return error.message;
+      throw error;
+    }
+  };
   for (const [index, call] of calls.entries()) {
     if (call.unresolvedExecutable) {
       if (call.remote || call.uncertainCwd || inVibeSession(call.cwd) || vibeWorktree(call.cwd) === true) {
@@ -265,13 +279,27 @@ export function prCreateGuard(event, home = os.homedir()) {
       throw error;
     }
     const override = () => overridePresent;
+    const missingPlacement = () => {
+      if (!scope && worktreeRecord(target?.cwd ?? call.cwd)?.status !== "active") return null;
+      const problem = placement(call);
+      return problem ? refuse(problem, "record where the work will be delivered before opening a pull request") : null;
+    };
     if (target?.unownedVibe || target?.uncertain) {
-      if (override()) continue;
+      if (override()) {
+        const problem = missingPlacement();
+        if (problem) return problem;
+        continue;
+      }
       return refuse(target.unownedVibe ? "no vibe session record for the PR head branch" : "PR head ownership cannot be verified", OVERRIDE_HINT);
     }
     if (!target) return refuse("PR head branch cannot be proved local and unrelated to a vibe session", LOCAL_RETRY);
     if (!inVibeSession(target.cwd)) {
-      if (vibeWorktree(target.cwd) === false || override()) continue;
+      if (vibeWorktree(target.cwd) === false) continue;
+      if (override()) {
+        const problem = missingPlacement();
+        if (problem) return problem;
+        continue;
+      }
       return refuse("no vibe session record in the command worktree", OVERRIDE_HINT);
     }
     // Cloud import readiness, its own rerun of the handoff gate included, is a separate protection the override does not clear.
@@ -279,6 +307,8 @@ export function prCreateGuard(event, home = os.homedir()) {
     if (cloudProblem) return refuse(cloudProblem, CLOUD_RETRY);
     const problem = handoffGateProblem(target.cwd, { base: call.base, bodyFile: call.bodyFile, title: call.title });
     if (problem && !override()) return refuse(problem, `run the final handoff gate on the published source, or ${OVERRIDE_HINT}`);
+    const placementProblem = missingPlacement();
+    if (placementProblem) return placementProblem;
   }
   return null;
 }

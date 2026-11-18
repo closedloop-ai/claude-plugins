@@ -104,6 +104,18 @@ function launchedModel(value: ReturnType<typeof fixture>, agent = "vibe:vibe-cha
 }
 
 describe("production Claude CLI adapter", () => {
+  it("AC-020 Claude dispatch accepts a repository test shorthand and names a real missing plugin script", () => {
+    const value = setup();
+    const directory = join(value.worktree, "plugins", "vibe", "skills", "vibe", "scripts");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "queue-regression.test.mjs"), "export {};\n");
+    const accepted = run(value, { input: "Run vibe/scripts/queue-regression.test.mjs in the repository." });
+    expect(accepted.status, accepted.stdout || accepted.stderr).toBe(0);
+    const missing = run(value, { requestId: "next", input: "Run vibe/scripts/not-installed.mjs." });
+    expect(missing.status).toBe(1);
+    expect(JSON.parse(missing.stdout)).toMatchObject({ code: "DISPATCH_SCRIPT_INVALID",
+      summary: expect.stringMatching(/skills\/vibe\/scripts\/not-installed\.mjs.*does not exist in installed vibe/) });
+  });
   it("honors explicit top-level test requirements only for the persistent writer's eligible modes", () => {
     const grant = { agentName: "vibe-change-worker", mode: "request", testsRequired: true } as const;
     expect(testAuthoringGranted(grant)).toBe(true);

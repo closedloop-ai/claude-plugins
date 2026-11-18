@@ -235,7 +235,8 @@ F. Status. The PLN's status follows the work:
    `create-document` with `type: ISSUE`, `status: IN_PROGRESS`, the assignee,
    the project, `priority: MEDIUM`, a plain title in the person's terms, and
    `repositorySelection` with primary `closedloop-ai/symphony-alpha` on the
-   session's branch.
+   session's branch. Include the body’s `Delivery placement:` line from the
+   [quality loop](../skills/vibe/references/quality-loop.md#communication-and-product-questions).
 5. Record the slug on the session yourself, then confirm `show` reports it as
    `liveTicket`:
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <slug> --created-live-ticket`.
@@ -464,8 +465,8 @@ historical inspections accurately. Preserve the existing grading block.
    must pass (a reworded or dropped criterion is restored unless a human
    ruling amends it). Write the body back with `create-document-version`, then save it to
    the returned `liveTicket` path and run
-   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit> --worktree "<wt>" --rulings "<the separate session change log or program rulings.md>"`.
-   A `No environment` line must be copied exactly from that human-source rulings record; the candidate ticket cannot authorize itself.
+   `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit> --worktree "<wt>"`.
+   A `No environment` line must be copied exactly from the session's canonical private change-log human-rulings record, which the check resolves itself; the candidate ticket cannot authorize itself.
    Fix every problem you can from the session; a problem only the person can
    resolve (acceptance criteria they never stated, an unclear scope line)
    returns `NEEDS_PERSON` with the question in plain words, marked

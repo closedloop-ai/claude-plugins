@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { CLAUDE_ENV_VAR, checkCloudSetup, CloudSetupError, resolveClaudeEnvironment } from './cloud-environment.mjs';
 import { pollTask, remoteTrigger, startClaude } from './cloud-worker.mjs';
 import { readLedger } from './cloud-routines.mjs';
@@ -132,7 +134,7 @@ test('the setup check reports each environment and API result with its fix, and 
   assert.deepEqual(ok.checks.map(({ check, ok: passed }) => [check, passed]), [['environment', true], ['api', true], ['environment-setup', null], ['environment-use', true], ['github', null]]);
   assert.match(ok.checks[2].detail, /not exercised.*did not run the environment setup script/);
   assert.match(ok.checks[3].detail, /routine trig_a on this account runs in env_01FromRequest/);
-  assert.match(ok.checks[4].detail, /no GitHub connection endpoint/);
+  assert.match(ok.checks[4].detail, /No GitHub connection refusal is recorded.*read-only check/);
 
   const setupFailed = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { standing,
     remote: fakeRemote({ get: () => ({ trigger: { ...used.data[0], last_run: { status: 'archived', turn_count: 0, failure_reason: 'setup script exited 100' } } }) }).remote,
@@ -187,6 +189,67 @@ test('remoteTrigger carries the HTTP status of a refused call', (t) => {
   assert.deepEqual(remoteTrigger('create', { body: {} }, { ...recorded, run: mismatched }), {
     trigger: { id: 't-created' }, echoWarning: 'RemoteTrigger create called an unexpected action',
   }, 'a confirmed created routine is returned for ledger adoption even when the echoed input differs');
+});
+
+test('AC-023 RemoteTrigger reports the terminal error, last executed result and stderr', () => {
+  const use = (id) => ({ type: 'tool_use', name: 'RemoteTrigger', id, input: { action: 'list' } });
+  const done = (id, content) => ({ type: 'tool_result', tool_use_id: id, content });
+  const event = (item) => ({ message: { content: [item] } });
+  const stdout = [
+    { type: 'system', subtype: 'hook_started', hook_event: 'SessionStart' },
+    event(use('first')), event(done('first', 'HTTP 503\n{"error":"first result"}')),
+    event(use('last')), event(done('last', 'HTTP 502\n{"error":"last result"}')),
+    { type: 'result', subtype: 'error_during_execution', errors: ['terminal failure'] },
+  ].map(JSON.stringify).join('\n');
+  assert.throws(() => remoteTrigger('list', {}, { run: () => ({ status: 1, stdout, stderr: 'transport exhausted' }) }), (error) => {
+    assert.match(error.message, /error_during_execution.*terminal failure/);
+    assert.match(error.message, /HTTP 502.*last result/);
+    assert.match(error.message, /transport exhausted/);
+    assert.doesNotMatch(error.message, /hook_started|first result/);
+    return true;
+  });
+});
+
+test('AC-023 only the executed RemoteTrigger call counts, and check surfaces its verified GitHub setup refusal', async (t) => {
+  const home = ledgerHome(t);
+  const env = { FLEET_HOME: fleetHome(t) };
+  const request = dispatchRequest({ claudeEnvironment: REQUEST_ENV });
+  const githubFix = 'Connect GitHub to your claude.ai account before saving a scheduled task using a GitHub repository.';
+  const calls = [];
+  const remote = (action, payload, options) => {
+    calls.push(action);
+    assert.equal(action, 'create');
+    const stdout = [
+      { type: 'system', subtype: 'hook_started', hook_event: 'SessionStart' },
+      { message: { content: [{ type: 'tool_use', name: 'RemoteTrigger', id: 'rejected', input: { __unparsedToolInput: '{broken' } }] } },
+      { message: { content: [{ type: 'tool_use', name: 'RemoteTrigger', id: 'verified', input: { action, ...payload } }] } },
+      { message: { content: [{ type: 'tool_result', tool_use_id: 'verified', content: 'HTTP 401\n{"error":{"code":"github_token_missing"}}' }] } },
+      { type: 'result', subtype: 'error_during_execution', errors: ['request was refused'] },
+    ].map(JSON.stringify).join('\n');
+    return remoteTrigger(action, payload, { ...options, run: () => ({ status: 1, stdout, stderr: '' }) });
+  };
+  await assert.rejects(startClaude(request, 'brief', { remote, env, home }), (error) => {
+    assert.equal(error.code, 'CLOUD_GITHUB_TOKEN_MISSING');
+    assert.equal(error.httpStatus, 401);
+    assert.ok(error.message.includes(githubFix));
+    return true;
+  });
+  const ledger = readLedger(home);
+  const requestFile = path.join(home, 'check-request.json');
+  writeFileSync(requestFile, JSON.stringify(request));
+  const cli = spawnSync(process.execPath, [fileURLToPath(new URL('./cloud-worker.mjs', import.meta.url)), 'check', '--request', requestFile], {
+    cwd: home, env: { ...env, HOME: home, PATH: process.env.PATH }, encoding: 'utf8', timeout: 5000,
+  });
+  assert.equal(cli.status, 1, cli.error?.message ?? cli.stderr);
+  const checked = JSON.parse(cli.stdout);
+  assert.deepEqual(calls, ['create'], 'the setup check never creates a probe routine');
+  assert.deepEqual(ledger.intents, [], 'verified HTTP refusal cannot have created a routine');
+  assert.equal(checked.ok, false);
+  const github = checked.checks.find(({ check }) => check === 'github');
+  assert.equal(github.code, 'CLOUD_GITHUB_TOKEN_MISSING');
+  assert.ok(github.detail.includes(githubFix));
+  await startClaude(request, 'brief', { remote: fakeRemote().remote, env, home });
+  assert.equal(readLedger(home).githubTokenMissingAt, null, 'a successful create clears prior refusal evidence');
 });
 
 const TOO_LARGE = 'CLOUD_RESULT_TOO_LARGE: the routine service answered, but the reply was too large to read here';

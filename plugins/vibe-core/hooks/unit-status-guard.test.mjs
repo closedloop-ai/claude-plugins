@@ -66,7 +66,7 @@ test("a vibe session delivering a unit needs its handoff gate's unit review befo
 
 test("the PreToolUse hook routes the provider's status write to the guard and denies an unreviewed unit ticket's move", (t) => {
   const { home } = fleetHome(t);
-  assert.deepEqual(MCP_ROUTE.map(({ name }) => name), ["unit-status-guard"]);
+  assert.deepEqual(MCP_ROUTE.map(({ name }) => name), ["unit-status-guard", "issue-placement-guard"]);
   const chat = activatedChat(t, process.env, { provider: true });
   const run = (status) => spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify(chat.payload({ tool_name: UPDATE_DOCUMENT_TOOL, cwd: home, tool_input: { documentId: "ISS-2", status } })),

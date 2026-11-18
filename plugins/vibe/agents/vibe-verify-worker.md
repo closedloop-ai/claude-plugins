@@ -116,7 +116,9 @@ runs on its pull requests. Never trigger CI or reviews manually.
 When the repository's root rule explicitly permits a targeted local E2E lane,
 run every selected spec and every E2E spec the change adds or edits. Record a
 passing lane with `pre-pr-lanes.mjs record --targeted-specs '<JSON list>'
---graph-query '<selector query>' --graph-result '<normalized JSON selection>'`;
+--graph-query '<exact observed tool arguments JSON>' --graph-session '<native thread>'
+--graph-turn '<completed turn>'` in Codex, or replace the last two options with
+`--graph-launcher-result '<owned Claude launcher result>'` in Claude;
 its `check` command binds that receipt to
 the unchanged file scope and prints `TARGETED-LANE`. Without that repository
 rule, the full local lane remains required. Describe a later full lane only

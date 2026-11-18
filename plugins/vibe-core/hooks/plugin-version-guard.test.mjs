@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { launchesWorker, launchesWriterAgent, pluginVersionGuard, pluginVersionPromptStart, pluginVersionSkillStart } from "./plugin-version-guard.mjs";
 import { readHookSkill, readHookSkillRecord } from "./hook-session-scope.mjs";
+import { isolatedVibeEnvironment } from "../../vibe/skills/vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSION = "11111111-2222-4333-8444-555555555555";
@@ -118,7 +119,9 @@ test("worker launches are recognized by program, not by a mention", () => {
 
 test("the hook scripts route the guard: a Skill start then an Agent call is refused end to end", (t) => {
   const dir = home(t);
-  const run = (script, payload) => spawnSync(process.execPath, [path.join(HERE, script)], { input: JSON.stringify(payload), encoding: "utf8", env: { ...process.env, HOME: dir } });
+  const run = (script, payload) => spawnSync(process.execPath, [path.join(HERE, script)], {
+    cwd: dir, input: JSON.stringify({ cwd: dir, ...payload }), encoding: "utf8", env: isolatedVibeEnvironment(dir),
+  });
   const start = run("pre-tool-use.mjs", { hook_event_name: "PreToolUse", tool_name: "Skill", session_id: SESSION, tool_input: { skill: "vibe:vibe" } });
   assert.deepEqual([start.status, start.stdout], [0, ""]);
   const refused = run("pre-tool-use.mjs", { hook_event_name: "PreToolUse", ...agent });
@@ -182,4 +185,24 @@ test("vibe-generic's skills, prompts and workers are vibe's to the check", (t) =
   assert.equal(launchesWriterAgent({ subagent_type: "vibe-generic:vibe-change-worker" }), true);
   assert.equal(launchesWriterAgent({ subagent_type: "general-purpose", prompt: "Invoke vibe-generic:vibe first: resume the session" }), true);
   assert.equal(launchesWriterAgent({ subagent_type: "vibe-core:vibe-change-worker" }), false);
+});
+
+test("AC-020 SendMessage resolves repository test paths from a nested worktree cwd", (t) => {
+  const dir = home(t);
+  const repo = path.join(dir, "repo");
+  execFileSync("git", ["init", "-q", repo]);
+  const scriptDir = path.join(repo, "plugins", "vibe", "skills", "vibe", "scripts");
+  mkdirSync(scriptDir, { recursive: true });
+  writeFileSync(path.join(scriptDir, "queue-regression.test.mjs"), "export {};\n");
+  record(dir, { status: "current", loadedSkill: loaded(dir) });
+  const send = (message) => pluginVersionGuard({ tool_name: "SendMessage", session_id: SESSION,
+    cwd: path.join(repo, "plugins"), tool_input: { to: "writer", message } }, dir);
+  for (const reference of ["vibe/scripts/queue-regression.test.mjs", "plugins/vibe/skills/vibe/scripts/queue-regression.test.mjs"]) {
+    assert.equal(send(`Read ${reference}:1.`), null, reference);
+  }
+  assert.match(send("Run vibe/scripts/not-installed.mjs")?.reason ?? "", /skills\/vibe\/scripts\/not-installed\.mjs.*does not exist/);
+  const other = path.join(repo, "another", "vibe", "scripts");
+  mkdirSync(other, { recursive: true });
+  writeFileSync(path.join(other, "queue-regression.test.mjs"), "export {};\n");
+  assert.match(send("Run vibe/scripts/queue-regression.test.mjs")?.reason ?? "", /does not exist in installed vibe/);
 });

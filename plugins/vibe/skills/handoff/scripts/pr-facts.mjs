@@ -658,8 +658,8 @@ export function selectionProblems(runsFile, files, requiredTests, commit, rules 
     runs.some((run) => passedOrMainPreexisting(run) && run.commit === commit && (run.lane === selected || run.command === selected)));
   const live = files.filter((file) => file.status !== "D");
   for (const file of live.filter((entry) => SOURCE.test(entry.path) && !isTestFile(entry.path)).map((entry) => entry.path)) {
-    if (coveredByWholeLane(file)) continue;
-    if (!graphSelectors.some((selector) => of(file, selector).some((entry) => entry.tests.length > 0)) && of(file, "related").length === 0) {
+    if (!coveredByWholeLane(file)
+      && !graphSelectors.some((selector) => of(file, selector).some((entry) => entry.tests.length > 0)) && of(file, "related").length === 0) {
       problems.push(`${file}: no import selection; no graph test lookup (${graphSelector}) returned tests for it, so record the repo's related-test selection`);
     }
     if (of(file, "e2e-reference").length === 0) {

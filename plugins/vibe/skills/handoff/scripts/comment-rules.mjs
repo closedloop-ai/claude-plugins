@@ -28,6 +28,7 @@ import { parseArgs } from "node:util";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
+import { lineIndex } from "./line-index.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -44,7 +45,10 @@ const NEGATED_CONDITION = /!\s*([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\b(?!
 const ONE_READER_CLAIM = /\b(?:read|used|imported|called)\s+at\s+(?:one|1)\s+site\b|\b(?:only|just)\s+(?:one|1)\s+(?:reader|site|caller|consumer)\b/i;
 const EXPORTED_SYMBOL = /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|class|function|type|interface)\s+([A-Za-z_$][\w$]*)\b/;
 const SESSION_POINTER = /\brulings\.md(?:\s+\d+)?\b|\bDEC-\d+\b|\(fix-\d+\)|(?:^|[\s'"`])(?:decision-tables|vibe-plans)\//gi;
-const AGENT_SOURCE = /\b(?:orchestrator|agent|lane|session|decision(?:-table)?|ruled)\b/i;
+// Naming an agent, lane or session as the one that decided: "orchestrator decision", "ruled by the agent", "per the
+// orchestrator", "per the decision table", or a dated label "(orchestrator, 2026-11-17)". A comment that only mentions
+// a session or a lane, scopes something "per session", or lists roles in parentheses, is not a citation.
+const AGENT_DECISION = /\b(?:orchestrator|agent|lane|session|writer|reviewer)s?(?:'s)?\s+(?:decisions?|decided|rulings?|ruled|chose|choices?)\b|\((?:orchestrator|agent|lane|session|writer|reviewer)s?\s*[,:;]\s*(?:\d{4}-\d{2}-\d{2}|(?:decisions?|decided|rulings?|ruled|chose|choices?)\b)|\b(?:decided|ruled|chosen)\s+(?:by|in)\s+(?:the\s+|this\s+|an?\s+)?(?:orchestrator|agent|lane|session|writer|reviewer)\b|\bper\s+(?:the|this)\s+(?:orchestrator|agent)\b|\b(?:per|from|by|in)\s+(?:the\s+)?decision[- ]tables?\b/i;
 const PRODUCT_DECISION = /\b(?:order|first|last|word(?:ing)?|glyph|copy|show|hide|visible|visibility|rank)\w*\b/i;
 const HUMAN_COMMENT_URL = /https?:\/\/\S+\/(?:pull|issues)\/\d+(?:#\S+)?/i;
 const OPEN = { "(": ")", "{": "}", "[": "]" };
@@ -130,15 +134,16 @@ export function checkGuardedConstants(files, repo, add) {
   for (const file of codeFiles(files)) {
     const head = repo.head(file.path) ?? "";
     const touched = new Set(file.added.map((entry) => entry.line));
+    const lineOf = lineIndex(head);
+    const readsOf = identifierReads(head);
     for (const definition of head.matchAll(DEFINITION)) {
       const name = definition[1];
       const start = definition.index + definition[0].length;
       const end = initializerEnd(head, start);
       const initializer = head.slice(start, end);
-      const uses = [...head.matchAll(new RegExp(`(?<![\\w$.])${escape(name)}\\b(?!\\s*(?:=(?![=>])|\\())`, "g"))]
+      const uses = readsOf(name)
         .filter((use) => (use.index < definition.index || use.index >= end) && !isObjectKey(head, use.index, name));
       if (!uses.length) continue;
-      const lineOf = (offset) => head.slice(0, offset).split("\n").length;
       const span = [lineOf(definition.index), lineOf(end)];
       const reached = uses.some((use) => touched.has(lineOf(use.index))) || [...touched].some((line) => line >= span[0] && line <= span[1]);
       if (!reached) continue;
@@ -186,14 +191,15 @@ export function checkSessionPointers(files, repo, add) {
   }
 }
 
-/** An agent or session decision is not provenance for user-visible ordering, wording or visibility. */
+/** Only a human source decides user-visible ordering, wording or visibility; a comment naming an agent as the decider is flagged. */
 export function checkAgentDecisionCitations(files, repo, add) {
   for (const file of commentFiles(files)) {
     for (const block of addedCommentBlocks(file)) {
-      const text = block.map((entry) => entry.text).join(" ");
+      // Markers stripped, so a citation wrapped across comment lines reads as one sentence.
+      const text = block.map((entry) => commentBody(entry.text)).join(" ");
       const ticketed = repo.rules?.ticketed;
       if (ticketed) ticketed.lastIndex = 0;
-      if (!AGENT_SOURCE.test(text) || !PRODUCT_DECISION.test(text) || HUMAN_COMMENT_URL.test(text) || ticketed?.test(text)) continue;
+      if (!AGENT_DECISION.test(text) || !PRODUCT_DECISION.test(text) || HUMAN_COMMENT_URL.test(text) || ticketed?.test(text)) continue;
       add("agent-decision-citation", file.path, block[0].line,
         "comment cites an agent or session decision as the source of user-visible ordering, wording or visibility",
         "cite the ticket, PRD or durable human comment that decides the behavior; an agent decision is not product authority");
@@ -219,6 +225,40 @@ export function commentCandidates(files, repo) {
   return found;
 }
 
+const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
+const WORD = /\w/;
+// What makes a matched name an assignment target or a call instead of a read.
+const NOT_A_READ = /\s*(?:=(?![=>])|\()/y;
+
+/**
+ * The reads of each name in `text`, found in one pass: a function from a name to the `{index}` of every place
+ * the pattern `(?<![\w$.])<name>\b(?!\s*(?:=(?![=>])|\())` matches, in order. Every such place starts an
+ * identifier run (`[A-Za-z_$][\w$]*`) that no `\w`, `$` or `.` precedes, and the name is that whole run, or a
+ * part of it that ends just before or just after a `$` where the `\b` still holds.
+ */
+function identifierReads(text) {
+  const starts = new Map();
+  const note = (name, index) => {
+    const list = starts.get(name);
+    if (list) list.push(index);
+    else starts.set(name, [index]);
+  };
+  for (const match of text.matchAll(IDENTIFIER)) {
+    const index = match.index;
+    if (index > 0 && /[\w$.]/.test(text[index - 1])) continue;
+    const run = match[0];
+    for (let dollar = run.indexOf("$"); dollar !== -1; dollar = run.indexOf("$", dollar + 1)) {
+      if (dollar > 0 && WORD.test(run[dollar - 1])) note(run.slice(0, dollar), index);
+      if (dollar + 1 < run.length && WORD.test(run[dollar + 1])) note(run.slice(0, dollar + 1), index);
+    }
+    if (WORD.test(run.at(-1))) note(run, index);
+  }
+  return (name) => (starts.get(name) ?? []).filter((index) => {
+    NOT_A_READ.lastIndex = index + name.length;
+    return !NOT_A_READ.test(text);
+  }).map((index) => ({ index }));
+}
+
 /** End offset of an initializer: its balanced bracket group, else the end of its statement line. */
 function initializerEnd(text, start) {
   let index = start;
@@ -239,9 +279,20 @@ function initializerEnd(text, start) {
   return text.length;
 }
 
-/** Whether `name` at `offset` is a key in an object literal (`{ name: value }`), not a read. */
+const SPACE = /\s/;
+const KEY_COLON = /\s*:/y;
+
+/**
+ * Whether `name` at `offset` is a key in an object literal (`{ name: value }`), not a read: within the 200
+ * characters before it, the last one that is not white space is `{` or `,`, and a `:` follows the name.
+ */
 function isObjectKey(text, offset, name) {
-  return /[{,]\s*$/.test(text.slice(Math.max(0, offset - 200), offset)) && /^\s*:/.test(text.slice(offset + name.length));
+  const floor = Math.max(0, offset - 200);
+  let index = offset - 1;
+  while (index >= floor && SPACE.test(text[index])) index -= 1;
+  if (index < floor || (text[index] !== "{" && text[index] !== ",")) return false;
+  KEY_COLON.lastIndex = offset + name.length;
+  return KEY_COLON.test(text);
 }
 
 function escape(value) {
@@ -276,4 +327,9 @@ function citations(repo) {
   const pattern = repo.rules?.citations ?? citationPattern(null);
   pattern.lastIndex = 0;
   return pattern;
+}
+
+/** A comment line's text without its `//`, `/*`, `*` or closing marker. */
+export function commentBody(text) {
+  return text.replace(/^\s*(?:\/\/+|\/\*+|\*+)\s?/, "").replace(/\*\/\s*$/, "").trim();
 }

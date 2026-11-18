@@ -12,6 +12,17 @@ Each block replaces the stub of the same id there, in a session bound to this pr
   precedent or accepted visual QA (`references/quality-loop.md`); and dispatch.
 <!-- end: root-may -->
 
+<!-- block: version-check -->
+Every `$vibe` start, new or resume, first checks whether the ClosedLoop
+plugins installed on this machine, in Claude Code and in Codex, are the latest
+release, and shows the setup check, in one command. Call ClosedLoop `get-me`
+and closedloop-graph `sync_status` yourself first, then run
+`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`
+in Codex, or `--runtime claude` in Claude Code, where each `<state>` is
+`connected` only when that call answered in this conversation, otherwise
+`not-connected`; never assume either.
+<!-- end: version-check -->
+
 <!-- block: brief-auth -->
   around credentials. On a machine without the staging e2e identities the
   local web e2e lane is never run, so its sign-in failure never happens: it is
@@ -363,7 +374,9 @@ that waited, and one deploy after the last of them carries them all. A
    SAME writer with it and redeploy before saying ready. Never say it
    matches the reference when you have seen a gap
    (`references/quality-loop.md`, "The reference check before ready" and
-   "What the orchestrator says"). Whenever you open
+   "What the orchestrator says"). A property the render could not show is
+   named as not verified yet; never ask the person to look at or check it.
+   Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "The
    component gallery needs you to sign in to Vercel with your team account first."

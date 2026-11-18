@@ -6,14 +6,18 @@
 //
 // Usage:
 //   pre-pr-lanes.mjs run    --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON>) [--main-worktree <checkout of captured main> --main-sha <sha>]
-//   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>) [--targeted-specs '<JSON list>' --graph-query '<query>' --graph-result '<normalized JSON>']
+//   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>) [--targeted-specs '<JSON list>' --graph-query '<exact tool arguments JSON>' --graph-session <native thread> --graph-turn <completed turn>]
 //   pre-pr-lanes.mjs record --ran-on <host> --proof-commit <sha the remote run tested> --git-tree <its Git tree> --worktree <path> --head <clean local HEAD> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
+//   pre-pr-lanes.mjs record --cloud-result <cloud-worker validation JSON> --worktree <path> --head <clean local HEAD> --command "<exact lane recipe>" --result pass (--report <workflow lane report> | --impact <qa-impact JSON>)
 //   pre-pr-lanes.mjs check  --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON>) [--skip <regex> --skip-ruling "<who, when, where>"]
 //
 // The report's lane commands are its 4-space-indented lines that start with a
 // package runner (pnpm, npm, npx, yarn, node), after any `KEY='value'`
 // assignments the lane's CI step binds; a trailing ` (<detail>)` is not part of
-// the command. A report that says nothing changed needs no lane. `check`
+// the command. A JSON report with a github-workflow source binds the exact
+// job/matrix recipes to the declared workflow at HEAD. These recipes identify
+// CI jobs and are recorded after execution by their owning CI/harness.
+// A text report that says nothing changed needs no lane. `check`
 // prints `MISSING-LANE <command>` for each lane with no passing record for that scope
 // and exits 1; a report it cannot read exits 2. After automated QA, `--impact`
 // narrows the check to only lanes qa-impact.mjs selected. A None result needs
@@ -75,14 +79,17 @@
 // this clone may never receive: it needs a clean worktree whose
 // HEAD's Git tree is `--git-tree`, records this HEAD's source, and adds
 // `ranOn: { host, proofCommit, gitTree, command }`; the proof commit is never resolved here.
+// `record --cloud-result` instead verifies cloud-worker's host, GitHub repository,
+// exact commit and passing recipe against clean HEAD, then records that complete provenance.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { repositoryLaneReportProblems } from "../../handoff/scripts/ci-job-shape.mjs";
 import { containerizedE2eIdentityProblem, RUNNER_HOST } from "../../handoff/scripts/e2e-tier.mjs";
 import { targetedTestsRuling } from "../../handoff/scripts/targeted-tests-ruling.mjs";
 import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
@@ -94,6 +101,9 @@ const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { readCodexTurnItems } = await vibeCore("lib/handoff/scripts/codex-review-runtime.mjs");
+const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
+const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 const FLEET_SCRIPT = fileURLToPath(new URL("../../fleet-orchestrator/scripts/fleet.sh", import.meta.url));
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
@@ -333,11 +343,21 @@ function selectedScope(values, command) {
     return { lanes, laneKey: impact.laneKey ?? null, impact };
   }
   const report = readFileSync(values.report, "utf8");
-  const named = reportLanes(report);
+  let workflowCommands = [];
+  if (report.trimStart().startsWith("{")) {
+    const parsed = JSON.parse(report);
+    if (parsed.source?.kind !== "github-workflow") throw new Error("a JSON --report needs a github-workflow source");
+    const head = git(values.worktree, ["rev-parse", "HEAD"]);
+    const problems = repositoryLaneReportProblems(parsed, values.worktree, head);
+    if (problems.length) throw new Error(problems.join("; "));
+    workflowCommands = parsed.matches.map(({ command: recipe }) => recipe);
+    if (new Set(workflowCommands).size !== workflowCommands.length) throw new Error("workflow recipes must identify each lane unambiguously");
+  }
+  const named = workflowCommands.length ? workflowCommands : reportLanes(report);
   const lanes = named === null ? null : withStoryTypecheck(values, named);
   if (lanes === null || (command && !lanes.includes(command))) throw new Error("--report must name this lane or explicitly say nothing changed");
   const laneKey = createHash("sha256").update(JSON.stringify(named)).update("\n").update(report).digest("hex").slice(0, 16);
-  return { lanes, laneKey, impact: null };
+  return { lanes, laneKey, impact: null, workflowCommands };
 }
 
 function targetBase(values) {
@@ -345,10 +365,17 @@ function targetBase(values) {
   return git(values.worktree, ["merge-base", "HEAD", "refs/remotes/origin/main"]);
 }
 
-/** The changed paths whose exact scope a targeted E2E receipt covers. */
-export function changedFileScope(values) {
-  return git(values.worktree, ["diff", "--name-only", "--diff-filter=ACMRT", targetBase(values), "--"])
-    .split("\n").map((item) => item.trim()).filter(Boolean).sort();
+/** Bind graph proof to the whole diff, including deletions and untracked additions. */
+function targetedScope(values) {
+  const base = targetBase(values);
+  const diff = (...options) => git(values.worktree, ["diff", "--name-only", "--no-renames", "-z", ...options, base, "--"])
+    .split("\0").filter(Boolean);
+  const untracked = git(values.worktree, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
+  return {
+    base,
+    changedFiles: [...new Set([...diff(), ...untracked])].sort(),
+    changedSpecs: [...new Set([...diff("--diff-filter=ACMRT"), ...untracked])].filter((file) => E2E_SPEC.test(file)),
+  };
 }
 
 /** Whether the target repository explicitly permits graph-selected local E2E instead of the full lane. */
@@ -368,42 +395,141 @@ function parseTargetedSpecs(raw) {
   return [...new Set(value.map((item) => item.trim()))].sort();
 }
 
-function parseGraphResult(raw) {
-  let value;
-  try { value = typeof raw === "string" ? JSON.parse(raw) : raw; }
-  catch { throw new Error("--graph-result must be the selection tool's normalized JSON result"); }
-  if (!value || typeof value !== "object" || !["RUN_ALL", "SELECTED"].includes(value.mode)) {
-    throw new Error("--graph-result needs mode RUN_ALL or SELECTED");
+function parsedToolResult(item) {
+  if (item?.result?.structuredContent && typeof item.result.structuredContent === "object") return item.result.structuredContent;
+  for (const block of item?.result?.content ?? []) {
+    if (block?.type !== "text" || typeof block.text !== "string") continue;
+    try { return JSON.parse(block.text); } catch { /* continue */ }
   }
-  const fields = value.mode === "RUN_ALL" ? ["startHere", "directEvidence"] : ["selected"];
-  for (const field of fields) {
-    if (!Array.isArray(value[field]) || value[field].some((item) => typeof item !== "string" || !E2E_SPEC.test(item.trim()))) {
-      throw new Error(`--graph-result ${field} must be a list of repository-relative E2E spec paths`);
-    }
-  }
-  return value.mode === "RUN_ALL"
-    ? { mode: value.mode, startHere: [...new Set(value.startHere.map((item) => item.trim()))].sort(), directEvidence: [...new Set(value.directEvidence.map((item) => item.trim()))].sort() }
-    : { mode: value.mode, selected: [...new Set(value.selected.map((item) => item.trim()))].sort() };
+  throw new Error("the graph tool call has no structured result");
 }
 
-function graphSpecs(result) {
-  return result.mode === "RUN_ALL" ? [...new Set([...result.startHere, ...result.directEvidence])].sort() : result.selected;
+function relativePath(file) {
+  return typeof file === "string" && !file.includes("\\") && !file.startsWith("...")
+    && file.split("/").every((part) => part && part !== "." && part !== "..");
 }
 
-function targetedRecord(values, lane) {
-  const supplied = [values["targeted-specs"], values["graph-query"], values["graph-result"]];
-  if (supplied.every((item) => item === undefined)) return null;
-  if (supplied.some((item) => item === undefined)) throw new Error("--targeted-specs, --graph-query and --graph-result go together");
+/** Reject capped results and read only the graph's spec records, never incidental paths in its prose. */
+function graphSpecs(entries, total = entries?.length) {
+  if (!Array.isArray(entries) || entries.length !== total) throw new Error("the graph E2E spec result is incomplete");
+  const paths = entries.map((entry) => typeof entry === "string" ? entry : entry?.spec ?? entry?.path ?? entry?.test ?? entry?.file);
+  if (paths.some((file) => !relativePath(file) || !E2E_SPEC.test(file))) throw new Error("the graph E2E spec result is incomplete or contains an invalid path");
+  return paths;
+}
+
+function graphResult(result) {
+  const desktop = result?.desktop_e2e;
+  const tier = result?.tier2;
+  const mode = desktop?.verdict ?? result?.mode ?? (tier ? "SELECTED" : null);
+  if (mode !== "RUN_ALL" && mode !== "SELECTED") throw new Error("the graph tool has no usable E2E verdict");
+  const direct = tier ? graphSpecs(tier.rows ?? [], tier.candidates_total) : graphSpecs(result.direct_evidence ?? []);
+  const start = desktop?.start_here;
+  const ruled = mode === "RUN_ALL"
+    ? (desktop ? graphSpecs(start?.specs, start?.specs_total) : graphSpecs(result.start_here))
+    : (desktop?.verdict === "SELECTED" ? graphSpecs(desktop.specs, desktop.specs_total) : graphSpecs(result.selected ?? []));
+  const selected = [...new Set([...ruled, ...direct])].sort();
+  if (mode === "RUN_ALL" && selected.length === 0) throw new Error("RUN_ALL has no start-here or direct-evidence specs for targeted validation");
+  return { mode, selected };
+}
+
+function assertGraphScope(values, graph, scope) {
+  const args = JSON.parse(graph.query);
+  const origin = githubRepository(git(values.worktree, ["config", "--get", "remote.origin.url"]));
+  const repositories = origin ? [origin.toLowerCase(), origin.split("/").at(-1).toLowerCase()] : [];
+  if (typeof args.repo !== "string" || !repositories.includes(args.repo.toLowerCase())
+    || (graph.repository && !repositories.includes(graph.repository.toLowerCase()))) {
+    throw new Error("the graph query repository differs from this worktree's GitHub origin");
+  }
+  if (args.e2e === false) throw new Error("the graph query excluded E2E selection");
+  // Matching paths do not authenticate the patch text or its completeness. The change query lets the graph derive hunks from verified commits.
+  if (args.hunks != null) throw new Error("the graph query used caller-supplied hunks; select whole files or use the exact committed base and head");
+
+  if (Array.isArray(args.files) && !args.change) {
+    const paths = args.files.flatMap((entry) => typeof entry === "string" ? [entry]
+      : [entry?.path, ...(entry?.previous_path && entry.status === "renamed" ? [entry.previous_path] : [])]);
+    if (paths.every(relativePath) && sameStringList([...new Set(paths)].sort(), scope.changedFiles)) return;
+  } else if (args.change && args.files == null) {
+    const source = sourceIdentity(values.worktree);
+    if (source.diffSha256 === NO_DIFF && args.change.base === scope.base && args.change.head === source.head) return;
+  }
+  throw new Error("the observed graph query must cover the exact changed-file scope of this worktree");
+}
+
+function requiredTargetedSpecs(graph, scope) {
+  return [...new Set([...graph.result.selected, ...scope.changedSpecs])].sort();
+}
+
+/** A successful native graph tool item normalized into the exact spec selection it returned. */
+export function graphSelectionFromItem(item, selector) {
+  if (item?.type !== "mcpToolCall" || item.status !== "completed" || item.tool !== selector || typeof item.id !== "string") return null;
+  const result = parsedToolResult(item);
+  return { toolCallId: item.id, query: JSON.stringify(item.arguments ?? {}),
+    repository: typeof result?.repo === "string" ? result.repo : null, result: graphResult(result) };
+}
+
+async function nativeGraphSelection(values, readTurn = readCodexTurnItems) {
+  const selector = values.graphSelector ?? providerDataOr(sessionBinding(values.worktree), "recipes", "prEvidence", "graphSelector", null);
+  if (typeof selector !== "string" || !selector) throw new Error("the bound provider does not name a graph selector for targeted E2E");
+  const native = await readTurn(values["graph-session"], values["graph-turn"]);
+  const calls = native.items.map((item) => graphSelectionFromItem(item, selector)).filter(Boolean);
+  if (calls.length !== 1) throw new Error(`the completed native turn needs exactly one successful ${selector} graph call`);
+  return { ...calls[0], runtime: "codex", sessionId: values["graph-session"], turnId: values["graph-turn"] };
+}
+
+function claudeToolResult(block) {
+  const text = typeof block?.content === "string" ? block.content
+    : (block?.content ?? []).filter((item) => item?.type === "text" && typeof item.text === "string").map((item) => item.text).join("\n");
+  try { return JSON.parse(text); } catch { throw new Error("the Claude graph tool result is not JSON"); }
+}
+
+function claudeGraphSelection(values, selector) {
+  const resultEvidence = evidenceFingerprint(values["graph-launcher-result"]);
+  const launcher = JSON.parse(readFileSync(resultEvidence.path, "utf8"));
+  const currentSource = sourceIdentity(values.worktree);
+  if (launcher.runtime !== "claude" || launcher.status !== "DONE" || !launcher.sessionId || !launcher.tracePath
+    || !sameSource(launcher.source, currentSource)) throw new Error("the Claude graph launcher result is not DONE on the current source");
+  const traceEvidence = evidenceFingerprint(launcher.tracePath);
+  const events = readFileSync(traceEvidence.path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const blocks = events.flatMap((event) => event?.message?.content ?? []);
+  const tools = blocks.filter((block) => block?.type === "tool_use" && typeof block.name === "string"
+    && block.name.slice(block.name.lastIndexOf("__") + 2).replaceAll("-", "_") === selector);
+  if (tools.length !== 1 || typeof tools[0].id !== "string") throw new Error(`the Claude trace needs exactly one ${selector} graph call`);
+  const result = blocks.find((block) => block?.type === "tool_result" && block.tool_use_id === tools[0].id && !block.is_error);
+  if (!result) throw new Error("the Claude graph call has no successful tool result");
+  const selected = graphSelectionFromItem({ type: "mcpToolCall", id: tools[0].id, tool: selector, status: "completed",
+    arguments: tools[0].input ?? {}, result: { structuredContent: claudeToolResult(result) } }, selector);
+  return { ...selected, runtime: "claude", sessionId: launcher.sessionId, evidence: { result: resultEvidence, trace: traceEvidence } };
+}
+
+async function observedGraphSelection(values, readTurn = readCodexTurnItems) {
+  const selector = values.graphSelector ?? providerDataOr(sessionBinding(values.worktree), "recipes", "prEvidence", "graphSelector", null);
+  if (typeof selector !== "string" || !selector) throw new Error("the bound provider does not name a graph selector for targeted E2E");
+  if (values["graph-launcher-result"]) return claudeGraphSelection(values, selector);
+  return nativeGraphSelection({ ...values, graphSelector: selector }, readTurn);
+}
+
+export async function targetedRecord(values, lane, readTurn = readCodexTurnItems) {
+  const baseSupplied = [values["targeted-specs"], values["graph-query"]];
+  const nativeSupplied = [values["graph-session"], values["graph-turn"]];
+  const launcherSupplied = values["graph-launcher-result"] !== undefined;
+  const nativeAny = nativeSupplied.some((item) => item !== undefined);
+  const nativeAll = nativeSupplied.every((item) => item !== undefined);
+  if (baseSupplied.every((item) => item === undefined) && nativeSupplied.every((item) => item === undefined) && !launcherSupplied) return null;
+  if (baseSupplied.some((item) => item === undefined) || (nativeAny && !nativeAll) || (nativeAll === launcherSupplied)) {
+    throw new Error("--targeted-specs and --graph-query need exactly one graph proof: --graph-session with --graph-turn, or --graph-launcher-result");
+  }
   if (!isWebE2eLane(lane) && !isDesktopE2eLane(lane)) throw new Error("targeted specs are accepted only for an E2E lane");
   if (!allowsTargetedE2e(values.worktree)) throw new Error("the target repository's AGENTS.md does not allow targeted E2E lanes");
   const specs = parseTargetedSpecs(values["targeted-specs"]);
   const graphQuery = values["graph-query"].trim();
   if (!graphQuery) throw new Error("--graph-query must record the non-empty graph query that selected the targeted specs");
-  const graphResult = parseGraphResult(values["graph-result"]);
-  const changedFiles = changedFileScope(values);
-  const required = [...new Set([...graphSpecs(graphResult), ...changedFiles.filter((file) => E2E_SPEC.test(file))])].sort();
+  const graph = await observedGraphSelection(values, readTurn);
+  if (graph.query !== graphQuery) throw new Error("--graph-query must exactly match the observed graph tool arguments JSON");
+  const scope = targetedScope(values);
+  assertGraphScope(values, graph, scope);
+  const required = requiredTargetedSpecs(graph, scope);
   if (!sameStringList(specs, required)) throw new Error(`--targeted-specs must exactly match graph-selected plus added or edited E2E specs: ${required.join(", ")}`);
-  return { specs, graphQuery, graphResult, changedFiles };
+  return { specs, graphQuery, graph, changedFiles: scope.changedFiles };
 }
 
 function sameStringList(left, right) {
@@ -411,24 +537,31 @@ function sameStringList(left, right) {
 }
 
 /** Valid targeted E2E receipts for the current source and changed-file scope. */
-export function targetedE2eCoverage(values, lanes, records, selected) {
+export async function targetedE2eCoverage(values, lanes, records, selected, readTurn = readCodexTurnItems) {
   if (!allowsTargetedE2e(values.worktree)) return [];
-  const changedFiles = changedFileScope(values);
-  return lanes.flatMap((lane) => {
-    if (!isWebE2eLane(lane) && !isDesktopE2eLane(lane)) return [];
+  const scope = targetedScope(values);
+  const covered = [];
+  for (const lane of lanes) {
+    if (!isWebE2eLane(lane) && !isDesktopE2eLane(lane)) continue;
     const record = records.find((item) => item.command === lane && item.result === "pass" && item.targeted
       && typeof item.targeted.graphQuery === "string" && item.targeted.graphQuery.trim()
-      && sameSelection(item, selected) && sameStringList(item.targeted.changedFiles, changedFiles));
-    if (!record) return [];
-    let graphResult;
-    try { graphResult = parseGraphResult(itemGraphResult(record)); } catch { return []; }
-    const required = [...new Set([...graphSpecs(graphResult), ...changedFiles.filter((file) => E2E_SPEC.test(file))])].sort();
-    return sameStringList(record.targeted.specs, required) ? [{ lane, specs: record.targeted.specs }] : [];
-  });
-}
-
-function itemGraphResult(record) {
-  return record?.targeted?.graphResult;
+      && sameSelection(item, selected) && sameStringList(item.targeted.changedFiles, scope.changedFiles));
+    if (!record) continue;
+    let current;
+    try {
+      current = await observedGraphSelection({ ...values, "graph-session": record.targeted.graph?.runtime === "codex" ? record.targeted.graph.sessionId : undefined,
+        "graph-turn": record.targeted.graph?.runtime === "codex" ? record.targeted.graph.turnId : undefined,
+        "graph-launcher-result": record.targeted.graph?.runtime === "claude" ? record.targeted.graph.evidence?.result?.path : undefined }, readTurn);
+      assertGraphScope(values, current, scope);
+    }
+    catch { continue; }
+    if (current.toolCallId !== record.targeted.graph?.toolCallId || current.query !== record.targeted.graphQuery
+      || current.runtime !== record.targeted.graph?.runtime || JSON.stringify(current.result) !== JSON.stringify(record.targeted.graph?.result)
+      || (current.runtime === "claude" && JSON.stringify(current.evidence) !== JSON.stringify(record.targeted.graph?.evidence))) continue;
+    const required = requiredTargetedSpecs(current, scope);
+    if (sameStringList(record.targeted.specs, required)) covered.push({ lane, specs: record.targeted.specs });
+  }
+  return covered;
 }
 
 /**
@@ -446,16 +579,17 @@ function withStoryTypecheck(values, lanes) {
   return lane && !lanes.includes(lane) ? [...lanes, lane] : lanes;
 }
 
-function main(argv) {
+async function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
     "reuse-cache": { type: "boolean" }, "reuse-unaffected": { type: "string" }, base: { type: "string" }, config: { type: "string", multiple: true },
     "ran-on": { type: "string" }, "proof-commit": { type: "string" }, "git-tree": { type: "string" },
+    "cloud-result": { type: "string" },
     "fleet-where": { type: "string" }, "fleet-orch": { type: "string" }, "fleet-owner": { type: "string" },
     targeted: { type: "string" }, "targeted-ruling-id": { type: "string" }, "targeted-ruling-source": { type: "string" },
-    "targeted-specs": { type: "string" }, "graph-query": { type: "string" }, "graph-result": { type: "string" },
+    "targeted-specs": { type: "string" }, "graph-query": { type: "string" }, "graph-session": { type: "string" }, "graph-turn": { type: "string" }, "graph-launcher-result": { type: "string" },
     ticket: { type: "string" }, rulings: { type: "string" },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
@@ -471,9 +605,12 @@ function main(argv) {
       if (values.source && !sameSource(JSON.parse(values.source), source)) throw new Error('record --source does not match the current inputs');
     }
     const selected = { ...selectedScope(values, values.command.trim()), source };
-    const targetedReceipt = command === "record" ? targetedRecord(values, values.command.trim()) : null;
-    if (command === "run" && (values["targeted-specs"] !== undefined || values["graph-query"] !== undefined || values["graph-result"] !== undefined)) {
-      throw new Error("targeted E2E evidence is recorded after the selected specs run, with record --targeted-specs --graph-query --graph-result");
+    if (command === "run" && selected.workflowCommands?.includes(values.command.trim())) {
+      throw new Error("a workflow recipe is a CI lane identity. Run its job or matrix entry in the owning harness, then use record with its exact recipe and source evidence");
+    }
+    const targetedReceipt = command === "record" ? await targetedRecord(values, values.command.trim()) : null;
+    if (command === "run" && ["targeted-specs", "graph-query", "graph-session", "graph-turn", "graph-launcher-result"].some((key) => values[key] !== undefined)) {
+      throw new Error("targeted E2E evidence is recorded after the selected specs run, with record --targeted-specs --graph-query and a native or Claude graph proof");
     }
     if (Boolean(values["main-worktree"]) !== Boolean(values["main-sha"]) || (values["main-worktree"] && command !== "run")) {
       throw new Error("--main-worktree and --main-sha go together, on run only");
@@ -527,7 +664,8 @@ function main(argv) {
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
   }
   if (command === "check") {
-    return withStableSource(values.worktree, source => {
+    const source = sourceIdentity(values.worktree);
+    const checked = await (async () => {
       const head = source.head;
       if (values.skip && !values["skip-ruling"]?.trim()) throw new Error("--skip needs --skip-ruling naming the operator ruling that waives those lanes");
       const selected = { ...selectedScope(values), source };
@@ -537,7 +675,7 @@ function main(argv) {
       const skip = values.skip ? new RegExp(values.skip, "i") : null;
       const records = readRecords(values.worktree);
       const targeted = targetedLaneDecision(values, named);
-      const targetedRuns = targetedE2eCoverage(values, named, records, selected);
+      const targetedRuns = await targetedE2eCoverage(values, named, records, selected);
       const targetedRunLanes = targetedRuns.map((item) => item.lane);
       const left = notRunLanes(named.filter((lane) => !skip?.test(lane) && !targeted.left.includes(lane) && !targetedRunLanes.includes(lane)), records, selected,
         { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness() });
@@ -563,10 +701,18 @@ function main(argv) {
       const unaffected = values["reuse-unaffected"] ? reuseUnaffectedLanes(values, lanes, records, selected, covered) : [];
       for (const { lane, from } of unaffected) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: nothing changed since touches this lane; not a fresh run)\n`);
       const missing = missingLanes(lanes, records, selected).filter((lane) => ![...covered, ...unaffected].some((item) => item.lane === lane));
-      for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
+      for (const lane of missing) {
+        if (selected.workflowCommands?.includes(lane)) {
+          process.stdout.write(`MISSING-LANE ${lane}: run the owning workflow job and record its exact recipe with pre-pr-lanes.mjs record --report <lane report>\n`);
+        } else {
+          process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
+        }
+      }
       process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] || values["reuse-unaffected"] ? `, ${covered.length + unaffected.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
       return { exitCode: missing.length === 0 ? 0 : 1 };
-    }).exitCode;
+    })();
+    if (!sameSource(source, sourceIdentity(values.worktree))) throw new Error("worktree source changed while targeted graph evidence was checked");
+    return checked.exitCode;
   }
   throw new Error("Usage: pre-pr-lanes.mjs record|check ...");
 }
@@ -593,6 +739,36 @@ function targetedLaneDecision(values, lanes) {
  * binding is the clean local HEAD's Git tree, so the row's source identity is this content's.
  */
 function remoteRun(values, source) {
+  if (values["cloud-result"] !== undefined) {
+    if (["ran-on", "proof-commit", "git-tree"].some((key) => values[key] !== undefined) || values.source) {
+      throw new Error("--cloud-result is the complete remote identity and cannot be combined with --ran-on or --source");
+    }
+    if (source.diffSha256 !== NO_DIFF) throw new Error("a cloud lane result needs a clean worktree so the validated commit is the recorded source");
+    let result;
+    try { result = JSON.parse(readFileSync(values["cloud-result"], "utf8")); }
+    catch (error) { throw new Error(`cloud lane result is not readable JSON: ${error.message}`); }
+    let report;
+    try { report = JSON.parse(readFileSync(values.report, "utf8")); }
+    catch { throw new Error("a cloud lane result needs the verified JSON workflow --report"); }
+    const expected = report?.matches?.filter((item) => item?.command === values.command.trim()) ?? [];
+    const repository = githubRepository(git(values.worktree, ["config", "--get", "remote.origin.url"]));
+    const lane = Array.isArray(result?.lanes) ? result.lanes.find((item) => item?.command === values.command.trim()) : null;
+    if (!repository || result?.repository !== repository || githubRepository(result?.provenance?.origin ?? "") !== repository) {
+      throw new Error("cloud lane result repository differs from this worktree's GitHub origin");
+    }
+    if (result?.commit !== source.head || result?.provenance?.commit !== source.head || result?.provenance?.remote !== "true") {
+      throw new Error("cloud lane result commit/provenance differs from the clean recorded source");
+    }
+    if (expected.length !== 1 || lane?.name !== expected[0].name || !isDeepStrictEqual(result?.laneSource, report.source)) {
+      throw new Error("cloud lane result differs from the verified workflow lane name/source");
+    }
+    if (!RUNNER_HOST.test(result?.provenance?.host ?? "") || lane?.passed !== true || lane?.exitCode !== 0 || values.result !== "pass") {
+      throw new Error("cloud lane result needs a named passing lane and a valid remote host");
+    }
+    const tree = git(values.worktree, ["rev-parse", "--verify", `${source.head}^{tree}`]);
+    return { host: result.provenance.host, repository, proofCommit: source.head, gitTree: tree,
+      command: values.command.trim(), lane: lane.name, source: "cloud-worker" };
+  }
   if (["ran-on", "proof-commit", "git-tree"].every((key) => values[key] === undefined)) return null;
   if (values.source) throw new Error("record --ran-on binds by Git tree; it never takes --source");
   if (!RUNNER_HOST.test(values["ran-on"] ?? "") || !COMMIT.test(values["proof-commit"] ?? "") || !COMMIT.test(values["git-tree"] ?? "")) {
@@ -606,7 +782,7 @@ function remoteRun(values, source) {
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    process.exit(main(process.argv.slice(2)));
+    process.exit(await main(process.argv.slice(2)));
   } catch (error) {
     process.exit(failScript(error, 2));
   }

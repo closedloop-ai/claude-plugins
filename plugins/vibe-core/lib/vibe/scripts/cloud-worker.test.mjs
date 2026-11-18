@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
-import { abandonValidation, cloudRules, generateBrief, importAndSweep, parseValidationResult, pollTask, remoteTrigger, routinesCommand, startClaude, startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
+import { abandonValidation, cloudRules, generateBrief, importAndSweep, parseValidationResult, pollTask, readValidationArtifact, remoteTrigger, routinesCommand, startClaude, startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief, validationLanes } from './cloud-worker.mjs';
 import { chromeRemoval, ledgerPath, markRun, NO_EXECUTOR, readLedger, routineLockDir, sweepRemovals } from './cloud-routines.mjs';
 import { release, tryAcquire } from './e2e-lock.mjs';
 import { git, makeHome } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
@@ -112,12 +113,108 @@ test('a validate request starts a Claude session bound to the branch and the exa
   assert.equal(JSON.parse(readFileSync(result.receipt, 'utf8')).commit, COMMIT);
 });
 
+test('ISS-14355 validation returns the complete JSON result from a result-only branch', async (t) => {
+  const worktree = checkout(t);
+  const request = { ...validationRequest(worktree), resultArtifact: { path: 'eval-results/claude-result.json', branch: 'vibe-eval-results/iss-14355' } };
+  const artifact = { ...request.resultArtifact, commit: 'b'.repeat(40), sha256: 'c'.repeat(64) };
+  const full = { schemaVersion: 1, cases: Array.from({ length: 50 }, (_, index) => ({ id: `case-${index}`, passed: true })) };
+  const { calls, remote } = fakeRemote(resultLine({ artifact }));
+  let read = null;
+  const result = await validateCommit(request, { remote, sleep: async () => {}, home: homeOf(worktree),
+    artifactReader: (seenRequest, seenArtifact) => { read = [seenRequest.commit, seenArtifact]; return { ...seenArtifact, result: full }; } });
+  assert.deepEqual(read, [COMMIT, artifact]);
+  assert.deepEqual(result.artifact.result, full, 'the caller receives the full result, not log excerpts or exit codes alone');
+  const brief = calls[1].payload.body.job_config.ccr.events[0].data.message.content;
+  assert.match(brief, /commit only that file/);
+  assert.match(brief, /HEAD:refs\/heads\/vibe-eval-results\/iss-14355/);
+  assert.match(brief, /sha256/);
+  assert.throws(() => validateValidationRequest({ ...request, resultArtifact: { path: 'auth.json', branch: 'result/x' } }), /never auth\.json/);
+  assert.throws(() => validateValidationRequest({ ...request, resultArtifact: { path: 'result.json', branch: request.branch } }), /distinct pushed result branch/);
+});
+
+test('ISS-14355 result branch is a one-file direct child with the recorded full-file hash', (t) => {
+  const fixture = makeHome('cloud-result-artifact-');
+  t.after(fixture.cleanup);
+  const bare = path.join(fixture.root, 'origin.git');
+  const worktree = path.join(fixture.root, 'worktree');
+  git(fixture.root, ['init', '--quiet', '--bare', bare], fixture.home);
+  mkdirSync(worktree);
+  git(worktree, ['init', '--quiet', '--initial-branch=main'], fixture.home);
+  git(worktree, ['remote', 'add', 'origin', bare], fixture.home);
+  writeFileSync(path.join(worktree, 'base.txt'), 'base\n');
+  git(worktree, ['add', '.'], fixture.home);
+  git(worktree, ['-c', 'user.name=t', '-c', 'user.email=fixture.invalid', 'commit', '--quiet', '-m', 'base'], fixture.home);
+  const base = git(worktree, ['rev-parse', 'HEAD'], fixture.home);
+  const resultPath = 'eval-results/result.json';
+  mkdirSync(path.join(worktree, 'eval-results'));
+  const bytes = `${JSON.stringify({ complete: true, output: 'x'.repeat(2000) })}\n`;
+  writeFileSync(path.join(worktree, resultPath), bytes);
+  git(worktree, ['add', resultPath], fixture.home);
+  git(worktree, ['-c', 'user.name=t', '-c', 'user.email=fixture.invalid', 'commit', '--quiet', '-m', 'result'], fixture.home);
+  const commit = git(worktree, ['rev-parse', 'HEAD'], fixture.home);
+  const branch = 'vibe-eval-results/test';
+  git(worktree, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`], fixture.home);
+  git(worktree, ['reset', '--hard', '--quiet', base], fixture.home);
+  const artifact = { path: resultPath, branch, commit, sha256: createHash('sha256').update(bytes).digest('hex') };
+  const read = readValidationArtifact({ worktree, commit: base }, artifact);
+  assert.equal(read.result.output.length, 2000);
+  assert.equal(read.commit, commit);
+});
+
 test('validate refuses Codex, a short commit and a lane with shell control before starting anything', () => {
   assert.throws(() => validateValidationRequest({ ...validationRequest(), provider: 'codex' }), /Codex Cloud returns no task report/);
   assert.throws(() => validateValidationRequest({ ...validationRequest(), commit: COMMIT.slice(0, 12) }), /full 40-character commit/);
   assert.throws(() => validateValidationRequest({ ...validationRequest(), lanes: [{ name: 'node', command: 'node --test a.mjs; git push' }] }), /without shell control/);
   assert.throws(() => validateValidationRequest({ ...validationRequest(), lanes: [{ name: 'checkout', command: 'git checkout main' }] }), /documented check entry point/);
   assert.doesNotThrow(() => validationBrief(validationRequest()));
+});
+
+test('ISS-14374 cloud validation resolves named CI lanes from the immutable workflow instead of accepting caller shell', (t) => {
+  const worktree = checkout(t);
+  const workflowPath = '.github/workflows/ci.yml';
+  const workflow = `name: CI
+on: [push]
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node suites
+        run: bash scripts/run-node-tests.sh
+  vibe-eval-t0:
+    runs-on: ubuntu-latest
+    steps:
+      - run: uv sync --frozen --group dev
+      - run: npm ci
+      - run: npm run build
+      - run: claude plugin validate plugins/vibe
+`;
+  mkdirSync(path.join(worktree, '.github/workflows'), { recursive: true });
+  writeFileSync(path.join(worktree, workflowPath), workflow);
+  git(worktree, ['add', '.'], homeOf(worktree));
+  git(worktree, ['-c', 'user.name=t', '-c', 'user.email=fixture.invalid', 'commit', '--quiet', '-m', 'workflow'], homeOf(worktree));
+  const commit = git(worktree, ['rev-parse', 'HEAD'], homeOf(worktree));
+  const laneSource = { kind: 'github-workflow', path: workflowPath, commit,
+    sha256: createHash('sha256').update(workflow).digest('hex') };
+  const request = { ...validationRequest(worktree), commit, laneSource,
+    lanes: [{ name: 'node-tests' }, { name: 'vibe-eval-t0' }] };
+  const resolved = validationLanes(request);
+  assert.deepEqual(resolved.lanes.map((lane) => lane.name), ['node-tests', 'vibe-eval-t0']);
+  assert.match(resolved.lanes[0].command, /bash scripts\/run-node-tests\.sh/);
+  assert.match(resolved.lanes[1].command, /claude plugin validate plugins\/vibe/);
+  const brief = validationBrief(request);
+  assert.match(brief, /immutable recipes read from \.github\/workflows\/ci\.yml/);
+  assert.match(brief, /uv sync --frozen --group dev/);
+  const parsed = parseValidationResult(resultLine({ commit,
+    provenance: { host: 'vm', remote: 'true', origin: 'https://github.com/closedloop-ai/claude-plugins', commit },
+    lanes: [{ name: 'node-tests', exitCode: 0 }, { name: 'vibe-eval-t0', exitCode: 0 }] }), request);
+  assert.equal(parsed.laneSource.sha256, laneSource.sha256);
+  assert.deepEqual(parsed.lanes.map(({ name, passed }) => ({ name, passed })), [
+    { name: 'node-tests', passed: true }, { name: 'vibe-eval-t0', passed: true },
+  ]);
+  assert.throws(() => validateValidationRequest({ ...request, lanes: [{ name: 'node-tests', command: 'bash anything.sh' }] }), /caller commands are refused/);
+  assert.throws(() => validateValidationRequest({ ...request, laneSource: { ...laneSource, sha256: '0'.repeat(64) } }), /SHA-256 differs/);
+  assert.throws(() => validateValidationRequest({ ...request, lanes: [{ name: 'not-a-job' }] }), /missing or ambiguous/);
 });
 
 test('a validation result reported for another commit is refused', async (t) => {

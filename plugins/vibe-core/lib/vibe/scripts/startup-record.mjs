@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import os from "node:os";
 import path from "node:path";
 import { isVibePlugin } from "../../../shared/plugin-roots.mjs";
+import { assertIsolatedTestRead } from "./test-state-isolation.mjs";
 
 export const VersionStatus = Object.freeze({ Current: "current", Outdated: "outdated", Unknown: "unknown", Pending: "pending" });
 export const RELEASE_VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
@@ -88,6 +89,7 @@ export function startupDir(home) {
 }
 
 export function readJson(file) {
+  assertIsolatedTestRead(file);
   try {
     return JSON.parse(readFileSync(file, "utf8"));
   } catch {

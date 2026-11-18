@@ -89,6 +89,7 @@
         "portableModuleRoot": "packages/app"
       },
       "diffRules": {
+        "flagRetirementRegistry": "packages/api/src/types/retired-feature-flags.ts",
         "migrations": {
           "server": "^packages/database/prisma/migrations/[^/]+/migration\\.sql$",
           "desktop": "^apps/desktop/prisma/migrations/[^/]+/migration\\.sql$",
@@ -669,6 +670,7 @@
       "keyPattern": "[A-Z]+-\\d+",
       "documentPrefix": "^(?:ISS|FEA|PRD|PLN|DOC|PRO)-",
       "issueKey": "(?:ISS|FEA)-\\d+",
+      "issueCreateTool": "mcp__closedloop__create-document",
       "requirementsKey": "PRD-\\d+",
       "unitStatusGuard": {
         "tool": "mcp__closedloop__update-document",

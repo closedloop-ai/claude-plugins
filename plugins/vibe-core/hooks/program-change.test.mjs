@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { PROGRAM_CHANGE_REMINDER, programChange } from "./program-change.mjs";
 import { USER_PROMPT_SUBMIT_GUARDS } from "./user-prompt-submit.mjs";
 import { recordHookSkill } from "./hook-session-scope.mjs";
+import { isolatedVibeEnvironment } from "../../vibe/skills/vibe/scripts/test-fixtures.mjs";
 
 const USER_PROMPT_SUBMIT = path.join(path.dirname(fileURLToPath(import.meta.url)), "user-prompt-submit.mjs");
 
@@ -23,6 +24,8 @@ function transcript(t, content) {
 // to proceed" for four hours (2026-10-22).
 test("an operator prompt that changes the program gets the record-it-first reminder in an orchestrator session", (t) => {
   const file = transcript(t, "Base directory for this skill: /cache/vibe/1.0.72/skills/fleet-orchestrator");
+  const home = path.dirname(file);
+  const inspect = (prompt) => programChange({ prompt, transcript_path: file, cwd: home }, home);
   for (const prompt of [
     "I don't want to build anything yet. I want to come up with a design. We may end up taking it over",
     "I don't want to look at the design of #802. Let's go back and look at #800",
@@ -30,10 +33,10 @@ test("an operator prompt that changes the program gets the record-it-first remin
     "Drop #802 and switch to #800 instead",
     "Stop building, design only for now",
   ]) {
-    assert.equal(programChange({ prompt, transcript_path: file })?.context, PROGRAM_CHANGE_REMINDER, prompt);
+    assert.equal(inspect(prompt)?.context, PROGRAM_CHANGE_REMINDER, prompt);
   }
   for (const prompt of ["What is the kernel?", "Why is #9058 so large?", "brb", "Looks good, ship the QA plan"]) {
-    assert.equal(programChange({ prompt, transcript_path: file }), null, prompt);
+    assert.equal(inspect(prompt), null, prompt);
   }
   assert.match(PROGRAM_CHANGE_REMINDER, /rulings\.md/);
   assert.match(PROGRAM_CHANGE_REMINDER, /resume-log\.md/);
@@ -41,11 +44,13 @@ test("an operator prompt that changes the program gets the record-it-first remin
 
 test("outside an orchestrator session it says nothing, and the UserPromptSubmit hook routes it", (t) => {
   const worker = transcript(t, "Base directory for this skill: /cache/vibe/1.0.85/skills/vibe");
-  assert.equal(programChange({ prompt: "I want to start from scratch", transcript_path: worker }), null);
+  const home = path.dirname(worker);
+  assert.equal(programChange({ prompt: "I want to start from scratch", transcript_path: worker, cwd: home }, home), null);
   assert.ok(USER_PROMPT_SUBMIT_GUARDS.some((guard) => guard.run === programChange));
   const file = transcript(t, "Base directory for this skill: /cache/vibe/1.0.72/skills/fleet-orchestrator");
-  const result = spawnSync(process.execPath, [USER_PROMPT_SUBMIT], { encoding: "utf8",
-    input: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "I want to start from scratch", transcript_path: file }) });
+  const result = spawnSync(process.execPath, [USER_PROMPT_SUBMIT], { encoding: "utf8", cwd: home,
+    env: isolatedVibeEnvironment(home),
+    input: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "I want to start from scratch", transcript_path: file, cwd: home }) });
   assert.equal(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, PROGRAM_CHANGE_REMINDER);
 });
 
@@ -53,8 +58,8 @@ test("a recorded fleet skill preserves the program-change reminder without a tra
   const home = mkdtempSync(path.join(tmpdir(), "program-change-marker-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   recordHookSkill("fleet-session", "vibe:fleet-orchestrator", home);
-  assert.equal(programChange({ session_id: "fleet-session", prompt: "start from scratch", transcript_path: null }, home)?.context, PROGRAM_CHANGE_REMINDER);
-  assert.equal(programChange({ session_id: "other-session", prompt: "start from scratch", transcript_path: null }, home), null);
+  assert.equal(programChange({ session_id: "fleet-session", prompt: "start from scratch", transcript_path: null, cwd: home }, home)?.context, PROGRAM_CHANGE_REMINDER);
+  assert.equal(programChange({ session_id: "other-session", prompt: "start from scratch", transcript_path: null, cwd: home }, home), null);
 });
 
 test("a move between work items is named the way the session's tracker references one", (t) => {

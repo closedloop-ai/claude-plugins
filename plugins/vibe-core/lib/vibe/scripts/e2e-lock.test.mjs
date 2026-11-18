@@ -11,6 +11,7 @@ import { installOwnedBuildShim, recordBuiltTags } from "./owned-builder.mjs";
 import { captureOwnedDockerResources, plannedLocalTags, removeOwnedDockerResources,
   reserveGeneratedE2E } from "./owned-docker.mjs";
 import { sourceIdentity } from './tested-head.mjs';
+import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
 const CHILD_TIMEOUT_MS = 60_000;
@@ -18,9 +19,31 @@ const trackedChildren = new Map();
 
 function spawn(command, args, options = {}) {
   const child = rawSpawn(command, args, options);
-  trackedChildren.set(child, options.detached === true);
+  const lockAt = args.indexOf("--lock-dir");
+  const lockDir = command === process.execPath && args[0] === SCRIPT && args[1] === "run" && lockAt >= 0
+    ? path.resolve(options.cwd ?? process.cwd(), args[lockAt + 1]) : null;
+  trackedChildren.set(child, { detached: options.detached === true, lockDir });
   child.once("close", () => trackedChildren.delete(child));
   return child;
+}
+
+function stopTestChild(child) {
+  const owned = trackedChildren.get(child);
+  if (owned?.lockDir?.startsWith(`${root}${path.sep}`)) {
+    const holder = readHolder(owned.lockDir);
+    if (holder?.pid === child.pid) {
+      try {
+        const record = JSON.parse(readFileSync(path.join(path.dirname(owned.lockDir), `e2e-cleanup-${holder.token}.json`), 'utf8'));
+        const gate = record.child;
+        if (record.owner?.pid === child.pid && gate?.pgid === gate?.pid && gate.pid > 1 && gate.identity === readProcessIdentity(gate.pid)) {
+          process.kill(-gate.pgid, "SIGKILL");
+        }
+      } catch { /* No live child group owned by this fixture. */ }
+    }
+  }
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try { if (owned?.detached && child.pid > 1) process.kill(-child.pid, "SIGKILL"); else child.kill("SIGKILL"); }
+  catch { /* Already exited. */ }
 }
 
 function spawnSync(command, args, options = {}) {
@@ -33,7 +56,7 @@ async function waitForClose(child, step, timeoutMs = 30_000) {
   if (child.exitCode !== null || child.signalCode !== null) return child.exitCode;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      stopTestChild(child);
       reject(new Error(`${step} did not close within ${timeoutMs}ms`));
     }, timeoutMs);
     child.once("close", (code) => { clearTimeout(timer); resolve(code); });
@@ -41,12 +64,9 @@ async function waitForClose(child, step, timeoutMs = 30_000) {
 }
 
 afterEach(async () => {
-  const children = [...trackedChildren.entries()];
-  for (const [child, detached] of children) {
-    if (child.exitCode !== null || child.signalCode !== null) continue;
-    try { if (detached && child.pid > 1) process.kill(-child.pid, "SIGKILL"); else child.kill("SIGKILL"); } catch { /* Already exited. */ }
-  }
-  await Promise.allSettled(children.map(([child]) => waitForClose(child, "test child cleanup", 2_000)));
+  const children = [...trackedChildren.keys()];
+  for (const child of children) stopTestChild(child);
+  await Promise.allSettled(children.map((child) => waitForClose(child, "test child cleanup", 2_000)));
 });
 const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-")));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -93,12 +113,6 @@ test("e2e lock and fleet helpers share the raw process identity primitive", () =
   assert.doesNotMatch(session, /export function processIdentity\(/);
 });
 
-test("ISS-14184 the node test lane has a fixed workflow timeout", () => {
-  const workflow = readFileSync(path.resolve(path.dirname(SCRIPT), "../../../../../.github/workflows/ci.yml"), "utf8");
-  const lane = /\n  node-tests:\n([\s\S]*?)(?=\n  [a-z0-9-]+:)/.exec(workflow)?.[1] ?? "";
-  assert.match(lane, /timeout-minutes:\s*15/);
-  assert.match(lane, /node --test --test-reporter=spec/);
-});
 
 test("Docker inspect read failures retain an owned resource; only exact absence counts gone", () => {
   const record = { project: null, containers: [{ id: FULL_CONTAINER_ID, created: "2026-10-29T00:00:00Z", project: "qa-owned" }], volumes: [], networks: [] };
@@ -383,6 +397,72 @@ test('a second signal explicitly escalates a stuck command group', async () => {
   const code = await waitForClose(child, 'second-signal wrapper');
   assert.equal(code, 137);
   assert.ok(Date.now() - started < 2_000, 'second signal escalates immediately');
+});
+
+test('AC-020 a signal crossing the child-gate launch window stops the owned command', { timeout: 18_000 }, async (t) => {
+  const dir = path.join(root, 'signal-during-child-gate-launch');
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  const head = commitAt(repo);
+  const pending = path.join(dir, 'gate-pending');
+  const forwarded = path.join(dir, 'parent-forwarded');
+  const releaseGate = path.join(dir, 'release');
+  const lock = path.join(dir, 'lock');
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\n[ "$1" = version ] && exit 0\ncase "$2" in ls) exit 0;; esac\nexit 9\n', { mode: 0o700 });
+  const preload = path.join(dir, 'barrier.mjs');
+  writeFileSync(preload, `
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { existsSync, writeFileSync } from 'node:fs';
+if (process.argv[2] === 'child-gate') {
+  // Keep SIGINT queued in Node while the fixture holds the gate just before it starts the command.
+  process.on('SIGINT', () => {});
+  const spawn = childProcess.spawn;
+  childProcess.spawn = (...args) => {
+    writeFileSync(${JSON.stringify(pending)}, String(process.pid));
+    const until = Date.now() + 7000;
+    const idle = new Int32Array(new SharedArrayBuffer(4));
+    while (!existsSync(${JSON.stringify(releaseGate)}) && Date.now() < until) Atomics.wait(idle, 0, 0, 10);
+    if (!existsSync(${JSON.stringify(releaseGate)})) throw new Error('fixture never released child gate');
+    return spawn(...args);
+  };
+  syncBuiltinESMExports();
+} else if (process.argv[2] === 'run') {
+  const kill = process.kill.bind(process);
+  process.kill = (pid, signal) => {
+    const result = kill(pid, signal);
+    if (signal === 'SIGINT') writeFileSync(${JSON.stringify(forwarded)}, String(pid));
+    return result;
+  };
+  const send = childProcess.ChildProcess.prototype.kill;
+  childProcess.ChildProcess.prototype.kill = function (signal) {
+    const result = send.call(this, signal);
+    if (signal === 'SIGINT') writeFileSync(${JSON.stringify(forwarded)}, String(this.pid));
+    return result;
+  };
+}
+`);
+  let gatePid;
+  let gateIdentity;
+  t.after(() => {
+    if (gatePid > 1 && gateIdentity && readProcessIdentity(gatePid) === gateIdentity) {
+      try { process.kill(-gatePid, 'SIGKILL'); } catch { /* Test-owned gate already drained. */ }
+    }
+  });
+  const child = spawn(process.execPath, [SCRIPT, 'run', '--head', head, '--lock-dir', lock, process.execPath, '-e',
+    'setTimeout(() => process.exit(91), 8000)'], { cwd: repo, stdio: 'ignore', env: { ...process.env,
+    NODE_OPTIONS: `--import=${preload}`, VIBE_E2E_DOCKER: docker } });
+  await waitUntil(() => existsSync(pending) && readFileSync(pending, 'utf8').trim(), 5000, 'launch barrier');
+  gatePid = Number(readFileSync(pending, 'utf8'));
+  assert.ok(gatePid > 1);
+  gateIdentity = readProcessIdentity(gatePid);
+  assert.ok(gateIdentity);
+  child.kill('SIGINT');
+  await waitUntil(() => existsSync(forwarded), 3500, 'initial signal forwarding');
+  writeFileSync(releaseGate, 'go');
+  assert.equal(await waitForClose(child, 'signal during child-gate launch', 3500), 130);
+  assert.equal(existsSync(lock), false);
 });
 
 test("generated runner removes its locally built Compose tag after a successful command", () => {

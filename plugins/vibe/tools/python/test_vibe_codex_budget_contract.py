@@ -33,7 +33,7 @@ CHECKS_SOURCE = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "mai
 WHOLE_STORYBOOK_SUITE = re.compile(r"`pnpm --filter storybook test`(?! suite)")
 
 
-def test_cloud_eval_rule_is_mirrored_with_runtime_and_evidence_boundaries() -> None:
+def test_cloud_eval_rule_states_runtime_and_evidence_boundaries() -> None:
     required = (
         "codex cloud exec --env claude-plugins --branch <branch>",
         "plugins/vibe/evals/codex/run.py",
@@ -48,10 +48,11 @@ def test_cloud_eval_rule_is_mirrored_with_runtime_and_evidence_boundaries() -> N
         "api.openai.com",
         "Run Codex vibe evals as a Codex cloud task",
     )
-    for instructions in (REPO_ROOT / "AGENTS.md", REPO_ROOT / "CLAUDE.md"):
-        text = instructions.read_text()
-        for phrase in required:
-            assert phrase in text, f"{instructions.name}: {phrase}"
+    # Root AGENTS.md alone carries the rule; CLAUDE.md only loads AGENTS.md (operator ruling, 2026-11-18: "we don't
+    # update claude.md. every claude.md file just says to load AGENTS.md").
+    text = (REPO_ROOT / "AGENTS.md").read_text()
+    for phrase in required:
+        assert phrase in text, f"AGENTS.md: {phrase}"
 
 
 def harness_notes() -> str:

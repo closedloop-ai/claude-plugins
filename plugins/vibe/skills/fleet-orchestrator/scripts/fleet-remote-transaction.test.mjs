@@ -133,7 +133,7 @@ test('macOS lockf retains the command on lock loss and orders same-name turns', 
   const f = fixture();
   const worktree = successfulRemoteWriter(f);
   const receipt = join(f.root, 'lockf-args');
-  writeFileSync(join(f.root, 'bin', 'lockf'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(receipt)}\nexec ${JSON.stringify(real)} "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'lockf'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >> ${JSON.stringify(receipt)}\nexec ${JSON.stringify(real)} "$@"\n`);
   chmodSync(join(f.root, 'bin', 'lockf'), 0o755);
   const turn = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
     '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
