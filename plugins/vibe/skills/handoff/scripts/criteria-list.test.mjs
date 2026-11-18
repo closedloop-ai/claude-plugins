@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { criteriaStates, ticketCriteria, unreadCriteriaProblems } from "./criteria-list.mjs";
-import { TICKET, UNREAD } from "./criteria-test-fixture.mjs";
+import { checkboxStates, criteriaStates, ticketCriteria, unreadCriteriaProblems } from "./criteria-list.mjs";
+import { C3A48F20_DROPS, fuzzTickets, oracleMisses, READER_ROWS, TICKET, UNREAD } from "./criteria-test-fixture.mjs";
 
 test("ISS-14136 AC-4: checkboxes that read as criteria outside the section are reported, and other checklists are not", () => {
   assert.deepEqual(unreadCriteriaProblems(TICKET), [], "an Environment checklist is not a criterion");
@@ -60,8 +60,30 @@ test("ISS-14136 AC-4: once the template list or criteria section has ended, an u
   assert.deepEqual(unreadCriteriaProblems("## Acceptance criteria\n\n- [ ] a\n\n## Environment\n\n+ [ ] run the app\n1. [ ] check the logs\n"), [], "a heading at the section's level closes it");
 });
 
-test("ISS-14136 AC-4: a sibling list label indented less than the template list's boxes closes the list, so its checklist is not reported, and ids match main", () => {
-  const ticket = "- Acceptance criteria:\n  - [ ] a\n - Environment:\n   - [ ] run the app\n   + [ ] check the logs\n";
-  assert.deepEqual(criteriaStates(ticket).map(({ id, text }) => [id, text]), [["AC-1", "a"]]);
-  assert.deepEqual(unreadCriteriaProblems(ticket), []);
+for (const row of READER_ROWS) {
+  test(`ISS-14136 AC-4: reader row "${row.name}": ids match main and every box in a criteria section is read or reported`, () => {
+    assert.deepEqual(criteriaStates(row.ticket).map(({ id, text }) => [id, text]), row.read.map((text, index) => [`AC-${index + 1}`, text]));
+    const states = checkboxStates(row.ticket);
+    assert.deepEqual(states.filter((box) => !box.read && box.reportedUnder === null).map((box) => box.text), row.outside, "only boxes outside every criteria section go unreported");
+    assert.deepEqual(oracleMisses(row.ticket, states, criteriaStates), []);
+  });
+}
+
+for (const row of READER_ROWS.filter((candidate) => candidate.overReport.length)) {
+  test(`ISS-14136 AC-4: accepted over-report (orchestrator decision 2026-11-18, AC-4 outranks the ADV-R5-2 half of Q-R5): "${row.name}" reports its sibling section's boxes under Acceptance criteria`, () => {
+    const states = checkboxStates(row.ticket);
+    for (const text of row.overReport) assert.equal(states.find((box) => box.text === text)?.reportedUnder, "Acceptance criteria", text);
+  });
+}
+
+test("ISS-14136 AC-4: over a seeded corpus of 50000 tickets, no box the reader neither reads nor reports is one main would read inside a criteria section", () => {
+  const misses = fuzzTickets(14136, 50000).flatMap((ticket) => oracleMisses(ticket, checkboxStates(ticket), criteriaStates).map((text) => [ticket, text]));
+  assert.deepEqual(misses.slice(0, 3), []);
+});
+
+test("ISS-14136 AC-4: the oracle finds every box c3a48f20 dropped, so it is not blind to that drop", () => {
+  for (const row of C3A48F20_DROPS) {
+    assert.ok(row.dropped.length > 0, row.name);
+    assert.deepEqual(oracleMisses(row.ticket, row.states, criteriaStates), row.dropped, row.name);
+  }
 });

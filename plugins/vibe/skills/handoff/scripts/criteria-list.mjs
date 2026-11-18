@@ -45,18 +45,31 @@ export function criteriaStates(ticket) {
  * section), or a box elsewhere whose heading or label names criteria or whose text leads with a criterion id.
  */
 export function unreadCriteriaProblems(ticket) {
-  const under = checkboxes(ticket).filter((box) => !box.read && (NAMES_CRITERIA.test(box.under) || LEADS_WITH_ID.test(box.text))).map((box) => box.under);
+  const under = checkboxStates(ticket).filter((box) => box.reportedUnder !== null).map((box) => box.reportedUnder);
   return [...new Set(under)].map((name) => `the ticket has checkboxes under "${name}" that read as acceptance criteria in a form or place this audit does not read; write each as a "- [ ]" box directly in the "Acceptance criteria" section or the "- Acceptance criteria:" list`);
 }
 
 /**
- * Every checkbox of the ticket: whether the criteria sections hold it, and the name it is reported under. Reading
+ * Every checkbox-shaped line of the ticket, in order: its text, whether it is checked, whether the reader reads it,
+ * and the name it is reported under when it is not read but reads as a criterion (null otherwise). Every line inside
+ * a criteria section is either read or reported.
+ */
+export function checkboxStates(ticket) {
+  return checkboxes(ticket).map(({ text, checked, read, under }) => ({
+    text, checked, read, reportedUnder: !read && (NAMES_CRITERIA.test(under) || LEADS_WITH_ID.test(text)) ? under : null,
+  }));
+}
+
+/**
+ * Every checkbox of the ticket: whether the criteria sections hold it, and the name it is filed under. Reading
  * (`inList`, `headingLevel`) is unchanged from before the report rule, so ids do not move. Reporting uses one
- * criteria section rule for both forms: a criteria heading's section stays open, at its outermost level, through
- * deeper headings (a nested criteria heading included). The template list's section holds every line the list
- * reads, and after that every line indented at least as deep as its read boxes; it closes at a line indented less
- * than those boxes, or at a list label no deeper than the `- Acceptance criteria:` line (a sibling of it). An unread
- * box inside either is filed under the section.
+ * criteria section rule for both forms, closing only where that is unambiguous: a criteria heading's section stays
+ * open, at its outermost level, through deeper headings (a nested criteria heading included) and closes at a
+ * same-or-shallower heading; the template list's section stays open while the list still reads and through every
+ * line indented deeper than its `- Acceptance criteria:` line, and closes at a heading or at a line at or left of
+ * that line. So a box under any label nested in the list is reported, never dropped; a sibling section indented
+ * deeper than the list line is reported too (an accepted over-report: orchestrator decision, 2026-11-18). An unread
+ * box inside either section is filed under it.
  */
 function checkboxes(ticket) {
   const found = [];
@@ -68,7 +81,6 @@ function checkboxes(ticket) {
   let sectionLevel = 0;
   let sectionName = null;
   let listIndent = null;
-  let listBoxIndent = null;
   const indentOf = (text) => text.length - text.trimStart().length;
   for (const line of ticket.split("\n")) {
     const heading = HEADING.exec(line);
@@ -77,7 +89,6 @@ function checkboxes(ticket) {
       const name = line.slice(level).trim();
       inList = false;
       listIndent = null;
-      listBoxIndent = null;
       headingLevel = CRITERIA_HEADING.test(line) ? level : headingLevel && level > headingLevel ? headingLevel : 0;
       if (!(sectionLevel && level > sectionLevel)) [sectionLevel, sectionName] = CRITERIA_HEADING.test(line) ? [level, name] : [0, null];
       headingName = name;
@@ -87,22 +98,21 @@ function checkboxes(ticket) {
     if (CRITERIA_START.test(line)) {
       inList = true;
       listIndent = indentOf(line);
-      listBoxIndent = null;
-      // A box at list level right after the list is reported under it too.
-      label = "Acceptance criteria";
       continue;
     }
     const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;
     if (item) {
-      if (inList) listBoxIndent ??= indentOf(line);
       found.push({ read: true, text: item[2], checked: item[1] !== " " });
       continue;
     }
-    if (listIndent !== null && line.trim() !== "" &&
-      (indentOf(line) < (listBoxIndent ?? listIndent + 1) || (LIST_LABEL.test(line) && indentOf(line) <= listIndent))) listIndent = null;
+    // Whether the list was still being read when this line began: a box on the line that ends the reading is in it.
+    const reading = inList;
+    // A line at or left of the `- Acceptance criteria:` line closes the list; a checkbox only when it is left of it,
+    // since list items may sit at that line's column.
+    if (listIndent !== null && line.trim() !== "" && indentOf(line) < listIndent + (ANY_CHECKBOX.test(line) ? 0 : 1)) listIndent = null;
     if (inList && line.trim() !== "" && !/^\s{4,}\S/.test(line)) inList = false;
     const stray = ANY_CHECKBOX.exec(line);
-    const section = sectionLevel ? sectionName : listIndent !== null || inList ? "Acceptance criteria" : null;
+    const section = sectionLevel ? sectionName : listIndent !== null || reading ? "Acceptance criteria" : null;
     if (stray) found.push({ read: false, text: stray[2], checked: stray[1] !== " ", under: section ?? label ?? headingName });
     else if (LIST_LABEL.test(line)) label = LIST_LABEL.exec(line)[1];
     else if (/^\S/.test(line)) label = null;
