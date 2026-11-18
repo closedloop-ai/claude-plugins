@@ -525,6 +525,26 @@ export const READER_ROWS = [
       "run the app",
       "check the logs"
     ]
+  },
+  {
+    "name": "ADV-R7-1 deeper heading after the template list",
+    "ticket": "## Scope and acceptance criteria\n\n- Acceptance criteria:\n  - [ ] a\n\n### Web\n\n- [ ] b\n+ [ ] c\n",
+    "read": [
+      "a"
+    ],
+    "outside": [],
+    "overReport": []
+  },
+  {
+    "name": "ADV-R7-2 checkbox left of an indented list line",
+    "ticket": "  - Acceptance criteria:\n    - [ ] a\n   note\n- [ ] b\n",
+    "read": [
+      "a"
+    ],
+    "outside": [
+      "b"
+    ],
+    "overReport": []
   }
 ];
 

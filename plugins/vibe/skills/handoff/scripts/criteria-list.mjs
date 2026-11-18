@@ -65,9 +65,10 @@ export function checkboxStates(ticket) {
  * (`inList`, `headingLevel`) is unchanged from before the report rule, so ids do not move. Reporting uses one
  * criteria section rule for both forms, closing only where that is unambiguous: a criteria heading's section stays
  * open, at its outermost level, through deeper headings (a nested criteria heading included) and closes at a
- * same-or-shallower heading; the template list's section stays open while the list still reads and through every
- * line indented deeper than its `- Acceptance criteria:` line, and closes at a heading or at a line at or left of
- * that line. So a box under any label nested in the list is reported, never dropped; a sibling section indented
+ * same-or-shallower heading; the template list's section stays open while the list still reads, through every
+ * line indented deeper than its `- Acceptance criteria:` line and through headings deeper than the one the list sits
+ * under, and closes at a same-or-shallower heading, at another line at or left of that line, or at a checkbox left
+ * of it (a checkbox at its column stays in, since list items may sit there). So a box under any label nested in the list is reported, never dropped; a sibling section indented
  * deeper than the list line is reported too (an accepted over-report: orchestrator decision, 2026-11-18). An unread
  * box inside either section is filed under it.
  */
@@ -81,6 +82,9 @@ function checkboxes(ticket) {
   let sectionLevel = 0;
   let sectionName = null;
   let listIndent = null;
+  // The level of the heading the template list sits under (0 for none): a deeper heading keeps the list's section open.
+  let lastHeadingLevel = 0;
+  let listHeadingLevel = 0;
   const indentOf = (text) => text.length - text.trimStart().length;
   for (const line of ticket.split("\n")) {
     const heading = HEADING.exec(line);
@@ -88,7 +92,8 @@ function checkboxes(ticket) {
       const level = heading[1].length;
       const name = line.slice(level).trim();
       inList = false;
-      listIndent = null;
+      if (!(listIndent !== null && listHeadingLevel && level > listHeadingLevel)) listIndent = null;
+      lastHeadingLevel = level;
       headingLevel = CRITERIA_HEADING.test(line) ? level : headingLevel && level > headingLevel ? headingLevel : 0;
       if (!(sectionLevel && level > sectionLevel)) [sectionLevel, sectionName] = CRITERIA_HEADING.test(line) ? [level, name] : [0, null];
       headingName = name;
@@ -98,6 +103,7 @@ function checkboxes(ticket) {
     if (CRITERIA_START.test(line)) {
       inList = true;
       listIndent = indentOf(line);
+      listHeadingLevel = lastHeadingLevel;
       continue;
     }
     const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;

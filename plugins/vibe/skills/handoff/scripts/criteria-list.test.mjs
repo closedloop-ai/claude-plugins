@@ -76,7 +76,8 @@ for (const row of READER_ROWS.filter((candidate) => candidate.overReport.length)
   });
 }
 
-test("ISS-14136 AC-4: over a seeded corpus of 50000 tickets, no box the reader neither reads nor reports is one main would read inside a criteria section", () => {
+test("ISS-14136 AC-4: over a seeded corpus of 50000 tickets, the report oracle run with this reader's own criteriaStates finds no box in a criteria section that the reader neither reads nor reports", () => {
+  // Reading equal to main is pinned by the literal ids of READER_ROWS, not here.
   const misses = fuzzTickets(14136, 50000).flatMap((ticket) => oracleMisses(ticket, checkboxStates(ticket), criteriaStates).map((text) => [ticket, text]));
   assert.deepEqual(misses.slice(0, 3), []);
 });
