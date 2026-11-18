@@ -27,3 +27,13 @@ test("ISS-14136 AC-4: under an Acceptance criteria heading only - and * boxes ar
   assert.deepEqual(criteriaStates(ticket).map(({ id, text }) => [id, text]), [["AC-1", "first"], ["AC-2", "last"]]);
   assert.deepEqual(unreadCriteriaProblems(ticket), [UNREAD("Acceptance criteria")], "the numbered and plus boxes are reported, never dropped");
 });
+
+test("ISS-14136 AC-4: inside the Acceptance criteria section, a + or ordered box under a sub-heading or a list label is reported under that heading, and ids match main", () => {
+  for (const [ticket, why] of [
+    ["### Acceptance criteria\n\n- [ ] a\n\n#### Web\n\n+ [ ] plus\n1. [ ] num\n- [ ] b\n", "under a deeper sub-heading"],
+    ["## Acceptance criteria\n\n- [ ] a\n- Notes:\n  + [ ] plus\n- [ ] b\n", "under a list label"],
+  ]) {
+    assert.deepEqual(criteriaStates(ticket).map(({ id, text }) => [id, text]), [["AC-1", "a"], ["AC-2", "b"]], why);
+    assert.deepEqual(unreadCriteriaProblems(ticket), [UNREAD("Acceptance criteria")], why);
+  }
+});

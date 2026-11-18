@@ -50,6 +50,7 @@ function checkboxes(ticket) {
   let inList = false;
   let headingLevel = 0;
   let headingName = "the top of the ticket";
+  let criteriaHeading = null;
   let label = null;
   for (const line of ticket.split("\n")) {
     const heading = HEADING.exec(line);
@@ -57,6 +58,7 @@ function checkboxes(ticket) {
       inList = false;
       headingLevel = CRITERIA_HEADING.test(line) ? heading[1].length : headingLevel && heading[1].length > headingLevel ? headingLevel : 0;
       headingName = line.slice(heading[1].length).trim();
+      if (CRITERIA_HEADING.test(line)) criteriaHeading = headingName;
       label = null;
       continue;
     }
@@ -73,7 +75,9 @@ function checkboxes(ticket) {
     }
     if (inList && line.trim() !== "" && !/^\s{4,}\S/.test(line)) inList = false;
     const stray = ANY_CHECKBOX.exec(line);
-    if (stray) found.push({ read: false, text: stray[2], checked: stray[1] !== " ", under: label ?? headingName });
+    // Inside an open Acceptance criteria section (sub-headings and list labels included) a box the section does not
+    // read is reported under that heading, never dropped.
+    if (stray) found.push({ read: false, text: stray[2], checked: stray[1] !== " ", under: headingLevel ? criteriaHeading : label ?? headingName });
     else if (LIST_LABEL.test(line)) label = LIST_LABEL.exec(line)[1];
     else if (/^\S/.test(line)) label = null;
   }

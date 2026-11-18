@@ -7,7 +7,7 @@ import { repositoryLayout } from "./area-paths.mjs";
 export const ROOT_TEST_PREFIXES = ["e2e/"];
 export const TEST_SPEC_PATTERN = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 // A pytest module: test_*.py or *_test.py.
-export const PYTHON_TEST_PATTERN = /(?:^|\/)(?:test_[^/]*|[^/]*_test)\.py$/;
+const PYTHON_TEST_PATTERN = /(?:^|\/)(?:test_[^/]*|[^/]*_test)\.py$/;
 const TEST_SUPPORT_PATTERN = /(?:^|\/)(?:__tests__|__fixtures__|__mocks__|__snapshots__|fixtures)\//;
 const SNAPSHOT_PATTERN = /\.snap$/;
 // An e2e suite root is any directory named `e2e`, `e2e-*` or `*-e2e` (web, Desktop, smoke and walk suites alike).
