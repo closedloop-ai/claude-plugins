@@ -63,23 +63,24 @@ function tree(dir: string): Map<string, string> {
 describe("the files the build reads", () => {
   it("leaves out tests, evals, fixtures, caches and test support, and keeps runtime files that only look like tests", () => {
     const paths = fixture({
-      "evals/case/prompt.md": "x", "tools/python/test_a.py": "x", "tools/python/skill_split.py": "x",
+      "evals/case/prompt.md": "x", "evals/codex/model-policy.json": "{}", "tools/python/test_a.py": "x", "tools/python/skill_split.py": "x",
       "skills/a/scripts/run.test.mjs": "x", "skills/a/scripts/fixtures/f.json": "{}", "skills/a/scripts/__pycache__/m.pyc": "x",
       "skills/cl-work-report/scripts/test_render_report.py": "x", "skills/vibe/scripts/test-fixtures.mjs": "x",
       "skills/vibe/scripts/skill-split.mjs": "x", "skills/handoff/scripts/diff-rules-test-fixture.mjs": "x",
       "skills/codex-fleet-monitor/scripts/test-support.mjs": "x", "skills/fleet-orchestrator/scripts/fleet-test-support.mjs": "x",
-      "skills/cl-sweep/scripts/core-client-fixture.mjs": "x",
+      "skills/cl-sweep/scripts/core-client-fixture.mjs": "x", "skills/a/scripts/next-test-fixture.mjs": "x",
       "skills/a/scripts/run.mjs": "x", "skills/vibe/scripts/test-files.mjs": "x", "skills/handoff/scripts/targeted-tests-ruling.mjs": "x",
     }, {});
-    expect(sourceFiles(paths.source)).toEqual([".claude-plugin/plugin.json", "skills/a/scripts/run.mjs",
+    expect(sourceFiles(paths.source)).toEqual([".claude-plugin/plugin.json", "evals/codex/model-policy.json", "skills/a/scripts/run.mjs",
       "skills/handoff/scripts/targeted-tests-ruling.mjs", "skills/vibe/scripts/test-files.mjs"]);
   });
 
   it("ships every runtime file of plugins/vibe and no test", () => {
     const files = sourceFiles(DEFAULT_PATHS.source);
-    expect(files.filter((file) => /\.test\.|(?:^|\/)test_[^/]*\.py$|^evals\/|^tools\/|\/fixtures\//.test(file))).toEqual([]);
+    // The Codex model policy is runtime data (cl-sweep/scripts/model-policy.mjs reads it at load); no other eval file ships.
+    expect(files.filter((file) => /\.test\.|(?:^|\/)test_[^/]*\.py$|^evals\/(?!codex\/model-policy\.json$)|^tools\/|\/fixtures\//.test(file))).toEqual([]);
     for (const runtime of ["skills/vibe/scripts/test-files.mjs", "skills/vibe/scripts/tested-head.mjs", "skills/handoff/scripts/test-integrity.mjs",
-      "skills/vibe/scripts/dist/main-sync.mjs", "skills/cl-work-report/assets/mermaid-11.16.0.min.js"]) expect(files).toContain(runtime);
+      "skills/vibe/scripts/dist/main-sync.mjs", "skills/cl-work-report/assets/mermaid-11.16.0.min.js", "evals/codex/model-policy.json"]) expect(files).toContain(runtime);
     expect(isExcluded("skills/vibe/scripts/test-fixtures.mjs")).toBe(true);
   });
 });

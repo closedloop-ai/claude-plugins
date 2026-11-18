@@ -83,8 +83,8 @@ inheritance because `fork_turns: "none"` supplies none.
 
 Every support `spawn_agent` packet must set a role-bounded model and
 `reasoning_effort`. The bindings come from the plugin's one Codex model
-policy, `../../cl-sweep/scripts/model-policy.mjs`. Use `model: "gpt-6-sol"`
-with `reasoning_effort: "high"` for planning review, correctness-sensitive
+policy, `../../cl-sweep/scripts/model-policy.mjs`. For a planning or review lane, run `node ../../cl-sweep/scripts/model-policy.mjs lane reviewer --complexity <grade>` with the `Complexity:` grade of the ticket's cl-analyze result (no flag when there is none) and use the `model` it prints: `gpt-6.2-astra` for a HIGH ticket, else `gpt-6.2-sol`. When it also prints a `note`, this Codex does not list that model and the lane runs on the fallback it names; show the note once. Use `model: "gpt-6.2-sol"`
+with `reasoning_effort: "high"` for other correctness-sensitive
 review/QA, synthesis, and other high-judgment work where mistakes matter;
 raise it to `xhigh` only by an explicit choice for that lane. Use
 `model: "gpt-5.6-terra"` with `high` for explorer lanes: bounded exploratory
@@ -105,10 +105,10 @@ Model or effort selection alone is not a token-savings claim.
 
 For every path-addressed read-only planning, code-review lens/synthesis,
 logical-QA, visual-QA, audit, search, or status support spawn, use
-`fork_turns: "none"` plus the role-appropriate `gpt-6-sol`, `gpt-5.6-terra`
+`fork_turns: "none"` plus the role-appropriate `gpt-6.2-sol` (or `gpt-6.2-astra`), `gpt-5.6-terra`
 or `gpt-6-luna` selection above and its matching `reasoning_effort`. If the
 work is neither an explorer lane nor a genuinely bounded deterministic
-lower-risk support role, use `gpt-6-sol`.
+lower-risk support role, use `gpt-6.2-sol`.
 
 The self-contained prompt must state the exact absolute input artifact path and
 SHA-256, cwd, requirements reference, expected absolute result path, and bounded

@@ -9,6 +9,10 @@ const COMPARATOR = /\.(?:sort|toSorted)\(\s*(?:\(\s*[\w$]+\s*,\s*[\w$]+\s*\)\s*=
 const NAMED_EXPORT = /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|class|type|interface)\s+([\w$]+)/;
 // Names a framework reaches by convention rather than by import.
 const CONVENTION_EXPORTS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "metadata", "generateMetadata", "generateStaticParams", "viewport", "config", "dynamic", "revalidate", "runtime", "loader", "action", "handler", "meta", "middleware"]);
+// Build output says so on its first line, and a bundler labels each source it inlined with a comment line
+// holding its path, `// ../../plugins/vibe/shared/owner.mjs`, above that source's code.
+const GENERATED_BANNER = /^\/\/[^\n]*\bgenerated\b[^\n]*\bdo not edit\b/i;
+const MODULE_LABEL = /^\/\/ (?:\.{1,2}\/)*((?:[\w@.+-]+\/)*[\w@+-][\w@.+-]*\.[cm]?[jt]sx?)$/;
 const HELPER_DECL = /^(\s*)(?:export\s+)?(?:async\s+)?function\s+([a-z]\w*)\s*\([^)]*\)(?:\s*:\s*[^\n{]+)?\s*\{\s*$/;
 
 function sources(files) {
@@ -64,19 +68,63 @@ function helperBody(source, name) {
   return null;
 }
 
-/** A newly added helper must not copy an identical existing or fellow-diff helper. */
+/**
+ * In build output (a generated banner on its first line), the module label of the section that defines
+ * helper `name`: the nearest label line above its declaration. Null for a hand-written file. A `dist/`
+ * path proves nothing, so it exempts nothing.
+ */
+function bundledFrom(output, name) {
+  if (!GENERATED_BANNER.test(output ?? "")) return null;
+  const lines = output.split("\n");
+  const at = lines.findIndex((line) => HELPER_DECL.exec(line)?.[2] === name);
+  for (let index = at - 1; index > 0; index -= 1) {
+    const label = MODULE_LABEL.exec(lines[index])?.[1];
+    if (label) return label;
+  }
+  return null;
+}
+
+/** True when a module label names `source`: the whole repo path, or its tail from a directory boundary on, never a bare file name. */
+function labels(label, source) {
+  return label === source || (label.includes("/") && source.endsWith(`/${label}`));
+}
+
+/**
+ * True when a bundle whose module label is `label` inlined `file`: the label names the file, or names the source
+ * the file is a built copy of under a build marker (a launcher bundle against the built copy of its own source).
+ */
+function inlines(label, file, repo) {
+  if (labels(label, file)) return true;
+  const source = builtSource(file, repo);
+  return source !== null && labels(label, source);
+}
+
+/**
+ * A newly added helper must not copy an identical existing or fellow-diff helper. A bundle and the
+ * source it inlined are one definition, whichever of the two the diff adds, and so are two bundles that
+ * inlined it from the same source.
+ */
 export function checkDuplicateHelpers(files, repo, add) {
   const changed = new Set(files.map((file) => file.path));
   for (const file of sources(files)) {
     for (const entry of file.added) {
       const name = HELPER_DECL.exec(entry.text)?.[2];
       if (!name) continue;
-      const body = helperBody(repo.head(file.path), name);
+      const own = repo.head(file.path);
+      const body = helperBody(own, name);
       if (!body || body.length < 16) continue;
       const duplicate = repo.wordFiles(name).filter((other) => other !== file.path && SOURCE_FILE.test(other) && !isBuiltMirror(file.path, other, repo)
         && !isTestFile(other) && !/\.stories\.[jt]sx?$/.test(other))
-        .sort().find((other) => (!changed.has(other) || other < file.path)
-          && helperBody(repo.head(other) ?? repo.base(other), name) === body);
+        .sort().find((other) => {
+          if (changed.has(other) && other > file.path) return false;
+          const text = repo.head(other) ?? repo.base(other);
+          if (helperBody(text, name) !== body) return false;
+          const ownSource = bundledFrom(own, name);
+          const otherSource = bundledFrom(text, name);
+          if (ownSource && inlines(ownSource, other, repo)) return false;
+          if (otherSource && inlines(otherSource, file.path, repo)) return false;
+          return !(ownSource && otherSource && ownSource === otherSource);
+        });
       if (duplicate) add("duplicate-helper", file.path, entry.line,
         `new helper ${name} duplicates ${duplicate}`,
         `move the shared behavior to one owner and import it from ${duplicate}`);

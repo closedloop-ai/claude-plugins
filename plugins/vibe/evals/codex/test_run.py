@@ -166,6 +166,13 @@ def test_default_model_uses_shared_policy_at_low_effort(tmp_path: Path) -> None:
     assert 'model_reasoning_effort="low"' in args
 
 
+def test_iss_14112_ac_8_evals_run_on_the_switched_default(tmp_path: Path) -> None:
+    """Operator ruling 2026-11-17 ("Switch evals too"): the runner's default Codex model is gpt-6.2-sol."""
+    assert runner.default_codex_model() == "gpt-6.2-sol"
+    args = runner.exec_args(runner.default_codex_model(), tmp_path, tmp_path / "reply.txt")
+    assert args[args.index("-m") + 1] == "gpt-6.2-sol"
+
+
 def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None:
     """An outer interrupt can stop a model process started by a worker thread."""
     marker = tmp_path / "grandchild.pid"
