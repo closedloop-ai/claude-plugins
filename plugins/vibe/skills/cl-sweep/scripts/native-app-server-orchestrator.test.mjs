@@ -172,7 +172,7 @@ test('a turn on an ended worker unarchives its thread before resuming it', async
   assert.equal(saved.archivedAt, undefined);
 });
 
-test('AC-2: a new session with no model takes this machine\'s Codex writer model, else the default gpt-6.2-sol', (t) => {
+test('ISS-14112 AC-2: a new session with no model takes this machine\'s Codex writer model, else the default gpt-6.2-sol', (t) => {
   const root = realpathSync(mkdtempSync(resolve(tmpdir(), 'orchestrator-model-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const previous = process.env.VIBE_MODELS_FILE;
@@ -194,7 +194,7 @@ test('AC-2: a new session with no model takes this machine\'s Codex writer model
   assert.equal(model('legacy-override'), 'gpt-5.5');
 });
 
-test('AC-2: a new native session with an explicit gpt-5.5 model starts its thread and runs its turn on gpt-5.5', async (t) => {
+test('ISS-14112 AC-2: a new native session with an explicit gpt-5.5 model starts its thread and runs its turn on gpt-5.5', async (t) => {
   const fresh = freshSession(t, { model: 'gpt-5.5' });
   assert.equal(JSON.parse(readFileSync(fresh.stateFile, 'utf8')).options.model, 'gpt-5.5');
   const starter = new FakeClient(starting(fresh.root, { sidebar: false }));

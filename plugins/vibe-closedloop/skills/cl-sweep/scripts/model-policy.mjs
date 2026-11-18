@@ -120,8 +120,17 @@ export function validateModelFallback(session) {
   if (session.requestedModelFallbackFrom === undefined) return;
   const from = session.requestedModelFallbackFrom;
   if (!Object.hasOwn(CODEX_FALLBACK_MODELS, from) || CODEX_FALLBACK_MODELS[from] !== session.requestedModel) {
-    throw new Error('requestedModelFallbackFrom must name the model whose fallback is requestedModel');
+    throw new Error('Worker session requestedModelFallbackFrom must name the model whose fallback is requestedModel');
   }
+}
+
+/**
+ * The model fields a new session saves, the same in every cl-sweep transport: the model this Codex runs
+ * (`requestedModel`), and the chosen model (`requestedModelFallbackFrom`) only when that is its fallback.
+ */
+export function sessionModelFields(chosen, catalog) {
+  const { model, fallbackFrom } = availableCodexModel(chosen, catalog);
+  return { requestedModel: model, ...(fallbackFrom ? { requestedModelFallbackFrom: fallbackFrom } : {}) };
 }
 
 /** Refuses a new turn on a saved session that must first be replaced at its idle boundary. */

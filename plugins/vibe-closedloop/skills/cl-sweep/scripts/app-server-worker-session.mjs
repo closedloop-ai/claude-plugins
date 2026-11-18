@@ -57,13 +57,13 @@ import {
   DEFAULT_REASONING_EFFORT,
   TICKET_OWNER_MODEL,
   assertNoReplacementNeeded,
-  availableCodexModel,
+  sessionModelFields,
   ticketOwnerModel,
   ticketOwnerReplacementStatus,
   validateModelFallback,
   validateModelName,
 } from './model-policy.mjs';
-import { readModelCatalog } from './model-catalog.mjs';
+import { startWithModelList } from './model-catalog.mjs';
 import { isEntryPoint } from '../../../shared/plugin-roots.mjs';
 
 export const SESSION_SCHEMA = 'CL_SWEEP_APP_SERVER_WORKER_SESSION v1';
@@ -475,11 +475,7 @@ function validateReasoningEffort(value, label) {
 function validateModelBinding(session) {
   // A saved session keeps the exact model it was started on; no model is required of it.
   validateModelName(session.requestedModel, 'requestedModel');
-  try {
-    validateModelFallback(session);
-  } catch (error) {
-    fail(`Worker session ${error.message}`);
-  }
+  validateModelFallback(session);
   if (!session.modelBinding || session.modelBinding.field !== 'model') {
     fail('Worker session is missing proven App Server model binding field');
   }
@@ -898,7 +894,8 @@ export function initializeSession(args, { modelCatalog } = {}) {
   const chosenModel = validateModelName(ticketOwnerModel({
     launchModel: args['requested-model'] ? validateModelName(args['requested-model'], '--requested-model') : undefined,
   }), 'requestedModel');
-  const { model: requestedModel, fallbackFrom } = availableCodexModel(chosenModel, modelCatalog);
+  const modelFields = sessionModelFields(chosenModel, modelCatalog);
+  const { requestedModel } = modelFields;
   const requestedReasoningEffort = validateReasoningEffort(
     args['reasoning-effort'] || DEFAULT_TICKET_REASONING_EFFORT,
     '--reasoning-effort',
@@ -927,11 +924,10 @@ export function initializeSession(args, { modelCatalog } = {}) {
     transport: 'app_server',
     appServerVersion: args['app-server-version'] || null,
     protocolSchemaSha256,
-    requestedModel,
+    // requestedModel, and requestedModelFallbackFrom only when this Codex did not list the chosen model.
+    ...modelFields,
     // Written only when a model was explicitly requested for this session; it then keeps that model.
     ...(args['requested-model'] ? { requestedModelExplicit: true } : {}),
-    // Written only when this Codex did not list the chosen model; the session keeps the fallback it started on.
-    ...(fallbackFrom ? { requestedModelFallbackFrom: fallbackFrom } : {}),
     requestedReasoningEffort,
     modelBinding: {
       field: 'model',
@@ -2363,12 +2359,7 @@ async function main() {
     return;
   }
   let result;
-  if (args.command === 'init') {
-    const modelCatalog = await readModelCatalog({ codex: args.codex || 'codex' });
-    const session = initializeSession(args, { modelCatalog });
-    const { note } = session.requestedModelFallbackFrom ? availableCodexModel(session.requestedModelFallbackFrom, modelCatalog) : {};
-    result = note ? { ...session, modelNote: note } : session;
-  }
+  if (args.command === 'init') result = await startWithModelList(args.codex || 'codex', (modelCatalog) => initializeSession(args, { modelCatalog }));
   else if (args.command === 'attach-idle-historical-thread') result = await attachIdleHistoricalThread(args);
   else if (args.command === 'probe') result = await probeAppServer(args);
   else if (args.command === 'run') result = await runTurn(args);

@@ -40,12 +40,19 @@ const PROOF_SOURCE = [
 export const markLine = (id, reason = "Desktop here is the client process, not a screen") => `No surface: ${id}: ${reason}\n`;
 export const testRow = (id, name = "an older build ignores the new fields", file = PROOF_TEST) => `| ${id} | MET | test | ${file}::${name} |\n`;
 
-/** A folder holding the one test file the marks name. */
+/** A pytest module with one collected test and one helper, and two files that hold test-like code but are not test files. */
+export const PYTHON_TEST = "checks/test_contract.py";
+export const NOT_TEST_FILES = { python: "checks/runner.py", node: "checks/contract.mjs" };
+
+/** A folder holding the test files the marks name, and files that look like tests but are not test files. */
 export function proofFolder(t) {
   const { root: dir, cleanup } = makeHome("criteria-no-surface-");
   t.after(cleanup);
   mkdirSync(path.join(dir, "checks"));
   writeFileSync(path.join(dir, PROOF_TEST), PROOF_SOURCE);
+  writeFileSync(path.join(dir, PYTHON_TEST), "def helper_contract():\n    return 1\n\n\ndef test_contract_holds():\n    assert helper_contract() == 1\n");
+  writeFileSync(path.join(dir, NOT_TEST_FILES.python), "def test_contract_holds():\n    return 1\n");
+  writeFileSync(path.join(dir, NOT_TEST_FILES.node), 'test("an older build ignores the new fields", () => {});\n');
   return dir;
 }
 

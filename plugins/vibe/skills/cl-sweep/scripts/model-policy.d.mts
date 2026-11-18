@@ -16,6 +16,7 @@ export function validateModelName(value: unknown, label: string): string;
 export function ticketOwnerModel(options?: ModelOverrideOptions & { launchModel?: string }): string;
 export type SavedModelSession = { requestedModel?: unknown; requestedModelExplicit?: unknown; requestedModelFallbackFrom?: unknown };
 export function validateModelFallback(session: SavedModelSession): void;
+export function sessionModelFields(chosen: string, catalog?: ModelCatalog): { requestedModel: string; requestedModelFallbackFrom?: string };
 export function ticketOwnerNeedsReplacement(session: SavedModelSession): boolean;
 export function assertNoReplacementNeeded(session: SavedModelSession): void;
 export function ticketOwnerReplacementStatus(session: SavedModelSession, idleCandidate: boolean): {

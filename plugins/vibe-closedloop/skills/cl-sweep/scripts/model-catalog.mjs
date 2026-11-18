@@ -4,6 +4,7 @@
 // version number. A list that cannot be read is `{ error }`, never a throw: the caller then uses the fallback.
 
 import { findCli, BUNDLED_CODEX } from '../../vibe/scripts/plugin-cli.mjs';
+import { availableCodexModel } from './model-policy.mjs';
 import { vibeCore } from '../../../shared/vibe-core.mjs';
 
 const { connectStdio } = await vibeCore('lib/codex-fleet-monitor/scripts/liveness.mjs');
@@ -62,4 +63,17 @@ export async function readModelCatalog({ codex, timeoutMs = DEFAULT_TIMEOUT_MS, 
   } finally {
     client.close();
   }
+}
+
+/**
+ * A cl-sweep `init` (or `replace`) from the command line, the same in every transport: reads the Codex CLI's model
+ * list, runs `create(modelCatalog)`, and returns the saved session plus `modelNote`, the one launch line, when the
+ * session started on a fallback (`requestedModelFallbackFrom`).
+ */
+export async function startWithModelList(codex, create) {
+  const modelCatalog = await readModelCatalog({ codex });
+  const session = create(modelCatalog);
+  const from = session.requestedModelFallbackFrom;
+  const { note } = from ? availableCodexModel(from, modelCatalog) : {};
+  return note ? { ...session, modelNote: note } : session;
 }

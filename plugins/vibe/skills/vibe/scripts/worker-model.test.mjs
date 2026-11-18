@@ -62,7 +62,7 @@ test("every vibe agent file has exactly one role, and every role names a real ag
   assert.deepEqual(Object.keys(VIBE_AGENT_ROLES).sort(), names);
 });
 
-test("AC-1: explorers run on gpt-5.6-terra and every other role defaults to gpt-6.2-sol, all at high effort on Codex", () => {
+test("ISS-14112 AC-1: explorers run on gpt-5.6-terra and every other role defaults to gpt-6.2-sol, all at high effort on Codex", () => {
   const explorer = codexWorkerBinding("vibe-requirements-worker");
   assert.deepEqual(explorer, { agent: "vibe-requirements-worker", role: "explorer", model: "gpt-5.6-terra", reasoning_effort: "high" });
   const writer = codexWorkerBinding("vibe:vibe-change-worker");
@@ -74,7 +74,7 @@ test("AC-1: explorers run on gpt-5.6-terra and every other role defaults to gpt-
   }
 });
 
-test("AC-1: the evals policy file is the one source the agents' binding and cl-sweep read", () => {
+test("ISS-14112 AC-1: the evals policy file is the one source the agents' binding and cl-sweep read", () => {
   const policyFile = path.resolve(HERE, "../../../evals/codex/model-policy.json");
   assert.equal(JSON.parse(readFileSync(policyFile, "utf8")).codexModel, "gpt-6.2-sol");
   // A copy of the policy scripts beside an edited policy file follows the file, so no script carries its own default.
@@ -111,12 +111,13 @@ test("AC-1: the evals policy file is the one source the agents' binding and cl-s
       assert.notEqual(refused.status, 0, String(body));
       assert.equal(refused.stdout, "", String(body));
       assert.match(refused.stderr, /eval-codex-model-policy-invalid/, String(body));
-      assert.doesNotMatch(refused.stderr, /gpt-5\.6-sol|gpt-6-sol/, String(body));
+      // No model the policy names is built in, so none appears in the refusal.
+      assert.doesNotMatch(refused.stderr, /gpt-6\.2-sol|gpt-6\.2-astra|gpt-5\.6-sol/, String(body));
     }
   }
 });
 
-test("AC-1: the Claude launcher bundle carries no copy of the Codex model policy", () => {
+test("ISS-14112 AC-1: the Claude launcher bundle carries no copy of the Codex model policy", () => {
   const bundle = readFileSync(path.join(HERE, "dist/claude-worker.mjs"), "utf8");
   // `includes`, not a pattern assertion: a failure must not print the whole bundle.
   assert.equal(bundle.includes("model-policy"), false, "the bundle names the Codex model policy");

@@ -265,7 +265,7 @@ test('no skill carries one-off exceptions for merged tickets (ISS-9294 / PR #705
   }
 });
 
-test('AC-4: new sweep ticket workers use gpt-6.2-sol, and a saved session on another model is replaced at idle, never refused', () => {
+test('ISS-14112 AC-4: new sweep ticket workers use gpt-6.2-sol, and a saved session on another model is replaced at idle, never refused', () => {
   const surfaces = read('cl-sweep/references/execution-surfaces.md');
   const sweep = read('cl-sweep/SKILL.md');
   const protocol = read('cl-sweep/references/cli-worker-protocol.md');
@@ -1173,7 +1173,7 @@ test('a new data direction needs a traced decision in cl-execute and cl-analyze'
   assert.match(gateResult, /^- Data direction: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
 });
 
-test('AC-4: Codex lanes take models from the one policy: high by default, explorers on gpt-5.6-terra', async () => {
+test('ISS-14112 AC-4: Codex lanes take models from the one policy: high by default, explorers on gpt-5.6-terra', async () => {
   const policy = await import('./model-policy.mjs');
   const known = new Set([
     policy.TICKET_OWNER_MODEL, policy.EXPLORER_MODEL, policy.MECHANICAL_SUPPORT_MODEL, policy.HIGH_COMPLEXITY_REVIEW_MODEL,

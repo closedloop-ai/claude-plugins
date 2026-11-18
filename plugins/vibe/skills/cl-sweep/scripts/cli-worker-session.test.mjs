@@ -72,7 +72,7 @@ function event({ id, worktree, generation = 1, rootGeneration = 1, parentThreadI
   })}\n`;
 }
 
-test('AC-1: launches and resumes the same cwd-bound Codex exec session on the default gpt-6.2-sol', () => {
+test('ISS-14112 AC-1: launches and resumes the same cwd-bound Codex exec session on the default gpt-6.2-sol', () => {
   const { repo, state, fakeCodex, invocationLog } = setup();
   const session = join(state, 'session.json');
   const events = join(state, 'events.jsonl');
@@ -115,7 +115,7 @@ test('AC-1: launches and resumes the same cwd-bound Codex exec session on the de
 
 const INIT = ['--ticket', 'FEA-1', '--parent-thread-id', 'parent-1', '--owner-id', 'worker-1', '--generation', '1', '--lease-id', 'lease-1', '--lease-token-hash', HASH_1];
 
-test('AC-2: a new fallback session takes this machine\'s Codex writer model, else the default', () => {
+test('ISS-14112 AC-2: a new fallback session takes this machine\'s Codex writer model, else the default', () => {
   const { repo, state, fakeCodex, invocationLog } = setup();
   const models = join(state, 'models.json');
   writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'gpt-writer-choice', reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } }));
@@ -147,7 +147,7 @@ test('AC-2: a new fallback session takes this machine\'s Codex writer model, els
   assert.equal(JSON.parse(readFileSync(other, 'utf8')).requestedModel, 'gpt-6.2-sol');
 });
 
-test('AC-2: an override this machine chose that a fallback session cannot store is refused at init, before any session file', () => {
+test('ISS-14112 AC-2: an override this machine chose that a fallback session cannot store is refused at init, before any session file', () => {
   const { repo, state } = setup();
   const models = join(state, 'models.json');
   writeFileSync(models, JSON.stringify({ codex: { roles: { writer: 'ft:gpt-5.6-sol:org' } } }));
@@ -187,7 +187,7 @@ test('ISS-14112 AC-6: on a Codex whose model list lacks gpt-6.2-sol, init starts
   assert.match(forged.bindingError, /requestedModelFallbackFrom must name the model whose fallback is requestedModel/);
 });
 
-test('AC-3: fallback status still answers when this machine\'s model overrides cannot be read', () => {
+test('ISS-14112 AC-3: fallback status still answers when this machine\'s model overrides cannot be read', () => {
   const { repo, state } = setup();
   const session = join(state, 'status-session.json');
   run('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT]);
@@ -201,7 +201,7 @@ test('AC-3: fallback status still answers when this machine\'s model overrides c
   assert.equal(JSON.parse(run('node', [script, 'status', '--session-file', session])).modelReplacementError, null);
 });
 
-test('AC-3: a refused turn on a saved fallback session that must be replaced leaves its file byte for byte', () => {
+test('ISS-14112 AC-3: a refused turn on a saved fallback session that must be replaced leaves its file byte for byte', () => {
   const { repo, state, fakeCodex } = setup();
   const session = join(state, 'correction-session.json');
   run('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT]);
@@ -221,7 +221,7 @@ test('AC-3: a refused turn on a saved fallback session that must be replaced lea
   assert.equal(readFileSync(session).equals(before), true);
 });
 
-test('AC-3: a saved gpt-6-sol fallback session is never refused for its model and is replaced at idle', () => {
+test('ISS-14112 AC-3: a saved gpt-6-sol fallback session is never refused for its model and is replaced at idle', () => {
   const { repo, state, fakeCodex, invocationLog } = setup();
   const session = join(state, 'saved-session.json');
   run('node', [script, 'init', '--session-file', session, '--worktree', repo, '--parent-cwd', repo, ...INIT]);

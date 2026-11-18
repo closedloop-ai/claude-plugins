@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { auditProblems } from "./criteria-audit.mjs";
-import { markLine, NAMES_DESKTOP, NEEDS_APP_RUN, NO_SURFACE_FIXTURES, PROOF_TEST, proofFolder, testRow } from "./criteria-test-fixture.mjs";
+import { markLine, NAMES_DESKTOP, NEEDS_APP_RUN, NO_SURFACE_FIXTURES, NOT_TEST_FILES, PROOF_TEST, proofFolder, PYTHON_TEST, testRow } from "./criteria-test-fixture.mjs";
 import { EvidenceAt, noSurfaceMarks } from "./criterion-surface.mjs";
 import { gapLines, Origin, reviewGaps } from "./unit-review.mjs";
 
@@ -108,6 +108,26 @@ for (const line of MALFORMED_MARKS) {
     assert.deepEqual(auditProblems(audit, criteria, dir, EvidenceAt.Worktree, { marks: read.marks }), [`AC-1: ${NEEDS_APP_RUN}`], "the criterion stays unmarked");
   });
 }
+
+test("ISS-14136 AC-1: the named test lives in a test file a runner collects, and a Python test is a def pytest collects", (t) => {
+  const dir = proofFolder(t);
+  const criteria = [{ id: "AC-1", text: NO_SURFACE_FIXTURES[0].text }];
+  const read = (name, file) => noSurfaceMarks(markLine("AC-1") + testRow("AC-1", name, file), criteria, { worktree: dir });
+  assert.deepEqual([...read("test_contract_holds", PYTHON_TEST).marks.keys()], ["AC-1"], "a collected pytest test in a test_*.py file");
+  assert.deepEqual(read("helper_contract", PYTHON_TEST).problems, [`AC-1: ${PYTHON_TEST} has no test named "helper_contract"`], "a def pytest does not collect");
+  for (const [name, file] of [["test_contract_holds", NOT_TEST_FILES.python], ["an older build ignores the new fields", NOT_TEST_FILES.node]]) {
+    const refused = read(name, file);
+    assert.deepEqual(refused.problems, [`AC-1: ${file} is not a test file a test runner collects`], file);
+    assert.equal(refused.marks.size, 0, file);
+  }
+});
+
+test("ISS-14136 AC-2: an indented mark is read as the mark it is", (t) => {
+  const dir = proofFolder(t);
+  const criteria = [{ id: "AC-1", text: NO_SURFACE_FIXTURES[0].text }];
+  const read = noSurfaceMarks(`  ${markLine("AC-1")}${testRow("AC-1")}`, criteria, { worktree: dir });
+  assert.deepEqual([read.problems, [...read.marks.keys()]], [[], ["AC-1"]]);
+});
 
 test("ISS-14136 AC-2: a mark with no space after its id colon is read as that id and its reason", (t) => {
   const dir = proofFolder(t);

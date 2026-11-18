@@ -107,8 +107,8 @@ event. A saved session is never refused for its model: an already-active
 turn is recoverable under its exact stored binding. When its model differs from
 the model resolved for that session (an explicitly requested model, else this machine's override, else the default), replace its owner/session once it reaches an
 authoritatively verified idle/no-active-turn boundary,
-before another turn; never rewrite its model field in place. No implicit
-fallback or model-family reroute is allowed.
+before another turn; never rewrite its model field in place. No fallback or
+model-family reroute is allowed other than the `init` fallback in `execution-surfaces.md`.
 
 Accepted callbacks enter the bundled native helper's durable outbox before
 journal or parent delivery work continues. The shared primitive persists a

@@ -25,10 +25,10 @@ import {
   verifyFeatureOwnership,
 } from './feature-ownership.mjs';
 import {
-  assertNoReplacementNeeded, availableCodexModel, ticketOwnerModel, ticketOwnerReplacementStatus, validateModelFallback,
+  assertNoReplacementNeeded, sessionModelFields, ticketOwnerModel, ticketOwnerReplacementStatus, validateModelFallback,
   validateModelName,
 } from './model-policy.mjs';
-import { readModelCatalog } from './model-catalog.mjs';
+import { startWithModelList } from './model-catalog.mjs';
 
 const SESSION_SCHEMA = 'CL_SWEEP_CLI_WORKER_SESSION v1';
 const EVENT_PREFIX = 'CL_SWEEP_EVENT v1 ';
@@ -165,11 +165,7 @@ function validateBinding(session) {
   verifyFeatureOwnership(session);
   // A saved session keeps the exact model it was started on; no model is required of it.
   validateModelName(session.requestedModel, 'requestedModel');
-  try {
-    validateModelFallback(session);
-  } catch (error) {
-    fail(`Worker session ${error.message}`);
-  }
+  validateModelFallback(session);
   return current;
 }
 
@@ -232,12 +228,6 @@ function statusSession(args) {
 }
 
 /** `modelCatalog` is the Codex CLI's model list (`model-catalog.mjs`); a chosen model it does not name runs on its fallback. */
-/** The saved model fields: the model this Codex runs, and the chosen model only when that is its fallback. */
-function modelFields(chosen, modelCatalog) {
-  const { model, fallbackFrom } = availableCodexModel(chosen, modelCatalog);
-  return { requestedModel: model, ...(fallbackFrom ? { requestedModelFallbackFrom: fallbackFrom } : {}) };
-}
-
 function initialize(args, { modelCatalog } = {}) {
   const path = resolve(required(args, 'session-file'));
   const binding = inspectWorktree(realpathSync(required(args, 'worktree')));
@@ -260,7 +250,7 @@ function initialize(args, { modelCatalog } = {}) {
     cutoverCheckpoint,
     transport: 'codex_exec',
     // The resolved model can come from this machine's overrides file, which accepts names a session cannot store.
-    ...modelFields(validateModelName(ticketOwnerModel(), 'requestedModel'), modelCatalog),
+    ...sessionModelFields(validateModelName(ticketOwnerModel(), 'requestedModel'), modelCatalog),
     codexSessionId: null,
     state: 'READY',
     acceptedEventIds: [],
@@ -636,20 +626,10 @@ try {
   let result;
   if (args.command === 'probe') result = probe(args);
   else if (args.command === 'status') result = statusSession(args);
-  else if (args.command === 'init') {
-    const modelCatalog = await readModelCatalog({ codex: args.codex ?? 'codex' });
-    const session = initialize(args, { modelCatalog });
-    const { note } = session.requestedModelFallbackFrom ? availableCodexModel(session.requestedModelFallbackFrom, modelCatalog) : {};
-    result = note ? { ...session, modelNote: note } : session;
-  }
+  else if (args.command === 'init') result = await startWithModelList(args.codex ?? 'codex', (modelCatalog) => initialize(args, { modelCatalog }));
   else if (args.command === 'run') result = await runTurn(args);
   else if (args.command === 'validate-callback') result = validateCallbackFile(args);
-  else if (args.command === 'replace') {
-    const modelCatalog = await readModelCatalog({ codex: args.codex ?? 'codex' });
-    const session = replaceSession(args, { modelCatalog });
-    const { note } = session.requestedModelFallbackFrom ? availableCodexModel(session.requestedModelFallbackFrom, modelCatalog) : {};
-    result = note ? { ...session, modelNote: note } : session;
-  }
+  else if (args.command === 'replace') result = await startWithModelList(args.codex ?? 'codex', (modelCatalog) => replaceSession(args, { modelCatalog }));
   else if (args.command === 'rebind-parent') result = rebindParent(args);
   else fail('Usage: cli-worker-session.mjs <probe|status|init|run|validate-callback|replace|rebind-parent> [options]');
   process.stdout.write(`${JSON.stringify(result)}\n`);

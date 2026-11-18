@@ -307,7 +307,7 @@ function manuallyWriteArtifact(fixture, event, artifact) {
   };
 }
 
-test('AC-1: new ticket sessions default to gpt-6.2-sol at high effort and capture a synchronous callback', async () => {
+test('ISS-14112 AC-1: new ticket sessions default to gpt-6.2-sol at high effort and capture a synchronous callback', async () => {
   const fixture = initializeFixture();
   const event = {
     event_id: randomUUID(),
@@ -404,7 +404,7 @@ async function firstTurnModels(fixture) {
   };
 }
 
-test('AC-2: a new ticket session takes the launch model, else this machine\'s Codex writer model, else the default', async () => {
+test('ISS-14112 AC-2: a new ticket session takes the launch model, else this machine\'s Codex writer model, else the default', async () => {
   const chosen = { codex: { roles: { writer: 'gpt-writer-choice', reviewer: 'gpt-reviewer-choice' } }, claude: { roles: { writer: 'claude-writer-choice' } } };
   await withModelOverrides(chosen, async () => {
     const overridden = initializeFixture();
@@ -441,7 +441,7 @@ function savedSession(model) {
 const turnArgs = (fixture) => ({ 'session-file': fixture.sessionFile, 'prompt-file': fixture.promptFile, 'events-file': fixture.eventsFile });
 const startedTurn = (client) => client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread');
 
-test('AC-3: a saved gpt-6-sol session is never refused for its model and is replaced at its next idle boundary', async () => {
+test('ISS-14112 AC-3: a saved gpt-6-sol session is never refused for its model and is replaced at its next idle boundary', async () => {
   const fixture = savedSession('gpt-6-sol');
   // A session saved before the explicit-request marker existed carries none, and a read-only command leaves it byte for byte.
   const saved = readFileSync(fixture.sessionFile);
@@ -460,7 +460,7 @@ test('AC-3: a saved gpt-6-sol session is never refused for its model and is repl
   assert.equal(after.modelBinding.requestedModel, 'gpt-6-sol');
 });
 
-test('AC-2: a model explicitly requested at init runs turns and is not replaced, whatever this machine resolves', async () => {
+test('ISS-14112 AC-2: a model explicitly requested at init runs turns and is not replaced, whatever this machine resolves', async () => {
   await withModelOverrides({ codex: { roles: { writer: 'gpt-writer-choice' } } }, async () => {
     const requested = initializeFixture({ 'requested-model': 'gpt-launch-choice' });
     assert.equal(requested.session.requestedModel, 'gpt-launch-choice');
@@ -476,7 +476,7 @@ test('AC-2: a model explicitly requested at init runs turns and is not replaced,
   });
 });
 
-test('AC-2: an override this machine chose that a session cannot store is refused at init, before any session file', async () => {
+test('ISS-14112 AC-2: an override this machine chose that a session cannot store is refused at init, before any session file', async () => {
   await withModelOverrides({ codex: { roles: { writer: 'ft:gpt-5.6-sol:org' } } }, async () => {
     const directory = mkdtempSync(join(tmpdir(), 'cl-sweep-app-server-refused-'));
     const sessionFile = join(directory, 'session.json');
@@ -485,7 +485,7 @@ test('AC-2: an override this machine chose that a session cannot store is refuse
   });
 });
 
-test('AC-3: status still answers when this machine\'s model overrides cannot be read', async () => {
+test('ISS-14112 AC-3: status still answers when this machine\'s model overrides cannot be read', async () => {
   const fixture = savedSession('gpt-6-sol');
   const client = new FakeClient({ worktree: fixture.worktree, materialized: true });
   const file = join(mkdtempSync(join(tmpdir(), 'cl-sweep-models-')), 'models.json');
@@ -505,7 +505,7 @@ test('AC-3: status still answers when this machine\'s model overrides cannot be 
   assert.equal(readable.modelReplacement.targetModel, 'gpt-6.2-sol');
 });
 
-test('AC-3: detached launch supervises an active turn on a saved model other than the resolved one, and refuses a new turn on it', () => {
+test('ISS-14112 AC-3: detached launch supervises an active turn on a saved model other than the resolved one, and refuses a new turn on it', () => {
   const launch = (fixture) => spawnSync(process.execPath, [workerScript, 'launch',
     '--socket', join(fixture.directory, 'no-daemon.sock'), '--session-file', fixture.sessionFile, '--events-file', fixture.eventsFile,
     '--prompt-file', fixture.promptFile, '--log-file', join(fixture.directory, 'runner.log'), '--runner-file', join(fixture.directory, 'runner.json'),
@@ -528,7 +528,7 @@ test('AC-3: detached launch supervises an active turn on a saved model other tha
   assert.equal(JSON.parse(readFileSync(active.sessionFile, 'utf8')).requestedModel, 'gpt-6-sol');
 });
 
-test('AC-3: a saved session on the model this machine chose is not replaced, and one on another model is', async () => {
+test('ISS-14112 AC-3: a saved session on the model this machine chose is not replaced, and one on another model is', async () => {
   await withModelOverrides({ codex: { roles: { writer: 'gpt-5.6-terra' } } }, async () => {
     const same = savedSession('gpt-5.6-terra');
     const sameClient = new FakeClient({ worktree: same.worktree, event: waitingCheckpointEvent(same.worktree), materialized: true });
@@ -2000,7 +2000,7 @@ test('an original idle thread can be restored only after the outgoing thread is 
   await restoreOriginalThread();
 });
 
-test('AC-3: a thread saved on gpt-6-sol re-attaches to a session that requests its model, and that session is not replaced', async () => {
+test('ISS-14112 AC-3: a thread saved on gpt-6-sol re-attaches to a session that requests its model, and that session is not replaced', async () => {
   const { targetFile, worktree } = await restoreOriginalThread('gpt-6-sol');
   const attached = JSON.parse(readFileSync(targetFile, 'utf8'));
   assert.equal(attached.requestedModel, 'gpt-6-sol');

@@ -25,9 +25,9 @@ import {
   sendInput,
 } from './core-client-process.mjs';
 import {
-  availableCodexModel, MECHANICAL_SUPPORT_MODEL, TICKET_OWNER_MODEL, ticketOwnerModel, validateModelName,
+  MECHANICAL_SUPPORT_MODEL, sessionModelFields, TICKET_OWNER_MODEL, ticketOwnerModel, validateModelName,
 } from './model-policy.mjs';
-import { readModelCatalog } from './model-catalog.mjs';
+import { startWithModelList } from './model-catalog.mjs';
 import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
@@ -269,7 +269,7 @@ export function initializeSession(options) {
     fail('transport must be proxy, direct, or desktop');
   }
   const createdAt = now();
-  const available = availableCodexModel(validateNewSessionModel(options.model), options.modelCatalog);
+  const { requestedModel, ...fallback } = sessionModelFields(validateNewSessionModel(options.model), options.modelCatalog);
   const session = {
     schema: SESSION_SCHEMA,
     sessionId: options.sessionId || randomUUID(),
@@ -286,11 +286,11 @@ export function initializeSession(options) {
       sandbox: options.sandbox || null,
       serviceName: options.serviceName || null,
       threadName: validateThreadName(options.threadName),
-      model: available.model,
+      model: requestedModel,
       effort: validateEffortOption(options.effort),
     },
-    // Written only when this Codex did not list the chosen model.
-    ...(available.fallbackFrom ? { modelFallbackFrom: available.fallbackFrom } : {}),
+    // requestedModelFallbackFrom, written only when this Codex did not list the chosen model.
+    ...fallback,
     eventsFile: resolve(options.eventsFile || `${stateFile}.events.jsonl`),
     threadId: null,
     threadMaterialized: false,
@@ -1605,14 +1605,6 @@ function usage() {
   ].join('\n');
 }
 
-/** `init` from the command line: reads the Codex CLI's model list first and prints the fallback note once. */
-async function initializeWithCatalog(options) {
-  const modelCatalog = await readModelCatalog({ codex: options.codex || 'codex' });
-  const session = initializeSession({ ...options, modelCatalog });
-  const { note } = session.modelFallbackFrom ? availableCodexModel(session.modelFallbackFrom, modelCatalog) : {};
-  return note ? { ...session, modelNote: note } : session;
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.command || ['help', '--help', '-h'].includes(args.command)) {
@@ -1622,7 +1614,7 @@ async function main() {
   let result;
   if (args.command === 'daemon') result = managedDaemon({ codex: args.codex || 'codex' });
   else if (args.command === 'probe') result = await probe({ codex: args.codex, socket: args.socket, transport: args.transport });
-  else if (args.command === 'init') result = await initializeWithCatalog({
+  else if (args.command === 'init') result = await startWithModelList(args.codex || 'codex', (modelCatalog) => initializeSession({ modelCatalog,
     stateFile: required(args, 'state'),
     cwd: required(args, 'cwd'),
     parentThreadId: args['parent-thread-id'],
@@ -1638,7 +1630,7 @@ async function main() {
     threadName: args['thread-name'],
     model: args.model,
     effort: args.effort,
-  });
+  }));
   else if (args.command === 'thread-status') result = await inspectThread({
     threadId: required(args, 'thread-id'),
     cwd: required(args, 'cwd'),

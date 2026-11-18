@@ -21,6 +21,10 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { escapeRegExp } from "./source-imports.mjs";
 import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
+import { TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
+
+// A pytest module: test_*.py or *_test.py.
+const PYTHON_TEST_FILE = /(?:^|\/)(?:test_[^/]*|[^/]*_test)\.py$/;
 
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
 export const ACROSS_PAGES = /\b(?:every|each|all|across)(?: the| all)?(?: \w+)? pages?\b|\bwhere(?:ver)? (?:it is |they are )?available\b/i;
@@ -94,15 +98,23 @@ export function noSurfaceLine(id, reason, slug = null) {
   return `NO-SURFACE ${where}: ${reason}`;
 }
 
-/** True when `text` declares a live test titled `name`: not in a comment, not a skip or todo form. */
+/** True when `file` is a test file a runner collects: a node or vitest spec, or a pytest module. */
+function isRunnableTestFile(file) {
+  return TEST_SPEC_PATTERN.test(file) || PYTHON_TEST_FILE.test(file);
+}
+
+/**
+ * True when `text` declares a live test titled `name`: not in a comment, not a skip or todo form. A Python test is
+ * a `def` pytest collects, so its name starts with `test`.
+ */
 function declaresTest(text, name) {
   const title = escapeRegExp(name);
   const call = new RegExp(`(?:^|[^\\w.$])(?:it|test)(?:\\.only)?\\s*\\(\\s*(["'\`])${title}\\1`);
-  const python = new RegExp(`^\\s*(?:async\\s+)?def\\s+${title}\\s*\\(`);
+  const python = /^test/.test(name) ? new RegExp(`^\\s*(?:async\\s+)?def\\s+${title}\\s*\\(`) : null;
   return text.split("\n").some((line) => {
     if (COMMENT_LINE.test(line)) return false;
     const found = call.exec(line);
-    return python.test(line) || (found !== null && !line.slice(0, found.index).includes("//"));
+    return python?.test(line) || (found !== null && !line.slice(0, found.index).includes("//"));
   });
 }
 
@@ -118,7 +130,8 @@ export function noSurfaceMarks(audit, criteria, { worktree = null, at = Evidence
   const problems = [];
   for (const line of audit.split("\n")) {
     if (!MARK_LIKE.test(line)) continue;
-    const match = markLine().exec(line.trimEnd());
+    // Indentation is not part of the mark; any other leading text is.
+    const match = markLine().exec(line.trim());
     if (!match) {
       problems.push(`${JSON.stringify(line.trim())}: a no-surface mark reads "No surface: <id>: <reason>"`);
       continue;
@@ -143,6 +156,10 @@ export function noSurfaceMarks(audit, criteria, { worktree = null, at = Evidence
       if (worktree === null) return true;
       if (!testFileExists(worktree, test.file, at)) {
         if (!rowsAudited) refused.push(missingTestProblem(id, test.file, at));
+        return false;
+      }
+      if (!isRunnableTestFile(test.file)) {
+        refused.push(`${id}: ${test.file} is not a test file a test runner collects`);
         return false;
       }
       const text = testFileText(worktree, test.file, at);

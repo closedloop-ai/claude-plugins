@@ -611,7 +611,8 @@ remains unchanged when Desktop is complete.
    field and is valid only for an already-active turn under the proven binding.
    Reject missing, unproven, incompatible, or rerouted model bindings before
    starting or resuming work. Allow
-   no implicit fallback or model-family reroute. Stream its turn
+   no fallback or model-family reroute other than the `init` fallback in
+   `references/execution-surfaces.md`. Stream its turn
    events, steer active work directly, and reconcile the stored thread/turn
    after daemon or client interruption before any new turn. When a stored turn
    is absent from history, use `recover-absent-turn` only after exact-bound

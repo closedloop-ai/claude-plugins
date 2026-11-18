@@ -13,7 +13,8 @@ const CRITERIA_START = /^\s*-\s*Acceptance criteria:\s*$/;
 const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
 const HEADING = /^(#{1,6})\s/;
 const CHECKBOX = /^\s+-\s*\[([ xX])\]\s*(\S.*)$/;
-const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
+// Any list marker: -, *, + or an ordered 1. or 1), so no checkbox form is dropped unseen.
+const TOP_CHECKBOX = /^\s*(?:[-*+]|\d+[.)])\s*\[([ xX])\]\s*(\S.*)$/;
 const LIST_LABEL = /^\s*[-*]\s+([^[\s].*?):\s*$/;
 const NAMES_CRITERIA = /\bcriteri(?:a|on)\b/i;
 const LEADS_WITH_ID = /^AC-\d+\b/;
@@ -59,7 +60,8 @@ function checkboxes(ticket) {
     }
     if (CRITERIA_START.test(line)) {
       inList = true;
-      label = null;
+      // A box the list does not read (another marker, or one at list level right after it) is reported under it.
+      label = "Acceptance criteria";
       continue;
     }
     const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;
