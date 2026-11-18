@@ -43,6 +43,9 @@ const SECTION_CASES = [
   ["a 1. box under a list label nested in the template list", "- Acceptance criteria:\n  - [ ] a\n    - Notes:\n      1. [ ] num\n  - [ ] b\n", ["a", "b"]],
   ["a 1) box under a list label nested in the template list", "- Acceptance criteria:\n  - [ ] a\n    - Notes:\n      1) [ ] num\n  - [ ] b\n", ["a", "b"]],
   ["a - box after a list label at item level in the template list", "- Acceptance criteria:\n  - [ ] a\n  - Notes:\n  - [ ] b\n", ["a"]],
+  ["a + box under a nested list label of an indented template list", "  - Acceptance criteria:\n  - [ ] a\n    - Notes:\n      + [ ] plus\n  - [ ] b\n", ["a", "b"]],
+  ["a + box under a shallower continuation label the template list still reads through", "- Acceptance criteria:\n      - [ ] a\n    - Notes:\n      + [ ] plus\n      - [ ] b\n", ["a", "b"]],
+  ["a 1. box under a nested list label of an indented template list", "  - Acceptance criteria:\n  - [ ] a\n    - Notes:\n      1. [ ] num\n  - [ ] b\n", ["a", "b"]],
 ];
 
 for (const [what, ticket, read] of SECTION_CASES) {
@@ -55,4 +58,10 @@ for (const [what, ticket, read] of SECTION_CASES) {
 test("ISS-14136 AC-4: once the template list or criteria section has ended, an unrelated checklist is not reported", () => {
   assert.deepEqual(unreadCriteriaProblems("- Acceptance criteria:\n  - [ ] a\n- Environment:\n  - [ ] run the app\n  1. [ ] check the logs\n"), [], "a sibling list label closes the template list");
   assert.deepEqual(unreadCriteriaProblems("## Acceptance criteria\n\n- [ ] a\n\n## Environment\n\n+ [ ] run the app\n1. [ ] check the logs\n"), [], "a heading at the section's level closes it");
+});
+
+test("ISS-14136 AC-4: a sibling list label indented less than the template list's boxes closes the list, so its checklist is not reported, and ids match main", () => {
+  const ticket = "- Acceptance criteria:\n  - [ ] a\n - Environment:\n   - [ ] run the app\n   + [ ] check the logs\n";
+  assert.deepEqual(criteriaStates(ticket).map(({ id, text }) => [id, text]), [["AC-1", "a"]]);
+  assert.deepEqual(unreadCriteriaProblems(ticket), []);
 });

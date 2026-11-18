@@ -53,8 +53,10 @@ export function unreadCriteriaProblems(ticket) {
  * Every checkbox of the ticket: whether the criteria sections hold it, and the name it is reported under. Reading
  * (`inList`, `headingLevel`) is unchanged from before the report rule, so ids do not move. Reporting uses one
  * criteria section rule for both forms: a criteria heading's section stays open, at its outermost level, through
- * deeper headings (a nested criteria heading included); the template list's section stays open through lines
- * indented deeper than its `- Acceptance criteria:` line. An unread box inside either is filed under the section.
+ * deeper headings (a nested criteria heading included). The template list's section holds every line the list
+ * reads, and after that every line indented at least as deep as its read boxes; it closes at a line indented less
+ * than those boxes, or at a list label no deeper than the `- Acceptance criteria:` line (a sibling of it). An unread
+ * box inside either is filed under the section.
  */
 function checkboxes(ticket) {
   const found = [];
@@ -66,6 +68,8 @@ function checkboxes(ticket) {
   let sectionLevel = 0;
   let sectionName = null;
   let listIndent = null;
+  let listBoxIndent = null;
+  const indentOf = (text) => text.length - text.trimStart().length;
   for (const line of ticket.split("\n")) {
     const heading = HEADING.exec(line);
     if (heading) {
@@ -73,6 +77,7 @@ function checkboxes(ticket) {
       const name = line.slice(level).trim();
       inList = false;
       listIndent = null;
+      listBoxIndent = null;
       headingLevel = CRITERIA_HEADING.test(line) ? level : headingLevel && level > headingLevel ? headingLevel : 0;
       if (!(sectionLevel && level > sectionLevel)) [sectionLevel, sectionName] = CRITERIA_HEADING.test(line) ? [level, name] : [0, null];
       headingName = name;
@@ -81,20 +86,23 @@ function checkboxes(ticket) {
     }
     if (CRITERIA_START.test(line)) {
       inList = true;
-      listIndent = line.length - line.trimStart().length;
+      listIndent = indentOf(line);
+      listBoxIndent = null;
       // A box at list level right after the list is reported under it too.
       label = "Acceptance criteria";
       continue;
     }
-    if (listIndent !== null && line.trim() !== "" && line.length - line.trimStart().length <= listIndent) listIndent = null;
     const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;
     if (item) {
+      if (inList) listBoxIndent ??= indentOf(line);
       found.push({ read: true, text: item[2], checked: item[1] !== " " });
       continue;
     }
+    if (listIndent !== null && line.trim() !== "" &&
+      (indentOf(line) < (listBoxIndent ?? listIndent + 1) || (LIST_LABEL.test(line) && indentOf(line) <= listIndent))) listIndent = null;
     if (inList && line.trim() !== "" && !/^\s{4,}\S/.test(line)) inList = false;
     const stray = ANY_CHECKBOX.exec(line);
-    const section = sectionLevel ? sectionName : listIndent !== null ? "Acceptance criteria" : null;
+    const section = sectionLevel ? sectionName : listIndent !== null || inList ? "Acceptance criteria" : null;
     if (stray) found.push({ read: false, text: stray[2], checked: stray[1] !== " ", under: section ?? label ?? headingName });
     else if (LIST_LABEL.test(line)) label = LIST_LABEL.exec(line)[1];
     else if (/^\S/.test(line)) label = null;
