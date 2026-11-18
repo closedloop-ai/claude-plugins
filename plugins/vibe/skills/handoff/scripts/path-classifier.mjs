@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
+import { isE2eTestSupport, isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { portableSurfaceChecker } from "./prototype-allowlist.mjs";
 import { prototypeRecipe } from "../../vibe/scripts/area-paths.mjs";
 
@@ -37,7 +37,9 @@ export function classifyHandoffPath({
     prototype,
     portableSurfaceAllowed,
   });
-  if (isTestFile(file.path)) {
+  // An e2e suite's support module is classified with the suite's specs, so the dispositions a spec gets for a
+  // repair, a retired deletion and a pull request are the ones its helpers and fixtures get too.
+  if (isTestFile(file.path) || isE2eTestSupport(file.path)) {
     const testLocationAllowed = allowedPath || Boolean(policy?.rootTests && isRootTest(file.path));
     if (file.status === "M" && !isSnapshot(file.path) && testLocationAllowed) {
       return { disposition: PathDisposition.Allowed, reason: "test-repair" };
@@ -45,7 +47,8 @@ export function classifyHandoffPath({
     if (file.status === "D" && retiredDeletion && testLocationAllowed) {
       return { disposition: PathDisposition.Allowed, reason: "retired-test" };
     }
-    const pullRequestTest = allowedPath || Boolean(policy?.rootTests && isRootTest(file.path) && TEST_SPEC_PATTERN.test(file.path));
+    const pullRequestTest = allowedPath || Boolean(policy?.rootTests && isRootTest(file.path) &&
+      (TEST_SPEC_PATTERN.test(file.path) || isE2eTestSupport(file.path)));
     return phase === "pull-request" && pullRequestTest
       ? { disposition: PathDisposition.Allowed, reason: "pull-request-test" }
       : { disposition: PathDisposition.Outside, reason: "test-not-admitted" };

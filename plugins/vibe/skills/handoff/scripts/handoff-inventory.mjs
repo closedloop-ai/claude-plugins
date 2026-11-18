@@ -17,7 +17,9 @@
 //
 // Target-specific docs rules belong in that repository's declaration.
 //
-// Root web and Desktop test specs are admitted only in the pull-request phase.
+// Root web and Desktop test specs are admitted only in the pull-request phase, and so are the support
+// modules an e2e suite's specs import, in whatever folder under the suite root the suite keeps them. The
+// suite root itself stays out: that is the harness, not test support.
 //
 // In the build and handoff phases a test file may only be repaired: an
 // existing test or fixture modified so the tree compiles after the session's

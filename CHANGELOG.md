@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.102
+
+#### Fixed
+- The handoff inventory rejected a module an admitted e2e spec imports. A suite keeps its helpers in a folder it names itself (`helpers/`, `perf/`, `fixtures/`), and `isTestFile` recognises only `__tests__`/`fixtures`-style folders, so a `helpers/` module reached neither test branch: it was classified as ordinary source and admitted only when an `allowedPrefixes` entry happened to cover it. `classifyHandoffPath` now classifies an e2e suite's support with the suite's specs, so a helper gets the disposition the spec that imports it gets — `pull-request-test` when added in the pull-request phase, `test-not-admitted` in the build phase, `test-repair` when edited. This replaces the exact-file `allowedFiles` workaround a target repository needed.
+- `skills/handoff/scripts/handoff-inventory.mjs`'s header said only root specs are admitted in the pull-request phase, which the above makes wrong.
+
+- The README version line and the Python and vibe-bench release-pin tests move to 1.1.102, and `plugins/vibe-closedloop` is rebuilt from `plugins/vibe` and the provider and carries 1.1.102 in its manifests.
+- Measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs` against 1.1.101 (origin/main at this update, 0673f594): this change edits no plugin Markdown, so `plugins/vibe` is about 0 words longer. Across all plugin Markdown, including eval prompts and graders and each plugin's README (`--path plugins`), with every file under the generated `plugins/vibe-closedloop` left out, this change is about 0 words longer.
+
+#### Added
+- `skills/vibe/scripts/test-files.mjs` exports `isE2eTestSupport`: a non-spec, non-snapshot module in a FOLDER under an e2e suite root. The suite root itself is excluded, because that is where the harness lives — the playwright config, the auth setup, the compose files — and editing the harness is not a test repair. `test-files.test.mjs` covers the predicate and `path-classifier.test.mjs` covers the classification, including the consuming spec, a module outside every suite root, a forbidden prefix and a snapshot.
+
 ### vibe v1.1.101
 
 #### Added
