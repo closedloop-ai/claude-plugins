@@ -106,7 +106,9 @@ Never send a technical question or re-ask a settled decision
   screen.
 - Before building a net-new screen or capability, run `query_collisions` and
   `search_nodes` on the request. Include matched `EXECUTED` PRDs, their `DONE`
-  children and shipped rules, because delivered work still constrains scope.
+  children and shipped rules, because delivered work still constrains scope;
+  report them before open tickets, one line per `DONE` child
+  (`../../../agents/vibe-requirements-worker.md`, step 2).
   If an open ticket already covers it, report that ticket so the person can
   decide whether to build on it.
 - Before editing a file, run `blast_radius_tickets` on it. An in-progress

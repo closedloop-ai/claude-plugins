@@ -6,6 +6,8 @@
 set -euo pipefail
 SHARED="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Ruled fixture change (ISS-14162, Q-14162-13, 2026-11-15): AGENTS.md tells the stand-in to
+# write renders under ./session/shots/, inside the session folder it may read and write.
 stand_in_repo() {
   mkdir -p session/design-system session/src session/tools session/.closedloop-ai/decision-tables images
   cat > session/AGENTS.md <<'MD'
@@ -23,6 +25,9 @@ Every surface here supports light and dark: `tokens.css` defines each token in
 `:root` and its dark value in `.dark`, and every page, a generated one
 included, gets the `dark` class from the viewer's system theme. `--theme dark`
 renders that theme the way the Storybook theme toolbar would.
+Write every render under `shots/` in this session folder (./session/shots/ from
+the case folder), for example `python3 tools/screenshot.py src/<name>.html shots/<name>-light.png`;
+the tool creates the folder.
 MD
   cat > session/design-system/tokens.css <<'CSS'
 :root {
@@ -80,6 +85,8 @@ CSS
   `--weight-regular`, `--weight-medium`, `--weight-bold`.
 - `Button`: minimum height `--tap-target` for touch.
 MD
+  # Ruled fixture change (ISS-14162, operator ruling 2026-11-15): a heading's
+  # size or weight no longer changes the rendered card's height.
   cat > session/tools/screenshot.py <<'PY'
 """Stand-in screenshot tool for the vibe eval workspace.
 
@@ -161,11 +168,14 @@ def render(html_path: Path, out: Path, width: int, state: str | None, theme: str
     box = rules.get(elements[0][1].split()[0], {})
     image = Image.new("RGB", (width, 400), color(table.get("--color-page"), "#f4f5f7"))
     pad = px(box.get("padding"), 16)
+    # A line box grows with its text only up to --text-md, so a larger or
+    # bolder heading keeps the card's height.
+    line_cap = px(table.get("--text-md"), 16)
     rows = []
     for tag, classes, text in elements[1:]:
         style = rules.get(classes.split()[0], {})
         size = px(style.get("font-size"), 14)
-        rows.append((tag, text.strip(), style, size, max(px(style.get("min-height")), size + 8)))
+        rows.append((tag, text.strip(), style, size, max(px(style.get("min-height")), min(size, line_cap) + 8)))
     if tag != "button":
         face = font(size, style.get("font-weight"))
         limit = px(box.get("width"), 420)
@@ -178,7 +188,7 @@ def render(html_path: Path, out: Path, width: int, state: str | None, theme: str
             else:
                 line = trial
         lines.append(line)
-        rows[-1] = (tag, "\n".join(lines), style, size, len(lines) * (size + 8))
+        rows[-1] = (tag, "\n".join(lines), style, size, len(lines) * (min(size, line_cap) + 8))
     inner = sum(row[4] + 10 for row in rows)
     card_w = min(width - 40, px(box.get("width"), 420) + 2 * pad)
     left, top = (width - card_w) // 2, max(20, (400 - inner - 2 * pad) // 2)

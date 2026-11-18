@@ -252,7 +252,8 @@ Three more rules:
 - For every new or changed story with a `play` function, and every story
   file with a `play` on a component whose layout, position or scrolling the
   diff changes, inspect every
-  `storybook/test` interaction and report any call that is not awaited. Then
+  `storybook/test` interaction and report any call that is not awaited as a
+  failing play. Then
   execute the touched stories' plays in a real browser with the repository's
   Storybook test runner or Playwright against its containerized Storybook
   service. A jsdom result, source inspection or successful build is not play
@@ -276,9 +277,9 @@ Three more rules:
   comment exposes them.
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium
-  Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not
-  count, and neither do a Storybook fixture standing in for the consumed
-  surface or synthetic `dispatchEvent` pointer events for the gesture under
+  Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone are
+  insufficient evidence, and so are a Storybook fixture standing in for the
+  consumed surface or synthetic `dispatchEvent` pointer events for the gesture under
   test. Judge an iOS tap by its user-visible result in both device runs, even
   when its click reports `pointerType` as `mouse`.
   Record runs of the inventory's `requiredLanes` (with `webkit-iphone` and

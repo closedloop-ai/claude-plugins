@@ -258,7 +258,8 @@ plus Codex subagent ids when applicable. A worker id is not an orchestrator id.>
 - Feature map: <each `Feature map:` line from the writer's change log, verbatim, for the requested pull request>, or "None: no screen behavior or reach changed"
 - Missing tests (engineering scope): <every test the session still needs,
   which engineering writes in its pull request: the behavior and stable row
-  ID each covers, the files that need coverage, and any existing test a human
+  ID each covers, its acceptance criterion IDs, the owning test lane by name,
+  the files that need coverage, and any existing test a human
   behavior ruling made obsolete, with that exact ruling. Vibe and handoff
   write no tests>, or "None: existing tests cover every row"
 - Retired tests deleted: <each test file or case the session deleted because

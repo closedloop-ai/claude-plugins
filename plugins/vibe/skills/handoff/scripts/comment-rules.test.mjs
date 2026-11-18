@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkStaleCitations, citationPattern } from "./comment-rules.mjs";
 import { bindProvider, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -139,4 +140,63 @@ test("the command prints blocking findings and reviewer candidates for a worktre
   assert.deepEqual(output.blocking.map(({ rule, file }) => [rule, file]), [["excuse-comment", STORY]]);
   assert.deepEqual(output.candidates.map(({ rule, file, line }) => [rule, file, line]), [["stale-citation", LEAD, 1]]);
   assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: "utf8" }).status, 2);
+});
+
+// A large changed file: 100 definitions, each read 400 times, then one guarded constant and one near miss at the
+// end, where the diff touches. Each definition looks up the line of every use, so a per-lookup split of the
+// file's whole prefix takes many seconds here, while one line index per file finishes well inside the bound.
+function largeGuardedFile() {
+  const lines = [];
+  for (let i = 0; i < 100; i += 1) lines.push(`const value${i} = compute(${i});`);
+  for (let j = 0; j < 400; j += 1) for (let i = 0; i < 100; i += 1) lines.push(`use(value${i}, ${j});`);
+  const guardedAt = lines.length + 2;
+  lines.push("const controls = (", "  <T readOnly={!mode.isEditing} />", ");", "const a = { bar: mode.isEditing ? controls : null };");
+  lines.push("const near = (", "  <T readOnly={!mode.isEditing} />", ");", "const b = { bar: session.ready ? near : null };", "");
+  return { text: lines.join("\n"), lines, guardedAt, touched: [lines.length - 5, lines.length - 1] };
+}
+
+// A changed file with many definitions, as a bundled script has: 60,000 definitions read once each, then the
+// same guarded constant and near miss. A search of the whole file per definition needs several times the case
+// timeout here, while one pass over the file's identifiers stays far inside it.
+function manyDefinitionsFile() {
+  const lines = [];
+  for (let i = 0; i < 60_000; i += 1) lines.push(`const value${i} = compute(${i});`, `use(value${i});`);
+  const guardedAt = lines.length + 2;
+  lines.push("const controls = (", "  <T readOnly={!mode.isEditing} />", ");", "const a = { bar: mode.isEditing ? controls : null };");
+  lines.push("const near = (", "  <T readOnly={!mode.isEditing} />", ");", "const b = { bar: session.ready ? near : null };", "");
+  return { text: lines.join("\n"), lines, guardedAt, touched: [lines.length - 5, lines.length - 1] };
+}
+
+// The check runs in a worker so the case timeout can end a run that never yields.
+function guardedConstantsInWorker(t, text, files) {
+  const source = `import { parentPort, workerData } from "node:worker_threads";
+const { checkGuardedConstants } = await import(workerData.module);
+const found = [];
+checkGuardedConstants(workerData.files, { head: () => workerData.text }, (rule, file, line, problem) => found.push({ rule, file, line, problem }));
+parentPort.postMessage(found);`;
+  const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(source)}`),
+    { workerData: { module: new URL("./comment-rules.mjs", import.meta.url).href, text, files } });
+  worker.unref();
+  t.after(() => worker.terminate());
+  return new Promise((resolve, reject) => {
+    worker.once("message", resolve);
+    worker.once("error", reject);
+  });
+}
+
+test("ISS-14325 a large changed file with many definitions and uses finishes inside the case timeout with the same findings", { timeout: 5_000 }, async (t) => {
+  const { text, lines, guardedAt, touched } = largeGuardedFile();
+  const changed = [{ path: "big.tsx", status: "M", added: touched.map((line) => ({ line, text: lines[line - 1] })), removed: [] }];
+  const found = await guardedConstantsInWorker(t, text, changed);
+  assert.deepEqual(found.map(({ rule, file, line }) => [rule, file, line]), [["guarded-constant", "big.tsx", guardedAt]]);
+  assert.match(found[0].problem, /`controls` is used only where `mode.isEditing` is true/);
+  assert.ok(!found.some(({ problem }) => problem.includes("`near`")), "the near miss, guarded by another condition, reports nothing");
+});
+
+test("ISS-14325 a changed file with many definitions finishes inside the case timeout with the same findings", { timeout: 5_000 }, async (t) => {
+  const { text, lines, guardedAt, touched } = manyDefinitionsFile();
+  const changed = [{ path: "bundle.mjs", status: "M", added: touched.map((line) => ({ line, text: lines[line - 1] })), removed: [] }];
+  const found = await guardedConstantsInWorker(t, text, changed);
+  assert.deepEqual(found.map(({ rule, file, line }) => [rule, file, line]), [["guarded-constant", "bundle.mjs", guardedAt]]);
+  assert.ok(!found.some(({ problem }) => problem.includes("`near`")), "the near miss, guarded by another condition, reports nothing");
 });

@@ -105,8 +105,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    layout mode whose selection is color only (WCAG 1.4.1) or whose targets
    are under 24px (2.5.8) instead of reusing the wide mode's. Card or narrow
    interactions without real-touch WebKit iPhone and Chromium Pixel runs are
-   a finding (keyboard or Chromium `hasTouch` alone do not count; judge an
-   iOS tap by its result, as its click may report `pointerType` `mouse`).
+   a finding (keyboard or Chromium `hasTouch` alone is insufficient; judge an
+   iOS tap by its result: its click may report `pointerType` `mouse`).
    Also compare the narrow-width DOM geometry and captures with the same
    width on main: a control that floats over the list on main but becomes an
    in-flow band is a finding. For each touched list surface, snapshot one row

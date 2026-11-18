@@ -128,10 +128,13 @@ test("ISS-13760 AC-003 Claude final replies use the private Codex case shape and
 });
 
 test("ISS-13760 private reply policy rejects local paths and credential shapes", () => {
+  // Q-14162-11 (2026-11-15): system tool roots such as /usr and /etc are no longer private paths,
+  // so "/usr/local/bin/tool", "/etc/config", "saved at `/usr/local/share/reply.txt`" and
+  // "[`/etc/config`]" left this list; their file:// forms below stay private.
   for (const value of ["/private/var/run", "/tmp/reply", "/Volumes/work", "/opt/tool",
-    "/usr/local/bin/tool", "/etc/config", "/var/log/app.log", "/Applications/App.app",
+    "/var/log/app.log", "/Applications/App.app",
     "C:\\Users\\person\\reply", "\\\\host\\share\\reply",
-    "saved at `/usr/local/share/reply.txt`", "[`/etc/config`]", "path=`/var/log/eval.log`",
+    "path=`/var/log/eval.log`",
     "saved at file:///usr/local/share/reply.txt", "[file://localhost/etc/config]",
     "file://fileserver/var/log/eval.log"]) {
     assert.equal(privateTextProblem(value), "local-path", value);
@@ -200,10 +203,10 @@ function withCodexModel(artifact: EvalBaselineArtifact, model: string): EvalBase
 test("case skills come from actual invocations", () => {
   const vibeDir = join(import.meta.dirname, "../../../plugins/vibe");
   const catalog = evalCaseCatalog(vibeDir);
-  assert.equal(catalog.length, 127);
+  assert.equal(catalog.length, 126);
   assert.deepEqual(Object.fromEntries(["vibe", "handoff", "fleet-orchestrator", "pr-takeover"].map((skill) =>
     [skill, catalog.filter((item) => item.skill === skill).length])),
-  { vibe: 78, handoff: 31, "fleet-orchestrator": 12, "pr-takeover": 6 });
+  { vibe: 77, handoff: 31, "fleet-orchestrator": 12, "pr-takeover": 6 });
   assert.throws(() => skillFromPrompt("no invocation"), /skill-invocation-invalid/);
 });
 
@@ -382,13 +385,15 @@ test("scheduled task wrapper keeps T2 behind the local heavy slot", () => {
   assert.doesNotMatch(readme, /SLACK_BOT_TOKEN|SLACK_CHANNEL_ID|vibe-eval\.env/);
 });
 
-test("the initial quarantine names all 29 runtime failures with one owner and deadline", () => {
-  const entries = loadEvalQuarantine();
-  assert.equal(entries.length, 29);
-  assert.equal(entries.filter((item) => item.runtime === "claude").length, 18);
-  assert.equal(entries.filter((item) => item.runtime === "codex").length, 11);
-  assert.deepEqual(new Set(entries.map((item) => item.owner)), new Set(["vibe-maintainers"]));
-  assert.deepEqual(new Set(entries.map((item) => item.deadline)), new Set(["2026-11-13"]));
+// ISS-14162 (Q-14162-15): every quarantined case reached its bar, so the committed quarantine is
+// empty; it still carries the shared owner and deadline loadEvalQuarantine requires.
+test("the committed quarantine is empty and keeps its owner and deadline", () => {
+  assert.deepEqual(loadEvalQuarantine(), []);
+  const raw = JSON.parse(readFileSync(new URL("../eval-quarantine.json", import.meta.url), "utf8")) as
+    { owner?: unknown; deadline?: unknown; entries?: unknown };
+  assert.equal(raw.owner, "vibe-maintainers");
+  assert.equal(raw.deadline, "2026-11-13");
+  assert.deepEqual(raw.entries, []);
 });
 
 test("T2 store rolls reliability forward and resolves only its atomic newest baseline", () => {
@@ -611,14 +616,16 @@ test("expired quarantine remains readable, gates failures and is surfaced for Sl
     catalog, pluginVersion: "1.2.3", createdAt: "2026-10-29T00:00:00Z" });
   assert.doesNotThrow(() => verifyEvalBaseline(baseline));
   const quarantine = evalQuarantineStatus(new Date("2026-11-14T00:00:00Z"));
-  assert.equal(quarantine.entries.length, 29);
-  assert.equal(quarantine.expired.length, 29);
+  assert.deepEqual(quarantine.entries, []);
+  assert.deepEqual(quarantine.expired, []);
   const failedAfterExpiry = buildEvalBaseline({
     results: [comparisonEval("b".repeat(40), { "case-a": false })], catalog,
     pluginVersion: "1.2.3", createdAt: "2026-11-14T00:00:00Z",
   });
   assert.equal(isGreenEvalBaseline(failedAfterExpiry), false);
-  const extended = baseline.quarantine.map((item) => ({ ...item, deadline: "2026-12-01" }));
+  // An explicit non-empty quarantine, so this stays a real change once the committed file is empty.
+  const extended = [{ runtime: "claude" as const, case: "case-a", reason: "fixture-reason",
+    owner: "vibe-maintainers", deadline: "2026-12-01" }];
   const reconciled = reconcileEvalBaselineQuarantine(baseline, extended,
     "2026-11-14T00:00:00Z");
   assert.notEqual(reconciled.resultHash, baseline.resultHash);
@@ -2294,10 +2301,13 @@ test("ISS-14142 AC-1 staged Claude cases list every plugin vibe depends on, tran
     assert.equal(stageFocusedClaudeEvalCases(vibeDir, ["case-listed", "case-unlisted"]), "vibe/evals-focused");
     assert.equal(readFileSync(join(vibeDir, "evals-focused/case-listed/prompt.md"), "utf8"),
       "---\nruns: 1\nplugins: [\"../..\", \"../../../closedloop-core\", \"../../../vibe-core\", " +
-      "\"../../../chain-a\", \"../../../chain-b\"]\nmax_turns: 8\n---\n" +
+      "\"../../../chain-a\", \"../../../chain-b\"]\nmax_turns: 8\n" +
+      "append_system_prompt: \"Use the installed vibe:vibe skill.\"\n---\n" +
       "/vibe:vibe\nplugins: [\"body text, not front matter\"]\n");
-    assert.equal(readFileSync(join(vibeDir, "evals-focused/case-unlisted/prompt.md"), "utf8"), unlistedSource,
-      "a case without a plugins list is staged as it is");
+    // Q-14162-4 (2026-11-14): every staged case also carries the skill-use line.
+    assert.equal(readFileSync(join(vibeDir, "evals-focused/case-unlisted/prompt.md"), "utf8"),
+      "---\ntags: []\nappend_system_prompt: \"Use the installed vibe:vibe skill.\"\n---\n/vibe:vibe\n",
+      "a case without a plugins list keeps its plugins as they are");
     assert.equal(readFileSync(join(vibeDir, "evals/case-listed/prompt.md"), "utf8"), listedSource,
       "the source case manifest is byte-unchanged");
     assert.equal(readFileSync(join(vibeDir, "evals/case-unlisted/prompt.md"), "utf8"), unlistedSource);

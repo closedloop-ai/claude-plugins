@@ -38,6 +38,8 @@ say what it means for the person, or leave it out.
 > Provider `recipes` (block `auth-words` of `vibe/plain-words.md`)
 | feature flag, flag snapshot | the settings that switch features on and off |
 | a story id, file path, component name or route pattern to look at | a link to that exact thing ("Links to what the person should look at") |
+| a script or command name, such as `vibe-sessions.mjs link --page` | (leave it out; give only the URL it printed) |
+| a file name, CSS property, design token name or "decision table" in a description of a change | what changed on the screen, in words ("the project name is now larger and bold") |
 
 <!-- generic: sign-in-names -->
 A product or app name the person signs in to (Vercel, GitHub)
@@ -117,6 +119,12 @@ the person.
 - A preview, pull request or ticket: the URL its tool returned (the
   prototype's recorded preview URL, the pull request's URL, the ticket's
   `webUrl`).
+- The message carries only the URL. The command that built it, its name and
+  its flags never sit in the message, beside the person's words or as a
+  link's target. With no URL to give, such as when you could not run
+  `link`, say in words what is ready, by the name the person sees in the
+  product, and write no link: never a placeholder link or a note in its
+  place.
 - When `link` prints `url: null`, nothing is running or deployed to open yet.
   Where the step you are on already starts it (a new component's gallery
   link, `SKILL.md` section 5), start it and run `link` again. Otherwise say so in plain words and offer to start it, such as "Your copy of the app
