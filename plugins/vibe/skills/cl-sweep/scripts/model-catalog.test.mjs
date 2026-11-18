@@ -1,10 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listModels, pageModels, readModelCatalog } from './model-catalog.mjs';
 import { availableCodexModel, Complexity, laneModel } from './model-policy.mjs';
-import { LISTED_MODELS, withModelCatalog, withoutModelOverrides } from './core-client-fixture.mjs';
+import {
+  catalogServerCode, CODEX_SHIM, CODEX_SHIM_MESSAGE, fixtureSkillPath, LISTED_MODELS, withModelCatalog,
+  withoutModelOverrides, writeCodexShim,
+} from './core-client-fixture.mjs';
+
+const realTmp = realpathSync(tmpdir());
 
 // Operator rulings, 2026-11-17 (ISS-14112, "Codex model switch"): the default moves to gpt-6.2-sol, planning and
 // review lanes take gpt-6.2-astra only when cl-analyze graded the ticket HIGH, and a Codex whose own model list lacks
@@ -26,6 +34,60 @@ function pagedClient(pages) {
     },
   };
 }
+
+const resolver = fileURLToPath(new URL('./resolve-core-skill.mjs', import.meta.url));
+
+test('ISS-14112: the fake Codex that lists models also answers core discovery', () => {
+  // Session tests put this fake first on PATH; core discovery (resolve-core-skill.mjs) asks that `codex` for its
+  // plugin list and skills. A fake that refused them sent discovery to the real bundled Codex, which CI lacks.
+  const codex = withModelCatalog(LISTED_MODELS);
+  const home = mkdtempSync(join(tmpdir(), 'cl-sweep-no-home-'));
+  const result = spawnSync(process.execPath, [resolver], {
+    input: JSON.stringify({ runtime: 'codex', codex }), encoding: 'utf8',
+    env: { ...process.env, PATH: `${dirname(codex)}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).skillDirectory, dirname(fixtureSkillPath()));
+});
+
+test('ISS-14112: a test that imports the cl-sweep fixture runs with an empty temporary HOME and a codex shim ahead of any real codex on PATH', () => {
+  assert.ok(homedir().startsWith(realTmp) || homedir().startsWith(tmpdir()), homedir());
+  assert.deepEqual(readdirSync(homedir()), []);
+  const entries = process.env.PATH.split(':');
+  const shim = entries.indexOf(dirname(CODEX_SHIM));
+  assert.ok(shim >= 0, 'the shim is on PATH');
+  const temporary = (entry) => entry.startsWith(tmpdir()) || entry.startsWith(realTmp);
+  for (const entry of entries.slice(0, shim)) {
+    if (existsSync(join(entry, 'codex'))) assert.ok(temporary(entry), `${entry} has a codex ahead of the shim and is not a fixture folder`);
+  }
+});
+
+test('ISS-14112: with no fixture codex in front, the codex a test spawns is the shim, which fails with "real codex spawned in test"', () => {
+  // A shim of its own, so this deliberate call does not reach the sandbox shim the file's `after` hook checks.
+  const { codex, log } = writeCodexShim();
+  const result = spawnSync('codex', ['plugin', 'list', '--json'], {
+    encoding: 'utf8', env: { ...process.env, PATH: `${dirname(codex)}:/usr/bin:/bin` },
+  });
+  assert.equal(result.status, 97);
+  assert.match(result.stderr, new RegExp(CODEX_SHIM_MESSAGE));
+  assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter(Boolean), ['plugin list --json']);
+});
+
+test('ISS-14112: with 9d3fe998\'s model-list fake in front (it refused plugin list), core discovery fails loudly instead of resolving through a live Codex', () => {
+  // The fake as 9d3fe998 wrote it: it answered only the model list, so core discovery fell back to the bundled Codex
+  // app, which on a machine with closedloop-core installed under the real HOME resolved and hid the bug.
+  const directory = mkdtempSync(join(tmpdir(), 'cl-sweep-9d3fe998-fake-'));
+  writeFileSync(join(directory, 'codex'), `#!/usr/bin/env node
+if (process.argv[2] === 'app-server' && process.argv.length === 3) ${catalogServerCode(LISTED_MODELS)}
+else { process.stderr.write('fake codex: only app-server on stdio'); process.exitCode = 2; }
+`);
+  chmodSync(join(directory, 'codex'), 0o755);
+  const result = spawnSync(process.execPath, [resolver], {
+    input: JSON.stringify({ runtime: 'codex' }), encoding: 'utf8', env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+  });
+  assert.notEqual(result.status, 0, `discovery resolved: ${result.stdout}`);
+  assert.equal(result.stdout, '');
+});
 
 test('ISS-14112 AC-6: a Codex whose model list names gpt-6.2-sol runs it, with no note', async () => {
   const listed = await readModelCatalog({ codex: withModelCatalog(['gpt-6.2-sol', 'gpt-6.2-astra']) });

@@ -5,9 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { withModelCatalog } from "../../cl-sweep/scripts/core-client-fixture.mjs";
 import { codexBindingForRole } from "../../cl-sweep/scripts/model-policy.mjs";
 import { MODELS_FILE_ENV, readModelOverrides, resolveWorkerModel, setModelOverride, VIBE_AGENT_ROLES } from "./agent-models.mjs";
 import { claudeWorkerBinding, codexWorkerBinding } from "./worker-model.mjs";
+
+// The cl-sweep test sandbox (imported above) keeps these tests off this machine's Codex; `worker-model.mjs codex`
+// reads the model list from the fixture Codex this puts first on PATH.
+withModelCatalog();
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "worker-model.mjs");
