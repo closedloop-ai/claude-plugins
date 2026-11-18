@@ -12,6 +12,8 @@ const TEST_SUPPORT_PATTERN = /(?:^|\/)(?:__tests__|__fixtures__|__mocks__|__snap
 const SNAPSHOT_PATTERN = /\.snap$/;
 // An e2e suite root is any directory named `e2e`, `e2e-*` or `*-e2e` (web, Desktop, smoke and walk suites alike).
 const E2E_ROOT = /(?:^|\/)(?:e2e|e2e[-_][^/]+|[^/]+[-_]e2e)\//;
+// The same suite roots, but only inside one of their folders: the suite root holds the harness, not support.
+const E2E_SUPPORT_DIR = /(?:^|\/)(?:e2e|e2e[-_][^/]+|[^/]+[-_]e2e)\/[^/]+\//;
 export const E2E_ROOT_PATHSPECS = [":(glob)**/e2e/**", ":(glob)**/e2e[-_]*/**", ":(glob)**/*[-_]e2e/**"];
 
 /** A spec, a file under a test support folder, or a snapshot. */
@@ -36,4 +38,15 @@ export function isRootTest(filePath) {
 /** A file under an e2e suite root, at any depth. */
 export function isE2ePath(filePath) {
   return E2E_ROOT.test(filePath);
+}
+
+/**
+ * A module an e2e suite's specs import: in a FOLDER under an e2e suite root, and neither a spec nor a snapshot.
+ * A suite names that folder freely (`helpers/`, `perf/`, `fixtures/`), so recognising support by folder name alone
+ * leaves a `helpers/` module outside every test class. The suite root itself is excluded because that is where the
+ * harness lives -- the playwright config, the auth setup, the compose files -- and editing the harness is not a
+ * test repair.
+ */
+export function isE2eTestSupport(filePath) {
+  return E2E_SUPPORT_DIR.test(filePath) && !TEST_SPEC_PATTERN.test(filePath) && !SNAPSHOT_PATTERN.test(filePath);
 }
