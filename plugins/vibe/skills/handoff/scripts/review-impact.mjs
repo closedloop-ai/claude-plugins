@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { normalizeImporters, qaImpactRequest, QaImpact } from "./qa-impact.mjs";
-import { REVIEW_ROLES } from "../../../../vibe-core/lib/handoff/scripts/review-receipts.mjs";
+import { REVIEW_ROLES } from "../../../lib/handoff/scripts/review-receipts.mjs";
 
 const CLEAN_DIFF = createHash("sha256").digest("hex");
 const SOURCE_LIKE = /\.(?:[cm]?[jt]sx?|py|sh|bash|zsh|css|scss|sass|less|html?)$/i;

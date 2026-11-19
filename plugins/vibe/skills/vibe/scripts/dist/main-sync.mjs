@@ -7270,7 +7270,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse5(src, reviver, options) {
+    function parse6(src, reviver, options) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -7311,7 +7311,7 @@ var require_public_api = __commonJS({
         return value.toString(options);
       return new Document.Document(value, _replacer, options).toString(options);
     }
-    exports.parse = parse5;
+    exports.parse = parse6;
     exports.parseAllDocuments = parseAllDocuments;
     exports.parseDocument = parseDocument2;
     exports.stringify = stringify;
@@ -8227,7 +8227,7 @@ var require_parse = __commonJS({
       }
       return { risky: false };
     };
-    var parse5 = (input, options) => {
+    var parse6 = (input, options) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected a string");
       }
@@ -8397,7 +8397,7 @@ var require_parse = __commonJS({
             output = token.close = `)$))${extglobStar}`;
           }
           if (token.inner.includes("*") && (rest = remaining()) && /^\.[^\\/.]+$/.test(rest)) {
-            const expression = parse5(rest, { ...options, fastpaths: false }).output;
+            const expression = parse6(rest, { ...options, fastpaths: false }).output;
             output = token.close = `)${expression})${extglobStar})`;
           }
           if (token.prev.type === "bos") {
@@ -8920,7 +8920,7 @@ var require_parse = __commonJS({
       }
       return state;
     };
-    parse5.fastpaths = (input, options) => {
+    parse6.fastpaths = (input, options) => {
       const opts = { ...options };
       const max = typeof opts.maxLength === "number" ? Math.min(MAX_LENGTH, opts.maxLength) : MAX_LENGTH;
       const len = input.length;
@@ -8985,7 +8985,7 @@ var require_parse = __commonJS({
       }
       return source;
     };
-    module6.exports = parse5;
+    module6.exports = parse6;
   }
 });
 
@@ -8994,13 +8994,13 @@ var require_picomatch = __commonJS({
   "node_modules/picomatch/lib/picomatch.js"(exports, module6) {
     "use strict";
     var scan = require_scan();
-    var parse5 = require_parse();
+    var parse6 = require_parse();
     var utils = require_utils();
     var constants = require_constants();
     var isObject = (val) => val && typeof val === "object" && !Array.isArray(val);
-    var picomatch3 = (glob, options, returnState = false) => {
+    var picomatch4 = (glob, options, returnState = false) => {
       if (Array.isArray(glob)) {
-        const fns = glob.map((input) => picomatch3(input, options, returnState));
+        const fns = glob.map((input) => picomatch4(input, options, returnState));
         const arrayMatcher = (str) => {
           for (const isMatch of fns) {
             const state2 = isMatch(str);
@@ -9016,16 +9016,16 @@ var require_picomatch = __commonJS({
       }
       const opts = options || {};
       const posix = opts.windows;
-      const regex = isState ? picomatch3.compileRe(glob, options) : picomatch3.makeRe(glob, options, false, true);
+      const regex = isState ? picomatch4.compileRe(glob, options) : picomatch4.makeRe(glob, options, false, true);
       const state = regex.state;
       delete regex.state;
       let isIgnored = () => false;
       if (opts.ignore) {
         const ignoreOpts = { ...options, ignore: null, onMatch: null, onResult: null };
-        isIgnored = picomatch3(opts.ignore, ignoreOpts, returnState);
+        isIgnored = picomatch4(opts.ignore, ignoreOpts, returnState);
       }
       const matcher = (input, returnObject = false) => {
-        const { isMatch, match, output } = picomatch3.test(input, regex, options, { glob, posix });
+        const { isMatch, match, output } = picomatch4.test(input, regex, options, { glob, posix });
         const result = { glob, state, regex, posix, input, output, match, isMatch };
         if (typeof opts.onResult === "function") {
           opts.onResult(result);
@@ -9051,7 +9051,7 @@ var require_picomatch = __commonJS({
       }
       return matcher;
     };
-    picomatch3.test = (input, regex, options, { glob, posix } = {}) => {
+    picomatch4.test = (input, regex, options, { glob, posix } = {}) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected input to be a string");
       }
@@ -9068,24 +9068,24 @@ var require_picomatch = __commonJS({
       }
       if (match === false || opts.capture === true) {
         if (opts.matchBase === true || opts.basename === true) {
-          match = picomatch3.matchBase(input, regex, options, posix);
+          match = picomatch4.matchBase(input, regex, options, posix);
         } else {
           match = regex.exec(output);
         }
       }
       return { isMatch: Boolean(match), match, output };
     };
-    picomatch3.matchBase = (input, glob, options, posix = options && options.windows) => {
-      const regex = glob instanceof RegExp ? glob : picomatch3.makeRe(glob, options);
+    picomatch4.matchBase = (input, glob, options, posix = options && options.windows) => {
+      const regex = glob instanceof RegExp ? glob : picomatch4.makeRe(glob, options);
       return regex.test(utils.basename(input, { windows: posix }));
     };
-    picomatch3.isMatch = (str, patterns, options) => picomatch3(patterns, options)(str);
-    picomatch3.parse = (pattern, options) => {
-      if (Array.isArray(pattern)) return pattern.map((p) => picomatch3.parse(p, options));
-      return parse5(pattern, { ...options, fastpaths: false });
+    picomatch4.isMatch = (str, patterns, options) => picomatch4(patterns, options)(str);
+    picomatch4.parse = (pattern, options) => {
+      if (Array.isArray(pattern)) return pattern.map((p) => picomatch4.parse(p, options));
+      return parse6(pattern, { ...options, fastpaths: false });
     };
-    picomatch3.scan = (input, options) => scan(input, options);
-    picomatch3.compileRe = (state, options, returnOutput = false, returnState = false) => {
+    picomatch4.scan = (input, options) => scan(input, options);
+    picomatch4.compileRe = (state, options, returnOutput = false, returnState = false) => {
       if (returnOutput === true) {
         return state.output;
       }
@@ -9096,26 +9096,26 @@ var require_picomatch = __commonJS({
       if (state && state.negated === true) {
         source = `^(?!${source}).*$`;
       }
-      const regex = picomatch3.toRegex(source, options);
+      const regex = picomatch4.toRegex(source, options);
       if (returnState === true) {
         regex.state = state;
       }
       return regex;
     };
-    picomatch3.makeRe = (input, options = {}, returnOutput = false, returnState = false) => {
+    picomatch4.makeRe = (input, options = {}, returnOutput = false, returnState = false) => {
       if (!input || typeof input !== "string") {
         throw new TypeError("Expected a non-empty string");
       }
       let parsed = { negated: false, fastpaths: true };
       if (options.fastpaths !== false && (input[0] === "." || input[0] === "*")) {
-        parsed.output = parse5.fastpaths(input, options);
+        parsed.output = parse6.fastpaths(input, options);
       }
       if (!parsed.output) {
-        parsed = parse5(input, options);
+        parsed = parse6(input, options);
       }
-      return picomatch3.compileRe(parsed, options, returnOutput, returnState);
+      return picomatch4.compileRe(parsed, options, returnOutput, returnState);
     };
-    picomatch3.toRegex = (source, options) => {
+    picomatch4.toRegex = (source, options) => {
       try {
         const opts = options || {};
         return new RegExp(source, opts.flags || (opts.nocase ? "i" : ""));
@@ -9124,8 +9124,8 @@ var require_picomatch = __commonJS({
         return /$^/;
       }
     };
-    picomatch3.constants = constants;
-    module6.exports = picomatch3;
+    picomatch4.constants = constants;
+    module6.exports = picomatch4;
   }
 });
 
@@ -9135,14 +9135,14 @@ var require_picomatch2 = __commonJS({
     "use strict";
     var pico = require_picomatch();
     var utils = require_utils();
-    function picomatch3(glob, options, returnState = false) {
+    function picomatch4(glob, options, returnState = false) {
       if (options && (options.windows === null || options.windows === void 0)) {
         options = { ...options, windows: utils.isWindows() };
       }
       return pico(glob, options, returnState);
     }
-    Object.assign(picomatch3, pico);
-    module6.exports = picomatch3;
+    Object.assign(picomatch4, pico);
+    module6.exports = picomatch4;
   }
 });
 
@@ -31988,13 +31988,13 @@ ${lanes.join("\n")}
       function guessDirectorySymlink(a, b, cwd, getCanonicalFileName) {
         const aParts = getPathComponents(getNormalizedAbsolutePath(a, cwd));
         const bParts = getPathComponents(getNormalizedAbsolutePath(b, cwd));
-        let isDirectory2 = false;
+        let isDirectory = false;
         while (aParts.length >= 2 && bParts.length >= 2 && !isNodeModulesOrScopedPackageDirectory(aParts[aParts.length - 2], getCanonicalFileName) && !isNodeModulesOrScopedPackageDirectory(bParts[bParts.length - 2], getCanonicalFileName) && getCanonicalFileName(aParts[aParts.length - 1]) === getCanonicalFileName(bParts[bParts.length - 1])) {
           aParts.pop();
           bParts.pop();
-          isDirectory2 = true;
+          isDirectory = true;
         }
-        return isDirectory2 ? [getPathFromPathComponents(aParts), getPathFromPathComponents(bParts)] : void 0;
+        return isDirectory ? [getPathFromPathComponents(aParts), getPathFromPathComponents(bParts)] : void 0;
       }
       function isNodeModulesOrScopedPackageDirectory(s, getCanonicalFileName) {
         return s !== void 0 && (getCanonicalFileName(s) === "node_modules" || startsWith(s, "@"));
@@ -49784,15 +49784,15 @@ ${lanes.join("\n")}
               }
             default:
               if (modifiersIn) {
-                const missing2 = createMissingNode(
+                const missing = createMissingNode(
                   283,
                   /*reportAtCurrentPosition*/
                   true,
                   Diagnostics.Declaration_expected
                 );
-                setTextRangePos(missing2, pos);
-                missing2.modifiers = modifiersIn;
-                return missing2;
+                setTextRangePos(missing, pos);
+                missing.modifiers = modifiersIn;
+                return missing;
               }
               return void 0;
           }
@@ -50369,15 +50369,15 @@ ${lanes.join("\n")}
               /* ClassExpression */
             );
           }
-          const missing2 = createMissingNode(
+          const missing = createMissingNode(
             283,
             /*reportAtCurrentPosition*/
             true,
             Diagnostics.Expression_expected
           );
-          setTextRangePos(missing2, pos);
-          missing2.modifiers = modifiers;
-          return missing2;
+          setTextRangePos(missing, pos);
+          missing.modifiers = modifiers;
+          return missing;
         }
         function parseClassExpression() {
           return parseClassDeclarationOrExpression(
@@ -86557,8 +86557,8 @@ ${lanes.join("\n")}
           return type.flags & 4 ? emptyStringType : type.flags & 8 ? zeroType : type.flags & 64 ? zeroBigIntType : type === regularFalseType || type === falseType || type.flags & (16384 | 32768 | 65536 | 3) || type.flags & 128 && type.value === "" || type.flags & 256 && type.value === 0 || type.flags & 2048 && isZeroBigInt(type) ? type : neverType2;
         }
         function getNullableType(type, flags) {
-          const missing2 = flags & ~type.flags & (32768 | 65536);
-          return missing2 === 0 ? type : missing2 === 32768 ? getUnionType([type, undefinedType2]) : missing2 === 65536 ? getUnionType([type, nullType2]) : getUnionType([type, undefinedType2, nullType2]);
+          const missing = flags & ~type.flags & (32768 | 65536);
+          return missing === 0 ? type : missing === 32768 ? getUnionType([type, undefinedType2]) : missing === 65536 ? getUnionType([type, nullType2]) : getUnionType([type, undefinedType2, nullType2]);
         }
         function getOptionalType(type, isProperty = false) {
           Debug.assert(strictNullChecks);
@@ -153561,7 +153561,7 @@ ${lanes.join("\n")}
         };
       }
       function createBuildOrUpdateInvalidedProject(state, project, projectPath, projectIndex, config, status, buildOrder) {
-        let step = 0;
+        let step2 = 0;
         let program;
         let buildResult;
         return {
@@ -153637,14 +153637,14 @@ ${lanes.join("\n")}
           if (state.options.dry) {
             reportStatus(state, Diagnostics.A_non_dry_build_would_build_project_0, project);
             buildResult = 1;
-            step = 2;
+            step2 = 2;
             return;
           }
           if (state.options.verbose) reportStatus(state, Diagnostics.Building_project_0, project);
           if (config.fileNames.length === 0) {
             reportAndStoreErrors(state, projectPath, getConfigFileParsingDiagnostics(config));
             buildResult = 0;
-            step = 2;
+            step2 = 2;
             return;
           }
           const { host, compilerHost } = state;
@@ -153670,13 +153670,13 @@ ${lanes.join("\n")}
             );
             state.builderPrograms.set(projectPath, program);
           }
-          step++;
+          step2++;
         }
         function emit(writeFileCallback, cancellationToken, customTransformers) {
           var _a, _b, _c;
           Debug.assertIsDefined(program);
           Debug.assert(
-            step === 1
+            step2 === 1
             /* Emit */
           );
           const { host, compilerHost } = state;
@@ -153748,13 +153748,13 @@ ${lanes.join("\n")}
             buildResult |= 4;
           }
           afterProgramDone(state, program);
-          step = 2;
+          step2 = 2;
           return emitResult;
         }
         function executeSteps(till, cancellationToken, writeFile2, customTransformers) {
-          while (step <= till && step < 3) {
-            const currentStep = step;
-            switch (step) {
+          while (step2 <= till && step2 < 3) {
+            const currentStep = step2;
+            switch (step2) {
               case 0:
                 createProgram2();
                 break;
@@ -153763,14 +153763,14 @@ ${lanes.join("\n")}
                 break;
               case 2:
                 queueReferencingProjects(state, project, projectPath, projectIndex, config, buildOrder, Debug.checkDefined(buildResult));
-                step++;
+                step2++;
                 break;
               // Should never be done
               case 3:
               default:
-                assertType(step);
+                assertType(step2);
             }
-            Debug.assert(step > currentStep);
+            Debug.assert(step2 > currentStep);
           }
         }
       }
@@ -196034,7 +196034,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         return ts_textChanges_exports.ChangeTracker.with(
           { host, formatContext, preferences },
           (changeTracker) => {
-            const parsed = contents.map((c) => parse5(sourceFile, c));
+            const parsed = contents.map((c) => parse6(sourceFile, c));
             const flattenedLocations = focusLocations && flatten(focusLocations);
             for (const nodes of parsed) {
               placeNodeGroup(
@@ -196047,7 +196047,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           }
         );
       }
-      function parse5(sourceFile, content) {
+      function parse6(sourceFile, content) {
         const nodeKinds = [
           {
             parse: () => createSourceFile(
@@ -221458,12 +221458,12 @@ ZodString.create = (params) => {
     ...processCreateParams(params)
   });
 };
-function floatSafeRemainder(val, step) {
+function floatSafeRemainder(val, step2) {
   const valDecCount = (val.toString().split(".")[1] || "").length;
-  const stepDecCount = (step.toString().split(".")[1] || "").length;
+  const stepDecCount = (step2.toString().split(".")[1] || "").length;
   const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;
   const valInt = Number.parseInt(val.toFixed(decCount).replace(".", ""));
-  const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
+  const stepInt = Number.parseInt(step2.toFixed(decCount).replace(".", ""));
   return valInt % stepInt / 10 ** decCount;
 }
 var ZodNumber = class _ZodNumber extends ZodType {
@@ -223945,11 +223945,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
 var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
-var CODEX_LOCAL_VERSION = "local";
-var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
-var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-var NUMERIC = /^\d+$/;
-var SCOPE_FALLBACK = "user";
 var DEFAULT_MARKETPLACE = "closedloop-ai";
 var VIBE_PLUGIN_NAMES = Object.freeze(["vibe", "vibe-generic"]);
 var VIBE_LOOKUP_ORDER = Object.freeze({ checkout: Object.freeze(["vibe-generic", "vibe"]), installed: VIBE_PLUGIN_NAMES });
@@ -223985,30 +223980,6 @@ function isVibePlugin(name) {
 function pluginMarketplace(install) {
   return install?.marketplace ?? DEFAULT_MARKETPLACE;
 }
-function comparePluginVersions(left, right) {
-  const a = SEMVER.exec(left);
-  const b = SEMVER.exec(right);
-  if (!a || !b) return compareText(left, right);
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(a[index]) - Number(b[index]);
-    if (difference !== 0) return Math.sign(difference);
-  }
-  if (a[4] === void 0 || b[4] === void 0) {
-    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
-  } else {
-    const order = compareIdentifiers(a[4], b[4]);
-    if (order !== 0) return order;
-  }
-  if (a[5] === b[5]) return 0;
-  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
-  return compareIdentifiers(a[5], b[5]);
-}
-function activeCodexVersion(versions) {
-  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
-  if (valid.length === 0) return null;
-  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
-  return [...valid].sort(comparePluginVersions).at(-1);
-}
 function pluginInstall(from) {
   const self = ownPluginRoot(from);
   const parent = path.dirname(self.root);
@@ -224027,76 +223998,8 @@ function pluginInstall(from) {
     registry
   };
 }
-function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
-  const self = pluginInstall(from);
-  if (self.layout === Layout.Checkout) {
-    const candidate = checkoutRoot(self.plugins, name);
-    if (candidate) return { root: realpathSync(candidate), layout: Layout.Checkout };
-    throw missing(name, self, Layout.Checkout);
-  }
-  if (self.layout === null) {
-    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
-  }
-  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
-  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
-  return {
-    root: realpathSync(found.installPath),
-    layout: self.layout,
-    home: self.home,
-    marketplace: self.marketplace,
-    ...found.scope ? { scope: found.scope } : {},
-    ...found.projectPath ? { projectPath: found.projectPath } : {}
-  };
-}
-function siblingPluginRoot(name, options) {
-  return siblingPluginInstall(name, options).root;
-}
 function isEntryPoint(moduleUrl, entry = process.argv[1]) {
   return Boolean(entry) && realOrSame(path.resolve(entry)) === realOrSame(fileURLToPath(moduleUrl));
-}
-function checkoutRoot(plugins, name) {
-  const named = path.join(plugins, name);
-  if (pluginManifest(named)?.name === name) return named;
-  return listDirectories(plugins).sort().map((entry) => path.join(plugins, entry)).find((dir) => pluginManifest(dir)?.name === name) ?? null;
-}
-function claudeEntry(registry, name, self, cwd) {
-  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const here = realOrSame(path.resolve(cwd));
-  const holds = (project) => {
-    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
-    const root = realOrSame(project);
-    return here === root || here.startsWith(`${root}${path.sep}`);
-  };
-  for (const scope of PROJECT_SCOPES) {
-    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
-    if (matching.length > 0) return matching[0];
-  }
-  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  if (user.length === 1) return user[0];
-  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
-  throw missing(name, self, Layout.Claude);
-}
-function codexRoot(base, name, self) {
-  let versions;
-  try {
-    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
-  } catch {
-    throw missing(name, self, Layout.Codex);
-  }
-  const version = activeCodexVersion(versions);
-  if (!version) throw missing(name, self, Layout.Codex);
-  return path.join(base, version);
-}
-function missing(name, self, layout) {
-  const id = `${name}@${pluginMarketplace(self)}`;
-  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${id}\` in Claude Code or \`codex plugin add ${id}\` in Codex`);
-}
-function readRegistry(file) {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
 }
 function realOrSame(file) {
   try {
@@ -224112,62 +224015,14 @@ function isFile(file) {
     return false;
   }
 }
-function listDirectories(dir) {
-  try {
-    return readdirSync(dir).filter((entry) => isDirectory(path.join(dir, entry)));
-  } catch {
-    return [];
-  }
-}
-function isDirectory(file) {
-  try {
-    return statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function compareText(left, right) {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
-}
-function compareIdentifiers(left, right) {
-  const a = left.split(".");
-  const b = right.split(".");
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const order = compareIdentifier(a[index], b[index]);
-    if (order !== 0) return order;
-  }
-  return Math.sign(a.length - b.length);
-}
-function compareIdentifier(left, right) {
-  const leftNumeric = NUMERIC.test(left);
-  const rightNumeric = NUMERIC.test(right);
-  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
-  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
-  return compareText(left, right);
-}
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.14";
 var SELF = pluginInstall(import.meta.url);
+var OWN_ROOT = ownPluginRoot(import.meta.url).root;
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
-var cachedRoot = null;
-function vibeCoreRoot() {
-  if (cachedRoot) return cachedRoot;
-  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
-  const installed = pluginManifest(root)?.version ?? null;
-  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
-    throw Object.assign(
-      new Error(`${SELF.name} ${SELF.version ?? "unknown"} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update ${VIBE_CORE_ID}\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
-      { outdated: true, installed, minimum: VIBE_CORE_MIN }
-    );
-  }
-  cachedRoot = root;
-  return root;
-}
 function vibeCorePath(relative9) {
-  return path2.join(vibeCoreRoot(), relative9);
+  return path2.join(OWN_ROOT, relative9);
 }
 function vibeCore(relative9) {
   return import(pathToFileURL(vibeCorePath(relative9)).href);
@@ -224175,7 +224030,7 @@ function vibeCore(relative9) {
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module;
+var { absoluteGitDir, assertVibeCreatedWorktree, git, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module;
 
 // ../../plugins/vibe/skills/vibe/scripts/area-paths.mjs
 var { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -225043,12 +224898,12 @@ function checkedSourceFromJobLog(log, checkout, test, expectedCommand) {
   }
   return shaCandidates[0];
 }
-function stepEvents(events, step) {
-  if (step.status !== "completed" || step.conclusion !== "success" || !step.started_at || !step.completed_at) {
+function stepEvents(events, step2) {
+  if (step2.status !== "completed" || step2.conclusion !== "success" || !step2.started_at || !step2.completed_at) {
     throw new MainSyncError("Required CI step did not complete successfully");
   }
-  const start = Math.floor(Date.parse(step.started_at) / 1e3);
-  const end = Math.floor(Date.parse(step.completed_at) / 1e3);
+  const start = Math.floor(Date.parse(step2.started_at) / 1e3);
+  const end = Math.floor(Date.parse(step2.completed_at) / 1e3);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) throw new MainSyncError("CI step identity window is invalid");
   return events.filter((event) => event.seconds >= start && event.seconds <= end);
 }
@@ -225317,7 +225172,7 @@ var workflowStep = external_exports.object({
   if: condition.optional(),
   "timeout-minutes": external_exports.number().int().positive().optional(),
   "continue-on-error": external_exports.boolean().optional()
-}).strict().refine((step) => Boolean(step.run) !== Boolean(step.uses), "step needs exactly one run or uses").refine((step) => !step.run || step.with === void 0, "run steps cannot have action inputs").refine((step) => !step.uses || step.shell === void 0 && step["working-directory"] === void 0, "action steps cannot have shell/cwd");
+}).strict().refine((step2) => Boolean(step2.run) !== Boolean(step2.uses), "step needs exactly one run or uses").refine((step2) => !step2.run || step2.with === void 0, "run steps cannot have action inputs").refine((step2) => !step2.uses || step2.shell === void 0 && step2["working-directory"] === void 0, "action steps cannot have shell/cwd");
 var workflowJob = external_exports.object({
   steps: external_exports.array(workflowStep).min(1),
   env: external_exports.record(workflowScalar).optional(),
@@ -225345,8 +225200,8 @@ var laneWorkflow = external_exports.object({
 function workflowLaneDefinitions(source) {
   const document = (0, import_yaml2.parseDocument)(source, { uniqueKeys: true });
   if (document.errors.length || document.warnings.length) throw new Error("invalid/unsupported workflow YAML");
-  const workflow = laneWorkflow.parse(document.toJS({ maxAliasCount: 0 }));
-  const { jobs, ...globals } = workflow;
+  const workflow2 = laneWorkflow.parse(document.toJS({ maxAliasCount: 0 }));
+  const { jobs, ...globals } = workflow2;
   const canonical = (value) => {
     if (Array.isArray(value)) return value.map(canonical);
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort().map(([key, item]) => [key, canonical(item)]));
@@ -225354,7 +225209,7 @@ function workflowLaneDefinitions(source) {
     return value;
   };
   const lanes = [];
-  for (const [job, value] of Object.entries(jobs)) {
+  for (const [job2, value] of Object.entries(jobs)) {
     const matrix = value.strategy?.matrix;
     let rows = [{}];
     if (matrix) {
@@ -225379,10 +225234,10 @@ function workflowLaneDefinitions(source) {
       };
       const expanded = workflowJob.parse(expand(value));
       const boundGlobals = { ...globals, ...globals.env ? { env: expand(globals.env, ["env"]) } : {}, ...globals.defaults ? { defaults: expand(globals.defaults, ["defaults"]) } : {} };
-      for (const step of expanded.steps) if (step.uses && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+@[A-Za-z0-9_./-]+$/.test(step.uses)) throw new Error("unsupported local/dynamic action reference");
-      const name = Object.keys(row).length ? `${job}[${JSON.stringify(row)}]` : job;
+      for (const step2 of expanded.steps) if (step2.uses && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+@[A-Za-z0-9_./-]+$/.test(step2.uses)) throw new Error("unsupported local/dynamic action reference");
+      const name = Object.keys(row).length ? `${job2}[${JSON.stringify(row)}]` : job2;
       if (lanes.some((lane) => lane.name === name)) throw new Error("duplicate workflow lane");
-      lanes.push({ name, job, matrix: row, command: JSON.stringify(canonical({ version: 1, workflow: boundGlobals, job: expanded, matrix: row })) });
+      lanes.push({ name, job: job2, matrix: row, command: JSON.stringify(canonical({ version: 1, workflow: boundGlobals, job: expanded, matrix: row })) });
       if (lanes.length > 200) throw new Error("workflow lane expansion bound exceeded");
     }
   }
@@ -225395,15 +225250,15 @@ var REVIEWED_ELECTRON_RUN_SHA256 = "d42acd228f3da95e0d05b419b0c8f38f36c2233fbf49
 var REVIEWED_CHECKOUT_REF = "${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha || github.event.inputs.ref || (github.event_name == 'schedule' && github.sha) || github.ref }}";
 var SAFE_ID = external_exports.number().int().positive().safe();
 var identitySchema = (repository) => external_exports.object({ full_name: external_exports.literal(repository) }).passthrough();
-var workflowSchema = (workflow) => external_exports.object({ id: SAFE_ID, path: external_exports.literal(workflow) }).passthrough();
-var runSchema = (repository, workflow) => external_exports.object({
+var workflowSchema = (workflow2) => external_exports.object({ id: SAFE_ID, path: external_exports.literal(workflow2) }).passthrough();
+var runSchema = (repository, workflow2) => external_exports.object({
   id: SAFE_ID,
   event: external_exports.enum(["workflow_dispatch", "schedule"]),
   status: external_exports.literal("completed"),
   conclusion: external_exports.literal("success"),
   head_branch: external_exports.literal("main"),
   head_sha: commitSchema,
-  path: external_exports.literal(workflow),
+  path: external_exports.literal(workflow2),
   workflow_id: SAFE_ID,
   run_attempt: SAFE_ID,
   repository: identitySchema(repository),
@@ -225439,14 +225294,14 @@ function verifyExternalCi(value, input) {
   const repository = origin.status === 0 ? githubRepository(origin.stdout.trim()) : null;
   if (!repository) throw new MainSyncError("The session's origin is not a GitHub repository; no CI evidence can be read");
   const workflowPath = ci.workflow;
-  const workflow = workflowSchema(workflowPath).parse(apiJson(root, `repos/${repository}/actions/workflows/${workflowPath.split("/").at(-1)}`));
+  const workflow2 = workflowSchema(workflowPath).parse(apiJson(root, `repos/${repository}/actions/workflows/${workflowPath.split("/").at(-1)}`));
   const run = runSchema(repository, workflowPath).parse(apiJson(root, `repos/${repository}/actions/runs/${locator.runId}`));
-  if (run.id !== locator.runId || run.run_attempt !== locator.attempt || run.workflow_id !== workflow.id) throw new MainSyncError("CI run/workflow/attempt differs from the actual source grant");
+  if (run.id !== locator.runId || run.run_attempt !== locator.attempt || run.workflow_id !== workflow2.id) throw new MainSyncError("CI run/workflow/attempt differs from the actual source grant");
   const contents = contentsSchema.parse(apiJson(root, `repos/${repository}/contents/${workflowPath}?ref=${run.head_sha}`));
   const test = reviewedProducer(Buffer.from(contents.content, "base64").toString("utf8"));
   const jobs = jobsSchema.parse(apiJson(root, `repos/${repository}/actions/runs/${run.id}/attempts/${locator.attempt}/jobs?per_page=100`));
   if (jobs.jobs.length !== jobs.total_count) throw new MainSyncError("Required CI job set is incomplete");
-  const desktop = only(jobs.jobs.filter((job) => job.name === "desktop-e2e"));
+  const desktop = only(jobs.jobs.filter((job2) => job2.name === "desktop-e2e"));
   requireJob(desktop, run.id, locator.attempt);
   const checkoutStep = requiredStep(desktop.steps, "Checkout repository");
   const testStep = requiredStep(desktop.steps, "Run Electron e2e");
@@ -225458,7 +225313,7 @@ function verifyExternalCi(value, input) {
   return ciEvidenceSchema.parse({
     runId: run.id,
     attempt: locator.attempt,
-    workflowId: workflow.id,
+    workflowId: workflow2.id,
     definitionSha: run.head_sha,
     checkoutSha,
     treeSha: input.treeSha,
@@ -225474,18 +225329,18 @@ function verifyExternalCi(value, input) {
 }
 function reviewedProducer(workflowText) {
   const steps = producerSchema2.parse((0, import_yaml3.parse)(workflowText)).jobs["desktop-e2e"].steps;
-  const checkout = only(steps.filter((step) => step.name === "Checkout repository"));
-  const test = only(steps.filter((step) => step.name === "Run Electron e2e"));
+  const checkout = only(steps.filter((step2) => step2.name === "Checkout repository"));
+  const test = only(steps.filter((step2) => step2.name === "Run Electron e2e"));
   if (!checkout.uses?.startsWith("actions/checkout@") || checkout.with?.ref !== REVIEWED_CHECKOUT_REF || !test.run || digest(test.run) !== REVIEWED_ELECTRON_RUN_SHA256) throw new MainSyncError("Pinned loaded-main CI producer has no recognized trusted source/verdict interface");
   return { ...test, run: test.run };
 }
 function requiredStep(steps, name) {
-  const step = only(steps.filter((item) => item.name === name));
-  if (step.status !== "completed" || step.conclusion !== "success") throw new MainSyncError("Required CI step is missing, skipped, canceled or unsuccessful");
-  return step;
+  const step2 = only(steps.filter((item) => item.name === name));
+  if (step2.status !== "completed" || step2.conclusion !== "success") throw new MainSyncError("Required CI step is missing, skipped, canceled or unsuccessful");
+  return step2;
 }
-function requireJob(job, runId, attempt) {
-  if (job.run_id !== runId || job.run_attempt !== attempt || job.status !== "completed" || job.conclusion !== "success") throw new MainSyncError("Required CI job is missing, skipped, canceled or unsuccessful");
+function requireJob(job2, runId, attempt) {
+  if (job2.run_id !== runId || job2.run_attempt !== attempt || job2.status !== "completed" || job2.conclusion !== "success") throw new MainSyncError("Required CI job is missing, skipped, canceled or unsuccessful");
 }
 function only(items) {
   if (items.length !== 1) throw new MainSyncError("CI identity is missing or ambiguous");
@@ -228466,11 +228321,11 @@ function checkRecipe(value, receipt) {
   const e2eLimitations = [];
   const purpose = value.purpose === "build" ? "build" : prototype ? "prototype" : "handoff";
   const { steps, final } = checkSteps(root, purpose);
-  const expand = (step) => {
-    if ("biome" in step) commands.push(...biomeCheckCommands(paths));
-    else if ("laneDiscovery" in step) e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
-    else if (!step.when || files.some((file) => new RegExp(step.when).test(file))) {
-      commands.push({ argv: step.argv.map((word) => word.replaceAll("{mainSha}", receipt.mainSha).replaceAll("{slug}", value.place.session.slug)) });
+  const expand = (step2) => {
+    if ("biome" in step2) commands.push(...biomeCheckCommands(paths));
+    else if ("laneDiscovery" in step2) e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
+    else if (!step2.when || files.some((file) => new RegExp(step2.when).test(file))) {
+      commands.push({ argv: step2.argv.map((word) => word.replaceAll("{mainSha}", receipt.mainSha).replaceAll("{slug}", value.place.session.slug)) });
     }
   };
   steps.forEach(expand);
@@ -228632,6 +228487,98 @@ function biomeCheckCommands(paths) {
     commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths.slice(start, start + BIOME_PATHS_PER_COMMAND)] });
   }
   return commands;
+}
+
+// src/pull-request-workflows.ts
+var import_picomatch3 = __toESM(require_picomatch2(), 1);
+var import_yaml6 = __toESM(require_dist(), 1);
+var PULL_REQUEST_EVENTS = ["pull_request", "pull_request_target"];
+var patternList = external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional();
+var eventFilter = external_exports.object({ paths: patternList, "paths-ignore": patternList }).passthrough().nullable();
+var step = external_exports.object({ run: external_exports.unknown().optional(), uses: external_exports.unknown().optional(), if: external_exports.unknown().optional(), "continue-on-error": external_exports.unknown().optional() }).passthrough();
+var SETUP_ACTION = /^(?:actions\/(?:checkout|setup-[\w-]+|cache|upload-artifact|download-artifact)|pnpm\/action-setup|\.\/\.github\/actions\/setup-[\w-]+)(?:@|$)/;
+var runDefaults = external_exports.object({ run: external_exports.object({ "working-directory": external_exports.unknown().optional() }).passthrough().optional() }).passthrough().optional();
+var job = external_exports.object({ steps: external_exports.array(step).optional(), if: external_exports.unknown().optional(), defaults: runDefaults }).passthrough();
+var workflow = external_exports.object({ on: external_exports.unknown(), jobs: external_exports.record(job).optional(), defaults: runDefaults }).passthrough();
+function pathFilteredPullRequestWorkflows(workflows, changedFiles) {
+  const matched = [];
+  for (const file of workflows) {
+    let parsed;
+    try {
+      parsed = workflow.parse((0, import_yaml6.parse)(file.text, { maxAliasCount: 0 }));
+    } catch (error) {
+      throw new Error(`${file.path}: not a readable workflow (${error instanceof Error ? error.message : String(error)})`);
+    }
+    for (const filter of pullRequestFilters(parsed.on)) {
+      const files = filteredFiles(filter, changedFiles);
+      if (files === null || files.length === 0) continue;
+      matched.push({
+        path: file.path,
+        matchedFiles: files,
+        commands: runCommands(parsed.jobs ?? {}),
+        jobChecks: jobChecks(parsed.jobs ?? {}, parsed.defaults?.run?.["working-directory"])
+      });
+      break;
+    }
+  }
+  return matched;
+}
+function pullRequestFilters(on) {
+  if (typeof on === "string" || Array.isArray(on)) return [];
+  if (!on || typeof on !== "object") return [];
+  return PULL_REQUEST_EVENTS.filter((event) => event in on).map((event) => eventFilter.parse(on[event] ?? null));
+}
+function filteredFiles(filter, changedFiles) {
+  const list = (value) => value === void 0 ? void 0 : [value].flat();
+  const paths = list(filter?.paths);
+  const ignored = list(filter?.["paths-ignore"]);
+  if (paths === void 0 && ignored === void 0) return null;
+  if (paths !== void 0) {
+    const rules = paths.map((pattern) => {
+      const negated = pattern.startsWith("!");
+      const body = pattern.replace(/^!/, "");
+      return { negated, test: githubOnlyGlob(body) ? () => !negated : (0, import_picomatch3.default)(body, { dot: true }) };
+    });
+    return changedFiles.filter((changed) => {
+      let included = false;
+      for (const rule of rules) if (rule.test(changed)) included = !rule.negated;
+      return included;
+    });
+  }
+  const tests = (ignored ?? []).filter((pattern) => !githubOnlyGlob(pattern)).map((pattern) => (0, import_picomatch3.default)(pattern, { dot: true }));
+  return changedFiles.filter((changed) => !tests.some((test) => test(changed)));
+}
+function runCommands(jobs) {
+  const commands = Object.values(jobs).flatMap((entry) => (entry.steps ?? []).map((item) => item.run)).filter((run) => typeof run === "string" && run.trim() !== "").map((run) => run.trim());
+  return [...new Set(commands)];
+}
+function jobChecks(jobs, workflowDirectory) {
+  return Object.entries(jobs).filter(([, entry]) => !certainlyOffOnPassingPullRequest(entry)).flatMap(([name, entry]) => {
+    const jobDirectory = entry.defaults?.run?.["working-directory"] ?? workflowDirectory;
+    const commands = (entry.steps ?? []).filter((item) => !stepCertainlyOff(item)).flatMap((item) => {
+      if (typeof item.run !== "string" || item.run.trim() === "") return [];
+      const directory = item["working-directory"] ?? jobDirectory;
+      return [{ job: name, command: typeof directory === "string" && directory.trim() !== "" && directory.trim() !== "." ? `cd ${directory.trim()} && ${item.run.trim()}` : item.run.trim() }];
+    });
+    const checkingAction = (entry.steps ?? []).some((item) => !stepCertainlyOff(item) && typeof item.uses === "string" && !SETUP_ACTION.test(item.uses));
+    return commands.length > 0 && !checkingAction ? commands : [...commands, { job: name, command: null }];
+  });
+}
+function githubOnlyGlob(pattern) {
+  return /[?+]/.test(pattern) || /[^/]\*\*|\*\*[^/]/.test(pattern);
+}
+var OFF_CONDITIONS = [/^failure\(\)$/, /^cancelled\(\)$/, /^false$/, /^github\.event_name\s*==\s*'(?!pull_request(?:_target)?')[a-z_]+'$/];
+function stepCertainlyOff(item) {
+  return conditionCertainlyOff(item.if);
+}
+function certainlyOffOnPassingPullRequest(item) {
+  return item["continue-on-error"] === true || conditionCertainlyOff(item.if);
+}
+function conditionCertainlyOff(condition2) {
+  if (condition2 === false) return true;
+  if (typeof condition2 !== "string") return false;
+  const text = condition2.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, "$1").replace(/"/g, "'").trim();
+  return OFF_CONDITIONS.some((pattern) => pattern.test(text));
 }
 
 // src/main-sync.ts
@@ -229100,6 +229047,7 @@ export {
   admitMainSyncRequest,
   admitMainSyncShare,
   mainSyncFailure,
+  pathFilteredPullRequestWorkflows,
   prepareMainSync,
   prepareMainSyncInputs,
   pushMainSync,

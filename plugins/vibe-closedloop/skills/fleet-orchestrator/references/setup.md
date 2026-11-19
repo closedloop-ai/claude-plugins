@@ -43,13 +43,6 @@ inputs read by `fleet.sh` and `load-check.sh`; only the operator sets them, and
 they are never stored in `config.env`. With either absent, heavy work uses the
 normal load routing and a busy machine is refused.
 
-`LOCAL_HEAVY_BARRED=1` is the operator's placement order that this machine (usually
-their daily laptop) takes no heavy work: `fleet.sh <orchDir> local slot heavy`
-refuses with exit 78 and names `fleet.sh <orchDir> remote slot heavy`, which is
-where the affected typecheck and every other heavy check then run. It is not a load
-reading, so `FLEET_FORCE_HERE` does not lift it; the operator removes the key to
-allow local heavy work again. `HEAVY_SLOTS` keeps its meaning either way.
-
 Session, request and remote state dirs are derived per program. `fleet.sh` uses `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot and load keys, and the `REMOTE_*` keys. Vibe's worker-model policy owns sub-agent models. `MOVE_AT_PERCENT` is yours to compare with each `codex-usage` line.
 
 ## First-run interview
@@ -82,14 +75,14 @@ Then set the slot counts from this machine's core count, write the file, and run
 
 1. Run `scripts/fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` ([layout](./state.md)) and write `<fleetHome>/config.env`.
 2. Fill `sessions.txt` and `prs.txt` as codex-fleet-monitor describes; a session started through `fleet.sh` is listed as `local|remote <name>`.
-3. For each other machine: create its fleet home the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex jq gh'"`, which must print four paths. Install this plugin there in a persistent path.
+3. For each other machine: create its fleet home the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex jq gh'"`, which must print four paths. Install this plugin there in a persistent path. Run its `skills/fleet-orchestrator/scripts/launch-check.mjs gui-hooks` there: each `GUI-HOOK` line is a user-level hook needing the desktop session, which holds every tool call over ssh. Have the operator guard it with an `ITERM_SESSION_ID` test or remove it before that machine hosts a session.
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
 5. On each machine, check closedloop-graph answers (its `sync_status` tool) from Claude Code and from Codex.
 6. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.
    For Claude cloud workers, set `CLOUD_CLAUDE_ENV=<env id>` in `config.env` and run `../vibe/scripts/cloud-worker.mjs check`.
-   Check that vibe-core is installed beside vibe: the placement check every writer start needs is its `lib/fleet-orchestrator/scripts/cloud-placement.mjs`, run through `board.mjs placement`.
-7. On each Codex machine, open `/hooks` for the person to review and trust the
-   current vibe hook definition before relying on fleet's PreToolUse guards.
+   Check that vibe-core, which runs vibe's hooks, is installed beside vibe.
+7. On each Codex machine, have the person trust vibe-core's hooks by the steps
+   the setup check's hook line names before relying on fleet's PreToolUse guards.
    Plugin installation alone does not activate trusted hooks. Until a hook
    has recorded the conversation, `plugin-version.mjs loaded` reports
    `enforced: false` and the loaded-skill gate is not applied there. The current

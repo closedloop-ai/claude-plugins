@@ -10,7 +10,7 @@ One fleet home per machine holds everything (default `~/fleet-orchestrator`; `FL
 
 ```
 <fleetHome>/
-  config.env  standing-rulings.md  lessons.md  handover.md   reused by every program
+  config.env  standing-rulings.md  lessons.md               reused by every program
   context-guard.json                                         compaction limits
   current                                                    the program of a chat or command with none bound
   programs/<slug>/
@@ -19,7 +19,7 @@ One fleet home per machine holds everything (default `~/fleet-orchestrator`; `FL
     sessions/<name>.json        written by fleet.sh; a remote session leaves <name>.remote.json
     prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
     requests/  findings/  evidence/
-    resume-log.md  rulings.md  attention.md  review.md
+    resume-log.md  rulings.md  attention.md  review.md  handover.md (this chat's handoff)
     program.json   the program's shape (no-writer, one-writer or fleet)
     plugin-version.json   the plugin version check, the operator's answer and any update
 ```
@@ -31,14 +31,18 @@ One fleet home per machine holds everything (default `~/fleet-orchestrator`; `FL
 1. `fleet-home.mjs resume` (or `resume <slug>` for a named program): read each `READ` file in order and note its `SHAPE`. It binds this chat to the program it prints after `ACTIVE`. On `NO-ACTIVE-PROGRAM`, `start` a fresh one. On `UNBOUND`, the home's current program is bound to another chat, named with when it bound: if that chat has finished (this chat replaces it), `resume <slug> --takeover`; otherwise `start` your own. `HELD` refuses a program another chat holds and names that chat and when it bound; add `--takeover` only when that chat has finished (`TAKEOVER` names it; that chat's scripts given the home path are then refused with `TAKEN-OVER`).
 2. Run the plugin version check its `PLUGIN-VERSION` line names (SKILL.md, Setup) before anything else.
    Then show the setup check block (SKILL.md, Setup) once.
-3. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
+3. `HANDOFF-INCOMPLETE` or `WATCHER-LIVE <pid>`: the previous chat has not finished `fleet-home.mjs handoff`; `handoff --check` lists what is left. Arm your watcher after its watcher stops.
 4. Relaunch each `RELAUNCH <writer> <prompt>` Claude worker from that saved prompt; resume Codex writers through `fleet.sh`.
 5. Run `fleet-home.mjs check` and fix every line before acting.
 <!-- generic: units-resume -->
 6. Keep the writers the board lists (`board.md`) and the open work they own.
 <!-- end generic: units-resume -->
 > Provider `tickets` (block `units-resume` of `fleet/state.md`)
-7. Before any writer start, record each ticket's placement with `board.mjs placement` (SKILL.md, Cloud workers); the check lives in vibe-core, `lib/fleet-orchestrator/scripts/cloud-placement.mjs`, not in this plugin.
+7. Before any writer start, record each ticket's placement with `board.mjs placement` (SKILL.md, Cloud workers); the check is vibe's `lib/fleet-orchestrator/scripts/cloud-placement.mjs`.
+
+## Ending a chat
+
+Before a chat ends, run `fleet-home.mjs handoff --successor <SendMessage name> --mesh <id> [--peer <name>]... [--cron <id>]... --notes <promises and first steps>`. Send the successor's address to each recipient it prints and record it with `--told <name> --via sendmessage|mesh`; delete each cron and record `--cron-deleted <id>`; then `--stop-watcher`, and `--check` until `HANDOFF-COMPLETE`.
 
 ## Resume log
 

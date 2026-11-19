@@ -13,7 +13,7 @@ key=$(printf '%s\0%s' "$owner" "$tree" | cksum | awk '{print $1 "-" $2}')
 locks=("$root/work-$key.lock")
 [ "$kind" = full-corpus ] && locks+=("$root/full-corpus.lock")
 held=()
-cleanup() { for lock in "${held[@]}"; do rm -rf "$lock"; done; }
+cleanup() { for lock in ${held[@]+"${held[@]}"}; do rm -rf "$lock"; done; }
 child=
 stop_child() {
   local fallback=$1 status

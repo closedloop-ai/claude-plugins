@@ -1,48 +1,37 @@
 # vibe-core Plugin
 
-The hooks behind vibe sessions, and every module those hooks run, released
-apart from the `vibe` plugin.
+The hook registrations behind vibe sessions, released apart from the `vibe`
+plugin so Codex's approval of them lasts across vibe releases.
 
 ## Why it is separate
 
-Codex ties approval of a plugin's hooks to a hash of the whole plugin bundle.
-While the hooks shipped inside `vibe`, every vibe release changed that bundle,
-so Codex reported every vibe hook as modified and skipped them all until a
-person approved them again. A vibe release that does not touch the hook code
-now leaves this plugin, and Codex's approval of its hooks, unchanged.
+Codex ties approval of a plugin's hooks to a hash of every file in the plugin.
+vibe-core holds only a small loader, so a vibe release leaves that hash, and
+the approval, unchanged.
+
+## How it works
+
+`hooks/hooks.json` registers one command per event. Each finds the `vibe` or
+`vibe-generic` install the session uses and runs that install's guards
+(`hooks/runtime.mjs` in vibe). Codex's approval covers the loader, not the
+guard code it loads from vibe.
+
+The hooks do nothing when vibe is not installed or is disabled, or while the
+installed vibe still registers its own hooks. When vibe's guards cannot load,
+nothing is refused: the work continues and the agent is told how to update
+vibe.
 
 ## Installation
 
 Claude Code installs `vibe-core` through the dependency of the `vibe` or
 `vibe-generic` plugin.
-Codex installs no plugin dependency, so install it explicitly, then open Codex
-once and approve vibe-core's hooks in /hooks:
+Codex installs no plugin dependency, so install it explicitly, then approve
+vibe-core's hooks: in the ChatGPT app, open Settings > Hooks > From Plugins,
+choose vibe-core's entry, trust each of its hooks, then start a new session (in
+the Codex CLI, run /hooks instead):
 
 ```bash
 codex plugin add vibe-core@closedloop-ai
 ```
 
 Each vibe-core release asks for that approval again; a vibe release does not.
-vibe's Codex preflight, its version check and the fleet writer launch check
-each name the fix when vibe-core is missing or its hooks are not approved.
-
-## Contents
-
-- `hooks/hooks.json` registers one command per event: PreToolUse, PostToolUse,
-  PreCompact, UserPromptSubmit and SessionStart (after a compaction). Each runs
-  the guards routed to it in one process (`hooks/hook-dispatch.mjs`).
-- `lib/<skill>/scripts/` holds the vibe skill modules those guards run, under
-  the skill they serve. vibe loads them from here through
-  `plugins/vibe/shared/vibe-core.mjs`; a command among them keeps a thin
-  wrapper at its old vibe path.
-- `shared/plugin-roots.mjs` finds a sibling plugin's install in a repository
-  checkout, the Claude Code install and the Codex install. vibe carries a
-  byte-identical copy so it can find vibe-core before loading anything from it.
-- `shared/vibe-install.mjs` is how the guards read vibe's install (its
-  version, skill definitions and scripts) as data. vibe-core never imports or
-  runs a file from vibe's install.
-- `shared/process-identity.mjs` reads a process's start time and command, so
-  the lib modules can tell a live process from a dead or reused PID.
-
-The hooks do nothing when neither `vibe` nor `vibe-generic` is installed, or
-while the installed vibe still registers its own hooks (vibe 1.1.70 and older), so no guard runs twice.

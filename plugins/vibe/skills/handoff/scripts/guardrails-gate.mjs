@@ -360,7 +360,7 @@ export function createGuardrailsGate({
     const handle = {
       ran: (name) => { if (!report.checks_run.includes(name)) report.checks_run.push(name); },
       skip: (name, reason) => report.checks_skipped.push({ name, reason }),
-      add: (items) => report.findings.push(...items),
+      add: (items) => addFindings(report.findings, items),
     };
     if (!head || !baseSha) {
       handle.skip("all", "could not read the head and base commits");
@@ -443,5 +443,18 @@ if (isEntryPoint(import.meta.url)) {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {
     process.exit(failScript(error, 2));
+  }
+}
+
+/**
+ * Appends `items` to `findings` with every id unique: an exact repeat (same id and evidence) is dropped, and a
+ * finding whose id repeats with other evidence (two removed assertions paired with one line) gets an occurrence suffix.
+ */
+export function addFindings(findings, items) {
+  for (const item of items) {
+    if (findings.some((existing) => existing.id === item.id && existing.evidence === item.evidence)) continue;
+    let id = item.id;
+    for (let occurrence = 2; findings.some((existing) => existing.id === id); occurrence += 1) id = `${item.id}~${occurrence}`;
+    findings.push({ ...item, id });
   }
 }

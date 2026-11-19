@@ -104,8 +104,9 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    the named skill's post-implementation workflow and fix source drift now.
    Planned tests are not executed coverage or final alignment.
 7. In the build loop run only the quick checks the commit hooks need (Biome
-   and the owning packages' typecheck); existing relevant tests run at
-   handoff. Never author tests; only repair an existing one the change broke
+   and the owning packages' typecheck) and the writer's self-review
+   (`vibe-change-worker.md`, "Self-review before `DONE`"); existing relevant
+   tests run at handoff. Never author tests; only repair an existing one the change broke
    (`guardrails.md`, "Tests"). Independent implementation review and its
    corrections run at handoff.
 8. Append to the session change log

@@ -1,0 +1,65 @@
+// Read a managed Codex reviewer's exact completed turn from App Server.
+// Its saved MCP items have type mcpToolCall with server, tool and status:
+// https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/thread_history.rs
+import { connectViaProxy, daemonSocket } from "../../codex-fleet-monitor/scripts/liveness.mjs";
+
+function nativeMcpName(item) {
+  return `mcp__${item.server.replaceAll("-", "_")}__${item.tool}`;
+}
+
+/** Completed turn and machine-observed successful MCP calls, or a refusal. */
+export function observedCodexTurn(thread, sessionId, turnId) {
+  if (thread?.id !== sessionId) throw new Error("App Server returned another native reviewer thread");
+  const turn = Array.isArray(thread.turns) ? thread.turns.find(item => item?.id === turnId) : null;
+  if (turn?.status !== "completed" || !Array.isArray(turn.items) || turn.items.length === 0 || turn.itemsView === "notLoaded") {
+    throw new Error("App Server has no loaded completed reviewer turn and items");
+  }
+  const toolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "completed"
+    && typeof item.server === "string" && typeof item.tool === "string")
+    .map(nativeMcpName);
+  const failedToolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "failed"
+    && typeof item.server === "string" && typeof item.tool === "string")
+    .map(item => ({ name: nativeMcpName(item), error: String(item.error?.message ?? item.error ?? item.message ?? "tool call failed") }));
+  return { sessionId, turnId, status: "completed", toolCalls, failedToolCalls };
+}
+
+/** A managed reviewer probes graph first; an approval refusal stops before its findings can be accepted. */
+export function codexGraphSetupProblem(runtime, aliases) {
+  const refusal = runtime?.failedToolCalls?.find(call => aliases.includes(call.name)
+    && /approval|not approved|requires approval/i.test(call.error));
+  return refusal ? `Codex reviewer graph tool ${refusal.name} was refused by the approval policy before review. Approve the graph read tools for managed Codex reviewers, then relaunch the review.` : null;
+}
+
+/** Read one exact completed turn and its raw App Server items. */
+export async function readCodexTurnItems(sessionId, turnId, client) {
+  const owned = client ?? connectViaProxy(daemonSocket());
+  try {
+    if (!client) await owned.initialize();
+    const { thread } = await owned.request("thread/read", { threadId: sessionId, includeTurns: false });
+    let cursor;
+    let turn = null;
+    do {
+      const page = await owned.request("thread/turns/list", { threadId: sessionId, limit: 50, sortDirection: "desc", itemsView: "notLoaded", ...(cursor ? { cursor } : {}) });
+      turn = (page?.data ?? []).find(item => item?.id === turnId) ?? turn;
+      cursor = turn ? null : page?.nextCursor ?? null;
+    } while (cursor);
+    if (!turn || turn.status !== "completed") throw new Error("App Server did not return the exact completed reviewer turn");
+    const items = [];
+    cursor = undefined;
+    do {
+      const page = await owned.request("thread/items/list", { threadId: sessionId, turnId, limit: 100, sortDirection: "asc", ...(cursor ? { cursor } : {}) });
+      items.push(...(page?.data ?? []).map(entry => entry?.item).filter(Boolean));
+      cursor = page?.nextCursor ?? null;
+    } while (cursor);
+    return { thread, turn, items };
+  } finally { if (!client) owned.close(); }
+}
+
+/** Read one exact thread through the repository's existing App Server client. */
+export async function readCodexReviewTurn(sessionId, turnId, client) {
+  const { thread, turn, items } = await readCodexTurnItems(sessionId, turnId, client);
+  // The summary marker describes thread/turns/list, before these item pages were loaded.
+  const loadedTurn = { ...turn, items };
+  delete loadedTurn.itemsView;
+  return observedCodexTurn({ ...thread, turns: [loadedTurn] }, sessionId, turnId);
+}

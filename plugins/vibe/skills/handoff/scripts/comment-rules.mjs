@@ -38,17 +38,19 @@ const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs")
 const CODE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*|\{\s*\/\*)/;
 // "bug" and "regression" alone fired on ten legitimate comments in 40 main commits (feature names, story descriptions).
-const EXCUSE = /\b(?:pre-?existing|defects?|on main|work(?:s|ing)?[ -]?around|known (?:issue|bug|failure|problem|defect)s?)\b/i;
+const EXCUSE = /(?<![\w-])pre-?existing\b|\b(?:defects?|on main|work(?:s|ing)?[ -]?around|known (?:issue|bug|failure|problem|defect)s?)\b/i;
 const COMPOUND_NAME = /\b(?:[a-z][a-z0-9]*[A-Z]|[A-Z][a-z0-9]+[A-Z])[A-Za-z0-9]*\b/g;
 const DEFINITION = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*/g;
 const NEGATED_CONDITION = /!\s*([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\b(?!\s*\()/g;
 const ONE_READER_CLAIM = /\b(?:read|used|imported|called)\s+at\s+(?:one|1)\s+site\b|\b(?:only|just)\s+(?:one|1)\s+(?:reader|site|caller|consumer)\b/i;
 const EXPORTED_SYMBOL = /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|class|function|type|interface)\s+([A-Za-z_$][\w$]*)\b/;
-const SESSION_POINTER = /\brulings\.md(?:\s+\d+)?\b|\bDEC-\d+\b|\(fix-\d+\)|(?:^|[\s'"`])(?:decision-tables|vibe-plans)\//gi;
-// Naming an agent, lane or session as the one that decided: "orchestrator decision", "ruled by the agent", "per the
-// orchestrator", "per the decision table", or a dated label "(orchestrator, 2026-11-17)". A comment that only mentions
-// a session or a lane, scopes something "per session", or lists roles in parentheses, is not a citation.
-const AGENT_DECISION = /\b(?:orchestrator|agent|lane|session|writer|reviewer)s?(?:'s)?\s+(?:decisions?|decided|rulings?|ruled|chose|choices?)\b|\((?:orchestrator|agent|lane|session|writer|reviewer)s?\s*[,:;]\s*(?:\d{4}-\d{2}-\d{2}|(?:decisions?|decided|rulings?|ruled|chose|choices?)\b)|\b(?:decided|ruled|chosen)\s+(?:by|in)\s+(?:the\s+|this\s+|an?\s+)?(?:orchestrator|agent|lane|session|writer|reviewer)\b|\bper\s+(?:the|this)\s+(?:orchestrator|agent)\b|\b(?:per|from|by|in)\s+(?:the\s+)?decision[- ]tables?\b/i;
+const SESSION_POINTER = /(?<![\w.-])rulings\.md(?:\s+\d+)?\b|\bDEC-\d+\b|\(fix-\d+\)|(?:^|[\s'"`])(?:decision-tables|vibe-plans)\//gi;
+// The tracked criterion's trigger list for an agent decision cited as the source: `orchestrator`, `lane`, `ruled`, `decision <n>`,
+// or a decision-table row id; a lane counts only beside a decision verb. A bare "session" or "agent" is not a trigger.
+const AGENT_DECISION = /\borchestrator\b|\bruled\b(?!\s+out\b)|\blanes?(?:'s)?\s+(?:decided|decisions?|rul(?:ed|ings?)|chose|choices?|picked)\b|\bdecision\s+\d+\b/i;
+// A decision-table row id is upper case and holds a digit (DT-7, ROW-P2-01), so "row-actions", "dt-label" and an
+// all-letter id are not ids.
+const TABLE_ROW_ID = /\b(?:DT|ROW|DEC)-(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*\b/;
 const PRODUCT_DECISION = /\b(?:order|first|last|word(?:ing)?|glyph|copy|show|hide|visible|visibility|rank)\w*\b/i;
 const HUMAN_COMMENT_URL = /https?:\/\/\S+\/(?:pull|issues)\/\d+(?:#\S+)?/i;
 const OPEN = { "(": ")", "{": "}", "[": "]" };
@@ -199,7 +201,8 @@ export function checkAgentDecisionCitations(files, repo, add) {
       const text = block.map((entry) => commentBody(entry.text)).join(" ");
       const ticketed = repo.rules?.ticketed;
       if (ticketed) ticketed.lastIndex = 0;
-      if (!AGENT_DECISION.test(text) || !PRODUCT_DECISION.test(text) || HUMAN_COMMENT_URL.test(text) || ticketed?.test(text)) continue;
+      const tableId = (repo.sessionIds ?? []).some((id) => text.includes(id));
+      if (!(AGENT_DECISION.test(text) || TABLE_ROW_ID.test(text) || tableId) || !PRODUCT_DECISION.test(text) || HUMAN_COMMENT_URL.test(text) || ticketed?.test(text)) continue;
       add("agent-decision-citation", file.path, block[0].line,
         "comment cites an agent or session decision as the source of user-visible ordering, wording or visibility",
         "cite the ticket, PRD or durable human comment that decides the behavior; an agent decision is not product authority");

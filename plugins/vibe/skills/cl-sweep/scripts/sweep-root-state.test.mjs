@@ -15,8 +15,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { before, after } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { installRegistryFixture } from './core-client-fixture.mjs';
+import { installRegistryFixture, withModelCatalog, withoutModelOverrides } from './core-client-fixture.mjs';
 import { monitorScript } from './core-client-process.mjs';
+
+withoutModelOverrides();
+withModelCatalog();
 
 let restoreRegistry;
 before(() => { restoreRegistry = installRegistryFixture(); });

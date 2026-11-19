@@ -1,5 +1,5 @@
 // Where each ticket's writer runs, cloud or local, recorded on the fleet board
-// from the one placement check (decideCloudPlacement, vibe-core's
+// from the one placement check (decideCloudPlacement,
 // lib/fleet-orchestrator/scripts/cloud-placement.mjs) and required before a
 // board writer takes the ticket. An orchestrator once started four local
 // writers with no placement computed, one of them for a code-only ticket that

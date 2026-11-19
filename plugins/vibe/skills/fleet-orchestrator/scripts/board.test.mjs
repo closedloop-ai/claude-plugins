@@ -9,10 +9,10 @@ import { recordUsageReading } from '../../codex-fleet-monitor/scripts/usage-stat
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
-import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { ALL_CAPABILITIES, bindProvider, bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
-bindProviderInProcess(after);
+const boundChat = bindProviderInProcess(after);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -131,8 +131,14 @@ test('remote writers report NO-HEAD without blocking status or push-check', t =>
   const dir = tempDir(t);
   const head = 'a'.repeat(40);
   const base = 'b'.repeat(40);
-  const recorded = run([dir, 'writer', 'remote-w', '--tickets', 'ISS-1', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
+  // A remote writer has no tree here to diff, so its ready head carries the visual QA findings for that head.
+  const unproven = run([dir, 'writer', 'remote-w', '--tickets', 'ISS-1', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
     '--ready', head, '--base', base]);
+  assert.equal(unproven.status, 2);
+  assert.match(unproven.stderr, /no local tree to diff[\s\S]*no visual QA findings file/);
+  const recorded = run([dir, 'writer', 'remote-w', '--tickets', 'ISS-1', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
+    '--ready', head, '--base', base, '--visual-qa', findingsAt(dir, head)]);
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /visual QA covered \(no local tree to diff/);
   assert.equal(recorded.status, 0, recorded.stderr);
   const status = run([dir, 'status', '--pushed', `remote-w=${head}`]);
   assert.equal(status.status, 0, status.stdout + status.stderr);
@@ -374,11 +380,22 @@ test('a head is pushed for a writer only when the writer declared it ready (a pa
   const none = run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']);
   assert.equal(none.status, 1);
   assert.match(none.stdout, /^NOT-READY w1 head a77421d8fa00, declared ready none/);
-  assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--ready', '5ec6633da7ff']).status, 0);
+  // Bound without the repository recipe, no UI paths are declared; a row with no worktree has no repository to read
+  // them from, so its ready head still carries visual QA findings (an unknown UI set counts as UI).
+  bindProvider(boundChat.home, { capabilities: ALL_CAPABILITIES.filter((capability) => capability !== 'recipes'), conversation: 'no-recipes' });
+  const chat = process.env.CLAUDE_CODE_SESSION_ID;
+  process.env.CLAUDE_CODE_SESSION_ID = 'no-recipes';
+  t.after(() => { process.env.CLAUDE_CODE_SESSION_ID = chat; });
+  const ready = `5ec6633da7ff${'0'.repeat(28)}`;
+  const unproven = run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--ready', ready]);
+  assert.equal(unproven.status, 2);
+  assert.match(unproven.stderr, /no local tree to diff[\s\S]*no visual QA findings file/);
+  const proven = run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--ready', ready, '--visual-qa', findingsAt(dir, ready)]);
+  assert.equal(proven.status, 0, proven.stderr);
   assert.equal(run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']).status, 1, 'the committed head is not the ready one');
   assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec6633da7']).status, 0);
   assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec']).status, 1, 'a short prefix proves nothing');
-  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /\| w1 \|  \| a77421d8fa00 \| 5ec6633da7ff \|/);
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /\| w1 \|  \| a77421d8fa00 \| 5ec6633da7ff0{28} \|/);
 });
 
 test('status fails on state outside the fleet home: a flat watched dir, and a session not started through fleet.sh', (t) => {
@@ -406,6 +423,13 @@ test('status fails on state outside the fleet home: a flat watched dir, and a se
 // 2026-10-26: a Claude pane writer committed items 1 to 3 and sat in long verification runs for over an
 // hour; the answer and two scope additions sent at 14:55 and 15:15 never reached it, and its worktree stayed clean
 // at that one commit. Every send reported success and nothing flagged it until the operator asked.
+// A visual QA findings file (finding-brief.mjs) for `head`.
+const findingsAt = (dir, head, findings = [], name = 'findings.json') => {
+  const file = path.join(dir, name);
+  writeFileSync(file, JSON.stringify({ head, findings }));
+  return file;
+};
+
 const gitRepo = (t) => {
   const repo = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-wt-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
@@ -598,4 +622,75 @@ test('with no tracker bound a watched program needs only its green-watch owner, 
   const status = run([dir, 'status', ...now], generic);
   assert.doesNotMatch(status.stdout, /status-sweep/);
   assert.equal(status.status, 0, status.stdout);
+});
+
+/** A writer worktree whose branch commits `files` over its trusted origin/main; returns its git runner and the heads. */
+const uiWriter = (t, files) => {
+  const wt = gitRepo(t);
+  const git = (...args) => execFileSync('git', ['-C', wt, '-c', 'user.name=t', '-c', 'user.email=t', ...args], { encoding: 'utf8' }).trim();
+  const heads = files.map((file) => {
+    mkdirSync(path.dirname(path.join(wt, file)), { recursive: true });
+    writeFileSync(path.join(wt, file), `${file}\n`);
+    git('add', '.');
+    git('commit', '-qm', file);
+    return git('rev-parse', 'HEAD');
+  });
+  return { wt, git, heads };
+};
+
+test('a UI head is called ready only with dispositioned visual QA findings for that head, and push-check rechecks them (a UI PR was reported ready with no visual QA)', (t) => {
+  const dir = tempDir(t);
+  const { wt, heads } = uiWriter(t, ['apps/app/header.tsx', 'apps/app/footer.tsx']);
+  const head = heads.at(-1);
+  assert.equal(run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--worktree', wt, '--head', head]).status, 0);
+  const ready = (...extra) => run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--ready', head, ...extra]);
+  const missing = ready();
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /visual QA is required before this head is called ready \(2 changed file\(s\) under the repository's UI paths[\s\S]*run the repository's visual QA skill/);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8')).writers.w.ready, undefined, 'nothing is recorded');
+  assert.match(ready('--visual-qa', findingsAt(dir, heads[0])).stderr, /ran on [0-9a-f]{40}, not the current source/, 'findings for an older head are stale');
+  const open = [{ id: 'F1', summary: 'clipped', route: '/', viewport: '1280', selector: 'h1', touchedSurface: true }];
+  assert.match(ready('--visual-qa', findingsAt(dir, head, open)).stderr, /F1: a finding on a touched surface needs disposition/);
+  const findings = findingsAt(dir, head, [{ ...open[0], disposition: `fixed: ${head}` }]);
+  assert.equal(ready('--visual-qa', findings).status, 0);
+  // The first commit is already on the PR branch, so only the ready head is checked for a push-ready declaration.
+  const pushed = ['--pushed', `w=${heads[0]}`];
+  assert.match(run([dir, 'push-check', 'w', '--head', head, ...pushed]).stdout, /^READY w /);
+  writeFileSync(findings, JSON.stringify({ head, findings: open }));
+  const changed = run([dir, 'push-check', 'w', '--head', head, ...pushed]);
+  assert.equal(changed.status, 1);
+  assert.match(changed.stdout, /^VISUAL-QA-MISSING w head [0-9a-f]+: visual QA findings .* changed since the ready declaration/m);
+  rmSync(findings);
+  assert.match(run([dir, 'push-check', 'w', '--head', head, ...pushed]).stdout, /^VISUAL-QA-MISSING w head [0-9a-f]+: visual QA findings for ready head [0-9a-f]+ cannot be read/m);
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /w: ready [0-9a-f]+, visual QA covered \(2 changed file\(s\)/, 'the log says what the verdict was');
+  assert.match(run([dir, 'status', ...pushed]).stdout, /^VISUAL-QA-MISSING w [0-9a-f]{40}: .*it is not ready/m);
+});
+
+test('a ready head outside the UI paths needs no findings, and one with no declared UI paths records why', (t) => {
+  const dir = tempDir(t);
+  const { wt, heads } = uiWriter(t, ['apps/api/route.ts', 'README.md']);
+  assert.equal(run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--worktree', wt, '--ready', heads.at(-1)]).status, 0);
+  assert.equal(run([dir, 'push-check', 'w', '--head', heads.at(-1), '--pushed', `w=${heads[0]}`]).status, 0);
+  const generic = { CLAUDE_CODE_SESSION_ID: '', CODEX_THREAD_ID: '' };
+  const ui = uiWriter(t, ['apps/app/header.tsx']);
+  writeFileSync(path.join(dir, 'placement.json'), JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ['web screenshots'] }));
+  assert.equal(run([dir, 'placement', '#2', '--evidence', path.join(dir, 'placement.json')], generic).status, 0);
+  assert.equal(run([dir, 'writer', 'g', '--tickets', '#2', '--worktree', ui.wt, '--ready', ui.heads[0]], generic).status, 0);
+  const row = JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8')).writers.g;
+  assert.equal(row.visualQa.required, false);
+  assert.match(row.visualQa.reason, /declares no UI paths/);
+  assert.equal(run([dir, 'push-check', 'g', '--head', ui.heads[0]], generic).status, 0);
+});
+
+test('a ready head recorded before the visual QA check is not pushed until it is declared again', (t) => {
+  const dir = tempDir(t);
+  const { wt, heads } = uiWriter(t, ['apps/api/route.ts']);
+  assert.equal(run([dir, 'writer', 'w', '--tickets', 'ISS-1', '--worktree', wt, '--ready', heads[0]]).status, 0);
+  const file = path.join(dir, 'board.json');
+  const board = JSON.parse(readFileSync(file, 'utf8'));
+  delete board.writers.w.visualQa;
+  writeFileSync(file, JSON.stringify(board));
+  const check = run([dir, 'push-check', 'w', '--head', heads[0]]);
+  assert.equal(check.status, 1);
+  assert.match(check.stdout, /VISUAL-QA-MISSING w head [0-9a-f]+: no visual QA verdict for ready head/);
 });

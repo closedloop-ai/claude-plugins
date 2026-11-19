@@ -381,10 +381,10 @@ compaction or a later turn): show nothing. If the check could not run at all,
 prints the same block from the versions installed here. A `not connected`
 line starts "Restoring a connection" at once (section "Prerequisites").
 A Codex line saying vibe-core is not installed, or its hooks are not
-approved, means vibe's guards are off in Codex: tell the person right away in
-one plain line. Installing vibe-core goes through the update flow below.
-Approving its hooks is always the person's own step, never a worker's: they
-need to open Codex once and approve vibe-core's hooks in /hooks. Say nothing
+approved, means vibe's guards are off in Codex: give the person that line word
+for word right away; it names their steps. Installing vibe-core goes through
+the update flow below. Approving its hooks is always the person's own step,
+never a worker's. Say nothing
 about approval when the block has no such line.
 
 ### Prerequisites
@@ -744,7 +744,9 @@ evidence, never by replacing the writer.
    handoff runs them. The writer still verifies affected and interacting prior
    table rows against actual code and fixes source gaps. Planned tests remain
    distinct from executed coverage; they never justify premature core Final
-   Aligned or a source-gap waiver. Then it checks every acceptance criterion
+   Aligned or a source-gap waiver. It reviews its own diff
+   (`../../agents/vibe-change-worker.md`, "Self-review before `DONE`").
+   Then it checks every acceptance criterion
    the change touches and records each result, under
    `references/quality-loop.md`, "Acceptance criteria before ready". With a
    reference image, that includes each visual and UX property it shows,

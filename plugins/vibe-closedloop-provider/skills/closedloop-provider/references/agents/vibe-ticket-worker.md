@@ -231,8 +231,7 @@ F. Status. The PLN's status follows the work:
    `create-document` with `type: ISSUE`, `status: IN_PROGRESS`, the assignee,
    the project, `priority: MEDIUM`, a plain title in the person's terms, and
    `repositorySelection` with primary `closedloop-ai/symphony-alpha` on the
-   session's branch. Include the body’s `Delivery placement:` line from the
-   [quality loop](../skills/vibe/references/quality-loop.md#communication-and-product-questions).
+   session's branch.
 5. Record the slug on the session yourself, then confirm `show` reports it as
    `liveTicket`:
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <slug> --created-live-ticket`.

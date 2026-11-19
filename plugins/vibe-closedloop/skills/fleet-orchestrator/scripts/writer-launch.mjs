@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { ADD_VIBE_CORE, APPROVE_HOOKS, HookApproval, runningHookApproval, UNKNOWN_METHOD } from '../../vibe/scripts/vibe-core-hooks.mjs';
+import { ADD_VIBE_CORE, APPROVE_HOOKS, approveHooksStep, HookApproval, runningHookApproval, UNKNOWN_METHOD } from '../../vibe/scripts/vibe-core-hooks.mjs';
 import { issueKey, requirementsKey, trackerBound } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -82,7 +82,7 @@ export async function vibeHookTrustProblem(client, cwd) {
   }
   const approval = runningHookApproval(listing);
   if (approval.plugin === "vibe" && approval.state === HookApproval.Needed) {
-    return `vibe's Codex hooks cannot run (${approval.blocked.join(', ')}); open Codex once and approve vibe's hooks in /hooks (each vibe release before vibe-core changes the plugin bundle Codex approved), then launch again`;
+    return `vibe's Codex hooks cannot run (${approval.blocked.join(', ')}); ${approveHooksStep('the vibe plugin', 'vibe')} (each vibe release before vibe-core changes the plugin bundle Codex approved), then launch again`;
   }
   if (approval.state === HookApproval.Missing) {
     return `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; run \`${ADD_VIBE_CORE}\`, then ${APPROVE_HOOKS}, then launch again`;

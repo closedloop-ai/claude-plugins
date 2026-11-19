@@ -40,14 +40,14 @@ def find_ad_hoc_static_servers(root_or_paths: Path | list[Path] | tuple[Path, ..
 
 def test_frozen_render_instructions_use_central_server_ownership() -> None:
     """The three owners never ask a worker to provide servers or their URLs."""
+    # ISS-14395: the three owners point at handoff's gate, which prepares its own base and runs the owned driver.
     for path in (HANDOFF, VERIFY, DECOMPOSER):
         text = path.read_text()
-        assert "frozen-render.mjs" in text, path
-        assert "verifier" in text and "run" in text, path
+        assert "frozen-render-gate.mjs" in text, path
         assert "--base-url" not in text and "--head-url" not in text, path
         assert "verify-storybook-process.mjs start" not in text, path
-    assert "prepared base worktree" in HANDOFF.read_text()
-    assert "owns both servers" in DECOMPOSER.read_text()
+    gate = (HANDOFF.parent / "scripts" / "frozen-render-gate.mjs").read_text()
+    assert "prepareBase" in gate and "runOwnedFrozenComparison" in gate
 
 
 def test_no_plugin_instruction_launches_an_ad_hoc_static_server() -> None:

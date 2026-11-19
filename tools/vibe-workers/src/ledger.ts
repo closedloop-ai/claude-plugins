@@ -5,8 +5,8 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { actionSchema, dropPendingSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
 import { isVibePlugin } from "../../../plugins/vibe/shared/plugin-roots.mjs";
-import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
-import { assertIsolatedTestRead } from "../../../plugins/vibe-core/lib/vibe/scripts/test-state-isolation.mjs";
+import { sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
+import { assertIsolatedTestRead } from "../../../plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { installedPluginRoot, readPluginManifest } from "./plugin-root.js";
 import { readReferenceImages } from "./reference-images.js";
@@ -268,8 +268,11 @@ function isNewerRelease(current: string, previous: string) {
   return false;
 }
 
-function activeContinuationSummary(requestId: string) {
-  return `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}; the refused request was not queued.`;
+function activeContinuationSummary(requestId: string, queuedId?: string) {
+  const continuation = `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}`;
+  return queuedId
+    ? `${continuation} first; requestId "${queuedId}" stays queued: claim it by id after that, or cancel it with writer-state.mjs drop-pending.`
+    : `${continuation}; the refused request was not queued.`;
 }
 
 function oldestPendingSummary(ledger: Ledger) {
@@ -279,7 +282,8 @@ function oldestPendingSummary(ledger: Ledger) {
 }
 
 function duplicateRefusal(ledger: Ledger, requestId: string) {
-  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id) : oldestPendingSummary(ledger);
+  const queued = ledger.pending.some((item) => item.id === requestId) ? requestId : undefined;
+  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id, queued) : oldestPendingSummary(ledger);
   return new WorkerRefusal("REQUEST_ID_EXISTS", `Request ID "${requestId}" already exists. ${recovery}`);
 }
 
@@ -331,12 +335,49 @@ export function changeWriter(action: "enqueue" | "start" | "claim" | "finish", i
       }
       if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
     };
+    const claim = (continuation?: string) => {
+      prepareClaim();
+      // A stopped or rejected turn finishes FAILED. A new request supersedes it
+      // instead of waiting on a continuation nobody sends.
+      if (ledger.active?.status === "FAILED" && !continuation && ledger.pending[0]?.id === requestId) {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (!ledger.active && continuation && ledger.completed.at(-1) === requestId) {
+        // The writer's last request returned DONE and its follow-up step (the main-sync validation after the
+        // input step) continues it: reopen that request rather than fail the continuation.
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: continuation, status: "PLAN", continuation };
+      } else if (ledger.active) {
+        if (ledger.active.id !== requestId || !continuation) throw new WorkerRefusal("ACTIVE_REQUEST_PENDING",
+          activeContinuationSummary(ledger.active.id, ledger.pending.some((item) => item.id === requestId) ? requestId : undefined));
+        ledger.active.continuation = continuation;
+      } else {
+        if (continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
+        const next = ledger.pending.shift();
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
+        ledger.active = { ...next, status: "PLAN" };
+      }
+      ledger.active.lease = randomUUID();
+      ledger.active.ownerPid = process.pid;
+    };
+    let queuedBehind: { requestId: string; status: string; next: string } | undefined;
     if (action === "enqueue") {
       if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
       if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
       if (ledger.pending.length >= 32) throw new WorkerRefusal("REQUEST_QUEUE_FULL",
         "The pending queue is full; keep the new input with the parent.");
       ledger.pending.push({ id: requestId, input: data.input });
+      // A request queued behind a stopped open one (BLOCKED, NEEDS_PERSON and the like) is not silent: claim
+      // refuses it until that request is continued. A running turn reports its own completion.
+      if (ledger.active && !ledger.active.lease && ledger.active.status !== "FAILED") {
+        queuedBehind = { requestId: ledger.active.id, status: ledger.active.status,
+          next: activeContinuationSummary(ledger.active.id, requestId) };
+      }
+    } else if (action === "start" && data.input && !data.continuation
+      && ledger.pending.some((item) => item.id === requestId && item.input === data.input)) {
+      // Relaunching a queued request with its own input claims it by id; other input stays a duplicate refusal.
+      claim();
     } else if (action === "start") {
       if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
       if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
@@ -350,30 +391,7 @@ export function changeWriter(action: "enqueue" | "start" | "claim" | "finish", i
       if (ledger.pending.length) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
       ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
     } else if (action === "claim") {
-      prepareClaim();
-      // A stopped or rejected turn finishes FAILED. A new request supersedes it
-      // instead of waiting on a continuation nobody sends.
-      if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
-        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
-        delete ledger.active;
-      }
-      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
-        // The writer's last request returned DONE and its follow-up step (the main-sync validation after the
-        // input step) continues it: reopen that request rather than fail the continuation.
-        ledger.completed = ledger.completed.slice(0, -1);
-        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
-      } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new WorkerRefusal("ACTIVE_REQUEST_PENDING",
-          activeContinuationSummary(ledger.active.id));
-        ledger.active.continuation = data.continuation;
-      } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
-        const next = ledger.pending.shift();
-        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
-        ledger.active = { ...next, status: "PLAN" };
-      }
-      ledger.active.lease = randomUUID();
-      ledger.active.ownerPid = process.pid;
+      claim(data.continuation);
     } else {
       if (!ledger.active || ledger.active.id !== requestId || !data.lease || ledger.active.lease !== data.lease || !data.status) {
         throw new Error("Finish requires ownership of the active turn lease");
@@ -402,7 +420,8 @@ export function changeWriter(action: "enqueue" | "start" | "claim" | "finish", i
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...(["start", "claim"].includes(action) ? { turn: ledger.active } : {}) };
+    return { ...summary(ledger), ...(["start", "claim"].includes(action) ? { turn: ledger.active } : {}),
+      ...(queuedBehind ? { queuedBehind } : {}) };
   });
 }
 

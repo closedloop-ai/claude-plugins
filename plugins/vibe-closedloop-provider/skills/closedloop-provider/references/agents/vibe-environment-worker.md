@@ -430,15 +430,18 @@ changes and gates fields.
 1. Confirm the branch on `origin` is at the verified published commit
    (`git -C "<wt>" ls-remote origin <branch>`). If not, return `BLOCKED`;
    never push to make it so.
-2. If an open pull request already exists for the branch
-   (`gh pr list --repo closedloop-ai/symphony-alpha --head <branch> --state open --json url,number`),
+2. `<nameWithOwner>` is the worktree's `gh repo view --json nameWithOwner --jq .nameWithOwner`
+   and `<default>` its default branch. If an open pull request already exists for the branch
+   (`gh pr list --repo <nameWithOwner> --head <branch> --state open --json url,number`),
    create nothing. Ensure it has the verified commit's `Targeted pre-PR
    evidence` comment, posting it per step 4 if absent. Then return its URL. A
    dispatch from handoff's "Changes on the open pull request" (section 10)
    updates it instead, as "Updating an open pull request" below says.
-3. Run `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request --overlap --ticket "<liveTicket>"`
-   and fetch the current PR template from main
-   (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
+3. Run `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request --overlap --live-ticket`;
+   it reads the ticket the ticket worker saved and names the fix when that file is missing.
+   Fetch the PR template from `<default>`
+   (`gh api repos/<nameWithOwner>/contents/.github/pull_request_template.md --jq .content | base64 -d`;
+   with none, the generic Summary, Changes, Acceptance criteria, Tests and Risks sections)
    and fill every section from the session's own record, never from
    invention:
    - Summary: the confirmed summary with the live ticket's slug and its
@@ -468,7 +471,7 @@ changes and gates fields.
    pointed at by path; cite the ticket's embedded evidence or quote text
    inline, briefly. `blocking.prBody` refuses a line naming one.
    If `blocking.prBody` lists an omitted assertion or unavailable overlap,
-   repair the private body and rerun the same inventory before returning;
+   repair the private body and rerun it with `--body-only` before returning;
    these are body edits, not source fixes or new permission requests.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
@@ -495,15 +498,18 @@ changes and gates fields.
    --worktree "<wt>" --base "<fetched base ref>" --body <file> --runs
    <verifier evidence file> --receipt <guardrails receipt> --receipt
    <adversarial receipt> --receipt <Storybook receipt> --receipt
-   <verifier receipt> --ticket
+   <verifier receipt> --visual-qa <findings.json> --ticket
    <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
    file>` (plus `--member <slug>=<body file>` for each `memberTickets` entry and `--title "<title>"`; the body must name every member while the title may name the lead, and add `--rulings <program rulings file>` when the evidence cites a targeted-tests ruling recorded there) immediately before creation. Use the paths step 9 of handoff passed;
+   `<findings.json>` is handoff's visual QA findings for this head. When the
+   diff touches the repository's UI paths and there is no such file, create
+   nothing and return `BLOCKED`: run the repository's visual QA skill first.
    when there is no ticket, omit the ticket/audit/matrix arguments. A gate
    that fails on `blocking.prBody` or `blocking.prEvidence` creates nothing
    and returns `NEEDS_CHANGE` with those problems; any other failed gate is
    `BLOCKED`. Neither is a reason to bypass the hook, except through the
    exception the hook's refusal names. Create it with
-   `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file "<prBody>"`.
+   `gh pr create --repo <nameWithOwner> --base <default> --head <branch> --title "<title>" --body-file "<prBody>"`.
    Read the returned `prBody` file back right before the `gh` command and confirm
    it names this ticket's slug and summary. Rerun step 3 with `--body "<prBody>" --runs "<prEvidence>" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
@@ -530,11 +536,11 @@ or `--body-file`).
      it exactly as step 3 does from the refreshed confirmed summary,
      Production impact, Flag changes and gates, tests and check results,
      gated as in step 4, and apply it with
-     `gh pr edit <number> --repo closedloop-ai/symphony-alpha --body-file <file>`,
+     `gh pr edit <number> --repo <nameWithOwner> --body-file <file>`,
      the file named and re-read as step 4 says.
      Keep the title unless the summary it names changed.
   3. For each thread, reply through the REST review-comment reply endpoint,
-     `gh api -X POST repos/closedloop-ai/symphony-alpha/pulls/<number>/comments/<comment databaseId>/replies --input <payload.json>`,
+     `gh api -X POST repos/<nameWithOwner>/pulls/<number>/comments/<comment databaseId>/replies --input <payload.json>`,
 <!-- end: update-pr-2 -->
 
 <!-- block: return -->

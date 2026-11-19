@@ -59,7 +59,7 @@
 // block is never shown twice. `check` given --connection does the same in the
 // same run, so startup is one command after the provider's connection calls.
 // `check` also binds the provider vibe's release carries, when it carries one,
-// for the conversation (vibe-core lib/vibe/scripts/provider.mjs
+// for the conversation (lib/vibe/scripts/provider.mjs
 // `probeProvider`), and saves the binding in the record as `provider`.
 // `provider`, `provider-install` and `provider-match`, which an older vibe's
 // text runs, answer `{"ok":false,"retired":<command>}` and exit 1; the
@@ -77,7 +77,7 @@
 // migrates when it resumes) or `failed` with its reason.
 // `vibe-sessions.mjs new` refuses to create a session while this
 // conversation's record is outdated with no choice, and the vibe hooks refuse
-// worker launches in Claude Code while it is (vibe-core's hooks/plugin-version-guard.mjs).
+// worker launches in Claude Code while it is (hooks/plugin-version-guard.mjs).
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -90,8 +90,8 @@ import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine } f
 import { BUNDLED_CODEX, findCli, installedPlugins, MARKETPLACE, OWN_PLUGIN } from "./plugin-cli.mjs";
 import { Choice, Connection, runWithoutVibeCore } from "./plugin-version-bootstrap.mjs";
 
-// Without vibe-core (a Codex vibe update that did not add it) the modules below cannot load, so the
-// command line reports the missing dependency and how to add it, and stops here.
+// Without a vibe-core new enough to run this vibe's hooks (a Codex vibe update that did not add or update it),
+// the command line reports the missing dependency and how to add it, and stops here.
 const missingCore = vibeCoreProblem();
 if (missingCore && isEntryPoint(import.meta.url)) {
   process.exit(await runWithoutVibeCore(process.argv.slice(2), missingCore));

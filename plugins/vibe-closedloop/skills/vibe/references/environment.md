@@ -354,7 +354,7 @@ not silently included or discarded. A clean result needs no extra local commit.
    sequence; a known generated-output change gets one bounded whole-matrix
    restart, and unknown outputs or continued churn yield no receipt. FULL
    local lint-scripts has a fixed 30-minute budget; the general worker keeps
-   its 15-minute default and 30-minute maximum, and only the Root-owned
+   its 15-minute default and 30-minute maximum of model time, and only the Root-owned
    witness derives a finite Claude envelope. Missing, tampered, stale or
    canceled proof blocks, never an enlarged caller timeout.
    A fleet remote report is diagnostic only until it carries authenticated

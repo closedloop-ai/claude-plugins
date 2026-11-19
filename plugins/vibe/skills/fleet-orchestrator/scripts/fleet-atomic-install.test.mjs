@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const INSTALL = fileURLToPath(new URL("./fleet-atomic-install.sh", import.meta.url));
 const RELATIVES = [
   "plugins/vibe/skills/vibe/scripts/owned-state.mjs",
-  "plugins/vibe-core/lib/vibe/scripts/owned-state-helper.mjs",
+  "plugins/vibe/lib/vibe/scripts/owned-state-helper.mjs",
 ];
 
 function staged(root, token) {

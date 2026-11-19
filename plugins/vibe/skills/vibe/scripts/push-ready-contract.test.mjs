@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -83,7 +84,9 @@ test('writer E2E guidance separates dirty local receipts from the clean remote w
   assert.match(verifier, /`fleet\.sh <orchDir> remote slot heavy <owner> <worktree>[^`]*`[\s\S]*clean/i);
   assert.doesNotMatch(verifier, /external `e2e-slot\.sh`[^\n]*--source-hash/);
   assert.match(fleet, /--source-hash/);
-  assert.match(verifier, /working-tree/);
+  // The evidence field guide (its `source: "working-tree"` rule) moved from the verifier's prose into the schema tool's --example output.
+  assert.match(verifier, /pr-evidence-schema\.mjs --example/);
+  assert.match(execFileSync(process.execPath, [fileURLToPath(new URL('../../handoff/scripts/pr-evidence-schema.mjs', import.meta.url)), '--example'], { encoding: 'utf8' }), /working-tree/);
 });
 
 test('review and verification precede publication, with explicit commit recovery boundaries', () => {

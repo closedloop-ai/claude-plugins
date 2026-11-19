@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 
 // The MCP operations a launch may grant, per service: the bound provider's graph and tracker tools
 // (`data.graph.operations`, `data.tickets.readOperations` and `recordOperations`); none with no provider bound.

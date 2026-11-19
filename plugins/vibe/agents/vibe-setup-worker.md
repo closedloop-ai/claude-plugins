@@ -21,11 +21,6 @@ use `fleet-orchestrator/scripts/helpers.mjs <orchDir> scratch-run <name>
 `helpers.mjs start/resources`, applies owner labels, and records a TTL.
 Never start that scratch stack with raw `docker run` or `docker compose up`.
 
-Scratch files: Each worker gets its own scratch directory named with its
-worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes
-only exact paths it created; an orchestrator brief never asks a worker to
-delete by prefix or glob.
-
 ## Inputs
 
 Read `../skills/vibe/references/quality-loop.md`. Never ask the person a

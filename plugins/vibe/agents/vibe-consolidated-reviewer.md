@@ -54,6 +54,8 @@ never edit files.
 For each confirmed finding: `severity` (high, medium, low), `file:line`, which
 reviewer's check it is (`guardrails <n>` or `adversarial <n>`), what breaks and
 for whom, the triggering input or state, the evidence and the smallest fix.
+Mark each finding blocking or not under
+`../skills/vibe/references/review-premises.md`.
 Then one line per area checked and found clean, and one line naming every
 check you ran yourself because the file did not cover it. Return "No proven
 <!-- generic: graph-block -->

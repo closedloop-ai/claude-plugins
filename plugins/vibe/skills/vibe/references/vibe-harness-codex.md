@@ -10,7 +10,9 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
   `reasoning_effort` to what `node scripts/worker-model.mjs codex <name>`
   prints: by default explorers (requirements, backend, primitive and Storybook
   advice, the handoff summary) run on `gpt-5.6-terra`, every other role on
-  `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
+  `gpt-6.2-sol`, all at `high`. When the running Codex does not list that
+  model, the command prints its fallback and a `note`; show the note once.
+  Never pass `xhigh` unless the person
   asked for it. Spawn `vibe-change-worker` only ONCE per
   session with a read-only hold brief, record its returned actual native ID
   (the agent path `spawn_agent` returns, such as `/root/vibe_writer`, is that
@@ -35,8 +37,8 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 <!-- block: codex-hooks-and-compaction -->
 - vibe's hooks (the shell, kill and merge guards, the away checklist and the
   compaction resume) ship in the vibe-core plugin. Codex loads its
-  `hooks/hooks.json` but runs it only once it is reviewed and trusted in
-  Codex's `/hooks`, and again after vibe-core changes.
+  `hooks/hooks.json` but runs it only once a person trusts it (the setup
+  check's hook line names the steps), and again after vibe-core changes.
   So after any context compaction in Codex, before the next action, run
   fleet-orchestrator's `scripts/fleet-home.mjs resume` when you orchestrate a
   fleet and read each `READ` file it prints, then reread the session record

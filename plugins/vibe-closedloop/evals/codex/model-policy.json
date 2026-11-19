@@ -1,0 +1,8 @@
+{
+  "codexModel": "gpt-6.2-sol",
+  "codexHighComplexityReviewModel": "gpt-6.2-astra",
+  "codexFallbackModels": {
+    "gpt-6.2-sol": "gpt-5.6-sol",
+    "gpt-6.2-astra": "gpt-5.6-sol"
+  }
+}

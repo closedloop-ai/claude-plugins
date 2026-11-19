@@ -110,20 +110,24 @@ and the check results.
    inventing one. The body and every review reply name no path on the
    operator's machine and no plan by path; `blocking.prBody` refuses a line
    naming one. If `blocking.prBody` lists an omitted assertion or unavailable
-   overlap, repair the private body and rerun the same inventory before
+   overlap, repair the private body and rerun it with `--body-only` before
    returning.
 4. Title: a plain imperative summary of at most 72 characters, with no
    mention of AI tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`
    must pass. Fetch the current PR base and run
-   `node ../skills/handoff/scripts/handoff-gate.mjs --worktree "<wt>" --base "<fetched base ref>" --body <file> --runs <verifier evidence file> --receipt <guardrails receipt> --receipt <adversarial receipt> --receipt <Storybook receipt> --receipt <verifier receipt>`
-   immediately before creation, with the paths step 9 of handoff passed. A
+   `node ../skills/handoff/scripts/handoff-gate.mjs --worktree "<wt>" --base "<fetched base ref>" --body <file> --runs <verifier evidence file> --receipt <guardrails receipt> --receipt <adversarial receipt> --receipt <Storybook receipt> --receipt <verifier receipt> --visual-qa <findings.json>`
+   immediately before creation, with the paths step 9 of handoff passed, the
+   findings file being handoff's visual QA findings for this head. When the
+   diff touches the repository's UI paths and there is no such file, create
+   nothing and return `BLOCKED`: run the repository's visual QA skill first. A
    gate that fails on `blocking.prBody` or `blocking.prEvidence` creates
    nothing and returns `NEEDS_CHANGE` with those problems; any other failed
    gate is `BLOCKED`. Neither is a reason to bypass the hook. Create it with
    `gh pr create --base <the repository's default branch> --head <branch> --title "<title>" --body-file <file>`
-   in the worktree, the body file in the session's private git directory and
-   named for the session (`pr-body-<session slug>.md`). Read the file back
-   right before the `gh` command and confirm it names this session's summary.
+   in the worktree. `<file>` is the one body file the gate checked (handoff's, or
+   `pr-body-<session slug>.md` written once in the session's private git
+   directory); `env-ctl pr` refuses a copy. Rerun the gate after any edit. Read the file back right before the `gh`
+   command and confirm it names this session's summary.
    Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <pushed commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing
    (`NEEDS_CHANGE`). Capture the new URL, render the validated evidence with

@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { isAbsolute, normalize, resolve, sep } from "node:path";
+import { basename, isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { runWhenMain } from "../../shared/cli.js";
 import { providerAware } from "./cli.js";
@@ -11,6 +11,8 @@ const DEFAULT_INVENTORY = fileURLToPath(new URL("../../../handoff/scripts/handof
 const PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
 // path-classifier.mjs DEFAULT_POLICY_SOURCE: the inventory's source kind for the built-in default policy.
 const DEFAULT_POLICY_SOURCE = "built-in-default";
+// Declared before runWhenMain below runs main, which reaches loadPathPolicy before its first await.
+const POLICY_TIMEOUT_MS = 120_000;
 
 type Phase = "build" | "pull-request";
 type PathPolicy = {
@@ -23,6 +25,8 @@ type PathPolicy = {
 };
 type PolicySource = { kind: string; commit: string };
 type InventoryResult = {
+  ok?: boolean;
+  error?: string;
   pathPolicyProblem?: string | null;
   pathPolicyFile?: string | null;
   pathPolicySource?: PolicySource | null;
@@ -137,16 +141,21 @@ async function portableSurfaceEditAllowed(worktree: string, inventory: Inventory
   }
 }
 
-export function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript: string) {
+export function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript: string, { timeoutMs = POLICY_TIMEOUT_MS, spawn = defaultPolicySpawn }: { timeoutMs?: number; spawn?: PolicySpawn } = {}) {
   const privateDir = mkdtempSync(resolve(tmpdir(), "vibe-scope-intake-"));
   const out = resolve(privateDir, "inventory.json");
-  const result = spawnSync(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "build", "--out", out], {
-    encoding: "utf8", env: process.env, maxBuffer: 64 * 1024 * 1024,
+  // The policy phase reads only the path policy and its base commit; the full inventory ran every repository rule first.
+  const result = spawn(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "policy", "--out", out], {
+    encoding: "utf8", env: process.env, maxBuffer: 64 * 1024 * 1024, timeout: timeoutMs,
   });
   let output = "";
-  try { output = readFileSync(out, "utf8"); } catch { /* The boundary diagnostic below reports the child result. */ }
+  try { output = readFileSync(out, "utf8"); } catch { /* A refusal is printed to stdout instead of the out file. */ }
   rmSync(privateDir, { recursive: true, force: true });
+  if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+    throw new Error(`the path policy lookup (${basename(inventoryScript)} --phase policy) did not finish within ${Math.round(timeoutMs / 1000)} s, so no planned file was classified; check that git in ${worktree} answers and that origin is reachable, then run scope intake again`);
+  }
   if (result.error) throw result.error;
+  output ||= String(result.stdout ?? "");
   let inventory: InventoryResult;
   try { inventory = JSON.parse(output) as InventoryResult; }
   catch {
@@ -155,6 +164,8 @@ export function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript:
     const stderr = String(result.stderr ?? "");
     throw new Error(`handoff inventory did not return JSON: exit ${result.status}, signal ${result.signal ?? "none"}, stdout ${Buffer.byteLength(stdout)} bytes: ${first(stdout)}, stderr: ${first(stderr)}`);
   }
+  // The inventory's own refusal (an unverifiable remote default branch, a non-vibe branch) is the real cause.
+  if (inventory.ok === false && inventory.error) throw new Error(`handoff inventory: ${inventory.error}`);
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
   const file = inventory.pathPolicyFile;
@@ -194,3 +205,11 @@ async function main(argv: string[]) {
 }
 
 runWhenMain(import.meta.url, providerAware(main));
+
+/** The inventory spawn loadPathPolicy needs: spawnSync's string form, or a test's stand-in. */
+type PolicySpawn = (command: string, args: string[], options: { encoding: "utf8"; env: NodeJS.ProcessEnv; maxBuffer: number; timeout: number })
+  => { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; error?: Error };
+
+function defaultPolicySpawn(...[command, args, options]: Parameters<PolicySpawn>): ReturnType<PolicySpawn> {
+  return spawnSync(command, args, options);
+}

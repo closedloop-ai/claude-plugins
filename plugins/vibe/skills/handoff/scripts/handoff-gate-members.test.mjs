@@ -155,3 +155,25 @@ test("at PR creation the hook accepts a lead-only title but still requires a tit
   assert.match(create("--fill")?.reason ?? "", /pass --title so the gate checks the PR names them/);
   assert.equal(handoffGateProblem(worktree, { base: "main", bodyFile: body }) === null, false, "without a title the gate is not satisfied");
 });
+
+test("an active session's gate refuses a body without one Delivery placement line before it records anything", (t) => {
+  const { gitDir, worktree, receipts, body, ticket, member, audit, matrix, review } = fixture(t);
+  const record = JSON.parse(readFileSync(path.join(gitDir, "vibe-session.json"), "utf8"));
+  writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ ...record, status: "active" }));
+  const inventoryArgs = [];
+  const runScript = (command, args, options) => {
+    if (args[0].endsWith("criteria-audit.mjs")) return spawnSync(command, args, options);
+    inventoryArgs.push(args);
+    return { status: 0, stdout: JSON.stringify(passingInventory), stderr: "" };
+  };
+  const ids = ["AC-1", "ISS-124:AC-1"];
+  const gate = () => recordHandoffGate({ worktree, base: "main", body, runs: receipts[0], receipts, ticket, audit: audit(ids), matrix: matrix(ids),
+    members: [`ISS-124=${member}`], title: TITLE, review: review(ids) }, { runScript });
+  assert.throws(gate, /record one Delivery placement line/);
+  assert.deepEqual(inventoryArgs, [], "nothing runs before the body is final");
+  writeFileSync(body, "Delivers ISS-123 and ISS-124.\nDelivery placement: unit ISS-123\nDelivery placement: unrelated: twice\n");
+  assert.throws(gate, /record one Delivery placement line/, "two placement lines are not one");
+  writeFileSync(body, "Delivers ISS-123 and ISS-124.\nDelivery placement: unit ISS-123\n");
+  gate();
+  assert.equal(inventoryArgs.length, 1);
+});

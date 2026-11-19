@@ -281,17 +281,18 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 `shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names. A `frozen-render` finding is settled
-only by `scripts/frozen-render.mjs`, run in step 4 by
-`vibe-storybook-decomposer`: on a remote runner it uses fleet's
-`--shipped-plugin-script handoff/scripts/frozen-render.mjs`; the writer records the `Frozen render
-unchanged` line that command prints, and nobody captures frozen stories any
-other way. Give it the prepared base worktree, never base or head server URLs:
-the renderer starts both through the verifier's owned run wrapper and stops
-both before it returns, including after failure. The line names the session
-files it rendered and counts only while their story states and dependency
-inputs are unchanged. A later commit or main
-merge reruns it only when `qa-impact.mjs` names one of those states or the
-frozen-render dependency digest changes. A finding's `fix` is written for the writer, never relayed to the
+only by one shell step that launches no agent:
+`node scripts/frozen-render-gate.mjs --repo <worktree> --base <base>`. Run it
+as its own step, never inside `fleet.sh … slot heavy`: its builds take the
+heavy lock themselves. `FROZEN PASS` has already recorded the `Frozen render
+unchanged` line; on `FROZEN BLOCK`, read only the cropped diffs that
+results.json's blocking entries name (a blocking story's changed render held
+over the base confirmation renders, or its branch play failure reproduced);
+`FROZEN ERROR` is a setup problem to fix before rerunning. Nobody captures
+frozen stories any other way. The line names the session files it rendered
+and counts only while their story states and dependency inputs are
+unchanged. A later commit or main merge reruns it only when `qa-impact.mjs`
+names one of those states or the frozen-render dependency digest changes. A finding's `fix` is written for the writer, never relayed to the
 person as a step (`../vibe/references/plain-words.md`, "What the person is
 asked to do").
 
@@ -551,10 +552,8 @@ they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
 steps 3 to 6 run again on the result, with visual QA as one pass scoped to
 the changes since the last reviewed capture
-(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). Before handoff, the findings file must pass
-`node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings
-<findings.json> --require-disposition`; every finding on a touched surface has
-`fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
+(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). The handoff gate's `--visual-qa` check holds the
+findings file to `finding-brief.mjs --require-disposition`. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 
 Storybook plays run in a real browser, and card or narrow-layout
@@ -589,9 +588,9 @@ Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
 `scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
 (add `--member <slug>=<body>` for each of the session's `memberTickets`, the other tickets a fleet unit delivers in this PR; their rows are `<slug>:AC-n`, and run rulings-check and rollout-gate for each member too)
-(a unit, meaning member tickets or a PRD, also passes `--prd <slug>=<PRD body>` and `--review <review.json>`: the review of the completed work in `scripts/unit-review.mjs`. Every member criterion and every PRD criterion for the touched pages needs a code review row (`file:line`) AND a visual QA capture for each page and each surface (Web, Desktop) it names, from the visual QA pass below; one page or surface never stands in for another. Every grouped, sorted or paginated list query the unit touches is listed in `listQueries` and needs a criterion naming its page, kind and a load time, met by a `measured` row (command, dataset rows, timing). Send its `GAP <ticket> <criterion>` lines to the SAME writer, and to the person before anything is called ready)
-(every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
-`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
+(a unit, meaning member tickets or a PRD, also passes `--prd <slug>=<PRD body>` and `--review <review.json>` for `scripts/unit-review.mjs`; `../fleet-orchestrator/references/ticket-units.md`, step 4, says what the review holds: a code review row and a visual QA capture per page and surface, from the visual QA pass below, and a `measured` row per list query. Send its `GAP <ticket> <criterion>` lines to the SAME writer, and to the person before anything is called ready)
+(audit rows: `../vibe/references/spec-card.md`, "Audit rows";
+`../vibe/scripts/spec-card.mjs audit-skeleton` prints them)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
 Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific
@@ -879,6 +878,8 @@ pull request body stale and skip the guardrails. When
 the person asks for changes on their vibe pull request ("please fix the
 review comments", "engineering asked for changes on my PR", a link to the
 pull request, or engineering's request passed on through them), the session
-resumes and every fix goes through this path, never around it:
+resumes and every fix goes through this path, never around it. A ruling
+that changes scope is recorded with `vibe-sessions.mjs touch --body-stale
+"<ruling>"`, and the next push waits for `env-ctl.mjs pr-update`:
 
 > Read `references/handoff-pr.md` (block `section-10-changes`) when a handed-off session's pull request is open or the person asks for changes on it.

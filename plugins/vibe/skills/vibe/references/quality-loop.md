@@ -29,8 +29,6 @@ Fold a new ask on the same surface into its in-flight unit. When a question offe
 <!-- end generic: related-delivery -->
 > Provider `tickets` (block `related-delivery` of `vibe/quality-loop.md`)
 
-Before creating an issue or a pull request, the body records exactly one `Delivery placement: unit <name>`, `Delivery placement: open PR #<number>`, or `Delivery placement: unrelated: <why it is unrelated to each open unit in this repository>`. An existing open pull request receives the work without opening another one.
-
 Before any product question, use this order and stop as soon as it settles the
 answer:
 
@@ -330,11 +328,6 @@ or absorb: it becomes an `Engineering decision` item on the live ticket's
 Engineering checklist (`ticket-template.md`, "Engineering decisions"), never
 a question for the person.
 
-Build inventory and cloud import report whether the decision table is ready for
-handoff. Reconcile empty review sections, pending evidence or pending rulings
-against the actual code before advancing. Cloud import can bring the source
-into the worktree while handoff waits for that reconciliation.
-
 Keep implementation evidence, executed existing-test evidence and missing
 tests separate: planned tests are not coverage. `Required Tests` maps stable
 row IDs to the invariant, positive control, wrong-input/mixed-state negative
@@ -494,6 +487,9 @@ the orchestrator's push-ready commit, deploy and showing the person.
   typecheck runs through `fleet.sh <orchDir> remote slot heavy` after each
   writer fix and before each review round; it is never skipped and never run
   locally.
+- Self-review: before `DONE`, the writer runs the reviewers' duplicate-helper
+  and contradicting-text checks on its own diff (`../../agents/vibe-change-worker.md`,
+  "Self-review before `DONE`").
 - Acceptance check: before `DONE`, the writer checks every acceptance
   criterion the change touches with concrete, cheap evidence and records the
   result ("Acceptance criteria before ready" below).
@@ -512,8 +508,9 @@ Browser E2E, visual QA, logical QA, product-contract QA, the guardrails and
 adversarial reviews, `workflow-code-review`, the targeted existing tests,
 Storybook footprint, running app checks and any other heavy validation run
 at `$handoff`, never during the loop, even where a repository protocol
-asks for them before a change is done: handoff runs them. The acceptance
-check's single test, script or control read per criterion is not one of them.
+asks for them before a change is done: handoff runs them. The self-review and
+the acceptance check's single test, script or control read per criterion are
+not among them.
 The reference check before ready is the one exception to this rule, and it
 runs only with a reference image.
 Visual QA can also run between requests, outside the loop, when the person

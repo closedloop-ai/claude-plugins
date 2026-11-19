@@ -34,6 +34,16 @@ LAUNCHER_SOURCE = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "c
 AGENTS = PLUGIN_ROOT / "agents"
 SESSION_TERMS = ("handoff", "the branch to merge", "branch", "MCP", "storybook server", "seeded")
 GNU_TIMEOUT = re.compile(r"(?:^|[\s;&|(`$])g?timeout\s+(?:-[A-Za-z]+\s+\S+\s+)*\d")
+# Reviewed lines that write a `timeout` command as data, never run it: path to exact stripped line to reason.
+GUARD_INPUT = "a command string the app-binary guard is tested against, not a command the plugin runs"
+REVIEWED_TIMEOUT_LINES = {
+    "hooks/app-binary-guard.test.mjs": {
+        "`timeout 5 ${APP}/Contents/MacOS/Closedloop --version`,": f"{GUARD_INPUT}: wrapped in timeout, it is refused",
+        "`nice -n 5 timeout 5 ${APP}/Contents/MacOS/Closedloop --version`,": f"{GUARD_INPUT}: wrapped in nice and timeout, it is refused",
+        "`timeout 10 env ELECTRON_RUN_AS_NODE=1 ${APP}/Contents/MacOS/Closedloop helper.js`,":
+            f"{GUARD_INPUT}: a Node helper under timeout, it is allowed",
+    },
+}
 
 
 def banned_terms() -> list[str]:
@@ -128,10 +138,17 @@ def test_no_plugin_file_bounds_a_command_with_gnu_timeout() -> None:
     for path in PLUGIN_ROOT.rglob("*"):
         if path.suffix not in {".md", ".sh", ".mjs", ".yaml"} or "dist" in path.parts or "evals" in path.parts:
             continue
+        reviewed = REVIEWED_TIMEOUT_LINES.get(path.relative_to(PLUGIN_ROOT).as_posix(), {})
         for number, line in enumerate(skill_split.read(path).splitlines(), 1):
-            if GNU_TIMEOUT.search(line):
+            if GNU_TIMEOUT.search(line) and line.strip() not in reviewed:
                 offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{number}")
     assert offenders == []
+    for relative, lines in REVIEWED_TIMEOUT_LINES.items():
+        present = {line.strip() for line in skill_split.read(PLUGIN_ROOT / relative).splitlines()}
+        for text, reason in lines.items():
+            assert reason.strip(), text
+            assert text in present, f"{relative}: reviewed line no longer exists: {text}"
+            assert GNU_TIMEOUT.search(text), f"{relative}: reviewed line no longer matches: {text}"
     for text in (section(skill_split.read(VIBE_SKILL), "## Harness notes"),
                  flat(skill_split.read(AGENTS / "vibe-setup-worker.md")),
                  flat(skill_split.read(AGENTS / "vibe-verify-worker.md"))):

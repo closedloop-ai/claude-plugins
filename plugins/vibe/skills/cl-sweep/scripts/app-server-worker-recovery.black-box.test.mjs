@@ -16,13 +16,16 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import test, { before, after } from 'node:test';
 import { decodeWebSocketFrames } from './core-client-process.mjs';
-import { registryFixtureCode, installRegistryFixture } from './core-client-fixture.mjs';
+import { registryFixtureCode, installRegistryFixture, withModelCatalog, withoutModelOverrides } from './core-client-fixture.mjs';
 
 let restoreRegistry;
 before(() => { restoreRegistry = installRegistryFixture(); });
 after(() => restoreRegistry?.());
 
 const execFileAsync = promisify(execFile);
+withoutModelOverrides();
+withModelCatalog();
+
 const workerCli = resolve(import.meta.dirname, 'app-server-worker-session.mjs');
 const ownershipCli = resolve(import.meta.dirname, 'ownership-lease.mjs');
 
@@ -63,7 +66,7 @@ function startFakeAppServer(socketPath, cwd) {
     }
     if (method === 'thread/start' || method === 'thread/resume') {
       assert.equal(params.cwd, cwd);
-      assert.equal(params.model, 'gpt-6-sol');
+      assert.equal(params.model, 'gpt-6.2-sol');
       if (method === 'thread/resume') assert.equal(params.threadId, state.threadId);
       if (method === 'thread/start') state.created = true;
       return { thread: thread() };
@@ -81,7 +84,7 @@ function startFakeAppServer(socketPath, cwd) {
     if (method === 'turn/start') {
       assert.equal(params.threadId, state.threadId);
       assert.equal(params.cwd, cwd);
-      assert.equal(params.model, 'gpt-6-sol');
+      assert.equal(params.model, 'gpt-6.2-sol');
       assert.equal(params.effort, 'high');
       state.turnStartCount += 1;
       state.materialized = true;

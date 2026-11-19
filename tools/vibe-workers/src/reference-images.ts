@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { assertIsolatedTestRead } from "../../../plugins/vibe-core/lib/vibe/scripts/test-state-isolation.mjs";
+import { assertIsolatedTestRead } from "../../../plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs";
 
 /** Where `reference-images.mjs` stores the person's visual references, beside the session record. */
 export const REFERENCE_DIR = "vibe-reference-images";

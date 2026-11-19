@@ -23,7 +23,9 @@
 // session with members needs `--child-evidence`.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of the tracker provider's live ticket
-// template (`provider:ticket-template.md`).
+// template (`provider:ticket-template.md`). A ticket vibe did not create (no
+// VIBE_TICKET_MARKER line, or the record says `liveTicketCreatedBySession: false`)
+// is human-authored and is checked only for APPENDED_SECTIONS.
 //
 // Usage: live-ticket-check.mjs --file <ticket body .md> [--base-commit <sha>] [--worktree <path>]
 //          [--child-evidence <map .json>] [--now <iso>]
@@ -60,6 +62,11 @@ export const TICKET_SECTIONS = [
   "Grading",
   "Engineering checklist",
 ];
+
+/** The template's own line, which only a ticket vibe created carries. */
+export const VIBE_TICKET_MARKER = "Built in a vibe session by";
+/** The sections vibe appends to a human-authored ticket it adopted; its other sections are never vibe's to rewrite. */
+export const APPENDED_SECTIONS = ["Sessions", "Handoff", "Grading"];
 
 const SECTION_HEADING = /^## (.+?)\s*$/;
 const PENDING_MARKER = /(^|\s)Pending\.\s*$/m;
@@ -123,6 +130,9 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
   const noEnvironmentMatch = NO_ENVIRONMENT.exec(sections.get("Environment") ?? "");
   const noEnvironment = Boolean(noEnvironmentMatch && humanNoEnvironmentAuthority(noEnvironmentMatch[1], rulingsText));
   const noUi = Array.isArray(diffFiles) && !touchesUiPath(diffFiles);
+  // A ticket the record says this session created is checked in full even when its editable marker line was removed.
+  const adopted = record?.liveTicketCreatedBySession === false
+    || (record?.liveTicketCreatedBySession !== true && !body.includes(VIBE_TICKET_MARKER));
   if (noEnvironmentMatch && !noEnvironment) {
     problems.push({ section: "Environment", problem: "a no-environment ruling needs a dated human identity and source copied exactly from the session's canonical private vibe-changes.md" });
   }
@@ -138,7 +148,7 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
     try { requirePrototypePublication(record, headSha); }
     catch (error) { problems.push({ section: "Environment", problem: error.message }); }
   }
-  for (const heading of TICKET_SECTIONS) {
+  for (const heading of adopted ? APPENDED_SECTIONS : TICKET_SECTIONS) {
     const content = sections.get(heading);
     if (content === undefined) {
       problems.push({ section: heading, problem: "missing" });

@@ -27,12 +27,13 @@ import { GRAPH_CHANGE_SELECTOR, GRAPH_SELECTOR, prEvidenceShapeProblems, readTes
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
 import { leftByRuling, RULING_HOST_LANES, targetedTestsRuling } from "./targeted-tests-ruling.mjs";
-import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
+import { pathFilteredPullRequestWorkflows, readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
+const { upstreamBranchName } = await vibeCore("lib/vibe/scripts/upstream-branch.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -112,8 +113,9 @@ function evidenceCandidateFiles(worktree) {
 export function computeOverlap({ worktree, changed, prs, ownBranch }) {
   const changedSet = new Set(changed);
   const imported = new Set(changed.flatMap((file) => importsOf(worktree, file)).filter((file) => !changedSet.has(file)));
+  const own = ownBranches(worktree, ownBranch);
   return prs
-    .filter((pr) => pr.headRefName !== ownBranch && !pr.unavailableReason)
+    .filter((pr) => !own.has(pr.headRefName) && !pr.unavailableReason)
     .map((pr) => ({ number: pr.number, title: pr.title,
       sharedFiles: pr.files.filter((file) => changedSet.has(file)), importedFiles: pr.files.filter((file) => imported.has(file)) }))
     .filter((pr) => pr.sharedFiles.length + pr.importedFiles.length > 0)
@@ -439,7 +441,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       refusals,
       asks: ticketText ? [...new Set([...ticketText.matchAll(ASK)].map(([ask]) => ask.replace(/\s+/g, " ").trim()))] : [],
       overlap: prs ? computeOverlap({ worktree, changed, prs, ownBranch }) : null,
-      overlapUnavailable: prs ? prs.filter((pr) => pr.headRefName !== ownBranch && pr.unavailableReason)
+      overlapUnavailable: prs ? prs.filter((pr) => pr.unavailableReason && !ownBranches(worktree, ownBranch).has(pr.headRefName))
         .map(({ number, title, unavailableReason: reason }) => ({ number, title, reason })) : [],
     };
     return {
@@ -455,6 +457,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
           readSource: file => proofSourceAt(worktree, file), probeCapability, currentCommit: commit,
           requiredTests, ticketText, rulingsText }),
         ...ciCheckProblems(runs, changed, testedCommit),
+        ...pathWorkflowProblems(runs, changed, workflowsAt(worktree, current.head), testedCommit),
       ] }),
     };
   });
@@ -772,7 +775,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir,
         && (!impactKey || atHead(run) || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
         && (!recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
-      problems.push(`lane ${lane.name}: no passing run of its lane command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
+      problems.push(`lane ${lane.name}: no passing run of its lane command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238). A lane that fails on main too is recorded with pre-pr-lanes.mjs record --result main-preexisting; only a dated human targeted-tests ruling leaves it not run`);
     }
   }
   if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {
@@ -932,4 +935,44 @@ function mustRunTests(requiredTests, files) {
 /** Whether a verified ruling leaves `test` not run: never a `mustRun` test, and only on a row naming the ruling. */
 function ruledByRuling(runs, test, rulingId, commit, mustRun) {
   return !mustRun.has(test) && runs.some((run) => run?.path === test && leftByRuling(run, rulingId, commit));
+}
+
+// A step that is exactly a dependency install or tool setup checks nothing; one that reads `${{ }}` expressions or the
+// runner's files cannot run locally as written.
+const SETUP_COMMAND = /^(?:corepack\s+enable|(?:pnpm|npm|yarn|bun)\s+(?:install|ci|i|fetch|setup)|uv\s+(?:sync|pip\s+install)|pip\s+install|npx\s+playwright\s+install)(?=\s|$)[^\n;&|]*$/;
+const RUNNER_BOUND = /\$\{?(?:GITHUB|RUNNER)_[A-Z_]+|\$\{\{/;
+
+/** The session's own branch names: the local branch and the origin branch it is set to push to, when that name differs. */
+export function ownBranches(worktree, branch) {
+  return new Set([branch, upstreamBranchName(worktree, branch)].filter(Boolean));
+}
+
+/**
+ * A pull_request workflow whose path filter the diff satisfies runs in CI whatever the repository's lane selector names.
+ * Every run step of its jobs that can run on a passing pull request needs a passing (or main-preexisting) run of exactly
+ * that command on the tested commit, so no preparing step can stand in for the check; only an exact install is exempt.
+ * A step that cannot run locally as written (it reads `${{ }}` expressions or the runner's files), or a job with no run
+ * step, may instead carry a `not-run` row on the tested commit naming the command (or `<workflow> job <job>`) with its
+ * reason, so the gap stays visible. The declared workflow lane source is checked lane by lane elsewhere.
+ */
+export function pathWorkflowProblems(runsFile, changed, workflows, commit) {
+  const declared = runsFile?.targetedInventory?.laneReport?.source?.path;
+  const onCommit = [...(runsFile?.runs ?? []), ...(runsFile?.testRuns ?? [])].filter((run) => Boolean(commit) && run?.commit === commit);
+  const ran = new Set(onCommit.filter(passedOrMainPreexisting).map((run) => run.command).filter(text).map((command) => command.trim()));
+  const leftNotRun = new Set(onCommit.filter((run) => run.status === "not-run" && text(run.reason)).map((run) => run.command).filter(text).map((command) => command.trim()));
+  return pathFilteredPullRequestWorkflows(workflows.filter((workflow) => workflow.path !== declared), changed)
+    .flatMap((workflow) => workflow.jobChecks.flatMap(({ job, command }) => {
+      const name = command ?? `${workflow.path} job ${job}`;
+      if (command !== null && SETUP_COMMAND.test(command)) return [];
+      if (ran.has(name) || ((command === null || RUNNER_BOUND.test(command)) && leftNotRun.has(name))) return [];
+      const how = command === null || RUNNER_BOUND.test(command) ? "a passing run, or a not-run row with its reason," : "a passing run";
+      return [`${workflow.path} job ${job} runs on this pull request (its path filter matches ${workflow.matchedFiles.slice(0, 3).join(", ")}); record ${how} on the tested commit for \`${name}\``];
+    }));
+}
+
+/** Every workflow file under `.github/workflows` at `commit`, read strictly: a git failure throws rather than reading as none. */
+function workflowsAt(worktree, commit) {
+  return git(worktree, ["ls-tree", "-r", "--name-only", commit, "--", ".github/workflows/"]).split("\n")
+    .filter((file) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file))
+    .map((file) => ({ path: file, text: committedFile(worktree, commit, file).toString("utf8") }));
 }

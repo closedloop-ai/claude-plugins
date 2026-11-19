@@ -16,16 +16,9 @@ stack, request the registered `fleet-orchestrator/scripts/helpers.mjs scratch-ru
 path with owner, ticket, worktree and TTL. Do not start a raw scratch container
 or Compose project; inspect existing Docker state read-only through normal
 diagnostic commands.
-Scratch files: Each worker gets its own scratch directory named with its
-worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes
-only exact paths it created; an orchestrator brief never asks a worker to
-delete by prefix or glob.
 Read `../skills/vibe/references/review-premises.md` before reporting a failure
 or missing coverage. Verify tool, runtime, CLI, platform and source premises;
 label an unverified premise and never make it a blocking result.
-When ROOT supplied any graph read capability, make at least one graph call
-before returning; the native receipt rejects a completed verification that
-leaves an available graph unused.
 For the final handoff verification turn, return `data.findings` as the current
 source's verifier failures: `{id, blocking, evidence, premises}` entries, or
 `[]` after all required checks pass. An unfinished or unverified result cannot
@@ -38,8 +31,10 @@ Save the repository-declared lane report as `<gitdir>/vibe-lane-report.txt`.
 > Provider `recipes` (block `lane-default` of `agents/vibe-verify-worker.md`)
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
-Run frozen comparison with its prepared base worktree; remote uses
-`fleet.sh <orchDir> remote slot heavy <owner> <worktree> --shipped-plugin-script handoff/scripts/frozen-render.mjs <args>`.
+Frozen comparison is handoff's `scripts/frozen-render-gate.mjs` shell step, run
+outside any fleet slot, since its builds take the heavy lock themselves. Other
+remote heavy checks use `fleet.sh <orchDir> remote slot heavy <owner> <worktree> <command...>`
+on a clean committed worktree.
 Other Storybook checks use `verify-storybook-process.mjs run`. These wrappers
 own server cleanup; never adopt or signal an unrecorded server.
 All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
@@ -49,10 +44,7 @@ the writer only repairs existing tests its change broke
 in the build loop, whose only checks are the writer's quick hook checks and
 its acceptance criterion checks (`quality-loop.md`, "Lean build loop" and
 "Acceptance criteria before ready"). Never commit, push or create a
-worktree/branch. Never pass `--no-verify` (or `git commit -n`), set
-`core.hooksPath`, or bypass a commit hook any other way, for a proof or scratch
-commit too. A proof commit whose hook fails is not made; report not ready with
-the hook output.
+worktree/branch.
 
 ## Inputs and references
 
@@ -113,17 +105,10 @@ surface runs only under a harness the repository documents as displayless;
 otherwise record the exact limitation and rely on the checks the repository
 runs on its pull requests. Never trigger CI or reviews manually.
 
-When the repository's root rule explicitly permits a targeted local E2E lane,
-run every selected spec and every E2E spec the change adds or edits. Record a
-passing lane with `pre-pr-lanes.mjs record --targeted-specs '<JSON list>'
---graph-query '<exact observed tool arguments JSON>' --graph-session '<native thread>'
---graph-turn '<completed turn>'` in Codex, or replace the last two options with
-`--graph-launcher-result '<owned Claude launcher result>'` in Claude;
-its `check` command binds that receipt to
-the unchanged file scope and prints `TARGETED-LANE`. Without that repository
-rule, the full local lane remains required. Describe a later full lane only
-where the repository actually runs it, never as a pull-request check by
-assumption.
+When the repository's root rule permits a targeted local E2E lane,
+`pre-pr-lanes.mjs check` prints `TARGETED-E2E` with how to record it; otherwise
+the full local lane is required. Describe a later full lane only where the
+repository actually runs it, never as a pull-request check by assumption.
 <!-- end generic: existing-checks -->
 > Provider `recipes` (block `existing-checks` of `agents/vibe-verify-worker.md`)
 

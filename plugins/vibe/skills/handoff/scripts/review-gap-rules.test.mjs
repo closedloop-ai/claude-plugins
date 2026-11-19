@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { performance } from "node:perf_hooks";
-import { checkDuplicateHelpers } from "./review-gap-rules.mjs";
+import { checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
 import { run } from "./diff-rules-test-fixture.mjs";
 
 
@@ -109,4 +109,22 @@ test("ISS-14162 a malformed build marker proves nothing, so the copy is still fl
 test("ISS-14162 a build marker naming a source that does not exist is still flagged", (t) => {
   const result = run(t, { head: { [SOURCE]: HELPER, [BUILT]: HELPER, [MARKER]: marker("plugins/missing") } });
   assert.equal(duplicates(result).length, 1);
+});
+
+test("ISS-14116: unused-export prefetches every new export name in one search before reading any", () => {
+  const files = [
+    { path: "src/a.ts", status: "M", added: [{ line: 1, text: "export const alpha = 1;" }, { line: 2, text: "export function beta() {}" }] },
+    { path: "src/b.ts", status: "A", added: [{ line: 1, text: "export type Gamma = string;" }] },
+  ];
+  const calls = [];
+  const repo = {
+    base: () => null,
+    prefetchWords: (words) => calls.push(["prefetch", [...words]]),
+    wordFiles: (word) => { calls.push(["read", word]); return word === "alpha" ? ["src/a.ts", "src/c.ts"] : []; },
+  };
+  const findings = [];
+  checkUnusedExports(files, repo, () => false, (...args) => findings.push(args[2]));
+  assert.deepEqual(calls[0], ["prefetch", ["alpha", "beta", "Gamma"]]);
+  assert.equal(calls.filter(([kind]) => kind === "prefetch").length, 1);
+  assert.deepEqual(findings, [2, 1]);
 });

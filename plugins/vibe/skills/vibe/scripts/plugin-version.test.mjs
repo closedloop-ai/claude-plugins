@@ -342,7 +342,7 @@ test("a harness with vibe but no vibe-core is outdated, and the chosen update in
 
 // Operator ruling (2026-11-09): the setup check names a missing vibe-core in Codex, and asks the developer to
 // approve its hooks only when Codex's hooks/list says one needs it.
-const APPROVE = "open Codex once and approve vibe-core's hooks in /hooks";
+const { APPROVE_HOOKS: APPROVE } = await import("./vibe-core-hooks.mjs");
 const SPLIT = { vibe: "1.1.71", "vibe-core": "1.0.0", "closedloop-core": "1.6.2" };
 const installedAt = (versions, names) => names.map((name) => ({ name, version: versions[name] }));
 
@@ -666,6 +666,10 @@ function cachedRelease(cache, version) {
   cpSync(path.join(PLUGIN_ROOT, "agents", "vibe-change-worker.md"), path.join(root, "agents", "vibe-change-worker.md"));
   cpSync(path.join(PLUGIN_ROOT, "skills", "vibe", "scripts", "dist", "writer-state.mjs"),
     path.join(root, "skills", "vibe", "scripts", "dist", "writer-state.mjs"));
+  // The bundle loads lib/ (which imports shared/) from its own release at run time; hooks/ ships beside it.
+  for (const part of ["lib", "hooks", "shared"]) {
+    cpSync(path.join(PLUGIN_ROOT, part), path.join(root, part), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
+  }
   return root;
 }
 

@@ -598,7 +598,7 @@ export async function startTurn(client, state, prompt, promptFile, {
     threadId = started?.thread?.id;
     if (!threadId) throw new Error('App Server returned no thread id');
     afterNewThread(threadId);
-    // vibe-core's hooks treat a thread the launcher started as an activated chat before its first skill load.
+    // vibe's hooks treat a thread the launcher started as an activated chat before its first skill load.
     recordWorkerScope(threadId, cwd);
     for (const warning of await labelWorkerThread(client, threadId, workerThreadName(name, state.ticket))) warn(warning);
   }

@@ -26,6 +26,7 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 DIFF_RULES = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules.mjs"
+DIFF_RULES_REPO = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules-repo.mjs"
 CL_EXECUTE_PR = PLUGIN_ROOT / "skills" / "cl-execute" / "references" / "implementation-review-pr.md"
 
 
@@ -94,7 +95,7 @@ def test_lost_and_stale_story_ids_are_searched_and_block() -> None:
     rules = skill_split.read(DIFF_RULES)
     assert '"lost-story-id"' in rules
     # The places a story ID can be named: the repository's e2e roots, its docs (the provider's diff rules) and tests.
-    assert '"--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"' in rules
+    assert '"--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"' in skill_split.read(DIFF_RULES_REPO)
     docs = PROVIDER_DATA["recipes"]["diffRules"]["docs"]
     for spec in ("docs/", "apps/web/content/docs/", ".claude/"):
         assert spec in docs, spec
@@ -334,7 +335,7 @@ def test_new_text_uses_no_emdashes_or_double_hyphen_dashes() -> None:
 def test_diff_rules_run_inside_the_inventory_and_block() -> None:
     inventory = skill_split.read(INVENTORY)
     rules = skill_split.read(DIFF_RULES)
-    assert 'import { runDiffRules } from "./diff-rules.mjs";' in inventory
+    assert 'import { runDiffRules, sessionInternalIds } from "./diff-rules.mjs";' in inventory
     assert "diffRulesClear: diffRulesBlocking.length === 0" in inventory
     assert 'const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);' in inventory
     for rule in ("migration-precedent", "migration-backfill", "activity-capture", "tx-result-after-write",

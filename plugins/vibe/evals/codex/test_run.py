@@ -166,6 +166,13 @@ def test_default_model_uses_shared_policy_at_low_effort(tmp_path: Path) -> None:
     assert 'model_reasoning_effort="low"' in args
 
 
+def test_iss_14112_ac_8_evals_run_on_the_switched_default(tmp_path: Path) -> None:
+    """Operator ruling 2026-11-17 ("Switch evals too"): the runner's default Codex model is gpt-6.2-sol."""
+    assert runner.default_codex_model() == "gpt-6.2-sol"
+    args = runner.exec_args(runner.default_codex_model(), tmp_path, tmp_path / "reply.txt")
+    assert args[args.index("-m") + 1] == "gpt-6.2-sol"
+
+
 def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None:
     """An outer interrupt can stop a model process started by a worker thread."""
     marker = tmp_path / "grandchild.pid"
@@ -192,8 +199,8 @@ def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None
 
 
 def copied_identity_helper(output: Path) -> Path:
-    """Place real runtime helper bytes in the fixture's installed payload (vibe-core holds them)."""
-    target = output / "market/plugins/vibe-core/lib/vibe/scripts"
+    """Place real runtime helper bytes in the fixture's installed payload (vibe's lib holds them)."""
+    target = output / "market/plugins/vibe/lib/vibe/scripts"
     target.mkdir(parents=True, exist_ok=True)
     for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs"):
         (target / name).write_bytes((runner.IDENTITY_SCRIPTS / name).read_bytes())
@@ -202,11 +209,11 @@ def copied_identity_helper(output: Path) -> Path:
 
 def test_receipts_use_copied_helper_after_live_helper_mutates(tmp_path: Path, monkeypatch) -> None:
     copied = copied_identity_helper(tmp_path)
-    (tmp_path / "market/plugins/vibe").mkdir()
+    (tmp_path / "market/plugins/vibe").mkdir(exist_ok=True)
     (tmp_path / "market/plugins/closedloop-core").mkdir()
     (tmp_path / "suite").mkdir()
     live = tmp_path / "live"
-    live_scripts = live / "vibe-core/lib/vibe/scripts"
+    live_scripts = live / "vibe/lib/vibe/scripts"
     live_scripts.mkdir(parents=True)
     for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs"):
         (live_scripts / name).write_bytes((copied.parent / name).read_bytes())
@@ -1025,6 +1032,28 @@ def test_generic_cases_cover_the_walk_and_load_no_provider() -> None:
         assert not any("provider" in plugin for plugin in case["meta"]["plugins"]), case["name"]
         assert (case["source"] / "graders" / "no-provider-names.md").is_file(), case["name"]
     assert any(runner.case_arm(case) == "provider" for case in runner.cases())
+
+
+def test_iss_14116_a_selection_naming_both_arms_is_refused_and_each_arm_accepts_its_own(
+    monkeypatch, capsys
+) -> None:
+    """The nightly passed every ordinary case to one provider-arm run; the driver now splits them by arm."""
+    names = {arm: [c["name"] for c in runner.cases() if runner.case_arm(c) == arm] for arm in ("provider", "generic")}
+    assert names["provider"] and names["generic"]
+
+    def listed(arm: str, selection: list[str]) -> int:
+        argv = ["run.py", "--list", "--arm", arm] + [x for name in selection for x in ("--case", name)]
+        monkeypatch.setattr(sys, "argv", argv)
+        try:
+            return runner.main()
+        except SystemExit as stop:
+            return stop.code if isinstance(stop.code, int) else 1
+
+    assert listed("provider", names["provider"] + names["generic"]) == 2
+    assert "unknown or empty case selection" in capsys.readouterr().err
+    for arm in ("provider", "generic"):
+        assert listed(arm, names[arm]) == 0
+        assert sorted(capsys.readouterr().out.split()) == sorted(names[arm])
 
 
 def _tree_bytes(root: Path) -> dict[str, bytes]:

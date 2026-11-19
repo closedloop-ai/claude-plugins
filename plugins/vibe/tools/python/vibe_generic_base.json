@@ -44158,7 +44158,7 @@
 "digest": "f8e7f2cdf27a5d2520e6"
 },
 {
-"path": "plugins/vibe-core/hooks/agent-guard.mjs",
+"path": "plugins/vibe/hooks/agent-guard.mjs",
 "line": 42,
 "families": [
 "graph",
@@ -44167,7 +44167,7 @@
 "digest": "a02e5fa4903d82a6d3e9"
 },
 {
-"path": "plugins/vibe-core/hooks/agent-guard.mjs",
+"path": "plugins/vibe/hooks/agent-guard.mjs",
 "line": 46,
 "families": [
 "organization"
@@ -44175,7 +44175,7 @@
 "digest": "d229d7722ea0d506dc46"
 },
 {
-"path": "plugins/vibe-core/hooks/context-guard.mjs",
+"path": "plugins/vibe/hooks/context-guard.mjs",
 "line": 2,
 "families": [
 "slug"
@@ -44183,7 +44183,7 @@
 "digest": "2927e3a3bc40904d6112"
 },
 {
-"path": "plugins/vibe-core/hooks/fleet-resume.test.mjs",
+"path": "plugins/vibe/hooks/fleet-resume.test.mjs",
 "line": 23,
 "families": [
 "slug",
@@ -44192,7 +44192,7 @@
 "digest": "2a973746a83cfc4fd641"
 },
 {
-"path": "plugins/vibe-core/hooks/fleet-resume.test.mjs",
+"path": "plugins/vibe/hooks/fleet-resume.test.mjs",
 "line": 37,
 "families": [
 "slug",
@@ -44201,7 +44201,7 @@
 "digest": "e94cad8dd7d1660885e7"
 },
 {
-"path": "plugins/vibe-core/hooks/guard-install.test.mjs",
+"path": "plugins/vibe/hooks/guard-install.test.mjs",
 "line": 18,
 "families": [
 "organization"
@@ -44218,7 +44218,7 @@
 "digest": "41ccd7e1940f6d639d85"
 },
 {
-"path": "plugins/vibe-core/hooks/kill-guard.test.mjs",
+"path": "plugins/vibe/hooks/kill-guard.test.mjs",
 "line": 71,
 "families": [
 "repo-path"
@@ -44226,7 +44226,7 @@
 "digest": "a295645c854c86e90df9"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.mjs",
+"path": "plugins/vibe/hooks/merge-guard.mjs",
 "line": 14,
 "families": [
 "repo-identity",
@@ -44235,7 +44235,7 @@
 "digest": "616fe7e7a238c8a5e007"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 45,
 "families": [
 "repo-identity"
@@ -44243,7 +44243,7 @@
 "digest": "22fbf0997b5908362a46"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 49,
 "families": [
 "identity"
@@ -44251,7 +44251,7 @@
 "digest": "8d5a3df72030f2812656"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 50,
 "families": [
 "identity"
@@ -44259,7 +44259,7 @@
 "digest": "cfbadec3b9a276095e38"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 51,
 "families": [
 "identity"
@@ -44267,7 +44267,7 @@
 "digest": "3bd7d0b4058891ae79e5"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 62,
 "families": [
 "identity"
@@ -44275,7 +44275,7 @@
 "digest": "13cd1b399ee697026ea8"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 74,
 "families": [
 "identity"
@@ -44283,7 +44283,7 @@
 "digest": "041b9610515fdf4b16e4"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 75,
 "families": [
 "identity"
@@ -44291,7 +44291,7 @@
 "digest": "423ee985a08f752194ae"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 76,
 "families": [
 "identity"
@@ -44299,7 +44299,7 @@
 "digest": "7df9950b973402b7206b"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 77,
 "families": [
 "identity"
@@ -44307,7 +44307,7 @@
 "digest": "b89d55b77bffaa7e9b08"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 81,
 "families": [
 "slug"
@@ -44315,7 +44315,7 @@
 "digest": "3820b4bbb11775e87c79"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 96,
 "families": [
 "identity"
@@ -44323,7 +44323,7 @@
 "digest": "115c9dbd986df0a7df4f"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 102,
 "families": [
 "identity"
@@ -44331,7 +44331,7 @@
 "digest": "d32841d8d9f20caf1013"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 103,
 "families": [
 "identity"
@@ -44339,7 +44339,7 @@
 "digest": "66b0e59bf5ed3ebcb982"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 104,
 "families": [
 "identity"
@@ -44347,7 +44347,7 @@
 "digest": "9a392f950df78eeb0c2d"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 105,
 "families": [
 "identity"
@@ -44355,7 +44355,7 @@
 "digest": "ba83049a4f1725fbc18d"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 106,
 "families": [
 "identity"
@@ -44363,7 +44363,7 @@
 "digest": "e5a76b552d8cd63f4608"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 112,
 "families": [
 "identity"
@@ -44371,7 +44371,7 @@
 "digest": "87c6542a2ba840537f12"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 113,
 "families": [
 "identity"
@@ -44379,7 +44379,7 @@
 "digest": "f3a5b424394ef7898a2e"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 114,
 "families": [
 "identity"
@@ -44387,7 +44387,7 @@
 "digest": "558a24d1b905065227b4"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 115,
 "families": [
 "identity"
@@ -44395,7 +44395,7 @@
 "digest": "f78f174d8ea38dde192c"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 116,
 "families": [
 "identity"
@@ -44403,7 +44403,7 @@
 "digest": "e27b0c4ad55a0498abe1"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 117,
 "families": [
 "identity"
@@ -44411,7 +44411,7 @@
 "digest": "8e74a173ced9abefe245"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 118,
 "families": [
 "identity"
@@ -44419,7 +44419,7 @@
 "digest": "20224d8331ae3054829d"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 119,
 "families": [
 "identity"
@@ -44427,7 +44427,7 @@
 "digest": "6d14a44cacf4bd0fca29"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 120,
 "families": [
 "identity"
@@ -44435,7 +44435,7 @@
 "digest": "9f217574c6d97fd4a580"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 121,
 "families": [
 "identity"
@@ -44443,7 +44443,7 @@
 "digest": "1e78d8281332da76af0f"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 135,
 "families": [
 "machine"
@@ -44451,7 +44451,7 @@
 "digest": "b2d4c9a3cfdf6d3e75ad"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 136,
 "families": [
 "identity"
@@ -44459,7 +44459,7 @@
 "digest": "e046f77e8ff21faa260e"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 137,
 "families": [
 "identity"
@@ -44467,7 +44467,7 @@
 "digest": "70f88ac7dc9123c1473b"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 143,
 "families": [
 "identity"
@@ -44475,7 +44475,7 @@
 "digest": "6c1f523e8a97923d9ec1"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 144,
 "families": [
 "identity"
@@ -44483,7 +44483,7 @@
 "digest": "fb562b540be9e045be31"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 145,
 "families": [
 "identity"
@@ -44491,7 +44491,7 @@
 "digest": "5d8301103d5ced3495b3"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 173,
 "families": [
 "identity"
@@ -44499,7 +44499,7 @@
 "digest": "df0ee68baecf67ae5a39"
 },
 {
-"path": "plugins/vibe-core/hooks/merge-guard.test.mjs",
+"path": "plugins/vibe/hooks/merge-guard.test.mjs",
 "line": 184,
 "families": [
 "identity"
@@ -44507,7 +44507,7 @@
 "digest": "3e884476f6ff1b2635df"
 },
 {
-"path": "plugins/vibe-core/hooks/plugin-version-guard.test.mjs",
+"path": "plugins/vibe/hooks/plugin-version-guard.test.mjs",
 "line": 32,
 "families": [
 "slug"
@@ -44515,7 +44515,7 @@
 "digest": "275a619fdf77e602953d"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.mjs",
 "line": 16,
 "families": [
 "slug"
@@ -44523,7 +44523,7 @@
 "digest": "01343c9ea4da1a4f6e05"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.mjs",
 "line": 216,
 "families": [
 "slug"
@@ -44531,7 +44531,7 @@
 "digest": "4eafd4a4a31d7db5f899"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 226,
 "families": [
 "tracker-tool",
@@ -44540,7 +44540,7 @@
 "digest": "3595791827cc4de2b913"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 228,
 "families": [
 "tracker-tool",
@@ -44549,7 +44549,7 @@
 "digest": "7b2c474027fb3b78bc15"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 355,
 "families": [
 "slug",
@@ -44558,7 +44558,7 @@
 "digest": "062446274897a1c481e6"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 364,
 "families": [
 "slug"
@@ -44566,7 +44566,7 @@
 "digest": "3b53c73fd0fd5111ef8f"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 378,
 "families": [
 "slug"
@@ -44574,7 +44574,7 @@
 "digest": "4d099e68dc415b142ca0"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 382,
 "families": [
 "slug"
@@ -44582,7 +44582,7 @@
 "digest": "23bbff85c6a0a4db3675"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 384,
 "families": [
 "slug"
@@ -44590,7 +44590,7 @@
 "digest": "701f3343cc005272a999"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 387,
 "families": [
 "slug"
@@ -44598,7 +44598,7 @@
 "digest": "3b53c73fd0fd5111ef8f"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 392,
 "families": [
 "slug"
@@ -44606,7 +44606,7 @@
 "digest": "8111c3fabac0c428607f"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 487,
 "families": [
 "slug"
@@ -44614,7 +44614,7 @@
 "digest": "d2a113a58f4d95c60777"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 515,
 "families": [
 "slug"
@@ -44622,7 +44622,7 @@
 "digest": "b0d44057c4fa9563eb8c"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 516,
 "families": [
 "slug"
@@ -44630,7 +44630,7 @@
 "digest": "501fd082f6784b3cf09e"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 518,
 "families": [
 "slug"
@@ -44638,7 +44638,7 @@
 "digest": "8c4d0d04eff02a05e264"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 533,
 "families": [
 "slug",
@@ -44647,7 +44647,7 @@
 "digest": "48cc3273e53efd848798"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 536,
 "families": [
 "slug"
@@ -44655,7 +44655,7 @@
 "digest": "06346db8a18f0982e8e6"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 545,
 "families": [
 "slug"
@@ -44663,7 +44663,7 @@
 "digest": "f678840537f9dce1ed4c"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 593,
 "families": [
 "slug"
@@ -44671,7 +44671,7 @@
 "digest": "b7c9bf951d778757bf1b"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 595,
 "families": [
 "slug"
@@ -44679,7 +44679,7 @@
 "digest": "7cb2d74c58f4a8afafcb"
 },
 {
-"path": "plugins/vibe-core/hooks/pr-create-guard.test.mjs",
+"path": "plugins/vibe/hooks/pr-create-guard.test.mjs",
 "line": 618,
 "families": [
 "slug"
@@ -44687,7 +44687,7 @@
 "digest": "814f899a815a295d4c99"
 },
 {
-"path": "plugins/vibe-core/hooks/program-change.mjs",
+"path": "plugins/vibe/hooks/program-change.mjs",
 "line": 18,
 "families": [
 "slug",
@@ -44697,7 +44697,7 @@
 "digest": "fe041f5cc5e0cc0a961e"
 },
 {
-"path": "plugins/vibe-core/hooks/program-change.test.mjs",
+"path": "plugins/vibe/hooks/program-change.test.mjs",
 "line": 28,
 "families": [
 "slug",
@@ -44706,7 +44706,7 @@
 "digest": "7492929c9fe67f7a3adf"
 },
 {
-"path": "plugins/vibe-core/hooks/program-change.test.mjs",
+"path": "plugins/vibe/hooks/program-change.test.mjs",
 "line": 30,
 "families": [
 "slug",
@@ -44715,7 +44715,7 @@
 "digest": "243960f419c71b4e949e"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.mjs",
 "line": 8,
 "families": [
 "repo-command"
@@ -44723,7 +44723,7 @@
 "digest": "b89a1f68f803304441a0"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.mjs",
 "line": 141,
 "families": [
 "repo-command"
@@ -44731,7 +44731,7 @@
 "digest": "459984226b9a9d7a7297"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.mjs",
 "line": 143,
 "families": [
 "repo-command"
@@ -44739,7 +44739,7 @@
 "digest": "eff92f85cc0d7389138f"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.mjs",
 "line": 146,
 "families": [
 "repo-command"
@@ -44747,7 +44747,7 @@
 "digest": "b8d96c4678746b480d6e"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 13,
 "families": [
 "identity"
@@ -44755,7 +44755,7 @@
 "digest": "74c25ec133c058defc47"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 16,
 "families": [
 "identity"
@@ -44763,7 +44763,7 @@
 "digest": "15759b3519342d09dc2b"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 19,
 "families": [
 "identity"
@@ -44771,7 +44771,7 @@
 "digest": "4e63ea195849988078a9"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 40,
 "families": [
 "identity"
@@ -44779,7 +44779,7 @@
 "digest": "ab54eeb82b5557d6a018"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 68,
 "families": [
 "repo-command"
@@ -44787,7 +44787,7 @@
 "digest": "3ffab72f896833d63451"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 69,
 "families": [
 "slug",
@@ -44796,7 +44796,7 @@
 "digest": "144fc9942006c74bad8e"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 70,
 "families": [
 "slug",
@@ -44805,7 +44805,7 @@
 "digest": "45c3136fe803e6ea8ce4"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 73,
 "families": [
 "slug",
@@ -44814,7 +44814,7 @@
 "digest": "ee7ca3c24eabc7e6f5c6"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 74,
 "families": [
 "slug",
@@ -44823,7 +44823,7 @@
 "digest": "8247c65b3495f1c6eed4"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 75,
 "families": [
 "slug",
@@ -44832,7 +44832,7 @@
 "digest": "10f092d70ddfb99f01c1"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 76,
 "families": [
 "repo-command"
@@ -44840,7 +44840,7 @@
 "digest": "497b4b2604cbd1427519"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 77,
 "families": [
 "slug",
@@ -44849,7 +44849,7 @@
 "digest": "722a4190af715516745a"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 79,
 "families": [
 "slug",
@@ -44858,7 +44858,7 @@
 "digest": "3347cad49a4c4c8c7b2b"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 81,
 "families": [
 "slug",
@@ -44867,7 +44867,7 @@
 "digest": "818730d020d07f1f6818"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 82,
 "families": [
 "slug",
@@ -44876,7 +44876,7 @@
 "digest": "fdd7b2fde32933d41738"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 85,
 "families": [
 "slug",
@@ -44885,7 +44885,7 @@
 "digest": "49d7d5ee20aef01afdbb"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 86,
 "families": [
 "slug",
@@ -44894,7 +44894,7 @@
 "digest": "5be23dbde1f8b91cc927"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 89,
 "families": [
 "slug",
@@ -44903,7 +44903,7 @@
 "digest": "73924c39cabae2dd6568"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 94,
 "families": [
 "repo-command"
@@ -44911,7 +44911,7 @@
 "digest": "b11855947b8f80e2ee7b"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 95,
 "families": [
 "slug"
@@ -44919,7 +44919,7 @@
 "digest": "1ee2cefd6bcfd4e8c29c"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 97,
 "families": [
 "slug"
@@ -44927,7 +44927,7 @@
 "digest": "7c918a47cd3f584a1a87"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 98,
 "families": [
 "slug",
@@ -44936,7 +44936,7 @@
 "digest": "00e4b3b5a061b7e78e9e"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 101,
 "families": [
 "slug"
@@ -44944,7 +44944,7 @@
 "digest": "b11ef570395250304b58"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 103,
 "families": [
 "slug",
@@ -44953,7 +44953,7 @@
 "digest": "d35bf71f554859c48304"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 105,
 "families": [
 "slug",
@@ -44962,7 +44962,7 @@
 "digest": "cf38d4520d0a5a78ba72"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 110,
 "families": [
 "repo-command"
@@ -44970,7 +44970,7 @@
 "digest": "d7965becf4c7be092a4e"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 128,
 "families": [
 "slug"
@@ -44978,7 +44978,7 @@
 "digest": "cb412c8229e27c666acc"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 129,
 "families": [
 "slug"
@@ -44986,7 +44986,7 @@
 "digest": "8e21dad3f9eebe9b5740"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 131,
 "families": [
 "slug"
@@ -44994,7 +44994,7 @@
 "digest": "9c841b072efb2d1706cf"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 132,
 "families": [
 "slug"
@@ -45002,7 +45002,7 @@
 "digest": "f8708722d5bd0e7791cd"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 140,
 "families": [
 "slug"
@@ -45010,7 +45010,7 @@
 "digest": "526d3706f0bbecc5d623"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 141,
 "families": [
 "slug"
@@ -45018,7 +45018,7 @@
 "digest": "8e21dad3f9eebe9b5740"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 147,
 "families": [
 "slug"
@@ -45026,7 +45026,7 @@
 "digest": "d7d5fadef70fe28e185a"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 148,
 "families": [
 "slug"
@@ -45034,7 +45034,7 @@
 "digest": "8e21dad3f9eebe9b5740"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 150,
 "families": [
 "slug"
@@ -45042,7 +45042,7 @@
 "digest": "8245aecc76004af1ff04"
 },
 {
-"path": "plugins/vibe-core/hooks/shell-safety-guard.test.mjs",
+"path": "plugins/vibe/hooks/shell-safety-guard.test.mjs",
 "line": 151,
 "families": [
 "slug"
@@ -45050,7 +45050,7 @@
 "digest": "f316435af01de98601f8"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.mjs",
 "line": 1,
 "families": [
 "tracker-tool"
@@ -45058,7 +45058,7 @@
 "digest": "e73ac6a0b1fef9e30bc5"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.mjs",
 "line": 24,
 "families": [
 "tracker-tool",
@@ -45067,7 +45067,7 @@
 "digest": "df22f2066da05210782b"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.mjs",
 "line": 26,
 "families": [
 "slug-regex"
@@ -45075,7 +45075,7 @@
 "digest": "58447443d69be2f66d97"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.mjs",
 "line": 35,
 "families": [
 "tracker-tool"
@@ -45083,7 +45083,7 @@
 "digest": "328610fb0067634a5803"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 20,
 "families": [
 "slug"
@@ -45091,7 +45091,7 @@
 "digest": "4c5281a1ea03ac75d20e"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 21,
 "families": [
 "slug"
@@ -45099,7 +45099,7 @@
 "digest": "24dca06c7f0bd59ecaa5"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 23,
 "families": [
 "slug"
@@ -45107,7 +45107,7 @@
 "digest": "6cf35725f4abdbf01248"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 30,
 "families": [
 "slug",
@@ -45116,7 +45116,7 @@
 "digest": "f652f602b53751352e47"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 31,
 "families": [
 "slug"
@@ -45124,7 +45124,7 @@
 "digest": "0c3a8c5e46ecc34b7d98"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 32,
 "families": [
 "slug",
@@ -45133,7 +45133,7 @@
 "digest": "b6ebe559213ce909c35f"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 33,
 "families": [
 "slug"
@@ -45141,7 +45141,7 @@
 "digest": "227544a033d649e25401"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 34,
 "families": [
 "slug"
@@ -45149,7 +45149,7 @@
 "digest": "00a0b21e9708890444ab"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 36,
 "families": [
 "slug",
@@ -45158,7 +45158,7 @@
 "digest": "cf7b83b0fd3bdf072090"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 37,
 "families": [
 "slug"
@@ -45166,7 +45166,7 @@
 "digest": "6e936962ce3dec5269c8"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 38,
 "families": [
 "slug",
@@ -45175,7 +45175,7 @@
 "digest": "69d453601063e0fe493c"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 48,
 "families": [
 "slug"
@@ -45183,7 +45183,7 @@
 "digest": "fcc0367bb8a5ba2c3490"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 49,
 "families": [
 "slug"
@@ -45191,7 +45191,7 @@
 "digest": "e02899e1971a3d0e8fdf"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 50,
 "families": [
 "slug"
@@ -45199,7 +45199,7 @@
 "digest": "ccc1e95f4695d12cfcf2"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 51,
 "families": [
 "slug"
@@ -45207,7 +45207,7 @@
 "digest": "5f3384e72c8af80b7591"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 52,
 "families": [
 "slug",
@@ -45216,7 +45216,7 @@
 "digest": "44fab456da826bea9e28"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 53,
 "families": [
 "slug"
@@ -45224,7 +45224,7 @@
 "digest": "1f9f925a14ed57c15b9f"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 55,
 "families": [
 "slug"
@@ -45232,7 +45232,7 @@
 "digest": "d2f616834ccb79d06d54"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 57,
 "families": [
 "slug"
@@ -45240,7 +45240,7 @@
 "digest": "bfabbb97a53d1c9e0c43"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 60,
 "families": [
 "tracker-tool"
@@ -45248,7 +45248,7 @@
 "digest": "cc3001b426732ad73f71"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 64,
 "families": [
 "slug"
@@ -45256,7 +45256,7 @@
 "digest": "f4baefce14b9bcf6b02f"
 },
 {
-"path": "plugins/vibe-core/hooks/unit-status-guard.test.mjs",
+"path": "plugins/vibe/hooks/unit-status-guard.test.mjs",
 "line": 69,
 "families": [
 "slug",
@@ -45265,7 +45265,7 @@
 "digest": "8e3896a3715f24630f34"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 61,
 "families": [
 "repo-command"
@@ -45273,7 +45273,7 @@
 "digest": "6303c796008a4ed01cc7"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 135,
 "families": [
 "slug"
@@ -45281,7 +45281,7 @@
 "digest": "dbea9a81276fadeeeb6f"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 200,
 "families": [
 "slug"
@@ -45289,7 +45289,7 @@
 "digest": "5a21e1528efd8fd74df4"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 201,
 "families": [
 "slug"
@@ -45297,7 +45297,7 @@
 "digest": "06d9e6ed0515bbd13969"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 205,
 "families": [
 "slug"
@@ -45305,7 +45305,7 @@
 "digest": "01ce788311774e0772f2"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 206,
 "families": [
 "slug"
@@ -45313,7 +45313,7 @@
 "digest": "fca24d108a5659cdcc9c"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 207,
 "families": [
 "slug"
@@ -45321,7 +45321,7 @@
 "digest": "33668bf7d2913cbca657"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.test.mjs",
 "line": 211,
 "families": [
 "slug"
@@ -45329,7 +45329,7 @@
 "digest": "9131b227b13b04cd7ec9"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.test.mjs",
 "line": 255,
 "families": [
 "identity"
@@ -45337,7 +45337,7 @@
 "digest": "e397889cc1c2c97bc48e"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.test.mjs",
 "line": 356,
 "families": [
 "identity"
@@ -45345,7 +45345,7 @@
 "digest": "22e4c7c8df6d57e1f5df"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.test.mjs",
 "line": 359,
 "families": [
 "identity"
@@ -45353,7 +45353,7 @@
 "digest": "00e1d5e64eaf052cd25c"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.test.mjs",
 "line": 386,
 "families": [
 "identity"
@@ -45361,7 +45361,7 @@
 "digest": "af504a9e915bb7a56eb2"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.test.mjs",
 "line": 398,
 "families": [
 "identity"
@@ -45369,7 +45369,7 @@
 "digest": "af504a9e915bb7a56eb2"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.test.mjs",
 "line": 414,
 "families": [
 "identity"
@@ -45377,7 +45377,7 @@
 "digest": "af504a9e915bb7a56eb2"
 },
 {
-"path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.test.mjs",
+"path": "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.test.mjs",
 "line": 440,
 "families": [
 "identity"
@@ -45385,7 +45385,7 @@
 "digest": "0fd28ca1a416655bafe1"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 51,
 "families": [
 "graph",
@@ -45394,7 +45394,7 @@
 "digest": "62f0d8badc00c166f80f"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 52,
 "families": [
 "graph",
@@ -45403,7 +45403,7 @@
 "digest": "2a2cfeec1b244fc14c50"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 53,
 "families": [
 "graph",
@@ -45412,7 +45412,7 @@
 "digest": "021e83df702b4e1d8079"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 54,
 "families": [
 "graph",
@@ -45421,7 +45421,7 @@
 "digest": "a4dec20f9fd9ea13be94"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 55,
 "families": [
 "graph",
@@ -45430,7 +45430,7 @@
 "digest": "e1208916a662a8e7bc5d"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 56,
 "families": [
 "tracker-tool",
@@ -45439,7 +45439,7 @@
 "digest": "ea5e7dabed8a8571616b"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 57,
 "families": [
 "tracker-tool",
@@ -45448,7 +45448,7 @@
 "digest": "7b6a21ec8e77d6cf2a2f"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 60,
 "families": [
 "graph",
@@ -45458,7 +45458,7 @@
 "digest": "21d3f86ffec95665907e"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 61,
 "families": [
 "graph",
@@ -45468,7 +45468,7 @@
 "digest": "d3356bb6d38494bed18e"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 62,
 "families": [
 "graph",
@@ -45478,7 +45478,7 @@
 "digest": "ba5e5915ef1e160c62e9"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 66,
 "families": [
 "tracker-tool",
@@ -45487,7 +45487,7 @@
 "digest": "f61ce7f1a7c2596c9899"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 67,
 "families": [
 "tracker-tool",
@@ -45496,7 +45496,7 @@
 "digest": "50db12ed85d6a7dcb07f"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 69,
 "families": [
 "tracker-tool",
@@ -45505,7 +45505,7 @@
 "digest": "405c81070cc4570f0fa5"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 70,
 "families": [
 "tracker-tool",
@@ -45514,7 +45514,7 @@
 "digest": "828dc64fc284ec570e09"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/codex-review-runtime.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/codex-review-runtime.test.mjs",
 "line": 71,
 "families": [
 "tracker-tool",
@@ -45523,7 +45523,7 @@
 "digest": "9180ba33fe6efb8ab65c"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/handoff-gate-check.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/handoff-gate-check.mjs",
 "line": 5,
 "families": [
 "slug"
@@ -45531,7 +45531,7 @@
 "digest": "e792636c90d111f3180e"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/mcp-tool-names.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/mcp-tool-names.mjs",
 "line": 23,
 "families": [
 "organization"
@@ -45539,7 +45539,7 @@
 "digest": "0a3c665646730582f777"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/review-receipts.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/review-receipts.test.mjs",
 "line": 21,
 "families": [
 "tracker-tool",
@@ -45548,7 +45548,7 @@
 "digest": "3595791827cc4de2b913"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/review-receipts.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/review-receipts.test.mjs",
 "line": 24,
 "families": [
 "tracker-tool",
@@ -45557,7 +45557,7 @@
 "digest": "8b3942e3f1851621a62c"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/review-receipts.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/review-receipts.test.mjs",
 "line": 42,
 "families": [
 "tracker-tool",
@@ -45566,7 +45566,7 @@
 "digest": "3595791827cc4de2b913"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/review-receipts.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/review-receipts.test.mjs",
 "line": 45,
 "families": [
 "tracker-tool",
@@ -45575,7 +45575,7 @@
 "digest": "111364657fe9c184fcc4"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/review-receipts.test.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/review-receipts.test.mjs",
 "line": 95,
 "families": [
 "graph"
@@ -45583,7 +45583,7 @@
 "digest": "050d9c3e51da70390e8a"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/ticket-names.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/ticket-names.mjs",
 "line": 2,
 "families": [
 "slug"
@@ -45591,7 +45591,7 @@
 "digest": "1cc8b7cd5911c7851c1f"
 },
 {
-"path": "plugins/vibe-core/lib/handoff/scripts/ticket-names.mjs",
+"path": "plugins/vibe/lib/handoff/scripts/ticket-names.mjs",
 "line": 3,
 "families": [
 "slug"
@@ -45599,7 +45599,7 @@
 "digest": "c096b4245e94ae187d6b"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-environment.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-environment.test.mjs",
 "line": 38,
 "families": [
 "slug",
@@ -45609,7 +45609,7 @@
 "digest": "571dc4a8f3ee0736ecd9"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-environment.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-environment.test.mjs",
 "line": 102,
 "families": [
 "identity"
@@ -45617,7 +45617,7 @@
 "digest": "1117ecbe35734fda5796"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-environment.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-environment.test.mjs",
 "line": 105,
 "families": [
 "identity"
@@ -45625,7 +45625,7 @@
 "digest": "82dddbde891be612fdf7"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 30,
 "families": [
 "identity"
@@ -45633,7 +45633,7 @@
 "digest": "c9993bffe52380b10814"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 43,
 "families": [
 "identity"
@@ -45641,7 +45641,7 @@
 "digest": "28f9efaac7e4fe8679c0"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 44,
 "families": [
 "identity"
@@ -45649,7 +45649,7 @@
 "digest": "20f06817bcf9d93696ed"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 46,
 "families": [
 "identity"
@@ -45657,7 +45657,7 @@
 "digest": "fdb577c8eff5d9c29a3c"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 52,
 "families": [
 "identity"
@@ -45665,7 +45665,7 @@
 "digest": "e4ce4f2427b16de381c8"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 53,
 "families": [
 "identity"
@@ -45673,7 +45673,7 @@
 "digest": "4ebe5e1fc2b7751fc303"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 54,
 "families": [
 "identity"
@@ -45681,7 +45681,7 @@
 "digest": "ebec9bcadc17ca807c04"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 62,
 "families": [
 "identity"
@@ -45689,7 +45689,7 @@
 "digest": "d70a22bedd0f919962c9"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 65,
 "families": [
 "organization"
@@ -45697,7 +45697,7 @@
 "digest": "21f805201326b6d79045"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 66,
 "families": [
 "identity"
@@ -45705,7 +45705,7 @@
 "digest": "00d3609c2040902b6e3c"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 73,
 "families": [
 "identity"
@@ -45713,7 +45713,7 @@
 "digest": "86ec0adbf2d390ccae83"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 74,
 "families": [
 "identity"
@@ -45721,7 +45721,7 @@
 "digest": "fbf7fba323c415601f7f"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 75,
 "families": [
 "identity"
@@ -45729,7 +45729,7 @@
 "digest": "a3c5d8db6d5bb034d596"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 86,
 "families": [
 "identity"
@@ -45737,7 +45737,7 @@
 "digest": "548b4886585b92342494"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 87,
 "families": [
 "identity"
@@ -45745,7 +45745,7 @@
 "digest": "51af73131c12a2af3072"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 122,
 "families": [
 "identity"
@@ -45753,7 +45753,7 @@
 "digest": "c86b3589b1ff59190147"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 124,
 "families": [
 "identity"
@@ -45761,7 +45761,7 @@
 "digest": "b650c3b39c4491078f2a"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 131,
 "families": [
 "slug",
@@ -45770,7 +45770,7 @@
 "digest": "f52196a8592f26e6b55b"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 132,
 "families": [
 "slug"
@@ -45778,7 +45778,7 @@
 "digest": "78770392467a8c28ed2b"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 136,
 "families": [
 "identity"
@@ -45786,7 +45786,7 @@
 "digest": "c2e3adf435f24343d0df"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 147,
 "families": [
 "identity"
@@ -45794,7 +45794,7 @@
 "digest": "2996f92084d2e56e9d51"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 150,
 "families": [
 "identity"
@@ -45802,7 +45802,7 @@
 "digest": "789a5087e414d4eb8d65"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 156,
 "families": [
 "identity"
@@ -45810,7 +45810,7 @@
 "digest": "312afa02012304ab7439"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-repository.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-repository.test.mjs",
 "line": 157,
 "families": [
 "identity"
@@ -45818,7 +45818,7 @@
 "digest": "891bea918b5732072a21"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.mjs",
 "line": 46,
 "families": [
 "organization"
@@ -45826,7 +45826,7 @@
 "digest": "912ff55f7f4c22d23b8e"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.mjs",
 "line": 103,
 "families": [
 "slug"
@@ -45834,7 +45834,7 @@
 "digest": "ba1b1c1690d10a5c825b"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.mjs",
 "line": 116,
 "families": [
 "organization"
@@ -45842,7 +45842,7 @@
 "digest": "dfacbaf212b677f5b6cd"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.mjs",
 "line": 139,
 "families": [
 "graph",
@@ -45851,7 +45851,7 @@
 "digest": "6fe32ece20db0a54dd23"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.mjs",
 "line": 214,
 "families": [
 "organization"
@@ -45859,7 +45859,7 @@
 "digest": "3b238874c5a190ab550d"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.mjs",
 "line": 304,
 "families": [
 "graph"
@@ -45867,7 +45867,7 @@
 "digest": "1ef976ea33f115e18891"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.test.mjs",
 "line": 99,
 "families": [
 "slug",
@@ -45876,7 +45876,7 @@
 "digest": "1684d316e9fcd17ae21c"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.test.mjs",
 "line": 101,
 "families": [
 "slug"
@@ -45884,7 +45884,7 @@
 "digest": "40055c6dd2aed774af4a"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/cloud-worker.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/cloud-worker.test.mjs",
 "line": 114,
 "families": [
 "slug"
@@ -45892,7 +45892,7 @@
 "digest": "b4f58d7026a60d4c16d9"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/docker-disk-admission.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/docker-disk-admission.test.mjs",
 "line": 45,
 "families": [
 "machine"
@@ -45900,7 +45900,7 @@
 "digest": "93f37e20439f06154f8b"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/e2e-lock.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/e2e-lock.mjs",
 "line": 2,
 "families": [
 "repo-identity"
@@ -45908,7 +45908,7 @@
 "digest": "a72fc168395fe839c3a8"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/e2e-lock.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/e2e-lock.test.mjs",
 "line": 899,
 "families": [
 "slug"
@@ -45916,7 +45916,7 @@
 "digest": "2559ac247b4e26532b83"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/harness-identity.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/harness-identity.mjs",
 "line": 5,
 "families": [
 "slug"
@@ -45924,7 +45924,7 @@
 "digest": "2ecdddf958ef736008f5"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/harness-identity.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/harness-identity.test.mjs",
 "line": 10,
 "families": [
 "slug"
@@ -45932,7 +45932,7 @@
 "digest": "88b620e1b39f13003ff8"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/image-head.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/image-head.mjs",
 "line": 5,
 "families": [
 "slug"
@@ -45940,7 +45940,7 @@
 "digest": "d0f14e2319ecb32876df"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.mjs",
 "line": 223,
 "families": [
 "artifact-root",
@@ -45949,7 +45949,7 @@
 "digest": "e5621814f9489ea3682a"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.mjs",
 "line": 227,
 "families": [
 "artifact-root",
@@ -45958,7 +45958,7 @@
 "digest": "e408f1a27d970e1058ae"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.mjs",
 "line": 230,
 "families": [
 "repo-path",
@@ -45967,7 +45967,7 @@
 "digest": "12e67c8e31f00b18ea4c"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.mjs",
 "line": 231,
 "families": [
 "repo-path"
@@ -45975,7 +45975,7 @@
 "digest": "a2ee013eecfbd271d8f7"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 28,
 "families": [
 "repo-path"
@@ -45983,7 +45983,7 @@
 "digest": "05500381c242d87aca79"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 30,
 "families": [
 "artifact-root",
@@ -45993,7 +45993,7 @@
 "digest": "7c993891adf4fb088b1a"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 31,
 "families": [
 "artifact-root",
@@ -46002,7 +46002,7 @@
 "digest": "72fdecd625464f78d46a"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 42,
 "families": [
 "repo-identity",
@@ -46011,7 +46011,7 @@
 "digest": "24379763f7f51a743897"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 46,
 "families": [
 "slug"
@@ -46019,7 +46019,7 @@
 "digest": "2690c0f6b8e708f04a1b"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 86,
 "families": [
 "repo-identity"
@@ -46027,7 +46027,7 @@
 "digest": "4b56f3e6827e9736cb94"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 89,
 "families": [
 "slug",
@@ -46036,7 +46036,7 @@
 "digest": "6945ae7123327ec57881"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 90,
 "families": [
 "artifact-root",
@@ -46046,7 +46046,7 @@
 "digest": "b19253c58b018c6308d5"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 91,
 "families": [
 "artifact-root",
@@ -46055,7 +46055,7 @@
 "digest": "cd2d2f760dd69e74c846"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 103,
 "families": [
 "artifact-root",
@@ -46064,7 +46064,7 @@
 "digest": "a6758b404f71be288c41"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/owned-cleanup.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/owned-cleanup.test.mjs",
 "line": 104,
 "families": [
 "artifact-root",
@@ -46073,7 +46073,7 @@
 "digest": "5446caaeab01079bef8a"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/sandbox-refusal.mjs",
 "line": 2,
 "families": [
 "slug"
@@ -46081,7 +46081,7 @@
 "digest": "5882183fc37fec8a0285"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/sandbox-refusal.mjs",
 "line": 5,
 "families": [
 "slug"
@@ -46089,7 +46089,7 @@
 "digest": "aa3334c9a3c25e6e9a98"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/sandbox-refusal.test.mjs",
 "line": 31,
 "families": [
 "slug"
@@ -46097,7 +46097,7 @@
 "digest": "5cc1c2e722bbce59df84"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/sandbox-refusal.test.mjs",
 "line": 38,
 "families": [
 "slug"
@@ -46105,7 +46105,7 @@
 "digest": "7ad91b9619f1cdbb2a0b"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.test.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/sandbox-refusal.test.mjs",
 "line": 50,
 "families": [
 "slug"
@@ -46113,7 +46113,7 @@
 "digest": "ade264154252e69eeecc"
 },
 {
-"path": "plugins/vibe-core/lib/vibe/scripts/session-record.mjs",
+"path": "plugins/vibe/lib/vibe/scripts/session-record.mjs",
 "line": 32,
 "families": [
 "slug"

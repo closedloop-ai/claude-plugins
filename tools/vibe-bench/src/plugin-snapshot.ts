@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, stat
 import { basename, dirname, join } from "node:path";
 import { agentModels } from "./agent-models.ts";
 
-/** vibe 1.1.71 and later ship their hooks, and the modules those run, in this plugin (ISS-13869). */
+/** vibe 1.1.71 and later ship their hook entry points in this plugin; the guards they run live in vibe since ISS-14116 (ISS-13869). */
 const HOOKS_PLUGIN = "vibe-core";
 /** The ClosedLoop build of vibe, the release `vibe@closedloop-ai` ships, which carries its provider. */
 const BUILT_VIBE = "vibe-closedloop";

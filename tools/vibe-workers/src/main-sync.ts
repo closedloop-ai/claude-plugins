@@ -4,7 +4,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
@@ -25,6 +25,7 @@ const desktopSchema = z.object({ ok: z.boolean(), running: z.boolean() }).passth
 const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/)/;
 export { MainSyncError };
 export { workflowLaneDefinitions } from "./main-sync-ci.js";
+export { pathFilteredPullRequestWorkflows } from "./pull-request-workflows.js";
 export { mainSyncFailure } from "./main-sync-failure.js";
 
 /** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */

@@ -5,7 +5,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { auditProblems, EvidenceAt, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
+import { auditProblems, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
+import { EvidenceAt } from "./criterion-surface.mjs";
+import { markLine, NAMES_DESKTOP, NEEDS_APP_RUN, NO_SURFACE_FIXTURES, PROOF_TEST, proofFolder, testRow, TICKET, UNREAD } from "./criteria-test-fixture.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
 // These read live tracker tickets, so they run bound to the ClosedLoop provider (spawned scripts inherit it).
@@ -13,16 +15,6 @@ bindProviderInProcess(after);
 
 const SCRIPT = fileURLToPath(new URL("./criteria-audit.mjs", import.meta.url));
 
-const TICKET = `## Scope and acceptance criteria
-
-- Scope: drag rows between groups
-- Acceptance criteria:
-  - [ ] A row can be dragged with the pointer
-  - [x] A row too deep to move is refused silently
-
-## Environment
-- [ ] not a criterion
-`;
 test("criteria are the ticket's acceptance checklist, numbered in order", () => {
   assert.deepEqual(ticketCriteria(TICKET), [
     { id: "AC-1", text: "A row can be dragged with the pointer" },
@@ -148,12 +140,12 @@ test("a fleet unit's member tickets are audited with the session's ticket, as <s
 test("a criterion that needs the product running on a surface is not met by typecheck or unit tests alone", () => {
   const criteria = [{ id: "AC-1", text: "Bulk Favorite works and is verified on web and Desktop" }, { id: "AC-2", text: "The batch route returns per-item results" }];
   const row = (id, type, ref) => `| ${id} | MET | ${type} | ${ref} |\n`;
-  const runtime = "AC-1: it names a user-visible surface, so code, typecheck, unit, e2e, or text control evidence alone does not meet its visual review; add a screenshot row";
+  const runtime = "AC-1: it needs the product running on a surface, so typecheck, unit-test or source evidence alone does not meet it; add a screenshot, e2e or control row";
   assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm typecheck") + row("AC-1", "script", "pnpm test --filter app") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
   assert.deepEqual(auditProblems(row("AC-1", "source-trace", "packages/app/bar.tsx:40") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
   assert.deepEqual(auditProblems(row("AC-1", "screenshot", "desktop-bulk-favorite.png") + row("AC-2", "script", "pnpm test"), criteria), []);
-  assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm control web screenshot sessions") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
-  assert.deepEqual(auditProblems(row("AC-1", "script", "dagger call e-2-e --spec bulk.spec.ts") + row("AC-2", "script", "pnpm test"), criteria), [runtime]);
+  assert.deepEqual(auditProblems(row("AC-1", "script", "pnpm control web screenshot sessions") + row("AC-2", "script", "pnpm test"), criteria), []);
+  assert.deepEqual(auditProblems(row("AC-1", "script", "dagger call e-2-e --spec bulk.spec.ts") + row("AC-2", "script", "pnpm test"), criteria), []);
   // A criterion waiting on another ticket's work follows the waiting rules alone; the runtime rule adds nothing to it.
   const waiting = `| AC-1 | PARTIAL | source-trace | not met yet: waits on ISS-9 |\n${row("AC-2", "script", "pnpm test")}`;
   assert.deepEqual(auditProblems(waiting, criteria, null, undefined, { passingOn: true, statuses: { "ISS-9": "IN_PROGRESS" } }), []);
@@ -208,4 +200,57 @@ test("the CLI reads --passing-on and --ticket-status and prints the waiting crit
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("ISS-14136 AC-4: the audit script refuses a ticket, and a member ticket, whose criteria sit outside the section", (t) => {
+  const dir = proofFolder(t);
+  const file = (name, content) => { writeFileSync(path.join(dir, name), content); return path.join(dir, name); };
+  const audit = file("audit.md", "| AC-1 | MET | script | pnpm test |\n| AC-2 | MET | script | pnpm test |\n");
+  const matrix = file("matrix.json", JSON.stringify({ surfaces: ["cli"], inputs: ["*"], flags: [], rows: ["AC-1", "AC-2"].map((criterion) => ({ criterion, surface: "cli", input: "*", evidence: "not input-driven: unit test" })) }));
+  const run = (ticket, ...extra) => spawnSync(process.execPath, [SCRIPT, "--worktree", dir, "--ticket", ticket, "--audit", audit, "--matrix", matrix, ...extra], { encoding: "utf8" });
+  const clean = run(file("ticket.md", TICKET));
+  assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+  const stray = run(file("stray.md", `${TICKET}\n## Added criteria\n\n- [ ] A third thing happens\n`));
+  assert.equal(stray.status, 1);
+  assert.deepEqual(JSON.parse(stray.stdout).problems, [UNREAD("Added criteria")]);
+  const member = run(file("ticket.md", TICKET), "--member", `ISS-124=${file("member.md", "- Acceptance criteria:\n  - [ ] The header shows its count\n\n## Added criteria\n\n- [ ] It also sorts\n")}`);
+  assert.equal(member.status, 1);
+  assert.ok(JSON.parse(member.stdout).problems.includes(`member ISS-124: ${UNREAD("Added criteria")}`), member.stdout);
+});
+
+test("ISS-14136 AC-1 AC-2: the audit script accepts a marked criterion, alone and through the unit review, and refuses the same audit without the mark", (t) => {
+  const dir = proofFolder(t);
+  const file = (name, content) => { writeFileSync(path.join(dir, name), content); return path.join(dir, name); };
+  const ticket = file("ticket.md", `## Acceptance criteria\n\n- [ ] ${NO_SURFACE_FIXTURES[2].text}\n`);
+  const matrix = file("matrix.json", JSON.stringify({ surfaces: ["cli"], inputs: ["*"], flags: [], rows: [{ criterion: "AC-1", surface: "cli", input: "*", evidence: "not input-driven: unit test" }] }));
+  const review = file("review.json", JSON.stringify({ pages: [], surfaces: [], listQueries: [], rows: [{ criterion: "AC-1", part: "code", verdict: "MET", ref: `${PROOF_TEST}:2` }] }));
+  const run = (audit, ...extra) => {
+    const result = spawnSync(process.execPath, [SCRIPT, "--worktree", dir, "--ticket", ticket, "--audit", file("audit.md", audit), "--matrix", matrix, ...extra], { encoding: "utf8" });
+    return { status: result.status, json: JSON.parse(result.stdout) };
+  };
+  const marked = markLine("AC-1") + testRow("AC-1");
+  assert.deepEqual(run(marked), { status: 0, json: { ok: true, criteria: ["AC-1"], problems: [], noSurface: ["NO-SURFACE AC-1: Desktop here is the client process, not a screen"] } });
+  const unmarked = run(testRow("AC-1"));
+  assert.deepEqual([unmarked.status, unmarked.json.problems], [1, [`AC-1: ${NEEDS_APP_RUN}`]]);
+  const inUnit = run(marked, "--review", review, "--slug", "ISS-1");
+  assert.deepEqual([inUnit.status, inUnit.json.problems, inUnit.json.noSurface], [0, [], ["NO-SURFACE ISS-1 AC-1: Desktop here is the client process, not a screen"]]);
+  const unmarkedInUnit = run(testRow("AC-1"), "--review", review, "--slug", "ISS-1");
+  assert.deepEqual([unmarkedInUnit.status, unmarkedInUnit.json.problems], [1, [`AC-1: ${NEEDS_APP_RUN}`, `GAP ISS-1 AC-1: ${NAMES_DESKTOP}`]]);
+});
+
+test("ISS-14136 AC-2: the audit script reports a marked criterion whose test file is missing once, through its row", (t) => {
+  const dir = proofFolder(t);
+  const file = (name, content) => { writeFileSync(path.join(dir, name), content); return path.join(dir, name); };
+  const ticket = file("ticket.md", `## Acceptance criteria\n\n- [ ] ${NO_SURFACE_FIXTURES[2].text}\n`);
+  const matrix = file("matrix.json", JSON.stringify({ surfaces: ["cli"], inputs: ["*"], flags: [], rows: [{ criterion: "AC-1", surface: "cli", input: "*", evidence: "not input-driven: unit test" }] }));
+  const audit = file("audit.md", markLine("AC-1") + testRow("AC-1", "a planned one", "checks/planned.test.mjs"));
+  const result = spawnSync(process.execPath, [SCRIPT, "--worktree", dir, "--ticket", ticket, "--audit", audit, "--matrix", matrix], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.deepEqual(JSON.parse(result.stdout).problems, ["AC-1: the test checks/planned.test.mjs does not exist in the worktree; a planned test is not evidence"]);
+});
+
+test("ISS-14136 AC-2: an unmarked row whose test ref is a directory passes in the worktree, as before the mark", (t) => {
+  const dir = proofFolder(t);
+  const criteria = ticketCriteria(TICKET).slice(0, 1);
+  assert.deepEqual(auditProblems("| AC-1 | MET | test | checks::drags a row |\n", criteria, dir, EvidenceAt.Worktree), []);
 });

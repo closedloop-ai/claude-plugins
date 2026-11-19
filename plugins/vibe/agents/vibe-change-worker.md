@@ -22,11 +22,6 @@ worktree, Compose file and finite TTL. Its helper record and owner labels
 authorize later exact cleanup; raw scratch Docker starts are refused by the
 vibe PreToolUse Bash guard.
 
-Scratch files: Each worker gets its own scratch directory named with its
-worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes
-only exact paths it created; an orchestrator brief never asks a worker to
-delete by prefix or glob.
-
 ## Inputs and continuations
 
 The owned worktree/branch, session summary, live ticket, request ID and the
@@ -286,9 +281,9 @@ Before `DONE`, run the handoff inventory in build phase and require its
 is fixed, or cleared by the change log line it names with a reason that holds.
 A frozen render listed under `diffRules.deferredToHandoff` never holds
 `DONE`: rendering frozen stories is handoff's heavy validation, done only by
-handoff's `scripts/frozen-render.mjs`. Never capture frozen stories yourself
-and never write a `Frozen render unchanged` line by hand; record only the
-line that command printed. Any `forbidden` or `outsideAllowed` entry is
+handoff's `scripts/frozen-render-gate.mjs`, which writes the `Frozen render
+unchanged` line itself on a pass. Never capture frozen stories yourself and
+never write that line by hand. Any `forbidden` or `outsideAllowed` entry is
 removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
@@ -570,6 +565,20 @@ uploads. Obtain the serial record turn before any shared session/ticket update;
 operational helpers do not write the same records concurrently.
 Name any check narrowed or left for CI in the existing progress or handoff
 summary in plain words (`../skills/vibe/references/guardrails.md`, "Checks").
+
+### Self-review before `DONE`
+
+Run `node <plugin-root>/skills/handoff/scripts/guardrails-gate.mjs --worktree "<wt>" --out <a file outside the worktree>`
+and move each `duplicate-helper` and `owner-duplicates` finding to one owner;
+it leaves out untracked files, so compare new files by hand, and a block that
+repeats at more than one site, even under different names, also moves to one owner.
+Fix a line your change contradicts in any doc, comment or changelog you touched;
+after a rename, `rg` the old name across the repository, generated files and changelogs included;
+a doc line naming a command names every sibling that reaches the same code path;
+debt is recorded only as the exact `Debt:` line; a test cites a criterion ID only once the ticket lists it.
+A parser or matcher change starts with decision-table rows for every input layout it can meet
+and a property check against `git show <base>:<file>`; a reviewer's new layout means you
+re-derive the layouts, not only that case.
 
 ## Tests: repair, don't author
 

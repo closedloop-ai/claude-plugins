@@ -11430,11 +11430,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
 var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
-var CODEX_LOCAL_VERSION = "local";
-var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
-var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-var NUMERIC = /^\d+$/;
-var SCOPE_FALLBACK = "user";
 var DEFAULT_MARKETPLACE = "closedloop-ai";
 var VIBE_PLUGIN_NAMES = Object.freeze(["vibe", "vibe-generic"]);
 var VIBE_LOOKUP_ORDER = Object.freeze({ checkout: Object.freeze(["vibe-generic", "vibe"]), installed: VIBE_PLUGIN_NAMES });
@@ -11470,30 +11465,6 @@ function isVibePlugin(name) {
 function pluginMarketplace(install) {
   return install?.marketplace ?? DEFAULT_MARKETPLACE;
 }
-function comparePluginVersions(left, right) {
-  const a = SEMVER.exec(left);
-  const b = SEMVER.exec(right);
-  if (!a || !b) return compareText(left, right);
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(a[index]) - Number(b[index]);
-    if (difference !== 0) return Math.sign(difference);
-  }
-  if (a[4] === void 0 || b[4] === void 0) {
-    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
-  } else {
-    const order = compareIdentifiers(a[4], b[4]);
-    if (order !== 0) return order;
-  }
-  if (a[5] === b[5]) return 0;
-  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
-  return compareIdentifiers(a[5], b[5]);
-}
-function activeCodexVersion(versions) {
-  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
-  if (valid.length === 0) return null;
-  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
-  return [...valid].sort(comparePluginVersions).at(-1);
-}
 function pluginInstall(from) {
   const self = ownPluginRoot(from);
   const parent = path.dirname(self.root);
@@ -11512,81 +11483,6 @@ function pluginInstall(from) {
     registry
   };
 }
-function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
-  const self = pluginInstall(from);
-  if (self.layout === Layout.Checkout) {
-    const candidate = checkoutRoot(self.plugins, name);
-    if (candidate) return { root: realpathSync(candidate), layout: Layout.Checkout };
-    throw missing(name, self, Layout.Checkout);
-  }
-  if (self.layout === null) {
-    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
-  }
-  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
-  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
-  return {
-    root: realpathSync(found.installPath),
-    layout: self.layout,
-    home: self.home,
-    marketplace: self.marketplace,
-    ...found.scope ? { scope: found.scope } : {},
-    ...found.projectPath ? { projectPath: found.projectPath } : {}
-  };
-}
-function siblingPluginRoot(name, options) {
-  return siblingPluginInstall(name, options).root;
-}
-function checkoutRoot(plugins, name) {
-  const named = path.join(plugins, name);
-  if (pluginManifest(named)?.name === name) return named;
-  return listDirectories(plugins).sort().map((entry) => path.join(plugins, entry)).find((dir) => pluginManifest(dir)?.name === name) ?? null;
-}
-function claudeEntry(registry, name, self, cwd) {
-  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const here = realOrSame(path.resolve(cwd));
-  const holds = (project) => {
-    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
-    const root = realOrSame(project);
-    return here === root || here.startsWith(`${root}${path.sep}`);
-  };
-  for (const scope of PROJECT_SCOPES) {
-    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
-    if (matching.length > 0) return matching[0];
-  }
-  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  if (user.length === 1) return user[0];
-  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
-  throw missing(name, self, Layout.Claude);
-}
-function codexRoot(base, name, self) {
-  let versions;
-  try {
-    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
-  } catch {
-    throw missing(name, self, Layout.Codex);
-  }
-  const version = activeCodexVersion(versions);
-  if (!version) throw missing(name, self, Layout.Codex);
-  return path.join(base, version);
-}
-function missing(name, self, layout) {
-  const id = `${name}@${pluginMarketplace(self)}`;
-  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${id}\` in Claude Code or \`codex plugin add ${id}\` in Codex`);
-}
-function readRegistry(file) {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function realOrSame(file) {
-  try {
-    return realpathSync(file);
-  } catch {
-    return file;
-  }
-}
 function isFile(file) {
   try {
     return statSync(file).isFile();
@@ -11594,62 +11490,14 @@ function isFile(file) {
     return false;
   }
 }
-function listDirectories(dir) {
-  try {
-    return readdirSync(dir).filter((entry) => isDirectory(path.join(dir, entry)));
-  } catch {
-    return [];
-  }
-}
-function isDirectory(file) {
-  try {
-    return statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function compareText(left, right) {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
-}
-function compareIdentifiers(left, right) {
-  const a = left.split(".");
-  const b = right.split(".");
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const order = compareIdentifier(a[index], b[index]);
-    if (order !== 0) return order;
-  }
-  return Math.sign(a.length - b.length);
-}
-function compareIdentifier(left, right) {
-  const leftNumeric = NUMERIC.test(left);
-  const rightNumeric = NUMERIC.test(right);
-  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
-  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
-  return compareText(left, right);
-}
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.14";
 var SELF = pluginInstall(import.meta.url);
+var OWN_ROOT = ownPluginRoot(import.meta.url).root;
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
-var cachedRoot = null;
-function vibeCoreRoot() {
-  if (cachedRoot) return cachedRoot;
-  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
-  const installed = pluginManifest(root)?.version ?? null;
-  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
-    throw Object.assign(
-      new Error(`${SELF.name} ${SELF.version ?? "unknown"} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update ${VIBE_CORE_ID}\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
-      { outdated: true, installed, minimum: VIBE_CORE_MIN }
-    );
-  }
-  cachedRoot = root;
-  return root;
-}
 function vibeCorePath(relative) {
-  return path2.join(vibeCoreRoot(), relative);
+  return path2.join(OWN_ROOT, relative);
 }
 function vibeCore(relative) {
   return import(pathToFileURL(vibeCorePath(relative)).href);
@@ -12279,15 +12127,17 @@ function isNewerRelease(current, previous) {
   }
   return false;
 }
-function activeContinuationSummary(requestId) {
-  return `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}; the refused request was not queued.`;
+function activeContinuationSummary(requestId, queuedId) {
+  const continuation = `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}`;
+  return queuedId ? `${continuation} first; requestId "${queuedId}" stays queued: claim it by id after that, or cancel it with writer-state.mjs drop-pending.` : `${continuation}; the refused request was not queued.`;
 }
 function oldestPendingSummary(ledger) {
   const next = ledger.pending[0]?.id;
   return next ? `Claim the oldest pending requestId "${next}" without input or continuation.` : "There is no oldest pending request to claim. Use a new requestId with original input.";
 }
 function duplicateRefusal(ledger, requestId) {
-  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id) : oldestPendingSummary(ledger);
+  const queued = ledger.pending.some((item) => item.id === requestId) ? requestId : void 0;
+  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id, queued) : oldestPendingSummary(ledger);
   return new WorkerRefusal("REQUEST_ID_EXISTS", `Request ID "${requestId}" already exists. ${recovery}`);
 }
 function inputDigest(input) {
@@ -12339,6 +12189,31 @@ function changeWriter(action, input) {
       }
       if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
     };
+    const claim = (continuation) => {
+      prepareClaim();
+      if (ledger.active?.status === "FAILED" && !continuation && ledger.pending[0]?.id === requestId) {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (!ledger.active && continuation && ledger.completed.at(-1) === requestId) {
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: continuation, status: "PLAN", continuation };
+      } else if (ledger.active) {
+        if (ledger.active.id !== requestId || !continuation) throw new WorkerRefusal(
+          "ACTIVE_REQUEST_PENDING",
+          activeContinuationSummary(ledger.active.id, ledger.pending.some((item) => item.id === requestId) ? requestId : void 0)
+        );
+        ledger.active.continuation = continuation;
+      } else {
+        if (continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
+        const next = ledger.pending.shift();
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
+        ledger.active = { ...next, status: "PLAN" };
+      }
+      ledger.active.lease = randomUUID();
+      ledger.active.ownerPid = process.pid;
+    };
+    let queuedBehind;
     if (action === "enqueue") {
       if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
       if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
@@ -12347,6 +12222,15 @@ function changeWriter(action, input) {
         "The pending queue is full; keep the new input with the parent."
       );
       ledger.pending.push({ id: requestId, input: data.input });
+      if (ledger.active && !ledger.active.lease && ledger.active.status !== "FAILED") {
+        queuedBehind = {
+          requestId: ledger.active.id,
+          status: ledger.active.status,
+          next: activeContinuationSummary(ledger.active.id, requestId)
+        };
+      }
+    } else if (action === "start" && data.input && !data.continuation && ledger.pending.some((item) => item.id === requestId && item.input === data.input)) {
+      claim();
     } else if (action === "start") {
       if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
       if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
@@ -12362,28 +12246,7 @@ function changeWriter(action, input) {
       if (ledger.pending.length) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
       ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
     } else if (action === "claim") {
-      prepareClaim();
-      if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
-        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
-        delete ledger.active;
-      }
-      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
-        ledger.completed = ledger.completed.slice(0, -1);
-        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
-      } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new WorkerRefusal(
-          "ACTIVE_REQUEST_PENDING",
-          activeContinuationSummary(ledger.active.id)
-        );
-        ledger.active.continuation = data.continuation;
-      } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
-        const next = ledger.pending.shift();
-        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
-        ledger.active = { ...next, status: "PLAN" };
-      }
-      ledger.active.lease = randomUUID();
-      ledger.active.ownerPid = process.pid;
+      claim(data.continuation);
     } else {
       if (!ledger.active || ledger.active.id !== requestId || !data.lease || ledger.active.lease !== data.lease || !data.status) {
         throw new Error("Finish requires ownership of the active turn lease");
@@ -12414,7 +12277,11 @@ function changeWriter(action, input) {
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...["start", "claim"].includes(action) ? { turn: ledger.active } : {} };
+    return {
+      ...summary(ledger),
+      ...["start", "claim"].includes(action) ? { turn: ledger.active } : {},
+      ...queuedBehind ? { queuedBehind } : {}
+    };
   });
 }
 function acquireRecordTurnAt(place, owner) {
@@ -12548,7 +12415,7 @@ import { join as join5, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module3 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module3;
+var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module3;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -12883,7 +12750,9 @@ function writerStateUsage() {
     "                  A BLOCKED request whose recorded definition is missing is carried over as the active",
     "                  request and returned as carriedBlock; the new writer settles it first.",
     "  enqueue         { worktree, workerId, requestId, input }",
-    "  start           { worktree, workerId, requestId, input }  only when neither active nor queued work comes first",
+    "                  Behind an open active request the result names it in queuedBehind: claim waits until it is continued.",
+    "  start           { worktree, workerId, requestId, input }  only when neither active nor queued work comes first;",
+    "                  a queued requestId sent with its own queued input is claimed by that id.",
     "  claim           { worktree, workerId, requestId, continuation? }",
     "  drop-pending    { worktree, workerId, requestId, evidence: { source, reason, inputSha256 } }",
     "                  The parent records why the pending request is obsolete and uses the digest from status.",

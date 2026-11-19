@@ -1,5 +1,6 @@
-// vibe loads every module its hooks run from the vibe-core plugin; these pin that each such module has
-// one home, that vibe asks vibe-core only for what it exports, and that the loader fails plainly.
+// vibe's hooks and the modules they run live in vibe (lib/**, hooks/**); vibe-core only loads vibe's hook runtime.
+// These pin that each such module has one home in vibe, that vibeCore() asks only for what exists, that it never
+// needs vibe-core, and that the setup check still names a missing or too old vibe-core.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -28,23 +29,21 @@ function files(dir, keep, found = []) {
 }
 
 const isModule = (file) => file.endsWith(".mjs") && !file.endsWith(".test.mjs");
-/** Where a vibe-core module lived in vibe before the split: lib/<skill>/scripts/x is skills/<skill>/scripts/x. */
+/** Where a lib module's command line keeps a skill path: lib/<skill>/scripts/x is skills/<skill>/scripts/x. */
 const vibePath = (relative) => relative.replace(/^lib\//, "skills/");
 const wrapper = (relative, file) => {
   let loader = path.relative(path.dirname(file), path.join(VIBE, "shared", "vibe-core.mjs"));
   if (!loader.startsWith(".")) loader = `./${loader}`;
-  return `#!/usr/bin/env node\n// This command moved to vibe-core; its vibe path keeps working through this wrapper.\n`
+  return `#!/usr/bin/env node\n// This command lives in vibe's lib/ folder; its skill path keeps working through this wrapper.\n`
     + `import { runVibeCoreMain } from "${loader}";\n\nawait runVibeCoreMain("${relative}");\n`;
 };
-const coreModules = files(CORE, isModule).map((file) => path.relative(CORE, file));
-const wrappers = coreModules.map((relative) => [relative, path.join(VIBE, vibePath(relative))])
-  .filter(([relative, file]) => relative !== "shared/plugin-roots.mjs" && existsSync(file));
+const libModules = files(path.join(VIBE, "lib"), isModule).map((file) => path.relative(VIBE, file));
+const wrappers = libModules.map((relative) => [relative, path.join(VIBE, vibePath(relative))]).filter(([, file]) => existsSync(file));
 
-test("each module vibe-core holds has one home: at most a thin command wrapper stays at its vibe path", () => {
-  assert.ok(coreModules.includes("hooks/pre-tool-use.mjs") && coreModules.includes("lib/vibe/scripts/session-record.mjs"));
+test("each lib module has one home: at most a thin command wrapper stays at its skill path", () => {
+  assert.ok(libModules.includes("lib/vibe/scripts/session-record.mjs") && existsSync(path.join(VIBE, "hooks", "runtime.mjs")));
   for (const [relative, file] of wrappers) assert.equal(readFileSync(file, "utf8"), wrapper(relative, file), `${vibePath(relative)} is a copy, not a wrapper`);
   assert.deepEqual(wrappers.map(([relative]) => vibePath(relative)).sort(), [
-    "hooks/kill-guard.mjs",
     "skills/codex-fleet-monitor/scripts/liveness.mjs",
     "skills/codex-fleet-monitor/scripts/work-dir.mjs",
     "skills/fleet-orchestrator/scripts/fleet-home.mjs",
@@ -69,31 +68,32 @@ test("each module vibe-core holds has one home: at most a thin command wrapper s
   }
 });
 
-test("vibe's bundles load vibe-core's modules at run time instead of carrying copies", () => {
+test("vibe's bundles load its lib and hooks modules from vibe at run time instead of carrying copies", () => {
   const bundles = files(path.join(VIBE, "skills", "vibe", "scripts", "dist"), (file) => file.endsWith(".mjs"));
   assert.ok(bundles.length >= 2);
-  const moved = new Set(coreModules.map((relative) => path.basename(relative)));
+  const runTime = /plugins\/vibe\/(?:lib|hooks)\/|plugins\/vibe\/shared\/process-identity\.mjs$|plugins\/vibe-core\//;
   for (const bundle of bundles) {
     const source = readFileSync(bundle, "utf8");
     // A run-time stub is labeled vibe-core:<path>; an inlined copy is labeled with its source path.
-    const inlined = [...source.matchAll(BUNDLED_SOURCE)].map((match) => match[1]).filter((file) => !file.startsWith("vibe-core:"))
-      .filter((file) => file.includes("plugins/vibe-core/") || (moved.has(path.basename(file)) && !file.includes("plugins/vibe/shared/")));
+    const inlined = [...source.matchAll(BUNDLED_SOURCE)].map((match) => match[1]).filter((file) => !file.startsWith("vibe-core:") && runTime.test(file));
     assert.deepEqual(inlined, [], path.basename(bundle));
   }
   assert.match(readFileSync(path.join(VIBE, "skills", "vibe", "scripts", "dist", "writer-state.mjs"), "utf8"),
     /^\/\/ vibe-core:lib\/vibe\/scripts\/session-record\.mjs\nvar module\d* = await vibeCore\("lib\/vibe\/scripts\/session-record\.mjs"\);$/m);
 });
 
-test("vibe asks vibe-core only for modules and names it has, at a release no older than VIBE_CORE_MIN", async () => {
-  const sources = files(VIBE, (file) => file.endsWith(".mjs") && !file.includes(`${path.sep}dist${path.sep}`) && file !== fileURLToPath(import.meta.url));
+test("vibeCore() asks only for modules and names vibe has, and VIBE_CORE_MIN is no newer than this checkout's vibe-core", async () => {
+  // The skew tests write a pre-slim vibe's loads into fixtures on purpose; they aim at vibe-core's stubs, not at vibe.
+  const sources = files(VIBE, (file) => file.endsWith(".mjs") && !file.includes(`${path.sep}dist${path.sep}`) && file !== fileURLToPath(import.meta.url)
+    && !/vibe-core-skew[^/]*\.test\.mjs$/.test(file));
   let checked = 0;
   for (const file of sources) {
     const source = readFileSync(file, "utf8");
     for (const [, relative] of source.matchAll(NAMED_LOAD)) {
-      assert.ok(existsSync(path.join(CORE, relative)), `${path.relative(VIBE, file)} loads ${relative}, which vibe-core does not have`);
+      assert.ok(existsSync(path.join(VIBE, relative)), `${path.relative(VIBE, file)} loads ${relative}, which vibe does not have`);
     }
     for (const [, names, relative] of source.matchAll(DESTRUCTURED)) {
-      const exported = new Set(Object.keys(await import(pathToFileURL(path.join(CORE, relative)).href)));
+      const exported = new Set(Object.keys(await import(pathToFileURL(path.join(VIBE, relative)).href)));
       for (const name of names.split(",").map((part) => part.trim().split(":")[0].trim()).filter(Boolean)) {
         assert.ok(exported.has(name), `${path.relative(VIBE, file)} takes ${name} from ${relative}, which does not export it`);
         checked += 1;
@@ -105,20 +105,26 @@ test("vibe asks vibe-core only for modules and names it has, at a release no old
   assert.ok(comparePluginVersions(VIBE_CORE_MIN, installed) <= 0, `VIBE_CORE_MIN ${VIBE_CORE_MIN} is newer than vibe-core ${installed}`);
 });
 
-test("the loader names a missing or too old vibe-core and how to fix it", (t) => {
+test("vibeCore() loads from vibe itself with no vibe-core beside it, while the setup check names a missing or too old vibe-core", (t) => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-core-loader-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const vibe = path.join(root, "plugins", "vibe");
   mkdirSync(path.join(vibe, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.71" }));
   cpSync(path.join(VIBE, "shared"), path.join(vibe, "shared"), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
-  const load = () => spawnSync(process.execPath, ["--input-type=module", "-e",
-    `import { vibeCore } from ${JSON.stringify(pathToFileURL(path.join(vibe, "shared", "vibe-core.mjs")).href)}; await vibeCore("hooks/hook-dispatch.mjs");`], { encoding: "utf8" });
-  assert.match(load().stderr, /vibe-core is not installed beside vibe \(checkout layout\); install it with `claude plugin install vibe-core@closedloop-ai` in Claude Code or `codex plugin add vibe-core@closedloop-ai` in Codex/);
+  mkdirSync(path.join(vibe, "lib"));
+  writeFileSync(path.join(vibe, "lib", "marker.mjs"), 'export const marker = "own vibe";\n');
+  const run = (code) => spawnSync(process.execPath, ["--input-type=module", "-e",
+    `import { vibeCore, vibeCoreProblem } from ${JSON.stringify(pathToFileURL(path.join(vibe, "shared", "vibe-core.mjs")).href)}; ${code}`], { encoding: "utf8" });
+  const load = () => run('process.stdout.write((await vibeCore("lib/marker.mjs")).marker);');
+  const problem = () => run('process.stdout.write(vibeCoreProblem()?.message ?? "none");').stdout;
+  assert.equal(load().stdout, "own vibe", load().stderr);
+  assert.match(problem(), /vibe-core is not installed beside vibe \(checkout layout\); install it with `claude plugin install vibe-core@closedloop-ai` in Claude Code or `codex plugin add vibe-core@closedloop-ai` in Codex/);
   const core = path.join(root, "plugins", "vibe-core");
   mkdirSync(path.join(core, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(core, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe-core", version: "0.9.0" }));
-  assert.match(load().stderr, new RegExp(`vibe 1\\.1\\.71 needs vibe-core ${VIBE_CORE_MIN.replaceAll(".", "\\.")} or newer, but vibe-core 0\\.9\\.0 is installed; update it`));
+  assert.match(problem(), new RegExp(`vibe 1\\.1\\.71 needs vibe-core ${VIBE_CORE_MIN.replaceAll(".", "\\.")} or newer, but vibe-core 0\\.9\\.0 is installed; update it`));
+  assert.equal(load().stdout, "own vibe", "an old vibe-core never stops vibe's own modules loading");
 });
 
 test("the loader's fixes name the marketplace and the vibe they were installed from", (t) => {
@@ -143,7 +149,7 @@ process.stdout.write(JSON.stringify({ problem: vibeCoreProblem()?.message, insta
     + "update it with `claude plugin update vibe-core@team-market` in Claude Code or `codex plugin add vibe-core@team-market` in Codex");
 });
 
-test("each command wrapper behaves as running its vibe-core module directly", (t) => {
+test("each command wrapper behaves as running its lib module directly", (t) => {
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "vibe-core-wrappers-")));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   // No codex on PATH, so the liveness probe reads nothing live.
@@ -153,5 +159,5 @@ test("each command wrapper behaves as running its vibe-core module directly", (t
     const message = result.stderr.split("\n").find((line) => line && !line.startsWith("file://") && !/^\s/.test(line) && !line.startsWith("Node.js")) ?? "";
     return { status: result.status, stdout: result.stdout, message };
   };
-  for (const [relative, file] of wrappers) assert.deepEqual(outcome(file), outcome(path.join(CORE, relative)), vibePath(relative));
+  for (const [relative, file] of wrappers) assert.deepEqual(outcome(file), outcome(path.join(VIBE, relative)), vibePath(relative));
 });

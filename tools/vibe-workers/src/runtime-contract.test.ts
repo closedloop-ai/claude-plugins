@@ -1,7 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assembleProviderText, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { assembleProviderText, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { capabilitiesSchema, unsupportedCapabilities, type Capability } from "./contracts.js";
 import { missingMcpTools } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
@@ -156,9 +157,12 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(environment).toContain("currently loaded ClosedLoop tool");
     expect(verify).toContain("vibe-control-runs/");
     expect(verify).toMatch(/Leave any other session's\s+captures alone/);
-    expect(verify).toMatch(/`testSelection` is an\s+array/);
+    // The evidence field guide moved from the verifier's prose into the schema tool's `--example` output.
+    const guide = execFileSync(process.execPath, [join(pluginRoot, "skills", "handoff", "scripts", "pr-evidence-schema.mjs"), "--example"], { encoding: "utf8" });
+    expect(verify).toContain("pr-evidence-schema.mjs --example");
+    expect(guide).toMatch(/`testSelection` is an\s+array/);
     expect(verify).toContain("pr-evidence-schema.mjs --file");
-    expect(verify).toContain("status: \"passed\"");
+    expect(guide).toContain("status: \"passed\"");
     expect(verify).toContain("e2e-capability-probe.mjs --worktree");
     expect(verify).toContain("Never set `dockerPresent: false`");
   });

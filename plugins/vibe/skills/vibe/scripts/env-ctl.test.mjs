@@ -374,3 +374,48 @@ test("the pull request opens in the repository origin names, against its default
   const remoteless = createEnvCtl({ environmentFor: () => null, run: router([["config --get remote.origin.url", ok("/srv/git/widgets.git\n")]]) });
   assert.throws(() => remoteless.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }), /not a GitHub repository/);
 });
+
+test("item 20: a PR opens with the body file the handoff gate checked, never a copy", (t) => {
+  const sha = "c".repeat(40);
+  const gated = "/git/pr-body-gated.md";
+  const witness = JSON.stringify({ evidence: { body: { path: gated } } });
+  const placement = prPlacementFixture(t);
+  const read = (file) => file.endsWith("vibe-handoff-gate.json") ? witness : placement.read(file);
+  const calls = [];
+  const ctl = createEnvCtl({ ...BOUND, ...placement, read, realpath: (file) => file, run: router([
+    ["rev-parse --absolute-git-dir", ok("/git\n")], ["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])],
+    ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/6\n")]], calls) });
+  const input = { worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", base: "e".repeat(40) };
+  const copy = ctl.openPullRequest({ ...input, bodyFile: "/git/pr-body-copy.md" });
+  assert.equal(copy.status, Status.Blocked);
+  assert.match(copy.error, /checked the body file \/git\/pr-body-gated\.md.*never a copy/);
+  assert.ok(!calls.some((call) => call.line.includes("pr create")), "a copy opens nothing");
+  const made = ctl.openPullRequest({ ...input, bodyFile: gated });
+  assert.deepEqual(made, { status: Status.Done, created: true, url: "https://github.com/x/pull/6" });
+  assert.ok(calls.some((call) => call.line.includes("pr create") && call.line.includes(`--body-file ${gated}`)));
+});
+
+test("a recorded scope change blocks the next push until pr-update saves a refreshed body, and then clears the mark", () => {
+  const stale = { reason: "operator ruling: items 17 to 36 join this PR", at: "2026-11-18T05:00:00.000Z" };
+  const staleShow = ok({ ok: true, session: { baseCommit: "b".repeat(40), vercel: {}, prBodyStale: stale } });
+  const pushCalls = [];
+  const blocked = createEnvCtl({ ...BOUND, run: router(publishRoutes({ show: staleShow }), pushCalls) }).publish({ stdin: CTX, worktree: "/wt" });
+  assert.equal(blocked.status, Status.Blocked);
+  assert.match(blocked.error, /recorded scope change \(operator ruling: items 17 to 36 join this PR, 2026-11-18T05:00:00\.000Z\) left the pull request body stale/);
+  assert.equal(pushCalls.some((call) => call.line.includes("main-sync-push")), false, "nothing is pushed");
+
+  const published = "## Summary\nOld scope.\n";
+  const update = (body, calls) => createEnvCtl({ ...BOUND, read: () => body, run: router([
+    ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["vibe-sessions.mjs show", staleShow], ["pr view", ok(published)],
+    ["pr edit", ok("")], ["vibe-sessions.mjs touch", ok({ ok: true })]], calls) })
+    .updatePullRequest({ worktree: "/wt", pr: 438, bodyFile: "/wt/body.md", title: "ISS-1: Fix" });
+  const unchangedCalls = [];
+  const unchanged = update(published, unchangedCalls);
+  assert.equal(unchanged.status, Status.Blocked);
+  assert.match(unchanged.error, /published body unchanged/);
+  assert.equal(unchangedCalls.some((call) => call.line.includes("pr edit")), false);
+  const refreshedCalls = [];
+  assert.deepEqual(update("## Summary\nNew scope.\n", refreshedCalls), { status: Status.Done, pr: 438 });
+  assert.ok(refreshedCalls.some((call) => call.line.includes("vibe-sessions.mjs touch --worktree /wt --body-refreshed")), "the mark is cleared after the edit");
+  assert.ok(refreshedCalls.findIndex((call) => call.line.includes("pr edit")) < refreshedCalls.findIndex((call) => call.line.includes("--body-refreshed")));
+});

@@ -3,7 +3,9 @@
 #        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> [--full-corpus] [--containerized-e2e-build] [--capture <spec.json>] [--shipped-plugin-script <skills-relative path>] <command...>
 #        fleet.sh <orchDir> <local|remote> cleanup
 # A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE;
+# a remote call whose shipment fails to unpack or install on REMOTE_HOST exits 74 before any command runs; both are retryable.
 # LOCAL_HEAVY_BARRED=1 refuses every local heavy slot (exit 78), even with FLEET_FORCE_HERE.
+# A new remote writer that started but failed its launch check (launch-check.mjs) exits 3; steer it, never start it again.
 # A --capture slot first runs vibe's capture-guard.mjs against <orchDir>/captures, which refuses (exit 79) a repeated
 # main baseline or an over-budget capture before any slot is taken, and records the capture's outcome when it ends.
 # <orchDir> is a fleet home (its active program) or a program dir; codex-fleet-monitor/scripts/work-dir.mjs
@@ -44,7 +46,7 @@ case "$where" in
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/fleet-remote-evidence.mjs fleet-orchestrator/scripts/skill-freshness.mjs fleet-orchestrator/scripts/writer-launch.mjs vibe/scripts/owned-state.mjs vibe/scripts/capture-guard.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs fleet-orchestrator/scripts/fleet-admission.sh fleet-orchestrator/scripts/fleet-atomic-install.sh fleet-orchestrator/scripts/fleet-plugin-preflight.mjs)
+ship=(codex-fleet-monitor/scripts/liveness.mjs fleet-orchestrator/scripts/launch-check.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/fleet-remote-evidence.mjs fleet-orchestrator/scripts/skill-freshness.mjs fleet-orchestrator/scripts/writer-launch.mjs vibe/scripts/owned-state.mjs vibe/scripts/capture-guard.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs fleet-orchestrator/scripts/fleet-admission.sh fleet-orchestrator/scripts/fleet-atomic-install.sh fleet-orchestrator/scripts/fleet-plugin-preflight.mjs)
 ship=("${ship[@]/#/skills/}")
 extra=()
 
@@ -60,9 +62,9 @@ run_remote() {
     if [ "$item" = -C ]; then skip=1; continue; fi
     mirror+=" $(printf %q "$item")"
   done
-  if [ -n "$mirror" ]; then mirror="mkdir -p $(printf %q "$remote_store") && (cd \"\$FLEET_SHIPPED_ROOT\" && cp -R$mirror $(printf %q "$remote_store")/) || exit 78; "; fi
-  outer="stage=$remote_stage_prefix.\$\$; rm -rf \"\$stage\" && mkdir -p \"\$stage\" && tar -C \"\$stage\" -xf - && FLEET_SHIPPED_ROOT=\$(bash \"\$stage/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-atomic-install.sh\" \"\$stage\" $(printf %q "$remote_store")) || exit 78; export FLEET_SHIPPED_ROOT; $mirror${REMOTE_SHELL:-zsh -lic} $(printf %q "$pinned_command")"
-  # The shipped scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).
+  if [ -n "$mirror" ]; then mirror="mkdir -p $(printf %q "$remote_store") && (cd \"\$FLEET_SHIPPED_ROOT\" && cp -R$mirror $(printf %q "$remote_store")/) || exit 74; "; fi
+  outer="stage=$remote_stage_prefix.\$\$; rm -rf \"\$stage\" && mkdir -p \"\$stage\" && tar -C \"\$stage\" -xf - && FLEET_SHIPPED_ROOT=\$(bash \"\$stage/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-atomic-install.sh\" \"\$stage\" $(printf %q "$remote_store")) || exit 74; export FLEET_SHIPPED_ROOT; $mirror${REMOTE_SHELL:-zsh -lic} $(printf %q "$pinned_command")"
+  # The shipped scripts go laid out as a checkout (plugins/vibe), which shared/ship-plugins.mjs stages.
   stage=$(node "$skills/../shared/ship-plugins.mjs" "${ship[@]}") || return 2
   files=$(cat "$stage/files")
   # shellcheck disable=SC2086 # plugin file paths have no spaces; each line is one path
@@ -238,7 +240,7 @@ session() {
     lead_provider=$(node "$skills/vibe/scripts/provider.mjs" show) || { echo "fleet: could not read this lead's provider binding" >&2; return 2; }
     plugin_arg+=" --lead-provider $(printf %q "$lead_provider")"
   fi
-  local pending= marker= legacy= attempt= owner_started= remote_command= stage=
+  local pending= marker= legacy= attempt= owner_started= remote_command= stage= resumed=
   # Publish complete ownership atomically before a remote turn can create a writer.
   # An incomplete private staging file never claims the pending name or blocks a retry.
   if [ "$command" = turn ]; then
@@ -262,6 +264,7 @@ session() {
       echo "fleet: prepared remote marker already exists or cannot be created; run remote session recover-marker $name" >&2
       return 2
     fi
+    if [ -f "$marker" ]; then resumed=1; fi
     owner_started=$(ps -o lstart= -p "$$" 2>/dev/null) || owner_started=
     if [ -z "$owner_started" ]; then
       echo "fleet: local dispatch identity is unavailable; writer not started" >&2
@@ -311,6 +314,17 @@ session() {
       if ! publish_remote_marker "$pending" "$marker"; then
         echo "fleet: remote writer started but local marker publication failed; run remote session recover-marker $name" >&2
         return 1
+      fi
+      # A new writer's first tool call must finish: a hook waiting on a GUI session once held one for 14 minutes.
+      if [ -z "$resumed" ]; then
+        local launch_status=0
+        run_remote "node $(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/launch-check.mjs") codex $(printf %q "$REMOTE_STATE_DIR") $(printf %q "$name")" || launch_status=$?
+        if [ "$launch_status" -eq 1 ]; then
+          echo "fleet: $name started on $REMOTE_HOST but failed its launch check (the LAUNCH line names the hook); fix that hook there and steer the writer, never start it again" >&2
+          return 3
+        elif [ "$launch_status" -ne 0 ]; then
+          echo "fleet: $name started on $REMOTE_HOST; its launch check could not run (exit $launch_status); read it with session last $name" >&2
+        fi
       fi
     fi
   else
@@ -479,9 +493,8 @@ slot() {
   if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
   local remote_command_args=("${command_args[@]}")
   if [ -n "$plugin_entry" ]; then
-    local expected_vibe expected_core remote_preflight remote_entry remote_base
+    local expected_vibe remote_preflight remote_entry remote_base
     expected_vibe=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
-    expected_core=$(jq -er '.version' "$skills/../../vibe-core/.codex-plugin/plugin.json")
     remote_preflight="$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-plugin-preflight.mjs"
     remote_entry="$remote_dir/plugins/vibe/skills/$plugin_entry"
     remote_base=(node "$remote_entry" "$@")
@@ -490,7 +503,7 @@ slot() {
     else
       remote_command_args=("${remote_base[@]}")
     fi
-    present+="node $(printf %q "$remote_preflight") $(printf %q "$remote_dir") $(printf %q "$expected_vibe") $(printf %q "$expected_core") || exit 78; "
+    present+="node $(printf %q "$remote_preflight") $(printf %q "$remote_dir") $(printf %q "$expected_vibe") || exit 78; "
   fi
   if [ -n "$preflight" ]; then
     local expected_version remote_root remote_gate

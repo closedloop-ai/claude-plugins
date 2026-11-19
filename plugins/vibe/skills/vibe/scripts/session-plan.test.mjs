@@ -145,7 +145,8 @@ test("ISS-14217: plan publication evidence uses one writable machine-private dir
 test("ISS-14217: provider workers resolve every direct evidence write through session-plan paths", () => {
   const workers = [
     [TICKET_WORKER, ["published", "planDocument", "childEvidence", "liveTicket", "users"]],
-    [ENVIRONMENT_WORKER, ["flagSnapshot", "dispatchInputs", "environmentResult", "environmentResultFile", "liveTicket", "prBody", "prEvidence", "prEvidenceComment"]],
+    // The inventory reads the live ticket itself (`--live-ticket`, through sessionPlanEvidencePaths).
+    [ENVIRONMENT_WORKER, ["flagSnapshot", "dispatchInputs", "environmentResult", "environmentResultFile", "prBody", "prEvidence", "prEvidenceComment"]],
   ];
   for (const [file, fields] of workers) {
     const worker = readFileSync(file, "utf8");

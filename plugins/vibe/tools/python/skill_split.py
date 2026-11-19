@@ -9,7 +9,7 @@ references, which the ClosedLoop vibe carries in place: tools/vibe-closedloop-bu
 plugins/vibe and the provider. `built` reads a file as that build prints it from the current sources, so a change to a
 vibe file or a provider block shows here before any rebuild, with each section the build moved to a cold file (its
 pointer line, build.json `coldPointer`) put back; `generic` reads it as the generic vibe renders it with no provider
-bound (vibe-core's provider.mjs `assembleProviderText`). Both put each split stub's block back where it stood.
+bound (vibe's lib provider.mjs `assembleProviderText`). Both put each split stub's block back where it stood.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ REPO = Path(__file__).resolve().parents[4]
 VIBE = REPO / "plugins" / "vibe"
 BUILD = REPO / "tools" / "vibe-closedloop-build" / "build.mjs"
 BUILD_DATA = REPO / "plugins" / "vibe-closedloop-provider" / "build.json"
-PROVIDER_MODULE = REPO / "plugins" / "vibe-core" / "lib" / "vibe" / "scripts" / "provider.mjs"
+PROVIDER_MODULE = REPO / "plugins" / "vibe" / "lib" / "vibe" / "scripts" / "provider.mjs"
 GENERIC_SCRIPT = (
     "const { assembleProviderText } = await import(process.argv[1]);"
     "const { readFileSync } = await import('node:fs');"

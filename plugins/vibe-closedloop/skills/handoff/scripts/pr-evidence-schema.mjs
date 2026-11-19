@@ -9,6 +9,7 @@ import { proofSourceAt, testIntegrityProofShapeProblems } from "./test-integrity
 import { RUNNER_HOST } from "./e2e-tier.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { EVIDENCE_GUIDE } from "./pr-evidence-guide.mjs";
 
 const { validSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -173,10 +174,13 @@ export function treeEquivalentCarryShapeProblems(carry) {
 
 if (isEntryPoint(import.meta.url)) {
   exitOnProviderBroken();
-  const { values } = parseArgs({ options: { file: { type: "string" }, worktree: { type: "string" } } });
-  if (!values.file) throw new Error("Usage: pr-evidence-schema.mjs --file <private vibe-pr-evidence.json>");
-  const problems = prEvidenceShapeProblems(JSON.parse(readFileSync(values.file, "utf8")), dirname(values.file),
-    values.worktree ? file => proofSourceAt(values.worktree, file) : undefined);
-  process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems })}\n`);
-  if (problems.length) process.exitCode = 1;
+  const { values } = parseArgs({ options: { file: { type: "string" }, worktree: { type: "string" }, example: { type: "boolean" } } });
+  if (values.example) process.stdout.write(`${EVIDENCE_GUIDE}\n`);
+  else {
+    if (!values.file) throw new Error("Usage: pr-evidence-schema.mjs --file <private vibe-pr-evidence.json> [--worktree <wt>] | --example");
+    const problems = prEvidenceShapeProblems(JSON.parse(readFileSync(values.file, "utf8")), dirname(values.file),
+      values.worktree ? file => proofSourceAt(values.worktree, file) : undefined);
+    process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems, ...(problems.length ? { shape: "pr-evidence-schema.mjs --example prints every field" } : {}) })}\n`);
+    if (problems.length) process.exitCode = 1;
+  }
 }

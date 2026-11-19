@@ -1,16 +1,5 @@
-import { existsSync, realpathSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
+// This module moved to vibe. A vibe older than this vibe-core still loads it from here, so it says how to fix that.
+import { writeSync } from "node:fs";
 
-/** Keep Node/Vitest suite children from consuming the workstation's real Vibe state. */
-export function assertIsolatedTestRead(file) {
-  // These flags are set by the test runners and inherited by their CLI fixtures.
-  if (!process.env.NODE_TEST_CONTEXT && process.env.VITEST !== "true") return;
-  if (!existsSync(file)) return;
-  const relative = path.relative(realpathSync(os.tmpdir()), realpathSync(file));
-  if (relative && !path.isAbsolute(relative) && relative.split(path.sep)[0] !== "..") return;
-  const failure = new Error(`VIBE_TEST_LIVE_STATE: a private Vibe state read escaped the temporary fixture (${file})`);
-  // A production fallback may catch the synchronous refusal. The test still fails.
-  queueMicrotask(() => { throw failure; });
-  throw failure;
-}
+writeSync(2, "vibe-core is newer than your vibe. To fix: run `claude plugin update vibe@closedloop-ai` then start a new Claude Code session, or run `codex plugin add vibe@closedloop-ai` then quit and reopen the Codex app.\n");
+process.exit(1);

@@ -450,7 +450,7 @@ export function qaImpactRequestAtCommit(worktree, request, commit) {
   return impactRequestAt(worktree, request, commit);
 }
 
-/** Classify a direct immutable tree delta; only the carry validator authorizes non-ancestor evidence. */
+/** Classify a direct immutable tree delta; only the carry validator and the lane reuse after an amend use non-ancestor evidence. */
 export function qaImpactDirectCommitScope(worktree, request, commit) {
   for (const sha of [request?.lastQa?.boundary, commit]) {
     if (!/^[a-f0-9]{40}$/.test(sha ?? "") || git(worktree, ["rev-parse", "--verify", `${sha}^{commit}`]) !== sha) throw new Error("direct scope needs verified full commit SHAs");

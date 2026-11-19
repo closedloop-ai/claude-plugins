@@ -9,13 +9,12 @@
 // docs folders) are the bound provider's `recipes.diffRules`; without one those
 // rules do not run and only the generic rules apply.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isLocalPlanPath, localPlanPaths, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { lineIndex } from "./line-index.mjs";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
-import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
 import { checkCommentRules, citationPattern, commentBody } from "./comment-rules.mjs";
@@ -23,8 +22,11 @@ import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { checkFlagRetirement } from "./flag-retirement.mjs";
 import { routeSpecs } from "./route-specs.mjs";
-import { createImportClosure, escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
-import { frozenGlobalInputAffectsRender, frozenInputs, storybookPreviewImportClosure } from "./frozen-render.mjs";
+import { escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { isGeneratedFile } from "./generated-files.mjs";
+import { frozenAffectedStoryFiles, frozenInputs } from "./frozen-render.mjs";
+import { DEEPEN_STEPS, gitRepo, lines } from "./diff-rules-repo.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
@@ -64,7 +66,6 @@ const GENERIC_SOURCE = String.raw`(?:#\d+|https?:\/\/\S+)`;
 const GENERIC_DOCS = ["docs/", ".claude/"];
 const STORY_COMPONENT = /\bcomponent:\s*([A-Z]\w*)/;
 const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
-const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
 const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
 const FROZEN_LINE_STATES = /; states ([^;]*);/;
@@ -82,7 +83,6 @@ const COPY_LITERALS = [
   /()(?<=[\w"'}/])>([^<>{}=&|();]*[A-Za-z]{2,}[^<>{}=&|();]*)</g,
 ];
 const WORDING = /[A-Z]|\s/;
-const TEMPLATE_PART = /\$\{[^}]*\}/;
 const TEMPLATE_PARTS = /\$\{[^}]*\}/g;
 const SCRIPT_FILE = /\.(?:[cm]?[jt]sx?|sh|bash|zsh|py)$/;
 const ENV_DUMP = [
@@ -94,8 +94,6 @@ const ENV_DUMP = [
 ];
 const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 const RESTORE_LIMIT = 40;
-const DEEPEN_STEPS = ["--deepen=1000", "--deepen=10000", "--unshallow"];
-const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
 const CONTROL_PROP = /\b((?:show|enable|allow|with|render|on)[A-Z][A-Za-z0-9]*)\s*(?::|=)/;
 const CONTROL_TERM = /selectall|checkbox|button|menu|action|toolbar|filter|search|picker|popover|dialog|drawer|toggle|favorite|star|bulk|control|disclosure|pagination/i;
 const CONTROL_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
@@ -104,7 +102,8 @@ const IMPORT_DECLARATION = /\bimport\s+(?!["'])([\s\S]*?)\s+from\s+["']([^"']+)[
 const DESIGN_SYSTEM_CONTROL = /^@repo\/design-system\/components\/ui\//;
 const CAPABILITY_COMPONENT = /search|filter|sort|range|toolbar|pagination|control|picker|menu|popover/i;
 const PRIMITIVE_LEAF = /(?:Item|Content|Trigger)$/;
-const PAGE_COMPOSER = /(?:^|\/)[^/]*(?:page|route|toolbar|list|shell|surface|adapter)[^/]*\.[jt]sx$/i;
+// The file-name words that mark a page composer; matched as whole words, so "pager" is not "page".
+const PAGE_COMPOSER_WORDS = new Set(["page", "route", "toolbar", "list", "shell", "surface", "adapter"]);
 
 /**
  * Parses `git diff --unified=0` output into per-file added and removed lines, leaving out the in-worktree
@@ -156,18 +155,18 @@ export function touchesUiPath(files) {
  * Applies every rule. `repo` supplies reads: `head(path)` and `base(path)` file
  * text or null, `headFiles`
  * (tracked paths at head), `importerCounts(paths)` (non-test files importing each) and optional `generatedFiles`
- * (head paths the repository marks `linguist-generated`).
+ * (head paths the repository marks `linguist-generated`); a generator header is read through `head` and `base`.
  */
-export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
+export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-request") {
+  // One predicate for every rule: build output repeats its hand-written source, which carries any finding; the build
+  // lanes byte-check the output. duplicate-helper skips only linguist-generated files (isGeneratedFile).
+  const files = changedFiles.filter((file) => !isGeneratedFile(repo, file.path));
   const blocking = [];
   const requiredTests = [];
   const requiredChecks = [];
   const logged = (prefix, file) => changeLog.split("\n").some((line) => line.includes(prefix) && (file === undefined || line.includes(file)));
   const add = (rule, file, line, problem, fix) => blocking.push({ rule, file, line, problem, fix });
   const live = files.filter((file) => file.status !== "D");
-  // Build output the base's `.gitattributes` marks `linguist-generated` repeats its hand-written source; the source
-  // carries the finding, and the build lanes byte-check the output.
-  const authored = live.filter((file) => !repo.generatedFiles?.has(file.path));
 
   if (repo.rules?.migrations) checkMigrations(live, repo, logged, add, requiredChecks);
   const newMigrations = live.filter((file) => file.status === "A" && migrationId(file.path)).map((file) => ({ path: file.path, sql: repo.head(file.path) ?? "" }));
@@ -192,11 +191,11 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
     checkTransactions(file, head, add);
     checkLinkDeletes(file, head, add);
   }
-  checkHighRiskBatchChanges(authored, changeLog, repo, add, requiredTests);
+  checkHighRiskBatchChanges(live, changeLog, repo, add, requiredTests);
   checkOwnerTestRules(live, changeLog, repo, add, requiredTests);
   if (rules.desktopLane) checkDesktopLane(live, repo, logged, add, rules);
   checkTicketedComments(files, repo, logged, add, rules);
-  checkCommentRules(authored, repo, add);
+  checkCommentRules(live, repo, add);
   checkStories(live, files, repo, logged, add);
   checkFrozenRenders(files, repo, changeLog, add);
   checkLostStoryIds(files, repo, logged, add);
@@ -211,9 +210,9 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   checkSpecChanges(files, changeLog, add);
   const flagRetirements = checkFlagRetirement(files, repo, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
-  checkComparators(authored, repo, logged, add, changeLog, phase);
-  checkUnusedExports(authored, repo, logged, add);
-  checkDuplicateHelpers(authored, repo, add);
+  checkComparators(live, repo, logged, add, changeLog, phase);
+  checkUnusedExports(live, repo, logged, add);
+  checkDuplicateHelpers(changedFiles.filter((file) => file.status !== "D" && !isGeneratedFile(repo, file.path, { header: false })), repo, add);
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo, add), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks, ...(flagRetirements.length ? { flagRetirements } : {}) };
@@ -356,7 +355,7 @@ function componentImports(source) {
  */
 function checkSharedCapabilityOwners(files, changeLog, repo, add, { slugSource }) {
   const checked = new Set();
-  for (const file of files.filter((entry) => PAGE_COMPOSER.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+  for (const file of files.filter((entry) => isPageComposer(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
     const addedLines = new Set(file.added.map((entry) => entry.line));
     const baseImports = componentImports(repo.base(file.oldPath ?? file.path) ?? "");
     const composedOnBase = (source, name) => baseImports.some((entry) => entry.source === source && entry.names.includes(name));
@@ -371,7 +370,7 @@ function checkSharedCapabilityOwners(files, changeLog, repo, add, { slugSource }
         if (checked.has(key)) continue;
         checked.add(key);
         const composers = repo.wordFiles(name).filter((candidate) =>
-          PAGE_COMPOSER.test(candidate) && !isTestFile(candidate) && !STORY_FILE.test(candidate) &&
+          isPageComposer(candidate) && !isTestFile(candidate) && !STORY_FILE.test(candidate) &&
           componentImports(repo.head(candidate) ?? "").some((entry) => entry.source === imported.source && entry.names.includes(name))
         );
         if (composers.length < 2) continue;
@@ -588,23 +587,16 @@ function checkStories(files, allFiles, repo, logged, add) {
  * itself are the inventory's `v1Stories` and `compileOnlyV1Repairs`.
  */
 function checkFrozenRenders(files, repo, changeLog, add) {
-  const changed = new Set(files.flatMap((file) => [file.path, file.oldPath].filter(Boolean)));
   const stories = repo.frozenStories();
   if (stories.length === 0) {
     return;
   }
-  const baseClosure = createImportClosure(repo.baseFiles, repo.baseBlobs);
-  const headFiles = new Set(repo.headFiles);
-  const headClosure = createImportClosure(headFiles,
-    (paths) => new Map(paths.map((file) => [file, repo.head(file)])));
-  const previewClosure = storybookPreviewImportClosure(repo.baseFiles, headFiles, repo.base, repo.head);
-  const globalChanged = files.some((file) => [file.path, file.oldPath].filter(Boolean).some((candidate) =>
-    frozenGlobalInputAffectsRender(candidate, previewClosure, repo.base(file.oldPath ?? file.path), repo.head(file.path))));
-  const affected = stories.filter((story) => {
-    if (globalChanged) return true;
-    return [...baseClosure([story]), ...headClosure([story])]
-      .some((file) => file !== story && changed.has(file));
-  });
+  if (Object.keys(repositoryLayout() ?? {}).length === 0) {
+    add("frozen-render", stories[0], 1, "no vibe provider layout is bound; selection cannot be computed", "bind the session's vibe provider, then run the inventory again");
+    return;
+  }
+  const affected = frozenAffectedStoryFiles({ changed: files, stories, baseFiles: repo.baseFiles, headFiles: new Set(repo.headFiles),
+    baseText: repo.base, headText: repo.head, baseBlobs: repo.baseBlobs });
   // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion.
   // It counts story files, as `affected` does; their stories follow in parentheses. It names the
   // rendered states and their dependency inputs. Unrelated branch changes do not invalidate that evidence.
@@ -621,7 +613,7 @@ function checkFrozenRenders(files, repo, changeLog, add) {
   };
   const recorded = changeLog.split("\n").some((line) => line.includes(prefix) && line.includes(": frozen-render.mjs ") && current(line));
   if (affected.length && !recorded) {
-    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged; rerun it only when qa-impact.mjs names one of these story states or its dependency inputs changed`);
+    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render-gate.mjs as its own shell step, never a capture of your own; on FROZEN PASS it records the \`Frozen render unchanged\` line itself, on FROZEN BLOCK keep the frozen renders unchanged; rerun it only when qa-impact.mjs names one of these story states or its dependency inputs changed`);
   }
 }
 
@@ -852,135 +844,6 @@ export function sidebarOrderTests(files, repo) {
     : [];
 }
 
-function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules, sessionIds = []) {
-  let deepened = 0;
-  const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
-  const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
-  const generatedFiles = linguistGenerated(worktree, headFiles, base);
-  const blobs = new Map();
-  const baseBlobs = (paths) => {
-    const missing = [...new Set(paths)].filter((file) => !blobs.has(file) && baseFiles.has(file));
-    if (missing.length) {
-      readBlobs(worktree, base, missing).forEach((text, file) => blobs.set(file, text));
-    }
-    return new Map(paths.map((file) => [file, blobs.get(file)]));
-  };
-  const read = memoize((file) => {
-    const absolute = path.join(worktree, file);
-    return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
-  });
-  const baseRead = memoize((file) => {
-    try {
-      return git(worktree, ["show", `${base}:${file}`]);
-    } catch {
-      return null;
-    }
-  });
-  return {
-    head: read,
-    base: baseRead,
-    shallow: () => lines(() => git(worktree, ["rev-parse", "--is-shallow-repository"]))[0] === "true",
-    deepen: () => {
-      const step = DEEPEN_STEPS[deepened++] ?? "--unshallow";
-      try {
-        execFileSync("git", ["-C", worktree, "fetch", "--quiet", step], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: DEEPEN_TIMEOUT_MS });
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, reason: `git fetch ${step}: ${String(error?.stderr ?? error?.message ?? error).trim().split("\n")[0]}` };
-      }
-    },
-    headFiles,
-    baseFiles,
-    generatedFiles,
-    baseBlobs,
-    wordFiles: (word) => lines(() => git(worktree, ["grep", "-l", "-w", "-F", "--untracked", "-e", word])),
-    sessionIds,
-    storyReplacements,
-    deletionOf: (file) => {
-      const hit = lines(() => git(worktree, ["log", "--diff-filter=D", "-n", "1", "--format=%h %s", base, "--", file]))[0];
-      return hit ? `commit ${hit}` : null;
-    },
-    unmountOf: (name, file) => {
-      const mount = new RegExp(`<${name}\\b`);
-      for (const hit of lines(() => git(worktree, ["log", "-G", `<${name}([^A-Za-z0-9]|$)`, "-n", "20", "--format=%H %h %s", base, "--", file]))) {
-        const [sha, ...summary] = hit.split(" ");
-        const diff = lines(() => git(worktree, ["show", "--format=", "--unified=0", sha, "--", file]));
-        const count = (sign) => diff.filter((text) => text.startsWith(sign) && !text.startsWith(`${sign}${sign}${sign}`) && mount.test(text)).length;
-        if (count("-") > count("+")) {
-          return `commit ${summary.join(" ")}`;
-        }
-      }
-      return null;
-    },
-    baseContains: (text) => {
-      const parts = text.split(TEMPLATE_PART);
-      const search = parts.length > 1 ? ["-E", "-e", parts.map((part) => part.replace(/[.[\]()*+?{}|^$\\]/g, "\\$&")).join(".*")] : ["-F", "-e", text];
-      try {
-        git(worktree, ["grep", "-q", ...search, base]);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    frozenInputs: (ref, stories) => { try { return frozenInputs(worktree, ref, stories); } catch { return null; } },
-    filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"])),
-    rules,
-    isFrozenStory,
-    frozenStories: () => {
-      const candidates = lines(() => git(worktree, ["grep", "-l", "-E", FROZEN_CANDIDATE, base, "--", "*.stories.tsx", "*.stories.ts"]))
-        .map((hit) => hit.slice(base.length + 1));
-      const texts = baseBlobs(candidates);
-      return candidates.filter((story) => !isUnversionedStory(texts.get(story)) && isFrozenStory(texts.get(story) ?? ""));
-    },
-    baseStoriesRendering: (component) =>
-      lines(() => git(worktree, ["grep", "-l", "-E", `component:[[:space:]]*${component}([^[:alnum:]_]|$)`, base, "--", "*.stories.tsx", "*.stories.ts"]))
-        .map((hit) => hit.slice(base.length + 1)),
-    importersOf: (files) => importersOf(worktree, files),
-    importerCounts: (files) => new Map([...importersOf(worktree, files)].map(([file, importing]) => [file, [...importing].filter((hit) => !isTestFile(hit)).length])),
-  };
-}
-
-function memoize(read) {
-  const cache = new Map();
-  return (key) => {
-    if (!cache.has(key)) {
-      cache.set(key, read(key));
-    }
-    return cache.get(key);
-  };
-}
-
-/**
- * Head paths whose `linguist-generated` attribute is set by the `.gitattributes` at `base`, so a diff cannot mark its
- * own hand-written files generated and skip the rules that read them. A git that cannot read attributes at a commit
- * (`--source` needs git 2.40) marks nothing generated, so every rule still reads every file.
- */
-export function linguistGenerated(worktree, files, base) {
-  if (files.length === 0) return new Set();
-  let output;
-  try {
-    output = execFileSync("git", ["-C", worktree, "check-attr", "-z", "--stdin", "--source", base, "linguist-generated"],
-      { input: files.join("\0"), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
-  } catch {
-    return new Set();
-  }
-  const fields = output.split("\0");
-  const generated = new Set();
-  for (let index = 0; index + 2 < fields.length; index += 3) {
-    if (fields[index + 2] === "set" || fields[index + 2] === "true") generated.add(fields[index]);
-  }
-  return generated;
-}
-
-/** Non-empty output lines of a git read; a command that matches nothing (grep's exit 1) or a missing path is empty. */
-function lines(read) {
-  try {
-    return read().split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 function untrackedAsAdded(worktree, planPrefix) {
   return git(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)
     .filter((file) => !isLocalPlanPath(file, planPrefix))
@@ -991,27 +854,6 @@ function untrackedAsAdded(worktree, planPrefix) {
       added: readFileSync(path.join(worktree, file), "utf8").split("\n").map((text, index) => ({ line: index + 1, text })),
       removed: [],
     }));
-}
-
-/** Reads many base blobs through one `git cat-file --batch`. */
-function readBlobs(worktree, base, files) {
-  const output = execFileSync("git", ["cat-file", "--batch"], {
-    cwd: worktree, input: files.map((file) => `${base}:${file}`).join("\n") + "\n", maxBuffer: 512 * 1024 * 1024,
-  });
-  const texts = new Map();
-  let offset = 0;
-  for (const file of files) {
-    const end = output.indexOf(10, offset);
-    const header = output.subarray(offset, end).toString();
-    const size = Number(header.split(" ")[2]);
-    offset = end + 1;
-    if (header.endsWith("missing")) {
-      continue;
-    }
-    texts.set(file, output.subarray(offset, offset + size).toString("utf8"));
-    offset += size + 1;
-  }
-  return texts;
 }
 
 /**
@@ -1034,7 +876,8 @@ export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), i
     compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding), sessionInternalIds(worktree, log)), phase);
 }
 
-function sessionInternalIds(worktree, changeLog) {
+/** The private row ids (decision tables, change log) the copy rules treat as session-internal. */
+export function sessionInternalIds(worktree, changeLog) {
   const texts = [changeLog];
   const directory = path.dirname(localPlanPaths(worktree).decisionTable);
   try {
@@ -1043,32 +886,6 @@ function sessionInternalIds(worktree, changeLog) {
     }
   } catch { /* A session with no table contributes no private row ids. */ }
   return [...new Set(texts.flatMap((text) => text.match(/\b(?:DT|ROW|DEC)-[A-Za-z0-9.-]+\b/g) ?? []))];
-}
-
-/** Every tracked file importing each of `files` by its directory and stem, or by `./stem` beside it. */
-function importersOf(worktree, files) {
-  const targets = files.map((file) => {
-    const stem = path.basename(file).replace(/\.[jt]sx?$/, "");
-    const directory = path.dirname(file);
-    return { file, directory, elsewhere: `${path.basename(directory)}/${stem}`, sibling: `./${stem}`, stem };
-  });
-  const hits = targets.length === 0 ? [] : lines(() => git(worktree, ["grep", "-F", ...targets.flatMap((target) => ["-e", target.elsewhere, "-e", target.sibling]), "--", "*.ts", "*.tsx", "*.js", "*.jsx"]));
-  const found = new Map();
-  for (const target of targets) {
-    const elsewhere = new RegExp(`from ["'][^"']*/${escapeRegExp(target.elsewhere)}(?:\\.js)?["']`);
-    const sibling = new RegExp(`from ["']\\./${escapeRegExp(target.stem)}(?:\\.js)?["']`);
-    const importing = new Set();
-    for (const hit of hits) {
-      const at = hit.indexOf(":");
-      const hitFile = hit.slice(0, at);
-      const text = hit.slice(at + 1);
-      if (hitFile !== target.file && (elsewhere.test(text) || (path.dirname(hitFile) === target.directory && sibling.test(text)))) {
-        importing.add(hitFile);
-      }
-    }
-    found.set(target.file, importing);
-  }
-  return found;
 }
 
 /**
@@ -1102,4 +919,11 @@ export function compileDiffRules(data, binding = null) {
     slugSource: providerDataOr(binding, "tickets", "slugSource", null) ?? GENERIC_SOURCE,
     criterionSource: providerDataOr(binding, "tickets", "criterionSource", null) ?? GENERIC_SOURCE,
   };
+}
+
+/** Whether a .jsx/.tsx file name holds a page-composer word, split at `-`, `_`, `.` and camelCase boundaries. */
+export function isPageComposer(file) {
+  const name = /(?:^|\/)([^/]+)\.[jt]sx$/i.exec(file)?.[1];
+  if (!name) return false;
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[-_.\s]+/).some((word) => PAGE_COMPOSER_WORDS.has(word.toLowerCase()));
 }

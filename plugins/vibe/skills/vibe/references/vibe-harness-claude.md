@@ -13,7 +13,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
   object on stdin: `{"worktree", "agentName", "mode", "requestId", "input"
   (or "continuation"), "capabilities"}` plus the record and sessionless fields
   below when they apply. `input` starts an id; its active resumes use
-  `continuation`. Optional `timeoutMs` defaults to and caps at 1800000. When the session brief or orchestrator explicitly
+  `continuation`. Optional `timeoutMs` (model time, and each tool call on its own) defaults to and caps at 1800000. When the session brief or orchestrator explicitly
   requires tests outside a pull-request turn, pass `"testsRequired": true`
   for the persistent change writer; the launcher never infers it from raw text.
   In Codex, carry the same explicit requirement in the root-controlled turn

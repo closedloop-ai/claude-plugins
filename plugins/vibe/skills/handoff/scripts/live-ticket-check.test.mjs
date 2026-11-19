@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkLiveTicket, parseSections, TICKET_SECTIONS } from "./live-ticket-check.mjs";
+import { APPENDED_SECTIONS, checkLiveTicket, parseSections, TICKET_SECTIONS, VIBE_TICKET_MARKER } from "./live-ticket-check.mjs";
 import { renderRecordSections, vercelAliases } from "../../vibe/scripts/vibe-session-data.mjs";
 import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { bindProviderInProcess, PROVIDER_BINDING, git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
@@ -38,7 +38,7 @@ const DESIGN_REVIEW = [
 
 function completeTicket(overrides = {}) {
   const sections = {
-    "What this is": "Bulk select with tag editing on Sessions and Branches.",
+    "What this is": `Bulk select with tag editing on Sessions and Branches.\n\n${VIBE_TICKET_MARKER} Dana Lee.`,
     "Scope and acceptance criteria": "- Scope: both lists\n- Newest ruling: ISS-12592, 2026-10-15, \"tag editing stays on the list page\"\n- Prior removal: none found (searched: fts_search tag editor remove)\n- Acceptance criteria:\n  - [ ] Select several rows and edit their tags",
     Environment: ENVIRONMENT,
     Progress: "- 2026-10-06: added bulk select to `<SessionsTable>`",
@@ -59,6 +59,7 @@ test("the checked sections are exactly the template's headings, in order", () =>
   const body = TEMPLATE_BODY.exec(readFileSync(TEMPLATE, "utf8"))?.[1];
   assert.ok(body, "the template has a fenced markdown body");
   assert.deepEqual([...parseSections(body).keys()], TICKET_SECTIONS);
+  assert.ok(body.includes(VIBE_TICKET_MARKER), "a ticket created from the template carries the marker that keeps it fully checked");
 });
 
 test("a complete ticket passes", () => {
@@ -163,7 +164,7 @@ test("the template itself is never complete", () => {
 test("pending markers, placeholders, and missing record fields are each reported", () => {
   const ticket = completeTicket({
     Progress: "Pending.",
-    "What this is": "<Two or three sentences in the person's words>",
+    "What this is": `<Two or three sentences in the person's words>\n\n${VIBE_TICKET_MARKER} Dana Lee.`,
     Environment: ENVIRONMENT.replace(/- Storybook: \S+/, "- Storybook: Pending."),
     Sessions: "Pending.",
     "Production flag snapshot": "Pending.",
@@ -400,4 +401,42 @@ test("a session's flag keys must be recorded, and every proposed key approved an
 test("a Handoff section with no Assumptions line fails the check", () => {
   const body = completeTicket({ Handoff: "- Checks: all pass" });
   assert.ok(checkLiveTicket(body).problems.some((entry) => entry.section === "Handoff" && entry.problem.includes("no Assumptions line")));
+});
+
+// A human-authored engineering ticket from a PRD, adopted by a session, with the sections vibe appended.
+const PRD_CHILD_TICKET = [
+  "## Summary", "", "Engineering ticket from PRD-321: show the owner on each Branch row.", "",
+  "## Requirements", "", "- [ ] AC-1 The owner column shows the assignee's name", "",
+  "## Technical notes", "", "Reuse the existing owner chip.", "",
+  "## Sessions", "", "- Codex session (orchestrator): `01a11209-54a0-72c0-8255-68692884c10f`", "",
+  "## Handoff", "", "- Checks: all pass", "- Assumptions: None: no Spec Card", "",
+  "## Grading", "", "Set `Design grade` or `Eng grade`.", "",
+].join("\n");
+
+test("ISS-14116: a ticket vibe did not create is checked only for the sections vibe appends", () => {
+  const created = { liveTicketCreatedBySession: true, flagKeys: { surfaces: [] } };
+  const adopted = { liveTicketCreatedBySession: false, flagKeys: { surfaces: [] } };
+  const withoutHandoff = PRD_CHILD_TICKET.replace(/## Handoff\n[\s\S]*?(?=## Grading)/, "");
+  const vibeTicketMissing = completeTicket().replace(/## Backend still missing\n\nNone\.\n/, "");
+  // Decision table: template marker in the body x the record's ticket provenance.
+  const rows = [
+    ["human PRD child, no record", PRD_CHILD_TICKET, undefined, []],
+    ["human PRD child, adopted record", PRD_CHILD_TICKET, adopted, []],
+    ["human PRD child body, created record", PRD_CHILD_TICKET, created, "full"],
+    ["human PRD child missing Handoff, adopted record", withoutHandoff, adopted, [{ section: "Handoff", problem: "missing" }]],
+    ["vibe ticket missing a section, no record", vibeTicketMissing, undefined, [{ section: "Backend still missing", problem: "missing" }]],
+    ["vibe ticket missing a section, created record", vibeTicketMissing, created, [{ section: "Backend still missing", problem: "missing" }]],
+    ["vibe-template body, adopted record", vibeTicketMissing, adopted, []],
+  ];
+  for (const [name, body, record, problems] of rows) {
+    if (problems === "full") {
+      assert.ok(checkLiveTicket(body, { record }).problems.some((item) => item.section === "Environment" && item.problem === "missing"), name);
+      continue;
+    }
+    assert.deepEqual(checkLiveTicket(body, { record }).problems, problems, name);
+  }
+  const pendingGrading = PRD_CHILD_TICKET.replace("Set `Design grade` or `Eng grade`.", "Pending.");
+  assert.deepEqual(checkLiveTicket(pendingGrading, { record: adopted }).problems,
+    [{ section: "Grading", problem: "still has a Pending. marker" }]);
+  assert.deepEqual(APPENDED_SECTIONS.filter((heading) => !TICKET_SECTIONS.includes(heading)), []);
 });

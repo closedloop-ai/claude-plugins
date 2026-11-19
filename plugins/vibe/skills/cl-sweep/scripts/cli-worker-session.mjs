@@ -24,7 +24,11 @@ import {
   initializeFeatureOwnership,
   verifyFeatureOwnership,
 } from './feature-ownership.mjs';
-import { isLegacyTicketOwnerModel, TICKET_OWNER_MODEL } from './model-policy.mjs';
+import {
+  assertNoReplacementNeeded, sessionModelFields, ticketOwnerModel, ticketOwnerReplacementStatus, validateModelFallback,
+  validateModelName,
+} from './model-policy.mjs';
+import { startWithModelList } from './model-catalog.mjs';
 
 const SESSION_SCHEMA = 'CL_SWEEP_CLI_WORKER_SESSION v1';
 const EVENT_PREFIX = 'CL_SWEEP_EVENT v1 ';
@@ -159,9 +163,9 @@ function validateWorktreeBinding(session) {
 function validateBinding(session) {
   const current = validateWorktreeBinding(session);
   verifyFeatureOwnership(session);
-  if (session.requestedModel !== TICKET_OWNER_MODEL && !isLegacyTicketOwnerModel(session.requestedModel)) {
-    fail(`Worker session requires a proven ${TICKET_OWNER_MODEL} or persisted legacy model binding`);
-  }
+  // A saved session keeps the exact model it was started on; no model is required of it.
+  validateModelName(session.requestedModel, 'requestedModel');
+  validateModelFallback(session);
   return current;
 }
 
@@ -207,9 +211,7 @@ function statusSession(args) {
     parentGeneration: session.parentGeneration ?? 1,
     codexSessionId: session.codexSessionId,
     requestedModel: session.requestedModel ?? null,
-    modelReplacement: session.requestedModel !== TICKET_OWNER_MODEL
-      ? { targetModel: TICKET_OWNER_MODEL, requiredBeforeNextTurn: true, idleCandidate: processes.length === 0 }
-      : null,
+    ...ticketOwnerReplacementStatus(session, processes.length === 0),
     worktree: session.worktree,
     branch: session.branch,
     bindingValid,
@@ -225,7 +227,8 @@ function statusSession(args) {
   };
 }
 
-function initialize(args) {
+/** `modelCatalog` is the Codex CLI's model list (`model-catalog.mjs`); a chosen model it does not name runs on its fallback. */
+function initialize(args, { modelCatalog } = {}) {
   const path = resolve(required(args, 'session-file'));
   const binding = inspectWorktree(realpathSync(required(args, 'worktree')));
   const cutoverCheckpoint = verifyCutoverCheckpoint(args['cutover-checkpoint'], binding);
@@ -246,7 +249,8 @@ function initialize(args) {
     ...binding,
     cutoverCheckpoint,
     transport: 'codex_exec',
-    requestedModel: TICKET_OWNER_MODEL,
+    // The resolved model can come from this machine's overrides file, which accepts names a session cannot store.
+    ...sessionModelFields(validateModelName(ticketOwnerModel(), 'requestedModel'), modelCatalog),
     codexSessionId: null,
     state: 'READY',
     acceptedEventIds: [],
@@ -466,6 +470,8 @@ async function runTurn(args) {
   if (session.callbackCorrection?.status === 'exhausted') {
     fail('Malformed-callback correction budget is exhausted; replace by policy');
   }
+  // Refused before anything is written: a session that must be replaced keeps its file exactly as saved.
+  assertNoReplacementNeeded(session);
   if (session.callbackCorrection?.status === 'required') {
     session.callbackCorrection = {
       ...session.callbackCorrection,
@@ -476,9 +482,6 @@ async function runTurn(args) {
     writeJsonPrivate(path, session);
   }
   validateBinding(session);
-  if (session.requestedModel !== TICKET_OWNER_MODEL) {
-    fail(`Persisted ${session.requestedModel} worker requires idle-boundary replacement with a new ${TICKET_OWNER_MODEL} session before another turn`);
-  }
   probe({ codex: args.codex });
   const prompt = guardedWorkerPrompt(
     readFileSync(resolve(required(args, 'prompt-file')), 'utf8'),
@@ -552,7 +555,7 @@ async function runTurn(args) {
   }
 }
 
-function replaceSession(args) {
+function replaceSession(args, { modelCatalog } = {}) {
   const prior = loadSession(required(args, 'session-file'));
   if (prior.session.state === 'RUNNING') fail('Cannot replace a running worker session');
   validateWorktreeBinding(prior.session);
@@ -570,7 +573,7 @@ function replaceSession(args) {
     'parent-cwd': prior.session.parentCwd,
     'root-generation': String(prior.session.parentGeneration ?? 1),
     'replacement-of': `${prior.session.ownerId}:${prior.session.generation}`,
-  });
+  }, { modelCatalog });
   prior.session.state = 'REPLACED';
   prior.session.replacedBy = required(args, 'owner-id');
   prior.session.replacementReason = required(args, 'reason');
@@ -623,10 +626,10 @@ try {
   let result;
   if (args.command === 'probe') result = probe(args);
   else if (args.command === 'status') result = statusSession(args);
-  else if (args.command === 'init') result = initialize(args);
+  else if (args.command === 'init') result = await startWithModelList(args.codex ?? 'codex', (modelCatalog) => initialize(args, { modelCatalog }));
   else if (args.command === 'run') result = await runTurn(args);
   else if (args.command === 'validate-callback') result = validateCallbackFile(args);
-  else if (args.command === 'replace') result = replaceSession(args);
+  else if (args.command === 'replace') result = await startWithModelList(args.codex ?? 'codex', (modelCatalog) => replaceSession(args, { modelCatalog }));
   else if (args.command === 'rebind-parent') result = rebindParent(args);
   else fail('Usage: cli-worker-session.mjs <probe|status|init|run|validate-callback|replace|rebind-parent> [options]');
   process.stdout.write(`${JSON.stringify(result)}\n`);

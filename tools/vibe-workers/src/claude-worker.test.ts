@@ -2,9 +2,9 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, DEFAULT_WORKER_TIMEOUT_MS, dispatchFreshnessProblem, MAX_WORKER_TIMEOUT_MS, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, testAuthoringGranted, workerResultJsonSchemaFor, workerSessionName } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, checkPreviewResult, createTurnCap, DEFAULT_WORKER_TIMEOUT_MS, dispatchFreshnessProblem, MAX_WORKER_TIMEOUT_MS, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, stderrTail, testAuthoringGranted, workerResultJsonSchemaFor, workerSessionName } from "./claude-worker.js";
 import { providerAware } from "./cli.js";
-import { ProviderBroken } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { ProviderBroken } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
@@ -37,20 +37,37 @@ it("Claude dispatch binds the exact installed definition root and script referen
   expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run handoff/scripts/repo-tool.mjs")).toBeNull();
 });
 
+it("Claude dispatch treats the session checkout's own plugin source as a script root, never another checkout's", () => {
+  const value = setup();
+  const pluginSource = (checkout: string) => {
+    const root = join(checkout, "plugins", "vibe");
+    mkdirSync(join(root, ".claude-plugin"), { recursive: true });
+    writeFileSync(join(root, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "0.0.1" }));
+    mkdirSync(join(root, "skills", "vibe", "scripts"), { recursive: true });
+    return root;
+  };
+  const own = pluginSource(value.worktree);
+  const other = join(value.base, "other-checkout");
+  mkdirSync(other);
+  execFileSync("git", ["init", "-q"], { cwd: other });
+  const elsewhere = pluginSource(other);
+  const check = (text: string) => dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, text);
+  expect(check("Add plugins/vibe/skills/vibe/scripts/branch-new.mjs and its test.")).toBeNull();
+  expect(check(`Add ${join(own, "skills", "vibe", "scripts", "branch-new.mjs")}.`)).toBeNull();
+  expect(check(`Run ${join(elsewhere, "skills", "vibe", "scripts", "branch-new.mjs")}.`))
+    .toMatch(/skills\/vibe\/scripts\/branch-new\.mjs: plugin script does not exist in installed vibe/);
+});
+
 it("protected path support requires a regular installed hook, not a missing or symlinked script", async () => {
   const value = setup();
-  await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/vibe-core is missing/);
-  // The guard lives in vibe-core beside vibe; lay the two out as a checkout.
-  const plugins = join(value.base, "layout", "plugins");
-  const vibe = join(plugins, "vibe");
-  const core = join(plugins, "vibe-core");
+  await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/missing or unreadable/);
+  // The guard lives in vibe's own hooks folder; lay out a vibe that has none.
+  const vibe = join(value.base, "layout", "plugins", "vibe");
   mkdirSync(join(vibe, ".claude-plugin"), { recursive: true });
   writeFileSync(join(vibe, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.0.0" }));
-  mkdirSync(join(core, ".claude-plugin"), { recursive: true });
-  writeFileSync(join(core, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe-core", version: "1.0.0" }));
   await expect(checkProtectedWriteSupportAsync(vibe, join(value.bin, "claude"))).rejects.toThrow(/missing or unreadable/);
-  mkdirSync(join(core, "hooks"));
-  symlinkSync(join(bundleDirectory, "../../../../../vibe-core", "hooks/protected-write-guard.mjs"), join(core, "hooks/protected-write-guard.mjs"));
+  mkdirSync(join(vibe, "hooks"));
+  symlinkSync(join(bundleDirectory, "../../../..", "hooks/protected-write-guard.mjs"), join(vibe, "hooks/protected-write-guard.mjs"));
   await expect(checkProtectedWriteSupportAsync(vibe, join(value.bin, "claude"))).rejects.toThrow(/regular file/);
 });
 
@@ -274,7 +291,7 @@ describe("production Claude CLI adapter", () => {
 
   it("routes a protected Python write through the writer-only Bash matcher", () => {
     const value = setup();
-    const hook = join(bundleDirectory, "../../../../../vibe-core", "hooks/protected-write-guard.mjs");
+    const hook = join(bundleDirectory, "../../../..", "hooks/protected-write-guard.mjs");
     const settings = JSON.parse(protectedWriteSettings(hook, value.worktree));
     const route = settings.hooks.PreToolUse[0];
     expect(new RegExp(route.matcher).test("Bash")).toBe(true);
@@ -1067,6 +1084,92 @@ describe("production Claude CLI adapter", () => {
     expect(next.status, next.stdout).toBe(0);
     expect(readWriterSummary(value.worktree)?.activeRequestId).toBeUndefined();
   }, 10000);
+  it("counts only the model's time against the turn cap and bounds each tool wait by the same cap (item 30(g))", () => {
+    let now = 0;
+    const timers: { callback: () => void; at: number; live: boolean }[] = [];
+    const expired: string[] = [];
+    const clock = { now: () => now, set: (callback: () => void, ms: number) => {
+      const timer = { callback, at: now + ms, live: true };
+      timers.push(timer);
+      return timer as unknown as ReturnType<typeof setTimeout>;
+    }, clear: (handle: ReturnType<typeof setTimeout>) => { (handle as unknown as { live: boolean }).live = false; } };
+    const advance = (ms: number) => {
+      now += ms;
+      for (const timer of timers) if (timer.live && timer.at <= now) { timer.live = false; timer.callback(); }
+    };
+    const cap = createTurnCap(1000, (reason) => expired.push(reason), clock);
+    advance(600);
+    cap.toolStarted("inventory");
+    cap.toolStarted("validate");
+    advance(900);
+    cap.toolFinished("inventory");
+    advance(50);
+    expect(expired).toEqual([]);
+    cap.toolFinished("validate");
+    advance(399);
+    expect(expired).toEqual([]);
+    advance(1);
+    expect(expired).toEqual(["model"]);
+    const hung = createTurnCap(1000, (reason) => expired.push(reason), clock);
+    hung.toolStarted("hung");
+    advance(999);
+    expect(expired).toEqual(["model"]);
+    advance(1);
+    expect(expired).toEqual(["model", "tool"]);
+    hung.stop();
+  });
+  it("lets a writer turn spend longer than its cap waiting on tools through the production launcher (item 30(g))", () => {
+    const value = setup();
+    // Two 1 s tool calls: 2 s of tool wait in a 1.5 s cap, each call within the cap on its own.
+    const waited = run(value, { input: "TOOL_WAIT_1000x2", timeoutMs: 1500 });
+    expect(waited.status, waited.stdout).toBe(0);
+    expect(JSON.parse(waited.stdout).status).toBe("DONE");
+  });
+  it("refuses a launch without the bound graph's capabilities with its own code, never WORKER_TURN_FAILED (item 20)", () => {
+    const value = setup();
+    const refused = run(value, { agentName: "vibe-environment-worker", mode: "record", recordAction: "handover",
+      exclusiveRecordTurn: true, input: "push", capabilities: [] });
+    expect(refused.status).toBe(1);
+    expect(JSON.parse(refused.stdout)).toMatchObject({ code: "GRAPH_CAPABILITIES_REQUIRED",
+      summary: "Parent-discovered read-only graph capabilities are required." });
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+  });
+  it("bounds a single tool call by the cap through the production launcher (item 30(g))", () => {
+    const value = setup();
+    const hung = run(value, { input: "TOOL_WAIT_1600", timeoutMs: 1200 });
+    expect(hung.status).toBe(1);
+    expect(JSON.parse(hung.stdout).code).toBe("TURN_TIMEOUT");
+  });
+  it("relaunches a queued request with its own input through the production launcher (item 30(c))", () => {
+    const value = setup();
+    expect(run(value, { input: "First request" }).status).toBe(0);
+    const workerId = readWriterSummary(value.worktree)!.workerId;
+    changeWriter("enqueue", { worktree: value.worktree, workerId, requestId: "queued", input: "QUEUED BRIEF" });
+    const relaunched = run(value, { requestId: "queued", input: "QUEUED BRIEF" });
+    expect(relaunched.status, relaunched.stdout).toBe(0);
+    expect(readProof(value.metadata).at(-1)?.payload.input).toBe("QUEUED BRIEF");
+    expect(readWriterSummary(value.worktree)?.queuedRequestIds).toEqual([]);
+  });
+  it("carries an unclassified failure's cause and a Claude exit's code and stderr tail (item 31(c))", () => {
+    const failed = safeFailure(Object.assign(new Error("Writer ledger does not belong to this session"), { code: "LEDGER_FOREIGN" }));
+    expect(failed).toMatchObject({ code: "WORKER_TURN_FAILED",
+      cause: { message: "Writer ledger does not belong to this session", code: "LEDGER_FOREIGN" } });
+    expect(failed.summary).toContain("Cause: Writer ledger does not belong to this session (LEDGER_FOREIGN)");
+    const parse = safeFailure(new SyntaxError('Unexpected token in JSON at "PRIVATE_BRIEF"'));
+    expect(parse.cause).toEqual({ message: "malformed JSON" });
+    expect(JSON.stringify(parse)).not.toContain("PRIVATE_");
+    expect(stderrTail(`${"x".repeat(2000)}\n\na\nb\nc\nd\ne\nf\n`)).toBe("b | c | d | e | f");
+    expect(stderrTail("y".repeat(2000)).length).toBe(800);
+    const value = setup();
+    const exited = run(value, { input: "STDERR_EXIT PRIVATE_BRIEF" });
+    expect(exited.status).toBe(1);
+    const result = JSON.parse(exited.stdout);
+    expect(result.code).toBe("CLAUDE_PROCESS_FAILED");
+    expect(result.cause).toEqual({ exitCode: 3,
+      stderrTail: "line two | line three | line four | line five | Error: hook refused the write (refusal R-31)" });
+    expect(result.summary).toContain("status 3. Last stderr:");
+    expect(exited.stdout).not.toContain("PRIVATE_");
+  });
   it("caps an over-long result instead of rejecting it, so the request closes (ISS-13043)", () => {
     const value = setup();
     const long = run(value, { input: "LONG_SUMMARY" });

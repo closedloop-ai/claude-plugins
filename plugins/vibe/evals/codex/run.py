@@ -28,8 +28,8 @@ import yaml
 
 EVALS = Path(__file__).resolve().parents[1]
 PLUGIN = EVALS.parent
-# The identity helper and its session-record import live in vibe-core beside vibe; vibe keeps only a wrapper.
-IDENTITY_SCRIPTS = PLUGIN.parent / "vibe-core/lib/vibe/scripts"
+# The identity helper and its session-record import live in vibe's lib; vibe keeps only a wrapper.
+IDENTITY_SCRIPTS = PLUGIN / "lib/vibe/scripts"
 IDENTITY = IDENTITY_SCRIPTS / "tested-head.mjs"
 MANIFESTS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
 PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestrator-"}
@@ -169,7 +169,7 @@ def bind_installed_provider(
 def snapshot_metadata(output: Path) -> dict[str, Any]:
     """Identify actual copied payloads through the shared Claude/Codex identity helper."""
     script = output / "receipt-helper/tested-head.mjs"
-    for installed in ("market/plugins/vibe-core/lib/vibe/scripts", "market/plugins/vibe/skills/vibe/scripts"):
+    for installed in ("market/plugins/vibe/lib/vibe/scripts", "market/plugins/vibe/skills/vibe/scripts"):
         if not script.is_file():
             script = output / installed / "tested-head.mjs"
     payloads = {

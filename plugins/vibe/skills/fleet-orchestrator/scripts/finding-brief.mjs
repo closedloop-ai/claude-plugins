@@ -22,11 +22,13 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
-import { workItem } from "../../vibe/scripts/tracker-key.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
+// The disposition rule lives with the visual QA gate that enforces it (lib/vibe/scripts/required-visual-qa.mjs).
+const { dispositionProblems } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
+export { dispositionProblems };
 
 /** What is missing from each finding, or an empty list when every finding can be acted on. */
 export function findingProblems(findings, exists = existsSync) {
@@ -44,25 +46,6 @@ export function findingProblems(findings, exists = existsSync) {
       ...(typeof finding?.touchedSurface === "boolean" ? [] : [`${name}: touchedSurface must say true or false`]),
       ...screenshots.filter((file) => !exists(file)).map((file) => `${name}: screenshot ${file} does not exist here`),
     ];
-  });
-}
-
-/**
- * Touched-surface findings that have neither a fixing commit nor a follow-up
- * ticket. A QA pass that found nothing has nothing to dispose of and passes
- * rather than needing an invented finding; only a findings file that is not
- * a list is refused.
- */
-export function dispositionProblems(findings) {
-  if (!Array.isArray(findings)) return ["findings must be a list, [] when QA found nothing"];
-  return findings.flatMap((finding, index) => {
-    const name = finding?.id ?? `finding ${index + 1}`;
-    if (typeof finding?.touchedSurface !== "boolean") return [`${name}: touchedSurface must say true or false`];
-    if (!finding.touchedSurface) return [];
-    const disposition = String(finding?.disposition ?? "").trim();
-    const ticket = /^ticket:\s*(\S+)$/i.exec(disposition)?.[1];
-    if (/^fixed:\s*[0-9a-f]{7,40}$/i.test(disposition) || (ticket && workItem().test(ticket))) return [];
-    return [`${name}: a finding on a touched surface needs disposition "fixed: <sha>" or "ticket: <id>"`];
   });
 }
 

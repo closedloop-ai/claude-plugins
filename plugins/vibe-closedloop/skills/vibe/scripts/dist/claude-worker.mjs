@@ -11424,17 +11424,16 @@ import { lstatSync, realpathSync as realpathSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+// ../../plugins/vibe/shared/vibe-core.mjs
+import path2 from "node:path";
+import { pathToFileURL } from "node:url";
+
 // ../../plugins/vibe/shared/plugin-roots.mjs
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
 var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
-var CODEX_LOCAL_VERSION = "local";
-var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
-var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-var NUMERIC = /^\d+$/;
-var SCOPE_FALLBACK = "user";
 var DEFAULT_MARKETPLACE = "closedloop-ai";
 var VIBE_PLUGIN_NAMES = Object.freeze(["vibe", "vibe-generic"]);
 var VIBE_LOOKUP_ORDER = Object.freeze({ checkout: Object.freeze(["vibe-generic", "vibe"]), installed: VIBE_PLUGIN_NAMES });
@@ -11473,30 +11472,6 @@ function vibeSkillOf(id) {
 function pluginMarketplace(install) {
   return install?.marketplace ?? DEFAULT_MARKETPLACE;
 }
-function comparePluginVersions(left, right) {
-  const a = SEMVER.exec(left);
-  const b = SEMVER.exec(right);
-  if (!a || !b) return compareText(left, right);
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(a[index]) - Number(b[index]);
-    if (difference !== 0) return Math.sign(difference);
-  }
-  if (a[4] === void 0 || b[4] === void 0) {
-    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
-  } else {
-    const order = compareIdentifiers(a[4], b[4]);
-    if (order !== 0) return order;
-  }
-  if (a[5] === b[5]) return 0;
-  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
-  return compareIdentifiers(a[5], b[5]);
-}
-function activeCodexVersion(versions) {
-  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
-  if (valid.length === 0) return null;
-  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
-  return [...valid].sort(comparePluginVersions).at(-1);
-}
 function pluginInstall(from) {
   const self = ownPluginRoot(from);
   const parent = path.dirname(self.root);
@@ -11515,81 +11490,6 @@ function pluginInstall(from) {
     registry
   };
 }
-function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
-  const self = pluginInstall(from);
-  if (self.layout === Layout.Checkout) {
-    const candidate = checkoutRoot(self.plugins, name);
-    if (candidate) return { root: realpathSync(candidate), layout: Layout.Checkout };
-    throw missing(name, self, Layout.Checkout);
-  }
-  if (self.layout === null) {
-    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
-  }
-  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
-  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
-  return {
-    root: realpathSync(found.installPath),
-    layout: self.layout,
-    home: self.home,
-    marketplace: self.marketplace,
-    ...found.scope ? { scope: found.scope } : {},
-    ...found.projectPath ? { projectPath: found.projectPath } : {}
-  };
-}
-function siblingPluginRoot(name, options) {
-  return siblingPluginInstall(name, options).root;
-}
-function checkoutRoot(plugins, name) {
-  const named = path.join(plugins, name);
-  if (pluginManifest(named)?.name === name) return named;
-  return listDirectories(plugins).sort().map((entry) => path.join(plugins, entry)).find((dir) => pluginManifest(dir)?.name === name) ?? null;
-}
-function claudeEntry(registry, name, self, cwd) {
-  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const here = realOrSame(path.resolve(cwd));
-  const holds = (project) => {
-    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
-    const root = realOrSame(project);
-    return here === root || here.startsWith(`${root}${path.sep}`);
-  };
-  for (const scope of PROJECT_SCOPES) {
-    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
-    if (matching.length > 0) return matching[0];
-  }
-  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  if (user.length === 1) return user[0];
-  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
-  throw missing(name, self, Layout.Claude);
-}
-function codexRoot(base, name, self) {
-  let versions;
-  try {
-    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
-  } catch {
-    throw missing(name, self, Layout.Codex);
-  }
-  const version = activeCodexVersion(versions);
-  if (!version) throw missing(name, self, Layout.Codex);
-  return path.join(base, version);
-}
-function missing(name, self, layout) {
-  const id = `${name}@${pluginMarketplace(self)}`;
-  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${id}\` in Claude Code or \`codex plugin add ${id}\` in Codex`);
-}
-function readRegistry(file) {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function realOrSame(file) {
-  try {
-    return realpathSync(file);
-  } catch {
-    return file;
-  }
-}
 function isFile(file) {
   try {
     return statSync(file).isFile();
@@ -11597,64 +11497,14 @@ function isFile(file) {
     return false;
   }
 }
-function listDirectories(dir) {
-  try {
-    return readdirSync(dir).filter((entry) => isDirectory(path.join(dir, entry)));
-  } catch {
-    return [];
-  }
-}
-function isDirectory(file) {
-  try {
-    return statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function compareText(left, right) {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
-}
-function compareIdentifiers(left, right) {
-  const a = left.split(".");
-  const b = right.split(".");
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const order = compareIdentifier(a[index], b[index]);
-    if (order !== 0) return order;
-  }
-  return Math.sign(a.length - b.length);
-}
-function compareIdentifier(left, right) {
-  const leftNumeric = NUMERIC.test(left);
-  const rightNumeric = NUMERIC.test(right);
-  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
-  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
-  return compareText(left, right);
-}
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-import path2 from "node:path";
-import { pathToFileURL } from "node:url";
-var VIBE_CORE_MIN = "1.0.14";
 var SELF = pluginInstall(import.meta.url);
+var OWN_ROOT = ownPluginRoot(import.meta.url).root;
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
-var cachedRoot = null;
-function vibeCoreRoot() {
-  if (cachedRoot) return cachedRoot;
-  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
-  const installed = pluginManifest(root)?.version ?? null;
-  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
-    throw Object.assign(
-      new Error(`${SELF.name} ${SELF.version ?? "unknown"} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update ${VIBE_CORE_ID}\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
-      { outdated: true, installed, minimum: VIBE_CORE_MIN }
-    );
-  }
-  cachedRoot = root;
-  return root;
-}
 function vibeCorePath(relative) {
-  return path2.join(vibeCoreRoot(), relative);
+  return path2.join(OWN_ROOT, relative);
 }
 function vibeCore(relative) {
   return import(pathToFileURL(vibeCorePath(relative)).href);
@@ -11863,9 +11713,9 @@ function protectedHookPath(pluginRoot) {
   );
   let hookPath;
   try {
-    hookPath = join(siblingPluginRoot("vibe-core", { from: join(pluginRoot, ".claude-plugin", "plugin.json") }), "hooks", "protected-write-guard.mjs");
+    hookPath = join(realpathSync2(pluginRoot), "hooks", "protected-write-guard.mjs");
   } catch (error) {
-    throw unavailable(`vibe-core is missing: ${error instanceof Error ? error.message : String(error)}`);
+    throw unavailable(`vibe's plugin root is unreadable: ${error instanceof Error ? error.message : String(error)}`);
   }
   try {
     if (!lstatSync(hookPath).isFile() || realpathSync2(hookPath) !== hookPath) {
@@ -11942,11 +11792,11 @@ async function checkClaudeSignInAsync(command = "claude") {
 }
 function checkRoleCapabilities(agentName, capabilities) {
   const roleReads = providerDataOr(sessionBinding(), "tickets", "roleReads", {});
-  const missing2 = (roleReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) => capability.service === TRACKER_SERVICE && capability.access === "read" && capability.operation === operation));
-  if (missing2.length) {
+  const missing = (roleReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) => capability.service === TRACKER_SERVICE && capability.access === "read" && capability.operation === operation));
+  if (missing.length) {
     throw new LaunchPrecheckError(
       "MISSING_CAPABILITIES",
-      `${agentName} needs tracker read capabilities: ${missing2.join(", ")}; discover and pass them in the parent`
+      `${agentName} needs tracker read capabilities: ${missing.join(", ")}; discover and pass them in the parent`
     );
   }
 }
@@ -11957,8 +11807,8 @@ function missingMcpTools(initTools, granted) {
     return identity !== null && !available.has(identity);
   });
 }
-function missingServers(missing2) {
-  return [...new Set(missing2.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
+function missingServers(missing) {
+  return [...new Set(missing.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
 }
 
 // src/cli.ts
@@ -12305,15 +12155,17 @@ function isNewerRelease(current, previous) {
   }
   return false;
 }
-function activeContinuationSummary(requestId) {
-  return `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}; the refused request was not queued.`;
+function activeContinuationSummary(requestId, queuedId) {
+  const continuation = `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}`;
+  return queuedId ? `${continuation} first; requestId "${queuedId}" stays queued: claim it by id after that, or cancel it with writer-state.mjs drop-pending.` : `${continuation}; the refused request was not queued.`;
 }
 function oldestPendingSummary(ledger) {
   const next = ledger.pending[0]?.id;
   return next ? `Claim the oldest pending requestId "${next}" without input or continuation.` : "There is no oldest pending request to claim. Use a new requestId with original input.";
 }
 function duplicateRefusal(ledger, requestId) {
-  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id) : oldestPendingSummary(ledger);
+  const queued = ledger.pending.some((item) => item.id === requestId) ? requestId : void 0;
+  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id, queued) : oldestPendingSummary(ledger);
   return new WorkerRefusal("REQUEST_ID_EXISTS", `Request ID "${requestId}" already exists. ${recovery}`);
 }
 function inputDigest(input) {
@@ -12345,6 +12197,31 @@ function changeWriter(action, input) {
       }
       if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
     };
+    const claim = (continuation) => {
+      prepareClaim();
+      if (ledger.active?.status === "FAILED" && !continuation && ledger.pending[0]?.id === requestId) {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (!ledger.active && continuation && ledger.completed.at(-1) === requestId) {
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: continuation, status: "PLAN", continuation };
+      } else if (ledger.active) {
+        if (ledger.active.id !== requestId || !continuation) throw new WorkerRefusal(
+          "ACTIVE_REQUEST_PENDING",
+          activeContinuationSummary(ledger.active.id, ledger.pending.some((item) => item.id === requestId) ? requestId : void 0)
+        );
+        ledger.active.continuation = continuation;
+      } else {
+        if (continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
+        const next = ledger.pending.shift();
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
+        ledger.active = { ...next, status: "PLAN" };
+      }
+      ledger.active.lease = randomUUID();
+      ledger.active.ownerPid = process.pid;
+    };
+    let queuedBehind;
     if (action === "enqueue") {
       if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
       if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
@@ -12353,6 +12230,15 @@ function changeWriter(action, input) {
         "The pending queue is full; keep the new input with the parent."
       );
       ledger.pending.push({ id: requestId, input: data.input });
+      if (ledger.active && !ledger.active.lease && ledger.active.status !== "FAILED") {
+        queuedBehind = {
+          requestId: ledger.active.id,
+          status: ledger.active.status,
+          next: activeContinuationSummary(ledger.active.id, requestId)
+        };
+      }
+    } else if (action === "start" && data.input && !data.continuation && ledger.pending.some((item) => item.id === requestId && item.input === data.input)) {
+      claim();
     } else if (action === "start") {
       if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
       if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
@@ -12368,28 +12254,7 @@ function changeWriter(action, input) {
       if (ledger.pending.length) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
       ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
     } else if (action === "claim") {
-      prepareClaim();
-      if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
-        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
-        delete ledger.active;
-      }
-      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
-        ledger.completed = ledger.completed.slice(0, -1);
-        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
-      } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new WorkerRefusal(
-          "ACTIVE_REQUEST_PENDING",
-          activeContinuationSummary(ledger.active.id)
-        );
-        ledger.active.continuation = data.continuation;
-      } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
-        const next = ledger.pending.shift();
-        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
-        ledger.active = { ...next, status: "PLAN" };
-      }
-      ledger.active.lease = randomUUID();
-      ledger.active.ownerPid = process.pid;
+      claim(data.continuation);
     } else {
       if (!ledger.active || ledger.active.id !== requestId || !data.lease || ledger.active.lease !== data.lease || !data.status) {
         throw new Error("Finish requires ownership of the active turn lease");
@@ -12420,7 +12285,11 @@ function changeWriter(action, input) {
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...["start", "claim"].includes(action) ? { turn: ledger.active } : {} };
+    return {
+      ...summary(ledger),
+      ...["start", "claim"].includes(action) ? { turn: ledger.active } : {},
+      ...queuedBehind ? { queuedBehind } : {}
+    };
   });
 }
 function acquireRecordTurnAt(place, owner) {
@@ -12590,13 +12459,6 @@ var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, briefWithProviderLi
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import os from "node:os";
 import path3 from "node:path";
-
-// ../../plugins/vibe/skills/cl-sweep/scripts/model-policy.mjs
-var TICKET_OWNER_MODEL = "gpt-6-sol";
-var EXPLORER_MODEL = "gpt-5.6-terra";
-var MECHANICAL_SUPPORT_MODEL = "gpt-6-luna";
-var DEFAULT_REASONING_EFFORT = "high";
-var MECHANICAL_SUPPORT_REASONING_EFFORT = "low";
 var CodexWorkerRole = Object.freeze({
   Writer: "writer",
   Operational: "operational",
@@ -12605,19 +12467,6 @@ var CodexWorkerRole = Object.freeze({
   Explorer: "explorer",
   Mechanical: "mechanical"
 });
-var CODEX_ROLE_BINDINGS = Object.freeze({
-  [CodexWorkerRole.Writer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Operational]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Reviewer]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Verifier]: Object.freeze({ model: TICKET_OWNER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Explorer]: Object.freeze({ model: EXPLORER_MODEL, reasoningEffort: DEFAULT_REASONING_EFFORT }),
-  [CodexWorkerRole.Mechanical]: Object.freeze({
-    model: MECHANICAL_SUPPORT_MODEL,
-    reasoningEffort: MECHANICAL_SUPPORT_REASONING_EFFORT
-  })
-});
-
-// ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
 var VIBE_AGENT_ROLES = Object.freeze({
   "vibe-adversarial-reviewer": CodexWorkerRole.Reviewer,
   "vibe-backend-worker": CodexWorkerRole.Explorer,
@@ -12705,10 +12554,14 @@ function resolveWorkerModel(runtime, agentName, defaultModel, { launchModel, ...
   if (Object.hasOwn(chosen.agents ?? {}, agent)) {
     return { model: chosen.agents[agent], source: ModelSource.Agent };
   }
-  if (Object.hasOwn(chosen.roles ?? {}, role)) {
-    return { model: chosen.roles[role], source: ModelSource.Role };
+  return resolveRoleModel(runtime, role, defaultModel, options);
+}
+function resolveRoleModel(runtime, role, defaultModel, { launchModel, ...options } = {}) {
+  if (launchModel) {
+    return { model: launchModel, source: ModelSource.Launch };
   }
-  return { model: defaultModel, source: ModelSource.Default };
+  const roles = readModelOverrides(options)[runtime]?.roles ?? {};
+  return Object.hasOwn(roles, role) ? { model: roles[role], source: ModelSource.Role } : { model: defaultModel, source: ModelSource.Default };
 }
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -12724,7 +12577,7 @@ import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module6 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module6;
+var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module6;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -13307,6 +13160,7 @@ function claudeWorkerUsage() {
     "Fields: worktree, agentName, mode, requestId, capabilities, and input for a new request or continuation",
     "for the active request. To claim the oldest pending request, name its requestId and send neither field.",
     "Optional: agentRoot, timeoutMs (default and maximum 1800000 ms), allowCredits, and the record fields.",
+    "timeoutMs counts the model's own time; a running tool call pauses it and is bounded by the same value on its own.",
     "A record action uses mode record, recordAction, and exclusiveRecordTurn true.",
     "Prints one JSON result; exits 1 when the status is BLOCKED or FAILED.",
     "",
@@ -13409,9 +13263,14 @@ var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-ad
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
 var testAuthoringModes = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
 var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
-var MCP_READINESS_WINDOW_MS = 15e3;
+var MCP_STARTUP_WAIT_MS = 6e4;
+var MCP_INIT_MARGIN_MS = 5e3;
+var MCP_READINESS_WINDOW_MS = MCP_STARTUP_WAIT_MS + 15e3;
 var MAX_MCP_STARTUP_ATTEMPTS = 3;
 var MCP_STARTUP_RETRY_DELAY_MS = 500;
+var STDERR_TAIL_LINES = 5;
+var STDERR_TAIL_BYTES = 800;
+var CAUSE_MESSAGE_LIMIT = 300;
 function workerResultJsonSchemaFor(agentName) {
   const schema = structuredClone(workerResultJsonSchema);
   if (!receiptRoles.has(agentName)) return schema;
@@ -13468,6 +13327,61 @@ var PendingMcpError = class extends Error {
   }
   servers;
 };
+var McpStillPendingError = class extends LaunchPrecheckError {
+  constructor(pendingConnections, attempts, waitedMs) {
+    super("MCP_TOOLS_MISSING", `The worker's granted connections stayed pending during bounded startup: ${pendingConnections.join(", ") || "unknown"} (still pending after ${attempts} launch attempt${attempts === 1 ? "" : "s"} over ${Math.round(waitedMs / 1e3)} s; check that connection, then relaunch)`);
+    this.pendingConnections = pendingConnections;
+  }
+  pendingConnections;
+};
+var ClaudeExitError = class extends WorkerRefusal {
+  constructor(exitCode, stderrTail2) {
+    super("CLAUDE_PROCESS_FAILED", `Claude exited with status ${exitCode}.${stderrTail2 ? ` Last stderr: ${stderrTail2}` : ""} Inspect the private trace and continue the same request.`);
+    this.exitCode = exitCode;
+    this.stderrTail = stderrTail2;
+  }
+  exitCode;
+  stderrTail;
+};
+function childMcpStartupWaitMs(turnTimeoutMs, startupTimeoutMs) {
+  return Math.max(0, Math.min(MCP_STARTUP_WAIT_MS, (startupTimeoutMs ?? turnTimeoutMs) - MCP_INIT_MARGIN_MS));
+}
+function stderrTail(text) {
+  const lines = text.split("\n").map((line) => line.trimEnd()).filter(Boolean).slice(-STDERR_TAIL_LINES).join(" | ");
+  return lines.length > STDERR_TAIL_BYTES ? lines.slice(-STDERR_TAIL_BYTES) : lines;
+}
+function createTurnCap(capMs, onExpire, clock = { now: Date.now, set: (callback, ms) => setTimeout(callback, ms), clear: (handle) => clearTimeout(handle) }) {
+  let remaining = capMs;
+  let armedAt = clock.now();
+  let timer = clock.set(() => onExpire("model"), remaining);
+  const open2 = /* @__PURE__ */ new Set();
+  return {
+    toolStarted(id) {
+      if (open2.has(id)) return;
+      open2.add(id);
+      if (open2.size !== 1) return;
+      if (timer) clock.clear(timer);
+      remaining = Math.max(0, remaining - (clock.now() - armedAt));
+      timer = clock.set(() => onExpire("tool"), capMs);
+    },
+    toolFinished(id) {
+      if (!open2.delete(id) || open2.size !== 0) return;
+      if (timer) clock.clear(timer);
+      armedAt = clock.now();
+      timer = clock.set(() => onExpire("model"), remaining);
+    },
+    stop() {
+      if (timer) clock.clear(timer);
+      timer = void 0;
+    }
+  };
+}
+var toolUseEventSchema = external_exports.object({ type: external_exports.literal("assistant"), message: external_exports.object({
+  content: external_exports.array(external_exports.object({ type: external_exports.string(), id: external_exports.string().min(1).optional() }).passthrough())
+}).passthrough() }).passthrough();
+var toolResultEventSchema = external_exports.object({ type: external_exports.literal("user"), message: external_exports.object({
+  content: external_exports.array(external_exports.object({ type: external_exports.string(), tool_use_id: external_exports.string().min(1).optional() }).passthrough())
+}).passthrough() }).passthrough();
 function protectedWriteSettings(hookPath, worktree) {
   const handler = {
     type: "command",
@@ -13800,7 +13714,7 @@ async function runWorker(rawInput) {
       input: turnInput
     }), timeoutMs, trace, input.allowCredits === true, (processGroupId) => {
       if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
-    });
+    }, !input.mainSyncValidation);
     process.removeListener("SIGTERM", cancelBeforeLaunch);
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
@@ -13880,13 +13794,18 @@ async function runWorker(rawInput) {
     if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join8(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
   }
 }
-async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTimeoutMs, trace, allowCredits, attach) {
+async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTimeoutMs, trace, allowCredits, attach, excludeToolWait) {
   return await new Promise((resolve3, reject) => {
+    const env = { ...process.env };
+    const mcpWait = childMcpStartupWaitMs(timeoutMs, startupTimeoutMs);
+    if (mcpWait > 0) env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS ??= String(mcpWait);
     const child = spawn("claude", args, {
       cwd,
+      env,
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"]
     });
+    let stderrText = "";
     let failed;
     let lines = "";
     let bytes = 0;
@@ -13905,9 +13824,9 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
       const init = initSchema.safeParse(event);
       if (!init.success) return;
       if (initTimer) clearTimeout(initTimer);
-      const missing2 = missingMcpTools(init.data.tools, granted);
-      if (missing2.length) {
-        const servers = missingServers(missing2);
+      const missing = missingMcpTools(init.data.tools, granted);
+      if (missing.length) {
+        const servers = missingServers(missing);
         const statuses = new Map(init.data.mcp_servers?.map((server) => [server.name, server.status]));
         if (servers.every((server) => statuses.get(server) === "pending")) {
           stop(new PendingMcpError(servers));
@@ -13921,7 +13840,18 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
     };
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
-    const deadline = setTimeout(() => stop(new Error("Owned worker turn exceeded its deadline")), timeoutMs);
+    const cap = createTurnCap(timeoutMs, (reason) => stop(new Error(reason === "tool" ? "Owned worker turn exceeded its deadline: one tool call ran past the step cap" : "Owned worker turn exceeded its deadline")));
+    const trackTools = (event) => {
+      if (!excludeToolWait) return;
+      const started = toolUseEventSchema.safeParse(event);
+      if (started.success) {
+        for (const block of started.data.message.content) if (block.type === "tool_use" && block.id) cap.toolStarted(block.id);
+      }
+      const finished = toolResultEventSchema.safeParse(event);
+      if (finished.success) {
+        for (const block of finished.data.message.content) if (block.type === "tool_result" && block.tool_use_id) cap.toolFinished(block.tool_use_id);
+      }
+    };
     const initTimer = armMcpInitWatchdog(startupTimeoutMs, () => stop(new LaunchPrecheckError(
       "MCP_TOOLS_MISSING",
       "The worker did not report its granted tools during bounded startup"
@@ -13957,6 +13887,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
         try {
           const event = JSON.parse(line);
           checkInit(event);
+          trackTools(event);
           rateLimit = rateLimitFromEvent(event) ?? rateLimit;
           if (mustStopForUsage(rateLimit, allowCredits)) {
             stop(new LaunchPrecheckError("USAGE_LIMIT_REACHED", "Claude reported a reached usage limit or paid extra usage"));
@@ -13974,6 +13905,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
     });
     child.stderr.on("data", (chunk) => {
       bytes += chunk.length;
+      stderrText = `${stderrText}${chunk.toString("utf8")}`.slice(-4 * STDERR_TAIL_BYTES);
       if (isAuthFailure(chunk.toString("utf8"))) authFailed = true;
       if (bytes > 8 * 1024 * 1024) stop(new Error("Worker trace exceeds its bounded limit"));
       else {
@@ -13986,7 +13918,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
       }
     });
     child.on("close", (code) => {
-      clearTimeout(deadline);
+      cap.stop();
       if (initTimer) clearTimeout(initTimer);
       if (killTimer) clearTimeout(killTimer);
       process.removeListener("SIGTERM", onSignal);
@@ -14008,7 +13940,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
           return;
         }
         if (code !== 0) {
-          reject(new WorkerRefusal("CLAUDE_PROCESS_FAILED", `Claude exited with status ${code}. Inspect the private trace and continue the same request.`));
+          reject(new ClaudeExitError(code, stderrTail(stderrText)));
           return;
         }
         if (!final) {
@@ -14046,12 +13978,13 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
 `);
   });
 }
-async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach) {
+async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach, excludeToolWait) {
   const started = Date.now();
   const turnDeadline = started + timeoutMs;
   let readinessDeadline = null;
   let attemptArgs = args;
   let lastPending;
+  let attempts = 0;
   for (let attempt = 1; attempt <= MAX_MCP_STARTUP_ATTEMPTS; attempt += 1) {
     const budget = remainingWorkerTurnBudget({
       turnDeadline,
@@ -14059,6 +13992,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
       now: Date.now()
     });
     if (!canStartWorkerAttempt(budget)) break;
+    attempts = attempt;
     try {
       return await launchProcessOnce(
         attemptArgs,
@@ -14069,7 +14003,8 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
         readinessDeadline === null ? null : budget.startupTimeoutMs,
         trace,
         allowCredits,
-        attach
+        attach,
+        excludeToolWait
       );
     } catch (error) {
       if (!(error instanceof PendingMcpError)) throw error;
@@ -14107,10 +14042,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
     }
   }
   if (!lastPending) throw new Error("Owned worker turn exceeded its deadline");
-  throw new LaunchPrecheckError(
-    "MCP_TOOLS_MISSING",
-    `The worker's granted connections stayed pending during bounded startup: ${lastPending?.servers.join(", ") ?? "unknown"}`
-  );
+  throw new McpStillPendingError(lastPending.servers, attempts, Date.now() - started);
 }
 var OwnedCleanupError = class extends Error {
 };
@@ -14143,7 +14075,15 @@ function invalidRequestSummary(error, rawInput) {
 }
 function safeFailure(error, rawInput) {
   const message = error instanceof Error ? error.message : "";
+  if (error instanceof ClaudeExitError) {
+    return {
+      code: error.code,
+      summary: error.summary,
+      cause: { exitCode: error.exitCode, ...error.stderrTail ? { stderrTail: error.stderrTail } : {} }
+    };
+  }
   if (error instanceof WorkerRefusal) return { code: error.code, summary: error.summary };
+  if (error instanceof McpStillPendingError) return { code: error.code, summary: error.message, pendingConnections: error.pendingConnections };
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
@@ -14165,7 +14105,18 @@ function safeFailure(error, rawInput) {
   if (message.includes("binding changed")) return { code: "WRITER_BINDING_CHANGED", summary: "The persistent writer binding changed; restore the exact original binding." };
   if (message.includes("Continue the active request")) return { code: "ACTIVE_REQUEST_PENDING", summary: "Continue the current request before consuming queued work." };
   if (message.includes("running turn") || message.includes("record turn") || message.includes("state is locked")) return { code: "WRITER_BUSY", summary: "The session already has an owned source or record turn." };
-  return { code: "WORKER_TURN_FAILED", summary: "The worker turn failed; inspect its private evidence and retain the same writer identity." };
+  const cause = failureCause(error);
+  return {
+    code: "WORKER_TURN_FAILED",
+    summary: "The worker turn failed; inspect its private evidence and retain the same writer identity." + (cause.message ? ` Cause: ${cause.message}` : "") + (cause.code ? ` (${cause.code})` : ""),
+    ...cause.message || cause.code ? { cause } : {}
+  };
+}
+function failureCause(error) {
+  if (!(error instanceof Error)) return {};
+  const code = "code" in error && typeof error.code === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(error.code) ? error.code : void 0;
+  const message = error instanceof SyntaxError ? "malformed JSON" : error.message.replace(/\s+/g, " ").trim().slice(0, CAUSE_MESSAGE_LIMIT);
+  return { ...message ? { message } : {}, ...code ? { code } : {} };
 }
 async function finishOwnedGroup(child) {
   if (!child.pid || child.pid <= 1) return;
@@ -14288,6 +14239,8 @@ export {
   canStartWorkerAttempt,
   capWorkerResult,
   checkPreviewResult,
+  childMcpStartupWaitMs,
+  createTurnCap,
   dispatchFreshnessProblem,
   main,
   protectedWriteLaunchArgs,
@@ -14295,6 +14248,7 @@ export {
   remainingWorkerTurnBudget,
   runWorker,
   safeFailure,
+  stderrTail,
   testAuthoringGranted,
   workerResultJsonSchemaFor,
   workerSessionName

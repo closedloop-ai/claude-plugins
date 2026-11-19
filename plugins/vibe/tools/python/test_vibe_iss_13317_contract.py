@@ -20,7 +20,7 @@ REFERENCES = PLUGIN_ROOT / "skills" / "vibe" / "references"
 
 def test_the_remedy_names_the_command_and_counts_story_files() -> None:
     rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
-    assert "run handoff's scripts/frozen-render.mjs with every one of these story files" in rules
+    assert "run handoff's scripts/frozen-render-gate.mjs as its own shell step" in rules
     assert "never a capture of your own" in rules
     assert "with fixed args, globals and viewport" not in rules
     assert "Frozen render unchanged: all ${affected.length} story files (" in rules
@@ -28,16 +28,14 @@ def test_the_remedy_names_the_command_and_counts_story_files() -> None:
 
 def test_handoff_change_worker_and_decomposer_point_at_the_command() -> None:
     handoff = flat((HANDOFF / "SKILL.md").read_text())
-    assert "A `frozen-render` finding is settled only by `scripts/frozen-render.mjs`" in handoff
-    assert "nobody captures frozen stories any other way" in handoff
+    assert "A `frozen-render` finding is settled only by one shell step that launches no agent" in handoff
+    assert "node scripts/frozen-render-gate.mjs --repo <worktree> --base <base>" in handoff
+    assert "Nobody captures frozen stories any other way" in handoff
     worker = flat((AGENTS / "vibe-change-worker.md").read_text())
-    assert "done only by handoff's `scripts/frozen-render.mjs`" in worker
-    assert "never write a `Frozen render unchanged` line by hand" in worker
+    assert "done only by handoff's `scripts/frozen-render-gate.mjs`" in worker
+    assert "never write that line by hand" in worker
     decomposer = flat((AGENTS / "vibe-storybook-decomposer.md").read_text())
-    assert "renders each story twice on the base and once on the branch" in decomposer
-    assert "only its cropped diff, never the full screenshots" in decomposer
-    assert "same load and slot rules as every other handoff heavy run" in decomposer
-    assert "never write or edit that line yourself" in decomposer
+    assert "Never render or capture frozen stories" in decomposer
 
 
 def test_unstable_base_stories_go_on_the_ticket_as_known_main_failures() -> None:
@@ -47,10 +45,8 @@ def test_unstable_base_stories_go_on_the_ticket_as_known_main_failures() -> None
 
 
 def test_the_base_storybook_runs_a_repaired_story_file_from_the_session() -> None:
-    decomposer = flat((AGENTS / "vibe-storybook-decomposer.md").read_text())
-    assert "frozen-render.mjs prepare-base --repo <worktree> --base <base> --story-file <file> ... --dir <dir>" in decomposer
-    assert "never copy or edit a file in it yourself" in decomposer
-    assert "a repaired play runs on both sides and only the app code differs" in decomposer
-    assert "a story file changed beyond a compile-only repair is not compared and its stories block" in decomposer
+    # ISS-14395: the gate prepares the base itself; the driver keeps the compile-only repair rule.
+    driver = (HANDOFF / "scripts" / "frozen-render.mjs").read_text()
+    assert "prepare-base" in driver and "compile-only repair" in driver
     inventory = (HANDOFF / "scripts" / "handoff-inventory.mjs").read_text()
     assert "keepsStoryIdentity," in inventory and "function keepsStoryIdentity" not in inventory

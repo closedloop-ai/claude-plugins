@@ -58,7 +58,7 @@
 //   OVERLAP <unit> <unit>: two in-flight units are related; give one owner or a merge order
 // Exits 0. Malformed input exits 2.
 //
-// `pr-check` exits 1 until the PR title and body name every ticket of the unit.
+// `pr-check` exits 1 until the PR body names every ticket of the unit: the handoff gate's member rule.
 // board.mjs status prints `unitMemberProblems`: UNIT-MEMBERS-UNRECORDED for a
 // local writer whose vibe session has not recorded every other ticket of its
 // unit as a member, and UNIT-MEMBERS-UNCHECKED when that cannot be read (a
@@ -74,7 +74,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
-const { missingTicketNames } = await vibeCore("lib/handoff/scripts/ticket-names.mjs");
+const { memberNameProblems } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 // The bound tracker's ticket key; ticket units exist only with a tracker bound.
@@ -172,12 +172,9 @@ export function groupTickets(candidates, units = {}, takenNames = Object.keys(un
   return { units: grouped, blocked: [...blocked].map(([slug, blocker]) => ({ slug, blocker })), otherOwners };
 }
 
-/** Tickets of the unit that the PR title or body does not name. */
+/** Tickets of the unit the PR body does not name, by the handoff gate's own member rule. */
 export function prNameProblems(unit, title, body) {
-  return [
-    ...missingTicketNames(title, unit?.tickets ?? []).map((slug) => `the PR title does not name ${slug}`),
-    ...missingTicketNames(body, unit?.tickets ?? []).map((slug) => `the PR body does not name ${slug}`),
-  ];
+  return memberNameProblems(unit?.tickets ?? [], title, body);
 }
 
 /** The board page's Units section: each unit, its writer, its writer's PR, every ticket in it, and whether it closed. */

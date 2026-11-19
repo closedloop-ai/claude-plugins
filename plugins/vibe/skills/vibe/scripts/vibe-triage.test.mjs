@@ -21,7 +21,7 @@ import { COMMIT as RULED_COMMIT, FILES as RULED_FILES, RULINGS, ruledEvidence } 
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
-const { abandonDispatch, cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
+const { abandonDispatch, cloudPrProblem, codexStatus, completeFromCommit, followupClaude, generateBrief, hydrateCloudRequest, importFromGit, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
@@ -522,7 +522,13 @@ test('ISS-13998 AC-5: abandon ends a dispatch for good and removes the routine i
     throw new Error(`unexpected ${action}`);
   };
   const executor = async (entries) => { for (const entry of entries) { removed.push([entry.id, entry.name]); gone.add(entry.id); } };
-  const abandoned = await abandonDispatch(request, { home, remote, executor, stderr: () => {} });
+  const receiptFile = path.join(gitDir, 'cloud-worker-iss-13804.json');
+  const before = readFileSync(receiptFile, 'utf8');
+  const probe = await abandonDispatch(request, { home, remote, executor, stderr: () => {} });
+  assert.deepEqual([probe.confirmRequired, probe.changed, probe.wouldChange.to], [true, false, 'abandoned'], 'without --confirm abandon only says what it would do');
+  assert.equal(readFileSync(receiptFile, 'utf8'), before);
+  assert.deepEqual(removed, []);
+  const abandoned = await abandonDispatch(request, { confirm: true, home, remote, executor, stderr: () => {} });
   assert.equal(abandoned.status, 'abandoned');
   assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'cloud-worker-iss-13804.json'), 'utf8')).status, 'abandoned');
   assert.deepEqual(removed, [['trig_old_dispatch', 'ISS-13804 cloud worker']]);
@@ -533,6 +539,96 @@ test('ISS-13998 AC-5: abandon ends a dispatch for good and removes the routine i
   const again = spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cloud-worker.mjs'), 'dispatch', '--request', file], { cwd: worktree, encoding: 'utf8', env: { ...process.env, HOME: home, ...bindProvider(home) } });
   assert.equal(again.status, 2);
   assert.match(again.stderr, /cloud task already ended: abandoned/, 'an abandoned dispatch is never resumed');
+});
+
+/** A pushed cloud branch with one operator commit; returns its SHA with the session branch checked out again. */
+function pushedCloudCommit(worktree, text = 'cloud edit\n') {
+  gitAt(worktree, 'switch', '-c', 'cloud/iss-13804-cloud');
+  writeFileSync(path.join(worktree, 'existing.txt'), text);
+  gitAt(worktree, 'add', '.');
+  gitAt(worktree, 'commit', '-m', 'cloud change');
+  gitAt(worktree, 'push', 'origin', 'cloud/iss-13804-cloud');
+  const commit = gitAt(worktree, 'rev-parse', 'HEAD');
+  gitAt(worktree, 'switch', 'vibe/iss-13804-cloud-dispatch');
+  return commit;
+}
+
+test('ISS-14116 item 41: the ISS-14259 shape (commit pushed, poll timed out, a probe ran abandon) recovers through complete-from-commit and imports', async (t) => {
+  const { worktree, gitDir } = vibeFixture();
+  const home = mkdtempSync(path.join(tmpdir(), 'cloud-ledger-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const commit = pushedCloudCommit(worktree);
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  // The receipt dispatch saved before its poll stopped at the time limit: no status was ever recorded.
+  completedReceipt(request, gitDir, 'run_1', { status: undefined, runId: 'run_1', sessionId: 'session_1' });
+  const receiptFile = path.join(gitDir, 'cloud-worker-iss-13804.json');
+  const requestFile = path.join(gitDir, 'cloud-request.json');
+  writeFileSync(requestFile, JSON.stringify(request));
+  const cli = (...args) => spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cloud-worker.mjs'), ...args, '--request', requestFile], { cwd: worktree, encoding: 'utf8', env: { ...process.env, HOME: home, ...bindProvider(home) } });
+  const timedOut = readFileSync(receiptFile, 'utf8');
+  const probe = cli('abandon');
+  assert.equal(probe.status, 1, probe.stderr);
+  assert.equal(JSON.parse(probe.stdout).confirmRequired, true);
+  assert.equal(readFileSync(receiptFile, 'utf8'), timedOut, 'a probe changes nothing');
+  await abandonDispatch(request, { confirm: true, home, remote: () => { throw new Error('no routine is recorded'); }, executor: async () => {}, stderr: () => {} });
+  assert.equal(JSON.parse(readFileSync(receiptFile, 'utf8')).status, 'abandoned');
+  assert.throws(() => completeFromCommit(request, { commit: 'f'.repeat(40), confirm: true }), new RegExp(`is at ${commit}, not f{40}`));
+  const dry = completeFromCommit(request, { commit });
+  assert.deepEqual([dry.confirmRequired, dry.wouldChange.from, dry.wouldChange.to], [true, 'abandoned', 'completed']);
+  assert.equal(JSON.parse(readFileSync(receiptFile, 'utf8')).status, 'abandoned');
+  const completed = completeFromCommit(request, { commit, confirm: true });
+  assert.deepEqual([completed.status, completed.completedFrom.commit, completed.completedFrom.priorStatus], ['completed', commit, 'abandoned']);
+  assert.throws(() => completeFromCommit(request, { commit, confirm: true }), /cloud receipt is completed/);
+  const imported = importResult(request, JSON.parse(readFileSync(receiptFile, 'utf8')));
+  assert.match(imported.changed, /existing.txt/);
+  assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8')).result.commit, commit);
+});
+
+test('ISS-14116 item 41: import-from-git records the witness only when the worktree holds exactly the cloud commit\'s diff', () => {
+  const { worktree, gitDir } = vibeFixture();
+  const commit = pushedCloudCommit(worktree);
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  const receipt = completedReceipt(request, gitDir, 'run_1', { runId: 'run_1', sessionId: 'session_1' });
+  const witnessFile = path.join(gitDir, 'vibe-cloud-import.json');
+  assert.throws(() => importFromGit(request, receipt, { commit, confirm: true }), /is not .* diff/, 'nothing brought in yet');
+  gitAt(worktree, 'cherry-pick', '--no-commit', commit);
+  writeFileSync(path.join(worktree, 'extra.txt'), 'an unrelated local change\n');
+  gitAt(worktree, 'add', 'extra.txt');
+  assert.throws(() => importFromGit(request, receipt, { commit, confirm: true }), /is not .* diff/, 'an extra change is not the commit');
+  gitAt(worktree, 'rm', '--cached', '--quiet', 'extra.txt');
+  rmSync(path.join(worktree, 'extra.txt'));
+  const dry = importFromGit(request, receipt, { commit });
+  assert.equal(dry.confirmRequired, true);
+  assert.equal(existsSync(witnessFile), false);
+  const imported = importFromGit(request, receipt, { commit, confirm: true });
+  assert.match(imported.changed, /existing.txt/);
+  const witness = JSON.parse(readFileSync(witnessFile, 'utf8'));
+  assert.deepEqual([witness.importedBy, witness.result.commit, witness.schema], ['git', commit, 'vibe.cloud-import/1']);
+  assert.match(cloudPrProblem(worktree, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }) ?? '', /stale for the current source/, 'the PR guard reads it as the import witness');
+});
+
+test('ISS-14116 item 41: a commit already merged into HEAD completes from its commit and imports by git, and a local commit ahead of it is refused', () => {
+  const { worktree, gitDir } = vibeFixture();
+  const commit = pushedCloudCommit(worktree);
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  completedReceipt(request, gitDir, 'run_1', { status: 'overdue', runId: 'run_1', sessionId: 'session_1' });
+  gitAt(worktree, 'merge', '--ff-only', commit);
+  const completed = completeFromCommit(request, { commit, confirm: true });
+  assert.deepEqual([completed.status, completed.completedFrom.priorStatus], ['completed', 'overdue']);
+  const imported = importFromGit(request, completed, { commit, confirm: true });
+  assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8')).result.commit, commit);
+  assert.equal(imported.witness, path.join(gitDir, 'vibe-cloud-import.json'));
+
+  const ahead = vibeFixture();
+  const aheadCommit = pushedCloudCommit(ahead.worktree);
+  const aheadRequest = { ...sourcedCloudRequest(ahead.worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  completedReceipt(aheadRequest, ahead.gitDir, 'run_1', { status: 'overdue', runId: 'run_1', sessionId: 'session_1' });
+  writeFileSync(path.join(ahead.worktree, 'local.txt'), 'a local commit after dispatch\n');
+  gitAt(ahead.worktree, 'add', 'local.txt');
+  gitAt(ahead.worktree, 'commit', '-m', 'local work');
+  const aheadCompleted = completeFromCommit(aheadRequest, { commit: aheadCommit, confirm: true });
+  gitAt(ahead.worktree, 'cherry-pick', aheadCommit);
+  assert.throws(() => importFromGit(aheadRequest, aheadCompleted, { commit: aheadCommit, confirm: true }), /is not .* diff/, 'the local commit is not the cloud commit');
 });
 
 test('AC-9: cloud CLI refuses local-evidence work before dispatch and generates a brief for code-only work', () => {

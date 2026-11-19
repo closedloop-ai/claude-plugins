@@ -7,6 +7,7 @@
 // Usage:
 //   pre-pr-lanes.mjs run    --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON>) [--main-worktree <checkout of captured main> --main-sha <sha>]
 //   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>) [--targeted-specs '<JSON list>' --graph-query '<exact tool arguments JSON>' --graph-session <native thread> --graph-turn <completed turn>]
+//   pre-pr-lanes.mjs record --result main-preexisting --main-sha <origin/main commit it also fails on> --failures <JSON {branch, main}: [{id, assertion}] each> --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON>)
 //   pre-pr-lanes.mjs record --ran-on <host> --proof-commit <sha the remote run tested> --git-tree <its Git tree> --worktree <path> --head <clean local HEAD> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
 //   pre-pr-lanes.mjs record --cloud-result <cloud-worker validation JSON> --worktree <path> --head <clean local HEAD> --command "<exact lane recipe>" --result pass (--report <workflow lane report> | --impact <qa-impact JSON>)
 //   pre-pr-lanes.mjs check  --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON>) [--skip <regex> --skip-ruling "<who, when, where>"]
@@ -88,7 +89,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import path from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { qaImpactDirectCommitScope, qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { repositoryLaneReportProblems } from "../../handoff/scripts/ci-job-shape.mjs";
 import { containerizedE2eIdentityProblem, RUNNER_HOST } from "../../handoff/scripts/e2e-tier.mjs";
 import { targetedTestsRuling } from "../../handoff/scripts/targeted-tests-ruling.mjs";
@@ -98,7 +99,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
-const { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { testedHead, testedSource, sourceIdentity, sameSource, withStableSource, committedSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { readCodexTurnItems } = await vibeCore("lib/handoff/scripts/codex-review-runtime.mjs");
@@ -309,9 +310,9 @@ export function lanesTouchedSince(request, impact) {
 /** The lanes an earlier fresh pass covers because nothing since touched them; new matches are recorded and cached records that no longer hold are dropped. */
 function reuseUnaffectedLanes(values, lanes, records, selected, already) {
   const request = JSON.parse(readFileSync(values["reuse-unaffected"], "utf8"));
-  const impact = qaImpactRequest(values.worktree, request);
-  const touched = lanesTouchedSince(request, impact);
   const boundary = git(values.worktree, ["rev-parse", "--verify", `${request.lastQa.boundary}^{commit}`]);
+  const impact = unaffectedImpact(values.worktree, request, boundary);
+  const touched = impact && lanesTouchedSince(request, impact);
   const covered = [];
   const written = [];
   for (const lane of missingLanes(lanes, records, selected).filter((name) => !already.some((item) => item.lane === name))) {
@@ -377,6 +378,12 @@ function targetedScope(values) {
     changedSpecs: [...new Set([...diff("--diff-filter=ACMRT"), ...untracked])].filter((file) => E2E_SPEC.test(file)),
   };
 }
+
+/** How to record a targeted E2E lane, printed where the lane is missing or its record is refused. */
+const TARGETED_RECORD = "after the graph-selected specs and every E2E spec the change adds or edits pass, record the owning lane with "
+  + "pre-pr-lanes.mjs record --targeted-specs '<JSON list of those specs>' --graph-query '<the graph test lookup's exact arguments JSON: "
+  + "the checkout's repository and the whole changed-file set, deletions included>' and one graph proof: --graph-session <native thread> "
+  + "--graph-turn <completed turn> in Codex, or --graph-launcher-result <owned Claude launcher result> in Claude; check then prints TARGETED-LANE";
 
 /** Whether the target repository explicitly permits graph-selected local E2E instead of the full lane. */
 export function allowsTargetedE2e(worktree) {
@@ -516,7 +523,7 @@ export async function targetedRecord(values, lane, readTurn = readCodexTurnItems
   const nativeAll = nativeSupplied.every((item) => item !== undefined);
   if (baseSupplied.every((item) => item === undefined) && nativeSupplied.every((item) => item === undefined) && !launcherSupplied) return null;
   if (baseSupplied.some((item) => item === undefined) || (nativeAny && !nativeAll) || (nativeAll === launcherSupplied)) {
-    throw new Error("--targeted-specs and --graph-query need exactly one graph proof: --graph-session with --graph-turn, or --graph-launcher-result");
+    throw new Error(`--targeted-specs and --graph-query need exactly one graph proof; ${TARGETED_RECORD}`);
   }
   if (!isWebE2eLane(lane) && !isDesktopE2eLane(lane)) throw new Error("targeted specs are accepted only for an E2E lane");
   if (!allowsTargetedE2e(values.worktree)) throw new Error("the target repository's AGENTS.md does not allow targeted E2E lanes");
@@ -583,7 +590,7 @@ async function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
-    "main-worktree": { type: "string" }, "main-sha": { type: "string" },
+    "main-worktree": { type: "string" }, "main-sha": { type: "string" }, failures: { type: "string" },
     "reuse-cache": { type: "boolean" }, "reuse-unaffected": { type: "string" }, base: { type: "string" }, config: { type: "string", multiple: true },
     "ran-on": { type: "string" }, "proof-commit": { type: "string" }, "git-tree": { type: "string" },
     "cloud-result": { type: "string" },
@@ -594,7 +601,10 @@ async function main(argv) {
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
-    if (!values.command?.trim() || (command === "record" && !["pass", "fail"].includes(values.result))) throw new Error(`${command} needs --head, --command${command === "record" ? " and --result pass|fail" : ""}`);
+    if (!values.command?.trim() || (command === "record" && !["pass", "fail", "main-preexisting"].includes(values.result))) throw new Error(`${command} needs --head, --command${command === "record" ? " and --result pass|fail|main-preexisting" : ""}`);
+    if ((values.result === "main-preexisting") !== Boolean(command === "record" && values.failures)) {
+      throw new Error("record --result main-preexisting needs --main-sha and --failures, and --failures goes only with it");
+    }
     const source = testedSource(values.worktree, values.head);
     const tested = source.head;
     const ranOn = command === "record" ? remoteRun(values, source) : null;
@@ -610,9 +620,10 @@ async function main(argv) {
     }
     const targetedReceipt = command === "record" ? await targetedRecord(values, values.command.trim()) : null;
     if (command === "run" && ["targeted-specs", "graph-query", "graph-session", "graph-turn", "graph-launcher-result"].some((key) => values[key] !== undefined)) {
-      throw new Error("targeted E2E evidence is recorded after the selected specs run, with record --targeted-specs --graph-query and a native or Claude graph proof");
+      throw new Error(`targeted E2E evidence is recorded, never run: ${TARGETED_RECORD}`);
     }
-    if (Boolean(values["main-worktree"]) !== Boolean(values["main-sha"]) || (values["main-worktree"] && command !== "run")) {
+    const recordedMain = command === "record" && values.result === "main-preexisting";
+    if (!recordedMain && (Boolean(values["main-worktree"]) !== Boolean(values["main-sha"]) || (values["main-worktree"] && command !== "run"))) {
       throw new Error("--main-worktree and --main-sha go together, on run only");
     }
     if (values["main-worktree"] && values["fleet-where"]) throw new Error("a fleet lane run cannot also rerun captured main");
@@ -624,7 +635,14 @@ async function main(argv) {
     }
     let result = values.result;
     let mainSha;
-    const mainSource = mainTested ? sourceIdentity(values["main-worktree"], mainTested) : undefined;
+    let failures;
+    let mainSource = mainTested ? sourceIdentity(values["main-worktree"], mainTested) : undefined;
+    if (recordedMain) {
+      if (values["main-worktree"]) throw new Error("record --result main-preexisting takes --main-sha, not --main-worktree");
+      mainSha = verifiedMainCommit(values.worktree, values["main-sha"]);
+      failures = sharedMainFailures(JSON.parse(readFileSync(values.failures, "utf8")));
+      mainSource = committedSourceIdentity(values.worktree, mainSha);
+    }
     if (mainSource && mainSource.diffSha256 !== createHash('sha256').digest('hex')) throw new Error('captured main must be clean to establish a main-preexisting failure');
     if (command === "run") {
       const execute = (tree, expected) => withStableSource(tree, current => {
@@ -657,7 +675,7 @@ async function main(argv) {
     // Two lanes of one pool finish close together: the read, the change and the write happen under one lock so neither record is lost.
     withRecordsLock(values.worktree, () => {
       const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), ...(ranOn ? { ranOn } : {}), ...(values.fleetReceipt ? { fleet: values.fleetReceipt } : {}), ...(targetedReceipt ? { targeted: targetedReceipt } : {}), at: new Date().toISOString() });
+      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), ...(failures ? { failures } : {}), ...(ranOn ? { ranOn } : {}), ...(values.fleetReceipt ? { fleet: values.fleetReceipt } : {}), ...(targetedReceipt ? { targeted: targetedReceipt } : {}), at: new Date().toISOString() });
       writeRecords(values.worktree, records);
     });
     process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}${ranOn ? ` (ran on ${ranOn.host} at ${ranOn.proofCommit})` : ""}\n`);
@@ -708,6 +726,7 @@ async function main(argv) {
           process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
         }
       }
+      if (missing.length > 0 && allowsTargetedE2e(values.worktree)) process.stdout.write(`TARGETED-E2E: this repository allows a targeted E2E lane in place of the full one; ${TARGETED_RECORD}\n`);
       process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] || values["reuse-unaffected"] ? `, ${covered.length + unaffected.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
       return { exitCode: missing.length === 0 ? 0 : 1 };
     })();
@@ -786,4 +805,41 @@ if (isEntryPoint(import.meta.url)) {
   } catch (error) {
     process.exit(failScript(error, 2));
   }
+}
+
+/**
+ * The impact of the changes since `boundary`: from an ancestor boundary, the usual classification; from a boundary an
+ * amend or re-commit left off HEAD's history, the direct delta between the two commits' trees, only when the worktree is
+ * clean (a direct delta cannot see uncommitted inputs). Null when neither holds, so nothing is reused.
+ */
+function unaffectedImpact(worktree, request, boundary) {
+  const head = git(worktree, ["rev-parse", "HEAD"]);
+  const ancestor = spawnSync("git", ["-C", worktree, "merge-base", "--is-ancestor", boundary, head]).status === 0;
+  if (ancestor) return qaImpactRequest(worktree, request);
+  if (git(worktree, ["status", "--porcelain", "--untracked-files=all"])) return null;
+  return qaImpactDirectCommitScope(worktree, { ...request, lastQa: { ...request.lastQa, boundary } }, head);
+}
+
+/** `sha` when it is a full commit SHA this clone has on its fetched main (origin/main); otherwise an error. */
+export function verifiedMainCommit(worktree, sha) {
+  if (!COMMIT.test(sha ?? "")) throw new Error("--main-sha must be a full 40-character commit SHA");
+  const onMain = spawnSync("git", ["-C", worktree, "merge-base", "--is-ancestor", sha, "refs/remotes/origin/main"]).status === 0;
+  if (!onMain) throw new Error(`--main-sha ${sha} is not a commit on this clone's fetched origin/main; fetch main or name a main commit`);
+  return sha;
+}
+
+/**
+ * The branch failures from `--failures {branch: [{id, assertion}], main: [{id, assertion}]}`, when every one fails on
+ * main with the same test id and assertion text; otherwise an error naming the first that does not.
+ */
+export function sharedMainFailures(input) {
+  const valid = (list) => Array.isArray(list) && list.length > 0
+    && list.every((item) => item && typeof item.id === "string" && item.id.trim() && typeof item.assertion === "string" && item.assertion.trim());
+  if (!valid(input?.branch) || !valid(input?.main)) throw new Error("--failures needs nonempty branch and main lists of {id, assertion}");
+  for (const failure of input.branch) {
+    if (!input.main.some((item) => item.id === failure.id && item.assertion === failure.assertion)) {
+      throw new Error(`${failure.id} does not fail on main with the same assertion, so it is not a main-preexisting failure`);
+    }
+  }
+  return input.branch.map(({ id, assertion }) => ({ id, assertion }));
 }

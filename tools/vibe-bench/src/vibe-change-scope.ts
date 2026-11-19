@@ -17,7 +17,7 @@ export interface VibeChangeScope {
 }
 
 const PLUGIN_PREFIX = "plugins/vibe/";
-/** vibe's hooks and every module they run ship in vibe-core (ISS-13869), so its runtime is vibe behavior too. */
+/** vibe-core's hook entry points and loader are vibe behavior too; the guards and modules they run live in vibe (ISS-14116). */
 const HOOKS_PLUGIN_PREFIX = "plugins/vibe-core/";
 const HOOKS_PLUGIN_DOCUMENTATION = /^plugins\/vibe-core\/(?:README|CHANGELOG)(?:\.[^/]+)?$/i;
 const CORE_SKILL_PREFIX = "plugins/closedloop-core/skills/";

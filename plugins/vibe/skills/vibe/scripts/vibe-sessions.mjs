@@ -20,6 +20,7 @@
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--environment-org <id>]
 //                                     [--pr-repo <owner/repo> --pr-number <n> --pr-head <sha>]
+//                                     [--body-stale <the ruling that changed scope> | --body-refreshed]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
@@ -213,6 +214,8 @@ const { positionals, values } = parseArgs({
     "created-live-ticket": { type: "boolean", default: false },
     "handoff-ticket": { type: "string" },
     "member-ticket": { type: "string", multiple: true },
+    "body-stale": { type: "string" },
+    "body-refreshed": { type: "boolean", default: false },
     "live-plan": { type: "string" },
     "live-plan-status": { type: "string" },
     "main-merge": { type: "string" },
@@ -503,6 +506,9 @@ function touchSession() {
       (record.liveTicketCreatedBySession === true && record.liveTicket === liveTicket)))) {
     throw new Error("--created-live-ticket requires the newly created --live-ticket, not a bound existing ticket.");
   }
+  if (values["body-stale"] !== undefined && (!values["body-stale"].trim() || values["body-refreshed"])) {
+    throw new Error("--body-stale needs the ruling that changed scope, and goes without --body-refreshed.");
+  }
   const members = values["member-ticket"] ?? [];
   for (const slug of members) requireTrackerSlug(worktree, slug, "member-ticket", "tickets", "slugPattern");
   const livePlan = values["live-plan"];
@@ -563,6 +569,9 @@ function touchSession() {
     ...(mainMerge ?? record.mainMerge ? { mainMerge: mainMerge ?? record.mainMerge } : {}),
     lastActiveAt: now,
   };
+  // A recorded scope change leaves the open pull request's body stale until env-ctl pr-update saves a refreshed one.
+  if (values["body-stale"]) updated.prBodyStale = { reason: values["body-stale"].trim(), at: now };
+  if (values["body-refreshed"]) delete updated.prBodyStale;
   writeRecord(worktree, updated);
   let retirementWarning;
   if (retirement) {

@@ -1,66 +1,71 @@
-// vibe's install as vibe-core reads it: data only (its name, its version, its skill
-// definitions, which of its scripts exist, whether the harness has it enabled).
-// vibe-core never imports or runs a file under vibe's root. vibe is published as
-// vibe-generic and as the build of it named vibe; whichever is installed is vibe here.
+// Which vibe install a session uses, as vibe-core's loader (hooks/vibe-runtime.mjs) reads it: data only (its
+// name, its version, whether the harness has it enabled, whether it still registers its own hooks). The loader
+// then imports that install's hooks/runtime.mjs, so vibe's guard code runs from vibe's install. Codex's hook
+// approval covers vibe-core's files, the loader; it does not cover the guard code the loader runs from vibe.
+// vibe is published as vibe-generic and as the build of it named vibe; whichever is installed is vibe here.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { Layout, pluginInstall, siblingInstalls, siblingPluginInstall, vibeLookupOrder } from "./plugin-roots.mjs";
+import { isDirectory, Layout, pluginInstall, realOrSame, siblingPluginInstall, vibeLookupOrder } from "./plugin-roots.mjs";
 
 /** Why vibe-core's hooks stand down, or null when they should run. */
 export const HookStandDown = Object.freeze({
-  NoVibe: "vibe is not installed",
   VibeDisabled: "the installed vibe is disabled",
   VibeOwnsHooks: "the installed vibe still registers its own hooks",
+});
+
+/** The reasons the loader names when vibe's guards cannot run: short phrases for the degraded notice. */
+export const VibeProblem = Object.freeze({
+  Older: "vibe is older than vibe-core",
+  Newer: "vibe is newer than this vibe-core",
+  Incomplete: "vibe's files are incomplete",
+  Unresolved: "vibe's install couldn't be read",
+  Failed: "vibe stopped with an error",
 });
 
 const CODEX_SECTION = /^\s*\[\s*plugins\s*\.\s*(?:"([^"]+)"|'([^']+)')\s*\]\s*(?:#.*)?$/;
 const ANY_SECTION = /^\s*\[/;
 const CODEX_ENABLED = /^\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$/;
+const PROJECT_SCOPES = Object.freeze(["local", "project"]);
 
 /**
- * The vibe install a session in `cwd` uses beside the vibe-core holding `from`, with its plugin `name`, or null when
- * there is none. With both names installed, the first enabled one in vibeLookupOrder: vibe in an install, vibe-generic
- * in a checkout.
+ * The vibe install a session in `cwd` uses beside the vibe-core holding `from`: `{ install }` (with its plugin
+ * `name`), `{ absent: true }` when no vibe is installed for this session, or `{ unresolved: reason }` when one is
+ * there but cannot be resolved (an unreadable Claude Code plugin list, two user installs, a recorded install or
+ * Codex cache folder that holds no matching plugin, or a vibe-core outside every layout). With both names found,
+ * the first enabled one in vibeLookupOrder wins; with none enabled, an unresolved name outranks a disabled one.
  */
-export function vibeInstall(cwd = process.cwd(), from = import.meta.url) {
-  const found = siblingInstalls(vibeLookupOrder(pluginInstall(from).layout), { from, cwd });
-  return found.find((install) => pluginEnabled(install.name, install, cwd)) ?? found[0] ?? null;
-}
-
-/** vibe's install root beside this vibe-core; throws with the fix when vibe is not installed. */
-export function vibeRoot(cwd = process.cwd(), from = import.meta.url) {
-  // With neither installed, the lookup of the build's name, vibe, throws the install commands.
-  return vibeInstall(cwd, from)?.root ?? siblingPluginInstall("vibe", { from, cwd }).root;
-}
-
-/** `<installed vibe's name>:<skill>`, the id a harness gives `skill` of the vibe beside this vibe-core. */
-export function vibeSkill(skill, cwd = process.cwd()) {
-  return `${vibeInstall(cwd)?.name ?? "vibe"}:${skill}`;
-}
-
-/** vibe's install root, or null when vibe is not installed beside this vibe-core. */
-export function vibeRootOrNull(cwd = process.cwd()) {
-  return vibeInstall(cwd)?.root ?? null;
-}
-
-/** The path of vibe script `relative` (for example "skills/vibe/scripts/plugin-version.mjs") to print in a command, never to run. */
-export function vibeScriptPath(relative, cwd = process.cwd()) {
-  return path.join(vibeRootOrNull(cwd) ?? "<vibe plugin root>", relative);
+export function vibeLookup(cwd = process.cwd(), from = import.meta.url) {
+  let self;
+  try {
+    self = pluginInstall(from);
+  } catch {
+    return { unresolved: VibeProblem.Unresolved };
+  }
+  if (self.layout === null) return { unresolved: VibeProblem.Unresolved };
+  const found = [];
+  let unresolved = false;
+  for (const name of vibeLookupOrder(self.layout)) {
+    try {
+      found.push({ ...siblingPluginInstall(name, { from, cwd }), name });
+    } catch {
+      unresolved ||= isPresent(self, name, cwd);
+    }
+  }
+  const enabled = found.find((install) => pluginEnabled(install.name, install, cwd));
+  if (enabled) return { install: enabled };
+  if (unresolved) return { unresolved: VibeProblem.Unresolved };
+  return found.length > 0 ? { install: found[0] } : { absent: true };
 }
 
 /**
- * Whether the harness has vibe enabled (under the name `install` carries), read from its own settings files: false
- * only when one says so. Claude Code: `enabledPlugins["vibe@<marketplace>"]` in the user settings, then each `.claude/settings.json`
- * and `.claude/settings.local.json` from the filesystem root down to `cwd`, the nearer one winning (managed
- * settings and a `--settings` flag are not visible here). Codex: `[plugins."vibe@<marketplace>"] enabled` in
- * CODEX_HOME's config.toml (a `-c` override or a project config layer is not visible here). A checkout is enabled.
+ * Whether the harness has `name` (installed as `install`, from vibe's marketplace) enabled, read from its own
+ * settings files: false only when one says so. Claude Code: `enabledPlugins["<name>@<marketplace>"]` in the user
+ * settings, then each `.claude/settings.json` and `.claude/settings.local.json` from the filesystem root down to
+ * `cwd`, the nearer one winning (managed settings and a `--settings` flag are not visible here). Codex:
+ * `[plugins."<name>@<marketplace>"] enabled` in CODEX_HOME's config.toml (a `-c` override or a project config
+ * layer is not visible here). A checkout is enabled.
  */
-export function vibeEnabled(install, cwd = process.cwd()) {
-  return pluginEnabled(install?.name ?? "vibe", install, cwd);
-}
-
-/** `vibeEnabled` for any plugin `name` installed (as `install`) in vibe's marketplace. */
 export function pluginEnabled(name, install, cwd = process.cwd()) {
   const id = `${name}@${install?.marketplace}`;
   if (install?.layout === Layout.Claude) {
@@ -76,14 +81,34 @@ export function pluginEnabled(name, install, cwd = process.cwd()) {
 }
 
 /**
- * Why vibe-core's hooks should stand down for `install` (vibe's, or null), or null when they should run:
- * with no vibe, or a disabled one, there is nothing to guard, and a vibe from before the split (1.1.70 or
- * older) still runs its own copy of these hooks, so running both would apply every guard twice.
+ * Why vibe-core's hooks should stand down for the found `install`, or null when they should run: a disabled vibe
+ * has nothing to guard, and a vibe from before the split (1.1.70 or older) still runs its own copy of these hooks,
+ * so running both would apply every guard twice.
  */
-export function hookStandDown(install = vibeInstall(), cwd = process.cwd()) {
-  if (!install) return HookStandDown.NoVibe;
-  if (!vibeEnabled(install, cwd)) return HookStandDown.VibeDisabled;
+export function hookStandDown(install, cwd = process.cwd()) {
+  if (!pluginEnabled(install.name ?? "vibe", install, cwd)) return HookStandDown.VibeDisabled;
   return existsSync(path.join(install.root, "hooks", "hooks.json")) ? HookStandDown.VibeOwnsHooks : null;
+}
+
+/**
+ * Whether plugin `name`, which siblingPluginInstall could not resolve, is installed for a session in `cwd` all the
+ * same: a Claude Code plugin list that cannot be read, or one with an entry this session would load; a Codex cache
+ * folder for it. A checkout lookup fails only when no folder holds it.
+ */
+function isPresent(self, name, cwd) {
+  if (self.layout === Layout.Codex) return isDirectory(path.join(self.cacheDir, self.marketplace, name));
+  if (self.layout !== Layout.Claude) return false;
+  let registry;
+  try {
+    registry = JSON.parse(readFileSync(self.registry, "utf8"));
+  } catch {
+    return true;
+  }
+  const entries = registry?.plugins?.[`${name}@${self.marketplace}`];
+  if (!Array.isArray(entries)) return false;
+  const here = realOrSame(path.resolve(cwd));
+  const holds = (project) => typeof project === "string" && (here === realOrSame(project) || here.startsWith(`${realOrSame(project)}${path.sep}`));
+  return entries.some((entry) => entry?.scope === "user" || (PROJECT_SCOPES.includes(entry?.scope) && holds(entry.projectPath)));
 }
 
 function claudeSettingsFiles(home, cwd) {

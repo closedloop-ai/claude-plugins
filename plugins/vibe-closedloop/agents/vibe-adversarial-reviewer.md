@@ -166,5 +166,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
 For each finding give severity, `file:line`, breakage, trigger, evidence and the
 smallest fix. Name clean areas or say "No proven findings"; end with the Graph
 block. Set `data.findings` to current-source `{id, blocking, evidence, premises}`
-objects, or `[]` after a clean recheck. Anything required before PR is blocking;
-the launcher receipt and graph trace bind the list to source.
+objects, or `[]` after a clean recheck. Anything required before PR is blocking,
+except a browser-observable claim resting on a code trace alone
+(`../skills/vibe/references/review-premises.md`). For a parser or matcher change, a layout the writer's
+decision table rows miss is a finding that the table is incomplete. The
+launcher receipt and graph trace bind the list to source.

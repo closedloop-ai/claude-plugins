@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { bindProvider, PROVIDER_BINDING } from "./test-fixtures.mjs";
-import { fleetLaneInvocation, graphSelectionFromItem, lanePreflightProblem, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes, targetedE2eCoverage, targetedRecord } from "./pre-pr-lanes.mjs";
+import { fleetLaneInvocation, graphSelectionFromItem, lanePreflightProblem, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes, sharedMainFailures, targetedE2eCoverage, targetedRecord } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
 import { spawnSync } from "node:child_process";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -236,6 +236,10 @@ test("ISS-14307: a repository-authorized targeted E2E receipt is scope-bound and
     { mode: "RUN_ALL", selected: ["e2e/direct.spec.ts", "e2e/existing.spec.ts"] });
 
   await assert.rejects(record("e2e/existing.spec.ts"), /exactly match graph-selected plus added or edited/);
+  // Decision 17 (operator ruling, 2026-11-18): the recording syntax lives in the refusal, not in the worker's instructions.
+  await assert.rejects(targetedRecord({ ...baseValues, "graph-session": undefined, "graph-turn": undefined, "graph-launcher-result": undefined,
+    "targeted-specs": JSON.stringify(specs), "graph-query": graphQuery }, lane, readTurn),
+  /--graph-session <native thread> --graph-turn <completed turn> in Codex, or --graph-launcher-result <owned Claude launcher result> in Claude/);
   await assert.rejects(targetedRecord({ ...baseValues, "targeted-specs": JSON.stringify(["e2e/existing.spec.ts", "e2e/added.spec.ts"]),
     "graph-query": "   " }, lane, readTurn), /non-empty graph query/);
   const recorded = await record(...specs);
@@ -582,3 +586,45 @@ test("ISS-14225: record binds a lane that ran on another host to the head by Git
   writeFileSync(path.join(wt, "a.txt"), "uncommitted\n");
   refused(ranOn, /clean/, "uncommitted inputs are not the proof tree");
 });
+
+test("ISS-14387 a lane run elsewhere is recorded main-preexisting only with a main commit and the same failures on both sides", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-record-main-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  writeFileSync(path.join(worktree, "a.txt"), "main\n");
+  git(worktree, ["add", "a.txt"], home);
+  git(worktree, ["commit", "--quiet", "-m", "main"], home);
+  const mainSha = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  git(worktree, ["update-ref", "refs/remotes/origin/main", mainSha], home);
+  writeFileSync(path.join(worktree, "a.txt"), "session\n");
+  git(worktree, ["commit", "--quiet", "--all", "-m", "session"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const lane = "pnpm --filter @repo/app test";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `IN THE TURBO GRAPH: 1 packages\n    ${lane}\n`);
+  const red = { id: "list.test.ts > sorts rows", assertion: "expected [ 2, 1 ] to deeply equal [ 1, 2 ]" };
+  const failures = (input) => { const file = path.join(root, `failures-${Math.random().toString(16).slice(2)}.json`); writeFileSync(file, JSON.stringify(input)); return file; };
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, "record", "--worktree", worktree, "--head", head, "--command", lane, "--report", report, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const refused = [
+    [["--result", "main-preexisting", "--main-sha", mainSha], /needs --main-sha and --failures/],
+    [["--result", "main-preexisting", "--main-sha", head, "--failures", failures({ branch: [red], main: [red] })], /not a commit on this clone's fetched origin\/main/],
+    [["--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [red], main: [{ ...red, assertion: "expected 3" }] })], /does not fail on main with the same assertion/],
+    [["--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [], main: [red] })], /nonempty branch and main lists/],
+    [["--result", "pass", "--failures", failures({ branch: [red], main: [red] })], /--failures goes only with it/],
+  ];
+  for (const [args, message] of refused) {
+    const out = run(...args);
+    assert.notEqual(out.status, 0, args.join(" "));
+    assert.match(out.stderr + out.stdout, message, args.join(" "));
+  }
+  assert.equal(existsSync(path.join(worktree, ".git", "vibe-lane-results.json")), false, "a refused record writes nothing");
+  const recorded = run("--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [red], main: [red, { id: "other", assertion: "x" }] }));
+  assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+  const [entry] = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
+  assert.deepEqual([entry.result, entry.mainSha, entry.mainSource.head, entry.failures], ["main-preexisting", mainSha, mainSha, [red]]);
+  const checked = spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  assert.match(checked.stdout, /^MAIN-PREEXISTING-LANE pnpm --filter @repo\/app test/m);
+  assert.deepEqual(sharedMainFailures({ branch: [red], main: [red] }), [red]);
+});
+

@@ -12,11 +12,11 @@ import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   readWriterUpgradeEvidence, registerWriter, writerUpgradeCompatible } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
-import { pluginScriptProblems } from "../../../plugins/vibe-core/lib/vibe/scripts/plugin-script-references.mjs";
-import { assembleProviderText, boundWith, connectionLabel, ProviderBroken, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
-import { briefProviderProblem } from "../../../plugins/vibe-core/lib/vibe/scripts/provider-brief.mjs";
+import { pluginScriptProblems } from "../../../plugins/vibe/lib/vibe/scripts/plugin-script-references.mjs";
+import { assembleProviderText, boundWith, connectionLabel, ProviderBroken, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
+import { briefProviderProblem } from "../../../plugins/vibe/lib/vibe/scripts/provider-brief.mjs";
 import { isModelName, MODEL_OVERRIDES_INVALID, ModelRuntime, resolveWorkerModel } from "../../../plugins/vibe/skills/vibe/scripts/agent-models.mjs";
-import { recordWorkerScope } from "../../../plugins/vibe-core/lib/vibe/scripts/worker-scope.mjs";
+import { recordWorkerScope } from "../../../plugins/vibe/lib/vibe/scripts/worker-scope.mjs";
 import { isHandoverContext, isPublisherContext, MissingSessionError, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
@@ -70,9 +70,22 @@ const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-revi
 const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
 const testAuthoringModes = new Set(["request", "fix", "handoff", "pull-request"]);
 const PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
-const MCP_READINESS_WINDOW_MS = 15_000;
+/**
+ * How long Claude itself holds the first turn for its MCP connections (`CLAUDE_CODE_MCP_STARTUP_WAIT_MS`). Without it
+ * a print-mode child reports a connection that is slow to come up under load as pending at its start event, and
+ * every relaunch raced the same few seconds (three reviewer launches refused while both connections were
+ * healthy). Measured on Claude Code 2.1.326: a server answering after 20 s was pending at the start event by default
+ * and connected with this wait set to 60000.
+ */
+const MCP_STARTUP_WAIT_MS = 60_000;
+/** Room left between the child's own MCP wait and the launcher's start-event watchdog on a retry. */
+const MCP_INIT_MARGIN_MS = 5_000;
+const MCP_READINESS_WINDOW_MS = MCP_STARTUP_WAIT_MS + 15_000;
 const MAX_MCP_STARTUP_ATTEMPTS = 3;
 const MCP_STARTUP_RETRY_DELAY_MS = 500;
+const STDERR_TAIL_LINES = 5;
+const STDERR_TAIL_BYTES = 800;
+const CAUSE_MESSAGE_LIMIT = 300;
 
 /** Mandatory reviewers are held to the receipt's finding and premise shape by Claude's structured-output tool. */
 export function workerResultJsonSchemaFor(agentName: string) {
@@ -120,6 +133,70 @@ export function armMcpInitWatchdog(startupTimeoutMs: number | null,
 class PendingMcpError extends Error {
   constructor(readonly servers: string[]) { super(`Granted MCP connections pending: ${servers.join(", ")}`); }
 }
+
+/** The connections that never left pending, carried to the result so the caller knows which one to check. */
+class McpStillPendingError extends LaunchPrecheckError {
+  constructor(readonly pendingConnections: string[], attempts: number, waitedMs: number) {
+    super("MCP_TOOLS_MISSING", `The worker's granted connections stayed pending during bounded startup: ${pendingConnections.join(", ") || "unknown"}`
+      + ` (still pending after ${attempts} launch attempt${attempts === 1 ? "" : "s"} over ${Math.round(waitedMs / 1000)} s; check that connection, then relaunch)`);
+  }
+}
+
+/** Claude exited non-zero: its exit code and the last stderr lines, so the failure names its cause. */
+class ClaudeExitError extends WorkerRefusal {
+  constructor(readonly exitCode: number | null, readonly stderrTail: string) {
+    super("CLAUDE_PROCESS_FAILED", `Claude exited with status ${exitCode}.${stderrTail ? ` Last stderr: ${stderrTail}` : ""}`
+      + " Inspect the private trace and continue the same request.");
+  }
+}
+
+/** The child's own MCP hold: as long as the launcher can wait, less a margin so its start event beats the watchdog. */
+export function childMcpStartupWaitMs(turnTimeoutMs: number, startupTimeoutMs: number | null): number {
+  return Math.max(0, Math.min(MCP_STARTUP_WAIT_MS, (startupTimeoutMs ?? turnTimeoutMs) - MCP_INIT_MARGIN_MS));
+}
+
+/** The bounded last lines of a stderr capture, never more than STDERR_TAIL_BYTES. */
+export function stderrTail(text: string): string {
+  const lines = text.split("\n").map((line) => line.trimEnd()).filter(Boolean).slice(-STDERR_TAIL_LINES).join(" | ");
+  return lines.length > STDERR_TAIL_BYTES ? lines.slice(-STDERR_TAIL_BYTES) : lines;
+}
+
+type TimerHandle = ReturnType<typeof setTimeout>;
+/**
+ * A worker turn's time cap that counts the model's own time and stops while a tool call runs (operator item 30(g):
+ * two turns were cut while they waited on the inventory and a validation, not while thinking). Each single tool wait
+ * is its own step, bounded by the same cap, so a hung tool still ends the turn.
+ */
+export function createTurnCap(capMs: number, onExpire: (reason: "model" | "tool") => void,
+  clock: { now: () => number; set: (callback: () => void, ms: number) => TimerHandle; clear: (handle: TimerHandle) => void }
+    = { now: Date.now, set: (callback, ms) => setTimeout(callback, ms), clear: (handle) => clearTimeout(handle) }) {
+  let remaining = capMs;
+  let armedAt = clock.now();
+  let timer: TimerHandle | undefined = clock.set(() => onExpire("model"), remaining);
+  const open = new Set<string>();
+  return {
+    toolStarted(id: string) {
+      if (open.has(id)) return;
+      open.add(id);
+      if (open.size !== 1) return;
+      if (timer) clock.clear(timer);
+      remaining = Math.max(0, remaining - (clock.now() - armedAt));
+      timer = clock.set(() => onExpire("tool"), capMs);
+    },
+    toolFinished(id: string) {
+      if (!open.delete(id) || open.size !== 0) return;
+      if (timer) clock.clear(timer);
+      armedAt = clock.now();
+      timer = clock.set(() => onExpire("model"), remaining);
+    },
+    stop() { if (timer) clock.clear(timer); timer = undefined; },
+  };
+}
+
+const toolUseEventSchema = z.object({ type: z.literal("assistant"), message: z.object({
+  content: z.array(z.object({ type: z.string(), id: z.string().min(1).optional() }).passthrough()) }).passthrough() }).passthrough();
+const toolResultEventSchema = z.object({ type: z.literal("user"), message: z.object({
+  content: z.array(z.object({ type: z.string(), tool_use_id: z.string().min(1).optional() }).passthrough()) }).passthrough() }).passthrough();
 type PreviewProbeRunner = (command: string, args: string[], options: { encoding: "utf8" }) =>
   { status: number | null; stdout?: string | null; stderr?: string | null };
 
@@ -418,7 +495,7 @@ export async function runWorker(rawInput: unknown) {
       ...(operationContext ? { operationContext } : {}), ...referenceImagesFor(input.agentName, place.dir),
       input: turnInput }), timeoutMs, trace, input.allowCredits === true, (processGroupId) => {
         if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
-      });
+      }, !input.mainSyncValidation);
     process.removeListener("SIGTERM", cancelBeforeLaunch);
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
@@ -476,11 +553,17 @@ export async function runWorker(rawInput: unknown) {
 /** Owns only the spawned child and its streams; bounded failure never falls back to another session. */
 async function launchProcessOnce(args: string[], granted: readonly string[], cwd: string, input: string,
   timeoutMs: number, startupTimeoutMs: number | null, trace: number, allowCredits: boolean,
-  attach: (pid: number) => void) {
+  attach: (pid: number) => void, excludeToolWait: boolean) {
   return await new Promise<{ status: WorkerStatus; summary: string; data?: Record<string, unknown>; sessionId: string;
     rateLimit?: ClaudeRateLimit }>((resolve, reject) => {
-    const child: ChildProcessWithoutNullStreams = spawn("claude", args, { cwd, detached: process.platform !== "win32",
+    // A caller's own CLAUDE_CODE_MCP_STARTUP_WAIT_MS wins, a budget too short for any wait keeps Claude's default,
+    // and an older Claude ignores the unknown name.
+    const env = { ...process.env };
+    const mcpWait = childMcpStartupWaitMs(timeoutMs, startupTimeoutMs);
+    if (mcpWait > 0) env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS ??= String(mcpWait);
+    const child: ChildProcessWithoutNullStreams = spawn("claude", args, { cwd, env, detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"] });
+    let stderrText = "";
     let failed: Error | undefined;
     let lines = "";
     let bytes = 0;
@@ -514,7 +597,17 @@ async function launchProcessOnce(args: string[], granted: readonly string[], cwd
     };
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
-    const deadline = setTimeout(() => stop(new Error("Owned worker turn exceeded its deadline")), timeoutMs);
+    // The validation envelope is derived for wall-clock lanes, so it keeps counting tool time.
+    const cap = createTurnCap(timeoutMs, (reason) => stop(new Error(reason === "tool"
+      ? "Owned worker turn exceeded its deadline: one tool call ran past the step cap"
+      : "Owned worker turn exceeded its deadline")));
+    const trackTools = (event: unknown) => {
+      if (!excludeToolWait) return;
+      const started = toolUseEventSchema.safeParse(event);
+      if (started.success) for (const block of started.data.message.content) if (block.type === "tool_use" && block.id) cap.toolStarted(block.id);
+      const finished = toolResultEventSchema.safeParse(event);
+      if (finished.success) for (const block of finished.data.message.content) if (block.type === "tool_result" && block.tool_use_id) cap.toolFinished(block.tool_use_id);
+    };
     const initTimer = armMcpInitWatchdog(startupTimeoutMs, () => stop(new LaunchPrecheckError(
       "MCP_TOOLS_MISSING", "The worker did not report its granted tools during bounded startup")));
     child.once("spawn", () => {
@@ -536,6 +629,7 @@ async function launchProcessOnce(args: string[], granted: readonly string[], cwd
         try {
           const event: unknown = JSON.parse(line);
           checkInit(event);
+          trackTools(event);
           rateLimit = rateLimitFromEvent(event) ?? rateLimit;
           if (mustStopForUsage(rateLimit, allowCredits)) {
             stop(new LaunchPrecheckError("USAGE_LIMIT_REACHED", "Claude reported a reached usage limit or paid extra usage"));
@@ -551,6 +645,7 @@ async function launchProcessOnce(args: string[], granted: readonly string[], cwd
     });
     child.stderr.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
+      stderrText = `${stderrText}${chunk.toString("utf8")}`.slice(-4 * STDERR_TAIL_BYTES);
       if (isAuthFailure(chunk.toString("utf8"))) authFailed = true;
       if (bytes > 8 * 1024 * 1024) stop(new Error("Worker trace exceeds its bounded limit"));
       else {
@@ -559,7 +654,7 @@ async function launchProcessOnce(args: string[], granted: readonly string[], cwd
       }
     });
     child.on("close", (code) => {
-      clearTimeout(deadline);
+      cap.stop();
       if (initTimer) clearTimeout(initTimer);
       if (killTimer) clearTimeout(killTimer);
       process.removeListener("SIGTERM", onSignal);
@@ -575,7 +670,7 @@ async function launchProcessOnce(args: string[], granted: readonly string[], cwd
             "Claude exhausted structured output retries; continue the same request with a shorter compact result."));
           return;
         }
-        if (code !== 0) { reject(new WorkerRefusal("CLAUDE_PROCESS_FAILED", `Claude exited with status ${code}. Inspect the private trace and continue the same request.`)); return; }
+        if (code !== 0) { reject(new ClaudeExitError(code, stderrTail(stderrText))); return; }
         if (!final) { reject(new WorkerRefusal("CLAUDE_RESULT_MISSING", "Claude returned no final result record. Inspect the private trace and continue the same request.")); return; }
         if (final.is_error) { reject(new WorkerRefusal("CLAUDE_RESULT_ERROR", "Claude marked its final result as an error. Inspect the private trace and continue the same request.")); return; }
         if (final.structured_output === undefined && !final.result) { reject(new WorkerRefusal("CLAUDE_RESULT_EMPTY", "Claude returned no structured result payload. Continue the same request.")); return; }
@@ -597,20 +692,22 @@ async function launchProcessOnce(args: string[], granted: readonly string[], cwd
 
 /** Retry only a pending MCP init, after owned cleanup, under the same worker identity and deadline. */
 async function launchProcess(args: string[], granted: readonly string[], cwd: string, input: string,
-  timeoutMs: number, trace: number, allowCredits: boolean, attach: (pid: number) => void) {
+  timeoutMs: number, trace: number, allowCredits: boolean, attach: (pid: number) => void, excludeToolWait: boolean) {
   const started = Date.now();
   const turnDeadline = started + timeoutMs;
   let readinessDeadline: number | null = null;
   let attemptArgs = args;
   let lastPending: PendingMcpError | undefined;
+  let attempts = 0;
   for (let attempt = 1; attempt <= MAX_MCP_STARTUP_ATTEMPTS; attempt += 1) {
     const budget = remainingWorkerTurnBudget({ turnDeadline,
       readinessDeadline: readinessDeadline ?? turnDeadline, now: Date.now() });
     if (!canStartWorkerAttempt(budget)) break;
+    attempts = attempt;
     try {
       return await launchProcessOnce(attemptArgs, granted, cwd, input,
         budget.turnTimeoutMs, readinessDeadline === null ? null : budget.startupTimeoutMs,
-        trace, allowCredits, attach);
+        trace, allowCredits, attach, excludeToolWait);
     } catch (error) {
       if (!(error instanceof PendingMcpError)) throw error;
       lastPending = error;
@@ -634,15 +731,14 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
     }
   }
   if (!lastPending) throw new Error("Owned worker turn exceeded its deadline");
-  throw new LaunchPrecheckError("MCP_TOOLS_MISSING",
-    `The worker's granted connections stayed pending during bounded startup: ${lastPending?.servers.join(", ") ?? "unknown"}`);
+  throw new McpStillPendingError(lastPending.servers, attempts, Date.now() - started);
 }
 
 class OwnedCleanupError extends Error {}
 class WorkerLaunchError extends Error {
   constructor(readonly result: { status: "BLOCKED"; code: string; summary: string; personAction?: string; workerId: string;
     sessionId: string; requestId: string; tracePath: string; leaseRetained: boolean; recordLeaseRetained: boolean;
-    capHit?: CapCheckpoint }) {
+    capHit?: CapCheckpoint } & FailureDetail) {
     super(result.summary);
   }
 }
@@ -668,9 +764,18 @@ function invalidRequestSummary(error: z.ZodError, rawInput?: unknown): string {
   }).join("; ");
 }
 
-export function safeFailure(error: unknown, rawInput?: unknown): { code: string; summary: string; personAction?: string } {
+/** Optional result fields that name a failure's underlying cause; older callers ignore them. */
+type FailureCause = { message?: string; code?: string; exitCode?: number | null; stderrTail?: string };
+type FailureDetail = { cause?: FailureCause; pendingConnections?: string[] };
+
+export function safeFailure(error: unknown, rawInput?: unknown): { code: string; summary: string; personAction?: string } & FailureDetail {
   const message = error instanceof Error ? error.message : "";
+  if (error instanceof ClaudeExitError) {
+    return { code: error.code, summary: error.summary,
+      cause: { exitCode: error.exitCode, ...(error.stderrTail ? { stderrTail: error.stderrTail } : {}) } };
+  }
   if (error instanceof WorkerRefusal) return { code: error.code, summary: error.summary };
+  if (error instanceof McpStillPendingError) return { code: error.code, summary: error.message, pendingConnections: error.pendingConnections };
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...(error.personAction ? { personAction: error.personAction } : {}) };
   }
@@ -693,7 +798,21 @@ export function safeFailure(error: unknown, rawInput?: unknown): { code: string;
   if (message.includes("binding changed")) return { code: "WRITER_BINDING_CHANGED", summary: "The persistent writer binding changed; restore the exact original binding." };
   if (message.includes("Continue the active request")) return { code: "ACTIVE_REQUEST_PENDING", summary: "Continue the current request before consuming queued work." };
   if (message.includes("running turn") || message.includes("record turn") || message.includes("state is locked")) return { code: "WRITER_BUSY", summary: "The session already has an owned source or record turn." };
-  return { code: "WORKER_TURN_FAILED", summary: "The worker turn failed; inspect its private evidence and retain the same writer identity." };
+  const cause = failureCause(error);
+  return { code: "WORKER_TURN_FAILED", summary: "The worker turn failed; inspect its private evidence and retain the same writer identity."
+    + (cause.message ? ` Cause: ${cause.message}` : "") + (cause.code ? ` (${cause.code})` : ""),
+    ...(cause.message || cause.code ? { cause } : {}) };
+}
+
+/**
+ * The underlying cause of an otherwise unclassified failure (operator item 31(c)): its message and its code or refusal
+ * id. A parse error's message can quote the text it parsed (the brief), so only its kind is kept.
+ */
+function failureCause(error: unknown): FailureCause {
+  if (!(error instanceof Error)) return {};
+  const code = "code" in error && typeof error.code === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(error.code) ? error.code : undefined;
+  const message = error instanceof SyntaxError ? "malformed JSON" : error.message.replace(/\s+/g, " ").trim().slice(0, CAUSE_MESSAGE_LIMIT);
+  return { ...(message ? { message } : {}), ...(code ? { code } : {}) };
 }
 
 /** Completion is not a free writer slot until the owned process group is proven stopped. */

@@ -1198,3 +1198,14 @@ for (const kind of ["bytes", "removed", "renamed", "permissions", "source", "mod
   assert.equal(result.blocking.forbiddenPaths, false);
   assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
 });
+
+test("an inventory longer than one 64 KiB pipe buffer reaches a spawnSync reader whole, as the handoff gate reads it", (t) => {
+  const { home, worktree } = setup(t, "large-inventory");
+  mkdirSync(path.join(worktree, "apps", "app", "generated-pages"), { recursive: true });
+  for (let index = 0; index < 900; index += 1) {
+    write(worktree, `apps/app/generated-pages/a-page-with-a-long-descriptive-file-name-number-${String(index).padStart(4, "0")}.ts`, `export const page${index} = ${index};\n`);
+  }
+  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "build"], home);
+  assert.ok(result.json.changedFiles.length >= 900, "every changed file is listed");
+  assert.ok(JSON.stringify(result.json).length > 64 * 1024, "the output is larger than one pipe buffer");
+});

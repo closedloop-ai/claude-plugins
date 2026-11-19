@@ -120,7 +120,7 @@
   "reason": "Compatibility: manifests written by earlier vibe versions carry this value."
  },
  {
-  "path": "plugins/vibe-core/lib/handoff/scripts/mcp-tool-names.mjs",
+  "path": "plugins/vibe/lib/handoff/scripts/mcp-tool-names.mjs",
   "text": "const CAPABILITY_SERVICES = new Set([\"graph\", \"tracker\", \"closedloop\"]);",
   "reason": "Compatibility: capability records written by earlier vibe versions name the tracker service by its earlier name."
  },
@@ -190,7 +190,7 @@
   "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
  },
  {
-  "path": "plugins/vibe-core/lib/fleet-orchestrator/scripts/fleet-home.mjs",
+  "path": "plugins/vibe/lib/fleet-orchestrator/scripts/fleet-home.mjs",
   "text": "const LAUNCHER_MARK = \"# Written by vibe fleet-home.mjs launcher (ISS-14028).\";",
   "reason": "Compatibility: the exact mark already written into installed fleet launchers; `launcher --install` overwrites only a file that carries it."
  },

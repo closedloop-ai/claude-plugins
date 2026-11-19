@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, portableSurfaceChecker, runNode, SYMPHONY_PATH_POLICY } from "./test-fixtures.mjs";
-import { checkLiveTicket, parseSections, TICKET_SECTIONS } from "../../handoff/scripts/live-ticket-check.mjs";
+import { checkLiveTicket, parseSections, TICKET_SECTIONS, VIBE_TICKET_MARKER } from "../../handoff/scripts/live-ticket-check.mjs";
 import { isOwnedPrototypeSession, validatePrototypePublication } from "./prototype-session.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -115,7 +115,7 @@ test("prototype inventory admits only its sandbox host and canonical shared path
 test("handoff validates owned publication and session ids without weakening app tickets", (t) => {
   const fixture = setup(t);
   runNode(SESSIONS, ["codex-sessions", "--worktree", fixture.worktree, "--thread", "thread-prototype"], fixture.home);
-  runNode(SESSIONS, ["touch", "--worktree", fixture.worktree, "--live-ticket", "ISS-123"], fixture.home);
+  runNode(SESSIONS, ["touch", "--worktree", fixture.worktree, "--live-ticket", "ISS-123", "--created-live-ticket"], fixture.home);
   const publication = publish(fixture).json.session;
   const sections = parseSections(runNode(SESSIONS, ["ticket-sections", "--worktree", fixture.worktree], fixture.home).json.markdown);
   const designReview = [
@@ -126,6 +126,7 @@ test("handoff validates owned publication and session ids without weakening app 
   ].join("\n");
   sections.set("Design Review", designReview);
   sections.set("Handoff", "- Assumptions: None: no Spec Card");
+  sections.set("What this is", `Board mockup.\n\n${VIBE_TICKET_MARKER} Dana Lee.`);
   sections.set("Scope and acceptance criteria", "- Newest ruling: none found (searched: fixture ticket comments)\n- Prior removal: none found (searched: fixture element names)");
   const body = TICKET_SECTIONS.map((heading) => `## ${heading}\n\n${sections.get(heading) ?? "None."}\n`).join("\n");
   const file = path.join(fixture.privateDir, "ticket.md");

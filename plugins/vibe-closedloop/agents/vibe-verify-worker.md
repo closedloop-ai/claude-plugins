@@ -14,16 +14,9 @@ stack, request the registered `fleet-orchestrator/scripts/helpers.mjs scratch-ru
 path with owner, ticket, worktree and TTL. Do not start a raw scratch container
 or Compose project; inspect existing Docker state read-only through normal
 diagnostic commands.
-Scratch files: Each worker gets its own scratch directory named with its
-worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes
-only exact paths it created; an orchestrator brief never asks a worker to
-delete by prefix or glob.
 Read `../skills/vibe/references/review-premises.md` before reporting a failure
 or missing coverage. Verify tool, runtime, CLI, platform and source premises;
 label an unverified premise and never make it a blocking result.
-When ROOT supplied any graph read capability, make at least one graph call
-before returning; the native receipt rejects a completed verification that
-leaves an available graph unused.
 For the final handoff verification turn, return `data.findings` as the current
 source's verifier failures: `{id, blocking, evidence, premises}` entries, or
 `[]` after all required checks pass. An unfinished or unverified result cannot
@@ -37,8 +30,10 @@ Command-based repositories default to `pnpm test:lanes`; their existing
 `pre-pr-lanes.mjs check --report` path is unchanged.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
-Run frozen comparison with its prepared base worktree; remote uses
-`fleet.sh <orchDir> remote slot heavy <owner> <worktree> --shipped-plugin-script handoff/scripts/frozen-render.mjs <args>`.
+Frozen comparison is handoff's `scripts/frozen-render-gate.mjs` shell step, run
+outside any fleet slot, since its builds take the heavy lock themselves. Other
+remote heavy checks use `fleet.sh <orchDir> remote slot heavy <owner> <worktree> <command...>`
+on a clean committed worktree.
 Other Storybook checks use `verify-storybook-process.mjs run`. These wrappers
 own server cleanup; never adopt or signal an unrecorded server.
 All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
@@ -48,10 +43,7 @@ the writer only repairs existing tests its change broke
 in the build loop, whose only checks are the writer's quick hook checks and
 its acceptance criterion checks (`quality-loop.md`, "Lean build loop" and
 "Acceptance criteria before ready"). Never commit, push or create a
-worktree/branch. Never pass `--no-verify` (or `git commit -n`), set
-`core.hooksPath`, or bypass a commit hook any other way, for a proof or scratch
-commit too. A proof commit whose hook fails is not made; report not ready with
-the hook output.
+worktree/branch.
 
 ## Inputs and references
 
@@ -133,65 +125,9 @@ the whole branch diff. Record import and E2E-reference selections in
 `<gitdir>/vibe-pr-evidence.json`. `blocking.prEvidence` names gaps; skipped CI
 is not a run or permission to write one.
 
-The private PR evidence uses the canonical structure checked by
-`../skills/handoff/scripts/pr-evidence-schema.mjs`. `testSelection` is an
-array of `{ file: "<full repo-relative source path>", selector:
-"code_tests_for_changes" | "related" | "e2e-reference", tests: ["<full repo-relative
-test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
-When the graph cannot establish tests, a `code_tests_for_changes` row may use
-`tests: null` only with the repository's `related` selection for that file.
-`targetedInventory` has `actor: "read-only"`,
-`source: "working-tree"`, the actual tested HEAD as `commit`, top-level
-`source` from `tested-head.mjs source`, and the complete
-`qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
-`impactKey`; never trust a stored classifier result. It also has a `laneReport`
-with `matches` from its repository source: legacy `command: "pnpm test:lanes"`,
-or typed `source` from the committed root declaration
-`vibe-handoff-paths.json`. For `github-workflow`, bind the workflow path,
-commit and SHA-256; use every job/matrix recipe from
-`ci-job-shape.mjs` export `workflowLaneDefinitions`, not a pnpm substitute. It has
-`entries` containing each exact test `kind`, `path`, nonempty `cases` and
-`command`. A lane result in `testRuns` uses `status: "passed"` with its
-exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
-its exact path, cases and command. Always write `rerunCycles: []` when no
-failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
-Older runs default to ancestor-based QA-impact recomputation. Sibling
-publications require the versioned `TreeEquivalentCarry` contract from
-`pr-evidence-schema.mjs`. Preserve original results/keys and historical lane
-selections; bind the current `scopeKey`. List non-ancestor source snapshots
-in `proofs` using pinned `CarryPoint` values. The gates check Git/source/receipt
-consistency. When the lanes ran on another host against a proof commit this
-clone never received, `proof` is a tree point `{ kind: "tree", host,
-proofCommit, gitTree, treeSha256, command }`: the gate checks `gitTree` and
-`treeSha256` against the published commit and never resolves `proofCommit`.
-Each result names `proofCommit`; its receipt `source` is that commit with the
-published tree hashes. Record each such lane from the clean published head
-with `pre-pr-lanes.mjs record --ran-on <host> --proof-commit <sha> --git-tree
-<tree>`. For an E2E carry, run the probe on that host with `--host <ssh name>`
-and also copy its `host`, `gitTree`, `runnerWorktree` and `probeScript`; the
-gate then re-probes that host over ssh, never this machine, and not-run spec
-and lane rows may name the probe's commit. A targeted test row at the proof
-commit carries through its inventory entry's `resultCommit` (the proof commit),
-`carriedTo` (the published commit), `carryReason` and `coveredFiles` hashes,
-which the gate reads from this worktree. Render with `pr-evidence-comment.mjs --worktree "<wt>"`.
-Also write `testIntegrityProofs: []`, populated for every candidate recomputed
-by the final handoff inventory. Each entry carries its exact `candidate`,
-`path`, `case`, `class`, intentional `mutation`, exact `command`,
-`observedFailure`, `restoredPass: true`, and tested `commit`. Responsive proof
-adds `viewportSource: "registered"` and `desktopWidthMutation`; absence proof
-adds `ownerBoundary: "production"`, a positive `mountedSignal`, the exact changed
-`assertionLine`, `assertionLocation` (repo path, line and column), and
-`presentState` describing where the element was made
-present. Record `mutationRun: { command, exitCode, assertionFailure }` from the
-actual mutation run. Name its private receipt JSON in the git dir as
-`rawReceipt` with `rawReceiptSha256` and `restoredOutputSha256`; the receipt
-holds `candidate`, `target`, `command`, `head`, `mutationExit`,
-`mutationOutput` (raw runner output), `restoredExit`, `restoredOutput`,
-`beforeSha256`, `mutatedSha256` and the one `mutationEdit: { old, new }`. If the runner cannot identify the assertion column, put each
-assertion on its own line and rerun the mutation through a runner that reports
-the source column. Layout proof
-adds the official grid or prototype `baseline` and the `layoutAssertion` that
-failed when the card moved. Never infer these fields from a green normal run.
+Write the private PR evidence in the shape
+`node ../skills/handoff/scripts/pr-evidence-schema.mjs --example` prints, and render
+it with `pr-evidence-comment.mjs --worktree "<wt>"`.
 After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
 "<gitdir>/vibe-pr-evidence.json" --worktree "<wt>"` and fix every reported shape problem before
@@ -298,8 +234,6 @@ For targeted E2E, record the repository's capability probe and choose:
 3. Tier C: otherwise use the clean, push-ready remote worktree through
    `fleet.sh <orchDir> remote slot heavy <owner> <runnerWorktree> <command...>`;
    the still-unpushed commit is amended and transferred only after it is push-ready;
-   Never pass `--no-verify` (or `git commit -n`), set `core.hooksPath`, or bypass a commit hook any other way, for a proof or scratch commit too.
-   A proof commit whose hook fails is not made; report not ready with the hook output.
    the command verifies `HEAD` before the run and rebuilds after a switch
    (`image-head.mjs` refuses stale images).
 
@@ -325,20 +259,10 @@ Three more rules:
   across every E2E root. Run only those specs through the chosen tier and the
   repository's serialization lock; a busy or unavailable runner is a named
   limitation, never a pass.
-- When the target repository's root rule permits graph-selected local E2E,
-  use `code_tests_for_changes` over the whole diff. If it answers `RUN_ALL`,
-  use its `start_here` and direct-evidence specs, then add every E2E spec the
-  pull request adds or edits. The graph request must name the checkout's
-  repository and the whole changed-file set, including deletions. Query whole
-  files or use `change` with the exact clean commit and its base. Caller-supplied
-  hunks and incomplete spec lists cannot establish targeted evidence. After
-  those specs pass, record the owning lane
-  with `pre-pr-lanes.mjs record --targeted-specs '<JSON list>' --graph-query
-  '<exact code_tests_for_changes arguments JSON>' --graph-session '<native thread>'
-  --graph-turn '<completed turn>'` in Codex, or `--graph-launcher-result '<owned result>'`
-  in Claude; the recorder re-reads the successful tool result from App Server or the fingerprinted launcher trace.
-  `check` must print `TARGETED-LANE`. In symphony-alpha the
-  full lane runs after merge, not on the pull request.
+- Graph-selected local E2E: on `RUN_ALL`, use `code_tests_for_changes`'s
+  `start_here` and direct-evidence specs plus every E2E spec the pull request
+  adds or edits, and record them as `pre-pr-lanes.mjs check`'s `TARGETED-E2E`
+  line says. In symphony-alpha the full lane runs after merge, not on the pull request.
 - Before you claim that CI runs, or ran, a check or test, read
   `.github/pr-test-event-tiers.md` and cite the tier of the job that runs
   it. A `batch-only` job does not run on the pull request, and its `skipped`

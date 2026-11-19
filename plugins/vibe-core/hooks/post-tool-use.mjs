@@ -1,20 +1,5 @@
 #!/usr/bin/env node
-// The vibe plugin's only PostToolUse hook. Every tool call runs these guards in
-// this one process; their output merges as hook-dispatch.mjs describes. A new
-// PostToolUse guard is a module added here, never another hooks.json command.
-//
-// Usage (hook): reads the PostToolUse JSON on stdin; prints a notice or nothing.
+// vibe-core's PostToolUse hook (hooks.json): vibe-runtime.mjs hands the event to the vibe this session uses.
+import { runEvent } from "./vibe-runtime.mjs";
 
-import { contextGuard } from "./context-guard.mjs";
-import { mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
-import { isEntryPoint } from "../shared/plugin-roots.mjs";
-
-/** The guards every tool call runs after it finishes, in order. */
-export const POST_TOOL_USE_GUARDS = Object.freeze([{ name: "context-guard", run: contextGuard, activated: true }]);
-
-/** The PostToolUse output for `event`, or null; `report(line)` receives each failing guard's error. */
-function postToolUse(event, report) {
-  return mergeResults("PostToolUse", runGuards(POST_TOOL_USE_GUARDS, event, report));
-}
-
-if (isEntryPoint(import.meta.url)) runHookScript("post-tool-use", postToolUse);
+await runEvent("PostToolUse");

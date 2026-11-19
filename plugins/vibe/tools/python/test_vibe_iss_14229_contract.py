@@ -33,10 +33,8 @@ def test_the_writer_sends_the_typecheck_to_the_remote_slot_when_local_heavy_work
     assert "Biome on the changed files, the affected typecheck and the source gates" in writer
 
 
-def test_setup_documents_the_bar_beside_the_heavy_slot_keys() -> None:
+def test_setup_lists_the_bar_beside_the_heavy_slot_keys() -> None:
+    # What the bar does is fleet.sh's refusal message, pinned in fleet.test.mjs; setup lists only the key.
     setup = skill_split.read(SETUP)
     keys = setup[setup.index("HEAVY_SLOTS=<"):setup.index("MAX_LOAD_PER_CORE=1.5")]
     assert "LOCAL_HEAVY_BARRED=1" in keys
-    prose = flat(setup)
-    assert "`fleet.sh <orchDir> local slot heavy` refuses with exit 78 and names `fleet.sh <orchDir> remote slot heavy`" in prose
-    assert "so `FLEET_FORCE_HERE` does not lift it" in prose

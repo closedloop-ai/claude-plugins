@@ -5,7 +5,7 @@ import { ciEvidenceSchema, commitSchema, MainSyncError } from "./main-sync-contr
 import { checkedSourceFromJobLog, ciStepSchema, type CiStep } from "./main-sync-ci-logs.js";
 import { digest, type syncContext } from "./main-sync-state.js";
 import { mainSyncRecipe } from "./main-sync-recipe.js";
-import { githubRepository } from "../../../plugins/vibe-core/lib/vibe/scripts/github-remote.mjs";
+import { githubRepository } from "../../../plugins/vibe/lib/vibe/scripts/github-remote.mjs";
 export { workflowLaneDefinitions } from "./workflow-lane-definitions.js";
 
 // Exact reviewed Run Electron e2e body at loaded-main 02a7ae03, e5fc4f7 and 51f4d122ba, including both verdict guards.

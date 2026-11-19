@@ -1,31 +1,5 @@
-// Runtime-neutral MCP names for a recorded capability. Keep this payload-side
-// adapter aligned with tools/vibe-workers/src/contracts.ts.
-const NAME = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
+// This module moved to vibe. A vibe older than this vibe-core still loads it from here, so it says how to fix that.
+import { writeSync } from "node:fs";
 
-/** Canonical operation spelling shared by Claude and Codex aliases. */
-export function mcpToolIdentity(name) {
-  if (!NAME.test(name ?? "")) return null;
-  const boundary = name.lastIndexOf("__");
-  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
-}
-
-/** Concrete names a runtime may report for one capability. */
-export function mcpToolAliases(name) {
-  const identity = mcpToolIdentity(name);
-  if (!identity) return [name];
-  const boundary = identity.lastIndexOf("__");
-  return [...new Set([name, identity, `${identity.slice(0, boundary)}__${identity.slice(boundary + 2).replaceAll("_", "-")}`])];
-}
-
-/** Exact graph aliases derived only from recorded read capabilities. */
-export function graphAliases(capabilities) {
-  if (!Array.isArray(capabilities) || capabilities.some(capability => typeof capability?.name !== "string"
-    || !CAPABILITY_SERVICES.has(capability.service) || !["read", "write"].includes(capability.access)
-    || !mcpToolIdentity(capability.name))) throw new Error("capability record is malformed");
-  return [...new Set(capabilities.filter(capability => capability.service === "graph" && capability.access === "read")
-    .flatMap(capability => mcpToolAliases(capability.name)))];
-}
-
-// The launcher's services: the graph and the tracker, which records written before vibe was generic name by its
-// earlier service name.
-const CAPABILITY_SERVICES = new Set(["graph", "tracker", "closedloop"]);
+writeSync(2, "vibe-core is newer than your vibe. To fix: run `claude plugin update vibe@closedloop-ai` then start a new Claude Code session, or run `codex plugin add vibe@closedloop-ai` then quit and reopen the Codex app.\n");
+process.exit(1);

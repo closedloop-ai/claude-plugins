@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import {
-  Check, createGuardrailsGate, exitCodeFor, findingId, findingsProblems, FINDINGS_SCHEMA, fromDiffRule, fromGateOutput, REVIEWER_CHECKS, scanConventions,
+  addFindings, Check, createGuardrailsGate, exitCodeFor, findingId, findingsProblems, FINDINGS_SCHEMA, fromDiffRule, fromGateOutput, REVIEWER_CHECKS, scanConventions,
   scanTestRepairs, scanTokens, Severity,
 } from "./guardrails-gate.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
@@ -375,4 +375,14 @@ test("with no verify recipe bound, the formatter and source gates are skipped wi
   assert.equal(reason(Check.Biome), "the repository's recipe names no formatter");
   assert.equal(reason(Check.SourceGates), "the repository's recipe names no source gates");
   assert.ok(!calls.some((call) => /biome|check:source-gates/.test(call.line)));
+});
+
+test("findings that share an id keep unique ids: an exact repeat is dropped and a different one is numbered", () => {
+  const item = (evidence) => ({ id: findingId(Check.TestRepair, "a.test.ts", 4, "an assertion was removed"), check: Check.TestRepair,
+    file: "a.test.ts", line: 4, severity: Severity.High, message: "an assertion was removed", evidence });
+  const findings = [];
+  addFindings(findings, [item("-expect(a)"), item("-expect(a)"), item("-expect(b)")]);
+  assert.deepEqual(findings.map(({ id, evidence }) => [id.endsWith("~2"), evidence]), [[false, "-expect(a)"], [true, "-expect(b)"]]);
+  const report = { schema: FINDINGS_SCHEMA, head: "h", base: "b", findings, checks_run: [Check.TestRepair], checks_skipped: [] };
+  assert.deepEqual(findingsProblems(report), []);
 });

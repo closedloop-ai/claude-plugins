@@ -11,7 +11,7 @@ import type { EvalRuntimeRecord, EvalSuiteResult, ExpectedEvalPlugin,
   LocalEvalResult } from "./eval-collector.ts";
 import { EVAL_POLICY, requireDeveloperMachine } from "./eval-policy.ts";
 import type { EvalRuntime } from "./eval-policy.ts";
-import { snapshotPluginsAtHead, snapshotPluginsAtWorktree } from "./plugin-snapshot.ts";
+import { providerVibeDir, snapshotPluginsAtHead, snapshotPluginsAtWorktree } from "./plugin-snapshot.ts";
 import { buildEvalBaseline, evalBaselineFileName, evalBaselineModelsMatchPolicy, publishEvalBaseline,
   evalQuarantineEntryIsActive, evalQuarantineStatus, reconcileEvalBaselineQuarantine,
   resolveLastGreenEvalBaseline,
@@ -28,7 +28,11 @@ import { mergeEvalSuiteResults, statefulInfrastructureInvalidReason,
   SystemUpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 import type { UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 import { createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
-import { privateReplyDestination, privateTextProblem, writePrivateReply } from "./private-artifact.ts";
+import { privateReplyDestination, privateReplyProblem, writePrivateReply } from "./private-artifact.ts";
+import { splitCodexArms } from "./eval-codex-arms.ts";
+import type { CodexArm, CodexArmRun } from "./eval-codex-arms.ts";
+import { evalCaseInputText, failPrivateReplyCases } from "./eval-private-reply.ts";
+import type { PrivateReplyRejection } from "./eval-private-reply.ts";
 import { applyClaudeReplyCheckers, deterministicClaudeRecord,
   hasMappedReplyCheckers } from "./reply-checker.ts";
 
@@ -298,7 +302,8 @@ function claudeReplyText(tracePath: string, allowedTempParent: string,
 /** Materialize every validated Claude final reply in the same private case shape as Codex. */
 export function preserveClaudeReplies(raw: unknown, outputDir: string,
   expectedCases: string[], allowedTempParent: string,
-  provenKeptRoots: readonly string[] = []): Map<string, string> {
+  provenKeptRoots: readonly string[] = [], caseInput: (caseId: string) => string = () => "",
+  rejected: PrivateReplyRejection[] = []): Map<string, string> {
   const root = nativeObject(raw, "eval-claude-json-invalid");
   const cases = nativeArray(root.cases, "eval-claude-cases-invalid");
   const actual = cases.map((rawCase) => {
@@ -318,12 +323,13 @@ export function preserveClaudeReplies(raw: unknown, outputDir: string,
     if (typeof item.name !== "string") throw new Error("eval-claude-case-invalid");
     const caseId = codexCaseId(item.name);
     const reply = claudeReplyText(run.tracePath, allowedTempParent, provenKeptRoots);
-    if (privateTextProblem(reply)) throw new Error("eval-private-reply-private-data");
-    return { caseId: item.name,
+    const category = privateReplyProblem(reply, caseInput(item.name));
+    if (category) rejected.push({ caseId: item.name, category });
+    return { caseId: item.name, withheld: category !== null,
       destination: privateReplyDestination(outputDir, caseId), reply };
   });
   for (const item of replies) {
-    writePrivateReply(item.destination, item.reply);
+    if (!item.withheld) writePrivateReply(item.destination, item.reply, caseInput(item.caseId));
   }
   return new Map(replies.map((item) => [item.caseId, item.reply]));
 }
@@ -684,22 +690,27 @@ export async function runLocalEvals(options: LocalEvalOptions,
     "--allow-tools", "Bash", "Write", "Edit", "--trust-plugin", "--no-publish", "--keep-temp"];
   // The native runner documents these isolated Python dependencies. Provision
   // them through uv instead of relying on the developer's system Python.
-  const codexArgs = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",
-    codexEvalRunnerPath(), "--plugin", snapshot.vibeDir,
-    "--source-sha", options.pluginSha, "--output", codexOutput, "--codex-bin",
-    options.codexExecutable, "--concurrency", String(EVAL_POLICY.codexConcurrency), "--max-seconds",
-    String(codexEvalBudgetSeconds(Math.max(1, partition.ordinary.length))), "--model", EVAL_POLICY.codexModel,
-    "--grader-model", EVAL_POLICY.codexJudgeModel];
-  if (options.deterministicOnly) codexArgs.push("--deterministic-only");
-  for (const id of partition.ordinary) codexArgs.push("--case", codexCaseId(id));
+  const codexGroups = (Object.entries(splitCodexArms(snapshot.vibeDir, partition.ordinary)) as
+    Array<[CodexArm, string[]]>).filter(([, ids]) => ids.length).map(([arm, ids]): CodexArmRun => {
+    const output = arm === "provider" ? codexOutput : `${codexOutput}-${arm}`;
+    const args = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",
+      codexEvalRunnerPath(), "--plugin", snapshot.vibeDir,
+      "--source-sha", options.pluginSha, "--output", output, "--codex-bin",
+      options.codexExecutable, "--concurrency", String(EVAL_POLICY.codexConcurrency), "--max-seconds",
+      String(codexEvalBudgetSeconds(ids.length)), "--model", EVAL_POLICY.codexModel,
+      "--grader-model", EVAL_POLICY.codexJudgeModel, "--arm", arm];
+    if (options.deterministicOnly) args.push("--deterministic-only");
+    for (const id of ids) args.push("--case", codexCaseId(id));
+    return { arm, ids, output, args, process: null };
+  });
   const vibeVersion = manifestVersion(snapshot.vibeDir);
   const coreVersion = manifestVersion(snapshot.coreDir);
   const wordingCases = wordingCaseIds(snapshot.vibeDir, partition.ordinary);
-  const skillSha = createHash("sha256").update(
-    readFileSync(join(snapshot.vibeDir, "skills/vibe/SKILL.md"))).digest("hex");
+  // The provider arm installs the ClosedLoop build as vibe, the generic arm installs plugins/vibe.
+  const skillShaFor = (arm: CodexArm) => createHash("sha256").update(readFileSync(join(
+    arm === "provider" ? providerVibeDir(snapshot) : snapshot.vibeDir, "skills/vibe/SKILL.md"))).digest("hex");
   const ordinaryRecords: EvalRuntimeRecord[] = [];
   let claudeProcess: { status: number; stdout: string; stderr: string } | null = null;
-  let codexProcess: { status: number; stdout: string; stderr: string } | null = null;
   const siblings = new AbortController();
   const forwardAbort = () => siblings.abort();
   options.signal?.addEventListener("abort", forwardAbort, { once: true });
@@ -710,9 +721,15 @@ export async function runLocalEvals(options: LocalEvalOptions,
         ? commands.run(isolatedClaude!.executable, claudeArgs, options.runRoot,
           { deadline, signal: siblings.signal,
             env: { TMPDIR: claudeTemp, TMP: claudeTemp, TEMP: claudeTemp } }) : Promise.resolve(null),
-      runtimes.includes("codex") && partition.ordinary.length
-        ? commands.run(options.uvExecutable, codexArgs, options.runRoot,
-          { deadline, signal: siblings.signal }) : Promise.resolve(null),
+      runtimes.includes("codex") && codexGroups.length
+        ? (async () => {
+          // One runner invocation per arm: run.py refuses a case its --arm does not run.
+          for (const group of codexGroups) {
+            group.process = await commands.run(options.uvExecutable, group.args, options.runRoot,
+              { deadline, signal: siblings.signal });
+          }
+          return null;
+        })() : Promise.resolve(null),
     ].map((launch) => launch.catch((error: unknown) => {
       siblings.abort();
       throw error;
@@ -720,12 +737,15 @@ export async function runLocalEvals(options: LocalEvalOptions,
     const settled = await Promise.allSettled(launches);
     // A process that finished keeps its result when its sibling was rejected,
     // so the cleanup below still removes and counts the sandboxes it kept.
-    [claudeProcess, codexProcess] = settled.map((item) =>
+    [claudeProcess] = settled.map((item) =>
       item.status === "fulfilled" ? item.value : null);
     const failure = settled.find((item): item is PromiseRejectedResult => item.status === "rejected");
     if (failure) throw failure.reason;
     if (claudeProcess) writeProcessLog(join(options.runRoot, "claude-process.log"), claudeProcess);
-    if (codexProcess) writeProcessLog(join(options.runRoot, "codex-process.log"), codexProcess);
+    for (const group of codexGroups) {
+      if (group.process) writeProcessLog(join(options.runRoot,
+        group.arm === "provider" ? "codex-process.log" : `codex-${group.arm}-process.log`), group.process);
+    }
     if (claudeProcess && claudeVersion) {
       let claudeNative: unknown;
       const expected = {
@@ -742,16 +762,19 @@ export async function runLocalEvals(options: LocalEvalOptions,
       } else {
         try {
           const mapped = hasMappedReplyCheckers(partition.ordinary);
+          const rejectedReplies: PrivateReplyRejection[] = [];
           const replies = commands.providesClaudeTraceArtifacts || mapped
             ? preserveClaudeReplies(claudeNative, claudeOutput, partition.ordinary, claudeTemp,
-              provenClaudeKeptRoots(claudeProcess.stderr, claudeSandboxFloorMs, sandboxOwnerUid))
+              provenClaudeKeptRoots(claudeProcess.stderr, claudeSandboxFloorMs, sandboxOwnerUid),
+              (caseId) => evalCaseInputText(snapshot.vibeDir, caseId), rejectedReplies)
             : new Map<string, string>();
           if (!mapped) {
-            ordinaryRecords.push(nativeRecord);
+            ordinaryRecords.push(failPrivateReplyCases(nativeRecord, rejectedReplies));
           } else {
             const overridden = applyClaudeReplyCheckers(claudeNative, partition.ordinary, replies);
             const semantic = collectClaudeEval(overridden.raw, partition.ordinary, expected);
-            ordinaryRecords.push(deterministicClaudeRecord(nativeRecord, semantic, overridden));
+            ordinaryRecords.push(failPrivateReplyCases(
+              deterministicClaudeRecord(nativeRecord, semantic, overridden), rejectedReplies));
           }
         } catch (error) {
           ordinaryRecords.push({ runtime: "claude", exitCode: claudeProcess.status, result: null,
@@ -759,17 +782,22 @@ export async function runLocalEvals(options: LocalEvalOptions,
         }
       }
     }
-    if (codexProcess && codexVersion) ordinaryRecords.push(record("codex", codexProcess.status,
-      () => collectCodexEval(json(join(codexOutput, "results.json")), partition.ordinary, {
-        sourceSha: options.pluginSha, skillSha, version: vibeVersion, cliVersion: codexVersion,
-        vibePath: snapshot.vibeDir, deterministicOnly: options.deterministicOnly ?? false,
-        model: EVAL_POLICY.codexModel, graderModel: EVAL_POLICY.codexJudgeModel, wordingCases,
-      })));
+    if (codexVersion && codexGroups.length && codexGroups.every((group) => group.process)) {
+      ordinaryRecords.push(mergeCodexArmRecords(codexGroups.map((group) =>
+        record("codex", group.process!.status, () => collectCodexEval(
+          json(join(group.output, "results.json")), group.ids, {
+            sourceSha: options.pluginSha, skillSha: skillShaFor(group.arm), version: vibeVersion,
+            cliVersion: codexVersion, vibePath: snapshot.vibeDir,
+            deterministicOnly: options.deterministicOnly ?? false, model: EVAL_POLICY.codexModel,
+            graderModel: EVAL_POLICY.codexJudgeModel,
+            wordingCases: wordingCases.filter((id) => group.ids.includes(id)),
+          }))), partition.ordinary));
+    }
   } finally {
     options.signal?.removeEventListener("abort", forwardAbort);
     // The Python runner also removes this copy in its finally block. The
     // parent independently removes it so an interrupt cannot retain a credential file.
-    rmSync(join(codexOutput, "home/auth.json"), { force: true });
+    for (const group of codexGroups) rmSync(join(group.output, "home/auth.json"), { force: true });
     rmSync(claudeTemp, { recursive: true, force: true });
     // Only folders this run's own process reported and this run can prove,
     // never a sweep of the shared temp parent.
@@ -1165,4 +1193,15 @@ writeOutput: (text: string) => unknown = (text) => process.stdout.write(text)): 
       `claudeJudge=${existing?.artifact.models.claudeJudge ?? "none"}/${EVAL_POLICY.claudeJudgeModel},` +
       `codex=${existing?.artifact.models.codex ?? "none"}/${result.models.codex},` +
       `codexJudge=${existing?.artifact.models.codexJudge ?? "none"}/${EVAL_POLICY.codexJudgeModel}` };
+}
+
+/** Join the Codex arms' records into the one record the runtime reports; any invalid arm invalidates it. */
+function mergeCodexArmRecords(records: EvalRuntimeRecord[], ordinary: string[]): EvalRuntimeRecord {
+  const invalid = records.find((item) => item.invalidReason || !item.result);
+  if (invalid) return invalid;
+  const merged = records.map((item) => item.result!).reduce<EvalSuiteResult | null>((left, right) =>
+    left ? mergeEvalSuiteResults(left, right, [...left.cases, ...right.cases].map((item) => item.id)) : right,
+  null)!;
+  if (merged.cases.length !== ordinary.length) throw new Error("eval-codex-arm-coverage-mismatch");
+  return { runtime: "codex", exitCode: merged.failed === 0 ? 0 : 1, result: merged, invalidReason: null };
 }

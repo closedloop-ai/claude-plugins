@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { capabilitiesSchema } from "./contracts.js";
 import { readDefinition } from "./definition.js";
-import { acquireRecordTurn, attachClaudeProcess, changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
+import { acquireRecordTurn, attachClaudeProcess, changeWriter, dropPendingWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
@@ -59,6 +59,50 @@ describe("persistent writer ledger", () => {
     const active = changeWriter("claim", { ...owner, requestId: "next" });
     expect(active.turn?.input).toBe("PRIVATE_NEXT");
     expect(JSON.parse(cli("drop-pending", "next", { evidence }).stdout).code).toBe("REQUEST_NOT_PENDING");
+  });
+  it("item 30(c): a request queued behind an open one is reported, relaunches with its input, and can be dropped", () => {
+    const refused = (action: "start" | "claim", input: Record<string, unknown>) => {
+      try { changeWriter(action, input); } catch (error) { return error as { code: string; summary: string }; }
+      throw new Error(`${action} was not refused`);
+    };
+    for (const status of ["BLOCKED", "NEEDS_PERSON"]) {
+      const value = registered();
+      const owner = { worktree: value.worktree, workerId: value.workerId };
+      const lease = changeWriter("start", { ...owner, requestId: "open", input: "OPEN" }).turn!.lease!;
+      nativeFinish({ ...owner, requestId: "open", lease, status });
+      const queued = changeWriter("enqueue", { ...owner, requestId: "later", input: "PRIVATE_LATER" });
+      expect(queued.queuedBehind).toMatchObject({ requestId: "open", status });
+      expect(queued.queuedBehind?.next).toMatch(/requestId "later" stays queued.*drop-pending/);
+      expect(JSON.stringify(queued)).not.toContain("PRIVATE_");
+      for (const [action, extra] of [["start", { input: "PRIVATE_LATER" }], ["claim", {}]] as const) {
+        const refusal = refused(action, { ...owner, requestId: "later", ...extra });
+        expect(refusal.code, `${status} ${action}`).toBe("ACTIVE_REQUEST_PENDING");
+        expect(refusal.summary).toMatch(/Continue active requestId "open".*requestId "later" stays queued/);
+        expect(refusal.summary).not.toContain("was not queued");
+      }
+      const dropped = dropPendingWriter({ ...owner, requestId: "later", evidence: { source: "Parent record", reason: "Superseded",
+        inputSha256: createHash("sha256").update("PRIVATE_LATER").digest("hex") } });
+      expect(dropped.queuedRequestIds).toEqual([]);
+      expect(dropped.status).toBe(status);
+    }
+    const idle = registered();
+    const idleOwner = { worktree: idle.worktree, workerId: idle.workerId };
+    changeWriter("enqueue", { ...idleOwner, requestId: "queued", input: "QUEUED INPUT" });
+    expect(refused("start", { ...idleOwner, requestId: "queued", input: "Other input" }).code).toBe("REQUEST_ID_EXISTS");
+    const relaunched = changeWriter("start", { ...idleOwner, requestId: "queued", input: "QUEUED INPUT" });
+    expect(relaunched.turn).toMatchObject({ id: "queued", input: "QUEUED INPUT" });
+    expect(relaunched.queuedRequestIds).toEqual([]);
+    const failed = registered();
+    const failedOwner = { worktree: failed.worktree, workerId: failed.workerId };
+    const failedLease = changeWriter("start", { ...failedOwner, requestId: "broken", input: "BROKEN" }).turn!.lease!;
+    nativeFinish({ ...failedOwner, requestId: "broken", lease: failedLease, status: "FAILED" });
+    expect(changeWriter("enqueue", { ...failedOwner, requestId: "next", input: "NEXT" }).queuedBehind).toBeUndefined();
+    const running = registered();
+    const runningOwner = { worktree: running.worktree, workerId: running.workerId };
+    changeWriter("start", { ...runningOwner, requestId: "running", input: "RUNNING" });
+    expect(changeWriter("enqueue", { ...runningOwner, requestId: "after", input: "AFTER" }).queuedBehind,
+      "a running turn is not a request to continue").toBeUndefined();
+    expect(changeWriter("start", { ...failedOwner, requestId: "next", input: "NEXT" }).turn?.id).toBe("next");
   });
   it("reopens the request that just returned DONE for its follow-up step instead of refusing it (ISS-13321)", () => {
     const value = registered();

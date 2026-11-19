@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
-import { agentsTestCommand, LOCKFILE_INSTALLS } from "../../../plugins/vibe-core/lib/vibe/scripts/repository-commands.mjs";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
+import { agentsTestCommand, LOCKFILE_INSTALLS } from "../../../plugins/vibe/lib/vibe/scripts/repository-commands.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
 
 const argvSchema = z.array(z.string().min(1)).min(1).max(256);

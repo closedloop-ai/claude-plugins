@@ -42,7 +42,7 @@ test("ISS-14193 container preflight names the empty identity and both E2E lanes 
   assert.match(command, /web_status/);
 });
 
-test("ISS-14193 and ISS-14216 worker contracts keep the supported E2E and remote frozen paths", () => {
+test("ISS-14193 and ISS-14216 worker contracts keep the supported E2E path, and the frozen render runs as the gate step", () => {
   const verify = readFileSync(new URL("../../../../vibe-closedloop-provider/skills/closedloop-provider/references/agents/vibe-verify-worker.md", import.meta.url), "utf8");
   const generic = readFileSync(new URL("../../../agents/vibe-verify-worker.md", import.meta.url), "utf8");
   const handoff = readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
@@ -55,7 +55,9 @@ test("ISS-14193 and ISS-14216 worker contracts keep the supported E2E and remote
   assert.equal(/one wrapper hold[\s\S]*attempt both lanes/.test(verify), true, "both E2E lanes stay under one hold");
   assert.equal(/control bridge is read only/.test(verify), true, "control bridge limit is explicit");
   assert.equal(/no supported Desktop write capture\s+against\s+the seeded vibe stack/.test(verify), true, "write capture absence is explicit");
-  for (const text of [generic, handoff, fleet]) assert.match(text, /--shipped-plugin-script handoff\/scripts\/frozen-render\.mjs/);
+  // ISS-14395: the frozen render is handoff's gate step, run outside any heavy slot (its builds take the lock themselves).
+  for (const text of [generic, handoff, fleet]) assert.match(text, /frozen-render-gate\.mjs/);
+  for (const text of [generic, handoff, fleet]) assert.doesNotMatch(text, /--shipped-plugin-script handoff\/scripts\/frozen-render\.mjs/);
 });
 
 test("the evidence records the probe, selected tier and honest no-tier or native visual gaps", () => {

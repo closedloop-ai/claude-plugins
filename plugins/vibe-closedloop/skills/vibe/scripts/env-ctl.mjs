@@ -35,7 +35,7 @@
 // (an org that could not be chosen, an identity refusal): the evidence is in
 // the object, and the script wrote no words for the person.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -164,6 +164,7 @@ export function createEnvCtl({
   env = process.env,
   write = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); },
   read = (file) => readFileSync(file, "utf8"),
+  realpath = realpathSync,
 } = {}) {
   const node = (name, args, options) => run(process.execPath, [script(name), ...args], options);
   const sessions = (args, options) => run(process.execPath, [SESSIONS, ...args], options);
@@ -321,6 +322,7 @@ export function createEnvCtl({
     if (noContext) return noContext;
     const record = parseJson(sessions(["show", "--worktree", worktree]).stdout, {});
     const session = record.session ?? record;
+    if (session.prBodyStale) return { status: Status.Blocked, error: staleBodyMessage(session.prBodyStale) };
     const plans = parseJson(node("local-plans.mjs", ["--worktree", worktree]).stdout, {});
     if (plans.ok !== true) return { status: Status.Blocked, problems: plans.committedLocalPlans ?? [plans.error ?? "committed local plans"] };
     const baseline = since ?? session.vercel?.lastDeployedCommit ?? session.baseCommit;
@@ -358,6 +360,20 @@ export function createEnvCtl({
     return { ...requested, pushed: published.pushed };
   }
 
+  /**
+   * The body the handoff gate checked, when its witness names one and `bodyFile` is another file. The witness binds
+   * the body by real path, so a copy (a fresh pr-body-<slug>.md) fails the PR guard; this says so before any gh call.
+   */
+  function gatedBodyMismatch(worktree, bodyFile) {
+    let gated;
+    try { gated = JSON.parse(read(path.join(gitDir(worktree), "vibe-handoff-gate.json")))?.evidence?.body?.path; }
+    catch { return null; }
+    if (typeof gated !== "string" || !gated) return null;
+    let actual;
+    try { actual = realpath(bodyFile); } catch { actual = bodyFile; }
+    return actual === gated ? null : gated;
+  }
+
   /** Opens the pull request, or reports the open one. The body and title are the worker's; `draft` is optional. */
   function openPullRequest({ worktree, branch, commit, title, bodyFile, base, draft = false }) {
     useWorktree(worktree);
@@ -365,6 +381,8 @@ export function createEnvCtl({
     if (remote !== commit) return { status: Status.Blocked, error: `origin/${branch} is at ${remote || "nothing"}, not the verified commit; nothing was pushed.` };
     const existing = parseJson(gh(["pr", "list", "--repo", activeRepo, "--head", branch, "--state", "open", "--json", "url,number"]).stdout, []);
     if (existing.length > 0) return { status: Status.Done, created: false, url: existing[0].url, number: existing[0].number };
+    const gatedBody = gatedBodyMismatch(worktree, bodyFile);
+    if (gatedBody) return { status: Status.Blocked, error: `The handoff gate checked the body file ${gatedBody}; pass that file to --body-file (edit it there and rerun the gate), never a copy.` };
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--base", base]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
     const placement = deliveryPlacementProblem({ content: read(bodyFile), repository: activeRepo, operation: "pull-request", chat: commandChat(env), env });
@@ -379,8 +397,20 @@ export function createEnvCtl({
     useWorktree(worktree);
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--pr", String(pr)]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
+    const session = parseJson(sessions(["show", "--worktree", worktree]).stdout, {});
+    const stale = (session.session ?? session).prBodyStale;
+    if (stale) {
+      const published = gh(["pr", "view", String(pr), "--repo", activeRepo, "--json", "body", "--jq", ".body"]);
+      if (published.status !== 0) return { status: Status.Blocked, error: `could not read pull request #${pr}'s body to compare it: ${tailLines(published.stderr, 3)}` };
+      if (published.stdout.trim() === read(bodyFile).trim()) return { status: Status.Blocked, error: `${staleBodyMessage(stale)} The body file is the published body unchanged.` };
+    }
     const edited = gh(["pr", "edit", String(pr), "--repo", activeRepo, "--body-file", bodyFile, "--title", title]);
-    return edited.status === 0 ? { status: Status.Done, pr: Number(pr) } : { status: Status.Blocked, error: tailLines(edited.stderr, 3) };
+    if (edited.status !== 0) return { status: Status.Blocked, error: tailLines(edited.stderr, 3) };
+    if (stale) {
+      const cleared = sessions(["touch", "--worktree", worktree, "--body-refreshed"]);
+      if (cleared.status !== 0) return { status: Status.Blocked, error: `pull request #${pr} was updated, but the stale-body mark was not cleared: ${tailLines(cleared.stderr, 3)}` };
+    }
+    return { status: Status.Done, pr: Number(pr) };
   }
 
   return { flags, request, publish, redeploy, openPullRequest, updatePullRequest, followRun, findRun, recordResult };
@@ -435,4 +465,8 @@ if (isEntryPoint(import.meta.url)) {
 function markedValue(line, marker) {
   const at = line.indexOf(marker);
   return at === -1 ? undefined : line.slice(at + marker.length);
+}
+
+function staleBodyMessage(stale) {
+  return `A recorded scope change (${stale.reason}, ${stale.at}) left the pull request body stale: refresh the body file for the new scope and save it with env-ctl pr-update before the next push.`;
 }

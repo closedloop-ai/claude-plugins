@@ -10,23 +10,19 @@ export function pluginVersionProblem(plugin, installed, required) {
   return null;
 }
 
-/** Validate the two-plugin checkout layout used by a shipped plugin script. */
-export function stagedPluginProblems(layout, requiredVibe, requiredCore) {
+/** Validate the checkout layout (plugins/vibe) a shipped plugin script runs from. */
+export function stagedPluginProblems(layout, requiredVibe) {
   const vibe = pluginManifest(path.join(layout, "plugins", "vibe"));
-  const core = pluginManifest(path.join(layout, "plugins", "vibe-core"));
-  return [
-    pluginVersionProblem("vibe", vibe?.version, requiredVibe),
-    pluginVersionProblem("vibe-core", core?.version, requiredCore),
-  ].filter(Boolean);
+  return [pluginVersionProblem("vibe", vibe?.version, requiredVibe)].filter(Boolean);
 }
 
 if (isEntryPoint(import.meta.url)) {
-  const [layout, requiredVibe, requiredCore] = process.argv.slice(2);
-  if (!layout || !requiredVibe || !requiredCore) {
-    process.stderr.write("usage: fleet-plugin-preflight.mjs <staged-layout> <required-vibe> <required-vibe-core>\n");
+  const [layout, requiredVibe] = process.argv.slice(2);
+  if (!layout || !requiredVibe) {
+    process.stderr.write("usage: fleet-plugin-preflight.mjs <staged-layout> <required-vibe>\n");
     process.exitCode = 2;
   } else {
-    const problems = stagedPluginProblems(layout, requiredVibe, requiredCore);
+    const problems = stagedPluginProblems(layout, requiredVibe);
     if (problems.length) {
       process.stderr.write(`fleet plugin preflight: ${problems.join("; ")}\n`);
       process.exitCode = 78;

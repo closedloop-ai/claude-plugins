@@ -54,7 +54,7 @@ def test_semantic_families_describe_rows_without_gating() -> None:
 
 @pytest.mark.parametrize(("relative", "expected"), [
     ("plugins/vibe/skills/vibe/SKILL.md", True),
-    ("plugins/vibe-core/hooks/kill-guard.mjs", True),
+    ("plugins/vibe/hooks/kill-guard.mjs", True),
     ("tools/vibe-workers/src/claude-worker.ts", True),
     (".claude-plugin/marketplace.json", True),
     ("plugins/vibe/skills/cl-sweep/SKILL.md", False),
@@ -160,8 +160,10 @@ def test_the_provider_root_comes_only_from_its_binding() -> None:
     assert calls, "the sibling resolver is still used for vibe-core"
     named = {argument for _, argument in calls}
     assert named <= {'"vibe-core"', '"vibe"', "name"}, calls
-    # A variable name reaches only the resolver itself and the startup probe that enumerates installed providers.
-    assert all(path.endswith(("plugin-roots.mjs", "lib/vibe/scripts/provider.mjs")) for path, argument in calls if argument == "name"), calls
+    # A variable name reaches only the resolver itself, the startup probe that enumerates installed providers, and
+    # vibe-core's loader lookup, whose names come from VIBE_PLUGIN_NAMES (vibeLookupOrder): it finds vibe, never the provider.
+    assert all(path.endswith(("plugin-roots.mjs", "lib/vibe/scripts/provider.mjs")) or path == "plugins/vibe-core/shared/vibe-install.mjs"
+               for path, argument in calls if argument == "name"), calls
 
 
 CODE_MARKERS = re.compile(r"=>|\bawait\s|\bimport\s*[{(*]|\bimport\s+\w+\s+from\b|\bfunction\s*\(|\brequire\(|\bprocess\.\w|\bconsole\.\w|\beval\(")

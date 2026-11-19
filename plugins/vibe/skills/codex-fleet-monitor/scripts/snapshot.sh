@@ -29,7 +29,7 @@ remote_node() {
     invoke='root=$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "'$own'" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1); test -n "$root" && '
     invoke+="env $e node $d/plugins/vibe/skills/fleet-orchestrator/scripts/skill-freshness.mjs $* --plugin-root \"\$root\""
   fi
-  # These scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).
+  # These scripts go laid out as a checkout (plugins/vibe), which shared/ship-plugins.mjs stages.
   local stage; stage=$(node $K/../../../shared/ship-plugins.mjs $ship) || return 2
   COPYFILE_DISABLE=1 tar -chf - -C $stage ${(f)"$(<$stage/files)"} 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
     ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL ${(q)invoke}" 2>/dev/null

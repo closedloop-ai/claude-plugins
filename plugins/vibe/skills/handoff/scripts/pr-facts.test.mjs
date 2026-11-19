@@ -6,7 +6,7 @@ import { hostname } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, prRulesFor, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
+import { capabilityProbeProblems, ciCheckProblems, computeOverlap, pathWorkflowProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, prRulesFor, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, gitEnv, makeCheckout, makeHome, PROVIDER_BINDING, runNode, SYMPHONY_PATH_POLICY, bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 import { seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
@@ -19,6 +19,9 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 // The repository the ClosedLoop provider serves, whose areas these cases name.
 const AREAS = repositoryAreas(PROVIDER_BINDING);
+
+const PLAYS = 'pnpm --filter storybook test:branches-plays';
+const PLAYS_WORKFLOW = `name: Branches Story Plays\non:\n  pull_request:\n    paths:\n      - 'notes.md'\njobs:\n  plays:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: ${PLAYS}\n`;
 
 const { sourceIdentity, committedSourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
@@ -54,6 +57,78 @@ test('dirty precommit evidence cannot bind unchanged HEAD and binds only after t
   assert.equal(evidence.source.head, base);
   writeFileSync(path.join(wt, 'notes.md'), 'unchecked post-verification change');
   assert.match(gate().join('\n'), /source.*(?:changed|match|identity)/i);
+});
+
+test('ISS-14394 a pull_request workflow whose path filter the diff matches needs a run of its command at the gate', t => {
+  const { root, home, cleanup } = makeHome('path-workflow-gate-');
+  t.after(cleanup);
+  const wt = path.join(root, 'repo');
+  mkdirSync(wt);
+  writeFileSync(path.join(wt, 'notes.md'), 'base');
+  mkdirSync(path.join(wt, '.github', 'workflows'), { recursive: true });
+  writeFileSync(path.join(wt, '.github', 'workflows', 'plays.yml'), PLAYS_WORKFLOW);
+  git(wt, ['init', '--quiet'], home);
+  git(wt, ['add', '.'], home);
+  git(wt, ['commit', '--quiet', '-m', 'base'], home);
+  const base = git(wt, ['rev-parse', 'HEAD'], home);
+  writeFileSync(path.join(wt, 'notes.md'), 'checked candidate');
+  const source = sourceIdentity(wt);
+  const evidence = { source, touchFlows: [], touchFlowsReason: 'docs only', runs: [], testSelection: [], testRuns: [], rerunCycles: [],
+    e2eCapability: structuredClone(SELECTED.e2eCapability),
+    targetedInventory: { actor: 'read-only', source: 'working-tree', commit: base,
+      laneReport: { command: 'pnpm test:lanes', matches: [] }, entries: [], noTestsReason: 'docs only' } };
+  git(wt, ['add', '.'], home);
+  git(wt, ['commit', '--quiet', '-m', 'one push-ready commit'], home);
+  const problems = pullRequestFacts({ worktree: wt, base, include: new Set(['notes.md']), ownBranch: 'main', runs: evidence,
+    commit: git(wt, ['rev-parse', 'HEAD'], home) }).prEvidenceProblems;
+  assert.ok(problems.some((problem) => problem.startsWith('.github/workflows/plays.yml job plays runs on this pull request') && problem.includes(PLAYS)), problems.join('\n'));
+});
+
+test('a path-filtered pull_request workflow needs a receipt for every step of its jobs on the tested commit: a passing run, or a reasoned not-run row for a step that cannot run locally as written', () => {
+  const commit = 'c'.repeat(40);
+  const pass = (command, at = commit) => ({ lane: 'l', command, status: 'passed', commit: at });
+  const notRun = (command, reason = 'reads the runner matrix; ran as pnpm turbo build --filter=app') => ({ lane: 'l', command, status: 'not-run', reason, commit });
+  const named = (problems) => problems.map((problem) => /job (\w+) .*for `([\s\S]*)`$/.exec(problem).slice(1).join(' '));
+  const workflow = (jobs) => [{ path: '.github/workflows/w.yml', text: `name: W\non:\n  pull_request:\n    paths: ['notes.md']\njobs:\n${jobs}` }];
+  const plays = workflow(`  plays:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: pnpm install --frozen-lockfile\n      - run: ${PLAYS}\n`);
+  const problems = (runsFile, changed = ['notes.md'], workflows = plays) => pathWorkflowProblems(runsFile, changed, workflows, commit);
+  assert.deepEqual(named(problems({ runs: [] })), [`plays ${PLAYS}`], 'an exact install is the one exempt step');
+  assert.equal(problems({ runs: [{ ...pass(PLAYS), status: 'failed' }] }).length, 1, 'a failed run is no receipt');
+  assert.equal(problems({ runs: [pass(PLAYS, 'd'.repeat(40))] }).length, 1, 'a run of another commit is no receipt');
+  assert.equal(problems({ runs: [{ lane: 'l', command: PLAYS, status: 'passed' }] }).length, 1, 'a run naming no commit is no receipt');
+  assert.equal(problems({ runs: [notRun(PLAYS)] }).length, 1, 'a step that runs locally needs a run, not a not-run row');
+  assert.deepEqual(problems({ runs: [pass(PLAYS)] }), []);
+  assert.deepEqual(problems({ testRuns: [{ path: 'x', command: PLAYS, status: 'main-preexisting', mainSha: 'a'.repeat(40), commit }] }), []);
+  assert.deepEqual(problems({ runs: [] }, ['other.ts']), [], 'a diff outside the filter does not trigger it');
+  assert.deepEqual(problems({ runs: [], targetedInventory: { laneReport: { source: { path: '.github/workflows/w.yml' } } } }), [], 'the declared lane source is not repeated');
+  const prepare = 'set -euo pipefail; pnpm build:deps && pnpm prebuild';
+  const twoJobs = workflow(`  prepare:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ${prepare}\n      - run: node scripts/phase-a.ts\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ${prepare}\n      - run: node scripts/rehearsal-verify.ts\n`);
+  assert.deepEqual(named(problems({ runs: [pass(prepare)] }, undefined, twoJobs)), ['prepare node scripts/phase-a.ts', 'verify node scripts/rehearsal-verify.ts'], 'a preparing step clears only itself');
+  assert.deepEqual(named(problems({ runs: [pass('node scripts/phase-a.ts'), pass('node scripts/rehearsal-verify.ts')] }, undefined, twoJobs)), [`prepare ${prepare}`, `verify ${prepare}`], 'the check without its preparation is not the job');
+  assert.deepEqual(problems({ runs: [pass(prepare), pass('node scripts/phase-a.ts'), pass('node scripts/rehearsal-verify.ts')] }, undefined, twoJobs), []);
+  const signingKey = 'if [ -n "$SIGNING_KEY" ]; then echo "KEY=$SIGNING_KEY" >> "$GITHUB_ENV"; fi';
+  const matrixBuild = 'pnpm turbo build --filter=${{ matrix.app }}';
+  const runnerBound = workflow(`  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: '${signingKey}'\n      - run: ${matrixBuild}\n      - run: node scripts/check.ts\n`);
+  assert.deepEqual(named(problems({ runs: [pass('node scripts/check.ts')] }, undefined, runnerBound)), [`build ${signingKey}`, `build ${matrixBuild}`], 'a runner-bound step is never silently skipped');
+  assert.match(problems({ runs: [] }, undefined, runnerBound)[0], /a passing run, or a not-run row with its reason,/);
+  assert.deepEqual(problems({ runs: [notRun(signingKey), notRun(matrixBuild), pass('node scripts/check.ts')] }, undefined, runnerBound), []);
+  assert.equal(problems({ runs: [notRun(signingKey, ' '), notRun(matrixBuild), pass('node scripts/check.ts')] }, undefined, runnerBound).length, 1, 'a not-run row needs a reason');
+  const budget = 'node --import tsx/esm scripts/ci/job-budget.ts --job test-shard';
+  const bookkept = workflow(`  shard:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm test\n      - run: ${budget}\n        if: always()\n        continue-on-error: true\n`);
+  assert.deepEqual(named(problems({ runs: [pass(budget)] }, undefined, bookkept)), ['shard pnpm test'], 'a bookkeeping receipt clears only itself');
+  assert.deepEqual(named(problems({ runs: [pass('pnpm test')] }, undefined, bookkept)), [`shard ${budget}`], 'a continue-on-error step stays required: a later step can read its outcome');
+  const installTest = workflow(`  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm install-test\n`);
+  assert.equal(problems({ runs: [] }, undefined, installTest).length, 1, 'install-test runs the tests, so it is not an install');
+  const desktop = workflow(`  d:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: apps/desktop\n    steps:\n      - run: pnpm test\n`);
+  assert.equal(problems({ runs: [pass('pnpm test')] }, undefined, desktop).length, 1, 'a run at the root is no receipt for a job in apps/desktop');
+  assert.deepEqual(problems({ runs: [pass('cd apps/desktop && pnpm test')] }, undefined, desktop), []);
+  const unread = workflow(`  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm build\n      - run: pnpm test\n        if: \${{ !cancelled() }}\n`);
+  assert.deepEqual(named(problems({ runs: [pass('pnpm build')] }, undefined, unread)), ['test pnpm test'], 'a condition that may hold keeps its step required');
+  const chained = workflow(`  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm install --frozen-lockfile && pnpm test\n`);
+  assert.equal(problems({ runs: [] }, undefined, chained).length, 1, 'an install chained to a check is not exempt');
+  const reusable = workflow(`  shared:\n    uses: ./.github/workflows/shared.yml\n`);
+  assert.match(problems({ runs: [] }, undefined, reusable)[0], /for `\.github\/workflows\/w\.yml job shared`$/);
+  assert.deepEqual(problems({ runs: [notRun('.github/workflows/w.yml job shared', 'a reusable workflow runs only in CI')] }, undefined, reusable), []);
 });
 
 test('precommit evidence cannot bind to a commit that omitted an untracked input', t => {
@@ -757,6 +832,8 @@ test("every lane pnpm test:lanes names needs a passing run of its own command, n
     testRuns: [{ path: TEST, cases: ["limits"], command: "vitest run", status: "passed", commit }, ...testRuns], rerunCycles: [],
   });
   assert.match(targetedEvidenceProblems(evidence([lane], []), commit).join(), /lane app: no passing run/);
+  assert.match(targetedEvidenceProblems(evidence([lane], []), commit).join(), /record --result main-preexisting; only a dated human targeted-tests ruling leaves it not run/,
+    "the refusal names the supported records for a lane red on main or trimmed by a ruling (ISS-14387)");
   assert.match(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: "vitest run capability-parity", status: "passed", commit }]), commit).join(), /hand-picked/);
   assert.deepEqual(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: lane.command, status: "passed", commit, laneKey: "8".repeat(16) }]), commit), [], "current-head provenance needs no carry key");
   assert.deepEqual(targetedEvidenceProblems(evidence([{ ...lane, mentionOnly: true, notRunReason: "only its AGENTS.md mentions the path" }], []), commit), []);
@@ -1225,4 +1302,23 @@ test("ISS-14077 AC-1: the inventory reads the cited targeted-tests ruling from -
   const fromTicketComment = comment(["--ticket", s.file("ticket.md", `${ask}${TICKET}`)], "ticket");
   assert.equal(fromTicketComment.status, 0, fromTicketComment.stderr);
   assert.match(readFileSync(path.join(s.root, "comment.md"), "utf8"), new RegExp(`Not run under targeted-tests ruling ${RULING_ID} \\(ticket\\): \`${other}\``));
+});
+
+test("the session's own pull request is never its overlap when the branch pushes under another name", t => {
+  const { root, home, cleanup } = makeHome('own-pr-overlap-');
+  t.after(cleanup);
+  const wt = path.join(root, 'repo');
+  mkdirSync(wt);
+  writeFileSync(path.join(wt, 'a.ts'), 'export const a = 1;\n');
+  git(wt, ['init', '--quiet', '--initial-branch=vibe/local'], home);
+  git(wt, ['add', '.'], home);
+  git(wt, ['commit', '--quiet', '-m', 'base'], home);
+  git(wt, ['config', 'branch.vibe/local.remote', 'origin'], home);
+  git(wt, ['config', 'branch.vibe/local.merge', 'refs/heads/vibe/local-2'], home);
+  const prs = [
+    { number: 438, title: 'own', headRefName: 'vibe/local-2', files: ['a.ts'] },
+    { number: 437, title: 'other', headRefName: 'vibe/other', files: ['a.ts'] },
+  ];
+  const overlap = computeOverlap({ worktree: wt, changed: ['a.ts'], prs, ownBranch: 'vibe/local' });
+  assert.deepEqual(overlap.map((pr) => pr.number), [437]);
 });

@@ -3,7 +3,7 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { mainSyncStateSchema, sessionSchema, MainSyncError, type OperationContext } from "./main-sync-contracts.js";
 import { verifyRecipeWitness, validationEnvelopeMs } from "./main-sync-validation-recipe.js";
-import { assertIsolatedTestRead } from "../../../plugins/vibe-core/lib/vibe/scripts/test-state-isolation.mjs";
+import { assertIsolatedTestRead } from "../../../plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs";
 
 /** Prelaunch option A reads bounded existing private data only; no source import, Git or other child execution. */
 export async function deriveValidationEnvelope(context: OperationContext, dir: string, branch: string,

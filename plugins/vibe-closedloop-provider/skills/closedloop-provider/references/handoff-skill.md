@@ -120,10 +120,8 @@ they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
 steps 3 to 6 run again on the result, with visual QA as one pass scoped to
 the changes since the last reviewed capture
-(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). Before handoff, the findings file must pass
-`node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings
-<findings.json> --require-disposition`; every finding on a touched surface has
-`fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
+(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). The handoff gate's `--visual-qa` check holds the
+findings file to `finding-brief.mjs --require-disposition`. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 <!-- end: qa-passes -->
 
@@ -131,9 +129,9 @@ prototype sessions keep their canonical single design review instead.
 verification, audit the uncommitted candidate:
 `scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
 (add `--member <slug>=<body>` for each of the session's `memberTickets`, the other tickets a fleet unit delivers in this PR; their rows are `<slug>:AC-n`, and run rulings-check and rollout-gate for each member too)
-(a unit, meaning member tickets or a PRD, also passes `--prd <slug>=<PRD body>` and `--review <review.json>`: the review of the completed work in `scripts/unit-review.mjs`. Every member criterion and every PRD criterion for the touched pages needs a code review row (`file:line`) AND a visual QA capture for each page and each surface (Web, Desktop) it names, from the visual QA pass below; one page or surface never stands in for another. Every grouped, sorted or paginated list query the unit touches is listed in `listQueries` and needs a criterion naming its page, kind and a load time, met by a `measured` row (command, dataset rows, timing). Send its `GAP <ticket> <criterion>` lines to the SAME writer, and to the person before anything is called ready)
-(every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
-`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists in the worktree, and handoff-gate checks it at HEAD; a `source-trace` ref is the file and line the trace ends at)
+(a unit, meaning member tickets or a PRD, also passes `--prd <slug>=<PRD body>` and `--review <review.json>` for `scripts/unit-review.mjs`; `../fleet-orchestrator/references/ticket-units.md`, step 4, says what the review holds: a code review row and a visual QA capture per page and surface, from the visual QA pass below, and a `measured` row per list query. Send its `GAP <ticket> <criterion>` lines to the SAME writer, and to the person before anything is called ready)
+(audit rows: `../vibe/references/spec-card.md`, "Audit rows";
+`../vibe/scripts/spec-card.mjs audit-skeleton` prints them)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
 Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific

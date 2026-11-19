@@ -281,17 +281,18 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 `shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names. A `frozen-render` finding is settled
-only by `scripts/frozen-render.mjs`, run in step 4 by
-`vibe-storybook-decomposer`: on a remote runner it uses fleet's
-`--shipped-plugin-script handoff/scripts/frozen-render.mjs`; the writer records the `Frozen render
-unchanged` line that command prints, and nobody captures frozen stories any
-other way. Give it the prepared base worktree, never base or head server URLs:
-the renderer starts both through the verifier's owned run wrapper and stops
-both before it returns, including after failure. The line names the session
-files it rendered and counts only while their story states and dependency
-inputs are unchanged. A later commit or main
-merge reruns it only when `qa-impact.mjs` names one of those states or the
-frozen-render dependency digest changes. A finding's `fix` is written for the writer, never relayed to the
+only by one shell step that launches no agent:
+`node scripts/frozen-render-gate.mjs --repo <worktree> --base <base>`. Run it
+as its own step, never inside `fleet.sh … slot heavy`: its builds take the
+heavy lock themselves. `FROZEN PASS` has already recorded the `Frozen render
+unchanged` line; on `FROZEN BLOCK`, read only the cropped diffs that
+results.json's blocking entries name (a blocking story's changed render held
+over the base confirmation renders, or its branch play failure reproduced);
+`FROZEN ERROR` is a setup problem to fix before rerunning. Nobody captures
+frozen stories any other way. The line names the session files it rendered
+and counts only while their story states and dependency inputs are
+unchanged. A later commit or main merge reruns it only when `qa-impact.mjs`
+names one of those states or the frozen-render dependency digest changes. A finding's `fix` is written for the writer, never relayed to the
 person as a step (`../vibe/references/plain-words.md`, "What the person is
 asked to do").
 
@@ -573,7 +574,9 @@ for a UI change, against the session's acceptance criteria
 (`../vibe/references/quality-loop.md`, "Visual QA during the session", "What
 it checks"), and any logical or product-contract QA skill its docs name for a
 data surface. A pass the repository does not ship is recorded as unsupported,
-never as passed. Confirmed
+never as passed. The handoff gate refuses a UI diff without visual QA findings
+for its current tree (`scripts/handoff-gate.mjs --visual-qa`,
+vibe's `lib/vibe/scripts/required-visual-qa.mjs`). Confirmed
 findings resume the SAME writer in fix mode for every touched surface, even
 when they predate the branch, already exist on main or were called the
 component owner's decision; approved copy is reused and unsourced wording is
@@ -684,7 +687,9 @@ Nothing is pushed here: step 9 pushes through `vibe-environment-worker`'s
 handover mode, under the normal pre-push hook. If that hook refuses, the SAME
 writer fixes uncommitted source and reruns the affected review and
 verification, and ROOT runs `commit-worktree.mjs --worktree "<wt>" --amend`
-on that still-unpushed commit. Once pushed, a commit is immutable in this
+on that still-unpushed commit. An amend discards lane records except those
+`pre-pr-lanes.mjs check --reuse-unaffected` carries; the rest run on the
+amended head. Once pushed, a commit is immutable in this
 flow: any later required source fix goes through the SAME writer and all
 affected checks, then ROOT makes a new commit; never amend a pushed commit and
 never force push. No PR opens here.
@@ -839,6 +844,8 @@ pull request body stale and skip the guardrails. When
 the person asks for changes on their vibe pull request ("please fix the
 review comments", "engineering asked for changes on my PR", a link to the
 pull request, or engineering's request passed on through them), the session
-resumes and every fix goes through this path, never around it:
+resumes and every fix goes through this path, never around it. A ruling
+that changes scope is recorded with `vibe-sessions.mjs touch --body-stale
+"<ruling>"`, and the next push waits for `env-ctl.mjs pr-update`:
 
 > Read `references/handoff-pr.md` (block `section-10-changes`) when a handed-off session's pull request is open or the person asks for changes on it.

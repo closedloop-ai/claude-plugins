@@ -12,19 +12,18 @@ function manifest(root, folder, name, version) {
   writeFileSync(path.join(dir, "plugin.json"), JSON.stringify({ name, version }));
 }
 
-test("frozen render shipment carries both plugin roots and names an older target version", (t) => {
+test("frozen render shipment carries vibe alone and names an older target version", (t) => {
   const shipped = shippedFiles(["skills/handoff/scripts/frozen-render.mjs"]);
   assert.ok(shipped.includes("plugins/vibe/skills/handoff/scripts/frozen-render.mjs"));
   assert.ok(shipped.includes("plugins/vibe/.codex-plugin/plugin.json"));
-  assert.ok(shipped.includes("plugins/vibe-core/.codex-plugin/plugin.json"));
-  assert.ok(shipped.some((file) => file.startsWith("plugins/vibe-core/lib/")), "frozen-render vibe-core dependencies are staged");
+  assert.ok(shipped.some((file) => file.startsWith("plugins/vibe/lib/")), "frozen-render's lib dependencies are staged");
+  assert.deepEqual(shipped.filter((file) => !file.startsWith("plugins/vibe/")), []);
 
   const layout = mkdtempSync(path.join(tmpdir(), "frozen-render-layout-"));
   t.after(() => rmSync(layout, { recursive: true, force: true }));
+  manifest(layout, "vibe", "vibe-generic", "1.1.89");
+  assert.deepEqual(stagedPluginProblems(layout, "1.1.90"),
+    ["vibe plugin installed version 1.1.89 is older than required version 1.1.90"]);
   manifest(layout, "vibe", "vibe-generic", "1.1.90");
-  manifest(layout, "vibe-core", "vibe-core", "1.0.6");
-  assert.deepEqual(stagedPluginProblems(layout, "1.1.90", "1.0.7"),
-    ["vibe-core plugin installed version 1.0.6 is older than required version 1.0.7"]);
-  manifest(layout, "vibe-core", "vibe-core", "1.0.7");
-  assert.deepEqual(stagedPluginProblems(layout, "1.1.90", "1.0.7"), []);
+  assert.deepEqual(stagedPluginProblems(layout, "1.1.90"), []);
 });

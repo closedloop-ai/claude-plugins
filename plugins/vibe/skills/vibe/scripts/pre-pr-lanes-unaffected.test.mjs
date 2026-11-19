@@ -94,3 +94,26 @@ test("lanesTouchedSince: outcome None touches nothing, a changed file without a 
   assert.equal(lanesTouchedSince({ laneSelections: { "a.ts": [UNIT] } }, { outcome: "Lanes only", changedFiles: ["a.ts", "c.tsx"] }), null);
   assert.equal(lanesTouchedSince({ laneSelections: { "a.ts": [] } }, { outcome: "Visual QA", changedFiles: ["a.ts"] }), null);
 });
+
+test("an amend keeps the lanes the amended delta does not reach, and a dirty tree keeps none", (t) => {
+  const { home, worktree, commit, report, run, request } = fixture(t);
+  const first = commit("base", { "CHANGELOG.md": "- one\n", "apps/api/a.ts": "export const a = 1;\n", "apps/web/b.ts": "export const b = 1;\n" });
+  for (const lane of [UNIT, LINT]) assert.equal(run("record", "--worktree", worktree, "--head", first, "--command", lane, "--result", "pass", "--report", report).status, 0);
+  const selections = { "CHANGELOG.md": [LINT], "apps/api/a.ts": [UNIT], "apps/web/b.ts": [LINT] };
+  const amend = (file, text) => {
+    writeFileSync(path.join(worktree, file), text);
+    git(worktree, ["commit", "--quiet", "--all", "--amend", "--no-edit"], home);
+  };
+  amend("CHANGELOG.md", "- one\n- two\n");
+  const changelog = run("check", "--worktree", worktree, "--report", report, "--reuse-unaffected", request(first, selections));
+  assert.equal(changelog.status, 0, changelog.stdout + changelog.stderr);
+  assert.equal([...changelog.stdout.matchAll(/^CACHED-LANE /gm)].length, 2, "a changelog line is a docs-only delta");
+  amend("apps/web/b.ts", "export const b = 2;\n");
+  const code = run("check", "--worktree", worktree, "--report", report, "--reuse-unaffected", request(first, selections));
+  assert.equal(code.status, 1, code.stdout + code.stderr);
+  assert.match(code.stdout, new RegExp(`^CACHED-LANE ${UNIT.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}`, "m"));
+  assert.match(code.stdout, new RegExp(`^MISSING-LANE ${LINT}`, "m"));
+  writeFileSync(path.join(worktree, "apps/api/a.ts"), "export const a = 2;\n");
+  const dirty = run("check", "--worktree", worktree, "--report", report, "--reuse-unaffected", request(first, selections));
+  assert.doesNotMatch(dirty.stdout, /^CACHED-LANE /m, "uncommitted inputs are outside a direct delta, so nothing is carried");
+});
