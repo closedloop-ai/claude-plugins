@@ -75,8 +75,10 @@ nothing agent-written goes into public docs (`guardrails.md`, "Copy" and
 <!-- end: copy-docs -->
 
 <!-- block: lane-discovery -->
-- Use existing structured lane-owner discovery, not blind
-  `test:lanes --exec`.
+- Use `code_tests_for_changes` on the whole diff, including unedited importers;
+  `code_tests_for` is one-file only. Empty results add related tests; E2E uses
+  lanes/behavior refs. A UI bug records each shell as `Owner test: <AGENTS.md>:
+  test <path>` or `Owner test: <AGENTS.md>: missing tests <shell and behavior>`.
 <!-- end: lane-discovery -->
 
 <!-- block: desktop-lane -->
@@ -113,5 +115,6 @@ pages under `apps/web/content/docs/` that describe a changed feature, per
 longer matches what was built, or that none covers the changed features, in
 the change log for the ticket's Feature docs line. Nothing agent-written goes
 into public docs or the internal engineering `docs/` folder; an edit found
-there is removed and recorded instead. Once the table is
+there is removed and recorded instead. A changed route's OpenAPI update is
+recorded as a `required contract update` (`guardrails.md`), never skipped. Once the table is
 <!-- end: feature-docs -->

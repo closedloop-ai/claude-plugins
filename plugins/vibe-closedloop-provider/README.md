@@ -24,7 +24,7 @@ connection answered for `tickets` and `plans`, closedloop-graph answered for
 malformed one binds the other capabilities and withholds `recipes` with one
 named reason. A session started without the provider
 stays generic until it ends. The folder holds text and data only: no hooks and
-no scripts. vibe-core's one guard engine reads its rules.
+no scripts. vibe's one guard engine reads its rules.
 
 ## The build
 

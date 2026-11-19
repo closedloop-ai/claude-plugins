@@ -55,4 +55,4 @@ At every assignment and merge, run `status-audit.mjs --snapshot <file> --board <
 
 ## 6. The PR
 
-Before the PR opens, `node scripts/ticket-units.mjs pr-check --board <orchDir> --unit <name> --title <title> --body-file <file>` must pass: the title and body name every ticket in the unit. Handoff's gate (`handoff-gate.mjs --title`, with `--review` and `--prd` for the unit review) and the PR-create hook (the command's `--title`) check the same for the session's member tickets. Reviews and QA plans take every member's criteria.
+Before the PR opens, `node scripts/ticket-units.mjs pr-check --board <orchDir> --unit <name> --title <title> --body-file <file>` must pass: the body names every ticket in the unit. Handoff's gate (`handoff-gate.mjs --title`, with `--review` and `--prd` for the unit review) and the PR-create hook (the command's `--title`) check the same for the session's member tickets. Reviews and QA plans take every member's criteria.

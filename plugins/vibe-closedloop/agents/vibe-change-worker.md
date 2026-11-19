@@ -145,6 +145,8 @@ request needs (or none). When the plan adds periodic or cross-surface work (a
 poller, interval, background lane, socket, subscription, feed or watcher), it
 carries a Cost Scaling table with the columns and rules in
 `../skills/cl-execute/references/planning-and-gates.md`, "Cost Scaling".
+Consolidated transactions measure limit, duration, effective/ambient timeout
+and lock hold; set/dedupe/collapse tests order, case, duplicates and whitespace.
 The plan gets no review: build in the same turn right after it
 (`quality-loop.md`, "Lean build loop"). No technical plan goes to the person
 running the session for approval.
@@ -266,9 +268,9 @@ Before `DONE`, run the handoff inventory in build phase and require its
 is fixed, or cleared by the change log line it names with a reason that holds.
 A frozen render listed under `diffRules.deferredToHandoff` never holds
 `DONE`: rendering frozen stories is handoff's heavy validation, done only by
-handoff's `scripts/frozen-render.mjs`. Never capture frozen stories yourself
-and never write a `Frozen render unchanged` line by hand; record only the
-line that command printed. Any `forbidden` or `outsideAllowed` entry is
+handoff's `scripts/frozen-render-gate.mjs`, which writes the `Frozen render
+unchanged` line itself on a pass. Never capture frozen stories yourself and
+never write that line by hand. Any `forbidden` or `outsideAllowed` entry is
 removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
@@ -352,8 +354,9 @@ from `design-pass.md`. Never revert another person's changes.
 An extraction, move or deletion is finished only when nothing it orphaned is
 left (`design-pass.md`, "Red flags", leftovers): import the new owner at
 every site instead of keeping a pass-through file, wrapper or re-export
-alias; delete helpers, types, constants and props nothing uses any more;
-collapse a loop or `each` table left with one arm; and record each test still
+alias; delete unused helpers, types, constants and props; correct nearby
+comments, docstrings and docs, including claims about other readers; collapse
+a loop or `each` table left with one arm; and record each test still
 named or placed after the old module for engineering (a rename on the missing
 tests list, or done in a `pull-request` turn).
 
@@ -364,7 +367,16 @@ parity test listing a sibling prop, not only the one you edited.
 
 Before publication/main-sync, read `environment.md`, "Main-sync before
 publication". Keep your current ID and registration metadata;
+record every new flag key with `flag-keys.mjs record` before handoff;
 only ROOT's recorded definition migration can change the writer binding.
+After a structural change to a shared component, run the repository's
+whole-diff test selector and its consumer tests in every importing package,
+including unedited contract tests. After adding or changing a story, run the repository's
+all-stories jsdom sweep and follow its existing browser-only tag precedent for
+browser APIs. Before `DONE`, require the existing cast guard, compare any file
+near the size ceiling against its base line count and record a `Debt:` reason
+for growth, and settle every required `Frozen render unchanged`, `Story entry:`
+and flag-key record the inventory names.
 After migration refresh source-owned readiness and validation proof. Compare
 captured main/imports against the same session table before fixes. Only you resolve conflicts/generators/code;
 ROOT alone commits.
@@ -407,8 +419,10 @@ Throughout:
   claim a pass for different pushed source.
 - A generator that changes source returns to your fix/ROOT commit/recheck
   sequence.
-- Use existing structured lane-owner discovery, not blind
-  `test:lanes --exec`.
+- Use `code_tests_for_changes` on the whole diff, including unedited importers;
+  `code_tests_for` is one-file only. Empty results add related tests; E2E uses
+  lanes/behavior refs. A UI bug records each shell as `Owner test: <AGENTS.md>:
+  test <path>` or `Owner test: <AGENTS.md>: missing tests <shell and behavior>`.
 - Never spawn unsafe browser/Electron automation: unsupported required
   scenarios remain named incomplete evidence. Publication-ready preview is
   not E2E PASS.
@@ -435,9 +449,12 @@ Return table path/row IDs and source verification evidence for handoff's indepen
 
 In the build loop run only the quick checks the commit hooks need: Biome on
 the changed files, the affected typecheck and the source gates
-(`quality-loop.md`, "Lean build loop"). When they fail on an existing test or
-fixture your change broke, repair it under "Tests: repair, don't author"
-below. Fix your implementation, never suppress or weaken a check. Browser E2E,
+(`quality-loop.md`, "Lean build loop"). When local heavy checks are barred
+(`LOCAL_HEAVY_BARRED=1` in the fleet's `config.env`), the affected typecheck
+runs through `fleet.sh <orchDir> remote slot heavy` after each writer fix and
+before each review round; it is never skipped and never run locally. When the
+quick checks fail on an existing test or fixture your change broke, repair it
+under "Tests: repair, don't author" below. Fix your implementation, never suppress or weaken a check. Browser E2E,
 visual QA, logical QA, product-contract QA, existing test suites, Storybook footprint
 and independent guardrails, adversarial and core workflow reviews run only at
 handoff; do not run or request them in the loop. Visual QA the person accepts
@@ -526,6 +543,20 @@ uploads. Obtain the serial record turn before any shared session/ticket update;
 operational helpers do not write the same records concurrently.
 Name any check narrowed or left for CI in the existing progress or handoff
 summary in plain words (`../skills/vibe/references/guardrails.md`, "Checks").
+
+### Self-review before `DONE`
+
+Run `node <plugin-root>/skills/handoff/scripts/guardrails-gate.mjs --worktree "<wt>" --out <a file outside the worktree>`
+and move each `duplicate-helper` and `owner-duplicates` finding to one owner;
+it leaves out untracked files, so compare new files by hand, and a block that
+repeats at more than one site, even under different names, also moves to one owner.
+Fix a line your change contradicts in any doc, comment or changelog you touched;
+after a rename, `rg` the old name across the repository, generated files and changelogs included;
+a doc line naming a command names every sibling that reaches the same code path;
+debt is recorded only as the exact `Debt:` line; a test cites a criterion ID only once the ticket lists it.
+A parser or matcher change starts with decision-table rows for every input layout it can meet
+and a property check against `git show <base>:<file>`; a reviewer's new layout means you
+re-derive the layouts, not only that case.
 
 ## Tests: repair, don't author
 
@@ -656,7 +687,8 @@ pages under `apps/web/content/docs/` that describe a changed feature, per
 longer matches what was built, or that none covers the changed features, in
 the change log for the ticket's Feature docs line. Nothing agent-written goes
 into public docs or the internal engineering `docs/` folder; an edit found
-there is removed and recorded instead. Once the table is
+there is removed and recorded instead. A changed route's OpenAPI update is
+recorded as a `required contract update` (`guardrails.md`), never skipped. Once the table is
 aligned, add its `## Frozen Behavior` section with the row IDs the person
 accepted (`quality-loop.md`, "Frozen behavior at handoff"), and refresh it
 whenever a handoff answer changes the table.

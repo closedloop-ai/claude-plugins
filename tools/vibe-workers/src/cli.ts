@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isProviderBroken } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { isProviderBroken } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { runWhenMain } from "../../shared/cli.js";
 
 /** A symlinked plugin entry is still direct execution, including macOS temporary paths. */

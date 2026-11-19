@@ -92,21 +92,20 @@ test('a file shared only through past changes is labelled history and only such 
   assert.throws(() => groupTickets({ tickets: [a, strong], apart: [{ a: 'ISS-1', b: 'ISS-2', reason: 'not wanted' }] }), /share shared file a\.ts; only a pair related by history alone/);
 });
 
-test('pr-check fails until the PR title and body name every ticket in the unit', (t) => {
+test('pr-check fails until the PR body names every ticket in the unit, by the handoff gate\'s member rule', (t) => {
   assert.deepEqual(prNameProblems({ tickets: ['ISS-1', 'I-2'] }, 'ISS-1: Fix the board', 'Fixes ISS-1 and I-23'), [
-    'the PR title does not name I-2',
-    'the PR body does not name I-2',
+    'the PR body does not name member ticket I-2',
   ]);
+  assert.deepEqual(prNameProblems({ tickets: ['ISS-1', 'I-2'] }, 'ISS-1: Fix the board', 'Fixes ISS-1 and I-2'), [], 'the title need not name every member');
   const home = mkdtempSync(path.join(os.tmpdir(), 'ticket-units-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(path.join(home, 'programs', 'p1'), { recursive: true });
   writeFileSync(path.join(home, 'current'), 'p1\n');
   writeFileSync(path.join(home, 'programs', 'p1', 'board.json'), JSON.stringify({ units: { 'ISS-1': { tickets: ['ISS-1', 'ISS-2'] } } }));
   const body = path.join(home, 'body.md');
-  writeFileSync(body, 'Delivers ISS-1 and ISS-2.\n');
-  const run = (title) => spawnSync(process.execPath, [SCRIPT, 'pr-check', '--board', home, '--unit', 'ISS-1', '--title', title, '--body-file', body], { encoding: 'utf8' });
-  assert.equal(run('ISS-1: Fix the board').status, 1);
-  const passing = run('ISS-1, ISS-2: Fix the board');
+  const run = (title, text) => { writeFileSync(body, text); return spawnSync(process.execPath, [SCRIPT, 'pr-check', '--board', home, '--unit', 'ISS-1', '--title', title, '--body-file', body], { encoding: 'utf8' }); };
+  assert.equal(run('ISS-1: Fix the board', 'Delivers ISS-1.\n').status, 1);
+  const passing = run('ISS-1: Fix the board', 'Delivers ISS-1 and ISS-2.\n');
   assert.equal(passing.status, 0);
   assert.equal(passing.stdout, 'pr-check: ISS-1 names ISS-1, ISS-2\n');
 });

@@ -11424,17 +11424,16 @@ import { lstatSync, realpathSync as realpathSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+// ../../plugins/vibe/shared/vibe-core.mjs
+import path2 from "node:path";
+import { pathToFileURL } from "node:url";
+
 // ../../plugins/vibe/shared/plugin-roots.mjs
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
 var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
-var CODEX_LOCAL_VERSION = "local";
-var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
-var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-var NUMERIC = /^\d+$/;
-var SCOPE_FALLBACK = "user";
 var DEFAULT_MARKETPLACE = "closedloop-ai";
 var VIBE_PLUGIN_NAMES = Object.freeze(["vibe", "vibe-generic"]);
 var VIBE_LOOKUP_ORDER = Object.freeze({ checkout: Object.freeze(["vibe-generic", "vibe"]), installed: VIBE_PLUGIN_NAMES });
@@ -11473,30 +11472,6 @@ function vibeSkillOf(id) {
 function pluginMarketplace(install) {
   return install?.marketplace ?? DEFAULT_MARKETPLACE;
 }
-function comparePluginVersions(left, right) {
-  const a = SEMVER.exec(left);
-  const b = SEMVER.exec(right);
-  if (!a || !b) return compareText(left, right);
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(a[index]) - Number(b[index]);
-    if (difference !== 0) return Math.sign(difference);
-  }
-  if (a[4] === void 0 || b[4] === void 0) {
-    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
-  } else {
-    const order = compareIdentifiers(a[4], b[4]);
-    if (order !== 0) return order;
-  }
-  if (a[5] === b[5]) return 0;
-  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
-  return compareIdentifiers(a[5], b[5]);
-}
-function activeCodexVersion(versions) {
-  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
-  if (valid.length === 0) return null;
-  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
-  return [...valid].sort(comparePluginVersions).at(-1);
-}
 function pluginInstall(from) {
   const self = ownPluginRoot(from);
   const parent = path.dirname(self.root);
@@ -11515,81 +11490,6 @@ function pluginInstall(from) {
     registry
   };
 }
-function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
-  const self = pluginInstall(from);
-  if (self.layout === Layout.Checkout) {
-    const candidate = checkoutRoot(self.plugins, name);
-    if (candidate) return { root: realpathSync(candidate), layout: Layout.Checkout };
-    throw missing(name, self, Layout.Checkout);
-  }
-  if (self.layout === null) {
-    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
-  }
-  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
-  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
-  return {
-    root: realpathSync(found.installPath),
-    layout: self.layout,
-    home: self.home,
-    marketplace: self.marketplace,
-    ...found.scope ? { scope: found.scope } : {},
-    ...found.projectPath ? { projectPath: found.projectPath } : {}
-  };
-}
-function siblingPluginRoot(name, options) {
-  return siblingPluginInstall(name, options).root;
-}
-function checkoutRoot(plugins, name) {
-  const named = path.join(plugins, name);
-  if (pluginManifest(named)?.name === name) return named;
-  return listDirectories(plugins).sort().map((entry) => path.join(plugins, entry)).find((dir) => pluginManifest(dir)?.name === name) ?? null;
-}
-function claudeEntry(registry, name, self, cwd) {
-  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const here = realOrSame(path.resolve(cwd));
-  const holds = (project) => {
-    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
-    const root = realOrSame(project);
-    return here === root || here.startsWith(`${root}${path.sep}`);
-  };
-  for (const scope of PROJECT_SCOPES) {
-    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
-    if (matching.length > 0) return matching[0];
-  }
-  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  if (user.length === 1) return user[0];
-  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
-  throw missing(name, self, Layout.Claude);
-}
-function codexRoot(base, name, self) {
-  let versions;
-  try {
-    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
-  } catch {
-    throw missing(name, self, Layout.Codex);
-  }
-  const version = activeCodexVersion(versions);
-  if (!version) throw missing(name, self, Layout.Codex);
-  return path.join(base, version);
-}
-function missing(name, self, layout) {
-  const id = `${name}@${pluginMarketplace(self)}`;
-  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${id}\` in Claude Code or \`codex plugin add ${id}\` in Codex`);
-}
-function readRegistry(file) {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function realOrSame(file) {
-  try {
-    return realpathSync(file);
-  } catch {
-    return file;
-  }
-}
 function isFile(file) {
   try {
     return statSync(file).isFile();
@@ -11597,64 +11497,14 @@ function isFile(file) {
     return false;
   }
 }
-function listDirectories(dir) {
-  try {
-    return readdirSync(dir).filter((entry) => isDirectory(path.join(dir, entry)));
-  } catch {
-    return [];
-  }
-}
-function isDirectory(file) {
-  try {
-    return statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function compareText(left, right) {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
-}
-function compareIdentifiers(left, right) {
-  const a = left.split(".");
-  const b = right.split(".");
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const order = compareIdentifier(a[index], b[index]);
-    if (order !== 0) return order;
-  }
-  return Math.sign(a.length - b.length);
-}
-function compareIdentifier(left, right) {
-  const leftNumeric = NUMERIC.test(left);
-  const rightNumeric = NUMERIC.test(right);
-  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
-  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
-  return compareText(left, right);
-}
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-import path2 from "node:path";
-import { pathToFileURL } from "node:url";
-var VIBE_CORE_MIN = "1.0.13";
 var SELF = pluginInstall(import.meta.url);
+var OWN_ROOT = ownPluginRoot(import.meta.url).root;
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
-var cachedRoot = null;
-function vibeCoreRoot() {
-  if (cachedRoot) return cachedRoot;
-  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
-  const installed = pluginManifest(root)?.version ?? null;
-  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
-    throw Object.assign(
-      new Error(`${SELF.name} ${SELF.version ?? "unknown"} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update ${VIBE_CORE_ID}\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
-      { outdated: true, installed, minimum: VIBE_CORE_MIN }
-    );
-  }
-  cachedRoot = root;
-  return root;
-}
 function vibeCorePath(relative) {
-  return path2.join(vibeCoreRoot(), relative);
+  return path2.join(OWN_ROOT, relative);
 }
 function vibeCore(relative) {
   return import(pathToFileURL(vibeCorePath(relative)).href);
@@ -11764,6 +11614,17 @@ var actionSchema = external_exports.object({
   blockReason: blockReasonSchema.optional(),
   stoppedTurn: stoppedTurnSchema.optional()
 }).strict();
+var queueEvidenceSchema = external_exports.object({
+  source: external_exports.string().trim().min(1).max(1024),
+  reason: external_exports.string().trim().min(1).max(2048),
+  inputSha256: external_exports.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
+var dropPendingSchema = external_exports.object({
+  worktree: external_exports.string().min(1),
+  workerId: workerIdSchema,
+  requestId: identifierSchema,
+  evidence: queueEvidenceSchema
+}).strict();
 var bindingSchema = external_exports.object({
   agentRoot: external_exports.string(),
   agentName: identifierSchema,
@@ -11802,7 +11663,8 @@ var ledgerStateSchema = external_exports.object({
     resultSummary: external_exports.string().max(4096).optional(),
     blockReason: blockReasonSchema.optional()
   }).strict().optional(),
-  completed: external_exports.array(identifierSchema).max(64)
+  completed: external_exports.array(identifierSchema).max(64),
+  dropped: external_exports.array(queueEvidenceSchema.extend({ id: identifierSchema, at: external_exports.string().datetime() })).max(64).optional()
 }).strict();
 var migrationSchema = external_exports.object({
   id: external_exports.string().uuid(),
@@ -11820,7 +11682,7 @@ var migrationSchema = external_exports.object({
   harnessSwitch: harnessSwitchSchema.extend({ from: external_exports.enum(["codex", "claude"]) }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
-async function readInput(stream = process.stdin) {
+async function readInput(stream = process.stdin, emptyError) {
   const buffers = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -11829,6 +11691,7 @@ async function readInput(stream = process.stdin) {
     if (size > 128 * 1024) throw new Error("Worker input exceeds the private input limit");
     buffers.push(bytes);
   }
+  if (size === 0 && emptyError) throw new Error(emptyError);
   return JSON.parse(Buffer.concat(buffers).toString("utf8"));
 }
 
@@ -11850,9 +11713,9 @@ function protectedHookPath(pluginRoot) {
   );
   let hookPath;
   try {
-    hookPath = join(siblingPluginRoot("vibe-core", { from: join(pluginRoot, ".claude-plugin", "plugin.json") }), "hooks", "protected-write-guard.mjs");
+    hookPath = join(realpathSync2(pluginRoot), "hooks", "protected-write-guard.mjs");
   } catch (error) {
-    throw unavailable(`vibe-core is missing: ${error instanceof Error ? error.message : String(error)}`);
+    throw unavailable(`vibe's plugin root is unreadable: ${error instanceof Error ? error.message : String(error)}`);
   }
   try {
     if (!lstatSync(hookPath).isFile() || realpathSync2(hookPath) !== hookPath) {
@@ -11929,11 +11792,11 @@ async function checkClaudeSignInAsync(command = "claude") {
 }
 function checkRoleCapabilities(agentName, capabilities) {
   const roleReads = providerDataOr(sessionBinding(), "tickets", "roleReads", {});
-  const missing2 = (roleReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) => capability.service === TRACKER_SERVICE && capability.access === "read" && capability.operation === operation));
-  if (missing2.length) {
+  const missing = (roleReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) => capability.service === TRACKER_SERVICE && capability.access === "read" && capability.operation === operation));
+  if (missing.length) {
     throw new LaunchPrecheckError(
       "MISSING_CAPABILITIES",
-      `${agentName} needs tracker read capabilities: ${missing2.join(", ")}; discover and pass them in the parent`
+      `${agentName} needs tracker read capabilities: ${missing.join(", ")}; discover and pass them in the parent`
     );
   }
 }
@@ -11944,8 +11807,8 @@ function missingMcpTools(initTools, granted) {
     return identity !== null && !available.has(identity);
   });
 }
-function missingServers(missing2) {
-  return [...new Set(missing2.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
+function missingServers(missing) {
+  return [...new Set(missing.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
 }
 
 // src/cli.ts
@@ -12132,9 +11995,13 @@ function observeDefinitionDigest(agentRoot, agentName, capabilities) {
 
 // src/ledger.ts
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash as createHash2, randomUUID } from "node:crypto";
 import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync5, realpathSync as realpathSync6, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename as basename2, dirname as dirname3, isAbsolute, join as join5 } from "node:path";
+
+// vibe-core:lib/vibe/scripts/test-state-isolation.mjs
+var module2 = await vibeCore("lib/vibe/scripts/test-state-isolation.mjs");
+var { assertIsolatedTestRead } = module2;
 
 // src/reference-images.ts
 import { existsSync as existsSync2, readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
@@ -12149,6 +12016,7 @@ var recordSchema = external_exports.object({ referenceImages: external_exports.a
 function readReferenceImages(metadataDir) {
   const file = join4(metadataDir, "vibe-session.json");
   if (!existsSync2(file)) return [];
+  assertIsolatedTestRead(file);
   const record = recordSchema.safeParse(JSON.parse(readFileSync4(file, "utf8")));
   if (!record.success) return [];
   const owned = join4(metadataDir, REFERENCE_DIR);
@@ -12162,6 +12030,18 @@ function readReferenceImages(metadataDir) {
   }
   return images;
 }
+
+// src/worker-refusal.ts
+var WorkerRefusal = class extends Error {
+  constructor(code, summary2, message = summary2) {
+    super(message);
+    this.code = code;
+    this.summary = summary2;
+    this.name = "WorkerRefusal";
+  }
+  code;
+  summary;
+};
 
 // src/ledger.ts
 function checkoutLocation(worktree) {
@@ -12177,8 +12057,10 @@ function location(worktree) {
   return sessionPlace(checkoutLocation(worktree));
 }
 function sessionPlace(place) {
+  const file = join5(place.dir, "vibe-session.json");
+  assertIsolatedTestRead(file);
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync5(join5(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync5(file, "utf8"))
   );
   if (record.worktree && realpathSync6(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
@@ -12229,6 +12111,10 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
 function readWriterUpgradeEvidence(worktree, installedRoot) {
   return definitionUpgradeEvidence(readLedger(writerLocation(worktree)), installedRoot);
 }
+function writerUpgradeCompatible(evidence) {
+  const unchangedUpgrade = evidence.provenNewer && evidence.installedDigest === evidence.recordedDigest;
+  return evidence.observedDigest === evidence.recordedDigest && (evidence.sameRelease || unchangedUpgrade);
+}
 function registerWriter(input) {
   const data = registerSchema.parse(input);
   requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
@@ -12269,23 +12155,38 @@ function isNewerRelease(current, previous) {
   }
   return false;
 }
+function activeContinuationSummary(requestId, queuedId) {
+  const continuation = `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}`;
+  return queuedId ? `${continuation} first; requestId "${queuedId}" stays queued: claim it by id after that, or cancel it with writer-state.mjs drop-pending.` : `${continuation}; the refused request was not queued.`;
+}
+function oldestPendingSummary(ledger) {
+  const next = ledger.pending[0]?.id;
+  return next ? `Claim the oldest pending requestId "${next}" without input or continuation.` : "There is no oldest pending request to claim. Use a new requestId with original input.";
+}
+function duplicateRefusal(ledger, requestId) {
+  const queued = ledger.pending.some((item) => item.id === requestId) ? requestId : void 0;
+  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id, queued) : oldestPendingSummary(ledger);
+  return new WorkerRefusal("REQUEST_ID_EXISTS", `Request ID "${requestId}" already exists. ${recovery}`);
+}
+function inputDigest(input) {
+  return createHash2("sha256").update(input).digest("hex");
+}
 function changeWriter(action, input) {
   const data = actionSchema.parse(input);
   const place = writerLocation(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
-    if (data.workerId !== ledger.workerId) throw new Error("Request must name the registered persistent writer");
+    if (data.workerId !== ledger.workerId) throw new WorkerRefusal(
+      "WRITER_ID_MISMATCH",
+      "The request must name the registered persistent writer."
+    );
     const requestId = data.requestId;
-    if (!requestId) throw new Error("Request ID is required");
-    if (action === "enqueue") {
-      if (!data.input || data.continuation) throw new Error("Enqueue requires one original request input");
-      if (ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId)) {
-        throw new Error("Request ID already exists");
+    if (!requestId) throw new WorkerRefusal("REQUEST_ID_REQUIRED", "A requestId is required.");
+    const duplicateRequest = () => ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId) || ledger.dropped?.some((item) => item.id === requestId);
+    const prepareClaim = () => {
+      if (existsSync3(join5(place.dir, "vibe-record-turn.lock"))) {
+        throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; retain the queued writer request.");
       }
-      if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
-      ledger.pending.push({ id: requestId, input: data.input });
-    } else if (action === "claim") {
-      if (existsSync3(join5(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
         ledger.active.status = "FAILED";
         ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
@@ -12294,25 +12195,66 @@ function changeWriter(action, input) {
         delete ledger.active.processGroupId;
         delete ledger.active.continuation;
       }
-      if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
-      if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
+      if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
+    };
+    const claim = (continuation) => {
+      prepareClaim();
+      if (ledger.active?.status === "FAILED" && !continuation && ledger.pending[0]?.id === requestId) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+      if (!ledger.active && continuation && ledger.completed.at(-1) === requestId) {
         ledger.completed = ledger.completed.slice(0, -1);
-        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+        ledger.active = { id: requestId, input: continuation, status: "PLAN", continuation };
       } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
-        ledger.active.continuation = data.continuation;
+        if (ledger.active.id !== requestId || !continuation) throw new WorkerRefusal(
+          "ACTIVE_REQUEST_PENDING",
+          activeContinuationSummary(ledger.active.id, ledger.pending.some((item) => item.id === requestId) ? requestId : void 0)
+        );
+        ledger.active.continuation = continuation;
       } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new Error("Claim must take the oldest pending request");
+        if (continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
         const next = ledger.pending.shift();
-        if (!next) throw new Error("No pending request");
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
         ledger.active = { ...next, status: "PLAN" };
       }
       ledger.active.lease = randomUUID();
       ledger.active.ownerPid = process.pid;
+    };
+    let queuedBehind;
+    if (action === "enqueue") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
+      if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
+      if (ledger.pending.length >= 32) throw new WorkerRefusal(
+        "REQUEST_QUEUE_FULL",
+        "The pending queue is full; keep the new input with the parent."
+      );
+      ledger.pending.push({ id: requestId, input: data.input });
+      if (ledger.active && !ledger.active.lease && ledger.active.status !== "FAILED") {
+        queuedBehind = {
+          requestId: ledger.active.id,
+          status: ledger.active.status,
+          next: activeContinuationSummary(ledger.active.id, requestId)
+        };
+      }
+    } else if (action === "start" && data.input && !data.continuation && ledger.pending.some((item) => item.id === requestId && item.input === data.input)) {
+      claim();
+    } else if (action === "start") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
+      if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
+      prepareClaim();
+      if (ledger.active?.status === "FAILED") {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (ledger.active) throw new WorkerRefusal(
+        "ACTIVE_REQUEST_PENDING",
+        activeContinuationSummary(ledger.active.id)
+      );
+      if (ledger.pending.length) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
+      ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
+    } else if (action === "claim") {
+      claim(data.continuation);
     } else {
       if (!ledger.active || ledger.active.id !== requestId || !data.lease || ledger.active.lease !== data.lease || !data.status) {
         throw new Error("Finish requires ownership of the active turn lease");
@@ -12343,7 +12285,11 @@ function changeWriter(action, input) {
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...action === "claim" ? { turn: ledger.active } : {} };
+    return {
+      ...summary(ledger),
+      ...["start", "claim"].includes(action) ? { turn: ledger.active } : {},
+      ...queuedBehind ? { queuedBehind } : {}
+    };
   });
 }
 function acquireRecordTurnAt(place, owner) {
@@ -12432,6 +12378,8 @@ function summary(ledger) {
     worktree: ledger.worktree,
     queuedRequestIds: ledger.pending.map((item) => item.id),
     activeRequestId: ledger.active?.id,
+    queuedRequests: ledger.pending.map((item) => ({ requestId: item.id, inputSha256: inputDigest(item.input) })),
+    droppedRequestIds: ledger.dropped?.map((item) => item.id) ?? [],
     status: ledger.active?.status,
     running: Boolean(ledger.active?.lease),
     processGroupId: ledger.active?.processGroupId,
@@ -12500,12 +12448,12 @@ function bindTakeoverWriter(worktree, binding) {
 }
 
 // vibe-core:lib/vibe/scripts/plugin-script-references.mjs
-var module2 = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
-var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScriptReferences } = module2;
+var module3 = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
+var { installedPluginVersion, isVibePluginRoot, pluginScriptProblems, pluginScriptReferences } = module3;
 
 // vibe-core:lib/vibe/scripts/provider-brief.mjs
-var module3 = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
-var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, briefWithProviderLine, providerLine } = module3;
+var module4 = await vibeCore("lib/vibe/scripts/provider-brief.mjs");
+var { WRITER_BRIEF, briefProviderLine, briefProviderProblem, briefWithProviderLine, providerLine } = module4;
 
 // ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
@@ -12620,16 +12568,16 @@ function isRecord(value) {
 }
 
 // vibe-core:lib/vibe/scripts/worker-scope.mjs
-var module4 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
-var { launcherWorker, recordWorkerScope } = module4;
+var module5 = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
+var { launcherWorker, recordWorkerScope } = module5;
 
 // src/record-context.ts
 import { existsSync as existsSync5, readFileSync as readFileSync7, realpathSync as realpathSync7 } from "node:fs";
 import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
-var module5 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module5;
+var module6 = await vibeCore("lib/vibe/scripts/session-record.mjs");
+var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module6;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -12751,29 +12699,53 @@ function isHandoverContext(input) {
 }
 function resolveRecordContext(input) {
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
-    throw new Error("Canonical validation witness belongs only to the Root source validation continuation");
+    throw new WorkerRefusal(
+      "VALIDATION_CONTEXT_INVALID",
+      "Canonical validation witness belongs only to the Root source validation continuation."
+    );
   }
   if (input.mainSyncCiRun && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.publicationPurpose !== "handoff")) {
-    throw new Error("External CI locators require the actual source handoff-validation grant");
+    throw new WorkerRefusal(
+      "CI_LOCATOR_CONTEXT_INVALID",
+      "External CI locators require the actual source handoff-validation grant."
+    );
   }
   if (input.mainSyncRequestContinuations && (input.agentName !== "vibe-environment-worker" || !isPublisherContext(input))) {
-    throw new Error("Only an actual environment publisher grant may predeclare request continuations");
+    throw new WorkerRefusal(
+      "REQUEST_CONTINUATIONS_CONTEXT_INVALID",
+      "Only an actual environment publisher grant may predeclare request continuations."
+    );
   }
   if (input.mainSyncRequestContinuations && new Set(input.mainSyncRequestContinuations.map((item) => `${item.runtime}:${item.requestId}:${item.recordAction}`)).size !== input.mainSyncRequestContinuations.length) {
-    throw new Error("Parent request continuations must identify distinct exact requests");
+    throw new WorkerRefusal(
+      "REQUEST_CONTINUATIONS_DUPLICATE",
+      "Parent request continuations must identify distinct exact requests."
+    );
   }
-  if (input.recordAction === "discard" && !input.discardTarget) throw new Error("Discard requires parent-held target and confirmation evidence");
+  if (input.recordAction === "discard" && !input.discardTarget) throw new WorkerRefusal(
+    "DISCARD_TARGET_REQUIRED",
+    "Discard requires parent-held target and confirmation evidence."
+  );
   if (input.discardTarget && (input.agentName !== "vibe-setup-worker" || input.mode !== "record" || input.recordAction !== "discard" || !input.exclusiveRecordTurn || input.sessionless?.kind !== "startup")) {
-    throw new Error("Discard executes only through setup's exclusive stable-checkout operation");
+    throw new WorkerRefusal(
+      "DISCARD_CONTEXT_INVALID",
+      "Discard executes only through setup's exclusive stable-checkout operation."
+    );
   }
   let place;
   if (input.sessionless) {
     const startup = input.sessionless.kind === "startup" && STARTUP_ROLES.has(input.agentName) && input.mode !== "handoff" && input.mode !== "pull-request";
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     const takeover = input.sessionless.kind === "takeover" && !input.recordAction && !input.exclusiveRecordTurn && (TAKEOVER_REVIEWERS.has(input.agentName) && input.mode === "pull-request" || input.agentName === TAKEOVER_WRITER && input.mode !== "record" && input.mode !== "plan" && Boolean(input.sessionless.evidence.sourceBranch));
-    if (!startup && !cancel && !takeover) throw new Error("This role/action has no sessionless operation");
+    if (!startup && !cancel && !takeover) throw new WorkerRefusal(
+      "SESSIONLESS_CONTEXT_INVALID",
+      `The role ${input.agentName} action ${input.recordAction ?? input.mode} has no sessionless operation.`
+    );
     place = checkoutLocation(input.worktree);
-    if (existsSync5(join6(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync5(join6(place.dir, "vibe-session.json"))) throw new WorkerRefusal(
+      "SESSIONLESS_PRIVATE_SESSION_EXISTS",
+      "A private session exists; use its strict owned operation."
+    );
   } else {
     const checkout = checkoutLocation(input.worktree);
     if (!existsSync5(join6(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
@@ -12793,15 +12765,21 @@ function discardLocation(input, stable) {
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
-    JSON.parse(readFileSync7(join6(target.dir, "vibe-session.json"), "utf8"))
+    readSessionRecord(target.root)
   );
   const recordedTicket = sessionLiveTicket(record);
   const recordedCreated = record.liveTicketCreatedBySession ?? recordedTicket !== null;
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join6(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join6(target.dir, "commondir"))) throw new WorkerRefusal(
+    "DISCARD_EXECUTION_CHECKOUT_INVALID",
+    "Discard must retain its execution checkout."
+  );
   const common = readFileSync7(join6(target.dir, "commondir"), "utf8").trim();
   const stableCommon = existsSync5(join6(stable.dir, "commondir")) ? realpathSync7(join6(stable.dir, readFileSync7(join6(stable.dir, "commondir"), "utf8").trim())) : realpathSync7(stable.dir);
   if (realpathSync7(join6(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (recordedTicket ?? void 0) !== evidence.liveTicket || recordedCreated !== evidence.liveTicketCreatedBySession) {
-    throw new Error("Discard target does not match the parent's owned session evidence");
+    throw new WorkerRefusal(
+      "DISCARD_TARGET_MISMATCH",
+      "Discard target does not match the parent's owned session evidence."
+    );
   }
   return target;
 }
@@ -12826,7 +12804,7 @@ function missingSessionRoute(agentName) {
 }
 
 // src/main-sync-state.ts
-import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
 
 // ../../plugins/vibe/skills/vibe/scripts/area-paths.mjs
 var { providerDataOr: providerDataOr2, sessionBinding: sessionBinding2 } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -12935,8 +12913,10 @@ var commandReceiptSchema = external_exports.object({
   exitCode: external_exports.number().int(),
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
-  comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+  comparison: mainComparisonSchema.optional(),
+  // A check the fleet's remote slot ran: `log` is the stored report, `logSha256` the remote run's own log digest.
+  remote: external_exports.object({ host: external_exports.string().min(1).max(255), commit: commitSchema, logSha256: digestSchema }).strict().optional()
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence").refine((item) => !item.remote || item.exitCode === 0 && !item.comparison, "Remote check evidence must be a passing run");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -13004,6 +12984,26 @@ var mainSyncReceiptSchema = external_exports.object({
   recipe: storedValidationRecipeSchema.optional(),
   deferredMain: external_exports.object({ mainSha: commitSchema, reason: external_exports.string().min(1).max(500) }).strict().optional()
 }).strict();
+var remoteCheckReportSchema = external_exports.object({
+  host: external_exports.string().trim().min(1).max(255),
+  validation: external_exports.object({
+    headSha: commitSchema,
+    treeSha: commitSchema,
+    inputSha256: digestSchema,
+    commands: external_exports.array(external_exports.object({
+      argv: external_exports.array(external_exports.string()).min(1).max(256),
+      bindings: external_exports.record(external_exports.string()).optional(),
+      cwd: external_exports.string().optional(),
+      timeoutMs: external_exports.number().int().optional(),
+      exitCode: external_exports.number().int(),
+      log: external_exports.string().min(1).max(4096),
+      sha256: digestSchema
+    }).strict()).min(1).max(128),
+    checkedAt: external_exports.string().datetime(),
+    e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
+  }).strict()
+}).strict();
+var mainSyncRemoteInputSchema = mainSyncInputSchema.extend({ report: remoteCheckReportSchema }).strict();
 var readinessStateSchema = external_exports.object({
   version: external_exports.literal(1),
   phase: external_exports.literal("input-readiness"),
@@ -13053,7 +13053,7 @@ var claudeOwnerSchema = external_exports.object({
   primaryOwner: external_exports.object({ workerId: external_exports.string(), lease: external_exports.string().uuid() }).strict().optional()
 }).strict();
 function digest(text) {
-  return createHash2("sha256").update(text).digest("hex");
+  return createHash3("sha256").update(text).digest("hex");
 }
 
 // src/main-sync-validation-envelope.ts
@@ -13124,6 +13124,7 @@ async function deriveValidationEnvelope(context, dir, branch, canceled) {
   return validationEnvelopeMs(receipt.recipe);
 }
 async function privateData(file) {
+  assertIsolatedTestRead(file);
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = await handle.stat();
@@ -13156,9 +13157,11 @@ function claudeWorkerUsage() {
     "Launches one canonical vibe agent as an owned Claude session. Takes no arguments;",
     "the launch request is one JSON object on stdin.",
     "",
-    "Fields: worktree, agentName, mode, requestId, capabilities, and input (a new request) or continuation",
-    "(the active request). Optional: agentRoot, timeoutMs, allowCredits, and the record fields",
-    "(recordAction, exclusiveRecordTurn, ...) for a record turn.",
+    "Fields: worktree, agentName, mode, requestId, capabilities, and input for a new request or continuation",
+    "for the active request. To claim the oldest pending request, name its requestId and send neither field.",
+    "Optional: agentRoot, timeoutMs (default and maximum 1800000 ms), allowCredits, and the record fields.",
+    "timeoutMs counts the model's own time; a running tool call pauses it and is bounded by the same value on its own.",
+    "A record action uses mode record, recordAction, and exclusiveRecordTurn true.",
     "Prints one JSON result; exits 1 when the status is BLOCKED or FAILED.",
     "",
     capabilityUsage()
@@ -13193,6 +13196,8 @@ function mustStopForUsage(rateLimit, allowCredits) {
 }
 
 // src/claude-worker.ts
+var MAX_WORKER_TIMEOUT_MS = 30 * 60 * 1e3;
+var DEFAULT_WORKER_TIMEOUT_MS = MAX_WORKER_TIMEOUT_MS;
 var launchSchema = recordContextSchema.extend({
   /** Optional: the launcher binds its own installed plugin root (or a resumed writer's recorded root) when omitted. */
   agentRoot: external_exports.string().min(1).optional(),
@@ -13200,7 +13205,7 @@ var launchSchema = recordContextSchema.extend({
   input: external_exports.string().min(1).max(64 * 1024).optional(),
   continuation: external_exports.string().min(1).max(64 * 1024).optional(),
   capabilities: capabilitiesSchema,
-  timeoutMs: external_exports.number().int().min(1e3).max(30 * 60 * 1e3).default(15 * 60 * 1e3),
+  timeoutMs: external_exports.number().int().min(1e3).max(MAX_WORKER_TIMEOUT_MS).optional(),
   /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
   allowCredits: external_exports.boolean().optional(),
   /** Explicit top-level orchestrator requirement; raw brief text never grants test authoring. */
@@ -13238,7 +13243,7 @@ var workerResultJsonSchema = {
   additionalProperties: false,
   properties: {
     status: { type: "string", enum: statusSchema.options },
-    summary: { type: "string", maxLength: 4096 },
+    summary: { type: "string" },
     data: { type: "object", additionalProperties: true }
   },
   required: ["status", "summary"]
@@ -13258,9 +13263,47 @@ var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-ad
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
 var testAuthoringModes = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
 var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
-var MCP_READINESS_WINDOW_MS = 15e3;
+var MCP_STARTUP_WAIT_MS = 6e4;
+var MCP_INIT_MARGIN_MS = 5e3;
+var MCP_READINESS_WINDOW_MS = MCP_STARTUP_WAIT_MS + 15e3;
 var MAX_MCP_STARTUP_ATTEMPTS = 3;
 var MCP_STARTUP_RETRY_DELAY_MS = 500;
+var STDERR_TAIL_LINES = 5;
+var STDERR_TAIL_BYTES = 800;
+var CAUSE_MESSAGE_LIMIT = 300;
+function workerResultJsonSchemaFor(agentName) {
+  const schema = structuredClone(workerResultJsonSchema);
+  if (!receiptRoles.has(agentName)) return schema;
+  schema.properties.data = {
+    type: "object",
+    additionalProperties: true,
+    properties: { findings: { type: "array", items: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        id: { type: "string", minLength: 1 },
+        blocking: { type: "boolean" },
+        evidence: { type: "string", minLength: 1 },
+        premises: { type: "array", minItems: 1, items: {
+          type: "object",
+          additionalProperties: false,
+          properties: { claim: { type: "string", minLength: 1 }, evidence: {
+            type: "object",
+            additionalProperties: true,
+            properties: { kind: { type: "string", enum: ["code", "command", "official-doc", "UNVERIFIED"] } },
+            required: ["kind"]
+          } },
+          required: ["claim", "evidence"]
+        } }
+      },
+      required: ["id", "blocking", "evidence"],
+      allOf: [{ if: { properties: { blocking: { const: true } }, required: ["blocking"] }, then: { required: ["premises"] } }]
+    } } },
+    required: ["findings"]
+  };
+  schema.required = ["status", "summary", "data"];
+  return schema;
+}
 function testAuthoringGranted(input) {
   return input.agentName === "vibe-change-worker" && (input.mode === "pull-request" || input.testsRequired === true && testAuthoringModes.has(input.mode));
 }
@@ -13284,6 +13327,61 @@ var PendingMcpError = class extends Error {
   }
   servers;
 };
+var McpStillPendingError = class extends LaunchPrecheckError {
+  constructor(pendingConnections, attempts, waitedMs) {
+    super("MCP_TOOLS_MISSING", `The worker's granted connections stayed pending during bounded startup: ${pendingConnections.join(", ") || "unknown"} (still pending after ${attempts} launch attempt${attempts === 1 ? "" : "s"} over ${Math.round(waitedMs / 1e3)} s; check that connection, then relaunch)`);
+    this.pendingConnections = pendingConnections;
+  }
+  pendingConnections;
+};
+var ClaudeExitError = class extends WorkerRefusal {
+  constructor(exitCode, stderrTail2) {
+    super("CLAUDE_PROCESS_FAILED", `Claude exited with status ${exitCode}.${stderrTail2 ? ` Last stderr: ${stderrTail2}` : ""} Inspect the private trace and continue the same request.`);
+    this.exitCode = exitCode;
+    this.stderrTail = stderrTail2;
+  }
+  exitCode;
+  stderrTail;
+};
+function childMcpStartupWaitMs(turnTimeoutMs, startupTimeoutMs) {
+  return Math.max(0, Math.min(MCP_STARTUP_WAIT_MS, (startupTimeoutMs ?? turnTimeoutMs) - MCP_INIT_MARGIN_MS));
+}
+function stderrTail(text) {
+  const lines = text.split("\n").map((line) => line.trimEnd()).filter(Boolean).slice(-STDERR_TAIL_LINES).join(" | ");
+  return lines.length > STDERR_TAIL_BYTES ? lines.slice(-STDERR_TAIL_BYTES) : lines;
+}
+function createTurnCap(capMs, onExpire, clock = { now: Date.now, set: (callback, ms) => setTimeout(callback, ms), clear: (handle) => clearTimeout(handle) }) {
+  let remaining = capMs;
+  let armedAt = clock.now();
+  let timer = clock.set(() => onExpire("model"), remaining);
+  const open2 = /* @__PURE__ */ new Set();
+  return {
+    toolStarted(id) {
+      if (open2.has(id)) return;
+      open2.add(id);
+      if (open2.size !== 1) return;
+      if (timer) clock.clear(timer);
+      remaining = Math.max(0, remaining - (clock.now() - armedAt));
+      timer = clock.set(() => onExpire("tool"), capMs);
+    },
+    toolFinished(id) {
+      if (!open2.delete(id) || open2.size !== 0) return;
+      if (timer) clock.clear(timer);
+      armedAt = clock.now();
+      timer = clock.set(() => onExpire("model"), remaining);
+    },
+    stop() {
+      if (timer) clock.clear(timer);
+      timer = void 0;
+    }
+  };
+}
+var toolUseEventSchema = external_exports.object({ type: external_exports.literal("assistant"), message: external_exports.object({
+  content: external_exports.array(external_exports.object({ type: external_exports.string(), id: external_exports.string().min(1).optional() }).passthrough())
+}).passthrough() }).passthrough();
+var toolResultEventSchema = external_exports.object({ type: external_exports.literal("user"), message: external_exports.object({
+  content: external_exports.array(external_exports.object({ type: external_exports.string(), tool_use_id: external_exports.string().min(1).optional() }).passthrough())
+}).passthrough() }).passthrough();
 function protectedWriteSettings(hookPath, worktree) {
   const handler = {
     type: "command",
@@ -13311,11 +13409,20 @@ function dispatchFreshnessProblem(agentRoot, installedRoot, worktree, text) {
 function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync2) {
   if (input.agentName !== "vibe-environment-worker" || input.mode !== "record" || !previewActions.has(input.recordAction ?? "") || output.status !== "DONE") return;
   if (!input.previewProducer && !input.previewRequirements) return;
-  if (input.previewProducer !== "runtime-provider") throw new Error("Preview requirements need an authoritative provider producer declaration");
-  if (!input.previewRequirements?.includes("app-preview")) throw new Error("Environment DONE needs explicit preview requirements including app-preview");
+  if (input.previewProducer !== "runtime-provider") throw new WorkerRefusal(
+    "PREVIEW_PRODUCER_INVALID",
+    "Preview requirements need an authoritative provider producer declaration."
+  );
+  if (!input.previewRequirements?.includes("app-preview")) throw new WorkerRefusal(
+    "PREVIEW_REQUIREMENTS_INVALID",
+    "Environment DONE needs explicit preview requirements including app-preview."
+  );
   const receipt = output.data?.previewReceipt;
   const environmentId = output.data?.environmentId;
-  if (typeof receipt !== "string" || typeof environmentId !== "string") throw new Error("Environment DONE needs provider preview receipt and environment identity");
+  if (typeof receipt !== "string" || typeof environmentId !== "string") throw new WorkerRefusal(
+    "PREVIEW_RECEIPT_MISSING",
+    "Environment DONE needs provider preview receipt and environment identity."
+  );
   const args = [
     realpathSync8(join8(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
     "--file",
@@ -13329,7 +13436,10 @@ function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync
     ...input.previewRequirements.flatMap((capability) => ["--required", capability])
   ];
   const checked = run(process.execPath, args, { encoding: "utf8" });
-  if (checked.status !== 0) throw new Error(`Environment preview is not ready: ${checked.stdout || checked.stderr}`);
+  if (checked.status !== 0) throw new WorkerRefusal(
+    "PREVIEW_NOT_READY",
+    `Environment preview is not ready: ${checked.stdout || checked.stderr}`
+  );
 }
 function reviewSourceIdentity(pluginRoot, worktree) {
   return JSON.parse(execFileSync2(
@@ -13342,10 +13452,10 @@ function boundDefinition(definition, input) {
   const binding = sessionBinding(input.worktree);
   requireSupportedCapabilities(input.capabilities, binding);
   const inherited = briefProviderProblem(input.input ?? "", binding);
-  if (inherited) throw new Error(inherited);
+  if (inherited) throw new WorkerRefusal("PROVIDER_BRIEF_MISMATCH", inherited);
   const modes = recordModes(binding);
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(modes, input.agentName)) {
-    throw new Error("This role is outside the vibe and handoff owned launcher");
+    throw new WorkerRefusal("ROLE_NOT_OWNED", `The role ${input.agentName} is outside the vibe and handoff owned launcher.`);
   }
   const { model } = resolveWorkerModel(
     ModelRuntime.Claude,
@@ -13358,23 +13468,48 @@ function boundDefinition(definition, input) {
   const declaredModes = modes[input.agentName];
   const possibleWrites = new Set(Object.values(declaredModes ?? {}).flat());
   if (reader && !prototypeAdvice && definition.tools.some((tool) => tool === "Write" || tool === "Edit")) {
-    throw new Error("Read-only advisor declares writable filesystem tools");
+    throw new WorkerRefusal(
+      "READER_DECLARATION_WRITABLE",
+      `The read-only role ${input.agentName} declares writable filesystem tools.`
+    );
   }
-  if (input.capabilities.some((capability) => capability.access === "write") && (reader || input.capabilities.some((capability) => capability.access === "write" && !possibleWrites.has(capability.operation)))) {
-    throw new Error("This worker cannot receive record-write capabilities");
+  const undeclaredWrite = input.capabilities.find((capability) => capability.access === "write" && !possibleWrites.has(capability.operation));
+  if (input.capabilities.some((capability) => capability.access === "write") && (reader || undeclaredWrite)) {
+    throw new WorkerRefusal(
+      "RECORD_CAPABILITY_UNDECLARED",
+      `Record capability ${undeclaredWrite?.operation ?? "write"} is not declared for ${input.agentName}.`
+    );
   }
   let permittedWrites = [];
   if (input.mode === "record") {
-    if (!input.exclusiveRecordTurn || !input.recordAction || !declaredModes?.[input.recordAction]) {
-      throw new Error("Record writes require a declared canonical action and exclusive record turn");
-    }
+    const declaredActions = Object.keys(declaredModes ?? {});
+    if (!input.recordAction) throw new WorkerRefusal(
+      "RECORD_ACTION_REQUIRED",
+      `Record mode for ${input.agentName} requires recordAction. Allowed actions: ${declaredActions.join(", ") || "none"}.`
+    );
+    if (!declaredModes?.[input.recordAction]) throw new WorkerRefusal(
+      "RECORD_ACTION_UNDECLARED",
+      `Record action ${input.recordAction} is not declared for ${input.agentName}. Allowed actions: ${declaredActions.join(", ") || "none"}.`
+    );
+    if (!input.exclusiveRecordTurn) throw new WorkerRefusal(
+      "EXCLUSIVE_RECORD_TURN_REQUIRED",
+      `Record action ${input.recordAction} for ${input.agentName} requires exclusiveRecordTurn.`
+    );
     permittedWrites = declaredModes[input.recordAction] ?? [];
-    if (input.capabilities.some((capability) => capability.access === "write" && !permittedWrites.includes(capability.operation))) {
-      throw new Error("Record capability is outside this canonical action");
+    const outsideAction = input.capabilities.find((capability) => capability.access === "write" && !permittedWrites.includes(capability.operation));
+    if (outsideAction) {
+      const allowedActions = Object.entries(declaredModes).filter(([, operations]) => operations.includes(outsideAction.operation)).map(([action]) => action);
+      throw new WorkerRefusal(
+        "RECORD_CAPABILITY_OUTSIDE_ACTION",
+        `Record capability ${outsideAction.operation} is outside action ${input.recordAction} for ${input.agentName}. Allowed actions: ${allowedActions.join(", ") || "none"}.`
+      );
     }
-  } else if (input.recordAction || input.exclusiveRecordTurn) throw new Error("Record grants belong only to a separate record continuation");
+  } else if (input.recordAction || input.exclusiveRecordTurn) throw new WorkerRefusal(
+    "RECORD_GRANT_OUTSIDE_RECORD",
+    "Record grants require mode record and a separate record continuation."
+  );
   if (boundWith(binding, "graph") && !input.capabilities.some((capability) => capability.service === "graph")) {
-    throw new Error("Parent-discovered read-only graph capabilities are required");
+    throw new WorkerRefusal("GRAPH_CAPABILITIES_REQUIRED", "Parent-discovered read-only graph capabilities are required.");
   }
   const roleTools = prototypeAdvice ? definition.tools.filter((tool) => tool !== "Write" && tool !== "Edit") : definition.tools;
   const tools = [.../* @__PURE__ */ new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities.filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation)).flatMap((capability) => mcpToolAliases(capability.name))])];
@@ -13405,8 +13540,11 @@ function pushPolicy(input) {
 }
 async function runWorker(rawInput) {
   const input = launchSchema.parse(rawInput);
-  if (input.mainSyncValidation && input.timeoutMs !== 15 * 60 * 1e3) {
-    throw new Error("Canonical validation derives its own envelope; caller timeout overrides are not allowed");
+  if (input.mainSyncValidation && input.timeoutMs !== void 0) {
+    throw new WorkerRefusal(
+      "VALIDATION_TIMEOUT_OVERRIDE",
+      "Canonical validation derives its own envelope; caller timeout overrides are not allowed."
+    );
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const recorded = input.agentName === "vibe-change-worker" && (!input.sessionless || input.sessionless.kind === "takeover") ? recordedWriterRoot(input.worktree) : void 0;
@@ -13414,7 +13552,7 @@ async function runWorker(rawInput) {
   const resolvedRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
   const upgrade = recorded ? readWriterUpgradeEvidence(input.worktree, installedRoot) : void 0;
   const unchangedUpgrade = upgrade?.provenNewer && upgrade.installedDigest === upgrade.recordedDigest;
-  const compatible = upgrade && upgrade.observedDigest === upgrade.recordedDigest && (upgrade.sameRelease || unchangedUpgrade);
+  const compatible = upgrade && writerUpgradeCompatible(upgrade);
   if (upgrade && !compatible) {
     const command = `node ${join8(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
     const message = upgrade.provenNewer || upgrade.observedDigest === null ? `Claude dispatch definition is from a stale installed plugin release; run ${command} with the recorded migration JSON on stdin` : "Writer definition mismatch has no proven installed release upgrade; retain the original writer";
@@ -13427,7 +13565,13 @@ async function runWorker(rawInput) {
     input.worktree,
     input.input ?? input.continuation ?? ""
   );
-  if (dispatchProblem) throw new Error(dispatchProblem);
+  if (dispatchProblem) throw new WorkerRefusal("DISPATCH_SCRIPT_INVALID", dispatchProblem);
+  if (receiptRoles.has(input.agentName) && input.continuation) {
+    throw new WorkerRefusal(
+      "REVIEWER_RELAUNCH_REQUIRED",
+      `Read-only role ${input.agentName} has no persistent continuation. Relaunch that same role fresh with a new requestId and input; do not continue the session writer.`
+    );
+  }
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
@@ -13463,8 +13607,7 @@ async function runWorker(rawInput) {
       capabilities: input.capabilities
     });
     workerId = registered.workerId;
-    if (input.input) changeWriter("enqueue", { worktree: input.worktree, workerId, requestId: input.requestId, input: input.input });
-    const claim = changeWriter("claim", {
+    const claim = input.input ? changeWriter("start", { worktree: input.worktree, workerId, requestId: input.requestId, input: input.input }) : changeWriter("claim", {
       worktree: input.worktree,
       workerId,
       requestId: input.requestId,
@@ -13473,7 +13616,11 @@ async function runWorker(rawInput) {
     lease = claim.turn?.lease;
     if (!lease) throw new Error("Writer claim returned no owned turn");
     turnInput = claim.turn?.continuation ?? claim.turn?.input ?? "";
-  } else if (!input.input || input.continuation) throw new Error("Advisors require a fresh read-only input");
+  } else if (input.continuation) throw new WorkerRefusal(
+    "REVIEWER_RELAUNCH_REQUIRED",
+    `Read-only role ${input.agentName} has no persistent continuation. Relaunch that same role fresh with a new requestId and input; do not continue the session writer.`
+  );
+  else if (!input.input) throw new WorkerRefusal("REVIEWER_INPUT_REQUIRED", "A read-only role requires fresh input.");
   recordWorkerScope(workerId, place.root);
   const turnId = randomUUID3();
   const definitionFile = join8(place.dir, `vibe-agent-${turnId}.json`);
@@ -13522,7 +13669,7 @@ async function runWorker(rawInput) {
     }
     writeFileSync3(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 384, flag: "wx" });
     trace = openSync(tracePath, "wx", 384);
-    const timeoutMs = input.mainSyncValidation ? await deriveValidationEnvelope(operationContext, place.dir, place.branch, () => prelaunchCanceled) : input.timeoutMs;
+    const timeoutMs = input.mainSyncValidation ? await deriveValidationEnvelope(operationContext, place.dir, place.branch, () => prelaunchCanceled) : input.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
     if (prelaunchCanceled) throw new Error("Owned worker turn canceled before Claude spawn");
     if (persistent && lease) resume = markClaudeStarted(input.worktree, workerId, lease).resume;
     const args = [
@@ -13533,7 +13680,7 @@ async function runWorker(rawInput) {
       "--agent",
       definition.name,
       "--json-schema",
-      JSON.stringify(workerResultJsonSchema),
+      JSON.stringify(workerResultJsonSchemaFor(input.agentName)),
       "--agents",
       definitionFile,
       "--model",
@@ -13567,13 +13714,17 @@ async function runWorker(rawInput) {
       input: turnInput
     }), timeoutMs, trace, input.allowCredits === true, (processGroupId) => {
       if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
-    });
+    }, !input.mainSyncValidation);
     process.removeListener("SIGTERM", cancelBeforeLaunch);
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
-    if (reviewSource && JSON.stringify(reviewSourceIdentity(definition.root, place.root)) !== JSON.stringify(reviewSource)) {
-      throw new Error("Reviewer source changed during its read-only turn; rerun on the settled source");
+    const endingReviewSource = reviewSource ? reviewSourceIdentity(definition.root, place.root) : void 0;
+    if (reviewSource && JSON.stringify(endingReviewSource) !== JSON.stringify(reviewSource)) {
+      throw new WorkerRefusal(
+        "REVIEWER_SOURCE_CHANGED",
+        `Reviewer source changed during its read-only turn from ${JSON.stringify(reviewSource)} to ${JSON.stringify(endingReviewSource)}. Rerun the review on the final settled source.`
+      );
     }
     checkPreviewResult(input, output, definition.root, place.root);
     if (persistent && lease) changeWriter("finish", {
@@ -13615,7 +13766,10 @@ async function runWorker(rawInput) {
         leaseRetained = true;
       }
     }
-    const failure = error instanceof StructuredOutputRetryError && input.mode === "record" ? { code: "RECORD_RESULT_UNVERIFIED", summary: "The record turn's final status failed structured output validation. Its write may have succeeded. Do not repeat the write; perform read-only reconciliation of the ticket and session record, then continue from the verified state." } : safeFailure(error);
+    const failure = error instanceof WorkerRefusal && error.code === "STRUCTURED_OUTPUT_RETRY_EXHAUSTED" && input.mode === "record" ? { code: "RECORD_RESULT_UNVERIFIED", summary: "The record turn's final status failed structured output validation. Its write may have succeeded. Do not repeat the write; perform read-only reconciliation of the ticket and session record, then continue from the verified state." } : safeFailure(error, input);
+    if (!persistent && failure.code === "TURN_TIMEOUT") {
+      failure.summary = `Read-only role ${input.agentName} timed out. Relaunch that same role fresh with a new requestId and input; reviewer turns cannot be continued.`;
+    }
     const capHit = persistent && failure.code === "TURN_TIMEOUT" ? capCheckpoint(place.root, place.dir, turnId) : void 0;
     if (capHit) {
       failure.summary = `CAP-HIT: the turn hit its time cap with ${capHit.dirtyFiles} changed files${capHit.midMerge ? ", mid-merge" : ""}${capHit.patch ? `; work saved as ${capHit.patch}` : ""}. Continue this request with the same writer.`;
@@ -13640,13 +13794,18 @@ async function runWorker(rawInput) {
     if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join8(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
   }
 }
-async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTimeoutMs, trace, allowCredits, attach) {
+async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTimeoutMs, trace, allowCredits, attach, excludeToolWait) {
   return await new Promise((resolve3, reject) => {
+    const env = { ...process.env };
+    const mcpWait = childMcpStartupWaitMs(timeoutMs, startupTimeoutMs);
+    if (mcpWait > 0) env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS ??= String(mcpWait);
     const child = spawn("claude", args, {
       cwd,
+      env,
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"]
     });
+    let stderrText = "";
     let failed;
     let lines = "";
     let bytes = 0;
@@ -13665,9 +13824,9 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
       const init = initSchema.safeParse(event);
       if (!init.success) return;
       if (initTimer) clearTimeout(initTimer);
-      const missing2 = missingMcpTools(init.data.tools, granted);
-      if (missing2.length) {
-        const servers = missingServers(missing2);
+      const missing = missingMcpTools(init.data.tools, granted);
+      if (missing.length) {
+        const servers = missingServers(missing);
         const statuses = new Map(init.data.mcp_servers?.map((server) => [server.name, server.status]));
         if (servers.every((server) => statuses.get(server) === "pending")) {
           stop(new PendingMcpError(servers));
@@ -13681,7 +13840,18 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
     };
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
-    const deadline = setTimeout(() => stop(new Error("Owned worker turn exceeded its deadline")), timeoutMs);
+    const cap = createTurnCap(timeoutMs, (reason) => stop(new Error(reason === "tool" ? "Owned worker turn exceeded its deadline: one tool call ran past the step cap" : "Owned worker turn exceeded its deadline")));
+    const trackTools = (event) => {
+      if (!excludeToolWait) return;
+      const started = toolUseEventSchema.safeParse(event);
+      if (started.success) {
+        for (const block of started.data.message.content) if (block.type === "tool_use" && block.id) cap.toolStarted(block.id);
+      }
+      const finished = toolResultEventSchema.safeParse(event);
+      if (finished.success) {
+        for (const block of finished.data.message.content) if (block.type === "tool_result" && block.tool_use_id) cap.toolFinished(block.tool_use_id);
+      }
+    };
     const initTimer = armMcpInitWatchdog(startupTimeoutMs, () => stop(new LaunchPrecheckError(
       "MCP_TOOLS_MISSING",
       "The worker did not report its granted tools during bounded startup"
@@ -13717,6 +13887,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
         try {
           const event = JSON.parse(line);
           checkInit(event);
+          trackTools(event);
           rateLimit = rateLimitFromEvent(event) ?? rateLimit;
           if (mustStopForUsage(rateLimit, allowCredits)) {
             stop(new LaunchPrecheckError("USAGE_LIMIT_REACHED", "Claude reported a reached usage limit or paid extra usage"));
@@ -13734,6 +13905,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
     });
     child.stderr.on("data", (chunk) => {
       bytes += chunk.length;
+      stderrText = `${stderrText}${chunk.toString("utf8")}`.slice(-4 * STDERR_TAIL_BYTES);
       if (isAuthFailure(chunk.toString("utf8"))) authFailed = true;
       if (bytes > 8 * 1024 * 1024) stop(new Error("Worker trace exceeds its bounded limit"));
       else {
@@ -13746,7 +13918,7 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
       }
     });
     child.on("close", (code) => {
-      clearTimeout(deadline);
+      cap.stop();
       if (initTimer) clearTimeout(initTimer);
       if (killTimer) clearTimeout(killTimer);
       process.removeListener("SIGTERM", onSignal);
@@ -13761,18 +13933,44 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
           return;
         }
         if (final?.is_error && final.terminal_reason === "structured_output_retry_exhausted") {
-          reject(new StructuredOutputRetryError("Claude exhausted structured output retries"));
+          reject(new WorkerRefusal(
+            "STRUCTURED_OUTPUT_RETRY_EXHAUSTED",
+            "Claude exhausted structured output retries; continue the same request with a shorter compact result."
+          ));
           return;
         }
-        if (code !== 0 || !final || final.is_error || final.structured_output === void 0 && !final.result) {
-          reject(new Error("Claude failed or returned no successful structured result"));
+        if (code !== 0) {
+          reject(new ClaudeExitError(code, stderrTail(stderrText)));
+          return;
+        }
+        if (!final) {
+          reject(new WorkerRefusal("CLAUDE_RESULT_MISSING", "Claude returned no final result record. Inspect the private trace and continue the same request."));
+          return;
+        }
+        if (final.is_error) {
+          reject(new WorkerRefusal("CLAUDE_RESULT_ERROR", "Claude marked its final result as an error. Inspect the private trace and continue the same request."));
+          return;
+        }
+        if (final.structured_output === void 0 && !final.result) {
+          reject(new WorkerRefusal("CLAUDE_RESULT_EMPTY", "Claude returned no structured result payload. Continue the same request."));
           return;
         }
         try {
-          const result = workerResultSchema.parse(capWorkerResult(final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result)));
+          let rawResult;
+          try {
+            rawResult = final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result);
+          } catch {
+            throw new WorkerRefusal("WORKER_RESULT_JSON_INVALID", "The worker returned invalid JSON instead of a compact status object.");
+          }
+          const parsed = workerResultSchema.safeParse(capWorkerResult(rawResult));
+          if (!parsed.success) throw new WorkerRefusal(
+            "WORKER_RESULT_SCHEMA_INVALID",
+            `The worker returned an invalid compact status object: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "result"} ${issue.message}`).join("; ")}`
+          );
+          const result = parsed.data;
           resolve3({ ...result, sessionId: final.session_id, ...rateLimit ? { rateLimit } : {} });
-        } catch {
-          reject(new Error("Worker returned no valid compact status object"));
+        } catch (error) {
+          reject(error);
         }
       }, reject);
     });
@@ -13780,12 +13978,13 @@ async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTi
 `);
   });
 }
-async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach) {
+async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach, excludeToolWait) {
   const started = Date.now();
   const turnDeadline = started + timeoutMs;
   let readinessDeadline = null;
   let attemptArgs = args;
   let lastPending;
+  let attempts = 0;
   for (let attempt = 1; attempt <= MAX_MCP_STARTUP_ATTEMPTS; attempt += 1) {
     const budget = remainingWorkerTurnBudget({
       turnDeadline,
@@ -13793,6 +13992,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
       now: Date.now()
     });
     if (!canStartWorkerAttempt(budget)) break;
+    attempts = attempt;
     try {
       return await launchProcessOnce(
         attemptArgs,
@@ -13803,7 +14003,8 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
         readinessDeadline === null ? null : budget.startupTimeoutMs,
         trace,
         allowCredits,
-        attach
+        attach,
+        excludeToolWait
       );
     } catch (error) {
       if (!(error instanceof PendingMcpError)) throw error;
@@ -13841,14 +14042,9 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
     }
   }
   if (!lastPending) throw new Error("Owned worker turn exceeded its deadline");
-  throw new LaunchPrecheckError(
-    "MCP_TOOLS_MISSING",
-    `The worker's granted connections stayed pending during bounded startup: ${lastPending?.servers.join(", ") ?? "unknown"}`
-  );
+  throw new McpStillPendingError(lastPending.servers, attempts, Date.now() - started);
 }
 var OwnedCleanupError = class extends Error {
-};
-var StructuredOutputRetryError = class extends Error {
 };
 var WorkerLaunchError = class extends Error {
   constructor(result) {
@@ -13857,8 +14053,37 @@ var WorkerLaunchError = class extends Error {
   }
   result;
 };
-function safeFailure(error) {
+function invalidRequestSummary(error, rawInput) {
+  const input = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput) ? rawInput : void 0;
+  const modeIssue = error.issues.find((issue) => issue.path.join(".") === "mode");
+  if (modeIssue && typeof input?.mode === "string" && typeof input.agentName === "string") {
+    try {
+      const actions = Object.keys(recordModes(sessionBinding(typeof input.worktree === "string" ? input.worktree : void 0))[input.agentName] ?? {});
+      if (actions.includes(input.mode)) {
+        return `Field mode received record action ${JSON.stringify(input.mode)} for ${input.agentName}. Use mode ${JSON.stringify("record")} with recordAction ${JSON.stringify(input.mode)}. Allowed record actions: ${actions.join(", ")}.`;
+      }
+    } catch {
+    }
+  }
+  return error.issues.map((issue) => {
+    const field = issue.path.join(".") || "request";
+    if (field === "timeoutMs" && issue.code === "too_big" && "maximum" in issue && typeof issue.maximum === "number") {
+      return `${field} received ${String(input?.timeoutMs)}; maximum ${issue.maximum} ms (${issue.maximum / 6e4} minutes)`;
+    }
+    return `${field}: ${issue.message}`;
+  }).join("; ");
+}
+function safeFailure(error, rawInput) {
   const message = error instanceof Error ? error.message : "";
+  if (error instanceof ClaudeExitError) {
+    return {
+      code: error.code,
+      summary: error.summary,
+      cause: { exitCode: error.exitCode, ...error.stderrTail ? { stderrTail: error.stderrTail } : {} }
+    };
+  }
+  if (error instanceof WorkerRefusal) return { code: error.code, summary: error.summary };
+  if (error instanceof McpStillPendingError) return { code: error.code, summary: error.message, pendingConnections: error.pendingConnections };
   if (error instanceof LaunchPrecheckError) {
     return { code: error.code, summary: error.message, ...error.personAction ? { personAction: error.personAction } : {} };
   }
@@ -13871,7 +14096,7 @@ function safeFailure(error) {
   if (message.includes("Takeover worktree HEAD")) return { code: "TAKEOVER_HEAD_MISMATCH", summary: "The takeover worktree is not at the bound pull request head; fetch and check out that head, then relaunch." };
   if (message.includes("Takeover worktree already has a writer")) return { code: "TAKEOVER_WRITER_BOUND", summary: "This takeover worktree already has its one writer for another pull request or source branch; use a new worktree for another takeover." };
   if (message.includes("never argv")) return { code: "INVALID_REQUEST", summary: "This command takes no arguments; send the launch request on stdin (claude-worker.mjs help prints its shape)." };
-  if (error instanceof external_exports.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
+  if (error instanceof external_exports.ZodError) return { code: "INVALID_REQUEST", summary: invalidRequestSummary(error, rawInput) };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
   if (message.includes("deadline")) return { code: "TURN_TIMEOUT", summary: "The owned worker turn exceeded its deadline." };
   if (message.includes("canceled")) return { code: "TURN_CANCELED", summary: "The owned worker turn was canceled." };
@@ -13880,7 +14105,18 @@ function safeFailure(error) {
   if (message.includes("binding changed")) return { code: "WRITER_BINDING_CHANGED", summary: "The persistent writer binding changed; restore the exact original binding." };
   if (message.includes("Continue the active request")) return { code: "ACTIVE_REQUEST_PENDING", summary: "Continue the current request before consuming queued work." };
   if (message.includes("running turn") || message.includes("record turn") || message.includes("state is locked")) return { code: "WRITER_BUSY", summary: "The session already has an owned source or record turn." };
-  return { code: "WORKER_TURN_FAILED", summary: "The worker turn failed; inspect its private evidence and retain the same writer identity." };
+  const cause = failureCause(error);
+  return {
+    code: "WORKER_TURN_FAILED",
+    summary: "The worker turn failed; inspect its private evidence and retain the same writer identity." + (cause.message ? ` Cause: ${cause.message}` : "") + (cause.code ? ` (${cause.code})` : ""),
+    ...cause.message || cause.code ? { cause } : {}
+  };
+}
+function failureCause(error) {
+  if (!(error instanceof Error)) return {};
+  const code = "code" in error && typeof error.code === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(error.code) ? error.code : void 0;
+  const message = error instanceof SyntaxError ? "malformed JSON" : error.message.replace(/\s+/g, " ").trim().slice(0, CAUSE_MESSAGE_LIMIT);
+  return { ...message ? { message } : {}, ...code ? { code } : {} };
 }
 async function finishOwnedGroup(child) {
   if (!child.pid || child.pid <= 1) return;
@@ -13933,7 +14169,7 @@ async function main(argv) {
     }
     const result = error instanceof WorkerLaunchError ? error.result : {
       status: "BLOCKED",
-      ...safeFailure(error),
+      ...safeFailure(error, input),
       requestId: identity.success ? identity.data.requestId : void 0,
       workerId: writer?.workerId,
       sessionId: writer?.runtime === "claude" ? writer.workerId : void 0,
@@ -13960,8 +14196,10 @@ function capWorkerResult(value) {
   const result = { ...value };
   const clip = (summary2, suffix) => summary2.length + suffix.length <= SUMMARY_LIMIT ? `${summary2}${suffix}` : `${summary2.slice(0, SUMMARY_LIMIT - suffix.length)}${suffix}`;
   if (typeof result.summary === "string" && result.summary.length > SUMMARY_LIMIT) result.summary = clip(result.summary, TRUNCATED);
-  if (JSON.stringify(result).length > RESULT_LIMIT && "data" in result) {
-    delete result.data;
+  const originalBytes = JSON.stringify(result).length;
+  if (originalBytes > RESULT_LIMIT && "data" in result) {
+    result.status = "BLOCKED";
+    result.data = { launcher: { code: "WORKER_DATA_TOO_LARGE", originalBytes } };
     if (typeof result.summary === "string") result.summary = clip(result.summary, DATA_DROPPED);
   }
   return result;
@@ -13994,11 +14232,15 @@ function checkoutHead(root) {
   return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }
 export {
+  DEFAULT_WORKER_TIMEOUT_MS,
+  MAX_WORKER_TIMEOUT_MS,
   armMcpInitWatchdog,
   boundDefinition,
   canStartWorkerAttempt,
   capWorkerResult,
   checkPreviewResult,
+  childMcpStartupWaitMs,
+  createTurnCap,
   dispatchFreshnessProblem,
   main,
   protectedWriteLaunchArgs,
@@ -14006,6 +14248,8 @@ export {
   remainingWorkerTurnBudget,
   runWorker,
   safeFailure,
+  stderrTail,
   testAuthoringGranted,
+  workerResultJsonSchemaFor,
   workerSessionName
 };

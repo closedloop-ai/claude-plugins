@@ -6,18 +6,21 @@ import { buildBundles } from "../shared/build-bundles.mjs";
 
 const toolDir = dirname(fileURLToPath(import.meta.url));
 const outdir = resolve(toolDir, "../../plugins/vibe/skills/vibe/scripts/dist");
-const vibeCoreDir = resolve(toolDir, "../../plugins/vibe-core");
+const vibeDir = resolve(toolDir, "../../plugins/vibe");
+// The vibe modules the hooks run (lib/**, hooks/**) and the process-identity helper: loaded from vibe's own root at run time.
+const RUN_TIME_MODULES = /^(?:lib|hooks)\/|^shared\/process-identity\.mjs$/;
 const vibeCoreLoader = resolve(toolDir, "../../plugins/vibe/shared/vibe-core.mjs");
 
-// A module that lives in vibe-core is loaded from the installed vibe-core at run time, never
-// inlined, so no copy of it ships in vibe (ISS-13869). The stub re-exports the module's names.
+// A module under vibe's lib/ or hooks/ is loaded from vibe's own root at run time, never inlined, so a bundled
+// copy cannot diverge from the module the hooks run and its import.meta.url and module-level state stay vibe's
+// (ISS-13869, ISS-14116). The stub re-exports the module's names.
 const loadVibeCoreAtRunTime = {
   name: "vibe-core-at-run-time",
   setup(builder) {
     builder.onResolve({ filter: /\.mjs$/ }, (args) => {
       const target = resolve(args.resolveDir, args.path);
-      return target.startsWith(`${vibeCoreDir}/`)
-        ? { path: target.slice(vibeCoreDir.length + 1), namespace: "vibe-core", pluginData: target }
+      return target.startsWith(`${vibeDir}/`) && RUN_TIME_MODULES.test(target.slice(vibeDir.length + 1))
+        ? { path: target.slice(vibeDir.length + 1), namespace: "vibe-core", pluginData: target }
         : undefined;
     });
     builder.onLoad({ filter: /.*/, namespace: "vibe-core" }, async (args) => {
@@ -52,6 +55,17 @@ await build({
   target: "node18",
   banner: { js: banner },
   plugins: [loadVibeCoreAtRunTime],
+});
+await build({
+  entryPoints: [resolve(toolDir, "src/workflow-lane-definitions.ts")],
+  outfile: resolve(vibeDir, "lib/vibe/scripts/workflow-lane-definitions.mjs"),
+  absWorkingDir: toolDir,
+  bundle: true,
+  minify: true,
+  platform: "node",
+  format: "esm",
+  target: "node18",
+  banner: { js: banner },
 });
 console.log(`built the bundled QA-impact parser to ${outdir}`);
 // Preserve the bundled Apache notice while removing its upstream whitespace-only comment lines.

@@ -7,6 +7,7 @@ import { after, test } from 'node:test';
 import { launchWriter, loadState, parseCli, requireResumeSession, run, saveState } from './codex-session.mjs';
 import { launchCwd, vibeHookTrustProblem } from './writer-launch.mjs';
 import { VIBE_CORE_INSTALL } from '../../../shared/vibe-core.mjs';
+import { APPROVE_HOOKS, approveHooksStep } from '../../vibe/scripts/vibe-core-hooks.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { readProcessIdentity } = await vibeCore("shared/process-identity.mjs");
@@ -379,7 +380,7 @@ test('a writer launch is refused while any vibe-core Codex hook is not trusted, 
     throw new Error(`unexpected ${method}`);
   };
   await assert.rejects(launchWriter(modified, { ...f.options(), cwd: future }),
-    /vibe-core@fixture-market:hooks\/hooks.json:user_prompt_submit:0:0 is modified\); open Codex once and approve vibe-core's hooks in \/hooks/s);
+    new RegExp(escapeRegExp(`vibe-core@fixture-market:hooks/hooks.json:user_prompt_submit:0:0 is modified); ${APPROVE_HOOKS}`), 's'));
   assert.deepEqual(modified.calls.map((call) => call.method), ['hooks/list']);
   assert.deepEqual(modified.calls[0].params, { cwds: [f.repo] });
   assert.equal(loadState(f.stateDir, 'writer'), null);
@@ -395,7 +396,7 @@ test('beside an older vibe the launch check judges the vibe hooks that will run,
   const listing = (hooks) => ({ request: async () => ({ data: [{ cwd: '/x', hooks }] }) });
   const hook = (pluginId, trustStatus) => ({ key: `${pluginId}:hooks/hooks.json:pre_tool_use:0:0`, pluginId, trustStatus, enabled: true });
   assert.match(await vibeHookTrustProblem(listing([hook('vibe@fixture-market', 'modified'), hook('vibe-core@fixture-market', 'trusted')]), '/x'),
-    /^vibe's Codex hooks cannot run \(vibe@fixture-market:hooks\/hooks.json:pre_tool_use:0:0 is modified\); open Codex once and approve vibe's hooks in \/hooks/);
+    new RegExp(`^${escapeRegExp(`vibe's Codex hooks cannot run (vibe@fixture-market:hooks/hooks.json:pre_tool_use:0:0 is modified); ${approveHooksStep('the vibe plugin', 'vibe')}`)}`));
   assert.equal(await vibeHookTrustProblem(listing([hook('vibe@fixture-market', 'trusted')]), '/x'), null, 'an older vibe needs no vibe-core');
   assert.equal(await vibeHookTrustProblem(listing([hook('vibe@fixture-market', 'trusted'), hook('vibe-core@fixture-market', 'modified')]), '/x'), null,
     "vibe-core's hooks stand down beside an older vibe, so they do not decide");
@@ -417,8 +418,12 @@ test('a writer launch is refused when vibe-core lists no hooks, naming the add c
   const userHook = { key: '/fixture/.codex/hooks.json:user_prompt_submit:0:0', pluginId: null, trustStatus: 'trusted', enabled: true };
   for (const hooks of [[], [userHook]]) {
     assert.equal(await vibeHookTrustProblem(listing(hooks), '/x'),
-      `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; run \`${VIBE_CORE_INSTALL.codex}\`, then open Codex once and approve vibe-core's hooks in /hooks, then launch again`);
+      `vibe-core's Codex hooks are not installed, so vibe's guards cannot run; run \`${VIBE_CORE_INSTALL.codex}\`, then ${APPROVE_HOOKS}, then launch again`);
   }
   const core = { key: 'vibe-core@fixture-market:hooks/hooks.json:pre_tool_use:0:0', pluginId: 'vibe-core@fixture-market', trustStatus: 'trusted', enabled: true };
   assert.equal(await vibeHookTrustProblem(listing([userHook, core]), '/x'), null);
 });
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}

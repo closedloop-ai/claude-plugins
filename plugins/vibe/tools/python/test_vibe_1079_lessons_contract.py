@@ -64,8 +64,8 @@ def test_message_less_watchers_use_the_watched_event_mailbox() -> None:
     assert "events" in watch and "event" in watch
 
 
-def test_main_sync_has_a_bounded_no_grant_fallback() -> None:
+def test_main_sync_stops_without_an_owned_grant() -> None:
     environment = flat(skill_split.read(VIBE / "references" / "environment.md"))
-    assert "cannot mint a supported publisher grant" in environment
-    assert "git merge --no-commit --no-ff origin/main" in environment
-    assert "commit-worktree.mjs" in environment
+    assert "cannot mint the publisher grant or pipe its owned operation context" in environment
+    assert "no plain Git merge substitutes for the grant" in environment
+    assert "git merge --no-commit --no-ff origin/main" not in environment

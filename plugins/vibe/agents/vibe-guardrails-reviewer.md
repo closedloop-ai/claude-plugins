@@ -359,7 +359,8 @@ path merely because another rule describes how its content should look.
     an `engineering decision` finding. A mechanism the ticket named is held to
     the same test (`vibe-change-worker.md`, "Plan before code"). When the
     session's local plan has a Cost Scaling table, check it against the diff;
-    a row that does not match what was built is a finding.
+    a row that does not match what was built is a finding. Consolidated batch
+    transactions measure limit duration, lock hold and effective/ambient timeout.
 13. Main syncs: check every main-sync merge in the session, not only the
     latest (`mainSync` provenance and
     `git -C <wt> log --merges --format='%H %P' <original base>..HEAD`). For
@@ -389,6 +390,11 @@ path merely because another rule describes how its content should look.
     PRD statement, a human comment, or a shipped rule found through the graph.
     If its only source is an agent's own rationale, it is a blocking
     `engineering decision` finding. Session artifacts are not a product source.
+    A comment or record that labels an orchestrator or reviewer decision as an
+    `operator ruling` is blocking until it cites the operator's actual words and
+    source. Treat exclusivity and causal-mechanism claims under
+    `../skills/vibe/references/review-premises.md`: importer/caller evidence or a measured probe is
+    required; an agent report cannot make the claim true.
     This covers every new
     user-reachable capability (a write path, action or control), refusal rule
     (a PRD display cap is not one), visual element, numeric limit, criterion

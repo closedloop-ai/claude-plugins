@@ -88,7 +88,7 @@ restore its bytes and record the passing run. Never handle or bypass a credentia
 
 <!-- block: e2e-path -->
 - Run them through the repo's containerized path (the `local-ci` skill's
-  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  `zsh -lic 'e2e/run-containerized.sh ...'`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
   "Existing checks"), never natively on the person's Mac. The lock gives
 <!-- end: e2e-path -->
 
@@ -120,10 +120,8 @@ they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
 steps 3 to 6 run again on the result, with visual QA as one pass scoped to
 the changes since the last reviewed capture
-(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). Before handoff, the findings file must pass
-`node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings
-<findings.json> --require-disposition`; every finding on a touched surface has
-`fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
+(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). The handoff gate's `--visual-qa` check holds the
+findings file to `finding-brief.mjs --require-disposition`. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 <!-- end: qa-passes -->
 
@@ -175,6 +173,9 @@ engineering finishing is the usual route, but the person decides.
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the next owner (full name and email), whether the person asked
 for a pull request, the inventory path, the
+complete handoff record grant from the provider contract, including
+`upload_attachment` for each decision table (a brief that omits that capability
+is refused before launch), the
 confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,

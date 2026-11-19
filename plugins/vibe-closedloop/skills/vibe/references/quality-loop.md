@@ -22,6 +22,8 @@ own words; after visual QA they also say what it found and changed ("Visual QA
 during the session").
 Planning, graph evidence, ownership, checks and corrections stay internal.
 
+Operator ruling, 2026-11-17: “group that work into a single PR”. Fold a new ask on the same surface into its in-flight unit. When both options are offered, recommend folding and name the separate delivery's own test lanes, CI, reviews, and merge-queue time.
+
 Before any product question, use this order and stop as soon as it settles the
 answer:
 
@@ -476,7 +478,14 @@ the orchestrator's push-ready commit, deploy and showing the person.
   change, so the orchestrator's commit and the deploy push pass: Biome on the
   changed files, the affected typecheck and the source gates. When they fail
   on an existing test or fixture the change broke, the writer repairs it
-  (`guardrails.md`, "Repair, don't author").
+  (`guardrails.md`, "Repair, don't author"). When local heavy checks are
+  barred (`LOCAL_HEAVY_BARRED=1` in the fleet's `config.env`), the affected
+  typecheck runs through `fleet.sh <orchDir> remote slot heavy` after each
+  writer fix and before each review round; it is never skipped and never run
+  locally.
+- Self-review: before `DONE`, the writer runs the reviewers' duplicate-helper
+  and contradicting-text checks on its own diff (`../../agents/vibe-change-worker.md`,
+  "Self-review before `DONE`").
 - Acceptance check: before `DONE`, the writer checks every acceptance
   criterion the change touches with concrete, cheap evidence and records the
   result ("Acceptance criteria before ready" below).
@@ -495,8 +504,9 @@ Browser E2E, visual QA, logical QA, product-contract QA, the guardrails and
 adversarial reviews, `workflow-code-review`, the targeted existing tests,
 Storybook footprint, running app checks and any other heavy validation run
 at `$handoff`, never during the loop, even where a repository protocol
-asks for them before a change is done: handoff runs them. The acceptance
-check's single test, script or control read per criterion is not one of them.
+asks for them before a change is done: handoff runs them. The self-review and
+the acceptance check's single test, script or control read per criterion are
+not among them.
 The reference check before ready is the one exception to this rule, and it
 runs only with a reference image.
 Visual QA can also run between requests, outside the loop, when the person

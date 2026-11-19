@@ -12,6 +12,7 @@ import {
   proofSourceAt,
 } from "./test-integrity.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { viewportWidthMutation } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
@@ -39,7 +40,7 @@ function withReceipt(input, source, mutation = ' void "intentional mutation";') 
   const hash = value => createHash("sha256").update(value).digest("hex");
   const proof = { ...input, mutationRun: { ...input.mutationRun, assertionFailure: runnerOutput(input, source) } };
   const old = source.split("\n")[0];
-  const mutationEdit = { old, new: `${old}${mutation}` };
+  const mutationEdit = typeof mutation === "string" ? { old, new: `${old}${mutation}` } : mutation;
   const receipt = { candidate: proof.candidate, target: proof.path, command: proof.command,
     mutationExit: proof.mutationRun.exitCode, mutationOutput: proof.mutationRun.assertionFailure,
     restoredExit: 0, restoredOutput: "Test Files 1 passed", head: proof.commit,
@@ -136,7 +137,11 @@ test("responsive, mocked-owner absence, premature absence, and count-only layout
     restoredPass: true,
     commit: COMMIT,
     ...(candidate.kind === "responsive"
-      ? { viewportSource: "registered", desktopWidthMutation: "run the Mobile play at desktop width" }
+      ? { viewportSource: "registered", desktopWidthMutation: "run the Mobile play at desktop width",
+        ...(candidate.viewportSetup ? { viewportSetup: candidate.viewportSetup } : {}),
+        assertionLine: candidate.assertionLine, assertionLocation: candidate.assertionLocation,
+        mutationRun: { command: `pnpm vitest ${candidate.path}`, exitCode: 1,
+          assertionFailure: `AssertionError: responsive assertion failed at ${candidate.assertionLocation}` } }
       : {}),
     ...(candidate.kind === "absence"
       ? { ownerBoundary: "production", mountedSignal: "the production list owner is visible before the absence assertion",
@@ -150,12 +155,682 @@ test("responsive, mocked-owner absence, premature absence, and count-only layout
       ? { baseline: "Surfaces/Artifacts/Documents/Documents List", layoutAssertion: "the card is a child of the metric grid at its established width" }
       : {}),
   }));
-  const receiptProofs = proofs.map(proof => proof.class === "absence" ? withReceipt(proof, read(proof.path)) : proof);
+  const receiptProofs = proofs.map(proof => proof.class === "absence" || (proof.class === "responsive" && proof.assertionLocation)
+    ? withReceipt(proof, read(proof.path)) : proof);
   assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: receiptProofs }, files, read, COMMIT, RECEIPT_DIR), []);
 
   const mockedOwner = structuredClone(receiptProofs);
   mockedOwner.find((proof) => proof.class === "absence").ownerBoundary = "mock";
-  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: mockedOwner }).join("\n"), /ownerBoundary: "production"/);
+  assert.match(testIntegrityProofShapeProblems({ testIntegrityProofs: mockedOwner }).join("\n"), /ownerBoundary: "production" or truthful "test-stand-in"/);
+  const standInOwner = structuredClone(receiptProofs);
+  const standIn = standInOwner.find((proof) => proof.class === "absence");
+  standIn.ownerBoundary = "test-stand-in";
+  delete standIn.mountedSignal;
+  delete standIn.presentState;
+  assert.deepEqual(testIntegrityProofShapeProblems({ testIntegrityProofs: standInOwner }, RECEIPT_DIR, read), [],
+    "truthful stand-in proofs remain renderable even though candidate selection no longer requires them");
+});
+
+test("ISS-14128 viewport words in lint fixtures do not invent responsive render candidates", () => {
+  const fixture = changed("src/viewport-rule.test.ts", [
+    'test("rejects unknown viewport names", () => {',
+    '  const names = ["Narrow", "mobile2"];',
+    "  expect(check(names)).toBe(false);",
+    "});",
+  ].join("\n"), ["Narrow", "mobile2"]);
+  const candidates = testIntegrityCandidates([fixture.file], (file) => file === fixture.file.path ? fixture.source : null);
+  assert.deepEqual(candidates.filter(({ kind }) => kind === "responsive"), []);
+});
+
+test("ISS-14128 assertion words in string fixtures do not invent absence candidates", () => {
+  const fixture = changed("src/string-fixture.test.ts", [
+    'const assertion = "expect(await activeProjectOrNull()).toBeNull()";',
+    'const query = "queryByRole(\\"dialog\\")";',
+    'const nearbyMatcher = "toHaveCount(0)";',
+  ].join("\n"), ["toBeNull", "queryByRole", "toHaveCount"]);
+  assert.deepEqual(testIntegrityCandidates([fixture.file],
+    file => file === fixture.file.path ? fixture.source : null), []);
+});
+
+test("ISS-14128 test-only E2E stand-ins are not production absence-proof candidates", () => {
+  const spec = "apps/desktop/test/e2e/project.spec.ts";
+  const standIn = "apps/desktop/test/e2e/helpers/active-project.ts";
+  const source = [
+    'import { activeProjectOrNull } from "./helpers/active-project";',
+    'test("no active project", async () => {',
+    '  expect(await activeProjectOrNull()).toBeNull();',
+    '});',
+  ].join("\n");
+  const files = [{ path: spec, status: "M", added: [{ line: 3, text: '  expect(await activeProjectOrNull()).toBeNull();' }] }];
+  const read = file => file === spec ? source : file === standIn
+    ? "export async function activeProjectOrNull() { return null; }\n" : null;
+  assert.deepEqual(testIntegrityCandidates(files, read).filter(({ kind }) => kind === "absence"), []);
+  for (const typed of [
+    "export async function activeProjectOrNull(): Promise<null> { return null; }\n",
+    "export const activeProjectOrNull = async (): Promise<null> => null;\n",
+  ]) {
+    const typedRead = file => file === spec ? source : file === standIn ? typed : null;
+    assert.deepEqual(testIntegrityCandidates(files, typedRead).filter(({ kind }) => kind === "absence"), [],
+      "a typed constant-null helper remains a truthful test-only stand-in");
+  }
+
+  const conditionalRead = file => file === spec ? source : file === standIn
+    ? "export async function activeProjectOrNull() { if (process.env.FORCE_EMPTY) return null; return productionLookup(); }\n" : null;
+  assert.equal(testIntegrityCandidates(files, conditionalRead).filter(({ kind }) => kind === "absence").length, 1,
+    "a conditional null path is not a constant test stand-in");
+  const conditionalArrowRead = file => file === spec ? source : file === standIn
+    ? "export const activeProjectOrNull = async () => null ?? productionLookup();\n" : null;
+  assert.equal(testIntegrityCandidates(files, conditionalArrowRead).filter(({ kind }) => kind === "absence").length, 1,
+    "a null-prefixed arrow expression is not a constant test stand-in");
+  const multilineArrowRead = file => file === spec ? source : file === standIn
+    ? "export const activeProjectOrNull = async () => null\n?? productionLookup();\n" : null;
+  assert.equal(testIntegrityCandidates(files, multilineArrowRead).filter(({ kind }) => kind === "absence").length, 1,
+    "a multiline continued arrow expression is not a constant test stand-in");
+  const fakeDeclarationRead = file => file === spec ? source : file === standIn
+    ? '// function activeProjectOrNull() { return null; }\nconst example = "function activeProjectOrNull() { return null; }";\nconst pattern = /function activeProjectOrNull() { return null; }/;\nexport async function activeProjectOrNull() { return productionLookup(); }\n' : null;
+  assert.equal(testIntegrityCandidates(files, fakeDeclarationRead).filter(({ kind }) => kind === "absence").length, 1,
+    "commented and quoted fake declarations cannot hide the real helper");
+  for (const nested of [
+    "function wrapper() { function activeProjectOrNull() { return null; } }\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+    "function wrapper() { const activeProjectOrNull = () => null; }\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+  ]) {
+    const nestedRead = file => file === spec ? source : file === standIn ? nested : null;
+    assert.equal(testIntegrityCandidates(files, nestedRead).filter(({ kind }) => kind === "absence").length, 1,
+      "nested shadow declarations cannot hide the exported helper");
+  }
+  for (const namespaceShadow of [
+    "namespace Fixture {\n  export async function activeProjectOrNull(): Promise<null> { return null; }\n}\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+    "namespace Fixture {\n  export const activeProjectOrNull = async (): Promise<null> => null;\n}\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+    "namespace Fixture {\n  void /}/;\n  export async function activeProjectOrNull(): Promise<null> { return null; }\n}\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+    "namespace Fixture {\n  void /}/;\n  export const activeProjectOrNull = async (): Promise<null> => null;\n}\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+    "namespace Fixture {\n  if (true) /}/.test(\"}\");\n  export async function activeProjectOrNull(): Promise<null> { return null; }\n}\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+    "namespace Fixture {\n  if (true) /}/.test(\"}\");\n  export const activeProjectOrNull = async (): Promise<null> => null;\n}\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+  ]) {
+    const namespaceRead = file => file === spec ? source : file === standIn ? namespaceShadow : null;
+    assert.equal(testIntegrityCandidates(files, namespaceRead).filter(({ kind }) => kind === "absence").length, 1,
+      "a namespace-local null export cannot hide the imported module-level production helper");
+  }
+  for (const namespaceBeforeStandIn of [
+    "namespace Fixture {\n  export async function activeProjectOrNull() { return productionLookup(); }\n}\nexport async function activeProjectOrNull(): Promise<null> { return null; }\n",
+    "namespace Fixture {\n  export const activeProjectOrNull = async () => productionLookup();\n}\nexport const activeProjectOrNull = async (): Promise<null> => null;\n",
+  ]) {
+    const namespaceRead = file => file === spec ? source : file === standIn ? namespaceBeforeStandIn : null;
+    assert.deepEqual(testIntegrityCandidates(files, namespaceRead).filter(({ kind }) => kind === "absence"), [],
+      "a namespace-local same-name export cannot hide the imported module-level constant-null stand-in");
+  }
+  for (const mutable of [
+    "export let activeProjectOrNull = async () => null;\nactiveProjectOrNull = async () => productionLookup();\n",
+    "export var activeProjectOrNull = async () => null;\nactiveProjectOrNull = async () => productionLookup();\n",
+    "export async function activeProjectOrNull() { return null; }\nactiveProjectOrNull = async () => productionLookup();\n",
+    "export async function activeProjectOrNull() { return null; }\n({ activeProjectOrNull } = productionBindings);\n",
+    "export async function activeProjectOrNull() { return null; }\nfor (activeProjectOrNull of productionBindings) break;\n",
+    "export const activeProjectOrNull = async () => null;\nactiveProjectOrNull = async () => productionLookup();\n",
+    "export async function activeProjectOrNull() { return null; }\neval('activeProjectOrNull = async () => productionLookup()');\n",
+    "export async function activeProjectOrNull() { return null; }\nexport async function activeProjectOrNull() { return productionLookup(); }\n",
+    "export const activeProjectOrNull = async () => null;\nexport const activeProjectOrNull = async () => productionLookup();\n",
+    "export const activeProjectOrNull = async () => null;\nconst real = async () => productionLookup();\nexport { real as activeProjectOrNull };\n",
+  ]) {
+    const mutableRead = file => file === spec ? source : file === standIn ? mutable : null;
+    assert.equal(testIntegrityCandidates(files, mutableRead).filter(({ kind }) => kind === "absence").length, 1,
+      "a mutable null initializer is not a constant test stand-in");
+  }
+  const productionImport = source.replace('import { activeProjectOrNull } from "./helpers/active-project";',
+    'import { activeProjectOrNull } from "../../src/main/active-project";\n// import { activeProjectOrNull } from "./helpers/active-project";');
+  const productionImportRead = file => file === spec ? productionImport
+    : file === standIn ? "export async function activeProjectOrNull(): Promise<null> { return null; }\n"
+      : file === "apps/desktop/src/main/active-project.ts" ? "export async function activeProjectOrNull() { return productionLookup(); }\n" : null;
+  assert.equal(testIntegrityCandidates(files, productionImportRead).filter(({ kind }) => kind === "absence").length, 1,
+    "a commented helper import cannot override the real module-level production import");
+  const shadowedSource = source.replace('test("no active project", async () => {',
+    'test("no active project", async () => {\n  async function activeProjectOrNull() { return productionLookup(); }');
+  const shadowedRead = file => file === spec ? shadowedSource : file === standIn
+    ? "export async function activeProjectOrNull(): Promise<null> { return null; }\n" : null;
+  assert.equal(testIntegrityCandidates(files, shadowedRead).filter(({ kind }) => kind === "absence").length, 1,
+    "a local production helper shadowing the import keeps the absence proof requirement");
+  const expressionShadow = changed(spec, [
+    'import { activeProjectOrNull } from "./helpers/active-project";',
+    'test("shadowed expression", async () => {',
+    "  const check = async function activeProjectOrNull() {",
+    "    expect(await activeProjectOrNull()).toBeNull();",
+    "  };",
+    "  await check();",
+    "});",
+  ].join("\n"), ["toBeNull"]);
+  const expressionShadowRead = file => file === spec ? expressionShadow.source : file === standIn
+    ? "export async function activeProjectOrNull(): Promise<null> { return null; }\n" : null;
+  assert.equal(testIntegrityCandidates([expressionShadow.file], expressionShadowRead)
+    .filter(({ kind }) => kind === "absence").length, 1,
+  "a named function-expression shadow keeps the absence proof requirement");
+  const namespaceShadow = changed(spec, [
+    'import { activeProjectOrNull } from "./helpers/active-project";',
+    "namespace Scenario {",
+    "  import activeProjectOrNull = Production.lookup;",
+    '  test("namespace shadow", async () => {',
+    "    expect(await activeProjectOrNull()).toBeNull();",
+    "  });",
+    "}",
+  ].join("\n"), ["toBeNull"]);
+  const namespaceShadowRead = file => file === spec ? namespaceShadow.source : file === standIn
+    ? "export async function activeProjectOrNull(): Promise<null> { return null; }\n" : null;
+  assert.equal(testIntegrityCandidates([namespaceShadow.file], namespaceShadowRead)
+    .filter(({ kind }) => kind === "absence").length, 1,
+  "a namespace import-equals alias shadows the stand-in import and keeps the proof requirement");
+  const duplicateImport = changed(spec, [
+    'import { activeProjectOrNull } from "./helpers/active-project";',
+    'import { productionProject as activeProjectOrNull } from "../../src/main/active-project";',
+    'test("duplicate import", async () => {',
+    "  expect(await activeProjectOrNull()).toBeNull();",
+    "});",
+  ].join("\n"), ["toBeNull"]);
+  const duplicateImportRead = file => file === spec ? duplicateImport.source : file === standIn
+    ? "export async function activeProjectOrNull(): Promise<null> { return null; }\n" : null;
+  assert.equal(testIntegrityCandidates([duplicateImport.file], duplicateImportRead)
+    .filter(({ kind }) => kind === "absence").length, 1,
+  "ambiguous duplicate named imports fail closed instead of selecting the first helper");
+  for (const competing of [
+    'import activeProjectOrNull from "../../src/main/active-project";',
+    'import * as activeProjectOrNull from "../../src/main/active-project";',
+  ]) {
+    const competingImport = changed(spec, [
+      'import { activeProjectOrNull } from "./helpers/active-project";',
+      competing,
+      'test("competing import", async () => {',
+      "  expect(await activeProjectOrNull()).toBeNull();",
+      "});",
+    ].join("\n"), ["toBeNull"]);
+    const competingRead = file => file === spec ? competingImport.source : file === standIn
+      ? "export async function activeProjectOrNull(): Promise<null> { return null; }\n" : null;
+    assert.equal(testIntegrityCandidates([competingImport.file], competingRead)
+      .filter(({ kind }) => kind === "absence").length, 1,
+    "a competing default or namespace import makes the asserted binding ambiguous");
+  }
+  for (const declaration of [
+    "enum activeProjectOrNull { Key }",
+    "namespace activeProjectOrNull { export const Key = 1; }",
+  ]) {
+    const competingDeclaration = changed(spec, [
+      'import { activeProjectOrNull } from "./helpers/active-project";',
+      declaration,
+      'test("competing declaration", async () => {',
+      "  expect(await activeProjectOrNull()).toBeNull();",
+      "});",
+    ].join("\n"), ["toBeNull"]);
+    const declarationRead = file => file === spec ? competingDeclaration.source : file === standIn
+      ? "export async function activeProjectOrNull(): Promise<null> { return null; }\n" : null;
+    assert.equal(testIntegrityCandidates([competingDeclaration.file], declarationRead)
+      .filter(({ kind }) => kind === "absence").length, 1,
+    "a competing enum or namespace declaration makes the asserted binding ambiguous");
+  }
+
+  const production = source.replace("./helpers/active-project", "../../src/main/active-project");
+  const productionPath = "apps/desktop/src/main/active-project.ts";
+  const readProduction = file => file === spec ? production : file === productionPath
+    ? "export async function activeProjectOrNull() { return null; }\n" : null;
+  assert.equal(testIntegrityCandidates(files, readProduction).filter(({ kind }) => kind === "absence").length, 1,
+    "a production owner still requires ownerBoundary production");
+});
+
+test("responsive E2E tests remain failing-mutation candidates", () => {
+  const fixture = changed("e2e/mobile-navigation.spec.ts", [
+    'test("mobile navigation opens on narrow viewport", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["setViewportSize", "toBeVisible"]);
+  const candidates = testIntegrityCandidates([fixture.file], file => file === fixture.file.path ? fixture.source : null);
+  assert.equal(candidates.filter(({ kind }) => kind === "responsive").length, 1);
+
+  const edgeCases = [
+    changed("e2e/mobile-soft.spec.ts", [
+      'test("opens navigation", async ({ page }) => {',
+      "  await page.setViewportSize({ width: 375, height: 800 });",
+      '  await expect.soft(page.getByRole("navigation")).toBeVisible();',
+      "});",
+    ].join("\n"), ["expect.soft"]),
+    changed("e2e/mobile-path-only.spec.ts", [
+      'test("opens navigation", async ({ page }) => {',
+      "  await page.setViewportSize({ width: 375, height: 800 });",
+      '  await expect(page.getByRole("navigation")).toBeVisible();',
+      "});",
+    ].join("\n"), ["toBeVisible"]),
+    changed("e2e/mobile-inline.spec.ts", [
+      'test("opens navigation", async ({ page }) => {',
+      '  await page.setViewportSize({ width: 375, height: 800 }); await expect(page.getByRole("navigation")).toBeVisible();',
+      "});",
+    ].join("\n"), ["setViewportSize"]),
+  ];
+  for (const edge of edgeCases) {
+    const responsive = testIntegrityCandidates([edge.file], file => file === edge.file.path ? edge.source : null)
+      .filter(({ kind }) => kind === "responsive");
+    assert.equal(responsive.length, 1, `${edge.file.path} retains its responsive assertion`);
+  }
+  const mixedCallbacks = changed("e2e/mobile-mixed.spec.ts", [
+    'test("mobile navigation", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+    'test("desktop title", async ({ page }) => {',
+    '  await expect(page.getByRole("heading")).toBeVisible();',
+    "});",
+    "beforeEach(async ({ page }) => {",
+    '  await expect(page.getByRole("main")).toBeVisible();',
+    "});",
+  ].join("\n"), ['getByRole("heading")', 'getByRole("main")']);
+  assert.deepEqual(testIntegrityCandidates([mixedCallbacks.file], file => file === mixedCallbacks.file.path ? mixedCallbacks.source : null)
+    .filter(({ kind }) => kind === "responsive"), [],
+  "desktop tests and hooks outside the responsive callback do not inherit its viewport proof requirement");
+  const playwrightSuite = changed("e2e/navigation.spec.ts", [
+    'test.describe("navigation", () => {',
+    '  test("mobile navigation", async ({ page }) => {',
+    "    await page.setViewportSize({ width: 375, height: 800 });",
+    '    await expect(page.getByRole("navigation")).toBeVisible();',
+    "  });",
+    '  test("desktop title", async ({ page }) => {',
+    '    await expect(page.getByRole("heading")).toBeVisible();',
+    "  });",
+    "});",
+  ].join("\n"), ['getByRole("navigation")', 'getByRole("heading")']);
+  const playwrightCandidates = testIntegrityCandidates([playwrightSuite.file],
+    file => file === playwrightSuite.file.path ? playwrightSuite.source : null)
+    .filter(({ kind }) => kind === "responsive");
+  assert.equal(playwrightCandidates.length, 1, "test.describe is a suite and only its responsive leaf owns a candidate");
+  assert.equal(playwrightCandidates[0].case, "mobile navigation");
+  const viewportFixtureOnly = changed("e2e/mobile-fixture.spec.ts", [
+    'test("mobile fixture", async ({ page }) => {',
+    "  const fixture = { viewport: { width: 375, height: 800 } };",
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  assert.deepEqual(testIntegrityCandidates([viewportFixtureOnly.file],
+    file => file === viewportFixtureOnly.file.path ? viewportFixtureOnly.source : null)
+    .filter(({ kind }) => kind === "responsive"), [],
+  "a viewport-shaped fixture without an executed setViewportSize call is not responsive setup");
+  const sameNameFixture = changed("e2e/mobile-method-fixture.spec.ts", [
+    'test("mobile fixture method", async ({ page }) => {',
+    "  fixture.setViewportSize({ width: 375, height: 800 });",
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  assert.deepEqual(testIntegrityCandidates([sameNameFixture.file],
+    file => file === sameNameFixture.file.path ? sameNameFixture.source : null)
+    .filter(({ kind }) => kind === "responsive"), [],
+  "an unrelated object's setViewportSize method is not page viewport setup");
+  const inertSetup = changed("e2e/mobile-inert.spec.ts", [
+    'test("mobile inert setup", async ({ page }) => {',
+    "  const unusedSetup = () => page.setViewportSize({ width: 375, height: 800 });",
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  assert.deepEqual(testIntegrityCandidates([inertSetup.file],
+    file => file === inertSetup.file.path ? inertSetup.source : null)
+    .filter(({ kind }) => kind === "responsive"), [],
+  "an uninvoked nested viewport helper does not establish executed responsive setup");
+  const nestedAssertion = changed("e2e/mobile-nested-assertion.spec.ts", [
+    'test("mobile nested assertion", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    "  function neverCalled() { expect(1).toBe(1); }",
+    "});",
+  ].join("\n"), ["expect(1)"]);
+  assert.deepEqual(testIntegrityCandidates([nestedAssertion.file],
+    file => file === nestedAssertion.file.path ? nestedAssertion.source : null)
+    .filter(({ kind }) => kind === "responsive"), [],
+  "an assertion inside an uncalled nested function is not owned by the responsive leaf");
+  for (const [label, statement] of [
+    ["inert arrow", "  void (() => expect(1).toBe(1));"],
+    ["short circuit", "  void (false && expect(1).toBe(1));"],
+    ["unconditional exit", "  if (true) return;\n  await expect(page.getByRole(\"navigation\")).toBeVisible();"],
+    ["bare expect", "  expect(1);"],
+    ["bare soft expect", "  expect.soft(1);"],
+    ["exit before setup", ""],
+    ["block return before setup", ""],
+    ["block throw before setup", ""],
+    ["nested true block return", ""],
+    ["nested true block throw", ""],
+    ["nested true if return", ""],
+    ["false else return", ""],
+    ["both arms return", ""],
+    ["both arms throw", ""],
+    ["post setup both arms return", ""],
+    ["try return before setup", ""],
+    ["try throw before setup", ""],
+    ["post setup try return", ""],
+  ]) {
+    const exit = label === "exit before setup" ? "  return;"
+      : label === "block return before setup" ? "  { return; }"
+        : label === "block throw before setup" ? '  { throw new Error("stop"); }'
+          : label === "nested true block return" ? "  if (true) { { return; } }"
+            : label === "nested true block throw" ? '  if (true) { { throw new Error("stop"); } }'
+              : label === "nested true if return" ? "  if (true) { if (true) return; }" : null;
+    const branchExit = label === "false else return" ? "  if (false) {} else return;"
+      : label === "both arms return" ? "  if (page) return; else return;"
+        : label === "both arms throw" ? '  if (page) throw new Error("a"); else throw new Error("b");' : null;
+    const selectedExit = exit ?? branchExit;
+    const body = exit
+      ? [selectedExit, "  await page.setViewportSize({ width: 375, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']
+      : branchExit
+        ? [branchExit, "  await page.setViewportSize({ width: 375, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']
+        : label === "post setup both arms return"
+          ? ["  await page.setViewportSize({ width: 375, height: 800 });", "  if (page) return; else return;", '  await expect(page.getByRole("navigation")).toBeVisible();']
+          : label === "try return before setup"
+            ? ["  try { return; } finally {}", "  await page.setViewportSize({ width: 375, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']
+            : label === "try throw before setup"
+              ? ['  try { throw new Error("stop"); } finally {}', "  await page.setViewportSize({ width: 375, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']
+              : label === "post setup try return"
+                ? ["  await page.setViewportSize({ width: 375, height: 800 });", "  try { return; } finally {}", '  await expect(page.getByRole("navigation")).toBeVisible();']
+          : ["  await page.setViewportSize({ width: 375, height: 800 });", statement];
+    const inert = changed(`e2e/mobile-${label.replaceAll(" ", "-")}.spec.ts`, [
+      `test("mobile ${label}", async ({ page }) => {`, ...body, "});",
+    ].join("\n"), ["expect"]);
+    assert.deepEqual(testIntegrityCandidates([inert.file], file => file === inert.file.path ? inert.source : null)
+      .filter(({ kind }) => kind === "responsive"), [], `${label} does not create a direct executable assertion candidate`);
+  }
+  for (const matcher of [
+    '  await expect(page.getByRole("navigation")).not.toBeEnabled();',
+    '  await expect.soft(page.getByRole("navigation")).not.toBeEnabled();',
+  ]) {
+    const negated = changed("e2e/mobile-negated.spec.ts", [
+      'test("mobile negated", async ({ page }) => {',
+      "  await page.setViewportSize({ width: 375, height: 800 });",
+      matcher,
+      "});",
+    ].join("\n"), ["toBeEnabled"]);
+    assert.equal(testIntegrityCandidates([negated.file], file => file === negated.file.path ? negated.source : null)
+      .filter(({ kind }) => kind === "responsive").length, 1,
+    "a direct negated matcher remains a responsive proof candidate");
+  }
+  for (const declaration of [
+    '  const title = "Navigation";',
+    "  const fixture = { title: \"Navigation\", values: [1, 2, 3] };",
+    "  const pattern = /navigation/i;",
+    '  const nav = page.getByRole("navigation");',
+    '  const nav = page.locator("//nav");',
+    '  const nav = page.getByRole("navigation").locator("button");',
+  ]) {
+    const literalPrelude = changed("e2e/mobile-literal-prelude.spec.ts", [
+      'test("mobile literal prelude", async ({ page }) => {',
+      "  await page.setViewportSize({ width: 375, height: 800 });",
+      declaration,
+      '  await expect(page.getByRole("navigation")).toBeVisible();',
+      "});",
+    ].join("\n"), ["toBeVisible"]);
+    assert.equal(testIntegrityCandidates([literalPrelude.file],
+      file => file === literalPrelude.file.path ? literalPrelude.source : null)
+      .filter(({ kind }) => kind === "responsive").length, 1,
+    "a provably literal variable prelude preserves the responsive candidate");
+  }
+  for (const typed of [
+    '  await expect<unknown>(page.getByRole("navigation")).toBeVisible();',
+    '  await expect.soft<unknown>(page.getByRole("navigation")).toBeVisible();',
+    '  await expect<Promise<unknown>>(page.getByRole("navigation")).toBeVisible();',
+    '  await expect.soft<Promise<unknown>>(page.getByRole("navigation")).toBeVisible();',
+    '  await expect<\n    unknown\n  >(page.getByRole("navigation")).toBeVisible();',
+  ]) {
+    const typedMatcher = changed("e2e/mobile-typed-matcher.spec.ts", [
+      'test("mobile typed matcher", async ({ page }) => {',
+      "  await page.setViewportSize({ width: 375, height: 800 });",
+      typed,
+      "});",
+    ].join("\n"), ["toBeVisible"]);
+    assert.equal(testIntegrityCandidates([typedMatcher.file],
+      file => file === typedMatcher.file.path ? typedMatcher.source : null)
+      .filter(({ kind }) => kind === "responsive").length, 1,
+    "a typed direct matcher remains a responsive proof candidate");
+  }
+  const nestedMatcher = changed("e2e/mobile-nested-matcher.spec.ts", [
+    'test("mobile nested matcher", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    "  await expect(() => expect(1)).not.toThrow();",
+    "});",
+  ].join("\n"), ["toThrow"]);
+  const nestedMatcherCandidates = testIntegrityCandidates([nestedMatcher.file],
+    file => file === nestedMatcher.file.path ? nestedMatcher.source : null)
+    .filter(({ kind }) => kind === "responsive");
+  assert.equal(nestedMatcherCandidates.length, 1, "only the outer terminal matcher owns responsive proof");
+  assert.match(nestedMatcherCandidates[0].assertionLine, /^expect\(\(\) => expect\(1\)\)\.not\.toThrow/);
+  const unreachableSetup = changed("e2e/mobile-unreachable.spec.ts", [
+    'test("mobile unreachable setup", async ({ page }) => {',
+    "  if (false) await page.setViewportSize({ width: 375, height: 800 });",
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  assert.deepEqual(testIntegrityCandidates([unreachableSetup.file],
+    file => file === unreachableSetup.file.path ? unreachableSetup.source : null)
+    .filter(({ kind }) => kind === "responsive"), [],
+  "a literal-false viewport branch does not establish executed responsive setup");
+  for (const [label, lines] of [
+    ["desktop width", ["  await page.setViewportSize({ width: 1280, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']],
+    ["variable width", ["  await page.setViewportSize({ width: mobileWidth, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']],
+    ["duplicate width", ["  await page.setViewportSize({ width: 375, height: 800, width: 375 });", '  await expect(page.getByRole("navigation")).toBeVisible();']],
+    ["late setup", ['  await expect(page.getByRole("navigation")).toBeVisible();', "  await page.setViewportSize({ width: 375, height: 800 });"]],
+    ["unawaited setup", ["  page.setViewportSize({ width: 375, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']],
+    ["second nested setup", ["  await page.setViewportSize({ width: 375, height: 800 });", "  if (true) await page.setViewportSize({ width: 375, height: 800 });", '  await expect(page.getByRole("navigation")).toBeVisible();']],
+  ]) {
+    const invalid = changed(`e2e/mobile-${label.replaceAll(" ", "-")}.spec.ts`, [
+      `test("mobile ${label}", async ({ page }) => {`, ...lines, "});",
+    ].join("\n"), ["toBeVisible"]);
+    assert.deepEqual(testIntegrityCandidates([invalid.file], file => file === invalid.file.path ? invalid.source : null)
+      .filter(({ kind }) => kind === "responsive"), [], `${label} does not establish canonical responsive setup`);
+  }
+
+  const paired = changed("e2e/mobile-pair.spec.ts", [
+    'test("opens navigation", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    '  await expect(page.locator("//nav")).toBeVisible(); await expect(page.getByRole("main")).toBeVisible();',
+    "});",
+  ].join("\n"), ['locator("//nav")', "getByRole"]);
+  const pairedCandidates = testIntegrityCandidates([paired.file], file => file === paired.file.path ? paired.source : null)
+    .filter(({ kind }) => kind === "responsive");
+  assert.deepEqual(pairedCandidates.map(({ id }) => id), [
+    "responsive:e2e/mobile-pair.spec.ts:3:1",
+    "responsive:e2e/mobile-pair.spec.ts:3:2",
+  ], "two changed assertions on one line need separate mutation proofs");
+  const responsiveProof = (candidate, failureLocation = candidate.assertionLocation, mutation = {
+    old: "await page.setViewportSize({ width: 375, height: 800 });",
+    new: "await page.setViewportSize({ width: 1280, height: 800 });",
+  }, proofSource = paired.source) => withReceipt({
+    candidate: candidate.id,
+    path: candidate.path,
+    case: candidate.case,
+    class: candidate.kind,
+    mutation: `break ${candidate.assertionLine}`,
+    command: `pnpm playwright test ${candidate.path}`,
+    observedFailure: "the named responsive assertion failed",
+    restoredPass: true,
+    commit: COMMIT,
+    viewportSource: "registered",
+    desktopWidthMutation: "run at desktop width",
+    viewportSetup: candidate.viewportSetup,
+    assertionLine: candidate.assertionLine,
+    assertionLocation: candidate.assertionLocation,
+    mutationRun: { command: `pnpm playwright test ${candidate.path}`, exitCode: 1,
+      assertionFailure: `AssertionError: responsive assertion failed at ${failureLocation}` },
+  }, proofSource, mutation);
+  const pairedProofs = pairedCandidates.map((candidate) => responsiveProof(candidate));
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: pairedProofs }, [paired.file],
+    file => file === paired.file.path ? paired.source : null, COMMIT, RECEIPT_DIR), []);
+  const relabeled = [pairedProofs[0], responsiveProof(pairedCandidates[1], pairedCandidates[0].assertionLocation)];
+  assert.match(testIntegrityProblems({ testIntegrityProofs: relabeled }, [paired.file],
+    file => file === paired.file.path ? paired.source : null, COMMIT, RECEIPT_DIR).join("\n"), /exact assertion failure/,
+  "one responsive assertion failure cannot be relabeled as proof for its same-line sibling");
+  const wrongMutation = [pairedProofs[0], responsiveProof(pairedCandidates[1], pairedCandidates[1].assertionLocation,
+    { old: 'test("opens navigation"', new: 'test("breaks navigation"' })];
+  assert.match(testIntegrityProblems({ testIntegrityProofs: wrongMutation }, [paired.file],
+    file => file === paired.file.path ? paired.source : null, COMMIT, RECEIPT_DIR).join("\n"), /narrow-to-desktop width mutation/,
+  "an unrelated executable edit cannot pose as the responsive desktop-width mutation");
+  const appendedDesktop = [pairedProofs[0], responsiveProof(pairedCandidates[1], pairedCandidates[1].assertionLocation,
+    { old: "await page.setViewportSize({ width: 375, height: 800 });",
+      new: "await page.setViewportSize({ width: 375, alternate: { width: 1280 }, height: 800 });" })];
+  assert.match(testIntegrityProblems({ testIntegrityProofs: appendedDesktop }, [paired.file],
+    file => file === paired.file.path ? paired.source : null, COMMIT, RECEIPT_DIR).join("\n"), /narrow-to-desktop width mutation/,
+  "adding an unused desktop width while retaining the narrow width cannot satisfy the responsive mutation");
+  const xpathChange = [responsiveProof(pairedCandidates[0], pairedCandidates[0].assertionLocation, {
+    old: 'await page.setViewportSize({ width: 375, height: 800 });\n  await expect(page.locator("//nav")).toBeVisible();',
+    new: 'await page.setViewportSize({ width: 1280, height: 800 });\n  await expect(page.locator("//missing")).toBeVisible();',
+  }), pairedProofs[1]];
+  assert.match(testIntegrityProblems({ testIntegrityProofs: xpathChange }, [paired.file],
+    file => file === paired.file.path ? paired.source : null, COMMIT, RECEIPT_DIR).join("\n"), /raw runner receipt|narrow-to-desktop width mutation/,
+  "a width edit plus an XPath string change is not a width-only responsive mutation");
+  const widthStringChange = [responsiveProof(pairedCandidates[0], pairedCandidates[0].assertionLocation, {
+    old: 'await page.setViewportSize({ width: 375, height: 800 });\n  await expect(page.locator("//nav")).toBeVisible();',
+    new: 'await page.setViewportSize({ width: 1280, height: 800 });\n  await expect(page.locator("//width: 1280")).toBeVisible();',
+  }), pairedProofs[1]];
+  assert.match(testIntegrityProblems({ testIntegrityProofs: widthStringChange }, [paired.file],
+    file => file === paired.file.path ? paired.source : null, COMMIT, RECEIPT_DIR).join("\n"), /raw runner receipt|narrow-to-desktop width mutation/,
+  "width-like text inside a changed string remains a non-width executable difference");
+  const multilineTyped = changed("e2e/mobile-multiline-proof.spec.ts", [
+    'test("mobile multiline typed", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    "  await expect<",
+    "    () => void",
+    '  >(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  const [multilineCandidate] = testIntegrityCandidates([multilineTyped.file],
+    file => file === multilineTyped.file.path ? multilineTyped.source : null)
+    .filter(({ kind }) => kind === "responsive");
+  const multilineProof = responsiveProof(multilineCandidate, multilineCandidate.assertionLocation, {
+    old: "await page.setViewportSize({ width: 375, height: 800 });",
+    new: "await page.setViewportSize({ width: 1280, height: 800 });",
+  }, multilineTyped.source);
+  assert.deepEqual(testIntegrityProblems({ testIntegrityProofs: [multilineProof] }, [multilineTyped.file],
+    file => file === multilineTyped.file.path ? multilineTyped.source : null, COMMIT, RECEIPT_DIR), [],
+  "a multiline nested typed matcher binds its exact raw runner frame");
+  const typedNestedFrame = changed("e2e/mobile-typed-nested-frame.spec.ts", [
+    'test("mobile typed nested frame", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    "  await expect<",
+    "    () => void",
+    "  >(",
+    '    /\\)/.test(")") ? await expect(page.getByRole("navigation")).toBeVisible() : undefined',
+    "  ).toBeUndefined();",
+    "});",
+  ].join("\n"), ["toBeUndefined"]);
+  const [typedOuter] = testIntegrityCandidates([typedNestedFrame.file],
+    file => file === typedNestedFrame.file.path ? typedNestedFrame.source : null)
+    .filter(({ kind }) => kind === "responsive");
+  const innerLine = typedNestedFrame.source.split("\n").findIndex((line) => line.includes("await expect(page")) + 1;
+  const innerColumn = typedNestedFrame.source.split("\n")[innerLine - 1].indexOf("expect(page") + 1;
+  const typedInnerProof = responsiveProof(typedOuter,
+    `${typedNestedFrame.file.path}:${innerLine}:${innerColumn}`, {
+      old: "await page.setViewportSize({ width: 375, height: 800 });",
+      new: "await page.setViewportSize({ width: 1280, height: 800 });",
+    }, typedNestedFrame.source);
+  assert.notDeepEqual(testIntegrityProblems({ testIntegrityProofs: [typedInnerProof] }, [typedNestedFrame.file],
+    file => file === typedNestedFrame.file.path ? typedNestedFrame.source : null, COMMIT, RECEIPT_DIR), [],
+  "a function-typed inner frame after a regex parenthesis cannot authenticate the outer matcher");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: ((fixture = { width: 375 }), 800) });",
+    "page.setViewportSize({ width: 375, height: ((fixture = { width: 1280 }), 800) });",
+  ), true, "a nested width under setViewportSize is not the call's effective viewport width");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: 800, ...{ width: 375 } });",
+    "page.setViewportSize({ width: 1280, height: 800, ...{ width: 375 } });",
+  ), true, "a later spread width makes effective viewport ownership ambiguous");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: 800, width: 375 });",
+    "page.setViewportSize({ width: 1280, height: 800, width: 375 });",
+  ), true, "a duplicate later width makes effective viewport ownership ambiguous");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: 800, width });",
+    "page.setViewportSize({ width: 1280, height: 800, width });",
+  ), true, "a later shorthand width makes effective viewport ownership ambiguous");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: 800, get width() { return 375; } });",
+    "page.setViewportSize({ width: 1280, height: 800, get width() { return 375; } });",
+  ), true, "a later width accessor makes effective viewport ownership ambiguous");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: 800 });\npage.setViewportSize({ width: 375, height: 800, ...fixture });",
+    "page.setViewportSize({ width: 1280, height: 800 });\npage.setViewportSize({ width: 375, height: 800, ...fixture });",
+  ), true, "a later ambiguous viewport call invalidates the whole desktop-width proof");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: 800 });\npage.setViewportSize(options);",
+    "page.setViewportSize({ width: 1280, height: 800 });\npage.setViewportSize(options);",
+  ), true, "a later variable viewport call invalidates the whole desktop-width proof");
+  assert.notEqual(viewportWidthMutation(
+    "page.setViewportSize({ width: 375, height: 800 });\npage.setViewportSize();",
+    "page.setViewportSize({ width: 1280, height: 800 });\npage.setViewportSize();",
+  ), true, "a later argumentless viewport call invalidates the whole desktop-width proof");
+
+  const longFixture = changed("e2e/mobile-navigation-long.spec.ts", [
+    'test("mobile navigation opens on narrow viewport", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    "  // } does not close the test callback",
+    '  // test("desktop placeholder") is not a declaration',
+    '  // `test("desktop placeholder") is text`',
+    '  // /test("desktop placeholder")/',
+    "  // /}/",
+    ...Array.from({ length: 40 }, (_, index) => `  // filler ${index}`),
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  const longCandidates = testIntegrityCandidates([longFixture.file], file => file === longFixture.file.path ? longFixture.source : null);
+  assert.equal(longCandidates.filter(({ kind }) => kind === "responsive").length, 1,
+    "long E2E cases retain their enclosing responsive test name");
+
+  const duplicateNames = changed("e2e/mobile-duplicate.spec.ts", [
+    'describe("header", () => {',
+    '  test("mobile layout", async ({ page }) => {',
+    "    await page.setViewportSize({ width: 375, height: 800 });",
+    '    await expect(page.locator("header")).toBeVisible();',
+    "  });",
+    "});",
+    'describe("footer", () => {',
+    '  test("mobile layout", async ({ page }) => {',
+    "    await page.setViewportSize({ width: 375, height: 800 });",
+    '    await expect(page.locator("footer")).toBeVisible();',
+    "  });",
+    "});",
+  ].join("\n"), ['locator("header")', 'locator("footer")']);
+  const duplicateCandidates = testIntegrityCandidates([duplicateNames.file], file => file === duplicateNames.file.path ? duplicateNames.source : null);
+  assert.equal(duplicateCandidates.filter(({ kind }) => kind === "responsive").length, 2,
+    "duplicate leaf names in separate test blocks each need proof");
+
+  const suiteName = changed("e2e/mobile-suite.spec.ts", [
+    'describe("mobile navigation", () => {',
+    "  const closingBrace = /}/;",
+    '  test("opens navigation", async ({ page }) => {',
+    "    await page.setViewportSize({ width: 375, height: 800 });",
+    '    await expect(page.getByRole("navigation")).toBeVisible();',
+    "  });",
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  const suiteCandidates = testIntegrityCandidates([suiteName.file], file => file === suiteName.file.path ? suiteName.source : null);
+  assert.equal(suiteCandidates.filter(({ kind }) => kind === "responsive").length, 1,
+    "a responsive suite title applies to its plain leaf test");
+
+  const eachCase = changed("e2e/mobile-each.spec.ts", [
+    "// 😀 keeps UTF-16 offsets aligned",
+    'test.each([/\\)/])("mobile navigation %s", async (_row, { page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    ...Array.from({ length: 40 }, (_, index) => `  // filler ${index}`),
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  const eachCandidates = testIntegrityCandidates([eachCase.file], file => file === eachCase.file.path ? eachCase.source : null);
+  assert.equal(eachCandidates.filter(({ kind }) => kind === "responsive").length, 1,
+    "regex tokens inside test.each data do not truncate the declaration");
+
+  const functionCallbacks = changed("e2e/mobile-function.spec.ts", [
+    'describe("mobile navigation", function mobileSuite() {',
+    '  test("opens navigation", async function opensNavigation() {',
+    "    await page.setViewportSize({ width: 375, height: 800 });",
+    '    await expect(page.getByRole("navigation")).toBeVisible();',
+    "  });",
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  const functionCandidates = testIntegrityCandidates([functionCallbacks.file], file => file === functionCallbacks.file.path ? functionCallbacks.source : null);
+  assert.equal(functionCandidates.filter(({ kind }) => kind === "responsive").length, 1,
+    "function callback suites retain responsive context");
+
+  const onlyCase = changed("e2e/mobile-only.spec.ts", [
+    'test.only("mobile navigation", async ({ page }) => {',
+    "  await page.setViewportSize({ width: 375, height: 800 });",
+    '  await expect(page.getByRole("navigation")).toBeVisible();',
+    "});",
+  ].join("\n"), ["toBeVisible"]);
+  const onlyCandidates = testIntegrityCandidates([onlyCase.file], file => file === onlyCase.file.path ? onlyCase.source : null);
+  assert.equal(onlyCandidates.filter(({ kind }) => kind === "responsive").length, 1,
+    "supported test modifiers retain their responsive proof candidate");
 });
 
 test("AC-4 absence assertions reject missing or unrun proof and accept an executed failure", () => {

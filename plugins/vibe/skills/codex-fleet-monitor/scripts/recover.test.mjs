@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -12,6 +12,7 @@ import {
   acquireLock, DEFAULT_CONTINUE_PROMPT, lockHolder, readConfig, recoverPass, reportLine,
 } from './recover.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { isolatedVibeEnvironment, makeHome } from '../../vibe/scripts/test-fixtures.mjs';
 
 const { connectDirect, decodeFrames } = await vibeCore("lib/codex-fleet-monitor/scripts/liveness.mjs");
 
@@ -21,6 +22,61 @@ const SYSTEM_ERROR = 'The App Server thread is in a system-error state';
 const OVERLOADED = { message: 'Selected model is at capacity. Please try a different model.', codexErrorInfo: 'serverOverloaded', additionalDetails: null };
 const MINUTE = 60_000;
 const READS = new Set(['initialize', 'thread/read', 'thread/turns/list', 'thread/items/list']);
+
+async function stopChild(child, step, graceMs = 30_000, processGroup = false) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const closed = new Promise((resolve) => child.once('close', resolve));
+  if (processGroup && child.pid > 1) process.kill(-child.pid, 'SIGTERM'); else child.kill('SIGTERM');
+  const deadline = () => new Promise((resolve) => { const timer = setTimeout(() => resolve(false), graceMs); timer.unref(); });
+  const graceful = await Promise.race([closed.then(() => true), deadline()]);
+  if (!graceful && child.exitCode === null && child.signalCode === null) {
+    if (processGroup && child.pid > 1) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL');
+  }
+  const ended = await Promise.race([closed.then(() => true), deadline()]);
+  if (!ended) throw new Error(`${step} did not exit after SIGKILL`);
+}
+
+async function waitForReadyLine(child, text, step, timeoutMs = 60_000) {
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk) => { stdout += chunk; });
+  child.stderr?.on('data', (chunk) => { stderr += chunk; });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer;
+    const done = async (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener('error', onError);
+      child.removeListener('exit', onExit);
+      child.stdout?.removeListener('data', onData);
+      if (error) {
+        let cleanup = '';
+        try { await stopChild(child, step, Math.min(500, timeoutMs)); }
+        catch (failure) { cleanup = `; cleanup: ${failure.message}`; }
+        reject(new Error(`${error}; stdout=${stdout.trim()}; stderr=${stderr.trim()}${cleanup}`));
+      }
+      else resolve({ stdout, stderr });
+    };
+    const onError = (error) => void done(`${step} failed to start: ${error.message}`);
+    const onExit = (code, signal) => void done(`${step} exited before its ready line (code ${code}, signal ${signal})`);
+    const onData = () => { if (stdout.includes(text)) void done(null); };
+    child.on('error', onError);
+    child.on('exit', onExit);
+    child.stdout?.on('data', onData);
+    timer = setTimeout(() => void done(`${step} never printed its ready line within ${timeoutMs}ms`), timeoutMs);
+  });
+}
+
+function runStep(step, command, args, { timeoutMs = 25_000, ...options } = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { ...options, encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL' }, (error, stdout, stderr) => {
+      if (error && typeof error.code !== 'number') reject(new Error(`${step} did not exit: ${error.message}; stdout=${stdout}; stderr=${stderr}`));
+      else resolve({ status: error?.code ?? 0, stdout, stderr });
+    });
+  });
+}
 
 function serverFrame(text) {
   const body = Buffer.from(text);
@@ -318,30 +374,48 @@ test('a lock refuses a second holder while the first lives, and a dead holder is
   assert.equal(readFileSync(path, 'utf8').trim(), String(process.pid));
 });
 
-test('a second supervisor on the host exits while the first holds the lock', { timeout: 20_000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'fleet-supervise-'));
-  const env = { ...process.env, FLEET_SUPERVISOR_LOCK: join(dir, 'supervisor.lock'), LOCAL_STATE_DIR: dir };
-  const first = spawn(process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+test('a second supervisor on the host exits while the first holds the lock', { timeout: 150_000 }, async (t) => {
+  const fixture = makeHome('fleet-supervise-');
+  const dir = fixture.root;
+  const env = { ...isolatedVibeEnvironment(fixture.home), FLEET_SUPERVISOR_LOCK: join(dir, 'supervisor.lock'), LOCAL_STATE_DIR: dir, PATH: '' };
+  const first = spawn(process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  t.after(async () => {
+    try { await stopChild(first, 'first supervisor cleanup', 5000, true); }
+    finally { fixture.cleanup(); }
+  });
   try {
-    await new Promise((resolve, reject) => {
-      first.on('error', reject);
-      first.stdout.on('data', (chunk) => { if (String(chunk).includes('supervise: pid')) resolve(); });
-    });
+    await waitForReadyLine(first, 'supervise: pid', 'first supervisor');
     assert.equal(lockHolder(env.FLEET_SUPERVISOR_LOCK), first.pid);
-    const second = spawnSync(process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { env, encoding: 'utf8', timeout: 10_000 });
+    const second = await runStep('second supervisor', process.execPath, [join(HERE, 'supervise.mjs'), dir, '3600'], { cwd: dir, env });
     assert.equal(second.status, 3);
     assert.match(second.stderr, new RegExp(`another supervisor \\(pid ${first.pid}\\)`));
 
     // While a supervisor runs, a watcher's own pass steps aside without touching the App Server.
-    const watcherPass = spawnSync(process.execPath, [join(HERE, 'recover.mjs'), dir, 'w1=T1'], { env: { ...env, PATH: '' }, encoding: 'utf8', timeout: 10_000 });
+    const watcherPass = await runStep('watcher pass', process.execPath, [join(HERE, 'recover.mjs'), dir, 'w1=T1'], { cwd: dir, env });
     assert.equal(watcherPass.status, 0);
     assert.equal(watcherPass.stdout, '');
   } finally {
-    const exited = new Promise((resolve) => first.on('exit', resolve));
-    first.kill('SIGTERM');
-    await exited;
+    await stopChild(first, 'first supervisor cleanup', 5000, true);
   }
-  assert.equal(existsSync(env.FLEET_SUPERVISOR_LOCK), false, 'the lock is released on SIGTERM');
+  for (let attempt = 0; attempt < 40 && existsSync(env.FLEET_SUPERVISOR_LOCK); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(existsSync(env.FLEET_SUPERVISOR_LOCK), false,
+    `the lock is released on SIGTERM (exit=${first.exitCode}, signal=${first.signalCode}, lock=${existsSync(env.FLEET_SUPERVISOR_LOCK) ? readFileSync(env.FLEET_SUPERVISOR_LOCK, 'utf8').trim() : 'gone'})`);
+});
+
+test('ISS-14184 a stalled supervisor ready line fails by step name and is killed', { timeout: 5_000 }, async () => {
+  const first = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const started = Date.now();
+  await assert.rejects(waitForReadyLine(first, 'supervise: pid', 'first supervisor', 250),
+    /first supervisor never printed its ready line within 250ms; stdout=; stderr=/);
+  assert.ok(Date.now() - started < 1_000);
+  assert.notEqual(first.signalCode, null, 'the stalled supervisor is dead after the deadline');
+});
+
+test('AC-020 a stalled supervisor probe reports the bounded subprocess by name', { timeout: 5000 }, async () => {
+  await assert.rejects(runStep('watcher pass', process.execPath, ['-e', 'setTimeout(() => process.exit(0), 1000)'], { timeoutMs: 250 }),
+    /watcher pass did not exit/);
 });
 
 test('a recovery pass reads each thread status and newest turn, never the history', async () => {

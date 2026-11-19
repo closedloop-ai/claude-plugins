@@ -1,6 +1,5 @@
-/**
- * The Fable model ids whose trace-proven review clears a Claude cloud import's independent-review gate
- * (cloud-worker.mjs). The Claude launcher runs a role on any model it is given.
- * A new Fable version is one entry here.
- */
-export const FABLE_REVIEW_MODELS = Object.freeze(["claude-fable-5-2"]);
+// This module moved to vibe. A vibe older than this vibe-core still loads it from here, so it says how to fix that.
+import { writeSync } from "node:fs";
+
+writeSync(2, "vibe-core is newer than your vibe. To fix: run `claude plugin update vibe@closedloop-ai` then start a new Claude Code session, or run `codex plugin add vibe@closedloop-ai` then quit and reopen the Codex app.\n");
+process.exit(1);

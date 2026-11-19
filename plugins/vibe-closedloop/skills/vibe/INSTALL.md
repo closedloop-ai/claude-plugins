@@ -38,7 +38,7 @@ CODEX=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 ```
 
 vibe-core carries vibe's hooks. Codex runs a plugin's hooks only after you
-approve them: open Codex once and approve vibe-core's hooks in /hooks. Each
+approve them, by the steps vibe's setup check names (in the Codex CLI, /hooks). Each
 vibe-core release can ask again; a vibe release does not. vibe's setup check
 says when Codex reports that an approval is needed.
 

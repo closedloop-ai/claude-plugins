@@ -38,14 +38,29 @@ const { exitOnProviderBroken } = await vibeCore("lib/vibe/scripts/provider.mjs")
 const CODE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*|\{\s*\/\*)/;
 // "bug" and "regression" alone fired on ten legitimate comments in 40 main commits (feature names, story descriptions).
-const EXCUSE = /\b(?:pre-?existing|defects?|on main|work(?:s|ing)?[ -]?around|known (?:issue|bug|failure|problem|defect)s?)\b/i;
+const EXCUSE = /(?<![\w-])pre-?existing\b|\b(?:defects?|on main|work(?:s|ing)?[ -]?around|known (?:issue|bug|failure|problem|defect)s?)\b/i;
 const COMPOUND_NAME = /\b(?:[a-z][a-z0-9]*[A-Z]|[A-Z][a-z0-9]+[A-Z])[A-Za-z0-9]*\b/g;
 const DEFINITION = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*/g;
 const NEGATED_CONDITION = /!\s*([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\b(?!\s*\()/g;
+const ONE_READER_CLAIM = /\b(?:read|used|imported|called)\s+at\s+(?:one|1)\s+site\b|\b(?:only|just)\s+(?:one|1)\s+(?:reader|site|caller|consumer)\b/i;
+const EXPORTED_SYMBOL = /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|class|function|type|interface)\s+([A-Za-z_$][\w$]*)\b/;
+const SESSION_POINTER = /(?<![\w.-])rulings\.md(?:\s+\d+)?\b|\bDEC-\d+\b|\(fix-\d+\)|(?:^|[\s'"`])(?:decision-tables|vibe-plans)\//gi;
+// The tracked criterion's trigger list for an agent decision cited as the source: `orchestrator`, `lane`, `ruled`, `decision <n>`,
+// or a decision-table row id; a lane counts only beside a decision verb. A bare "session" or "agent" is not a trigger.
+const AGENT_DECISION = /\borchestrator\b|\bruled\b(?!\s+out\b)|\blanes?(?:'s)?\s+(?:decided|decisions?|rul(?:ed|ings?)|chose|choices?|picked)\b|\bdecision\s+\d+\b/i;
+// A decision-table row id is upper case and holds a digit (DT-7, ROW-P2-01), so "row-actions", "dt-label" and an
+// all-letter id are not ids.
+const TABLE_ROW_ID = /\b(?:DT|ROW|DEC)-(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*\b/;
+const PRODUCT_DECISION = /\b(?:order|first|last|word(?:ing)?|glyph|copy|show|hide|visible|visibility|rank)\w*\b/i;
+const HUMAN_COMMENT_URL = /https?:\/\/\S+\/(?:pull|issues)\/\d+(?:#\S+)?/i;
 const OPEN = { "(": ")", "{": "}", "[": "]" };
 
 function codeFiles(files) {
   return files.filter((file) => file.status !== "D" && CODE_FILE.test(file.path) && !isTestFile(file.path));
+}
+
+function commentFiles(files) {
+  return files.filter((file) => file.status !== "D" && CODE_FILE.test(file.path));
 }
 
 /** Contiguous runs of added comment lines, as {line, text} blocks. */
@@ -145,10 +160,63 @@ export function checkGuardedConstants(files, repo, add) {
   }
 }
 
+/** A count claim above an export is checked against the repository's actual reader paths. */
+export function checkCommentClaims(files, repo, add) {
+  for (const file of codeFiles(files)) {
+    const lines = (repo.head(file.path) ?? "").split("\n");
+    for (const block of addedCommentBlocks(file)) {
+      const claim = block.map((entry) => entry.text).join(" ");
+      if (!ONE_READER_CLAIM.test(claim)) continue;
+      const symbol = lines.slice(block.at(-1).line, block.at(-1).line + 8)
+        .map((line) => EXPORTED_SYMBOL.exec(line)?.[1]).find(Boolean);
+      if (!symbol) continue;
+      const readers = (repo.wordFiles?.(symbol) ?? []).filter((candidate) => candidate !== file.path && CODE_FILE.test(candidate) && !isTestFile(candidate)).sort();
+      if (readers.length > 1) add("claim-vs-readers", file.path, block[0].line,
+        `comment says ${symbol} has one reader, but ${readers.length} reader files name it: ${readers.join(", ")}`,
+        "state only the local contract, or verify and describe every current reader without a false count");
+    }
+  }
+}
+
+/** Session-only labels and private paths cannot become committed code comments. */
+export function checkSessionPointers(files, repo, add) {
+  const privateIds = [...new Set(repo.sessionIds ?? [])];
+  for (const file of commentFiles(files)) {
+    for (const block of addedCommentBlocks(file)) {
+      const text = block.map((entry) => entry.text).join(" ");
+      const pointers = [...text.matchAll(SESSION_POINTER)].map((match) => match[0].trim());
+      for (const id of privateIds.filter((candidate) => new RegExp(`(?<![\\w.-])${escape(candidate)}(?![\\w.-])`).test(text))) pointers.push(id);
+      for (const pointer of [...new Set(pointers)]) add("session-internal-pointer", file.path, block[0].line,
+        `comment cites session-only pointer ${pointer}, which a repository reader cannot resolve`,
+        "replace it with a durable work-item or human-comment URL, or remove the private pointer");
+    }
+  }
+}
+
+/** Only a human source decides user-visible ordering, wording or visibility; a comment naming an agent as the decider is flagged. */
+export function checkAgentDecisionCitations(files, repo, add) {
+  for (const file of commentFiles(files)) {
+    for (const block of addedCommentBlocks(file)) {
+      // Markers stripped, so a citation wrapped across comment lines reads as one sentence.
+      const text = block.map((entry) => commentBody(entry.text)).join(" ");
+      const ticketed = repo.rules?.ticketed;
+      if (ticketed) ticketed.lastIndex = 0;
+      const tableId = (repo.sessionIds ?? []).some((id) => text.includes(id));
+      if (!(AGENT_DECISION.test(text) || TABLE_ROW_ID.test(text) || tableId) || !PRODUCT_DECISION.test(text) || HUMAN_COMMENT_URL.test(text) || ticketed?.test(text)) continue;
+      add("agent-decision-citation", file.path, block[0].line,
+        "comment cites an agent or session decision as the source of user-visible ordering, wording or visibility",
+        "cite the ticket, PRD or durable human comment that decides the behavior; an agent decision is not product authority");
+    }
+  }
+}
+
 /** The blocking comment rules, for diff-rules.mjs. */
 export function checkCommentRules(files, repo, add) {
   checkExcuseComments(files, add, repo.rules?.ticketed);
   checkGuardedConstants(files, repo, add);
+  checkCommentClaims(files, repo, add);
+  checkSessionPointers(files, repo, add);
+  checkAgentDecisionCitations(files, repo, add);
 }
 
 /** Findings that need the reviewer's judgment, as {rule, file, line, problem, fix}. */
@@ -262,4 +330,9 @@ function citations(repo) {
   const pattern = repo.rules?.citations ?? citationPattern(null);
   pattern.lastIndex = 0;
   return pattern;
+}
+
+/** A comment line's text without its `//`, `/*`, `*` or closing marker. */
+export function commentBody(text) {
+  return text.replace(/^\s*(?:\/\/+|\/\*+|\*+)\s?/, "").replace(/\*\/\s*$/, "").trim();
 }

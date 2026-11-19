@@ -1,7 +1,13 @@
 {
   "schemaVersion": 1,
   "createdAt": "2026-10-30",
-  "owner": "vibe-maintainers",
-  "deadline": "2026-11-13",
-  "entries": []
+  "owner": "ISS-14116",
+  "deadline": "2026-11-25",
+  "entries": [
+    {
+      "runtime": "codex",
+      "case": "pm-generic-repo-gates-not-shipped",
+      "reason": "Failed ends-in-the-pull-request in 3 of 4 Codex samples on 2026-11-18; a generic-arm case #426 added that had not run in a nightly. Fix in the next push of #438."
+    }
+  ]
 }

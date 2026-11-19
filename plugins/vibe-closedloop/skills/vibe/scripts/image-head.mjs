@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// This command moved to vibe-core; its vibe path keeps working through this wrapper.
+// This command lives in vibe's lib/ folder; its skill path keeps working through this wrapper.
 import { runVibeCoreMain } from "../../../shared/vibe-core.mjs";
 
 await runVibeCoreMain("lib/vibe/scripts/image-head.mjs");

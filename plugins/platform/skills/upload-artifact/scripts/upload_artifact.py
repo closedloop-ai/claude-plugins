@@ -67,6 +67,9 @@ class _Args(argparse.Namespace):
     workstream_id: str | None
     artifact_id: str | None
     verify: bool
+    status: str | None
+    assignee_id: str | None
+    repository_selection: str | None
 
 
 _API_KEY_ENV_VAR = "CLOSEDLOOP_API_KEY"
@@ -161,6 +164,12 @@ async def _create_document(
         tool_args["projectId"] = args.project_id
     if args.workstream_id:
         tool_args["workstreamId"] = args.workstream_id
+    if args.status:
+        tool_args["status"] = args.status
+    if args.assignee_id:
+        tool_args["assigneeId"] = args.assignee_id
+    if args.repository_selection:
+        tool_args["repositorySelection"] = json.loads(args.repository_selection)
 
     result = await session.call_tool("create-document", tool_args)
     if result.is_error:
@@ -191,13 +200,12 @@ async def upload(args: _Args) -> dict:
         return {"error": f"File not found: {file_path}"}
 
     content = file_path.read_text(encoding="utf-8")
+    if args.artifact_id:
+        return await _upload_version(args, args.artifact_id, content)
 
     try:
         async with _connect(args) as session:
-            if args.artifact_id:
-                output = await _version_document(session, args.artifact_id, content)
-            else:
-                output = await _create_document(session, args, content)
+            output = await _create_document(session, args, content)
 
             if "error" not in output and args.verify:
                 output["verify"] = await _verify_document(
@@ -207,6 +215,109 @@ async def upload(args: _Args) -> dict:
             return output
     except (Exception, ExceptionGroup) as exc:
         return _format_exception(exc)
+
+
+async def _upload_version(args: _Args, document_id: str, content: str) -> dict:
+    """Version a document; after a transport error, read it back before anyone retries.
+
+    The server can save the version and still fail the response stream (an SSE
+    event over its size limit), so a blind retry makes a duplicate version.
+    """
+    try:
+        async with _connect(args) as session:
+            baseline = await _latest_version(session, document_id)
+    except (Exception, ExceptionGroup) as exc:
+        baseline = _format_exception(exc)
+    if "error" in baseline:
+        # Nothing was written yet.
+        return {**baseline, "retry_safe": True}
+    try:
+        async with _connect(args) as session:
+            output = await _version_document(session, document_id, content)
+            if "error" not in output and args.verify:
+                output["verify"] = await _verify_document(
+                    session, document_id, len(content)
+                )
+            return output
+    except (Exception, ExceptionGroup) as exc:
+        transport_error = _format_exception(exc)
+    return await _read_back_version(
+        args, document_id, content, baseline["latest_version"], transport_error
+    )
+
+
+async def _read_back_version(
+    args: _Args,
+    document_id: str,
+    content: str,
+    baseline_version: int,
+    transport_error: dict,
+) -> dict:
+    """Decide from the stored document whether the failed write saved the content."""
+    try:
+        async with _connect(args) as session:
+            latest = await _latest_version(session, document_id)
+    except (Exception, ExceptionGroup) as exc:
+        latest = _format_exception(exc)
+    base = {"transport_error": transport_error["error"], "baseline_version": baseline_version}
+    if "error" in latest:
+        return {
+            "error": "Transport error, and the document could not be read back; do not retry",
+            "retry_safe": False,
+            "read_back_error": latest["error"],
+            **base,
+        }
+    expected_length = _server_length(content)
+    if latest["latest_version"] == baseline_version:
+        return {
+            "error": "Transport error before the version was saved; a retry is safe",
+            "retry_safe": True,
+            **base,
+        }
+    if (
+        latest["latest_version"] == baseline_version + 1
+        and latest["content_length"] == expected_length
+    ):
+        return {
+            "mode": "version",
+            "artifact_id": document_id,
+            "document_id": document_id,
+            "content_length": len(content),
+            "status": "success",
+            "recovered_after_transport_error": True,
+            "saved_version": latest["latest_version"],
+            **base,
+        }
+    return {
+        "error": "Transport error, and the stored latest version does not match this file; do not retry",
+        "retry_safe": False,
+        "stored_version": latest["latest_version"],
+        "stored_content_length": latest["content_length"],
+        "expected_content_length": expected_length,
+        **base,
+    }
+
+
+async def _latest_version(session: ClientSession, document_id: str) -> dict:
+    """The document's latest version number and that version's stored length."""
+    result = await session.call_tool("get-document", {"documentId": document_id})
+    if result.is_error:
+        return {"error": "get-document failed", **_error_details(result)}
+    text = _extract_text(result)
+    parsed = json.loads(text) if text else {}
+    version = parsed.get("version") if isinstance(parsed, dict) else None
+    number = parsed.get("latestVersion") if isinstance(parsed, dict) else None
+    if not isinstance(number, int) and isinstance(version, dict):
+        number = version.get("version")
+    length = version.get("contentLength") if isinstance(version, dict) else None
+    if not isinstance(number, int) or not isinstance(length, int):
+        return {"error": "get-document returned no latest version"}
+    return {"latest_version": number, "content_length": length}
+
+
+def _server_length(content: str) -> int:
+    """The length the server reports: JavaScript string length, in UTF-16 code units."""
+    return len(content.encode("utf-16-le")) // 2
 
 
 async def _verify_document(
@@ -330,6 +441,14 @@ def main() -> None:
     parser.add_argument(
         "--artifact-id",
         help="Existing document ID or slug (PRD-*/PLN-*/FEA-*) (version mode).",
+    )
+    parser.add_argument(
+        "--status", help="Initial status (create mode), for example DRAFT."
+    )
+    parser.add_argument("--assignee-id", help="Assignee user ID (create mode).")
+    parser.add_argument(
+        "--repository-selection",
+        help="repositorySelection as a JSON object (create mode).",
     )
     parser.add_argument(
         "--verify",

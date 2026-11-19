@@ -8,7 +8,7 @@ import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify as classifyIn, parsePathList, pathKind as kindIn, switchOn, validateManifest } from "./vibe-triage.mjs";
 import { repositoryAreas } from "./area-paths.mjs";
-import { bindProvider, bindProviderInProcess, makeHome, PROVIDER_BINDING } from "./test-fixtures.mjs";
+import { bindProvider, bindProviderInProcess, makeHome, PROVIDER_BINDING, seedAlignedDecisionTable } from "./test-fixtures.mjs";
 
 // The repository the ClosedLoop provider serves, whose areas these cases name.
 const AREAS = repositoryAreas(PROVIDER_BINDING);
@@ -21,11 +21,12 @@ import { COMMIT as RULED_COMMIT, FILES as RULED_FILES, RULINGS, ruledEvidence } 
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
-const { abandonDispatch, cloudPrProblem, codexStatus, followupClaude, generateBrief, hydrateCloudRequest, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
+const { abandonDispatch, cloudPrProblem, codexStatus, completeFromCommit, followupClaude, generateBrief, hydrateCloudRequest, importFromGit, importResult, pollTask, readyForPr, recordCloudEvidence, refreshImportWitness, remoteTrigger, startClaude, startCodex, validateRequest, verifyAuthor } = await vibeCore("lib/vibe/scripts/cloud-worker.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const PLACEMENT = 'Delivery placement: unrelated: no in-flight unit owns this standalone fixture change.\n';
 
 // The in-process cloud dispatch cases name tracker tickets, which need a tracker bound.
 bindProviderInProcess(after);
@@ -377,9 +378,11 @@ test('AC-3: polling stops at completion and reports elapsed wall time', async ()
   });
   assert.equal(result.wallMs, 1000);
   assert.equal(reads, 2);
-  await assert.rejects(() => pollTask(receipt, { maxWallMs: 1000, pollMs: 1000 }, {
+  const overdue = await pollTask(receipt, { maxWallMs: 1000, pollMs: 1000 }, {
     codex: () => ({ status: 'pending' }), sleep: async (ms) => { current += ms; }, now: () => current,
-  }), /exceeded/);
+  });
+  assert.equal(overdue.status, 'overdue');
+  assert.equal(overdue.remoteStatus, 'pending');
 });
 
 test('AC-3: Claude active session becomes complete only when its worker is idle', async () => {
@@ -519,7 +522,13 @@ test('ISS-13998 AC-5: abandon ends a dispatch for good and removes the routine i
     throw new Error(`unexpected ${action}`);
   };
   const executor = async (entries) => { for (const entry of entries) { removed.push([entry.id, entry.name]); gone.add(entry.id); } };
-  const abandoned = await abandonDispatch(request, { home, remote, executor, stderr: () => {} });
+  const receiptFile = path.join(gitDir, 'cloud-worker-iss-13804.json');
+  const before = readFileSync(receiptFile, 'utf8');
+  const probe = await abandonDispatch(request, { home, remote, executor, stderr: () => {} });
+  assert.deepEqual([probe.confirmRequired, probe.changed, probe.wouldChange.to], [true, false, 'abandoned'], 'without --confirm abandon only says what it would do');
+  assert.equal(readFileSync(receiptFile, 'utf8'), before);
+  assert.deepEqual(removed, []);
+  const abandoned = await abandonDispatch(request, { confirm: true, home, remote, executor, stderr: () => {} });
   assert.equal(abandoned.status, 'abandoned');
   assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'cloud-worker-iss-13804.json'), 'utf8')).status, 'abandoned');
   assert.deepEqual(removed, [['trig_old_dispatch', 'ISS-13804 cloud worker']]);
@@ -530,6 +539,96 @@ test('ISS-13998 AC-5: abandon ends a dispatch for good and removes the routine i
   const again = spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cloud-worker.mjs'), 'dispatch', '--request', file], { cwd: worktree, encoding: 'utf8', env: { ...process.env, HOME: home, ...bindProvider(home) } });
   assert.equal(again.status, 2);
   assert.match(again.stderr, /cloud task already ended: abandoned/, 'an abandoned dispatch is never resumed');
+});
+
+/** A pushed cloud branch with one operator commit; returns its SHA with the session branch checked out again. */
+function pushedCloudCommit(worktree, text = 'cloud edit\n') {
+  gitAt(worktree, 'switch', '-c', 'cloud/iss-13804-cloud');
+  writeFileSync(path.join(worktree, 'existing.txt'), text);
+  gitAt(worktree, 'add', '.');
+  gitAt(worktree, 'commit', '-m', 'cloud change');
+  gitAt(worktree, 'push', 'origin', 'cloud/iss-13804-cloud');
+  const commit = gitAt(worktree, 'rev-parse', 'HEAD');
+  gitAt(worktree, 'switch', 'vibe/iss-13804-cloud-dispatch');
+  return commit;
+}
+
+test('ISS-14116 item 41: the ISS-14259 shape (commit pushed, poll timed out, a probe ran abandon) recovers through complete-from-commit and imports', async (t) => {
+  const { worktree, gitDir } = vibeFixture();
+  const home = mkdtempSync(path.join(tmpdir(), 'cloud-ledger-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const commit = pushedCloudCommit(worktree);
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  // The receipt dispatch saved before its poll stopped at the time limit: no status was ever recorded.
+  completedReceipt(request, gitDir, 'run_1', { status: undefined, runId: 'run_1', sessionId: 'session_1' });
+  const receiptFile = path.join(gitDir, 'cloud-worker-iss-13804.json');
+  const requestFile = path.join(gitDir, 'cloud-request.json');
+  writeFileSync(requestFile, JSON.stringify(request));
+  const cli = (...args) => spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'cloud-worker.mjs'), ...args, '--request', requestFile], { cwd: worktree, encoding: 'utf8', env: { ...process.env, HOME: home, ...bindProvider(home) } });
+  const timedOut = readFileSync(receiptFile, 'utf8');
+  const probe = cli('abandon');
+  assert.equal(probe.status, 1, probe.stderr);
+  assert.equal(JSON.parse(probe.stdout).confirmRequired, true);
+  assert.equal(readFileSync(receiptFile, 'utf8'), timedOut, 'a probe changes nothing');
+  await abandonDispatch(request, { confirm: true, home, remote: () => { throw new Error('no routine is recorded'); }, executor: async () => {}, stderr: () => {} });
+  assert.equal(JSON.parse(readFileSync(receiptFile, 'utf8')).status, 'abandoned');
+  assert.throws(() => completeFromCommit(request, { commit: 'f'.repeat(40), confirm: true }), new RegExp(`is at ${commit}, not f{40}`));
+  const dry = completeFromCommit(request, { commit });
+  assert.deepEqual([dry.confirmRequired, dry.wouldChange.from, dry.wouldChange.to], [true, 'abandoned', 'completed']);
+  assert.equal(JSON.parse(readFileSync(receiptFile, 'utf8')).status, 'abandoned');
+  const completed = completeFromCommit(request, { commit, confirm: true });
+  assert.deepEqual([completed.status, completed.completedFrom.commit, completed.completedFrom.priorStatus], ['completed', commit, 'abandoned']);
+  assert.throws(() => completeFromCommit(request, { commit, confirm: true }), /cloud receipt is completed/);
+  const imported = importResult(request, JSON.parse(readFileSync(receiptFile, 'utf8')));
+  assert.match(imported.changed, /existing.txt/);
+  assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8')).result.commit, commit);
+});
+
+test('ISS-14116 item 41: import-from-git records the witness only when the worktree holds exactly the cloud commit\'s diff', () => {
+  const { worktree, gitDir } = vibeFixture();
+  const commit = pushedCloudCommit(worktree);
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  const receipt = completedReceipt(request, gitDir, 'run_1', { runId: 'run_1', sessionId: 'session_1' });
+  const witnessFile = path.join(gitDir, 'vibe-cloud-import.json');
+  assert.throws(() => importFromGit(request, receipt, { commit, confirm: true }), /is not .* diff/, 'nothing brought in yet');
+  gitAt(worktree, 'cherry-pick', '--no-commit', commit);
+  writeFileSync(path.join(worktree, 'extra.txt'), 'an unrelated local change\n');
+  gitAt(worktree, 'add', 'extra.txt');
+  assert.throws(() => importFromGit(request, receipt, { commit, confirm: true }), /is not .* diff/, 'an extra change is not the commit');
+  gitAt(worktree, 'rm', '--cached', '--quiet', 'extra.txt');
+  rmSync(path.join(worktree, 'extra.txt'));
+  const dry = importFromGit(request, receipt, { commit });
+  assert.equal(dry.confirmRequired, true);
+  assert.equal(existsSync(witnessFile), false);
+  const imported = importFromGit(request, receipt, { commit, confirm: true });
+  assert.match(imported.changed, /existing.txt/);
+  const witness = JSON.parse(readFileSync(witnessFile, 'utf8'));
+  assert.deepEqual([witness.importedBy, witness.result.commit, witness.schema], ['git', commit, 'vibe.cloud-import/1']);
+  assert.match(cloudPrProblem(worktree, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }) ?? '', /stale for the current source/, 'the PR guard reads it as the import witness');
+});
+
+test('ISS-14116 item 41: a commit already merged into HEAD completes from its commit and imports by git, and a local commit ahead of it is refused', () => {
+  const { worktree, gitDir } = vibeFixture();
+  const commit = pushedCloudCommit(worktree);
+  const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  completedReceipt(request, gitDir, 'run_1', { status: 'overdue', runId: 'run_1', sessionId: 'session_1' });
+  gitAt(worktree, 'merge', '--ff-only', commit);
+  const completed = completeFromCommit(request, { commit, confirm: true });
+  assert.deepEqual([completed.status, completed.completedFrom.priorStatus], ['completed', 'overdue']);
+  const imported = importFromGit(request, completed, { commit, confirm: true });
+  assert.equal(JSON.parse(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8')).result.commit, commit);
+  assert.equal(imported.witness, path.join(gitDir, 'vibe-cloud-import.json'));
+
+  const ahead = vibeFixture();
+  const aheadCommit = pushedCloudCommit(ahead.worktree);
+  const aheadRequest = { ...sourcedCloudRequest(ahead.worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
+  completedReceipt(aheadRequest, ahead.gitDir, 'run_1', { status: 'overdue', runId: 'run_1', sessionId: 'session_1' });
+  writeFileSync(path.join(ahead.worktree, 'local.txt'), 'a local commit after dispatch\n');
+  gitAt(ahead.worktree, 'add', 'local.txt');
+  gitAt(ahead.worktree, 'commit', '-m', 'local work');
+  const aheadCompleted = completeFromCommit(aheadRequest, { commit: aheadCommit, confirm: true });
+  gitAt(ahead.worktree, 'cherry-pick', aheadCommit);
+  assert.throws(() => importFromGit(aheadRequest, aheadCompleted, { commit: aheadCommit, confirm: true }), /is not .* diff/, 'the local commit is not the cloud commit');
 });
 
 test('AC-9: cloud CLI refuses local-evidence work before dispatch and generates a brief for code-only work', () => {
@@ -572,7 +671,7 @@ test('DT-16: a fabricated git-init Vibe record is not a creation witness', () =>
   assert.throws(() => importResult({ ...cloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' }, { provider: 'claude', status: 'completed' }), /Vibe-created linked worktree/);
 });
 
-test('AC-4 and AC-5: Claude branch imports its one operator-authored commit into Vibe without committing', () => {
+test('AC-4 AC-5 AC-019: Claude import preserves source and reports stale-table handoff refusal', () => {
   const { worktree, gitDir } = vibeFixture();
   gitAt(worktree, 'switch', '-c', 'cloud/iss-13804-cloud');
   writeFileSync(path.join(worktree, 'existing.txt'), 'cloud edit\n');
@@ -582,13 +681,22 @@ test('AC-4 and AC-5: Claude branch imports its one operator-authored commit into
   gitAt(worktree, 'switch', 'vibe/iss-13804-cloud-dispatch');
   const request = { ...sourcedCloudRequest(worktree), provider: 'claude', branch: 'cloud/iss-13804-cloud' };
   const receipt = completedReceipt(request, gitDir, 'run_1', { runId: 'run_1', sessionId: 'session_1' });
-  const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: 'gh pr create --base main --body-file body.md' } };
+  const preImportBody = path.join(gitDir, 'pre-import-body.md');
+  writeFileSync(preImportBody, 'PR body\n');
+  const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${preImportBody}` } };
   assert.match(prCreateGuard(event)?.reason ?? '', /no imported source witness/);
   const before = gitAt(worktree, 'rev-parse', 'HEAD');
+  const table = seedAlignedDecisionTable(worktree);
+  const aligned = readFileSync(table, 'utf8');
+  writeFileSync(table, aligned.replace('- Checked the fixture negative path.', '(post-implementation)'));
   const imported = importResult(request, receipt);
   assert.match(imported.changed, /existing.txt/);
   assert.equal(readFileSync(path.join(worktree, 'existing.txt'), 'utf8'), 'cloud edit\n');
   assert.equal(gitAt(worktree, 'rev-parse', 'HEAD'), before);
+  assert.equal(imported.handoff.decisionTableCurrent, false);
+  assert.match(imported.handoff.decisionTableProblems.join('\n'), /Adversarial Review is empty/);
+  assert.match(imported.next, /Reconcile the session decision table.*before handoff/);
+  writeFileSync(table, aligned);
   assert.throws(() => readyForPr(request, { gate: () => null, reviews: () => [{ runtime: 'codex' }] }), /stale for the current source/);
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   writeFileSync(path.join(gitDir, 'vibe-handoff-gate.json'), '{}\n');
@@ -680,8 +788,9 @@ test('ISS-14039: a Claude import accepts a Codex or trace-proven Fable 5.2 revie
   assert.match(cloudPrProblem(worktree, { gate }), missing, 'a trace changed after capture no longer proves the model');
 });
 
-test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.log', async () => {
-  const { worktree, gitDir } = vibeFixture();
+test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.log', async (t) => {
+  const { worktree, gitDir, remote } = vibeFixture();
+  seedAlignedDecisionTable(worktree);
   const request = sourcedCloudRequest(worktree);
   const receipt = completedReceipt(request, gitDir, 'task_abc');
   let current = 1000;
@@ -711,18 +820,20 @@ test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.
   gitAt(worktree, 'add', 'existing.txt');
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   const bodyFile = path.join(gitDir, 'body.md');
-  writeFileSync(bodyFile, 'PR body\n');
+  writeFileSync(bodyFile, `PR body\n${PLACEMENT}`);
   const reviews = claudeReviewReceipts(worktree, gitDir);
   recordHandoffGate({ worktree, base: 'main', body: bodyFile, runs: reviews[0], receipts: reviews }, { runScript: () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: '' }) });
   refreshImportWitness(worktree, { bodyFile });
+  placementReady(t, worktree, remote);
   const event = { cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --body-file ${bodyFile}` } };
   assert.equal(prCreateGuard(event), null, 'the actual PR hook admits the imported source after handoff and an independent Claude review');
   writeFileSync(path.join(worktree, 'existing.txt'), 'changed after review\n');
   assert.match(prCreateGuard(event)?.reason ?? '', /cloud import witness is stale for the current source/);
 });
 
-test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted-tests ruling refreshes and opens its PR without an override', () => {
-  const { worktree, gitDir } = vibeFixture();
+test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted-tests ruling refreshes and opens its PR without an override', (t) => {
+  const { worktree, gitDir, remote } = vibeFixture();
+  seedAlignedDecisionTable(worktree);
   const request = sourcedCloudRequest(worktree);
   const receipt = completedReceipt(request, gitDir, 'task_ruled');
   importResult(request, receipt, { run: (_command, args) => {
@@ -733,7 +844,7 @@ test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted
   gitAt(worktree, 'add', 'existing.txt');
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   const bodyFile = path.join(gitDir, 'body.md');
-  writeFileSync(bodyFile, 'PR body\n');
+  writeFileSync(bodyFile, `PR body\n${PLACEMENT}`);
   const runsFile = path.join(gitDir, 'vibe-pr-evidence.json');
   writeFileSync(runsFile, JSON.stringify(ruledEvidence('rulings')));
   const rulingsFile = path.join(gitDir, 'rulings.md');
@@ -755,14 +866,16 @@ test('ISS-14077 AC-2: a cloud import whose gate passes under a recorded targeted
   gate(rulingsFile);
   refreshImportWitness(worktree, { bodyFile });
   assert.equal(cloudPrProblem(worktree, { bodyFile }), null);
+  placementReady(t, worktree, remote);
   assert.equal(prCreateGuard(event), null, 'the PR opens with no gate override in its body');
   writeFileSync(rulingsFile, RULINGS.replace('TARGETED inventory', 'full suites'));
   assert.match(prCreateGuard(event)?.reason ?? '', /handoff rulings evidence changed/, 'the witness binds the rulings file it was judged with');
   assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: handoff rulings evidence changed/);
 });
 
-test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refreshes and opens its PR when the PR title names them', () => {
-  const { worktree, gitDir } = vibeFixture();
+test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refreshes and opens its PR when the PR title names them', (t) => {
+  const { worktree, gitDir, remote } = vibeFixture();
+  seedAlignedDecisionTable(worktree);
   // What `vibe-sessions.mjs touch --member-ticket` leaves on the session record.
   writeSessionRecord(worktree, { ...readSessionRecord(worktree), memberTickets: ['ISS-13805', 'ISS-13806'] });
   const request = sourcedCloudRequest(worktree);
@@ -775,7 +888,7 @@ test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refre
   gitAt(worktree, 'add', 'existing.txt');
   gitAt(worktree, 'commit', '-m', 'local reviewed import');
   const bodyFile = path.join(gitDir, 'body.md');
-  writeFileSync(bodyFile, 'Delivers ISS-13804, ISS-13805 and ISS-13806.\n');
+  writeFileSync(bodyFile, `Delivers ISS-13804, ISS-13805 and ISS-13806.\n${PLACEMENT}`);
   const title = 'ISS-13804, ISS-13805, ISS-13806: Cloud dispatch';
   const oneMember = 'ISS-13804, ISS-13805: Cloud dispatch';
   const reviews = claudeReviewReceipts(worktree, gitDir);
@@ -783,18 +896,19 @@ test('ISS-14077 AC-4: a cloud import whose session delivers member tickets refre
 
   const before = readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8');
   assert.throws(() => refreshImportWitness(worktree, { bodyFile }), /cloud import cannot refresh: the session delivers member tickets ISS-13805, ISS-13806; pass --title so the gate checks the PR names them/);
-  assert.throws(() => refreshImportWitness(worktree, { bodyFile, title: oneMember }), /cloud import cannot refresh: the PR title does not name member ticket ISS-13806/);
   assert.equal(readFileSync(path.join(gitDir, 'vibe-cloud-import.json'), 'utf8'), before, 'a refused refresh leaves the import witness as it was');
+  assert.equal(refreshImportWitness(worktree, { bodyFile, title: oneMember }).reviewedSource.head, gitAt(worktree, 'rev-parse', 'HEAD'));
 
   assert.equal(refreshImportWitness(worktree, { bodyFile, title }).reviewedSource.head, gitAt(worktree, 'rev-parse', 'HEAD'));
   assert.equal(cloudPrProblem(worktree, { bodyFile, title }), null);
-  assert.match(cloudPrProblem(worktree, { bodyFile, title: oneMember }) ?? '', /the PR title does not name member ticket ISS-13806/);
+  assert.equal(cloudPrProblem(worktree, { bodyFile, title: oneMember }), null);
   assert.equal(readyForPr(request, { bodyFile, title }).ready, true);
-  assert.throws(() => readyForPr(request, { bodyFile, title: oneMember }), /PR refused: the PR title does not name member ticket ISS-13806/);
+  assert.equal(readyForPr(request, { bodyFile, title: oneMember }).ready, true);
 
+  placementReady(t, worktree, remote);
   const create = (prTitle) => prCreateGuard({ cwd: worktree, session_id: 'unscoped', transcript_path: null, tool_input: { command: `gh pr create --base main --title "${prTitle}" --body-file ${bodyFile}` } });
   assert.equal(create(title), null, 'the PR hook admits the import with no gate override in its body');
-  assert.match(create(oneMember)?.reason ?? '', /the PR title does not name member ticket ISS-13806/);
+  assert.equal(create(oneMember), null, 'member tickets fit in the body without consuming the PR title');
 });
 
 /** One clean Claude launcher receipt per handoff review role, captured on the worktree's current source. */
@@ -819,3 +933,16 @@ test("with no provider bound, a file in no known area is unknown and Desktop rel
   assert.equal(kindIn("db/migrations/001.sql"), "backend");
   assert.equal(kindIn("apps/prototypes/a/page.ts"), "other");
 });
+
+/** A GitHub-shaped origin (served by the local bare remote) and an empty fleet home, as the PR hook's placement check reads them. */
+function placementReady(t, worktree, remote) {
+  const url = 'https://github.com/acme/cloud-fixture.git';
+  gitAt(worktree, 'remote', 'set-url', 'origin', url);
+  gitAt(worktree, 'config', `url.${remote}.insteadOf`, url);
+  const previous = process.env.FLEET_HOME;
+  process.env.FLEET_HOME = path.join(mkdtempSync(path.join(tmpdir(), 'vibe-cloud-fleet-')), 'absent');
+  t.after(() => {
+    if (previous === undefined) Reflect.deleteProperty(process.env, 'FLEET_HOME');
+    else process.env.FLEET_HOME = previous;
+  });
+}

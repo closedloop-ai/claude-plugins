@@ -2,9 +2,8 @@ import { execFile, spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { siblingPluginRoot } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 import { mcpToolIdentity, TRACKER_SERVICE, type Capability } from "./contracts.js";
-import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 
 /** A launch refused before or at worker start, carrying the one plain step a person can take when there is one. */
 export class LaunchPrecheckError extends Error {
@@ -20,10 +19,10 @@ function protectedHookPath(pluginRoot: string): string {
     `The headless Claude writer's protected-path hook is unavailable: ${reason}`);
   let hookPath: string;
   try {
-    // The guard lives in vibe-core beside the installed vibe.
-    hookPath = join(siblingPluginRoot("vibe-core", { from: join(pluginRoot, ".claude-plugin", "plugin.json") }), "hooks", "protected-write-guard.mjs");
+    // The guard lives in this vibe's own hooks folder.
+    hookPath = join(realpathSync(pluginRoot), "hooks", "protected-write-guard.mjs");
   } catch (error) {
-    throw unavailable(`vibe-core is missing: ${error instanceof Error ? error.message : String(error)}`);
+    throw unavailable(`vibe's plugin root is unreadable: ${error instanceof Error ? error.message : String(error)}`);
   }
   try {
     if (!lstatSync(hookPath).isFile() || realpathSync(hookPath) !== hookPath) {

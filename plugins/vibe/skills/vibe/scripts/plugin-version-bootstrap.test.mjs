@@ -11,7 +11,9 @@ import { fileURLToPath } from "node:url";
 import { VIBE_CORE_MIN } from "../../../shared/vibe-core.mjs";
 
 const VIBE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const APPROVE = "open Codex once and approve vibe-core's hooks in /hooks";
+// The fixture installs no vibe-core Codex manifest beside its vibe, so the step names the unread entry.
+const { approveHooksStep, UNREAD_PLUGIN_NAME } = await import("./vibe-core-hooks.mjs");
+const APPROVE = approveHooksStep(UNREAD_PLUGIN_NAME);
 
 /** vibe's scripts in a Codex cache with no vibe-core, and a fake Codex whose `plugin add vibe-core` installs one. */
 function codexInstall(t) {
@@ -21,7 +23,7 @@ function codexInstall(t) {
   // The cache folder is the plugin name its manifest gives: this source is published as vibe-generic.
   const vibe = path.join(cache, "vibe-generic", "1.1.71");
   const keep = (file) => !file.endsWith(".test.mjs") && !file.includes(`${path.sep}dist${path.sep}`) && !file.endsWith(`${path.sep}dist`);
-  for (const part of [".claude-plugin", ".codex-plugin", "shared", "skills/vibe/scripts", "skills/fleet-orchestrator/scripts"]) {
+  for (const part of [".claude-plugin", ".codex-plugin", "shared", "lib", "hooks", "skills/vibe/scripts", "skills/fleet-orchestrator/scripts"]) {
     cpSync(path.join(VIBE, part), path.join(vibe, part), { recursive: true, filter: keep });
   }
   const bin = path.join(root, "bin");
@@ -101,12 +103,13 @@ test("without vibe-core, the chosen update runs codex plugin add vibe-core and n
   assert.equal(result.hookApproval, `vibe-core's hooks are not approved in Codex (vibe-core@closedloop-ai:hooks/hooks.json:pre_tool_use:0:0 is untrusted), so vibe's guards cannot run there: ${APPROVE}`);
 });
 
-test("without vibe-core, a moved command such as fleet-home.mjs resume says what is missing instead of a stack trace", (t) => {
+test("without vibe-core, a moved command such as fleet-home.mjs resume runs from vibe's own lib", (t) => {
   const f = codexInstall(t);
   const resume = f.run("skills/fleet-orchestrator/scripts/fleet-home.mjs", ["resume", "--home", path.join(f.root, "fleet")]);
-  assert.equal(resume.status, 2);
-  assert.equal(resume.stdout, "");
-  assert.match(resume.stderr, /^fleet-home\.mjs: vibe-core is not installed beside vibe-generic \(codex layout\); install it with `claude plugin install vibe-core@closedloop-ai` in Claude Code or `codex plugin add vibe-core@closedloop-ai` in Codex\n$/);
+  assert.equal(resume.status, 0, resume.stderr);
+  assert.equal(resume.stdout, "NO-ACTIVE-PROGRAM: start one with fleet-home.mjs start <slug>; it reads no earlier program's state\n");
+  assert.equal(resume.stderr, "");
+  assert.ok(!existsSync(path.join(f.cache, "vibe-core")), "nothing installed vibe-core");
 });
 
 test("with a vibe-core older than this vibe needs, check says which version is installed and which it needs", (t) => {

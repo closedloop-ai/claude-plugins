@@ -1,10 +1,11 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { capabilitiesSchema } from "./contracts.js";
 import { readDefinition } from "./definition.js";
-import { acquireRecordTurn, attachClaudeProcess, changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
+import { acquireRecordTurn, attachClaudeProcess, changeWriter, dropPendingWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
@@ -23,6 +24,86 @@ function nativeFinish(input: { worktree: string; workerId: string; requestId: st
 }
 
 describe("persistent writer ledger", () => {
+  it("AC-020 queue refusals name the next claim and a parent can drop only its evidenced pending input", () => {
+    const value = registered();
+    const owner = { worktree: value.worktree, workerId: value.workerId };
+    const file = join(value.metadata, "vibe-writer.json");
+    const cli = (action: string, requestId: string, extra = {}) => spawnSync(process.execPath,
+      [join(bundleDirectory, "writer-state.mjs"), action], { input: JSON.stringify({ ...owner, requestId, ...extra }), encoding: "utf8", timeout: 8000 });
+    changeWriter("enqueue", { ...owner, requestId: "oldest", input: "PRIVATE_OLD" });
+    changeWriter("enqueue", { ...owner, requestId: "next", input: "PRIVATE_NEXT" });
+    const prior = readFileSync(file, "utf8");
+    for (const [action, code, extra] of [
+      ["claim", "REQUEST_ORDER_INVALID", {}], ["start", "REQUEST_ID_EXISTS", { input: "A duplicate request" }],
+    ] as const) {
+      const attempted = cli(action, "next", extra);
+      expect(attempted.status).toBe(1);
+      const refusal = JSON.parse(attempted.stdout);
+      expect(refusal.code).toBe(code);
+      expect(refusal.summary).toMatch(/oldest pending requestId "oldest".*without input or continuation/);
+      expect(attempted.stdout).not.toContain("PRIVATE_");
+      expect(readFileSync(file, "utf8")).toBe(prior);
+    }
+    const inputSha256 = createHash("sha256").update("PRIVATE_OLD").digest("hex");
+    const evidence = { source: "Parent triage record R-7", reason: "The operator superseded this request", inputSha256 };
+    expect(cli("drop-pending", "oldest").status).toBe(1);
+    const mismatch = cli("drop-pending", "oldest", { evidence: { ...evidence, inputSha256: "0".repeat(64) } });
+    expect(JSON.parse(mismatch.stdout).code).toBe("PENDING_INPUT_MISMATCH");
+    expect(readFileSync(file, "utf8")).toBe(prior);
+    const dropped = cli("drop-pending", "oldest", { evidence });
+    expect(dropped.status, dropped.stderr).toBe(0);
+    expect(dropped.stdout).not.toContain("PRIVATE_");
+    expect(JSON.parse(dropped.stdout).queuedRequestIds).toEqual(["next"]);
+    expect(JSON.parse(readFileSync(file, "utf8")).dropped[0]).toMatchObject({ id: "oldest", ...evidence });
+    expect(JSON.parse(cli("start", "oldest", { input: "Trying to reuse dropped ID" }).stdout).code).toBe("REQUEST_ID_EXISTS");
+    const active = changeWriter("claim", { ...owner, requestId: "next" });
+    expect(active.turn?.input).toBe("PRIVATE_NEXT");
+    expect(JSON.parse(cli("drop-pending", "next", { evidence }).stdout).code).toBe("REQUEST_NOT_PENDING");
+  });
+  it("item 30(c): a request queued behind an open one is reported, relaunches with its input, and can be dropped", () => {
+    const refused = (action: "start" | "claim", input: Record<string, unknown>) => {
+      try { changeWriter(action, input); } catch (error) { return error as { code: string; summary: string }; }
+      throw new Error(`${action} was not refused`);
+    };
+    for (const status of ["BLOCKED", "NEEDS_PERSON"]) {
+      const value = registered();
+      const owner = { worktree: value.worktree, workerId: value.workerId };
+      const lease = changeWriter("start", { ...owner, requestId: "open", input: "OPEN" }).turn!.lease!;
+      nativeFinish({ ...owner, requestId: "open", lease, status });
+      const queued = changeWriter("enqueue", { ...owner, requestId: "later", input: "PRIVATE_LATER" });
+      expect(queued.queuedBehind).toMatchObject({ requestId: "open", status });
+      expect(queued.queuedBehind?.next).toMatch(/requestId "later" stays queued.*drop-pending/);
+      expect(JSON.stringify(queued)).not.toContain("PRIVATE_");
+      for (const [action, extra] of [["start", { input: "PRIVATE_LATER" }], ["claim", {}]] as const) {
+        const refusal = refused(action, { ...owner, requestId: "later", ...extra });
+        expect(refusal.code, `${status} ${action}`).toBe("ACTIVE_REQUEST_PENDING");
+        expect(refusal.summary).toMatch(/Continue active requestId "open".*requestId "later" stays queued/);
+        expect(refusal.summary).not.toContain("was not queued");
+      }
+      const dropped = dropPendingWriter({ ...owner, requestId: "later", evidence: { source: "Parent record", reason: "Superseded",
+        inputSha256: createHash("sha256").update("PRIVATE_LATER").digest("hex") } });
+      expect(dropped.queuedRequestIds).toEqual([]);
+      expect(dropped.status).toBe(status);
+    }
+    const idle = registered();
+    const idleOwner = { worktree: idle.worktree, workerId: idle.workerId };
+    changeWriter("enqueue", { ...idleOwner, requestId: "queued", input: "QUEUED INPUT" });
+    expect(refused("start", { ...idleOwner, requestId: "queued", input: "Other input" }).code).toBe("REQUEST_ID_EXISTS");
+    const relaunched = changeWriter("start", { ...idleOwner, requestId: "queued", input: "QUEUED INPUT" });
+    expect(relaunched.turn).toMatchObject({ id: "queued", input: "QUEUED INPUT" });
+    expect(relaunched.queuedRequestIds).toEqual([]);
+    const failed = registered();
+    const failedOwner = { worktree: failed.worktree, workerId: failed.workerId };
+    const failedLease = changeWriter("start", { ...failedOwner, requestId: "broken", input: "BROKEN" }).turn!.lease!;
+    nativeFinish({ ...failedOwner, requestId: "broken", lease: failedLease, status: "FAILED" });
+    expect(changeWriter("enqueue", { ...failedOwner, requestId: "next", input: "NEXT" }).queuedBehind).toBeUndefined();
+    const running = registered();
+    const runningOwner = { worktree: running.worktree, workerId: running.workerId };
+    changeWriter("start", { ...runningOwner, requestId: "running", input: "RUNNING" });
+    expect(changeWriter("enqueue", { ...runningOwner, requestId: "after", input: "AFTER" }).queuedBehind,
+      "a running turn is not a request to continue").toBeUndefined();
+    expect(changeWriter("start", { ...failedOwner, requestId: "next", input: "NEXT" }).turn?.id).toBe("next");
+  });
   it("reopens the request that just returned DONE for its follow-up step instead of refusing it (ISS-13321)", () => {
     const value = registered();
     const owner = { worktree: value.worktree, workerId: value.workerId };
@@ -218,7 +299,7 @@ describe("closed writer turns never wedge the queue (ISS-13043, ISS-13051)", () 
     expect(start("second").turn?.id).toBe("second");
     changeWriter("finish", { worktree: value.worktree, workerId: writer.workerId, requestId: "second",
       lease: readLedgerActiveLease(value.metadata), status: "NEEDS_PERSON" });
-    expect(() => start("third")).toThrow(/Continue the active request/);
+    expect(() => start("third")).toThrow(/requestId "second".*"continuation"/);
   });
   it("a turn whose launcher process is gone is closed by the next claim", async () => {
     const { value, start } = claudeWriter();

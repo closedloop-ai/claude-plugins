@@ -10,6 +10,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
+import { hostname } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { repositoryLaneReportProblems, laneReportLabel } from "./ci-job-shape.mjs";
@@ -19,19 +20,20 @@ import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
 import { GENERIC_AREAS, isUiFile, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
 import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
-import { requiredContainerIdentity, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
-import { probeE2eCapability } from "./e2e-capability-probe.mjs";
+import { boundProbeCommit, requiredContainerIdentity, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
+import { probeE2eCapability, remoteCapabilityProbe } from "./e2e-capability-probe.mjs";
 import { prBodyClaimProblems } from "./pr-body-claims.mjs";
-import { GRAPH_SELECTOR, prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
+import { GRAPH_CHANGE_SELECTOR, GRAPH_SELECTOR, prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
 import { leftByRuling, RULING_HOST_LANES, targetedTestsRuling } from "./targeted-tests-ruling.mjs";
-import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
+import { pathFilteredPullRequestWorkflows, readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
+const { upstreamBranchName } = await vibeCore("lib/vibe/scripts/upstream-branch.mjs");
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -111,8 +113,9 @@ function evidenceCandidateFiles(worktree) {
 export function computeOverlap({ worktree, changed, prs, ownBranch }) {
   const changedSet = new Set(changed);
   const imported = new Set(changed.flatMap((file) => importsOf(worktree, file)).filter((file) => !changedSet.has(file)));
+  const own = ownBranches(worktree, ownBranch);
   return prs
-    .filter((pr) => pr.headRefName !== ownBranch && !pr.unavailableReason)
+    .filter((pr) => !own.has(pr.headRefName) && !pr.unavailableReason)
     .map((pr) => ({ number: pr.number, title: pr.title,
       sharedFiles: pr.files.filter((file) => changedSet.has(file)), importedFiles: pr.files.filter((file) => imported.has(file)) }))
     .filter((pr) => pr.sharedFiles.length + pr.importedFiles.length > 0)
@@ -218,11 +221,11 @@ function passedOrMainPreexisting(run) {
  * The web E2E lane is left for CI only when every changed spec has complete
  * per-spec evidence that its selected runtime tier cannot execute it.
  */
-function e2eLeftForCi(runsFile, changed, commit, rules) {
+function e2eLeftForCi(runsFile, changed, commit, rules, worktree) {
   const specs = changed.filter((file) => isE2ePath(file) && TEST_SPEC_PATTERN.test(file));
   const selection = readTestSelection(runsFile);
   return specs.length > 0 && selection.problems.length === 0
-    && specs.every((spec) => e2eCarriedForCi(runsFile, selection.entries, spec, commit, rules));
+    && specs.every((spec) => e2eCarriedForCi(runsFile, selection.entries, spec, commit, rules, worktree));
 }
 
 /** Immutable carry is an explicit alternate authority, never a weaker interpretation of a failed ancestry check. */
@@ -231,6 +234,11 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
   const shape = treeEquivalentCarryShapeProblems(carry);
   if (shape.length) throw new Error(shape.join("; "));
   if (!worktree || commit !== carry.published.commit) throw new Error("tree carry needs the verified published commit/worktree");
+  // A tree point's proof commit may exist only on the host that ran it; its verified equal tree is read at the publication instead.
+  const treeProof = carry.proof.kind === "tree";
+  const proofCommit = treeProof ? carry.proof.proofCommit : carry.proof.commit;
+  const local = sha => treeProof && sha === proofCommit ? commit : sha;
+  const scopeCommit = local(proofCommit);
   return withStableSource(worktree, current => {
     const sourceCache = new Map();
     const fileHashes = new Map();
@@ -244,29 +252,34 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
       return sourceCache.get(sha);
     };
     const verifyPoint = point => {
+      if (point.kind === "tree") {
+        if (git(worktree, ["rev-parse", "--verify", `${commit}^{tree}`]) !== point.gitTree
+          || sourceAt(commit).treeSha256 !== point.treeSha256) throw new Error("tree carry point's Git tree or tree hash differs from the publication");
+        return;
+      }
       if (git(worktree, ["rev-parse", "--verify", `${point.ref}^{commit}`]) !== point.commit
         || git(worktree, ["rev-parse", "--verify", `${point.commit}^{tree}`]) !== point.gitTree
         || !isDeepStrictEqual(sourceAt(point.commit), point.source)) throw new Error("tree carry ref, Git tree or source identity changed");
     };
     const points = [carry.proof, carry.published, ...(carry.proofs ?? [])];
     for (const point of points) verifyPoint(point);
-    const byCommit = new Map(points.map(point => [point.commit, point]));
+    const byCommit = new Map(points.filter(point => point.kind !== "tree").map(point => [point.commit, point]));
     const scopes = new Map(); // All records from one immutable proof share one classification in this validation pass.
     const scopeFrom = boundary => {
       if (scopes.has(boundary)) return scopes.get(boundary);
       const request = { ...runsFile.qaImpactRequest, lastQa: { boundary } };
       delete request.since;
       let ancestor = false;
-      try { git(worktree, ["merge-base", "--is-ancestor", boundary, carry.proof.commit]); ancestor = true; } catch { /* Explicit binding is required below. */ }
+      try { git(worktree, ["merge-base", "--is-ancestor", boundary, scopeCommit]); ancestor = true; } catch { /* Explicit binding is required below. */ }
       if (!ancestor && !byCommit.has(boundary)) throw new Error("non-ancestor scope needs a pinned proof point");
-      const scope = ancestor && carry.proofs === undefined ? qaImpactRequestAtCommit(worktree, request, carry.proof.commit)
-        : qaImpactDirectCommitScope(worktree, request, carry.proof.commit);
+      const scope = ancestor && carry.proofs === undefined ? qaImpactRequestAtCommit(worktree, request, scopeCommit)
+        : qaImpactDirectCommitScope(worktree, request, scopeCommit);
       scopes.set(boundary, scope);
       return scope;
     };
     if (!isDeepStrictEqual(runsFile.source, carry.published.source) || current.head !== commit || current.treeSha256 !== carry.published.source.treeSha256
       || git(worktree, ["status", "--porcelain", "--untracked-files=all"]) !== ""
-      || carry.proof.gitTree !== carry.published.gitTree || carry.proof.source.treeSha256 !== carry.published.source.treeSha256) {
+      || carry.proof.gitTree !== carry.published.gitTree || (treeProof ? carry.proof.treeSha256 : carry.proof.source.treeSha256) !== carry.published.source.treeSha256) {
       throw new Error("tree carry needs clean equal Git/source trees at proof and publication");
     }
     if (runsFile.qaImpactRequest?.since !== undefined && runsFile.qaImpactRequest.since !== runsFile.qaImpactRequest?.lastQa?.boundary) throw new Error("carry scope boundary differs from request");
@@ -282,7 +295,7 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
         throw new Error("tree carry result is not an exact declared workflow lane");
       }
       if (record.scopeKey !== carry.laneKey || !allRuns.some(run => isDeepStrictEqual(run, result))) throw new Error("tree carry recorded run or lane key changed");
-      if (result.commit !== carry.proof.commit) {
+      if (result.commit !== proofCommit) {
         const intervening = scopeFrom(result.commit);
         if (impact.lanes.includes(result.lane) || intervening.lanes.includes(result.lane)) throw new Error("tree carry scope includes this lane; original result is not reusable");
       }
@@ -293,7 +306,7 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
       if (createHash("sha256").update(bytes).digest("hex") !== record.receipt.sha256) throw new Error("tree carry receipt hash changed");
       const receipt = JSON.parse(bytes);
       if (Object.keys(receipt).sort().join("|") !== "coveredFiles|result|source|version" || receipt.version !== 1
-        || !isDeepStrictEqual(receipt.source, sourceAt(result.commit)) || !isDeepStrictEqual(receipt.result, result)
+        || !isDeepStrictEqual(receipt.source, { ...sourceAt(local(result.commit)), head: result.commit }) || !isDeepStrictEqual(receipt.result, result)
         || !isDeepStrictEqual(receipt.coveredFiles, record.coveredFiles)) throw new Error("tree carry receipt is incomplete or its recorded result/source changed");
       const coveredPaths = new Set(record.coveredFiles.map(item => item.path));
       const laneSource = runsFile.targetedInventory?.laneReport?.source;
@@ -302,7 +315,7 @@ function verifiedCarryImpact(runsFile, worktree, commit) {
       }
       const selected = runsFile.qaImpactRequest?.laneSelections?.files ?? runsFile.qaImpactRequest?.laneSelections ?? {};
       if (impact.changedFiles.some(file => selected[file]?.includes(result.lane) && !coveredPaths.has(file))) throw new Error("tree carry omits a changed covered file");
-      for (const covered of record.coveredFiles) for (const sha of new Set([result.commit, carry.proof.commit, commit])) {
+      for (const covered of record.coveredFiles) for (const sha of new Set([local(result.commit), scopeCommit, commit])) {
         if (hashAt(sha, covered.path) !== covered.sha256) throw new Error(`${covered.path}: tree carry covered file changed`);
       }
     }
@@ -339,7 +352,7 @@ export function evidenceProblems(runsFile, changed, commit, worktree, rulingId =
   const recomputed = older || runsFile?.treeEquivalentCarry !== undefined ? recomputedImpact(runsFile, worktree, commit) : null;
   if (recomputed?.problem) return [recomputed.problem];
   const impactKey = recomputed?.impact?.laneKey;
-  return requiredLanes(changed, runsFile.touchFlows, sessionAreas(worktree)).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit, prRules(worktree)))).flatMap((lane) => {
+  return requiredLanes(changed, runsFile.touchFlows, sessionAreas(worktree)).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit, prRules(worktree), worktree))).flatMap((lane) => {
     const runs = allRuns.filter((run) => run.lane === lane);
     if (runs.length === 0) return [`${lane}: no run recorded`];
     return runs.flatMap((run) => RULING_HOST_LANES.includes(lane) && leftByRuling(run, rulingId, commit)
@@ -428,7 +441,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       refusals,
       asks: ticketText ? [...new Set([...ticketText.matchAll(ASK)].map(([ask]) => ask.replace(/\s+/g, " ").trim()))] : [],
       overlap: prs ? computeOverlap({ worktree, changed, prs, ownBranch }) : null,
-      overlapUnavailable: prs ? prs.filter((pr) => pr.headRefName !== ownBranch && pr.unavailableReason)
+      overlapUnavailable: prs ? prs.filter((pr) => pr.unavailableReason && !ownBranches(worktree, ownBranch).has(pr.headRefName))
         .map(({ number, title, unavailableReason: reason }) => ({ number, title, reason })) : [],
     };
     return {
@@ -444,6 +457,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
           readSource: file => proofSourceAt(worktree, file), probeCapability, currentCommit: commit,
           requiredTests, ticketText, rulingsText }),
         ...ciCheckProblems(runs, changed, testedCommit),
+        ...pathWorkflowProblems(runs, changed, workflowsAt(worktree, current.head), testedCommit),
       ] }),
     };
   });
@@ -465,26 +479,34 @@ function authenticatedSourceCarry(worktree, source, current, publishedCommit) {
   return { testedCommit: problems.length ? publishedCommit : source.head, problems };
 }
 
-function currentCapabilityProbe({ worktree, commit }) {
+function currentCapabilityProbe({ worktree, commit, remote }) {
+  if (remote) return remoteCapabilityProbe(remote);
   if (git(worktree, ["rev-parse", "HEAD"]) !== commit) throw new Error("HEAD moved before the capability probe");
   return probeE2eCapability({ worktree, commit });
 }
 
 /**
- * Confirm the verifier's CI carry still matches this machine's read-only
- * runtime probe. A fabricated "no Docker" report cannot waive E2E merely by
- * selecting no tier; a changed prerequisite requires fresh evidence.
+ * Confirm the verifier's CI carry still matches a fresh read-only runtime probe
+ * of the machine that recorded it: this one, or the recorded host when another
+ * machine ran the lanes, whose probe binds by the head's Git tree.
+ * A fabricated "no Docker" report cannot waive E2E merely by selecting no tier;
+ * a changed prerequisite requires fresh evidence.
  */
 export function capabilityProbeProblems(evidence, worktree, commit, probeCapability = currentCapabilityProbe, currentCommit = commit) {
   const carried = (Array.isArray(evidence?.testRuns) ? evidence.testRuns : [])
     .filter((run) => run?.status === "not-run" && typeof run.path === "string" && isE2ePath(run.path));
   if (carried.length === 0) return [];
   const recorded = evidence?.e2eCapability;
-  if (!commit || recorded?.probedCommit !== commit) return ["E2E capability probe is not bound to the final committed HEAD"];
+  const remote = typeof recorded?.host === "string" && recorded.host !== hostname();
+  const gitTree = commit && (remote || recorded?.probedCommit !== commit) ? treeOf(worktree, commit) : null;
+  if (!commit || (recorded?.probedCommit !== commit && !boundProbeCommit(recorded, commit, gitTree))) return ["E2E capability probe is not bound to the final committed HEAD"];
   let current;
-  try { current = probeCapability({ worktree, commit: currentCommit }); }
-  catch { return ["current E2E capability probe could not be verified; do not carry specs to CI"]; }
-  if (!current?.container || !current.desktopHarness || current.probedCommit !== currentCommit) {
+  try {
+    current = probeCapability(remote ? { worktree, commit: currentCommit, remote: { host: recorded.host, runnerWorktree: recorded.runnerWorktree,
+      probeScript: recorded.probeScript, gitTree } } : { worktree, commit: currentCommit });
+  } catch { return ["current E2E capability probe could not be verified; do not carry specs to CI"]; }
+  const fresh = remote ? current?.host === recorded.host && Boolean(gitTree) && current.gitTree === gitTree : current?.probedCommit === currentCommit;
+  if (!current?.container || !current.desktopHarness || !fresh) {
     return ["current E2E capability probe is incomplete; do not carry specs to CI"];
   }
   const named = recorded.container;
@@ -560,12 +582,14 @@ export function prEvidenceValidationProblems(evidence, commit, options = {}) {
   const testRuns = Array.isArray(evidence?.testRuns) ? evidence.testRuns : [];
   const inventoryTests = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : [])
     .filter((entry) => testRuns.some((run) => run?.path === entry?.path && run.status === "passed" && run.commit === (entry.resultCommit ?? commit))).length;
+  const rules = prRules(worktree ?? null);
   return [
     ...ruling.problems,
     ...(ruling.id && inventoryTests === 0 ? [`targeted-tests ruling ${ruling.id} needs at least one targeted inventory test that passed on the published commit`] : []),
     ...evidenceProblems(evidence, files.map(file => file.path), commit, worktree, ruling.id),
-    ...selectionProblems(evidence, files, options.requiredTests ?? [], commit, prRules(worktree ?? null), ruling.id),
-    ...targetedEvidenceProblems(evidence, commit, worktree, receiptDir, ruling.id, mustRunTests(options.requiredTests ?? [], files)),
+    ...selectionProblems(evidence, files, options.requiredTests ?? [], commit, rules, ruling.id, worktree),
+    ...targetedEvidenceProblems(evidence, commit, worktree, receiptDir, ruling.id,
+      mustRunTests(options.requiredTests ?? [], files), [rules.graphSelector].filter(Boolean)),
     ...tierEvidenceProblems(evidence?.e2eCapability, specs),
     ...sourceProblems,
     ...scopeProblems,
@@ -573,6 +597,22 @@ export function prEvidenceValidationProblems(evidence, commit, options = {}) {
     ...testIntegrityProblems(evidence, files, readSource, commit, receiptDir, readCandidates),
     ...capabilityProbeProblems(evidence, worktree, commit, probeCapability, currentCommit),
   ];
+}
+
+/**
+ * Whether a row is at the published `commit`, or is a not-run row at the commit of an E2E capability probe
+ * that binds to `commit`'s Git tree from the host that ran the lanes (that commit may be absent here).
+ */
+function probeBoundRow(evidence, commit, worktree) {
+  const capability = evidence?.e2eCapability;
+  const probed = capability && capability.probedCommit !== commit ? boundProbeCommit(capability, commit, treeOf(worktree, commit)) : null;
+  return (run) => run?.commit === commit || (probed !== null && run?.status === "not-run" && run.commit === probed);
+}
+
+/** The Git tree of `commit` in `worktree`, or null when either cannot be read. */
+function treeOf(worktree, commit) {
+  if (!worktree) return null;
+  try { return git(worktree, ["rev-parse", "--verify", `${commit}^{tree}`]); } catch { return null; }
 }
 
 function git(worktree, args) {
@@ -605,17 +645,25 @@ export function templateHeadingProblems(body, template) {
  * skipped CI is not a run. A required test with `flagStates` needs a passing
  * run for each state, recorded with `flag`. Under a recorded targeted-tests
  * ruling (`rulingId`), a selected test that is neither required nor edited by
- * the branch may instead have a `not-run` row naming the ruling.
+ * the branch may instead have a `not-run` row naming the ruling. A `worktree`
+ * lets a spec left to CI bind by the head's Git tree to a probe from the host that ran it.
  */
-export function selectionProblems(runsFile, files, requiredTests, commit, rules = GENERIC_PR_RULES, rulingId = null) {
-  const { entries: selection, problems: shapeProblems } = readTestSelection(runsFile);
+export function selectionProblems(runsFile, files, requiredTests, commit, rules = GENERIC_PR_RULES, rulingId = null, worktree = null) {
+  const graphSelector = rules.graphSelector ?? GRAPH_SELECTOR;
+  const graphSelectors = [...new Set([graphSelector, GRAPH_CHANGE_SELECTOR])];
+  const { entries: selection, problems: shapeProblems } = readTestSelection(runsFile, [graphSelector]);
   const listed = (entry) => Array.isArray(entry?.tests) && entry.tests.every((test) => typeof test === "string");
   const problems = [...shapeProblems];
   const of = (file, selector) => selection.filter((entry) => entry?.file === file && entry.selector === selector && listed(entry));
+  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
+  const laneSelections = runsFile?.qaImpactRequest?.laneSelections?.files ?? runsFile?.qaImpactRequest?.laneSelections ?? {};
+  const coveredByWholeLane = (file) => Array.isArray(laneSelections?.[file]) && laneSelections[file].some((selected) =>
+    runs.some((run) => passedOrMainPreexisting(run) && run.commit === commit && (run.lane === selected || run.command === selected)));
   const live = files.filter((file) => file.status !== "D");
   for (const file of live.filter((entry) => SOURCE.test(entry.path) && !isTestFile(entry.path)).map((entry) => entry.path)) {
-    if (!of(file, GRAPH_SELECTOR).some((entry) => entry.tests.length > 0) && of(file, "related").length === 0) {
-      problems.push(`${file}: no import selection; no graph test lookup (${GRAPH_SELECTOR}) returned tests for it, so record the repo's related-test selection`);
+    if (!coveredByWholeLane(file)
+      && !graphSelectors.some((selector) => of(file, selector).some((entry) => entry.tests.length > 0)) && of(file, "related").length === 0) {
+      problems.push(`${file}: no import selection; no graph test lookup (${graphSelector}) returned tests for it, so record the repo's related-test selection`);
     }
     if (of(file, "e2e-reference").length === 0) {
       problems.push(`${file}: no e2e by-reference selection (routes, request fields, test IDs, accessible names, channels and flag keys it touches)`);
@@ -623,10 +671,9 @@ export function selectionProblems(runsFile, files, requiredTests, commit, rules 
   }
   const mustRun = mustRunTests(requiredTests, files);
   const selected = new Set([
-    ...selection.filter((entry) => TEST_SELECTORS.includes(entry?.selector) && listed(entry)).flatMap((entry) => entry.tests),
+    ...selection.filter((entry) => [...TEST_SELECTORS, graphSelector].includes(entry?.selector) && listed(entry)).flatMap((entry) => entry.tests),
     ...mustRun,
   ]);
-  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   const inventoryEntries = Array.isArray(runsFile?.targetedInventory?.entries) ? runsFile.targetedInventory.entries : [];
   const target = (test) => inventoryEntries.find((entry) => entry?.path === test);
   const unavailable = new Set(Array.isArray(runsFile?.e2eCapability?.unavailableSpecs) ? runsFile.e2eCapability.unavailableSpecs : []);
@@ -639,7 +686,7 @@ export function selectionProblems(runsFile, files, requiredTests, commit, rules 
       && target(test)?.cases?.every((name) => entry.cases.includes(name)))));
   const ruled = (test) => ruledByRuling(runs, test, rulingId, commit, mustRun);
   for (const test of [...selected].sort()) {
-    if (!passed(test) && !e2eCarriedForCi(runsFile, selection, test, commit, rules) && !ruled(test)) {
+    if (!passed(test) && !e2eCarriedForCi(runsFile, selection, test, commit, rules, worktree) && !ruled(test)) {
       problems.push(`${test}: selected but no passing or carried run for ${commit ?? "the published commit"} in testRuns`);
     }
   }
@@ -657,12 +704,15 @@ export function selectionProblems(runsFile, files, requiredTests, commit, rules 
  * Desktop additionally needs the matching not-run lane from the lane report. Without the provider's
  * E2E CI owners (`rules.e2eOwners`) no spec is left for CI.
  */
-function e2eCarriedForCi(evidence, selection, spec, commit, rules) {
+function e2eCarriedForCi(evidence, selection, spec, commit, rules, worktree = null) {
   if (!rules?.e2eOwners || !commit || !isE2ePath(spec) || !TEST_SPEC_PATTERN.test(spec)) return false;
   const capability = evidence?.e2eCapability;
   if (!capability || !Array.isArray(capability.unavailableSpecs) || !capability.unavailableSpecs.includes(spec)) return false;
-  const limitation = specExecutionLimitation(capability, spec, commit);
+  // A probe from the host that ran the lanes binds by the head's Git tree; its not-run rows may then name the probe's commit.
+  const headTree = capability.probedCommit === commit ? null : treeOf(worktree, commit);
+  const limitation = specExecutionLimitation(capability, spec, commit, undefined, headTree);
   if (!limitation) return false;
+  const atSource = probeBoundRow(evidence, commit, worktree);
   if (!selection.some((entry) => entry.selector === "e2e-reference" && Array.isArray(entry.tests) && entry.tests.includes(spec))) return false;
   const desktop = Boolean(rules.desktopSpecs) && spec.startsWith(rules.desktopSpecs);
   const reason = desktop ? NOT_RUN_NO_DESKTOP_HARNESS : NOT_RUN_NO_IDENTITY;
@@ -672,7 +722,7 @@ function e2eCarriedForCi(evidence, selection, spec, commit, rules) {
     || laneReportShapeProblems(laneReport).length !== 0
     || laneReport?.source?.kind !== "github-workflow" && laneReportLabel(laneReport) !== rules.laneReport) return false;
   const runs = Array.isArray(evidence.testRuns) ? evidence.testRuns : [];
-  const own = runs.some((run) => run?.path === spec && run.status === "not-run" && run.commit === commit
+  const own = runs.some((run) => run?.path === spec && run.status === "not-run" && atSource(run)
     && run.reason === reason && run.ciOwner === ciOwner && run.selectionSource === "e2e-reference"
     && run.laneReportSource === laneReportLabel(evidence?.targetedInventory?.laneReport) && (limitation.tier === null
       ? run.selectedTier === undefined || run.selectedTier === null
@@ -684,7 +734,7 @@ function e2eCarriedForCi(evidence, selection, spec, commit, rules) {
   const matches = evidence.targetedInventory.laneReport.matches;
   const lane = Array.isArray(matches) ? matches.find((entry) => entry?.name === "desktop-e2e" && isDesktopE2eLane(entry.command ?? "")) : null;
   return Boolean(lane) && runs.some((run) => run?.lane === lane.name && run.command === lane.command
-    && run.status === "not-run" && run.commit === commit && run.reason === reason);
+    && run.status === "not-run" && atSource(run) && run.reason === reason);
 }
 
 /**
@@ -696,16 +746,17 @@ function e2eCarriedForCi(evidence, selection, spec, commit, rules) {
  * a diff-rule required test or a spec the branch edits (`mustRun`) is never
  * left this way.
  */
-export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir, rulingId = null, mustRun = new Set()) {
+export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir, rulingId = null, mustRun = new Set(), extraSelectors = []) {
   const inventory = runsFile?.targetedInventory;
   if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
-  const { entries: selection } = readTestSelection(runsFile);
+  const { entries: selection } = readTestSelection(runsFile, extraSelectors);
   const problems = [...prEvidenceShapeProblems(runsFile,
     receiptDir ?? (worktree ? git(worktree, ["rev-parse", "--absolute-git-dir"]) : undefined),
-    worktree ? file => proofSourceAt(worktree, file) : undefined)];
+    worktree ? file => proofSourceAt(worktree, file) : undefined, extraSelectors)];
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   const laneRuns = runs.filter((run) => run?.lane);
-  const older = Boolean(commit) && (inventory.commit !== commit || laneRuns.some((run) => run?.commit && run.commit !== commit));
+  const atHead = probeBoundRow(runsFile, commit, worktree);
+  const older = Boolean(commit) && (inventory.commit !== commit || laneRuns.some((run) => run?.commit && !atHead(run)));
   const recomputed = older || runsFile?.treeEquivalentCarry !== undefined ? recomputedImpact(runsFile, worktree, commit) : null;
   if (recomputed?.problem) problems.push(recomputed.problem);
   const impactKey = recomputed?.impact?.laneKey;
@@ -721,10 +772,10 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir,
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && leftByRuling(run, rulingId, commit))
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command
-        && (!impactKey || run.commit === commit || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
+        && (!impactKey || atHead(run) || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
         && (!recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
-      problems.push(`lane ${lane.name}: no passing run of its lane command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
+      problems.push(`lane ${lane.name}: no passing run of its lane command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238). A lane that fails on main too is recorded with pre-pr-lanes.mjs record --result main-preexisting; only a dated human targeted-tests ruling leaves it not run`);
     }
   }
   if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {
@@ -741,7 +792,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir,
       continue;
     }
     if (entry.kind === "e2e" && unavailable.has(entry.path)) {
-      if (!e2eCarriedForCi(runsFile, selection, entry.path, commit, prRules(worktree))) {
+      if (!e2eCarriedForCi(runsFile, selection, entry.path, commit, prRules(worktree), worktree)) {
         problems.push(`${entry.path}: unavailable E2E needs an exact not-run spec record and authoritative CI owner`);
       }
       continue;
@@ -821,8 +872,8 @@ export function knownMainFailureProblems(body, runsFile) {
   if (known.length === 0) return [];
   const at = body.indexOf(KNOWN_MAIN_FAILURES);
   const listed = at < 0 ? "" : body.slice(at);
-  return known.map((run) => run.path ?? run.command ?? run.lane).filter((name) => !listed.includes(name))
-    .map((name) => `${name} fails on main too; list it under "${KNOWN_MAIN_FAILURES}" with the main commit`);
+  return known.filter((run) => ![run.path, run.command, run.lane].filter(Boolean).some((name) => listed.includes(name)))
+    .map((run) => `${run.path ?? run.lane ?? run.command} fails on main too; list its path, lane, or command under "${KNOWN_MAIN_FAILURES}" with the main commit`);
 }
 
 function finalFileHash(inventory, worktree, file) {
@@ -884,4 +935,44 @@ function mustRunTests(requiredTests, files) {
 /** Whether a verified ruling leaves `test` not run: never a `mustRun` test, and only on a row naming the ruling. */
 function ruledByRuling(runs, test, rulingId, commit, mustRun) {
   return !mustRun.has(test) && runs.some((run) => run?.path === test && leftByRuling(run, rulingId, commit));
+}
+
+// A step that is exactly a dependency install or tool setup checks nothing; one that reads `${{ }}` expressions or the
+// runner's files cannot run locally as written.
+const SETUP_COMMAND = /^(?:corepack\s+enable|(?:pnpm|npm|yarn|bun)\s+(?:install|ci|i|fetch|setup)|uv\s+(?:sync|pip\s+install)|pip\s+install|npx\s+playwright\s+install)(?=\s|$)[^\n;&|]*$/;
+const RUNNER_BOUND = /\$\{?(?:GITHUB|RUNNER)_[A-Z_]+|\$\{\{/;
+
+/** The session's own branch names: the local branch and the origin branch it is set to push to, when that name differs. */
+export function ownBranches(worktree, branch) {
+  return new Set([branch, upstreamBranchName(worktree, branch)].filter(Boolean));
+}
+
+/**
+ * A pull_request workflow whose path filter the diff satisfies runs in CI whatever the repository's lane selector names.
+ * Every run step of its jobs that can run on a passing pull request needs a passing (or main-preexisting) run of exactly
+ * that command on the tested commit, so no preparing step can stand in for the check; only an exact install is exempt.
+ * A step that cannot run locally as written (it reads `${{ }}` expressions or the runner's files), or a job with no run
+ * step, may instead carry a `not-run` row on the tested commit naming the command (or `<workflow> job <job>`) with its
+ * reason, so the gap stays visible. The declared workflow lane source is checked lane by lane elsewhere.
+ */
+export function pathWorkflowProblems(runsFile, changed, workflows, commit) {
+  const declared = runsFile?.targetedInventory?.laneReport?.source?.path;
+  const onCommit = [...(runsFile?.runs ?? []), ...(runsFile?.testRuns ?? [])].filter((run) => Boolean(commit) && run?.commit === commit);
+  const ran = new Set(onCommit.filter(passedOrMainPreexisting).map((run) => run.command).filter(text).map((command) => command.trim()));
+  const leftNotRun = new Set(onCommit.filter((run) => run.status === "not-run" && text(run.reason)).map((run) => run.command).filter(text).map((command) => command.trim()));
+  return pathFilteredPullRequestWorkflows(workflows.filter((workflow) => workflow.path !== declared), changed)
+    .flatMap((workflow) => workflow.jobChecks.flatMap(({ job, command }) => {
+      const name = command ?? `${workflow.path} job ${job}`;
+      if (command !== null && SETUP_COMMAND.test(command)) return [];
+      if (ran.has(name) || ((command === null || RUNNER_BOUND.test(command)) && leftNotRun.has(name))) return [];
+      const how = command === null || RUNNER_BOUND.test(command) ? "a passing run, or a not-run row with its reason," : "a passing run";
+      return [`${workflow.path} job ${job} runs on this pull request (its path filter matches ${workflow.matchedFiles.slice(0, 3).join(", ")}); record ${how} on the tested commit for \`${name}\``];
+    }));
+}
+
+/** Every workflow file under `.github/workflows` at `commit`, read strictly: a git failure throws rather than reading as none. */
+function workflowsAt(worktree, commit) {
+  return git(worktree, ["ls-tree", "-r", "--name-only", commit, "--", ".github/workflows/"]).split("\n")
+    .filter((file) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file))
+    .map((file) => ({ path: file, text: committedFile(worktree, commit, file).toString("utf8") }));
 }

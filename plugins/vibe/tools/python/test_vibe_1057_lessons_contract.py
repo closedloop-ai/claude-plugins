@@ -29,8 +29,10 @@ def test_frozen_stories_compare_dependency_closure_and_stable_output() -> None:
     assert "rendered dependency closure" in rules
     # ISS-13317: the remedy names the shipped command instead of describing a manual capture.
     assert "frozen-render.mjs" in rules and "never a capture of your own" in rules
-    assert "clock, animations, viewport, fonts, theme, args and globals pinned" in decomposer
-    assert "`frozen-render`" in decomposer and "`frozen-render`" in reviewer
+    # ISS-14395: the render runs as handoff's gate step, not a decomposer duty; the driver still pins the clock.
+    assert "frozen-render-gate.mjs" in decomposer and "Never render or capture frozen stories" in decomposer
+    assert "page.clock.setFixedTime" in skill_split.read(HANDOFF / "scripts" / "frozen-render.mjs")
+    assert "`frozen-render`" in reviewer
     assert "even when its file is byte-identical" in reviewer
 
 

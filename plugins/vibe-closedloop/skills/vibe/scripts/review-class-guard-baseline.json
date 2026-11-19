@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "subprocessStatus": [
-    "plugins/vibe-core/shared/process-identity.mjs:result-stdout",
-    "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
+    "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
+    "plugins/vibe/shared/process-identity.mjs:result-stdout",
     "plugins/vibe/skills/handoff/scripts/e2e-capability-probe.mjs:info-stdout"
   ],
   "defaultOnSwitches": [],
@@ -27,7 +27,8 @@
   ],
   "reviewedDefaultOnSwitches": [],
   "bareWordClassifiers": {
-    "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:EXCUSE": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
+    "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:ONE_READER_CLAIM": "operator ruling 2026-11-18: the acceptance criteria of the ticket that added these rules specify their trigger words (agent-decision-citation; claim-vs-readers)",
+    "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:PRODUCT_DECISION": "operator ruling 2026-11-18: the acceptance criteria of the ticket that added these rules specify their trigger words (agent-decision-citation; claim-vs-readers)",
     "plugins/vibe/skills/handoff/scripts/criteria-audit.mjs:RUNTIME_REF": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
     "plugins/vibe/skills/handoff/scripts/criteria-list.mjs:NAMES_CRITERIA": "finds a heading that names criteria only to refuse with a message naming it, never to pass or skip silently",
     "plugins/vibe/skills/handoff/scripts/criterion-surface.mjs:ACROSS_PAGES": "kept for unmarked criteria by operator ruling, 2026-11-13; a reviewer declines with a No surface mark",

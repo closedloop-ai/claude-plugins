@@ -170,7 +170,7 @@ test("None is an exact allow-list, while unknown and UI-capable files classify u
   assert.equal(classifyOne("HISTORY.md").outcome, QaImpact.None);
   assert.equal(classifyOne("docs/guide.md").outcome, QaImpact.None);
   assert.equal(classifyOne("packages/app/HISTORY.md").outcome, QaImpact.LanesOnly);
-  for (const file of ["HISTORY.tsx", "release.svg", "README.tsx", "font.woff2", "docs/page.mdx"]) {
+  for (const file of ["HISTORY.tsx", "release.svg", "README.tsx", "font.woff2", "intro.mp4", "audio.ogg", "docs/page.mdx"]) {
     assert.equal(classifyOne(file).outcome, QaImpact.Visual, file);
   }
   assert.equal(classifyOne("changes.ts").outcome, QaImpact.LanesOnly);

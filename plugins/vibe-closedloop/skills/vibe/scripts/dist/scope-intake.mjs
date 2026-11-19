@@ -3,9 +3,10 @@ import { createRequire as __vibeRequire } from 'node:module'; import {fileURLToP
 
 // src/scope-intake.ts
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync as readFileSync2, rmSync } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-import { isAbsolute, normalize, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 // ../shared/cli.ts
@@ -33,11 +34,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 var MANIFESTS = Object.freeze([".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]);
 var Layout = Object.freeze({ Checkout: "checkout", Claude: "claude", Codex: "codex" });
-var CODEX_LOCAL_VERSION = "local";
-var VERSION_SEGMENT = /^[A-Za-z0-9_.+-]+$/;
-var SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-var NUMERIC = /^\d+$/;
-var SCOPE_FALLBACK = "user";
 var DEFAULT_MARKETPLACE = "closedloop-ai";
 var VIBE_PLUGIN_NAMES = Object.freeze(["vibe", "vibe-generic"]);
 var VIBE_LOOKUP_ORDER = Object.freeze({ checkout: Object.freeze(["vibe-generic", "vibe"]), installed: VIBE_PLUGIN_NAMES });
@@ -70,30 +66,6 @@ function ownPluginRoot(from) {
 function pluginMarketplace(install) {
   return install?.marketplace ?? DEFAULT_MARKETPLACE;
 }
-function comparePluginVersions(left, right) {
-  const a = SEMVER.exec(left);
-  const b = SEMVER.exec(right);
-  if (!a || !b) return compareText(left, right);
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(a[index]) - Number(b[index]);
-    if (difference !== 0) return Math.sign(difference);
-  }
-  if (a[4] === void 0 || b[4] === void 0) {
-    if (a[4] !== b[4]) return a[4] === void 0 ? 1 : -1;
-  } else {
-    const order = compareIdentifiers(a[4], b[4]);
-    if (order !== 0) return order;
-  }
-  if (a[5] === b[5]) return 0;
-  if (a[5] === void 0 || b[5] === void 0) return a[5] === void 0 ? -1 : 1;
-  return compareIdentifiers(a[5], b[5]);
-}
-function activeCodexVersion(versions) {
-  const valid = versions.filter((version) => VERSION_SEGMENT.test(version) && version !== "." && version !== "..");
-  if (valid.length === 0) return null;
-  if (valid.includes(CODEX_LOCAL_VERSION)) return CODEX_LOCAL_VERSION;
-  return [...valid].sort(comparePluginVersions).at(-1);
-}
 function pluginInstall(from) {
   const self = ownPluginRoot(from);
   const parent = path.dirname(self.root);
@@ -112,81 +84,6 @@ function pluginInstall(from) {
     registry
   };
 }
-function siblingPluginInstall(name, { from, cwd = process.cwd() }) {
-  const self = pluginInstall(from);
-  if (self.layout === Layout.Checkout) {
-    const candidate = checkoutRoot(self.plugins, name);
-    if (candidate) return { root: realpathSync(candidate), layout: Layout.Checkout };
-    throw missing(name, self, Layout.Checkout);
-  }
-  if (self.layout === null) {
-    throw new Error(`${self.name} at ${self.root} is not in a checkout, Claude Code or Codex plugin layout, so ${name} cannot be found`);
-  }
-  const found = self.layout === Layout.Claude ? claudeEntry(readRegistry(self.registry), name, self, cwd) : { installPath: codexRoot(path.join(self.cacheDir, self.marketplace, name), name, self) };
-  if (pluginManifest(found.installPath)?.name !== name) throw missing(name, self, self.layout);
-  return {
-    root: realpathSync(found.installPath),
-    layout: self.layout,
-    home: self.home,
-    marketplace: self.marketplace,
-    ...found.scope ? { scope: found.scope } : {},
-    ...found.projectPath ? { projectPath: found.projectPath } : {}
-  };
-}
-function siblingPluginRoot(name, options) {
-  return siblingPluginInstall(name, options).root;
-}
-function checkoutRoot(plugins, name) {
-  const named = path.join(plugins, name);
-  if (pluginManifest(named)?.name === name) return named;
-  return listDirectories(plugins).sort().map((entry) => path.join(plugins, entry)).find((dir) => pluginManifest(dir)?.name === name) ?? null;
-}
-function claudeEntry(registry, name, self, cwd) {
-  const candidates = (registry?.plugins?.[`${name}@${self.marketplace}`] ?? []).filter((entry) => typeof entry?.installPath === "string" && path.isAbsolute(entry.installPath));
-  const here = realOrSame(path.resolve(cwd));
-  const holds = (project) => {
-    if (typeof project !== "string" || !path.isAbsolute(project)) return false;
-    const root = realOrSame(project);
-    return here === root || here.startsWith(`${root}${path.sep}`);
-  };
-  for (const scope of PROJECT_SCOPES) {
-    const matching = candidates.filter((entry) => entry.scope === scope && holds(entry.projectPath)).sort((left, right) => realOrSame(right.projectPath).length - realOrSame(left.projectPath).length);
-    if (matching.length > 0) return matching[0];
-  }
-  const user = candidates.filter((entry) => entry.scope === SCOPE_FALLBACK);
-  if (user.length === 1) return user[0];
-  if (user.length > 1) throw new Error(`${name} has more than one Claude Code user install; keep one`);
-  throw missing(name, self, Layout.Claude);
-}
-function codexRoot(base, name, self) {
-  let versions;
-  try {
-    versions = readdirSync(base).filter((entry) => isDirectory(path.join(base, entry)));
-  } catch {
-    throw missing(name, self, Layout.Codex);
-  }
-  const version = activeCodexVersion(versions);
-  if (!version) throw missing(name, self, Layout.Codex);
-  return path.join(base, version);
-}
-function missing(name, self, layout) {
-  const id = `${name}@${pluginMarketplace(self)}`;
-  return new Error(`${name} is not installed beside ${self.name} (${layout} layout); install it with \`claude plugin install ${id}\` in Claude Code or \`codex plugin add ${id}\` in Codex`);
-}
-function readRegistry(file) {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function realOrSame(file) {
-  try {
-    return realpathSync(file);
-  } catch {
-    return file;
-  }
-}
 function isFile(file) {
   try {
     return statSync(file).isFile();
@@ -194,62 +91,14 @@ function isFile(file) {
     return false;
   }
 }
-function listDirectories(dir) {
-  try {
-    return readdirSync(dir).filter((entry) => isDirectory(path.join(dir, entry)));
-  } catch {
-    return [];
-  }
-}
-function isDirectory(file) {
-  try {
-    return statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function compareText(left, right) {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
-}
-function compareIdentifiers(left, right) {
-  const a = left.split(".");
-  const b = right.split(".");
-  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-    const order = compareIdentifier(a[index], b[index]);
-    if (order !== 0) return order;
-  }
-  return Math.sign(a.length - b.length);
-}
-function compareIdentifier(left, right) {
-  const leftNumeric = NUMERIC.test(left);
-  const rightNumeric = NUMERIC.test(right);
-  if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right)) || compareText(left, right);
-  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
-  return compareText(left, right);
-}
 
 // ../../plugins/vibe/shared/vibe-core.mjs
-var VIBE_CORE_MIN = "1.0.13";
 var SELF = pluginInstall(import.meta.url);
+var OWN_ROOT = ownPluginRoot(import.meta.url).root;
 var VIBE_CORE_ID = `vibe-core@${pluginMarketplace(SELF)}`;
 var VIBE_CORE_INSTALL = Object.freeze({ claude: `claude plugin install ${VIBE_CORE_ID}`, codex: `codex plugin add ${VIBE_CORE_ID}` });
-var cachedRoot = null;
-function vibeCoreRoot() {
-  if (cachedRoot) return cachedRoot;
-  const root = siblingPluginRoot("vibe-core", { from: import.meta.url });
-  const installed = pluginManifest(root)?.version ?? null;
-  if (installed === null || comparePluginVersions(installed, VIBE_CORE_MIN) < 0) {
-    throw Object.assign(
-      new Error(`${SELF.name} ${SELF.version ?? "unknown"} needs vibe-core ${VIBE_CORE_MIN} or newer, but vibe-core ${installed ?? "(no version)"} is installed; update it with \`claude plugin update ${VIBE_CORE_ID}\` in Claude Code or \`${VIBE_CORE_INSTALL.codex}\` in Codex`),
-      { outdated: true, installed, minimum: VIBE_CORE_MIN }
-    );
-  }
-  cachedRoot = root;
-  return root;
-}
 function vibeCorePath(relative) {
-  return path2.join(vibeCoreRoot(), relative);
+  return path2.join(OWN_ROOT, relative);
 }
 function vibeCore(relative) {
   return import(pathToFileURL2(vibeCorePath(relative)).href);
@@ -277,6 +126,7 @@ function providerAware(main2) {
 var DEFAULT_INVENTORY = fileURLToPath2(new URL("../../../handoff/scripts/handoff-inventory.mjs", import.meta.url));
 var PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
 var DEFAULT_POLICY_SOURCE = "built-in-default";
+var POLICY_TIMEOUT_MS = 12e4;
 async function intakeScope(input) {
   if (!input.worktree) throw new Error("--worktree is required");
   if (!Array.isArray(input.plannedPaths) || input.plannedPaths.length === 0) throw new Error("at least one --path is required");
@@ -339,18 +189,36 @@ async function portableSurfaceEditAllowed(worktree, inventory, file) {
     return false;
   }
 }
-function loadPathPolicy(worktree, _phase, inventoryScript) {
-  const result = spawnSync(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "build"], {
+function loadPathPolicy(worktree, _phase, inventoryScript, { timeoutMs = POLICY_TIMEOUT_MS, spawn = defaultPolicySpawn } = {}) {
+  const privateDir = mkdtempSync(resolve(tmpdir(), "vibe-scope-intake-"));
+  const out = resolve(privateDir, "inventory.json");
+  const result = spawn(process.execPath, [inventoryScript, "--worktree", worktree, "--phase", "policy", "--out", out], {
     encoding: "utf8",
-    env: process.env
+    env: process.env,
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: timeoutMs
   });
+  let output = "";
+  try {
+    output = readFileSync2(out, "utf8");
+  } catch {
+  }
+  rmSync(privateDir, { recursive: true, force: true });
+  if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+    throw new Error(`the path policy lookup (${basename(inventoryScript)} --phase policy) did not finish within ${Math.round(timeoutMs / 1e3)} s, so no planned file was classified; check that git in ${worktree} answers and that origin is reachable, then run scope intake again`);
+  }
   if (result.error) throw result.error;
+  output ||= String(result.stdout ?? "");
   let inventory;
   try {
-    inventory = JSON.parse(result.stdout);
+    inventory = JSON.parse(output);
   } catch {
-    throw new Error(`handoff inventory did not return JSON: ${result.stderr.trim() || `exit ${result.status}`}`);
+    const first = (value) => value.trim().split("\n").slice(0, 6).join(" | ") || "(empty)";
+    const stdout = String(result.stdout ?? "");
+    const stderr = String(result.stderr ?? "");
+    throw new Error(`handoff inventory did not return JSON: exit ${result.status}, signal ${result.signal ?? "none"}, stdout ${Buffer.byteLength(stdout)} bytes: ${first(stdout)}, stderr: ${first(stderr)}`);
   }
+  if (inventory.ok === false && inventory.error) throw new Error(`handoff inventory: ${inventory.error}`);
   if (inventory.pathPolicyProblem) throw new Error(inventory.pathPolicyProblem);
   const source = inventory.pathPolicySource;
   const file = inventory.pathPolicyFile;
@@ -364,7 +232,7 @@ function loadPathPolicy(worktree, _phase, inventoryScript) {
   return { inventory, policy: JSON.parse(text) };
 }
 function plannedPath(value) {
-  if (!value || value.includes("\0") || value.includes("\\") || isAbsolute(value) || normalize(value).split(sep).join("/") !== value || value === "." || value.endsWith("/") || /[\r\n*?\[\]]/.test(value)) {
+  if (!value || value.includes("\0") || value.includes("\\") || isAbsolute(value) || normalize(value).split(sep).join("/") !== value || value === "." || value.endsWith("/") || /[\r\n*?]/.test(value)) {
     throw new Error(`planned path must be one literal repository-relative file: ${JSON.stringify(value)}`);
   }
   return value;
@@ -388,3 +256,9 @@ async function main(argv) {
   }
 }
 runWhenMain(import.meta.url, providerAware(main));
+function defaultPolicySpawn(...[command, args, options]) {
+  return spawnSync(command, args, options);
+}
+export {
+  loadPathPolicy
+};

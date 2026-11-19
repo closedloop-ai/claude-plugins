@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync }
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync }
   from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 import { CLAUDE_EVAL_PILLOW_FAILED, createClaudeEvalIsolation } from "./eval-claude-isolation.ts";
 
@@ -130,4 +130,28 @@ test("ISS-14162 the Pillow install is hash-locked to the PyPI 11.3.0 macOS wheel
     assert.ok(hashes.includes(`--hash=sha256:${PYPI_CP39_ARM64}`));
     assert.ok(hashes.includes(`--hash=sha256:${PYPI_CP39_X86_64}`));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("AC-016 the Claude isolation wrapper resolves its real executable with either inherited PATH", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "eval-claude-isolation-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const realBin = join(root, "real-bin");
+  mkdirSync(realBin);
+  const real = join(realBin, "claude");
+  writeFileSync(real, "#!/bin/sh\nprintf '%s\\n' \"${PATH%%:*}\" \"$@\"\n");
+  chmodSync(real, 0o700);
+  const isolated = createClaudeEvalIsolation(join(root, "run"), "claude", []);
+  // A model launched by Claude inherits an already isolated PATH.
+  for (const inheritedPath of [realBin, [isolated.binDir, realBin].join(delimiter)]) {
+    const result = spawnSync(isolated.executable, ["--version", "two words"], {
+      encoding: "utf8", timeout: 2500, env: { PATH: inheritedPath },
+    });
+    assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+    assert.deepEqual(result.stdout.trimEnd().split("\n"), [isolated.binDir,
+      "--setting-sources", "", "--mcp-config", isolated.mcpConfigFile, "--strict-mcp-config", "--version", "two words"]);
+  }
+  const missing = spawnSync(isolated.executable, ["--version"], {
+    encoding: "utf8", timeout: 2500, env: { PATH: isolated.binDir },
+  });
+  assert.equal(missing.status, 127, missing.error?.message ?? missing.stderr);
 });

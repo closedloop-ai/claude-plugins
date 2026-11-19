@@ -18,7 +18,7 @@ import {
   providerStubs,
   readContract,
   type ProviderContract,
-} from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+} from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 
 export const REPO = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
@@ -61,6 +61,7 @@ export const EXCLUDED: readonly { pattern: RegExp; why: string }[] = [
   { pattern: /(?:^|\/)fixtures\//, why: "test fixtures" },
   { pattern: /(?:^|\/)(?:__pycache__|node_modules)\/|\.pyc$|(?:^|\/)\.DS_Store$/, why: "caches and installs" },
   { pattern: /(?:^|\/|-)test-fixtures?\.mjs$/, why: "test fixture modules, by name, as the generic scan exempts them" },
+  { pattern: /(?:^|\/|-)test-support\.mjs$/, why: "test support modules, by name, imported only by tests" },
   {
     pattern: /^skills\/(?:vibe\/scripts\/skill-split|cl-sweep\/scripts\/core-client-fixture|codex-fleet-monitor\/scripts\/test-support|fleet-orchestrator\/scripts\/fleet-test-support)\.mjs$/,
     why: "test support imported only by tests",
@@ -172,7 +173,9 @@ export class ClosedLoopBuild {
     const placed = new Map(Object.entries(this.data.place).map(([file, target]) => [target, file]));
     for (const relative of sourceFiles(this.paths.source)) {
       if (placed.has(relative)) continue;
-      if ((MANIFESTS as readonly string[]).includes(relative)) add(relative, { kind: "manifest", relative });
+      if ((MANIFESTS as readonly string[]).includes(relative)) {
+        add(relative, { kind: "manifest", relative, content: json(this.manifest(relative)) });
+      }
       else if (relative.endsWith(".md")) {
         add(relative, { kind: "markdown", relative });
         for (const group of this.groupsIn(this.sourceMarkdown(relative))) add(coldPath(relative, group.name), { kind: "cold", relative, id: group.name });
@@ -194,7 +197,7 @@ export class ClosedLoopBuild {
       case "contract":
         return json({ ...this.contract, references: BUNDLED_REFERENCES, placed: this.data.place });
       case "manifest":
-        return json(this.manifest(entry.relative));
+        return entry.content;
       case "marker":
         return json({ builtFrom: relative(REPO, this.paths.source).split(sep).join("/") });
       case "markdown":
@@ -302,6 +305,11 @@ export class ClosedLoopBuild {
       const base = merged[key];
       merged[key] = isRecord(base) && isRecord(value) ? { ...base, ...value } : value;
     }
+    const genericLabel = isRecord(source.interface) ? marketplaceLabel(source.interface.displayName) : null;
+    const assembledLabel = isRecord(merged.interface) ? marketplaceLabel(merged.interface.displayName) : null;
+    if (genericLabel && genericLabel === assembledLabel) {
+      throw new Error(`${relative}: generic and assembled plugins have the same marketplace display name`);
+    }
     return merged;
   }
 }
@@ -314,8 +322,14 @@ interface Assembled {
 }
 
 export type Entry =
-  | { kind: "copy" | "markdown" | "manifest" | "reference" | "contract" | "marker"; relative: string }
+  | { kind: "copy" | "markdown" | "reference" | "contract" | "marker"; relative: string }
+  | { kind: "manifest"; relative: string; content: Buffer }
   | { kind: "cold"; relative: string; id: string };
+
+/** Normalize display names for the marketplace uniqueness comparison. */
+function marketplaceLabel(value: unknown): string | null {
+  return typeof value === "string" ? value.trim().normalize().toLowerCase() : null;
+}
 
 /** Builds into `paths.output`. */
 export function buildClosedLoopVibe(paths: BuildPaths = DEFAULT_PATHS): number {

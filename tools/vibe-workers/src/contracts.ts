@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 
 // The MCP operations a launch may grant, per service: the bound provider's graph and tracker tools
 // (`data.graph.operations`, `data.tickets.readOperations` and `recordOperations`); none with no provider bound.
@@ -91,6 +91,13 @@ export const actionSchema = z.object({
   lease: z.string().uuid().optional(), status: statusSchema.optional(), resultSummary: z.string().max(4096).optional(),
   blockReason: blockReasonSchema.optional(), stoppedTurn: stoppedTurnSchema.optional(),
 }).strict();
+const queueEvidenceSchema = z.object({
+  source: z.string().trim().min(1).max(1024), reason: z.string().trim().min(1).max(2048),
+  inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+/** The parent must bind its obsolescence decision to the exact queued input observed by status. */
+export const dropPendingSchema = z.object({ worktree: z.string().min(1), workerId: workerIdSchema,
+  requestId: identifierSchema, evidence: queueEvidenceSchema }).strict();
 export const bindingSchema = z.object({
   agentRoot: z.string(), agentName: identifierSchema, digest: z.string().length(64),
   capabilities: capabilitiesSchema,
@@ -120,6 +127,7 @@ const ledgerStateSchema = z.object({
     processGroupId: z.number().int().positive().optional(),
     resultSummary: z.string().max(4096).optional(), blockReason: blockReasonSchema.optional() }).strict().optional(),
   completed: z.array(identifierSchema).max(64),
+  dropped: z.array(queueEvidenceSchema.extend({ id: identifierSchema, at: z.string().datetime() })).max(64).optional(),
 }).strict();
 /** Retains the full prior writer state without recursively copying migration history. */
 export const migrationSchema = z.object({
@@ -134,8 +142,8 @@ export const migrationSchema = z.object({
 export const ledgerSchema = ledgerStateSchema.extend({ migrations: z.array(migrationSchema).default([]) }).strict();
 export type Ledger = z.infer<typeof ledgerSchema>;
 
-/** Limits parent input before JSON parsing; briefs never belong in process arguments. */
-export async function readInput(stream: NodeJS.ReadableStream = process.stdin): Promise<unknown> {
+/** Limits parent input before JSON parsing; `emptyError` distinguishes a missing owned envelope from malformed JSON. */
+export async function readInput(stream: NodeJS.ReadableStream = process.stdin, emptyError?: string): Promise<unknown> {
   const buffers: Buffer[] = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -144,5 +152,6 @@ export async function readInput(stream: NodeJS.ReadableStream = process.stdin): 
     if (size > 128 * 1024) throw new Error("Worker input exceeds the private input limit");
     buffers.push(bytes);
   }
+  if (size === 0 && emptyError) throw new Error(emptyError);
   return JSON.parse(Buffer.concat(buffers).toString("utf8"));
 }

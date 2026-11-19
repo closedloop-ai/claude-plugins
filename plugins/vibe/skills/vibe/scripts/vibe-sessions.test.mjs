@@ -1275,3 +1275,15 @@ test("new refuses while this chat's check left the installed provider unprobed, 
   assert.equal(created.status, 0, created.stderr);
   assert.equal(JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8")).provider.state, "bound");
 });
+
+test("a recorded scope change marks the pull request body stale until the refreshed body is saved", (t) => {
+  const { home, worktree } = newSession(t, "body-stale");
+  const marked = runNode(SCRIPT, ["touch", "--worktree", worktree, "--body-stale", "operator ruling: two more items join"], home).json.session;
+  assert.equal(marked.prBodyStale.reason, "operator ruling: two more items join");
+  assert.match(marked.prBodyStale.at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "kept"], home).json.session.prBodyStale.reason, "operator ruling: two more items join");
+  for (const args of [["--body-stale", " "], ["--body-stale", "x", "--body-refreshed"]]) {
+    assert.notEqual(runNode(SCRIPT, ["touch", "--worktree", worktree, ...args], home).status, 0, args.join(" "));
+  }
+  assert.equal(runNode(SCRIPT, ["touch", "--worktree", worktree, "--body-refreshed"], home).json.session.prBodyStale, undefined);
+});

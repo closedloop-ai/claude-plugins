@@ -35,11 +35,12 @@
 // (an org that could not be chosen, an identity refusal): the evidence is in
 // the object, and the script wrote no words for the person.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { NON_BUILD_PATH } from "./area-paths.mjs";
+import { MAIN_SYNC_REQUEST_TIMEOUT_MS } from "./dist/main-sync.mjs";
 import { isLocalPlanPath, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { execCommand, parseJson, stdoutOf, tailLines } from "./ws3-exec.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -48,6 +49,8 @@ import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { deliveryPlacementProblem } = await vibeCore("lib/fleet-orchestrator/scripts/delivery-placement.mjs");
+const { commandChat } = await vibeCore("lib/fleet-orchestrator/scripts/chat-binding.mjs");
 export const REDEPLOY_UI_ONLY_ENV = "VIBE_REDEPLOY_UI_ONLY";
 export const RUN_FAILURES = new Set(["failure", "cancelled", "timed_out"]);
 // agents/vibe-environment-worker.md, the sentence it returns when no analytics key can be found.
@@ -161,6 +164,7 @@ export function createEnvCtl({
   env = process.env,
   write = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); },
   read = (file) => readFileSync(file, "utf8"),
+  realpath = realpathSync,
 } = {}) {
   const node = (name, args, options) => run(process.execPath, [script(name), ...args], options);
   const sessions = (args, options) => run(process.execPath, [SESSIONS, ...args], options);
@@ -266,9 +270,19 @@ export function createEnvCtl({
     const keep = workflowInputs.declared.has("keep_flag_snapshot") ? (keepFlagSnapshot ?? (mode === "flags" ? "false" : "true")) : undefined;
     const out = path.join(gitDir(worktree), "vibe-dispatch-inputs.json");
     const args = ["dispatch-inputs", "--worktree", worktree, "--out", out, ...(personEmail ? ["--person-email", personEmail] : []), ...(keep ? ["--keep-flag-snapshot", keep] : [])];
-    const dispatched = parseJson(sessions(args, { input: stdin }).stdout, {});
-    if (dispatched.mainSync) return { ...dispatched.mainSync, status: dispatched.mainSync.status ?? Status.Done, requested: false };
-    if (dispatched.ok !== true) return { status: dispatched.status ?? Status.Blocked, error: dispatched.error ?? "dispatch-inputs refused", ...(dispatched.problems ? { problems: dispatched.problems } : {}) };
+    // The child revalidates committed inputs and performs a bounded remote HEAD lookup before it writes request inputs.
+    const prepared = sessions(args, { input: stdin, timeoutMs: MAIN_SYNC_REQUEST_TIMEOUT_MS });
+    const processDetail = tailLines(prepared.stderr ?? "", 3);
+    if (prepared.status === 124) return { status: Status.Blocked, code: "DISPATCH_INPUTS_TIMEOUT",
+      error: `dispatch-inputs timed out after ${MAIN_SYNC_REQUEST_TIMEOUT_MS / 1000} seconds. The environment workflow was not started.`,
+      ...(processDetail ? { detail: processDetail } : {}) };
+    if (prepared.status === 127) return { status: Status.Blocked, code: "DISPATCH_INPUTS_SPAWN_FAILED",
+      error: processDetail || "dispatch-inputs could not start" };
+    const dispatched = parseJson(prepared.stdout, {}) ?? {};
+    if (prepared.status === 0 && dispatched.mainSync) return { ...dispatched.mainSync, status: dispatched.mainSync.status ?? Status.Done, requested: false };
+    if (prepared.status !== 0 || dispatched.ok !== true) return { status: dispatched.status ?? Status.Blocked,
+      error: dispatched.error ?? (processDetail || `dispatch-inputs returned no usable reply (status ${prepared.status})`),
+      ...(dispatched.code ? { code: dispatched.code } : {}), ...(dispatched.problems ? { problems: dispatched.problems } : {}) };
     const missing = [...workflowInputs.required].filter((name) => !dispatched.inputNames.includes(name));
     if (missing.length > 0) return { status: Status.Blocked, error: `The request workflow requires inputs the session does not send: ${missing.join(", ")}.` };
     const started = gh(["workflow", "run", dispatched.workflow, "--repo", activeRepo, "--ref", dispatched.ref ?? "main", "--json"], { input: read(out) });
@@ -308,6 +322,7 @@ export function createEnvCtl({
     if (noContext) return noContext;
     const record = parseJson(sessions(["show", "--worktree", worktree]).stdout, {});
     const session = record.session ?? record;
+    if (session.prBodyStale) return { status: Status.Blocked, error: staleBodyMessage(session.prBodyStale) };
     const plans = parseJson(node("local-plans.mjs", ["--worktree", worktree]).stdout, {});
     if (plans.ok !== true) return { status: Status.Blocked, problems: plans.committedLocalPlans ?? [plans.error ?? "committed local plans"] };
     const baseline = since ?? session.vercel?.lastDeployedCommit ?? session.baseCommit;
@@ -345,6 +360,20 @@ export function createEnvCtl({
     return { ...requested, pushed: published.pushed };
   }
 
+  /**
+   * The body the handoff gate checked, when its witness names one and `bodyFile` is another file. The witness binds
+   * the body by real path, so a copy (a fresh pr-body-<slug>.md) fails the PR guard; this says so before any gh call.
+   */
+  function gatedBodyMismatch(worktree, bodyFile) {
+    let gated;
+    try { gated = JSON.parse(read(path.join(gitDir(worktree), "vibe-handoff-gate.json")))?.evidence?.body?.path; }
+    catch { return null; }
+    if (typeof gated !== "string" || !gated) return null;
+    let actual;
+    try { actual = realpath(bodyFile); } catch { actual = bodyFile; }
+    return actual === gated ? null : gated;
+  }
+
   /** Opens the pull request, or reports the open one. The body and title are the worker's; `draft` is optional. */
   function openPullRequest({ worktree, branch, commit, title, bodyFile, base, draft = false }) {
     useWorktree(worktree);
@@ -352,8 +381,12 @@ export function createEnvCtl({
     if (remote !== commit) return { status: Status.Blocked, error: `origin/${branch} is at ${remote || "nothing"}, not the verified commit; nothing was pushed.` };
     const existing = parseJson(gh(["pr", "list", "--repo", activeRepo, "--head", branch, "--state", "open", "--json", "url,number"]).stdout, []);
     if (existing.length > 0) return { status: Status.Done, created: false, url: existing[0].url, number: existing[0].number };
+    const gatedBody = gatedBodyMismatch(worktree, bodyFile);
+    if (gatedBody) return { status: Status.Blocked, error: `The handoff gate checked the body file ${gatedBody}; pass that file to --body-file (edit it there and rerun the gate), never a copy.` };
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--base", base]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
+    const placement = deliveryPlacementProblem({ content: read(bodyFile), repository: activeRepo, operation: "pull-request", chat: commandChat(env), env });
+    if (placement) return { status: Status.Blocked, error: placement };
     const created = gh(["pr", "create", "--repo", activeRepo, "--head", branch, "--base", defaultBranch(worktree), "--title", title, "--body-file", bodyFile, ...(draft ? ["--draft"] : [])]);
     if (created.status !== 0) return { status: Status.Blocked, error: tailLines(created.stderr, 3) };
     return { status: Status.Done, created: true, url: created.stdout.trim().split("\n").pop() };
@@ -364,8 +397,20 @@ export function createEnvCtl({
     useWorktree(worktree);
     const checked = parseJson(node("pr-preflight.mjs", ["--title", title, "--body-file", bodyFile, "--worktree", worktree, "--pr", String(pr)]).stdout, {});
     if (checked.ok !== true) return { status: Status.Blocked, problems: checked.problems ?? ["pr-preflight refused"] };
+    const session = parseJson(sessions(["show", "--worktree", worktree]).stdout, {});
+    const stale = (session.session ?? session).prBodyStale;
+    if (stale) {
+      const published = gh(["pr", "view", String(pr), "--repo", activeRepo, "--json", "body", "--jq", ".body"]);
+      if (published.status !== 0) return { status: Status.Blocked, error: `could not read pull request #${pr}'s body to compare it: ${tailLines(published.stderr, 3)}` };
+      if (published.stdout.trim() === read(bodyFile).trim()) return { status: Status.Blocked, error: `${staleBodyMessage(stale)} The body file is the published body unchanged.` };
+    }
     const edited = gh(["pr", "edit", String(pr), "--repo", activeRepo, "--body-file", bodyFile, "--title", title]);
-    return edited.status === 0 ? { status: Status.Done, pr: Number(pr) } : { status: Status.Blocked, error: tailLines(edited.stderr, 3) };
+    if (edited.status !== 0) return { status: Status.Blocked, error: tailLines(edited.stderr, 3) };
+    if (stale) {
+      const cleared = sessions(["touch", "--worktree", worktree, "--body-refreshed"]);
+      if (cleared.status !== 0) return { status: Status.Blocked, error: `pull request #${pr} was updated, but the stale-body mark was not cleared: ${tailLines(cleared.stderr, 3)}` };
+    }
+    return { status: Status.Done, pr: Number(pr) };
   }
 
   return { flags, request, publish, redeploy, openPullRequest, updatePullRequest, followRun, findRun, recordResult };
@@ -420,4 +465,8 @@ if (isEntryPoint(import.meta.url)) {
 function markedValue(line, marker) {
   const at = line.indexOf(marker);
   return at === -1 ? undefined : line.slice(at + marker.length);
+}
+
+function staleBodyMessage(stale) {
+  return `A recorded scope change (${stale.reason}, ${stale.at}) left the pull request body stale: refresh the body file for the new scope and save it with env-ctl pr-update before the next push.`;
 }

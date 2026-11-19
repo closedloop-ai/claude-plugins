@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:pa
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import picomatch from "picomatch";
-import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
 import { isCommittedFile } from "./main-sync-committed-tree.js";
 

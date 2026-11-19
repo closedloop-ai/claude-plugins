@@ -50,7 +50,11 @@ Keep your context for the conversation and session state; NEVER do the work:
   around credentials. Never force-push; this covers every remote. Proof and
 <!-- end generic: brief-auth -->
 > Provider `recipes` (block `brief-auth` of `vibe-skill.md`)
-  scratch commits use a fresh `proof/<sha>-<n>` ref.
+  scratch commits use a fresh `proof/<sha>-<n>` ref. It also carries this
+  line: Scratch files: Each worker gets its own scratch directory named with
+  its worker id (`<scratch>/<worker-id>/`), creates its files there, and
+  deletes only exact paths it created; an orchestrator brief never asks a
+  worker to delete by prefix or glob.
 
 Before any reply, including handoff or relayed worker text, check for a safe
 next step the session can take and take it. Do not tell the person they need
@@ -139,6 +143,9 @@ for an optional provider's text. With no provider bound, follow the generic text
 
 ## Harness notes
 
+- For every expired Claude sign-in, ignore a worker's login wording and use the exact
+  `claude-auth-login` preflight step. It says `claude auth login`; never relay
+  `claude /login` from a worker result.
 - Codex reads files through shell output, which keeps the start and end of a
   long file and drops its middle; one read of this file loses the build loop.
   Read this file, each agent file and each reference to its last line, in
@@ -353,6 +360,7 @@ a plugin script the installed release no longer has.
   release it replaced: `migrated` needs nothing more, and `on-resume` is
   migrated when that session resumes (`references/quality-loop.md`,
   "Recorded definition migration"). Neither is news for the person. When its
+  migration runs, preserve the original recorded binding and actual writer ID until the supported command replaces them.
   output has `hookApproval`, tell the person that line in plain words (it
   appears only when Codex says a vibe-core hook needs approval).
   Whatever its status, tell the person, for each harness in its `restart`,
@@ -381,10 +389,10 @@ compaction or a later turn): show nothing. If the check could not run at all,
 prints the same block from the versions installed here. A `not connected`
 line starts "Restoring a connection" at once (section "Prerequisites").
 A Codex line saying vibe-core is not installed, or its hooks are not
-approved, means vibe's guards are off in Codex: tell the person right away in
-one plain line. Installing vibe-core goes through the update flow below.
-Approving its hooks is always the person's own step, never a worker's: they
-need to open Codex once and approve vibe-core's hooks in /hooks. Say nothing
+approved, means vibe's guards are off in Codex: give the person that line word
+for word right away; it names their steps. Installing vibe-core goes through
+the update flow below. Approving its hooks is always the person's own step,
+never a worker's. Say nothing
 about approval when the block has no such line.
 
 ### Prerequisites
@@ -683,6 +691,10 @@ writer/request/lease, take the durable input, and forward it to the recorded
 worker. Finish only from the actual native completed/failed/canceled turn
 event with the same IDs, never because a short-lived ledger CLI PID exited.
 Claude's launcher manages this same ledger and its owned process lifecycle.
+When a launch names the oldest pending request, claim that ID without original
+input or continuation. If the parent has evidence a pending request is obsolete,
+use `writer-state.mjs drop-pending` with its digest from `status` and the parent’s
+source and reason. The action never cancels active work.
 Do not dispatch or resume the writer concurrently. A failed/interrupted turn
 retains its request and identity; recover only from verified stopped-turn
 evidence, never by replacing the writer.
@@ -747,7 +759,9 @@ evidence, never by replacing the writer.
    handoff runs them. The writer still verifies affected and interacting prior
    table rows against actual code and fixes source gaps. Planned tests remain
    distinct from executed coverage; they never justify premature core Final
-   Aligned or a source-gap waiver. Then it checks every acceptance criterion
+   Aligned or a source-gap waiver. It reviews its own diff
+   (`../../agents/vibe-change-worker.md`, "Self-review before `DONE`").
+   Then it checks every acceptance criterion
    the change touches and records each result, under
    `references/quality-loop.md`, "Acceptance criteria before ready". With a
    reference image, that includes each visual and UX property it shows,

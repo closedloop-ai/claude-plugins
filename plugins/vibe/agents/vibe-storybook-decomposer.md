@@ -255,11 +255,8 @@ Placement:
 
 ## Verify
 
-As an advisor, run no product source, test or session-record writes. For a
-handoff frozen render, use the central `frozen-render.mjs` command with its
-prepared base worktree. The renderer owns both servers through the verifier
-run wrapper and stops each on success or failure; supply no server URL. For
-other Storybook checks, use `verify-storybook-process.mjs run`. Do not adopt a
+As an advisor, run no product source, test or session-record writes. For
+Storybook checks, use `verify-storybook-process.mjs run`. Do not adopt a
 server already running or start an ad hoc static server. Inspect the current result and report
 what the sole writer should check: `pnpm exec biome check` and
 `pnpm --filter storybook exec vitest run <changed story files>` for the
@@ -272,43 +269,11 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence:
 
-- Frozen renders: run `../skills/handoff/scripts/frozen-render.mjs --repo
-  <worktree> --base <base> --base-dir <prepared base worktree> --story-file
-  <file> ... --out <dir>` once with every story file the inventory's
-  `frozen-render` finding lists, never a capture of your own. The base URL
-  is the repo's Storybook served from a disposable worktree made by
-  `../skills/handoff/scripts/frozen-render.mjs prepare-base --repo <worktree>
-  --base <base> --story-file <file> ... --dir <dir>` with the same story
-<!-- generic: frozen-base -->
-  files, bootstrapped the way the repository documents and removed
-<!-- end generic: frozen-base -->
-> Provider `recipes` (block `frozen-base` of `agents/vibe-storybook-decomposer.md`)
-  afterwards (`git worktree remove`); never copy or edit a file in it
-  yourself. It is the base commit with each compile-only repaired story file
-  (same title, tags and story names) taken from the session, so a repaired
-  play runs on both sides and only the app code differs. The renderer starts
-  the head and base servers itself with the owned run wrapper, derives the URLs,
-  and stops both before the base worktree is removed. It is heavy
-  validation and runs under the same load and slot rules as every other
-  handoff heavy run. It renders each story twice on the base and once on the
-  branch with its clock, animations, viewport, fonts, theme, args and globals
-  pinned, waits for each play to finish and judges it with
-  `story-play-verdict.mjs`. It prints one line per story and a summary; read
-  those and, for a `blocking` story, only its cropped diff, never the full
-  screenshots. Each `blocking` story is a finding. A `same-failure` story
-  fails the same way on the base and an `unstable-on-base` story renders
-  differently on two base renders: neither is a finding, and each goes on the
-  live ticket as a Known main failure. A story the run marks `head story
-  file on both sides` was compared with the session's repaired story file;
-  a story file changed beyond a compile-only repair is not compared and
-  its stories block. When nothing blocks, report the
-  `Frozen render unchanged` line it prints for the writer to record
-  unchanged; never write or edit that line yourself. Each finding and its
-  remedy (make a story deterministic, pause an animation) is for the writer,
-  or for engineering on the ticket when the session may not make it; never
-  phrase it as something the person running the session does
-  (`../skills/vibe/references/plain-words.md`, "What the person is asked to
-  do").
+- Frozen renders are not yours: handoff runs
+  `../skills/handoff/scripts/frozen-render-gate.mjs` as its own shell step,
+  and it records its own line. Never render or capture frozen stories.
+  Each finding and its remedy are for the writer; never phrase it as
+  something the person running the session does.
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry. Inventory each existing page/list story
   that consumes the changed component; a new component-only story does not

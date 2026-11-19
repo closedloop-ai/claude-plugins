@@ -31,13 +31,12 @@ Save the repository-declared lane report as `<gitdir>/vibe-lane-report.txt`.
 > Provider `recipes` (block `lane-default` of `agents/vibe-verify-worker.md`)
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
-For a frozen comparison, run handoff's `frozen-render.mjs` with its prepared
-base worktree; it owns both servers and their URLs through the verifier run
-wrapper. For another check needing Storybook, use
-`verify-storybook-process.mjs run` so its finalizer stops the server on success
-or failure. Never launch an ad hoc static server, use separate start and stop
-commands for a comparison, or adopt an unrecorded server already running.
-Report an existing port and PID without signaling it.
+Frozen comparison is handoff's `scripts/frozen-render-gate.mjs` shell step, run
+outside any fleet slot, since its builds take the heavy lock themselves. Other
+remote heavy checks use `fleet.sh <orchDir> remote slot heavy <owner> <worktree> <command...>`
+on a clean committed worktree.
+Other Storybook checks use `verify-storybook-process.mjs run`. These wrappers
+own server cleanup; never adopt or signal an unrecorded server.
 All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
 tests in vibe or handoff unless the person explicitly asks for a pull request;
 the writer only repairs existing tests its change broke
@@ -105,6 +104,11 @@ story IDs, browser and result. Browser automation is headless. A desktop
 surface runs only under a harness the repository documents as displayless;
 otherwise record the exact limitation and rely on the checks the repository
 runs on its pull requests. Never trigger CI or reviews manually.
+
+When the repository's root rule permits a targeted local E2E lane,
+`pre-pr-lanes.mjs check` prints `TARGETED-E2E` with how to record it; otherwise
+the full local lane is required. Describe a later full lane only where the
+repository actually runs it, never as a pull-request check by assumption.
 <!-- end generic: existing-checks -->
 > Provider `recipes` (block `existing-checks` of `agents/vibe-verify-worker.md`)
 

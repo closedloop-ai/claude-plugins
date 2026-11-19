@@ -331,7 +331,7 @@ def test_pull_request_body_and_evidence_are_gated_by_the_inventory() -> None:
     hand_over = section(skill_split.read(HANDOFF_SKILL), "## 9. Hand it over")
     assert "`blocking.prBody` and `blocking.prEvidence`" in hand_over
     mode = section(skill_split.read(PLUGIN_ROOT / "agents" / "vibe-environment-worker.md"), "## Pull-request mode")
-    for required in ("--phase pull-request --overlap --ticket", "`assertionChanges`", "`refusals`",
+    for required in ("--phase pull-request --overlap --live-ticket", "`assertionChanges`", "`refusals`",
                      "false creates nothing (`NEEDS_CHANGE`)", "fresh PostHog evaluation"):
         assert required in mode, required
     assert "`serverOnly` true skips step 4" in section(skill_split.read(HANDOFF_SKILL), "## 1. Internal checklist")

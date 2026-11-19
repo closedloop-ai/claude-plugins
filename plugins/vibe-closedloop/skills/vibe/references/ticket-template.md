@@ -92,7 +92,7 @@ publication, and the same ticket worker verifies completeness and assignment.
   Not on the Handoff section's Pre-existing failures line, never in both, and
   never routed to the person running the session. It does not block
   assignment or the pull request. Each `same-failure` story from
-  handoff's `frozen-render.mjs` goes there the same way:
+  handoff's `frozen-render-gate.mjs` goes there the same way:
   `- [ ] Known main failure: frozen story <story ID>; fails the same way on base <base>; evidence: <its reason>`.
   Each `unstable-on-base` story goes there as
   `- [ ] Known main failure: frozen story <story ID>; renders differently on two base renders at <base>; diff: <its cropped diff>`.
@@ -253,7 +253,10 @@ plus Codex subagent ids when applicable. A worker id is not an orchestrator id.>
   that no longer matches what was built, for design or engineering to update.
   Nothing agent-written goes into public docs, so no page is edited on this
   branch. Internal engineering docs under `docs/` are left to engineering's
-  pull request>, or
+  pull request. A route whose public shape changed also lists
+  `apps/web/content/docs/api-reference/openapi.json` as a `required contract
+  update` with the operation and shape change, which the web app's AGENTS
+  file requires in the same pull request>, or
   "None: no existing product docs page describes the changed features"
 - Feature map: <each `Feature map:` line from the writer's change log, verbatim, for the requested pull request>, or "None: no screen behavior or reach changed"
 - Missing tests (engineering scope): <every test the session still needs,

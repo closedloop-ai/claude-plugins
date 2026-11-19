@@ -165,8 +165,9 @@ def test_cached_lanes_are_off_by_default_and_never_recorded_or_counted_as_a_pass
     cache = read(VIBE_SCRIPTS / "lane-cache.mjs")
     assert 'CACHED_RESULT = "cached"' in cache
     assert 'record.result === "pass" && record.provenance !== Provenance.Cached' in cache
-    # missingLanes still counts only pass and main-preexisting, so a cached record never satisfies a check that did not opt in
-    assert 'record.result === "pass" ||' in lanes
+    # missingLanes still counts only an untargeted pass and main-preexisting, so a cached record never satisfies a check
+    # that did not opt in
+    assert '(record.result === "pass" && record.targeted === undefined)' in lanes
     assert "CACHED-LANE" in lanes and "not a fresh run" in lanes
 
 

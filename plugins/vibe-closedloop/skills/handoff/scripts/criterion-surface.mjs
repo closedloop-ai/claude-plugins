@@ -20,7 +20,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { escapeRegExp } from "./source-imports.mjs";
-import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
+import { workItemKey } from "../../vibe/scripts/tracker-key.mjs";
 import { isCollectedTestFile } from "../../vibe/scripts/test-files.mjs";
 
 const RUNTIME_CRITERION = /\b(?:web|desktop|electron|browser)\b|\brunning (?:app|product)\b/i;
@@ -28,8 +28,8 @@ export const ACROSS_PAGES = /\b(?:every|each|all|across)(?: the| all)?(?: \w+)? 
 export const ACROSS_SURFACES = /\bboth (?:surfaces|hosts|shells|platforms|apps)\b|\b(?:every|each|all) (?:surfaces?|hosts?|shells?|platforms?)\b/i;
 export const KNOWN_SURFACES = Object.freeze(["Web", "Desktop"]);
 
-// A criterion id, optionally prefixed with the member ticket key it belongs to (the bound tracker's key; see trackerKey).
-const criterionId = () => String.raw`(?:${trackerKey()}:)?AC-\d+`;
+// A criterion id, optionally prefixed with the member ticket key it belongs to (the bound tracker's key, else a GitHub issue number; see workItemKey).
+const criterionId = () => String.raw`(?:${workItemKey()}:)?AC-\d+`;
 const auditRow = () => new RegExp(String.raw`^\|\s*(${criterionId()})\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$`, "gm");
 const markLine = () => new RegExp(String.raw`^No surface:[ \t]*(${criterionId()})\b[ \t]*(?::[ \t]*(.*))?$`);
 const MARK_LIKE = /^\s*(?:[-*+>]\s*)*no[\s_-]*surface\s*:/i;

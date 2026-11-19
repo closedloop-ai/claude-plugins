@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
 import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
+import { EVIDENCE_GUIDE } from "./pr-evidence-guide.mjs";
 import { prEvidenceValidationProblems, proofCorpusBase, prRulesFor, selectionProblems, targetedEvidenceProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { bindProviderInProcess, git, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
@@ -65,7 +67,13 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
   assert.throws(() => renderEvidenceComment({
     ...evidence,
     testIntegrityProofs: [{ ...evidence.testIntegrityProofs[0], mutationRun: undefined }],
-  }, undefined, options), /absence proof needs a mutation run/);
+  }, undefined, options), /assertion proof needs a mutation run/);
+  const standInEvidence = structuredClone(evidence);
+  standInEvidence.testIntegrityProofs[0].ownerBoundary = "test-stand-in";
+  delete standInEvidence.testIntegrityProofs[0].mountedSignal;
+  delete standInEvidence.testIntegrityProofs[0].presentState;
+  assert.match(renderEvidenceComment(standInEvidence, undefined, options), /Test integrity mutations/,
+    "the comment renderer accepts the same truthful stand-in boundary as the gate");
   const multiline = renderEvidenceComment({
     ...evidence,
     testIntegrityProofs: [bind({ ...evidence.testIntegrityProofs[0],
@@ -358,4 +366,19 @@ test("ISS-13846 review F3 inventory and comment share one proof-candidate base",
   run("config", "vibe.baseRef", "preview");
   assert.equal(proofCorpusBase(repo), preview, "a configured vibe.baseRef wins, as in the inventory");
   assert.equal(proofCorpusBase(repo, () => "origin/main"), root, "the inventory's verified comparison is used when it supplies one");
+});
+
+test("Decision 17 (operator ruling, 2026-11-18): pr-evidence-schema.mjs --example prints the evidence field guide, and a refused file points at it", () => {
+  const schema = fileURLToPath(new URL("./pr-evidence-schema.mjs", import.meta.url));
+  const example = spawnSync(process.execPath, [schema, "--example"], { encoding: "utf8" });
+  assert.equal(example.status, 0, example.stderr);
+  assert.equal(example.stdout, `${EVIDENCE_GUIDE}\n`);
+  for (const field of ["testSelection", "targetedInventory", "testRuns", "rerunCycles", "TreeEquivalentCarry", "testIntegrityProofs"]) assert.match(example.stdout, new RegExp(field));
+  const dir = mkdtempSync(path.join(tmpdir(), "pr-evidence-example-"));
+  const file = path.join(dir, "vibe-pr-evidence.json");
+  writeFileSync(file, "{}\n");
+  const refused = spawnSync(process.execPath, [schema, "--file", file], { encoding: "utf8" });
+  assert.equal(refused.status, 1);
+  assert.match(JSON.parse(refused.stdout).shape, /--example/);
+  rmSync(dir, { recursive: true, force: true });
 });

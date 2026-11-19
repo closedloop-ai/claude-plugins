@@ -6,7 +6,7 @@ accounts' weekly Codex limits.
    verifiers on `gpt-6.2-sol` since the 2026-11-17 operator ruling (`skills/cl-sweep/scripts/model-policy.mjs`, read through
    `skills/vibe/scripts/worker-model.mjs`); Claude Code explorers on sonnet in agent frontmatter. Since
    ISS-14109 these are defaults a person can override (`skills/vibe/scripts/agent-models.mjs`).
-3. Targeted validation: the tests `code_tests_for` returns per changed file plus typecheck and lint, never a
+3. Targeted validation: the tests `code_tests_for_changes` returns for the diff plus typecheck and lint, never a
    broad or full local suite.
 4. Targeted E2E uses the strongest capable container, native or remote tier and the repository's lock.
 5. Usage awareness: stop and tell the person when a usage limit is reached, unless they allowed credits.
@@ -23,6 +23,7 @@ import skill_split
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = PLUGIN_ROOT.parents[1]
 SKILLS = PLUGIN_ROOT / "skills"
 VIBE_SKILL = SKILLS / "vibe" / "SKILL.md"
 REFERENCES = SKILLS / "vibe" / "references"
@@ -30,6 +31,28 @@ HANDOFF_SKILL = SKILLS / "handoff" / "SKILL.md"
 SEED_SKILL = SKILLS / "vibe-seed-refresh" / "SKILL.md"
 CHECKS_SOURCE = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "main-sync-checks.ts"
 WHOLE_STORYBOOK_SUITE = re.compile(r"`pnpm --filter storybook test`(?! suite)")
+
+
+def test_cloud_eval_rule_states_runtime_and_evidence_boundaries() -> None:
+    required = (
+        "codex cloud exec --env claude-plugins --branch <branch>",
+        "plugins/vibe/evals/codex/run.py",
+        "results.json",
+        "failed-run rollouts",
+        "never `auth.json`",
+        "codex cloud diff",
+        "Everything inside that task is Codex",
+        "Claude evals run in a Claude cloud session",
+        "Never mix runtimes",
+        "chatgpt.com",
+        "api.openai.com",
+        "Run Codex vibe evals as a Codex cloud task",
+    )
+    # Root AGENTS.md alone carries the rule; CLAUDE.md only loads AGENTS.md (operator ruling, 2026-11-18: "we don't
+    # update claude.md. every claude.md file just says to load AGENTS.md").
+    text = (REPO_ROOT / "AGENTS.md").read_text()
+    for phrase in required:
+        assert phrase in text, f"AGENTS.md: {phrase}"
 
 
 def harness_notes() -> str:
@@ -59,10 +82,20 @@ def test_usage_limits_stop_both_harnesses_unless_credits_were_allowed() -> None:
 def test_verify_worker_runs_only_targeted_tests() -> None:
     text = agent("vibe-verify-worker")
     checks = section(text, "## Existing checks")
-    assert "Only the tests closedloop-graph's `code_tests_for` returns for each changed file" in checks
+    assert "Only the tests closedloop-graph's `code_tests_for_changes` returns for the whole diff" in checks
     assert "Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`" in checks
     assert "## Full-suite mode" not in text
     assert "`full-suite`" not in text
+
+
+def test_provider_wires_whole_diff_graph_selection_to_writer_and_gate() -> None:
+    contract = json.loads(skill_split.read(PROVIDER_REFERENCES.parents[2] / "provider.json"))
+    assert "code_tests_for_changes" in contract["data"]["graph"]["operations"]
+    assert contract["data"]["recipes"]["prEvidence"]["graphSelector"] == "code_tests_for_changes"
+    writer = flat(agent("vibe-change-worker"))
+    assert "`code_tests_for_changes` on the whole diff" in writer
+    assert "including unedited importers" in writer
+    assert "E2E uses lanes/behavior refs" in writer
 
 
 def test_no_vibe_text_asks_for_a_whole_suite() -> None:
@@ -109,3 +142,16 @@ def test_e2e_uses_a_capability_tier_and_only_needed_specs() -> None:
     handoff = flat(skill_split.read(HANDOFF_SKILL))
     assert "and no other spec" in handoff
     assert "one stack per machine through `../vibe/scripts/e2e-lock.mjs`" in handoff
+
+
+def test_fleet_reads_failed_evidence_before_reruns_and_suppresses_duplicate_relays() -> None:
+    fleet = flat(skill_split.read(SKILLS / "fleet-orchestrator" / "SKILL.md"))
+    assert "Before approving a rerun, read the failed run's kept session or trace and current code" in fleet
+    assert "Do not relay an idle or turn-end notification that adds no fact" in fleet
+
+
+def test_remote_e2e_and_heavy_work_share_the_fleet_slot_owner() -> None:
+    verifier = flat(agent("vibe-verify-worker"))
+    assert "fleet.sh <orchDir> remote slot heavy <owner> <runnerWorktree> <command...>" in verifier
+    assert "machine-local legacy slot scripts are not a Vibe execution path" in verifier
+    assert "vibe-remote/e2e-slot.sh" not in verifier

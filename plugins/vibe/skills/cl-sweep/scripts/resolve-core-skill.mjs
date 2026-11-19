@@ -6,13 +6,13 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { codexAppServerRequest } from "../../vibe/scripts/codex-app-server.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { BUNDLED_CODEX } from "../../vibe/scripts/plugin-cli.mjs";
 
 const { harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 
 const PROCESS_API = 'CLOSEDLOOP_APP_SERVER_CLIENT v1';
 const CORE_ID = 'closedloop-core@closedloop-ai';
 const SKILL_NAME = 'closedloop-core:gh-monitor-pr';
-const BUNDLED_CODEX = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 export const DISCOVERY_STAGE_TIMEOUT_MS = 20_000;
 export const DISCOVERY_TOTAL_TIMEOUT_MS = DISCOVERY_STAGE_TIMEOUT_MS * 4 + 2000;
 

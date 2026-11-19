@@ -11,14 +11,15 @@ const PATH_FIXTURE_NAME = "review-class-path-fixture.json";
 const RUNTIME_EXTENSION = /\.(?:[cm]?js|mjs|ts)$/;
 const EXECUTOR = "(?:spawnSync|execFileSync|execSync|execCommand|execCommandAsync|command|run)";
 const INITIAL_SUBPROCESS_BASELINE = Object.freeze([
-  "plugins/vibe-core/shared/process-identity.mjs:result-stdout",
-  "plugins/vibe-core/lib/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
+  "plugins/vibe/lib/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
+  "plugins/vibe/shared/process-identity.mjs:result-stdout",
   "plugins/vibe/skills/handoff/scripts/e2e-capability-probe.mjs:info-stdout",
 ]);
 const INITIAL_DEFAULT_ON_BASELINE = Object.freeze([]);
 // Shrink-only (orchestrator answer, 2026-11-14): to add a bare-word classifier, list it here and give its reason in review-class-guard-baseline.json.
 const INITIAL_BARE_WORD_BASELINE = Object.freeze([
-  "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:EXCUSE",
+  "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:ONE_READER_CLAIM",
+  "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:PRODUCT_DECISION",
   "plugins/vibe/skills/handoff/scripts/criteria-audit.mjs:RUNTIME_REF",
   "plugins/vibe/skills/handoff/scripts/criteria-list.mjs:NAMES_CRITERIA",
   "plugins/vibe/skills/handoff/scripts/criterion-surface.mjs:ACROSS_PAGES",
@@ -78,7 +79,7 @@ const WORD_SPACE = /\\s[+*?]?/g;
 const ESCAPED_MARK = /\\([./:'"-])/g;
 const ONLY_WORDS = /^[A-Za-z0-9 |()?[\]-]+$/;
 
-/** Return tracked runtime source files of vibe and vibe-core (where its hook modules live) without tests, fixtures, or generated bundles. */
+/** Return tracked runtime source files of vibe and vibe-core (its thin hook entry files and plugin-roots) without tests, fixtures, or generated bundles. */
 export function runtimeFiles(root) {
   const files = [];
   const visit = (directory) => {

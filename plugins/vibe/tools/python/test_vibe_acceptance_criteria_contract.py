@@ -112,7 +112,7 @@ def test_it_stays_light() -> None:
     assert "no long-running command joins the loop" in text
     lean = section(skill_split.read(QUALITY), "## Lean build loop")
     assert "- Acceptance check: before `DONE`" in lean
-    assert "The acceptance check's single test, script or control read per criterion is not one of them." in lean
+    assert "The self-review and the acceptance check's single test, script or control read per criterion are not among them." in lean
 
 
 def test_handoff_alignment_starts_from_the_list() -> None:

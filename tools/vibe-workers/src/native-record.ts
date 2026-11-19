@@ -5,7 +5,7 @@ import { z } from "zod";
 import { identifierSchema, workerIdSchema, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, checkoutLocation, location, readWriterSummary, releaseRecordTurnAt } from "./ledger.js";
-import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 
 const grantSchema = recordContextSchema.extend({ agentRoot: z.string().min(1), workerId: workerIdSchema,

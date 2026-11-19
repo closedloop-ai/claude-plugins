@@ -90,10 +90,12 @@ export function checkVibeVersion(
 }
 
 /**
- * One of vibe's skill helpers: from the vibe-core installed beside the pinned vibe when it has one (vibe 1.1.71
- * moved the modules its hooks run there, ISS-13869), else from the pinned vibe itself.
+ * One of vibe's skill helpers: from the pinned vibe's own lib/ (the modules its hooks run live there since ISS-14116),
+ * else from the vibe-core installed beside it (vibe 1.1.71 moved them there, ISS-13869), else from its skill folder.
  */
 export function vibeHelper(vibeDir: string, name: string): string {
+  const own = join(vibeDir, "lib", "vibe", "scripts", name);
+  if (existsSync(own)) return own;
   const coreRoot = siblingPluginRootOrNull("vibe-core", { from: join(vibeDir, ".claude-plugin", "plugin.json") });
   const core = coreRoot ? join(coreRoot, "lib", "vibe", "scripts", name) : null;
   return core && existsSync(core) ? core : join(vibeDir, "skills", "vibe", "scripts", name);

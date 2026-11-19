@@ -12,6 +12,11 @@ export function trackerKey(worktree = null) {
   return providerDataOr(sessionBinding(worktree), "tickets", "keyPattern", NO_KEY);
 }
 
+/** A portable work-item key source: the bound tracker key, else a GitHub issue number. */
+export function workItemKey(worktree = null) {
+  return providerDataOr(sessionBinding(worktree), "tickets", "keyPattern", "#\\d+");
+}
+
 /** The bound tracker's document key (`data.tickets.slugSource`, unanchored: its issues, requirements and plans). */
 export function documentKey(worktree = null) {
   return providerDataOr(sessionBinding(worktree), "tickets", "slugSource", NO_KEY);
@@ -37,6 +42,5 @@ export function trackerBound(worktree = null) {
  * request number (`#123`).
  */
 export function workItem(worktree = null) {
-  const key = providerDataOr(sessionBinding(worktree), "tickets", "keyPattern", null);
-  return new RegExp(`^(?:${key ?? "#\\d+"})$`);
+  return new RegExp(`^(?:${workItemKey(worktree)})$`);
 }

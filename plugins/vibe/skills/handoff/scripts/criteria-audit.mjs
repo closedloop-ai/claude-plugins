@@ -55,7 +55,7 @@ import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { criteriaStates, memberCriteria, ticketCriteria, unreadCriteriaProblems } from "./criteria-list.mjs";
 import { auditRows, EvidenceAt, missingTestProblem, needsRunningSurface, noSurfaceLine, noSurfaceMarks, testFileExists, testRef } from "./criterion-surface.mjs";
-import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
+import { workItemKey } from "../../vibe/scripts/tracker-key.mjs";
 import { reviewUnit } from "./unit-review.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -66,7 +66,7 @@ const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
-const waitsRef = () => new RegExp(String.raw`^not met yet: waits on(?:\s+(${trackerKey()})\b)?`);
+const waitsRef = () => new RegExp(String.raw`^not met yet: waits on(?:\s+(${workItemKey()})\b)?`);
 const CLOSED_TICKET = new Set(["DONE", "CANCELED"]);
 const RUNTIME_REF = /\be2e\b|\.spec\.[cm]?[jt]sx?\b|\bplaywright\b|\bcontrol\b/i;
 
@@ -139,7 +139,7 @@ export function matrixProblems(matrix, criteria) {
 function waitingRowProblems(id, row, { passingOn, statuses }) {
   const slug = waitsRef().exec(row.ref)[1];
   if (!slug) return [`${id}: a waiting row names the ticket it waits on: not met yet: waits on <ticket>`];
-  if (!passingOn) return [`${id}: waits on ${slug}, but a pull request needs every criterion met; only a session passed on to its next owner may leave a criterion waiting`];
+  if (!passingOn) return [`${id}: waits on ${slug}, but handoff-gate does not pass --passing-on for a requested pull request; complete the criterion before PR creation, or pass the session to its next owner and rerun criteria-audit with --passing-on`];
   const status = statuses[slug];
   if (!status) return [`${id}: waits on ${slug}, whose status was not given; pass --ticket-status ${slug}=<its status>`];
   if (CLOSED_TICKET.has(status)) return [`${id}: waits on ${slug}, which is ${status}; check the criterion against the shipped work instead`];
@@ -201,7 +201,7 @@ function main(argv) {
 /** `--ticket-status <slug>=<status>` entries as a map. */
 function ticketStatuses(entries) {
   return Object.fromEntries(entries.map((entry) => {
-    const match = new RegExp(String.raw`^(${trackerKey()})=([A-Z_]+)$`).exec(entry);
+    const match = new RegExp(String.raw`^(${workItemKey()})=([A-Z_]+)$`).exec(entry);
     if (!match) throw new Error(`--ticket-status needs <slug>=<STATUS>, got ${entry}`);
     return [match[1], match[2]];
   }));

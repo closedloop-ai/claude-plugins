@@ -5,6 +5,8 @@ const DEPENDENCY_FIELDS = new Set([
   "configDependencies", "packageManagerDependencies",
 ]);
 const RESOLVED_DEPENDENCY_FIELDS = new Set(["dependencies", "optionalDependencies"]);
+// Importer fields whose entries resolve packages; every other importer field is compared as written.
+const IMPORTER_RESOLVED_FIELDS = new Set(["dependencies", "devDependencies", "optionalDependencies"]);
 const PACKAGE_METADATA_FIELDS = new Map([
   ["resolution", "resolution"], ["engines", "mapping"], ["peerDependencies", "mapping"],
   ["peerDependenciesMeta", "peer-meta"], ["hasBin", "boolean"],
@@ -561,7 +563,6 @@ function reachable(lock, roots) {
 /** Name every lockfile entry whose change is not attributable to an admitted manifest dependency edit. */
 export function unexplainedLockfileEntries({ before, after, manifests }) {
   if (before === null || after === null) return ["pnpm-lock.yaml (added or removed)"];
-  const documents = (text) => text.split(/^---\s*$/m).filter((part) => part.trim());
   const oldDocuments = documents(before);
   const newDocuments = documents(after);
   if (oldDocuments.length !== newDocuments.length) return ["pnpm-lock.yaml (document count changed)"];
@@ -707,4 +708,79 @@ function unexplainedDocumentEntries({ before, after, manifests }) {
     }
   }
   return [...new Set(unexplained)].sort();
+}
+
+/**
+ * Whether the lockfile change from `before` to `after` changes anything the importers in `roots` (lockfile-relative
+ * importer paths) resolve: a resolved version, a patch, a package or snapshot body or a
+ * lockfile setting, reached directly, through workspace links or transitively. A specifier rewrite or an added
+ * workspace link changes nothing. An added or removed lockfile, an unreadable shape or no roots counts as a change.
+ */
+export function lockfileChangesImporterResolution(before, after, roots) {
+  if (before === null || after === null || roots.length === 0) return true;
+  try {
+    const oldDocuments = documents(before);
+    const newDocuments = documents(after);
+    if (oldDocuments.length !== newDocuments.length) return true;
+    return oldDocuments.some((text, index) => importerResolution(text, roots) !== importerResolution(newDocuments[index], roots));
+  } catch {
+    return true;
+  }
+}
+
+/** One lockfile document's resolution for `roots`, as one comparable string; throws on a shape it cannot read. */
+export function importerResolution(text, roots) {
+  const lock = parseLock(text);
+  const parts = [`settings ${rawBlock(lock.sections.get("settings"))}`];
+  const refs = [];
+  const seenImporters = new Set();
+  const importers = roots.filter((root) => lock.importers.has(root));
+  while (importers.length) {
+    const importer = importers.shift();
+    if (seenImporters.has(importer)) continue;
+    seenImporters.add(importer);
+    for (const [field, category] of nested(lock.importers.get(importer), 4)) {
+      if (!IMPORTER_RESOLVED_FIELDS.has(field)) {
+        parts.push(`importer ${importer} ${field} ${rawBlock(category)}`);
+        continue;
+      }
+      for (const [name, block] of nested(category, 6)) {
+        const entry = importerDependency(block);
+        if (!entry) throw new Error(`unsupported importer dependency ${importer} ${name}`);
+        if (entry.version.startsWith("link:")) {
+          const target = path.posix.normalize(path.posix.join(importer, entry.version.slice("link:".length)));
+          if (lock.importers.has(target)) importers.push(target);
+          continue;
+        }
+        const ref = rootReference(name, entry);
+        if (!ref) throw new Error(`unsupported importer alias ${importer} ${name}`);
+        parts.push(`importer ${importer} ${field} ${name} ${entry.version}`);
+        refs.push(ref);
+      }
+    }
+  }
+  const seen = new Set();
+  while (refs.length) {
+    const ref = refs.shift();
+    const keys = resolvedKeys(lock, ref);
+    if (keys.length === 0) parts.push(`unresolved ${ref.name}@${ref.version}`);
+    for (const [section, key] of keys) {
+      const id = `${section}/${key}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const block = lock[section].get(key);
+      parts.push(`${id} ${rawBlock(block)}`);
+      refs.push(...resolvedRefs(block));
+    }
+  }
+  return [...new Set(parts)].sort().join("\n");
+}
+
+function documents(text) {
+  return text.split(/^---\s*$/m).filter((part) => part.trim());
+}
+
+/** A block's meaningful lines, so blank lines and trailing spaces between entries never count as a change. */
+function rawBlock(block) {
+  return block ? JSON.stringify(block.lines.map((line) => line.trimEnd()).filter((line) => line.trim() && !line.trimStart().startsWith("#"))) : "absent";
 }

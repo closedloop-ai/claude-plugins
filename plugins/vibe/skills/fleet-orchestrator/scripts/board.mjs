@@ -4,7 +4,8 @@
 // a QA guide never heard that its checkpoint was ready, and a UX ruling
 // reached one writer as text while another PR rendered the same behavior.
 //
-// Usage: board.mjs <orchDir> writer <name> [--tickets <a,b>] [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+// Usage: board.mjs <orchDir> writer <name> [--tickets <a,b>] [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha> [--visual-qa <findings.json>]] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+//        board.mjs <orchDir> retire <writer> --reason <merged or otherwise terminal reason>
 //        board.mjs <orchDir> placement <ticket> --evidence <file> | --keep-local <the operator's reason>
 //        board.mjs <orchDir> push-check <writer> --head <sha>
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
@@ -54,6 +55,13 @@
 // <sha>`); `push-check` exits 1 unless the head you are about to push for it
 // is that one. The orchestrator once pushed a writer's committed head while the
 // writer was still fixing two regressions in it, and auto-merge took it.
+// A ready head whose diff from the trusted base touches the repository's UI
+// paths (lib/vibe/scripts/required-visual-qa.mjs) also needs `--visual-qa
+// <findings.json>` for that head, every touched-surface finding disposed of;
+// a writer with no local tree to diff always needs it. `push-check` rechecks
+// the recorded findings, and `status` prints `VISUAL-QA-MISSING <writer> ...`
+// for a ready head without them. A user-visible PR was reported ready to merge
+// with no visual QA on any head.
 // A writer records each question it sends you under an id (`question`), your
 // answer echoes that id (`answered`), and the writer acknowledges it in its next
 // status (`ack`). `status` prints `QUESTION-UNANSWERED <writer> <id> <m>m:
@@ -111,7 +119,9 @@ const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/s
 const { homeProblems, programShape, Shape } = await vibeCore("lib/fleet-orchestrator/scripts/fleet-home.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
-const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { failScript, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
+const { changedPaths, declaresUiPaths, VISUAL_QA_STEP, visualQaFindingsProblems, visualQaRequired } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
 
 const STATE = "board.json";
 const PAGE = "board.md";
@@ -353,6 +363,7 @@ function pairs(texts, flag) {
 function threadCounts(board, texts) {
   const threads = Object.fromEntries(Object.entries(pairs(texts, "--threads")).map(([name, n]) => [name, Number(n)]));
   for (const [name, row] of Object.entries(board.writers)) {
+    if (row.retiredAt) continue;
     if (threads[name] === undefined && row.runtime === "codex" && row.pr && row.repo) {
       const count = ghThreads(row);
       if (count !== null) threads[name] = count;
@@ -381,7 +392,7 @@ function pushedHeads(board, texts) {
 export function unreadyCommits(board, pushed = {}) {
   const problems = [];
   for (const [name, row] of Object.entries(board.writers)) {
-    if (!row.worktree || row.where === 'remote') continue;
+    if (!row.worktree || row.where === 'remote' || row.retiredAt) continue;
     const git = (...args) => repositoryGit(row.worktree, args);
     try {
       let base = pushed[name];
@@ -407,11 +418,51 @@ export function unreadyCommits(board, pushed = {}) {
 }
 
 function noHeadRows(board) {
-  return Object.entries(board.writers).filter(([, row]) => row.where === 'remote')
+  return Object.entries(board.writers).filter(([, row]) => row.where === 'remote' && !row.retiredAt)
     .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
 }
 
-const ACTIONS = ["writer", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
+/**
+ * The visual QA verdict for a writer's ready head ({ head, required, reason, findings }), or a thrown refusal
+ * naming the visual QA step. The diff is the ready head against the row's trusted base in its local worktree. A
+ * remote or worktree-less row has no repository binding to read UI paths from, so an undeclared set counts as UI.
+ */
+function readyVisualQa(row, ready, findings) {
+  const local = row.worktree && row.where !== "remote";
+  const binding = sessionBinding(local ? row.worktree : null);
+  if (local && !declaresUiPaths(binding)) return { head: ready, ...visualQaRequired(binding, []), findings: null };
+  let verdict;
+  let git = null;
+  if (local) {
+    git = (...args) => repositoryGit(row.worktree, args);
+    try {
+      let published;
+      try { published = git("rev-parse", "@{upstream}"); } catch { published = null; }
+      verdict = visualQaRequired(binding, changedPaths(git, trustedBaseOid(row, git, published), ready));
+    } catch { verdict = null; }
+  }
+  verdict ??= { required: true, reason: "no local tree to diff, so the ready head is treated as user-visible", paths: [] };
+  if (!verdict.required) return { head: ready, required: false, reason: verdict.reason, findings: null };
+  const problems = visualQaFindingsProblems(findings, ready, git, binding);
+  if (problems.length) throw new Error(`visual QA is required before this head is called ready (${verdict.reason}): ${problems.join("; ")}`);
+  return { head: ready, required: true, reason: verdict.reason, findings: evidenceFingerprint(path.resolve(findings)) };
+}
+
+/** Why a writer's declared ready head lacks current visual QA, or null. */
+export function readyVisualQaProblem(row) {
+  if (!row?.ready || row.retiredAt) return null;
+  const verdict = row.visualQa;
+  if (!verdict?.head || !(verdict.head.startsWith(row.ready) || row.ready.startsWith(verdict.head))) {
+    return `no visual QA verdict for ready head ${row.ready}; declare it again with writer --ready <sha> [--visual-qa <findings.json>]`;
+  }
+  if (!verdict.required) return null;
+  try {
+    if (JSON.stringify(evidenceFingerprint(verdict.findings.path)) !== JSON.stringify(verdict.findings)) return `visual QA findings ${verdict.findings.path} changed since the ready declaration`;
+  } catch { return `visual QA findings for ready head ${row.ready} cannot be read: ${VISUAL_QA_STEP}`; }
+  return null;
+}
+
+const ACTIONS = ["writer", "retire", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
 
 /** A scope delivery's acknowledgements and each recipient's worktree head when it was sent; refuses a recipient status cannot watch. */
 function scopeBase(board, to, values, previous) {
@@ -506,6 +557,7 @@ function main(argv) {
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
       worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" }, tickets: { type: "string" }, writer: { type: "string" }, closed: { type: "string" },
       evidence: { type: "string" }, "keep-local": { type: "string" },
+      reason: { type: "string" }, "visual-qa": { type: "string" },
     },
   });
   if (!workDir || !ACTIONS.includes(action)) {
@@ -562,6 +614,11 @@ function main(argv) {
     }));
     for (const line of usage) process.stdout.write(`${line}\n`);
     for (const line of placementLines(board)) process.stdout.write(`${line}\n`);
+    const visual = Object.entries(board.writers).flatMap(([writer, row]) => {
+      const problem = readyVisualQaProblem(row);
+      return problem ? [`VISUAL-QA-MISSING ${writer} ${row.ready}: ${problem}; it is not ready`] : [];
+    });
+    for (const line of visual) process.stdout.write(`${line}\n`);
     const asked = [...unanswered, ...unacked, ...scope.unacked, ...scope.notStarted];
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
@@ -569,7 +626,7 @@ function main(argv) {
     const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
     for (const line of home) process.stdout.write(`${line}\n`);
     process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${members.length} unit member problems, ${reviews.length} units unreviewed${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
-    return members.length + reviews.length + commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    return visual.length + members.length + reviews.length + commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {
@@ -587,6 +644,11 @@ function main(argv) {
     }
     if (!ready || !(ready.startsWith(values.head) || values.head.startsWith(ready)) || Math.min(ready.length, values.head.length) < 7) {
       process.stdout.write(`NOT-READY ${name} head ${values.head}, declared ready ${ready ?? "none"}: ask the writer for its push-ready head and wait for it; never push a head it has not called ready\n`);
+      return 1;
+    }
+    const visual = readyVisualQaProblem(board.writers[name]);
+    if (visual) {
+      process.stdout.write(`VISUAL-QA-MISSING ${name} head ${values.head}: ${visual}\n`);
       return 1;
     }
     process.stdout.write(`READY ${name} ${values.head}\n`);
@@ -641,6 +703,14 @@ function main(argv) {
     process.stdout.write(`PLACEMENT ${name} ${decision.placement}: ${decision.reason}\n`);
     return 0;
   }
+  if (action === "retire") {
+    const row = board.writers[name];
+    if (!row) throw new Error(`no board writer ${name} is recorded`);
+    if (!values.reason?.trim()) throw new Error("retire needs --reason <merged or otherwise terminal reason>");
+    board.writers[name] = { ...row, retiredAt: at, retiredReason: values.reason.trim(), updatedAt: at };
+    write(orchDir, board, `${name}: retired (${values.reason.trim()})`, at);
+    return 0;
+  }
   if (action === "writer") {
     if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
       throw new Error("--runtime must be codex or claude.");
@@ -686,11 +756,18 @@ function main(argv) {
         throw new Error('trusted base commits are inherited, never writer push-ready declarations');
       }
     }
+    if (values.ready) {
+      const root = worktree ?? row.worktree;
+      const local = root && (values.where ?? row.where) !== "remote";
+      const full = local ? repositoryGit(root, ["rev-parse", "--verify", "--end-of-options", `${values.ready}^{commit}`]) : values.ready;
+      update.visualQa = readyVisualQa({ ...row, ...update, worktree: root }, full, values["visual-qa"]);
+    }
     if (values.ready) update.readyHeads = [...new Set([...(row.readyHeads ?? []), row.ready, values.ready].filter(Boolean))];
     const moved = values.head !== undefined && values.head !== row.head;
     if (named.length > 0) update.tickets = [...new Set([...(row.tickets ?? []), ...named])];
     board.writers[name] = { ...row, ...update, ...(values.deps === undefined ? {} : { deps: list(values.deps) }), ...(moved ? { headAt: at } : {}), updatedAt: at };
-    write(orchDir, board, `${name}: ${Object.entries(update).map(([key, value]) => `${key} ${value}`).join(", ") || "touched"}`, at);
+    const logged = Object.entries(update).map(([key, value]) => (key === "visualQa" ? `visual QA ${value.required ? "covered" : "not required"} (${value.reason})` : `${key} ${value}`));
+    write(orchDir, board, `${name}: ${logged.join(", ") || "touched"}`, at);
     return 0;
   }
   if (action === "deliver") {

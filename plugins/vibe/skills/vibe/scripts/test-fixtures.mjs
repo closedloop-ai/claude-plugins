@@ -11,10 +11,28 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { localPlanPaths } from "./local-plans.mjs";
 
 export const SYMPHONY_REMOTE = "git@github.com:closedloop-ai/symphony-alpha.git";
 // Fixture mirror of symphony-alpha/vibe-handoff-paths.json; production loads the target repository itself.
 export const SYMPHONY_PATH_POLICY = readFileSync(new URL("./fixtures/symphony-vibe-handoff-paths.json", import.meta.url), "utf8");
+
+/** Seed the private table required by handoff for a fixture whose table behavior is not under test. */
+export function seedAlignedDecisionTable(worktree) {
+  const file = localPlanPaths(worktree).decisionTable;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const relativeDirectory = path.relative(realpathSync(worktree), path.dirname(file));
+  if (relativeDirectory && !relativeDirectory.startsWith("..")) {
+    const excludePath = execFileSync("git", ["-C", worktree, "rev-parse", "--git-path", "info/exclude"], { encoding: "utf8" }).trim();
+    const exclude = path.resolve(worktree, excludePath);
+    mkdirSync(path.dirname(exclude), { recursive: true });
+    const current = readFileSync(exclude, "utf8");
+    const rule = `/${relativeDirectory.replaceAll(path.sep, "/")}/`;
+    if (!current.split("\n").includes(rule)) writeFileSync(exclude, `${current.trimEnd()}\n${rule}\n`);
+  }
+  writeFileSync(file, "# Fixture decision table\n\n## Verification Findings\n\n- Checked the fixture behavior.\n\n## Adversarial Review\n\n- Checked the fixture negative path.\n\n## Fixes Applied\n\n- None required by the fixture review.\n\n## Missing tests\n\n- None\n\n## Frozen Behavior\n\n- Fixture behavior is unchanged.\n\n## Final Alignment Status\n\nAligned\n");
+  return file;
+}
 
 /** Mutate a fixture immediately after a named source read, without patching the consumer under test. */
 export function mutateSourceRead({ file, caller, text, gitDiff = false, writeTo = file, excludeCaller }) {
@@ -53,6 +71,12 @@ export function makeHome(prefix) {
   const home = path.join(root, "home");
   mkdirSync(home, { recursive: true });
   return { root, home, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+/** Give a test and its children a fixture home and no inherited harness conversation. */
+export function isolatedVibeEnvironment(home, env = process.env) {
+  return { ...env, HOME: home, CODEX_HOME: path.join(home, ".codex"), CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
+    FLEET_HOME: path.join(home, "fleet-orchestrator"), CODEX_THREAD_ID: "", CLAUDE_CODE_SESSION_ID: "" };
 }
 
 export function gitEnv(home) {

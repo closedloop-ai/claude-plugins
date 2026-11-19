@@ -1,14 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { actionSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { actionSchema, dropPendingSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
 import { isVibePlugin } from "../../../plugins/vibe/shared/plugin-roots.mjs";
-import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
+import { assertIsolatedTestRead } from "../../../plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { installedPluginRoot, readPluginManifest } from "./plugin-root.js";
 import { readReferenceImages } from "./reference-images.js";
+import { WorkerRefusal } from "./worker-refusal.js";
 
 /** Resolves an exact existing checkout for pre-session operations or a parent-authorized cancellation. */
 export function checkoutLocation(worktree: string) {
@@ -30,8 +32,10 @@ export function location(worktree: string) {
 
 /** The session check of `location` for a checkout the caller already resolved. */
 export function sessionPlace(place: ReturnType<typeof checkoutLocation>) {
+  const file = join(place.dir, "vibe-session.json");
+  assertIsolatedTestRead(file);
   const record = z.object({ worktree: z.string().optional(), branch: z.string() }).passthrough().parse(
-    JSON.parse(readFileSync(join(place.dir, "vibe-session.json"), "utf8")),
+    JSON.parse(readFileSync(file, "utf8")),
   );
   if ((record.worktree && realpathSync(record.worktree) !== place.root) || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
@@ -88,6 +92,12 @@ function definitionUpgradeEvidence(ledger: Ledger, installedRoot: string) {
 /** Read-only upgrade decision for the installed Claude launcher; migration uses the same evidence under the ledger lock. */
 export function readWriterUpgradeEvidence(worktree: string, installedRoot: string) {
   return definitionUpgradeEvidence(readLedger(writerLocation(worktree)), installedRoot);
+}
+
+/** Resume and migration use one compatibility predicate for the recorded and installed definitions. */
+export function writerUpgradeCompatible(evidence: ReturnType<typeof definitionUpgradeEvidence>) {
+  const unchangedUpgrade = evidence.provenNewer && evidence.installedDigest === evidence.recordedDigest;
+  return evidence.observedDigest === evidence.recordedDigest && (evidence.sameRelease || unchangedUpgrade);
 }
 
 /** Checks the existing active source lease atomically without returning private request text. */
@@ -186,7 +196,7 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     const reason = harnessSwitch ? "harness-switch" as const : provenDefinitionChange(evidence);
     const releasedRecord = retained && data.retainedRecord && verifyRetained
       ? verifyRetained(lock, ledger, data.retainedRecord) : undefined;
-    const block = migratableBlock(ledger, observedDigest, releasedRecord);
+    const block = migratableBlock(ledger, evidence, releasedRecord);
     const runtime = harnessSwitch?.to ?? data.runtime;
     const workerId = runtime === "claude" ? randomUUID() : data.workerId;
     if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
@@ -233,16 +243,17 @@ function provenDefinitionChange(evidence: ReturnType<typeof definitionUpgradeEvi
  * A BLOCKED request whose recorded cause is the removed definition migrates. A ledger written before block
  * reasons existed carries none; there the writer's own unreleasable grant for that request, under an absent
  * definition, is the mechanical proof of that cause.
- * Any other BLOCKED request migrates only when the recorded definition is absent: the old writer can never run
- * again to settle it, so it moves unchanged, still the active request, to the new writer, and `claim` lets that
- * writer take nothing else until it continues it. While the old writer can still run, the refusal stays.
+ * Any other BLOCKED request migrates when the recorded definition is absent, or when an intact cached definition
+ * belongs to a proven older release and differs from the installed definition. In either state the launcher refuses
+ * the old writer, so migration carries the request unchanged and `claim` admits nothing else until it is continued.
  */
-function migratableBlock(ledger: Ledger, observedDigest: string | null,
+function migratableBlock(ledger: Ledger, evidence: ReturnType<typeof definitionUpgradeEvidence>,
   releasedRecord: ReturnType<StrandedRecordVerifier> | undefined) {
   const active = ledger.active;
   if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
-  if (active.blockReason === undefined && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
-  if (observedDigest === null) return "carried";
+  if (active.blockReason === undefined && evidence.observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
+  if (evidence.observedDigest === null
+    || (!writerUpgradeCompatible(evidence) && evidence.provenNewer && evidence.observedDigest === evidence.recordedDigest)) return "carried";
   throw new Error("Migration cannot bypass a writer refusal while the recorded writer can still run; resolve the blocked request first");
 }
 
@@ -257,24 +268,63 @@ function isNewerRelease(current: string, previous: string) {
   return false;
 }
 
+function activeContinuationSummary(requestId: string, queuedId?: string) {
+  const continuation = `Continue active requestId "${requestId}" with {"requestId":"${requestId}","continuation":"<next step>"}`;
+  return queuedId
+    ? `${continuation} first; requestId "${queuedId}" stays queued: claim it by id after that, or cancel it with writer-state.mjs drop-pending.`
+    : `${continuation}; the refused request was not queued.`;
+}
+
+function oldestPendingSummary(ledger: Ledger) {
+  const next = ledger.pending[0]?.id;
+  return next ? `Claim the oldest pending requestId "${next}" without input or continuation.`
+    : "There is no oldest pending request to claim. Use a new requestId with original input.";
+}
+
+function duplicateRefusal(ledger: Ledger, requestId: string) {
+  const queued = ledger.pending.some((item) => item.id === requestId) ? requestId : undefined;
+  const recovery = ledger.active ? activeContinuationSummary(ledger.active.id, queued) : oldestPendingSummary(ledger);
+  return new WorkerRefusal("REQUEST_ID_EXISTS", `Request ID "${requestId}" already exists. ${recovery}`);
+}
+
+function inputDigest(input: string) { return createHash("sha256").update(input).digest("hex"); }
+
+/** Drop a parent's obsolete request under the same mutex, without touching active work or exposing queued input. */
+export function dropPendingWriter(input: unknown) {
+  const data = dropPendingSchema.parse(input);
+  const place = writerLocation(data.worktree);
+  return locked(place, () => {
+    const ledger = readLedger(place);
+    if (data.workerId !== ledger.workerId) throw new WorkerRefusal("WRITER_ID_MISMATCH", "The request must name the registered persistent writer.");
+    if (existsSync(join(place.dir, "vibe-record-turn.lock"))) throw new WorkerRefusal("WRITER_BUSY", "Wait for the owned record turn before dropping pending work.");
+    const index = ledger.pending.findIndex((item) => item.id === data.requestId);
+    const pending = ledger.pending[index];
+    if (!pending) throw new WorkerRefusal("REQUEST_NOT_PENDING", `Request ID "${data.requestId}" is not pending. ${ledger.active ? activeContinuationSummary(ledger.active.id) : oldestPendingSummary(ledger)}`);
+    if (inputDigest(pending.input) !== data.evidence.inputSha256) throw new WorkerRefusal("PENDING_INPUT_MISMATCH",
+      `Request ID "${data.requestId}" does not match the parent's evidence. Check its inputSha256 with writer-state status.`);
+    ledger.pending.splice(index, 1);
+    ledger.dropped = [...(ledger.dropped ?? []).slice(-63), { id: data.requestId, ...data.evidence, at: new Date().toISOString() }];
+    save(place, ledger);
+    return summary(ledger);
+  });
+}
+
 /** Serialized mutations preserve active requests across review, person and commit continuations. */
-export function changeWriter(action: "enqueue" | "claim" | "finish", input: unknown) {
+export function changeWriter(action: "enqueue" | "start" | "claim" | "finish", input: unknown) {
   const data = actionSchema.parse(input);
   const place = writerLocation(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
-    if (data.workerId !== ledger.workerId) throw new Error("Request must name the registered persistent writer");
+    if (data.workerId !== ledger.workerId) throw new WorkerRefusal("WRITER_ID_MISMATCH",
+      "The request must name the registered persistent writer.");
     const requestId = data.requestId;
-    if (!requestId) throw new Error("Request ID is required");
-    if (action === "enqueue") {
-      if (!data.input || data.continuation) throw new Error("Enqueue requires one original request input");
-      if (ledger.pending.some((item) => item.id === requestId) || ledger.active?.id === requestId || ledger.completed.includes(requestId)) {
-        throw new Error("Request ID already exists");
+    if (!requestId) throw new WorkerRefusal("REQUEST_ID_REQUIRED", "A requestId is required.");
+    const duplicateRequest = () => ledger.pending.some((item) => item.id === requestId)
+      || ledger.active?.id === requestId || ledger.completed.includes(requestId) || ledger.dropped?.some((item) => item.id === requestId);
+    const prepareClaim = () => {
+      if (existsSync(join(place.dir, "vibe-record-turn.lock"))) {
+        throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; retain the queued writer request.");
       }
-      if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
-      ledger.pending.push({ id: requestId, input: data.input });
-    } else if (action === "claim") {
-      if (existsSync(join(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
         ledger.active.status = "FAILED";
         ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
@@ -283,29 +333,65 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
         delete ledger.active.processGroupId;
         delete ledger.active.continuation;
       }
-      if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
+      if (ledger.active?.lease) throw new WorkerRefusal("WRITER_BUSY", "The writer already has an owned running turn.");
+    };
+    const claim = (continuation?: string) => {
+      prepareClaim();
       // A stopped or rejected turn finishes FAILED. A new request supersedes it
       // instead of waiting on a continuation nobody sends.
-      if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
+      if (ledger.active?.status === "FAILED" && !continuation && ledger.pending[0]?.id === requestId) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+      if (!ledger.active && continuation && ledger.completed.at(-1) === requestId) {
         // The writer's last request returned DONE and its follow-up step (the main-sync validation after the
         // input step) continues it: reopen that request rather than fail the continuation.
         ledger.completed = ledger.completed.slice(0, -1);
-        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+        ledger.active = { id: requestId, input: continuation, status: "PLAN", continuation };
       } else if (ledger.active) {
-        if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
-        ledger.active.continuation = data.continuation;
+        if (ledger.active.id !== requestId || !continuation) throw new WorkerRefusal("ACTIVE_REQUEST_PENDING",
+          activeContinuationSummary(ledger.active.id, ledger.pending.some((item) => item.id === requestId) ? requestId : undefined));
+        ledger.active.continuation = continuation;
       } else {
-        if (data.continuation || ledger.pending[0]?.id !== requestId) throw new Error("Claim must take the oldest pending request");
+        if (continuation || ledger.pending[0]?.id !== requestId) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
         const next = ledger.pending.shift();
-        if (!next) throw new Error("No pending request");
+        if (!next) throw new WorkerRefusal("NO_PENDING_REQUEST", "There is no pending request to claim.");
         ledger.active = { ...next, status: "PLAN" };
       }
       ledger.active.lease = randomUUID();
       ledger.active.ownerPid = process.pid;
+    };
+    let queuedBehind: { requestId: string; status: string; next: string } | undefined;
+    if (action === "enqueue") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("ENQUEUE_INPUT_REQUIRED", "Enqueue requires one original request input.");
+      if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
+      if (ledger.pending.length >= 32) throw new WorkerRefusal("REQUEST_QUEUE_FULL",
+        "The pending queue is full; keep the new input with the parent.");
+      ledger.pending.push({ id: requestId, input: data.input });
+      // A request queued behind a stopped open one (BLOCKED, NEEDS_PERSON and the like) is not silent: claim
+      // refuses it until that request is continued. A running turn reports its own completion.
+      if (ledger.active && !ledger.active.lease && ledger.active.status !== "FAILED") {
+        queuedBehind = { requestId: ledger.active.id, status: ledger.active.status,
+          next: activeContinuationSummary(ledger.active.id, requestId) };
+      }
+    } else if (action === "start" && data.input && !data.continuation
+      && ledger.pending.some((item) => item.id === requestId && item.input === data.input)) {
+      // Relaunching a queued request with its own input claims it by id; other input stays a duplicate refusal.
+      claim();
+    } else if (action === "start") {
+      if (!data.input || data.continuation) throw new WorkerRefusal("START_INPUT_REQUIRED", "Starting a request requires one original input.");
+      if (duplicateRequest()) throw duplicateRefusal(ledger, requestId);
+      prepareClaim();
+      if (ledger.active?.status === "FAILED") {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
+      if (ledger.active) throw new WorkerRefusal("ACTIVE_REQUEST_PENDING",
+        activeContinuationSummary(ledger.active.id));
+      if (ledger.pending.length) throw new WorkerRefusal("REQUEST_ORDER_INVALID", oldestPendingSummary(ledger));
+      ledger.active = { id: requestId, input: data.input, status: "PLAN", lease: randomUUID(), ownerPid: process.pid };
+    } else if (action === "claim") {
+      claim(data.continuation);
     } else {
       if (!ledger.active || ledger.active.id !== requestId || !data.lease || ledger.active.lease !== data.lease || !data.status) {
         throw new Error("Finish requires ownership of the active turn lease");
@@ -334,7 +420,8 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
       }
     }
     save(place, ledger);
-    return { ...summary(ledger), ...(action === "claim" ? { turn: ledger.active } : {}) };
+    return { ...summary(ledger), ...(["start", "claim"].includes(action) ? { turn: ledger.active } : {}),
+      ...(queuedBehind ? { queuedBehind } : {}) };
   });
 }
 
@@ -422,6 +509,8 @@ function summary(ledger: Ledger) {
   return { runtime: ledger.runtime, workerId: ledger.workerId, agentName: ledger.binding.agentName,
     definitionDigest: ledger.binding.digest, branch: ledger.branch, worktree: ledger.worktree,
     queuedRequestIds: ledger.pending.map((item) => item.id), activeRequestId: ledger.active?.id,
+    queuedRequests: ledger.pending.map((item) => ({ requestId: item.id, inputSha256: inputDigest(item.input) })),
+    droppedRequestIds: ledger.dropped?.map((item) => item.id) ?? [],
     status: ledger.active?.status, running: Boolean(ledger.active?.lease), processGroupId: ledger.active?.processGroupId,
     migrationCount: ledger.migrations.length,
     lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : undefined };

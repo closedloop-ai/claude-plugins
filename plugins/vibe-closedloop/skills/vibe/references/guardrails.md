@@ -181,7 +181,8 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"):
 
 - The loop is quick prep, the build, the quick checks the commit hooks need,
   the orchestrator's commit, deploy, and showing the person.
-- Beyond the quick checks, the loop's only other check is the writer's
+- Beyond the quick checks, the loop's only other checks are the writer's
+  self-review of its own diff (`quality-loop.md`, "Lean build loop") and its
   acceptance check before a change is called ready (`quality-loop.md`,
   "Acceptance criteria before ready"): one cheap existing test, script,
   control read or source trace per touched criterion, never a suite or QA
@@ -293,6 +294,11 @@ reviewer, the ticket worker and the handoff skill point at it.
   that no longer matches what was built. The ticket's Feature docs line lists
   them for design or engineering to update; it never carries drafted words.
   When no page covers a changed feature, record that.
+- A contract file under the docs folder that the repository's rules require
+  to change with a route (an API schema, not prose) is never blocked or
+  dropped: the writer records it on the Feature docs line as a `required contract
+  update` with the route and the shape change, for the human who finishes the
+  pull request.
 - The handoff inventory reports any change under either folder as outside the
   allowed paths in every phase. An edit found there is removed by the same
   writer and recorded on the Feature docs line instead, never kept as a
@@ -337,6 +343,9 @@ No agent creates or adds a flag on its own.
 - An agent never adds or edits a flag registration attestation (a ledger row
   or verification date only a human makes); the
   approval and "Keys to see this work" tell the human which key to ledger.
+- A retirement covers each base spec and story `diff-rules.mjs` lists under
+  `flagRetirements`, callers that never name the flag included; its finding
+  names the `Flag retirement:` line each one needs.
 
 ## Accessibility
 

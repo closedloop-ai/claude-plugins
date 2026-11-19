@@ -18,7 +18,7 @@ LADDER = (
     "1. Architecture or types",
     "2. Static analysis",
     "3. Guard test",
-    "4. Owning AGENTS.md rule",
+    "4. Owning instruction rule",
     "5. Memory or notes hint",
 )
 FORBIDDEN_DEPENDENCIES = (
@@ -38,6 +38,12 @@ def skill_files() -> list[Path]:
     return sorted(SKILL_ROOT.rglob("*.md"))
 
 
+def skill_section(start: str, end: str) -> str:
+    skill = (SKILL_ROOT / "SKILL.md").read_text()
+    body = skill.split(start, 1)[1].split(end, 1)[0]
+    return " ".join(body.split())
+
+
 def test_frontmatter_names_the_skill_and_its_triggers() -> None:
     skill = (SKILL_ROOT / "SKILL.md").read_text()
     frontmatter = skill.split("---", 2)[1]
@@ -55,6 +61,7 @@ def test_frontmatter_names_the_skill_and_its_triggers() -> None:
         "accepted code-review findings",
         "keeps happening",
         "post-incident",
+        "owning instruction rule",
     ):
         assert trigger in description, trigger
     for exclusion in (
@@ -105,3 +112,63 @@ def test_relative_links_resolve_inside_the_skill() -> None:
             resolved = (path.parent / target).resolve()
             assert resolved.is_file(), f"{path.name}: {target}"
             assert resolved.is_relative_to(SKILL_ROOT), f"{path.name}: {target}"
+
+
+def test_step_3_runs_the_harness_check() -> None:
+    step = skill_section("## 3.", "## 4.")
+    for fact in (
+        "Harness check:",
+        "Claude Code at launch:",
+        "On demand:",
+        "Codex at start, once per run, in trusted projects only:",
+        "`project_doc_max_bytes` (default 32768)",
+        "Not loaded: files below its working directory",
+        "hook's `additionalContext`",
+    ):
+        assert fact in step, fact
+
+
+def test_rung_4_places_rules_where_each_harness_loads_them() -> None:
+    step = skill_section("## 4.", "## 5.")
+    lead_in = "where the harness check shows each harness loads them:"
+    placement = step.split(lead_in, 1)[1]
+    placement = placement.split("Size budget check before appending:", 1)[0]
+    for rule in (
+        "- Default: the nearest owning `AGENTS.md`",
+        "- A path-scoped `.claude/rules` file only for a lesson keyed to a file pattern"
+        " that crosses directories",
+        "it adds to the `AGENTS.md` text, never replaces it",
+        "Never move existing `AGENTS.md` lines into rules",
+        "- For a high-value lesson keyed to file paths, a shared PreToolUse or"
+        " PostToolUse hook returning `additionalContext` reaches both harnesses",
+        "Codex: only in trusted projects, once reviewed",
+        "It stays advisory",
+    ):
+        assert rule in placement, rule
+
+
+def test_rung_4_checks_size_budgets_before_appending() -> None:
+    step = skill_section("## 4.", "## 5.")
+    budget = step.split("Size budget check before appending:", 1)[1]
+    budget = budget.split("Rung 5", 1)[0]
+    for limit in ("40,000 characters", "`project_doc_max_bytes`", "200 lines"):
+        assert limit in budget, limit
+
+
+def test_step_5_covers_a_rule_the_harness_never_loaded() -> None:
+    step = skill_section("## 5.", "## 6.")
+    never_loaded = step.split("Harness never loaded it:", 1)[1]
+    for cause in (
+        "working directory was above the file",
+        "project was untrusted",
+        "cut off for size",
+        "only one harness reads its file",
+        "Fix placement or size, not another copy",
+    ):
+        assert cause in never_loaded, cause
+
+
+def test_closeout_records_harness_reach() -> None:
+    closeout = (SKILL_ROOT / "SKILL.md").read_text().split("## Closeout", 1)[1]
+    block = closeout.split("```text", 1)[1].split("```", 1)[0]
+    assert "\n- Harness reach: per harness, <harness>: <file>" in block

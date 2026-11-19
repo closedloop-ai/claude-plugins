@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import { NO_DISPLAYLESS_ELECTRON, selectE2eTier, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
+import { combinedE2eSlotCommand, containerizedE2eIdentityProblem, NO_DISPLAYLESS_ELECTRON, selectE2eTier, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
@@ -26,6 +26,38 @@ test("tier selection prefers capable containers, then native, then a configured 
   assert.equal(selectE2eTier({ ...base, container: { ...container, memoryGiB: 12 } }).tier, "B");
   assert.equal(selectE2eTier({ ...base, container: { ...container, dockerReachable: false }, native: { available: true, forbidden: true } }).tier, "C");
   assert.equal(selectE2eTier({ ...base, container: { ...container, dockerPresent: false }, native: { available: true, forbidden: true }, remote: { available: false } }).tier, null);
+});
+
+test("ISS-14193 container preflight names the empty identity and both E2E lanes share one slot hold", () => {
+  const recipe = { identityKey: "SEED_SANDBOX_CLERK_ORG_ID" };
+  assert.match(containerizedE2eIdentityProblem({}, recipe) ?? "", /SEED_SANDBOX_CLERK_ORG_ID.*login shell.*run-containerized\.sh/);
+  assert.equal(containerizedE2eIdentityProblem({ SEED_SANDBOX_CLERK_ORG_ID: "org_1" }, recipe), null);
+  const head = "a".repeat(40);
+  const command = combinedE2eSlotCommand({ slotCommand: "~/vibe-remote/e2e-slot.sh", head,
+    nativeDesktop: true, owner: "ISS-14193", webCommand: "pnpm test:e2e", desktopCommand: "pnpm test:desktop-e2e" });
+  assert.equal(command.match(/e2e-slot\.sh/g)?.length, 1);
+  assert.match(command, new RegExp(`--head ${head} --native-desktop ISS-14193`));
+  assert.match(command, /pnpm test:e2e/);
+  assert.match(command, /pnpm test:desktop-e2e/);
+  assert.match(command, /web_status/);
+});
+
+test("ISS-14193 and ISS-14216 worker contracts keep the supported E2E path, and the frozen render runs as the gate step", () => {
+  const verify = readFileSync(new URL("../../../../vibe-closedloop-provider/skills/closedloop-provider/references/agents/vibe-verify-worker.md", import.meta.url), "utf8");
+  const generic = readFileSync(new URL("../../../agents/vibe-verify-worker.md", import.meta.url), "utf8");
+  const handoff = readFileSync(new URL("../SKILL.md", import.meta.url), "utf8");
+  const fleet = readFileSync(new URL("../../fleet-orchestrator/SKILL.md", import.meta.url), "utf8");
+  for (const text of [verify, fleet]) {
+    assert.match(text, /zsh -lic 'e2e\/run-containerized\.sh \.\.\.'/);
+    assert.doesNotMatch(text, /dagger call e-2-e/);
+  }
+  assert.equal(/head flag, SHA, optional\s+native Desktop flag, owner, command/.test(verify), true, "slot argument order is explicit");
+  assert.equal(/one wrapper hold[\s\S]*attempt both lanes/.test(verify), true, "both E2E lanes stay under one hold");
+  assert.equal(/control bridge is read only/.test(verify), true, "control bridge limit is explicit");
+  assert.equal(/no supported Desktop write capture\s+against\s+the seeded vibe stack/.test(verify), true, "write capture absence is explicit");
+  // ISS-14395: the frozen render is handoff's gate step, run outside any heavy slot (its builds take the lock themselves).
+  for (const text of [generic, handoff, fleet]) assert.match(text, /frozen-render-gate\.mjs/);
+  for (const text of [generic, handoff, fleet]) assert.doesNotMatch(text, /--shipped-plugin-script handoff\/scripts\/frozen-render\.mjs/);
 });
 
 test("the evidence records the probe, selected tier and honest no-tier or native visual gaps", () => {

@@ -5,15 +5,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import './bundled-codex-test-fixture.mjs';
 
 /**
  * The test sandbox, set up when a test file imports this fixture, so no test reaches this machine's Codex or reads
  * the real HOME's plugin cache. HOME is an empty temporary folder (CODEX_HOME, CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME and
  * the harness identity variables are unset), and a `codex` shim sits on PATH ahead of any real one, behind the
  * fixture fakes a test puts in front of it. The shim records each call in a log beside it, prints "real codex spawned
- * in test" and fails; the root `after` hook below fails the file when any test reached it. A test that needs a Codex uses a fixture fake (withModelCatalog,
- * installRegistryFixture) or names one with --codex. The core-skill resolver's fallback to the bundled Codex app
- * (resolve-core-skill.mjs) runs only after the PATH codex fails; with this HOME it finds no closedloop-core and fails.
+ * in test" and fails; under `node --test`, the root `after` hook below fails the file when any test reached it. A test
+ * that needs a Codex uses a fixture fake (withModelCatalog, installRegistryFixture) or names one with --codex. The
+ * core-skill resolver's fallback to the bundled Codex app (resolve-core-skill.mjs) finds no app in this process or in
+ * any Node process it starts: bundled-codex-test-fixture.mjs, loaded here and through NODE_OPTIONS, hides it.
  */
 export const CODEX_SHIM_MESSAGE = 'real codex spawned in test';
 
@@ -42,6 +44,8 @@ for (const name of ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'CLAUD
 }
 process.env.HOME = mkdtempSync(join(tmpdir(), 'cl-sweep-home-'));
 process.env.PATH = `${shimDirectory}:${process.env.PATH ?? ''}`;
+const hideBundledCodex = `--import=${JSON.stringify(new URL('./bundled-codex-test-fixture.mjs', import.meta.url).href)}`;
+process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, hideBundledCodex].filter(Boolean).join(' ');
 after(() => {
   const reached = existsSync(shimLog) ? readFileSync(shimLog, 'utf8').split('\n').filter(Boolean) : [];
   assert.deepEqual(reached, [], `${CODEX_SHIM_MESSAGE}; give the test withModelCatalog, installRegistryFixture or --codex`);

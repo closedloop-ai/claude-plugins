@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { runFromCanonicalEntry } from "./cli.js";
 import { readInput } from "./contracts.js";
-import { changeWriter, migrateWriter, readWriterSummary, recordedWriterRoot, registerWriter, takeWriterInput } from "./ledger.js";
+import { changeWriter, dropPendingWriter, migrateWriter, readWriterSummary, recordedWriterRoot, registerWriter, takeWriterInput } from "./ledger.js";
 import { acquireNativeRecord, releaseNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
 import { installedPluginRoot, resolveAgentRoot } from "./plugin-root.js";
 import { asksForUsage, writerStateUsage } from "./usage.js";
+import { WorkerRefusal } from "./worker-refusal.js";
 export { readWriterSummary } from "./ledger.js";
 
 export async function main(argv: string[]): Promise<number> {
@@ -16,7 +17,7 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const { positionals } = parseArgs({ args: argv, allowPositionals: true, options: {} });
-  const action = z.enum(["register", "migrate", "status", "enqueue", "claim", "take-input", "finish", "acquire-record", "release-record"]).parse(positionals[0]);
+  const action = z.enum(["register", "migrate", "status", "enqueue", "start", "claim", "drop-pending", "take-input", "finish", "acquire-record", "release-record"]).parse(positionals[0]);
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");
   const input = await readInput();
   let result;
@@ -29,10 +30,19 @@ export async function main(argv: string[]): Promise<number> {
   else if (action === "take-input") result = takeWriterInput(input);
   else if (action === "status") result = readWriterSummary(z.object({ worktree: z.string() }).strict().parse(input).worktree) ?? null;
   else {
-    const changed = changeWriter(action, input);
-    result = { ...changed, ...(changed.turn ? {
-      turn: { id: changed.turn.id, lease: changed.turn.lease, status: changed.turn.status },
-    } : {}) };
+    try {
+      if (action === "drop-pending") result = dropPendingWriter(input);
+      else {
+        const changed = changeWriter(action, input);
+        result = { ...changed, ...(changed.turn ? {
+          turn: { id: changed.turn.id, lease: changed.turn.lease, status: changed.turn.status },
+        } : {}) };
+      }
+    } catch (error) {
+      if (!(error instanceof WorkerRefusal)) throw error;
+      process.stdout.write(`${JSON.stringify({ status: "BLOCKED", code: error.code, summary: error.summary })}\n`);
+      return 1;
+    }
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return 0;

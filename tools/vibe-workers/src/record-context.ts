@@ -1,11 +1,12 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
 import { z } from "zod";
-import { providerDataOr, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
-import { sessionLiveTicket } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
+import { providerDataOr, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
+import { readSessionRecord, sessionLiveTicket } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { identifierSchema } from "./contracts.js";
 import { checkoutLocation, location, sessionPlace } from "./ledger.js";
 import { validationWitnessSchema } from "./main-sync-validation-contracts.js";
+import { WorkerRefusal } from "./worker-refusal.js";
 
 // Each owned role's canonical record actions. What an action may write in the tracker is the bound provider's
 // (`data.tickets.recordWrites[role][action]`); with no tracker bound an action writes nothing there.
@@ -94,23 +95,29 @@ export function resolveRecordContext(input: RecordContext) {
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record"
     || input.recordAction !== "progress" || !input.exclusiveRecordTurn
     || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
-    throw new Error("Canonical validation witness belongs only to the Root source validation continuation");
+    throw new WorkerRefusal("VALIDATION_CONTEXT_INVALID",
+      "Canonical validation witness belongs only to the Root source validation continuation.");
   }
   if (input.mainSyncCiRun && (input.agentName !== "vibe-change-worker" || input.mode !== "record"
     || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.publicationPurpose !== "handoff")) {
-    throw new Error("External CI locators require the actual source handoff-validation grant");
+    throw new WorkerRefusal("CI_LOCATOR_CONTEXT_INVALID",
+      "External CI locators require the actual source handoff-validation grant.");
   }
   if (input.mainSyncRequestContinuations && (input.agentName !== "vibe-environment-worker" || !isPublisherContext(input))) {
-    throw new Error("Only an actual environment publisher grant may predeclare request continuations");
+    throw new WorkerRefusal("REQUEST_CONTINUATIONS_CONTEXT_INVALID",
+      "Only an actual environment publisher grant may predeclare request continuations.");
   }
   if (input.mainSyncRequestContinuations && new Set(input.mainSyncRequestContinuations.map((item) =>
     `${item.runtime}:${item.requestId}:${item.recordAction}`)).size !== input.mainSyncRequestContinuations.length) {
-    throw new Error("Parent request continuations must identify distinct exact requests");
+    throw new WorkerRefusal("REQUEST_CONTINUATIONS_DUPLICATE",
+      "Parent request continuations must identify distinct exact requests.");
   }
-  if (input.recordAction === "discard" && !input.discardTarget) throw new Error("Discard requires parent-held target and confirmation evidence");
+  if (input.recordAction === "discard" && !input.discardTarget) throw new WorkerRefusal("DISCARD_TARGET_REQUIRED",
+    "Discard requires parent-held target and confirmation evidence.");
   if (input.discardTarget && (input.agentName !== "vibe-setup-worker" || input.mode !== "record"
     || input.recordAction !== "discard" || !input.exclusiveRecordTurn || input.sessionless?.kind !== "startup")) {
-    throw new Error("Discard executes only through setup's exclusive stable-checkout operation");
+    throw new WorkerRefusal("DISCARD_CONTEXT_INVALID",
+      "Discard executes only through setup's exclusive stable-checkout operation.");
   }
   let place;
   if (input.sessionless) {
@@ -122,9 +129,11 @@ export function resolveRecordContext(input: RecordContext) {
       && ((TAKEOVER_REVIEWERS.has(input.agentName) && input.mode === "pull-request")
         || (input.agentName === TAKEOVER_WRITER && input.mode !== "record" && input.mode !== "plan"
           && Boolean(input.sessionless.evidence.sourceBranch)));
-    if (!startup && !cancel && !takeover) throw new Error("This role/action has no sessionless operation");
+    if (!startup && !cancel && !takeover) throw new WorkerRefusal("SESSIONLESS_CONTEXT_INVALID",
+      `The role ${input.agentName} action ${input.recordAction ?? input.mode} has no sessionless operation.`);
     place = checkoutLocation(input.worktree);
-    if (existsSync(join(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync(join(place.dir, "vibe-session.json"))) throw new WorkerRefusal("SESSIONLESS_PRIVATE_SESSION_EXISTS",
+      "A private session exists; use its strict owned operation.");
   } else {
     const checkout = checkoutLocation(input.worktree);
     if (!existsSync(join(checkout.dir, "vibe-session.json"))) throw new MissingSessionError(input.agentName);
@@ -142,11 +151,12 @@ function discardLocation(input: RecordContext, stable: ReturnType<typeof checkou
     liveTicketCreatedBySession: z.boolean().optional(),
     handoffTicket: z.string().nullable().optional(),
     operator: z.object({ id: z.string().min(1), email: z.string().email() }).passthrough() }).passthrough().parse(
-      JSON.parse(readFileSync(join(target.dir, "vibe-session.json"), "utf8")));
+      readSessionRecord(target.root));
   const recordedTicket = sessionLiveTicket(record);
   const recordedCreated = record.liveTicketCreatedBySession ?? (recordedTicket !== null);
   if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`)
-    || !existsSync(join(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+    || !existsSync(join(target.dir, "commondir"))) throw new WorkerRefusal("DISCARD_EXECUTION_CHECKOUT_INVALID",
+      "Discard must retain its execution checkout.");
   const common = readFileSync(join(target.dir, "commondir"), "utf8").trim();
   const stableCommon = existsSync(join(stable.dir, "commondir"))
     ? realpathSync(join(stable.dir, readFileSync(join(stable.dir, "commondir"), "utf8").trim())) : realpathSync(stable.dir);
@@ -154,7 +164,8 @@ function discardLocation(input: RecordContext, stable: ReturnType<typeof checkou
     || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId
     || record.operator.email !== evidence.operatorEmail || (recordedTicket ?? undefined) !== evidence.liveTicket
     || recordedCreated !== evidence.liveTicketCreatedBySession) {
-    throw new Error("Discard target does not match the parent's owned session evidence");
+    throw new WorkerRefusal("DISCARD_TARGET_MISMATCH",
+      "Discard target does not match the parent's owned session evidence.");
   }
   return target;
 }

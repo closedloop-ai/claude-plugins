@@ -8,7 +8,8 @@
 // writes nothing and exits 1 with every problem, so the same writer fixes its
 // local plan before anything is published.
 //
-// Usage: session-plan.mjs --worktree <path> --out <file> [--published <file>]
+// Usage: session-plan.mjs --worktree <path> [--out <file>] [--published <file>]
+//        session-plan.mjs paths --worktree <path>
 //
 // Prints one JSON object: `{ ok, empty, plans, out, digest }`, plus `current`
 // with `--published` (the latest plan document version's text saved by the ticket
@@ -23,11 +24,11 @@
 // tickets on an uncited Out-of-scope line of such a plan.
 
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { localPlanPaths, sessionLocalPlanPrefix } from "./local-plans.mjs";
+import { knownLocalPlanPrefixes, localPlanPaths, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { checkPublishableText } from "./publishable-text.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
@@ -39,12 +40,55 @@ const PLAN_SEPARATOR = "\n\n---\n\n";
 export const SELF_APPROVED_MARKER = "> Self-approved: vibe sets this plan's status and no human approved it; an exclusion here counts only where it cites a ticket AC, a PRD or an operator ruling.";
 
 /**
+ * Returns the one machine-private directory used by the ticket worker and plan gates.
+ * The stable opaque key keeps evidence available across worker turns without exposing
+ * a checkout path or placing any worker-authored file in protected Git metadata.
+ */
+export function sessionPlanEvidencePaths(worktree, home = os.homedir()) {
+  const checkoutKey = createHash("sha256").update(realpathSync(path.resolve(worktree))).digest("hex").slice(0, 24);
+  const root = path.join(home, ".codex", "vibe", "plan-evidence", checkoutKey);
+  return {
+    root,
+    rendered: path.join(root, "vibe-live-plan.md"),
+    published: path.join(root, "vibe-live-plan-published.md"),
+    planDocument: path.join(root, "vibe-live-plan-document.json"),
+    childEvidence: path.join(root, "vibe-child-evidence.json"),
+    liveTicket: path.join(root, "vibe-live-ticket.md"),
+    users: path.join(root, "vibe-users"),
+    flagSnapshot: path.join(root, "vibe-flag-snapshot.new.json"),
+    dispatchInputs: path.join(root, "vibe-dispatch-inputs.json"),
+    environmentResult: path.join(root, "vibe-environment-result"),
+    environmentResultFile: path.join(root, "vibe-environment-result", "vibe-environment-result.json"),
+    prBody: path.join(root, "pr-body.md"),
+    prEvidence: path.join(root, "vibe-pr-evidence.json"),
+    prEvidenceComment: path.join(root, "pr-evidence-comment.md"),
+  };
+}
+
+/**
  * The session's plans: top-level regular `.md` files of the local plan folder, in request ID order, each
  * repo-relative when the folder is in the worktree and absolute when it is in the git directory.
  */
 export function localPlanFiles(worktree) {
   const prefix = sessionLocalPlanPrefix(worktree);
-  const folder = prefix ? path.join(worktree, prefix) : localPlanPaths(worktree).plans;
+  const folder = localPlanPaths(worktree).plans;
+  const plans = new Map(planNames(folder).map((name) => [name, prefix ? `${prefix}${name}` : path.join(folder, name)]));
+  if (!prefix) {
+    const top = git(worktree, ["rev-parse", "--show-toplevel"]);
+    const canonicalNames = new Set(plans.keys());
+    for (const legacyPrefix of knownLocalPlanPrefixes(null)) {
+      const legacy = path.join(top, legacyPrefix);
+      for (const name of legacyPlanNames(legacy)) {
+        if (canonicalNames.has(name)) continue;
+        if (plans.has(name)) throw new Error(`Multiple legacy plan folders contain the request ${name}.`);
+        plans.set(name, `${legacyPrefix}${name}`);
+      }
+    }
+  }
+  return [...plans.entries()].sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true })).map(([, file]) => file);
+}
+
+function planNames(folder) {
   let entries;
   try {
     entries = readdirSync(folder, { withFileTypes: true });
@@ -54,8 +98,20 @@ export function localPlanFiles(worktree) {
   }
   return entries
     .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
-    .map((entry) => (prefix ? `${prefix}${entry.name}` : path.join(folder, entry.name)))
-    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+    .map((entry) => entry.name);
+}
+
+/** Existing provider-layout plans are read in place after adoption into a provider-neutral worktree. */
+function legacyPlanNames(folder) {
+  for (const dir of [path.dirname(folder), folder]) {
+    try {
+      if (!lstatSync(dir).isDirectory()) throw new Error("Legacy plan folder must be a regular directory.");
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    }
+  }
+  return planNames(folder);
 }
 
 /** Whitespace-insensitive identity of a plan body; equal digests mean no material change. */
@@ -95,11 +151,21 @@ function checkoutRoots(worktree) {
 }
 
 function main() {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
+    allowPositionals: true,
     options: { worktree: { type: "string" }, out: { type: "string" }, published: { type: "string" } },
   });
-  if (!values.worktree || !values.out) throw new Error("--worktree and --out are required.");
+  if (!values.worktree) throw new Error("--worktree is required.");
   const worktree = path.resolve(values.worktree);
+  const evidence = sessionPlanEvidencePaths(worktree);
+  if (positionals[0] === "paths") {
+    mkdirSync(evidence.root, { recursive: true, mode: 0o700 });
+    mkdirSync(evidence.users, { recursive: true, mode: 0o700 });
+    chmodSync(evidence.root, 0o700);
+    chmodSync(evidence.users, 0o700);
+    return { ok: true, ...evidence };
+  }
+  if (positionals.length) throw new Error(`Unknown command ${positionals[0]}.`);
   const { plans, body, problems } = renderSessionPlan(worktree, {
     roots: checkoutRoots(worktree),
     privateWords: [os.userInfo().username],
@@ -110,7 +176,8 @@ function main() {
   if (!plans.length) {
     return { ok: true, empty: true, plans };
   }
-  const out = path.resolve(values.out);
+  const out = path.resolve(values.out ?? evidence.rendered);
+  mkdirSync(path.dirname(out), { recursive: true, mode: 0o700 });
   writeFileSync(out, body, { mode: 0o600 });
   chmodSync(out, 0o600);
   const digest = planDigest(body);

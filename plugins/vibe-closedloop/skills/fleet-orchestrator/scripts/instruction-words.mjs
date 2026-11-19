@@ -58,11 +58,13 @@ function main(argv) {
     throw new Error("Usage: instruction-words.mjs --base <ref> [--head <ref>] [--path <dir>] [--changelog <file> --version <x.y.z>]");
   }
   const measure = () => {
-    const diff = execFileSync("git", ["-C", values.repo ?? ".", "diff", "-U0", values.base, ...(values.head ? [values.head] : []), "--", `${values.path ?? "plugins/vibe"}/**/*.md`],
+    const root = values.path ?? "plugins/vibe";
+    const markdown = [`${root}/*.md`, `${root}/**/*.md`];
+    const diff = execFileSync("git", ["-C", values.repo ?? ".", "diff", "-U0", values.base, ...(values.head ? [values.head] : []), "--", ...markdown],
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     let untrackedDiff = "";
     if (!values.head) {
-      const files = execFileSync('git', ['-C', values.repo ?? '.', 'ls-files', '--others', '--exclude-standard', '-z', '--', `${values.path ?? 'plugins/vibe'}/**/*.md`], { encoding: 'utf8' }).split('\0').filter(Boolean);
+      const files = execFileSync('git', ['-C', values.repo ?? '.', 'ls-files', '--others', '--exclude-standard', '-z', '--', ...markdown], { encoding: 'utf8' }).split('\0').filter(Boolean);
       untrackedDiff = files.map(file => readFileSync(path.resolve(values.repo ?? '.', file), 'utf8').split('\n').map(line => `+${line}`).join('\n')).join('\n');
     }
     const counts = countWords(`${diff}\n${untrackedDiff}`);

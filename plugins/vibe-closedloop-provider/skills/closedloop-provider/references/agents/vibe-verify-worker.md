@@ -27,7 +27,7 @@ once at the final head instead of running the bounded checks below by hand. It
 wraps the repository's own Biome, `pnpm check:source-gates`,
 `pnpm typecheck:affected`, the lanes `pnpm test:lanes` names (through
 `pre-pr-lanes.mjs`) and the commands in your `--tests-file`, which is the
-`code_tests_for` selection you make (it is an MCP tool the script cannot call).
+`code_tests_for_changes` selection you make (it is an MCP tool the script cannot call).
 It writes one evidence JSON that keeps `passed`, `failed`, `blocked`, `cached`,
 `main-preexisting`, `no-op`, `skipped` and `not-run` apart: a skipped, no-op,
 cached or not-run entry is never reported as a pass, and a `cached` entry is a
@@ -60,7 +60,7 @@ generic log SHA; missing/unsupported evidence remains a precise final gap.
 
 Validation is targeted. Run nonwriting Biome on changed files, source gates
 and `pnpm typecheck:affected`. Only the tests closedloop-graph's
-`code_tests_for` returns for each changed file, plus
+`code_tests_for_changes` returns for the whole diff, plus
 `diffRules.requiredTests` and `requiredChecks`, through their owning package
 commands. Run a required
 `flagStates` test on and off. If graph coverage is empty or unknown, use the
@@ -75,52 +75,9 @@ the whole branch diff. Record import and E2E-reference selections in
 `<gitdir>/vibe-pr-evidence.json`. `blocking.prEvidence` names gaps; skipped CI
 is not a run or permission to write one.
 
-The private PR evidence uses the canonical structure checked by
-`../skills/handoff/scripts/pr-evidence-schema.mjs`. `testSelection` is an
-array of `{ file: "<full repo-relative source path>", selector:
-"code_tests_for" | "related" | "e2e-reference", tests: ["<full repo-relative
-test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
-When the graph cannot establish tests, a `code_tests_for` row may use
-`tests: null` only with the repository's `related` selection for that file.
-`targetedInventory` has `actor: "read-only"`,
-`source: "working-tree"`, the actual tested HEAD as `commit`, top-level
-`source` from `tested-head.mjs source`, and the complete
-`qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
-`impactKey`; never trust a stored classifier result. It also has a `laneReport`
-with `matches` from its repository source: legacy `command: "pnpm test:lanes"`,
-or typed `source` from the committed root declaration
-`vibe-handoff-paths.json`. For `github-workflow`, bind the workflow path,
-commit and SHA-256; use every job/matrix recipe from
-`ci-job-shape.mjs` export `workflowLaneDefinitions`, not a pnpm substitute. It has
-`entries` containing each exact test `kind`, `path`, nonempty `cases` and
-`command`. A lane result in `testRuns` uses `status: "passed"` with its
-exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
-its exact path, cases and command. Always write `rerunCycles: []` when no
-failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
-Older runs default to ancestor-based QA-impact recomputation. Sibling
-publications require the versioned `TreeEquivalentCarry` contract from
-`pr-evidence-schema.mjs`. Preserve original results/keys and historical lane
-selections; bind the current `scopeKey`. List non-ancestor source snapshots
-in `proofs` using pinned `CarryPoint` values. The gates check Git/source/receipt
-consistency. Render with `pr-evidence-comment.mjs --worktree "<wt>"`.
-Also write `testIntegrityProofs: []`, populated for every candidate recomputed
-by the final handoff inventory. Each entry carries its exact `candidate`,
-`path`, `case`, `class`, intentional `mutation`, exact `command`,
-`observedFailure`, `restoredPass: true`, and tested `commit`. Responsive proof
-adds `viewportSource: "registered"` and `desktopWidthMutation`; absence proof
-adds `ownerBoundary: "production"`, a positive `mountedSignal`, the exact changed
-`assertionLine`, `assertionLocation` (repo path, line and column), and
-`presentState` describing where the element was made
-present. Record `mutationRun: { command, exitCode, assertionFailure }` from the
-actual mutation run. Name its private receipt JSON in the git dir as
-`rawReceipt` with `rawReceiptSha256` and `restoredOutputSha256`; the receipt
-holds `candidate`, `target`, `command`, `head`, `mutationExit`,
-`mutationOutput` (raw runner output), `restoredExit`, `restoredOutput`,
-`beforeSha256`, `mutatedSha256` and the one `mutationEdit: { old, new }`. If the runner cannot identify the assertion column, put each
-assertion on its own line and rerun the mutation through a runner that reports
-the source column. Layout proof
-adds the official grid or prototype `baseline` and the `layoutAssertion` that
-failed when the card moved. Never infer these fields from a green normal run.
+Write the private PR evidence in the shape
+`node ../skills/handoff/scripts/pr-evidence-schema.mjs --example` prints, and render
+it with `pr-evidence-comment.mjs --worktree "<wt>"`.
 After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
 "<gitdir>/vibe-pr-evidence.json" --worktree "<wt>"` and fix every reported shape problem before
@@ -209,31 +166,38 @@ Desktop spec with no supported displayless Linux Electron harness, record
 Electron harness", probe: "<actual platform and harness check>" }` and
 the same `displaylessLimitation` plus `selectedTier: "A"` on its not-run
 item. Tier C records `remote.available: true`, `source`, `runnerHost`,
-`runnerWorktree`, `probeOwner`, its `~/vibe-remote/e2e-slot.sh --head <final sha>`
-`command` and that `desktopHarness` plus `probedCommit`, with `selectedTier: "C"`;
+`runnerWorktree`, `probeOwner`, its `fleet.sh <orchDir> remote slot heavy
+<owner> <runnerWorktree> <command...>` command and that `desktopHarness` plus
+`probedCommit`, with `selectedTier: "C"`;
 the gate reprobes the runner. If the selected tier can actually execute a
 spec, run it and record the result; do not carry it to CI.
 
 For targeted E2E, record the repository's capability probe and choose:
 
-1. Tier A: its container path (`run-containerized.sh` or Dagger) only when
-   Docker is present and reachable and reported memory and disk meet the
-   repository's documented thresholds.
+1. Tier A: after its Docker, memory and disk probe passes, use
+   `zsh -lic 'e2e/run-containerized.sh ...'`; its preflight names an empty
+   `SEED_SANDBOX_CLERK_ORG_ID` before startup.
 2. Tier B: otherwise run the same specs natively, headless, against the local
    stack with the CI sandbox identity, quarantine exclusion and retries off.
    Do not run host-browser visual-regression specs against Linux baselines;
    list them as `not run locally, covered by CI`.
-3. Tier C: otherwise use the operator's configured remote runner through its
-   real `e2e-slot.sh --head <HEAD> <owner> <command...>` interface, on a clean
-   worktree at the push-ready local commit, building fresh after a switch
-   (`image-head.mjs` refuses stale images). A failure is fixed uncommitted,
-   then the still-unpushed commit is amended and transferred before rerunning.
+3. Tier C: otherwise use the clean, push-ready remote worktree through
+   `fleet.sh <orchDir> remote slot heavy <owner> <runnerWorktree> <command...>`;
+   the still-unpushed commit is amended and transferred only after it is push-ready;
+   the command verifies `HEAD` before the run and rebuilds after a switch
+   (`image-head.mjs` refuses stale images).
+
+Guard the full call and its script before queueing: head flag, SHA, optional
+native Desktop flag, owner, command. Direct scripts need mode plus shebang;
+`bash <script>` does not. `combinedE2eSlotCommand` uses one wrapper hold to
+attempt both lanes and returns the first failure after both attempts.
 
 Record dirty E2E through `e2e-lock.mjs`; retain its `<gitdir>/vibe-e2e-results`
 receipt with `--head <HEAD> --source-hash <treeSha256>`, not the HEAD-only
-prepush ledger. The external `e2e-slot.sh --head <HEAD> <owner> <command...>`
-runs only on a clean worktree; its imported `testedHead` enforces that boundary.
-Never pass it `--source-hash` or infer another interface.
+prepush ledger. The fleet remote heavy slot runs only on a clean worktree; its
+imported `testedHead` enforces that boundary. Never pass it `--source-hash` or
+infer another interface. All remote E2E and heavy work uses this one fleet slot
+owner; the machine-local legacy slot scripts are not a Vibe execution path.
 
 `git config --bool vibe.noNativeE2e` is the machine-local operator override;
 when true, skip Tier B and use C or report no tier. If no tier is available,
@@ -245,6 +209,10 @@ Three more rules:
   across every E2E root. Run only those specs through the chosen tier and the
   repository's serialization lock; a busy or unavailable runner is a named
   limitation, never a pass.
+- Graph-selected local E2E: on `RUN_ALL`, use `code_tests_for_changes`'s
+  `start_here` and direct-evidence specs plus every E2E spec the pull request
+  adds or edits, and record them as `pre-pr-lanes.mjs check`'s `TARGETED-E2E`
+  line says. In symphony-alpha the full lane runs after merge, not on the pull request.
 - Before you claim that CI runs, or ran, a check or test, read
   `.github/pr-test-event-tiers.md` and cite the tier of the job that runs
   it. A `batch-only` job does not run on the pull request, and its `skipped`
@@ -313,6 +281,9 @@ Desktop on the final commit with the repository's control skill. Read
 `<repo-root>/.claude/skills/control/SKILL.md` and its `references/cli.md`
 first and follow their rules. From the session worktree, for each screen the
 session touched:
+
+The control bridge is read only, with no supported Desktop write capture against
+the seeded vibe stack. Report this first; write evidence uses displayless E2E.
 
 1. Resolve it to its `FEATURE_MAP.md` entry with `pnpm control feature list`
    and `pnpm control feature show <id>`; a screen with no entry is reported as

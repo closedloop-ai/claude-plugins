@@ -20,6 +20,7 @@
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--environment-org <id>]
 //                                     [--pr-repo <owner/repo> --pr-number <n> --pr-head <sha>]
+//                                     [--body-stale <the ruling that changed scope> | --body-refreshed]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
@@ -114,7 +115,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { readWriterSummary } from "./dist/writer-state.mjs";
 import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailure, pushMainSync,
-  readMainSyncInput, readMainSyncProvenance, prepareMainSyncInputs, validateMainSync } from "./dist/main-sync.mjs";
+  readMainSyncInput, readMainSyncProvenance, readMainSyncRemoteInput, prepareMainSyncInputs, recordRemoteMainSync, validateMainSync } from "./dist/main-sync.mjs";
 import { listedFlagKeys } from "./flag-keys.mjs";
 import { migrationOrderProblems } from "./migration-order.mjs";
 import { adoptStartupRecord, blockingProblem, conversationId, readStartupRecord } from "./plugin-version.mjs";
@@ -213,6 +214,8 @@ const { positionals, values } = parseArgs({
     "created-live-ticket": { type: "boolean", default: false },
     "handoff-ticket": { type: "string" },
     "member-ticket": { type: "string", multiple: true },
+    "body-stale": { type: "string" },
+    "body-refreshed": { type: "boolean", default: false },
     "live-plan": { type: "string" },
     "live-plan-status": { type: "string" },
     "main-merge": { type: "string" },
@@ -250,7 +253,7 @@ try {
   process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
 } catch (error) {
   process.stdout.write(
-    `${JSON.stringify({ ok: false, ...(error instanceof MainSyncError || ["main-sync-inputs", "main-sync-validate", "main-sync-push", "main-sync-share"].includes(positionals[0])
+    `${JSON.stringify({ ok: false, ...(error instanceof MainSyncError || ["main-sync-inputs", "main-sync-validate", "main-sync-record-remote", "main-sync-push", "main-sync-share"].includes(positionals[0])
       ? mainSyncFailure(error) : { error: error instanceof Error ? error.message : String(error) }) })}\n`
   );
   process.exit(1);
@@ -292,6 +295,8 @@ async function run(command) {
       return { mainSync: validateMainSync(await readMainSyncInput(requireOption("worktree"))) };
     case "main-sync-inputs":
       return { mainSync: prepareMainSyncInputs(await readMainSyncInput(requireOption("worktree"))) };
+    case "main-sync-record-remote":
+      return { mainSync: recordRemoteMainSync(await readMainSyncRemoteInput(requireOption("worktree"))) };
     case "main-sync-push":
       refuseLateMigrations(requireOption("worktree"));
       return { mainSync: pushMainSync(await readMainSyncInput(requireOption("worktree"))) };
@@ -315,7 +320,7 @@ async function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, claude-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-record-remote, main-sync-push, main-sync-share, codex-sessions, claude-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -501,6 +506,9 @@ function touchSession() {
       (record.liveTicketCreatedBySession === true && record.liveTicket === liveTicket)))) {
     throw new Error("--created-live-ticket requires the newly created --live-ticket, not a bound existing ticket.");
   }
+  if (values["body-stale"] !== undefined && (!values["body-stale"].trim() || values["body-refreshed"])) {
+    throw new Error("--body-stale needs the ruling that changed scope, and goes without --body-refreshed.");
+  }
   const members = values["member-ticket"] ?? [];
   for (const slug of members) requireTrackerSlug(worktree, slug, "member-ticket", "tickets", "slugPattern");
   const livePlan = values["live-plan"];
@@ -561,6 +569,9 @@ function touchSession() {
     ...(mainMerge ?? record.mainMerge ? { mainMerge: mainMerge ?? record.mainMerge } : {}),
     lastActiveAt: now,
   };
+  // A recorded scope change leaves the open pull request's body stale until env-ctl pr-update saves a refreshed one.
+  if (values["body-stale"]) updated.prBodyStale = { reason: values["body-stale"].trim(), at: now };
+  if (values["body-refreshed"]) delete updated.prBodyStale;
   writeRecord(worktree, updated);
   let retirementWarning;
   if (retirement) {

@@ -406,11 +406,11 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.101` contains 17 skills and 17 agents, and no hook manifest: its
-hooks, and every module they run, ship in the `vibe-core` plugin, which vibe
-declares as a dependency. vibe loads those modules from vibe-core through
-`shared/vibe-core.mjs`, and the commands among them keep thin wrappers at
-their vibe paths. It has no standalone commands, root-level shell scripts,
+Version `1.1.103` contains 17 skills and 17 agents, and no hook manifest: the
+`vibe-core` plugin, which vibe declares as a dependency, registers the hooks and
+runs `hooks/runtime.mjs` from the vibe a session uses. The guards (`hooks/`) and
+the modules they run (`lib/`) ship in vibe; the commands among them keep thin
+wrappers at their skill paths. It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules, the generic scan (`vibe_generic_scan.py` and its
 JSON data), and `vibe_contract_text.py` and `skill_split.py`, the text helpers

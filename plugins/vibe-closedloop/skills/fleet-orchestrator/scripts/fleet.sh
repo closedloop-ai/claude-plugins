@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last|end|interrupt|reload|recover-marker> <name> [codex-session.mjs options]
-#        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> [--containerized-e2e-build] [--capture <spec.json>] <command...>
+#        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> [--full-corpus] [--containerized-e2e-build] [--capture <spec.json>] [--shipped-plugin-script <skills-relative path>] <command...>
 #        fleet.sh <orchDir> <local|remote> cleanup
-# A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE.
+# A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE;
+# a remote call whose shipment fails to unpack or install on REMOTE_HOST exits 74 before any command runs; both are retryable.
+# LOCAL_HEAVY_BARRED=1 refuses every local heavy slot (exit 78), even with FLEET_FORCE_HERE.
+# A new remote writer that started but failed its launch check (launch-check.mjs) exits 3; steer it, never start it again.
 # A --capture slot first runs vibe's capture-guard.mjs against <orchDir>/captures, which refuses (exit 79) a repeated
 # main baseline or an over-budget capture before any slot is taken, and records the capture's outcome when it ends.
 # <orchDir> is a fleet home (its active program) or a program dir; codex-fleet-monitor/scripts/work-dir.mjs
 # resolves it and loads config.env (references/setup.md); without the REMOTE_* keys only `local` works.
-# `remote` copies the scripts it needs, and a session's prompt file (with its <prompt>.evidence/ folder), to <REMOTE_STATE_DIR>/.fleet-orchestrator/
+# `remote` publishes the scripts it needs, and a session's prompt file (with its <prompt>.evidence/ folder), as one
+# immutable generation behind <REMOTE_STATE_DIR>/.fleet-orchestrator.current and pins each call to that generation.
 # on REMOTE_HOST over ssh and runs them there in REMOTE_SHELL.
 set -euo pipefail
 
@@ -34,25 +38,37 @@ case "$where" in
   remote)
     if [ "$action" != session ] || [ "${1:-}" != recover-marker ]; then
       : "${REMOTE_HOST:?set REMOTE_HOST in $orch/config.env}" "${REMOTE_STATE_DIR:?set REMOTE_STATE_DIR in $orch/config.env}"
-      remote_dir=$REMOTE_STATE_DIR/.fleet-orchestrator
+      remote_store=$REMOTE_STATE_DIR/.fleet-orchestrator
+      remote_dir=$remote_store.current
+      remote_runtime=$REMOTE_STATE_DIR/.fleet-orchestrator-runtime
     fi
     ;;
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/fleet-remote-evidence.mjs fleet-orchestrator/scripts/skill-freshness.mjs fleet-orchestrator/scripts/writer-launch.mjs vibe/scripts/owned-state.mjs vibe/scripts/capture-guard.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
+ship=(codex-fleet-monitor/scripts/liveness.mjs fleet-orchestrator/scripts/launch-check.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/fleet-remote-evidence.mjs fleet-orchestrator/scripts/skill-freshness.mjs fleet-orchestrator/scripts/writer-launch.mjs vibe/scripts/owned-state.mjs vibe/scripts/capture-guard.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs fleet-orchestrator/scripts/fleet-admission.sh fleet-orchestrator/scripts/fleet-atomic-install.sh fleet-orchestrator/scripts/fleet-plugin-preflight.mjs)
 ship=("${ship[@]/#/skills/}")
 extra=()
 
 # Runs a shell command line on REMOTE_HOST after unpacking the shipped scripts (and `extra`) into remote_dir.
 run_remote() {
-  local outer stage files status=0
-  outer="mkdir -p $(printf %q "$remote_dir") && tar -C $(printf %q "$remote_dir") -xf - && ${REMOTE_SHELL:-zsh -lic} $(printf %q "$1")"
-  # The shipped scripts load vibe-core's modules, so both plugins go, laid out as a checkout (shared/ship-plugins.mjs).
+  local outer stage files status=0 remote_stage_prefix pinned_command mirror='' skip='' item
+  remote_stage_prefix=$(printf %q "$remote_store.ship")
+  pinned_command=${1//"$remote_dir"/'$FLEET_SHIPPED_ROOT'}
+  # Prompts, their evidence and the rulings are also copied to the stable store, where briefs name them; each
+  # generation holds only its own shipment, so the next one would hide them.
+  for item in ${extra[@]+"${extra[@]}"}; do
+    if [ -n "$skip" ]; then skip=; continue; fi
+    if [ "$item" = -C ]; then skip=1; continue; fi
+    mirror+=" $(printf %q "$item")"
+  done
+  if [ -n "$mirror" ]; then mirror="mkdir -p $(printf %q "$remote_store") && (cd \"\$FLEET_SHIPPED_ROOT\" && cp -R$mirror $(printf %q "$remote_store")/) || exit 74; "; fi
+  outer="stage=$remote_stage_prefix.\$\$; rm -rf \"\$stage\" && mkdir -p \"\$stage\" && tar -C \"\$stage\" -xf - && FLEET_SHIPPED_ROOT=\$(bash \"\$stage/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-atomic-install.sh\" \"\$stage\" $(printf %q "$remote_store")) || exit 74; export FLEET_SHIPPED_ROOT; $mirror${REMOTE_SHELL:-zsh -lic} $(printf %q "$pinned_command")"
+  # The shipped scripts go laid out as a checkout (plugins/vibe), which shared/ship-plugins.mjs stages.
   stage=$(node "$skills/../shared/ship-plugins.mjs" "${ship[@]}") || return 2
   files=$(cat "$stage/files")
   # shellcheck disable=SC2086 # plugin file paths have no spaces; each line is one path
-  COPYFILE_DISABLE=1 tar -chf - -C "$stage" $files ${extra[@]+"${extra[@]}"} |
+  COPYFILE_DISABLE=1 tar -chf - -C "$stage" files $files ${extra[@]+"${extra[@]}"} |
     ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 "$REMOTE_HOST" "$outer" || status=$?
   rm -rf "$stage"
   return "$status"
@@ -101,7 +117,7 @@ recover_remote_marker() {
   local recorded_host recorded_state_dir
   recorded_host=$(jq -er '.host | select(type == "string" and length > 0)' "$pending") || return 2
   recorded_state_dir=$(jq -er '.stateDir | select(type == "string" and startswith("/") and length > 1)' "$pending") || return 2
-  local REMOTE_HOST="$recorded_host" REMOTE_STATE_DIR="$recorded_state_dir" remote_dir="$recorded_state_dir/.fleet-orchestrator"
+  local REMOTE_HOST="$recorded_host" REMOTE_STATE_DIR="$recorded_state_dir" remote_store="$recorded_state_dir/.fleet-orchestrator" remote_dir="$recorded_state_dir/.fleet-orchestrator.current" remote_runtime="$recorded_state_dir/.fleet-orchestrator-runtime"
   local state
   state=$(remote_writer_evidence "$marker_name" "$attempt") || { echo "fleet: could not check remote writer state; prepared marker retained" >&2; return 1; }
   if [ "$state" = present ]; then
@@ -224,7 +240,7 @@ session() {
     lead_provider=$(node "$skills/vibe/scripts/provider.mjs" show) || { echo "fleet: could not read this lead's provider binding" >&2; return 2; }
     plugin_arg+=" --lead-provider $(printf %q "$lead_provider")"
   fi
-  local pending= marker= legacy= attempt= owner_started= remote_command= stage=
+  local pending= marker= legacy= attempt= owner_started= remote_command= stage= resumed=
   # Publish complete ownership atomically before a remote turn can create a writer.
   # An incomplete private staging file never claims the pending name or blocks a retry.
   if [ "$command" = turn ]; then
@@ -248,6 +264,7 @@ session() {
       echo "fleet: prepared remote marker already exists or cannot be created; run remote session recover-marker $name" >&2
       return 2
     fi
+    if [ -f "$marker" ]; then resumed=1; fi
     owner_started=$(ps -o lstart= -p "$$" 2>/dev/null) || owner_started=
     if [ -z "$owner_started" ]; then
       echo "fleet: local dispatch identity is unavailable; writer not started" >&2
@@ -298,6 +315,17 @@ session() {
         echo "fleet: remote writer started but local marker publication failed; run remote session recover-marker $name" >&2
         return 1
       fi
+      # A new writer's first tool call must finish: a hook waiting on a GUI session once held one for 14 minutes.
+      if [ -z "$resumed" ]; then
+        local launch_status=0
+        run_remote "node $(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/launch-check.mjs") codex $(printf %q "$REMOTE_STATE_DIR") $(printf %q "$name")" || launch_status=$?
+        if [ "$launch_status" -eq 1 ]; then
+          echo "fleet: $name started on $REMOTE_HOST but failed its launch check (the LAUNCH line names the hook); fix that hook there and steer the writer, never start it again" >&2
+          return 3
+        elif [ "$launch_status" -ne 0 ]; then
+          echo "fleet: $name started on $REMOTE_HOST; its launch check could not run (exit $launch_status); read it with session last $name" >&2
+        fi
+      fi
     fi
   else
     local status=$?
@@ -325,7 +353,7 @@ capture_stop_remote() {
   local file stop
   file=$(printf %q "$capture_remote_pid")
   stop=$(printf %q "$capture_remote_pid.stop")
-  run_remote "mkdir -p $(printf %q "$remote_dir") && touch $stop; p=\$(cat $file 2>/dev/null); case \"\$p\" in ''|*[!0-9]*) ;; *) [ \"\$p\" -gt 1 ] && kill -TERM \"\$p\" 2>/dev/null ;; esac; true" >/dev/null 2>&1 || true
+  run_remote "mkdir -p $(printf %q "$remote_runtime") && touch $stop; p=\$(cat $file 2>/dev/null); case \"\$p\" in ''|*[!0-9]*) ;; *) [ \"\$p\" -gt 1 ] && kill -TERM \"\$p\" 2>/dev/null ;; esac; true" >/dev/null 2>&1 || true
 }
 # Records how an admitted capture ended, with the seconds its command ran inside the slot (never the queue wait).
 capture_end() {
@@ -369,30 +397,52 @@ capture_begin() {
 
 slot() {
   [ $# -ge 4 ] || usage
-  local name=$1 owner=$2 dir=$3 slots=1 check= typed= preflight=
-  local capture=''
+  local name=$1 owner=$2 dir=$3 slots=1 check= typed= preflight= plugin_entry= capture= admitted= full_corpus=
   shift 3
+  if [ "${1:-}" = --fleet-admitted ]; then admitted=1; shift; fi
+  local admission_args=("$@")
+  if [ "$name" = heavy ] && [ -z "$admitted" ]; then
+    local admission_kind=ordinary joined=" ${admission_args[*]} "
+    if [[ "$joined" == *" --full-corpus "* ]] \
+      || { [[ "$joined" == *"plugins/vibe/evals/codex/run.py"* ]] && [[ "$joined" != *" --case "* ]]; }; then
+      admission_kind=full-corpus
+    fi
+    exec bash "$here/fleet-admission.sh" "$orch" "$owner" "$dir" "$admission_kind" \
+      bash "$0" "$orch" "$where" slot "$name" "$owner" "$dir" --fleet-admitted "${admission_args[@]}"
+  fi
   while :; do
     case "${1:-}" in
+      --full-corpus) full_corpus=1; shift ;;
       --containerized-e2e-build) typed=1; shift ;;
+      --shipped-plugin-script)
+        plugin_entry=${2:-}; shift 2 2>/dev/null || usage
+        if ! [[ "$plugin_entry" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\.mjs$ ]] \
+          || [[ "/$plugin_entry/" == *"/../"* ]] || [[ "/$plugin_entry/" == *"/./"* ]]; then
+          echo "fleet: shipped plugin script must be a skills-relative mjs path" >&2
+          return 2
+        fi
+        ship+=("skills/$plugin_entry")
+        ;;
       --capture) { [ -n "${2:-}" ] && [ -f "$2" ]; } || usage; capture=$2; shift 2 ;;
       *) break ;;
     esac
   done
   [ $# -ge 1 ] || usage
+  local command_args=("$@")
+  if [ -n "$plugin_entry" ]; then command_args=(node "$skills/$plugin_entry" "$@"); fi
   if [ -n "$capture" ]; then capture_begin "$capture" "$dir" "$owner" || exit; fi
-  if [ -n "$typed" ] || node "$skills/vibe/scripts/e2e-lock.mjs" intent "$@" >/dev/null; then preflight=1; fi
+  if [ -n "$typed" ] || node "$skills/vibe/scripts/e2e-lock.mjs" intent "${command_args[@]}" >/dev/null; then preflight=1; fi
   if [ -n "$capture" ]; then
     # The command writes its own run time once the slot admits it, so the measured rate excludes the queue wait.
     if [ "$where" = local ]; then
       capture_timing=$(mktemp "${TMPDIR:-/tmp}/fleet-capture-time.XXXXXX")
     else
-      capture_timing="$remote_dir/capture-time-$$-$RANDOM"
-      capture_remote_pid="$remote_dir/capture-pid-$$-$RANDOM"
+      capture_timing="$remote_runtime/capture-time-$$-$RANDOM"
+      capture_remote_pid="$remote_runtime/capture-pid-$$-$RANDOM"
     fi
     # shellcheck disable=SC2016 # expanded by the inner bash, inside the slot
     # The command runs in the background so a TERM, INT or HUP sent to this wrapper (slot-lock's release) reaches it.
-    set -- bash -c 't=$(date +%s); if [ -n "$2" ]; then echo $$ > "$2"; fi; "${@:3}" <&0 & c=$!; trap "kill -TERM $c 2>/dev/null" TERM INT HUP; wait "$c"; r=$?; while kill -0 "$c" 2>/dev/null; do wait "$c"; r=$?; done; echo $(( $(date +%s) - t )) > "$1"; exit $r' capture-timing "$capture_timing" "$capture_remote_pid" "$@"
+    command_args=(bash -c 't=$(date +%s); if [ -n "$2" ]; then echo $$ > "$2"; fi; "${@:3}" <&0 & c=$!; trap "kill -TERM $c 2>/dev/null" TERM INT HUP; wait "$c"; r=$?; while kill -0 "$c" 2>/dev/null; do wait "$c"; r=$?; done; echo $(( $(date +%s) - t )) > "$1"; exit $r' capture-timing "$capture_timing" "$capture_remote_pid" "${command_args[@]}")
   fi
   if [ "$name" = heavy ]; then
     if [ "$where" = local ]; then slots=${HEAVY_SLOTS:-1}; else slots=${REMOTE_HEAVY_SLOTS:-1}; fi
@@ -403,14 +453,19 @@ slot() {
     admission_note="force reason: ${FLEET_FORCE_REASON:-}"
   fi
   if [ "$where" = local ]; then
+    # A placement order, not a load reading, so FLEET_FORCE_HERE cannot lift it.
+    if [ -n "$check" ] && [ "${LOCAL_HEAVY_BARRED:-}" = 1 ]; then
+      echo "fleet: LOCAL_HEAVY_BARRED=1 in config.env bars heavy work on this machine; run it with fleet.sh <orchDir> remote slot heavy <owner> <dir> <command...>" >&2
+      exit 78
+    fi
     cd "$dir"
     if [ -n "$check" ]; then MAX_LOAD_PER_CORE=${MAX_LOAD_PER_CORE:-1.5} bash "$here/load-check.sh"; fi
     local slot_args=(--slots "$slots")
     if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
     if [ -n "$preflight" ]; then slot_args+=(--preflight-node "$skills/vibe/scripts/e2e-lock.mjs"); fi
-    if [ -z "$capture" ]; then exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@"; fi
+    if [ -z "$capture" ]; then exec bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "${command_args[@]}"; fi
     # Kept as a child so a signal to this script stops slot-lock (which stops the command and frees the slot) before the entry is recorded failed.
-    bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@" <&0 &
+    bash "$here/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "${command_args[@]}" <&0 &
     local slot_pid=$!
     trap 'kill -TERM "$slot_pid" 2>/dev/null; wait "$slot_pid"; exit 143' TERM
     trap 'kill -TERM "$slot_pid" 2>/dev/null; wait "$slot_pid"; exit 130' INT
@@ -418,24 +473,46 @@ slot() {
     wait "$slot_pid"
     return
   fi
-  local gate='' remote_line='' remote_pid_part=''
+  local gate='' remote_line='' remote_pid_part='' remote_scripts=$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts
+  local required=(slot-lock.sh) script present=
   local remote_pid_first=''
   if [ -n "$capture" ]; then
     # The pid is recorded before the gate and the load check, so a stop reaches every stage; the marker covers the rest.
-    remote_pid_first="echo \$\$ > $(printf %q "$capture_remote_pid"); "
+    remote_pid_first="mkdir -p $(printf %q "$remote_runtime"); echo \$\$ > $(printf %q "$capture_remote_pid"); "
     remote_pid_part="[ ! -e $(printf %q "$capture_remote_pid.stop") ] && exec "
   fi
-  if [ -n "$check" ]; then gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/load-check.sh") && "; fi
+  if [ -n "$check" ]; then
+    required+=(load-check.sh)
+    gate="MAX_LOAD_PER_CORE=$(printf %q "${REMOTE_MAX_LOAD_PER_CORE:-${MAX_LOAD_PER_CORE:-1.5}}") FLEET_FORCE_HERE=$(printf %q "${FLEET_FORCE_HERE:-}") FLEET_FORCE_REASON=$(printf %q "${FLEET_FORCE_REASON:-}") bash $(printf %q "$remote_scripts/load-check.sh") && "
+  fi
+  # A stale or partial shipment must refuse with its own code; bash's 127 reads like the command itself was missing.
+  for script in "${required[@]}"; do
+    present+="test -f $(printf %q "$remote_scripts/$script") || { printf 'fleet: remote %s is missing; %s slot refused\\n' $(printf %q "$script") $(printf %q "$name") >&2; exit 78; }; "
+  done
   local slot_args=(--slots "$slots")
   if [ -n "$admission_note" ]; then slot_args+=(--admission-note "$admission_note"); fi
+  local remote_command_args=("${command_args[@]}")
+  if [ -n "$plugin_entry" ]; then
+    local expected_vibe remote_preflight remote_entry remote_base
+    expected_vibe=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
+    remote_preflight="$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/fleet-plugin-preflight.mjs"
+    remote_entry="$remote_dir/plugins/vibe/skills/$plugin_entry"
+    remote_base=(node "$remote_entry" "$@")
+    if [ -n "$capture" ]; then
+      remote_command_args=(bash -c 't=$(date +%s); if [ -n "$2" ]; then echo $$ > "$2"; fi; "${@:3}" <&0 & c=$!; trap "kill -TERM $c 2>/dev/null" TERM INT HUP; wait "$c"; r=$?; while kill -0 "$c" 2>/dev/null; do wait "$c"; r=$?; done; echo $(( $(date +%s) - t )) > "$1"; exit $r' capture-timing "$capture_timing" "$capture_remote_pid" "${remote_base[@]}")
+    else
+      remote_command_args=("${remote_base[@]}")
+    fi
+    present+="node $(printf %q "$remote_preflight") $(printf %q "$remote_dir") $(printf %q "$expected_vibe") || exit 78; "
+  fi
   if [ -n "$preflight" ]; then
     local expected_version remote_root remote_gate
     expected_version=$(jq -er '.version' "$skills/../.codex-plugin/plugin.json")
     remote_root=$remote_vibe_root
     remote_gate="command -v codex >/dev/null 2>&1 && remote_root=$remote_root && test -n \"\$remote_root\" && test \"\$(jq -er .version \"\$remote_root/.codex-plugin/plugin.json\")\" = $(printf %q "$expected_version") || { printf 'fleet: remote vibe plugin is missing or not version %s; heavy build not started\\n' $(printf %q "$expected_version") >&2; exit 78; }; "
-    remote_line="${remote_pid_first}${remote_gate}cd $(printf %q "$dir") && $gate${remote_pid_part}$(printf '%q ' bash "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "$@")"
+    remote_line="${remote_pid_first}${present}${remote_gate}cd $(printf %q "$dir") && $gate${remote_pid_part}$(printf '%q ' bash "$remote_scripts/slot-lock.sh" "${slot_args[@]}")--preflight-node \"\$remote_root/skills/vibe/scripts/e2e-lock.mjs\" $(printf '%q ' "$name" "$owner" "${remote_command_args[@]}")"
   else
-    remote_line="${remote_pid_first}cd $(printf %q "$dir") && $gate${remote_pid_part}$(printf '%q ' bash "$remote_dir/plugins/vibe/skills/fleet-orchestrator/scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "$@")"
+    remote_line="${remote_pid_first}${present}cd $(printf %q "$dir") && $gate${remote_pid_part}$(printf '%q ' bash "$remote_scripts/slot-lock.sh" "${slot_args[@]}" "$name" "$owner" "${remote_command_args[@]}")"
   fi
   if [ -z "$capture" ]; then run_remote "$remote_line"; return; fi
   # Kept as a child so a signal here stops the remote slot (slot-lock stops the command and frees the slot) and the entry

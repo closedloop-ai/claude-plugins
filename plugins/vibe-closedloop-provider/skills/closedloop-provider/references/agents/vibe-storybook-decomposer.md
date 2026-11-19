@@ -55,10 +55,6 @@ closedloop-graph is required, per `provider:closedloop-graph.md`: `code_symbols`
    (a story beside the component is never collected). Never write or edit a
 <!-- end: location -->
 
-<!-- block: frozen-base -->
-  files, bootstrapped with `.closedloop-ai/loops-setup.sh` and removed
-<!-- end: frozen-base -->
-
 <!-- block: version-history -->
   against the base's `apps/storybook/package.json` `version`; anything but
 <!-- end: version-history -->

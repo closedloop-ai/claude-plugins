@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { git } from "../../../plugins/vibe-core/lib/vibe/scripts/session-record.mjs";
+import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
@@ -14,20 +14,31 @@ import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
 import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
-import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt, type MainSyncSession } from "./main-sync-contracts.js";
+import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncRemoteInputSchema, mainSyncStateSchema, type MainSyncReceipt, type MainSyncSession } from "./main-sync-contracts.js";
 import { comparisonLogs } from "./main-sync-main-comparison.js";
 import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 
 const GIT_NETWORK_MS = 15 * 60 * 1000;
+/** One remote HEAD lookup plus two minutes for local source and receipt verification. */
+export const MAIN_SYNC_REQUEST_TIMEOUT_MS = GIT_NETWORK_MS + 2 * 60 * 1000;
 const desktopSchema = z.object({ ok: z.boolean(), running: z.boolean() }).passthrough();
 const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/)/;
 export { MainSyncError };
 export { workflowLaneDefinitions } from "./main-sync-ci.js";
+export { pathFilteredPullRequestWorkflows } from "./pull-request-workflows.js";
 export { mainSyncFailure } from "./main-sync-failure.js";
 
 /** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */
-export async function readMainSyncInput(worktree: string) {
-  const input = mainSyncInputSchema.parse(await readInput());
+export async function readMainSyncInput(worktree: string, stream: NodeJS.ReadableStream = process.stdin) {
+  const input = mainSyncInputSchema.parse(await readInput(stream,
+    "Main-sync operation context on stdin is missing; relaunch the prepare action through the owned vibe worker record turn so it pipes the granted context; do not run a plain git merge"));
+  if (realpathSync(input.context.worktree) !== realpathSync(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  return input;
+}
+
+/** The same bounded input, carrying the remote slot's check report beside the owned operation context. */
+export async function readMainSyncRemoteInput(worktree: string) {
+  const input = mainSyncRemoteInputSchema.parse(await readInput());
   if (realpathSync(input.context.worktree) !== realpathSync(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
   return input;
 }
@@ -131,19 +142,7 @@ export function validateMainSync(raw: unknown) {
   const receipt = requireSyncReceipt(value);
   if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
   let identity = committedInputs(value.place.root);
-  if (value.context.runtime === "claude") {
-    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
-    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
-  }
-  const recipe = checkRecipe(value, receipt);
-  const selectedIdentity = committedInputs(value.place.root);
-  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha
-    || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
-  if (value.context.runtime === "claude") {
-    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
-    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256
-      || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
-  }
+  const recipe = selectedRecipe(value, receipt, identity);
   let validation = receipt.validation;
   if (!value.context.mainSyncCiRun || !validation || !validationMatches(value, receipt, identity)) {
     validation = executeChecks(value, receipt, recipe);
@@ -173,6 +172,53 @@ export function validateMainSync(raw: unknown) {
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
+  return validationResult(value, receipt, validation, ciEvidence);
+}
+
+/** Validate a remote report's claimed scope, then refuse it until command artifacts have an authenticated verifier. */
+export function recordRemoteMainSync(raw: unknown) {
+  const { report, ...input } = mainSyncRemoteInputSchema.parse(raw);
+  const remote = report.validation;
+  const failing = remote.commands.find((command) => command.exitCode !== 0);
+  if (failing) throw new MainSyncError(`Remote check report has a failing check: ${failing.argv.join(" ")}`, "NEEDS_CHANGE");
+  // Only the registered writer may present the report; caller identity does not authenticate its command artifacts.
+  const value = syncContext(input, "validate");
+  const receipt = requireSyncReceipt(value);
+  if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
+  const identity = committedInputs(value.place.root);
+  if (remote.treeSha !== identity.treeSha) throw new MainSyncError("Remote check report names another tree than committed HEAD", "NEEDS_CHANGE");
+  if (remote.inputSha256 !== identity.inputSha256) throw new MainSyncError("Remote check report names other committed inputs", "NEEDS_CHANGE");
+  const recipe = selectedRecipe(value, receipt, identity);
+  if (JSON.stringify(recipe.commands.map(commandIdentity)) !== JSON.stringify(remote.commands.map(commandIdentity))
+    || JSON.stringify(recipe.e2eLimitations) !== JSON.stringify(remote.e2eLimitations)) {
+    throw new MainSyncError("Remote check report ran another matrix than this session's recipe", "NEEDS_CHANGE");
+  }
+  throw new MainSyncError(
+    "Remote check report has no authenticated command artifacts; run canonical validation in this checkout",
+    "NEEDS_CHANGE",
+  );
+}
+
+/** Claude's Root-bound witness pins the recipe selected for exactly these committed inputs. */
+function selectedRecipe(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt, identity: ReturnType<typeof committedInputs>) {
+  if (value.context.runtime === "claude") {
+    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
+    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
+  }
+  const recipe = checkRecipe(value, receipt);
+  const selectedIdentity = committedInputs(value.place.root);
+  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha
+    || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
+  if (value.context.runtime === "claude") {
+    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
+    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256
+      || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
+  }
+  return recipe;
+}
+
+function validationResult(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt,
+  validation: NonNullable<MainSyncReceipt["validation"]>, ciEvidence?: MainSyncReceipt["ciEvidence"]) {
   // The Desktop Electron lane never runs on a vibe machine; the post-merge run covers it, so it does not hold the
   // handoff or a requested pull request. Any other limitation still needs CI evidence.
   const e2eLeftForCi = validation.e2eLimitations.filter((item) => isDesktopE2eLimitation(value.place.root, item))
@@ -273,14 +319,15 @@ function validationMatches(value: ReturnType<typeof syncContext>, receipt: MainS
     return false;
   }
   const expected = checkRecipe(value, receipt);
-  const commandIdentity = (item: { argv: string[]; bindings?: Record<string, string>; cwd?: string }) => ({ argv: item.argv,
-    ...(item.bindings ? { bindings: item.bindings } : {}), ...(item.cwd ? { cwd: item.cwd } : {}) });
+  const remote = proof.commands.filter((command) => command.remote).length;
+  if (remote) return false;
   if (JSON.stringify(expected.commands.map(commandIdentity)) !== JSON.stringify(proof.commands.map(commandIdentity))
     || JSON.stringify(expected.e2eLimitations) !== JSON.stringify(proof.e2eLimitations)) {
     return false;
   }
   for (const [index, command] of proof.commands.entries()) {
     const prefix = `vibe-main-sync-${receipt.transactionId}-`;
+    // Only canonical local validation logs are admissible until remote command artifacts have their own verifier.
     const permitted = [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"]
       .map((suffix) => `${prefix}${attempt}-${index}${suffix}.log`)), `${prefix}main-bootstrap.log`]
       .map((name) => join(value.place.dir, name));
@@ -294,6 +341,10 @@ function validationMatches(value: ReturnType<typeof syncContext>, receipt: MainS
     if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");
   }
   return true;
+}
+
+function commandIdentity(item: { argv: string[]; bindings?: Record<string, string>; cwd?: string }) {
+  return { argv: item.argv, ...(item.bindings ? { bindings: item.bindings } : {}), ...(item.cwd ? { cwd: item.cwd } : {}) };
 }
 
 function publicationTurn(value: ReturnType<typeof syncContext>) {

@@ -42,7 +42,7 @@ installing <thing>; type it in the prompt" and wait.
 | fix | What to do |
 |---|---|
 | `<Codex CLI> plugin add closedloop-core@closedloop-ai` | Stop; never run it (`guardrails.md`, "Plugins and tooling"). A human installs closedloop-core as `INSTALL.md` describes; report the blocker as that section says. |
-| `<Codex CLI> plugin add vibe-core@closedloop-ai` | Stop; never run it, as for closedloop-core. A human installs vibe-core (vibe's hooks) and approves its hooks in Codex's `/hooks` as `INSTALL.md` describes; report the blocker the same way. |
+| `<Codex CLI> plugin add vibe-core@closedloop-ai` | Stop; never run it, as for closedloop-core. A human installs vibe-core (vibe's hooks) and approves its hooks as the setup check's hook line says; report the blocker the same way. |
 | `unsupported-os` | Stop. This flow supports macOS only. Tell the person and engineering. |
 | `install-xcode-clt` | `xcode-select --install`, then ask the person to click Install and Agree in the system installer, and wait for it to finish. |
 | `install-homebrew` | `NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`. It asks for the Mac password through sudo. Afterwards add brew to the shell: `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile && eval "$(/opt/homebrew/bin/brew shellenv)"`. |
@@ -102,8 +102,8 @@ These are checked by the skill, not the script:
 > Provider `tickets` (block `mcp-check` of `vibe/preflight.md`)
 - Codex Browser plugin: the in-app Browser must be available. If it is not,
   stop; a human adds it (`guardrails.md`, "Plugins and tooling").
-- Codex plugin hooks: open `/hooks` and have the person review and trust the
-  current vibe hook definition before relying on its PreToolUse refusals.
+- Codex plugin hooks: the person reviews and trusts the current vibe hook
+  definition, by the steps the setup check's hook line names, before relying on its PreToolUse refusals.
   Installing the plugin alone does not trust hooks; until a hook has recorded
   the conversation, `plugin-version.mjs loaded` reports `enforced: false` and
   sessions start without the loaded-skill gate. Current official Codex

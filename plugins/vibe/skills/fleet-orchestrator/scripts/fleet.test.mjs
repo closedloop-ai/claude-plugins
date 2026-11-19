@@ -1,20 +1,24 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { fixture, loadEvidence, PLUGIN_ROOT, remoteConfig, successfulRemoteWriter, writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs';
+import { fixture, HAS_MAC_BASH32, loadEvidence, pinMacBash, PLUGIN_ROOT, remoteConfig, startFleet, successfulRemoteWriter, TIMEOUT, waitFor, writeLoopbackSsh, writeRemoteCodexStub } from './fleet-test-support.mjs';
 import { readAssembled } from '../../vibe/scripts/skill-split.mjs';
 import { bindProvider, makeHome, PROVIDER_BINDING } from '../../vibe/scripts/test-fixtures.mjs';
 import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
+const ADMISSION = join(SCRIPTS, 'fleet-admission.sh');
 const LOAD_CHECK = join(SCRIPTS, 'load-check.sh');
-const TIMEOUT = { timeout: 20_000 };
+const REMOTE_TRANSITION_WAIT_ATTEMPTS = 600;
 const RELATIVE_IMPORT = /^import [^;]*? from (['"])(\.{1,2}\/[^'"]+)\1;/gms;
 const VIBE_CORE_LOAD = /\b(?:vibeCore|runVibeCoreMain)\("([^"]+)"\)/g;
+function shippedRoot(f) {
+  return realpathSync(join(f.root, 'remote', 'sessions', '.fleet-orchestrator.current'));
+}
 /** Exercise the shipped remote launcher while keeping App Server calls inside a nonexistent test socket. */
 function realRemoteSession(f) {
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
@@ -95,8 +99,11 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
   const result = f.run(['remote', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/remote wt']);
   assert.equal(result.status, 0, result.stderr);
-  const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
-  const remoteArgv = f.argv(result);
+  const shipped = shippedRoot(f);
+  const allArgv = f.argv(result);
+  const launchCheck = allArgv.indexOf(join(shipped, 'plugins/vibe/skills/fleet-orchestrator/scripts/launch-check.mjs'));
+  assert.deepEqual(allArgv.slice(launchCheck + 1), ['codex', join(f.root, 'remote', 'sessions'), 'w1'], 'the new writer then gets its launch check');
+  const remoteArgv = allArgv.slice(0, launchCheck);
   assert.deepEqual(remoteArgv.slice(0, -2), [
     join(shipped, 'plugins/vibe/skills/fleet-orchestrator/scripts/codex-session.mjs'), 'turn', join(f.root, 'remote', 'sessions'), 'w1',
     '--prompt-file', join(shipped, 'w1-01-start.md'), '--cwd', '/remote wt', '--effort', 'high',
@@ -104,7 +111,7 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   ]);
   assert.equal(remoteArgv.at(-2), '--fleet-claim');
   assert.match(remoteArgv.at(-1), /\/w1\.preflight\.[^/]+\.json$/);
-  for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs']) {
+  for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs', 'fleet-orchestrator/scripts/fleet-admission.sh', 'fleet-orchestrator/scripts/fleet-atomic-install.sh']) {
     assert.ok(existsSync(join(shipped, "plugins", "vibe", "skills", file)), file);
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), '$vibe ISS-1\n');
@@ -325,7 +332,7 @@ test('concurrent recovery cannot clear an in-flight remote launch before state a
   const stopped = new Promise((resolve) => child.on('close', (status) => resolve(status)));
   const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
   try {
-    for (let attempt = 0; attempt < 200 && (!existsSync(pending)
+    for (let attempt = 0; attempt < REMOTE_TRANSITION_WAIT_ATTEMPTS && (!existsSync(pending)
       || !existsSync(join(f.root, 'remote', 'sessions', 'writer.launch.json'))); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
@@ -360,7 +367,7 @@ test('signal-stopped dispatch keeps uncertain thread-before-state ownership for 
   const closed = new Promise((resolve) => child.on('close', resolve));
   const pending = join(f.orch, 'sessions', 'writer.remote.pending.json');
   try {
-    for (let attempt = 0; attempt < 200 && (!existsSync(pending)
+    for (let attempt = 0; attempt < REMOTE_TRANSITION_WAIT_ATTEMPTS && (!existsSync(pending)
       || !existsSync(join(f.root, 'remote', 'sessions', 'writer.launch.json'))); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
@@ -423,7 +430,7 @@ test('remote cleanup ships the exact board and runs on the owning host with its 
   remotePlugin(remoteRoot, version, true);
   const result = f.run(['remote', 'cleanup'], { FAKE_REMOTE_PLUGIN_ROOT: remoteRoot });
   assert.equal(result.status, 0, result.stderr);
-  const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
+  const shipped = shippedRoot(f);
   assert.deepEqual(JSON.parse(readFileSync(join(shipped, 'board.json'), 'utf8')),
     { writers: { w1: { where: 'remote', pr: '42' } } });
   assert.deepEqual(f.argv(result), [join(remoteRoot, 'skills', 'vibe', 'scripts', 'e2e-lock.mjs'),
@@ -484,8 +491,8 @@ test('a remote session ships every module codex-session.mjs and skill-freshness.
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
   const result = f.run(['remote', 'session', 'last', 'w1']);
   assert.equal(result.status, 0, result.stderr);
-  const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
-  // The shipped tree is the two plugins laid out as a checkout; vibe's scripts reach vibe-core's modules through vibeCore().
+  const shipped = shippedRoot(f);
+  // The shipped tree is vibe laid out as a checkout; vibe's scripts reach its lib/** modules through vibeCore().
   const plugins = join(SCRIPTS, '..', '..', '..', '..');
   const pending = ['vibe/skills/fleet-orchestrator/scripts/codex-session.mjs', 'vibe/skills/fleet-orchestrator/scripts/skill-freshness.mjs'];
   const seen = new Set();
@@ -496,10 +503,10 @@ test('a remote session ships every module codex-session.mjs and skill-freshness.
     assert.ok(existsSync(join(shipped, 'plugins', file)), `${file} is imported but not shipped`);
     const source = readFileSync(join(plugins, file), 'utf8');
     for (const [, , spec] of source.matchAll(RELATIVE_IMPORT)) pending.push(relative(plugins, join(plugins, dirname(file), spec)));
-    for (const [, spec] of source.matchAll(VIBE_CORE_LOAD)) pending.push(join('vibe-core', spec));
+    for (const [, spec] of source.matchAll(VIBE_CORE_LOAD)) pending.push(join('vibe', spec));
   }
   assert.ok(seen.has('vibe/skills/codex-fleet-monitor/scripts/thread-sidebar.mjs'));
-  assert.ok(seen.has('vibe-core/lib/vibe/scripts/session-record.mjs'));
+  assert.ok(seen.has('vibe/lib/vibe/scripts/session-record.mjs'));
 });
 
 test('remote without REMOTE_HOST fails and names the missing key', TIMEOUT, () => {
@@ -545,6 +552,103 @@ test('a remote slot uses REMOTE_HEAVY_SLOTS and the remote dir', TIMEOUT, () => 
   const result = f.run(['remote', 'slot', 'heavy', 'w2', dir, 'bash', '-c', 'pwd; ls "$SLOT_LOCK_DIR"']);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, `${dir}\nheavy-1.lock\nheavy-2.lock\n`);
+});
+
+async function admissionRefusals(macBash) {
+  const f = fixture();
+  const versionFile = join(f.root, 'admission.bash-version');
+  if (macBash) pinMacBash(f);
+  const pinned = macBash ? { env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}` } } : {};
+  const versionPart = macBash ? `printf %s "$BASH_VERSION" > ${versionFile}; ` : '';
+  const marker = join(f.root, 'first-heavy-started');
+  const first = spawn('bash', [ADMISSION, f.orch, 'same-owner', f.root, 'ordinary', 'bash', '-c', `${versionPart}touch ${marker}; sleep 3`], pinned);
+  await waitFor(() => existsSync(marker));
+  if (macBash) assert.match(readFileSync(versionFile, 'utf8'), /^3\./, 'the admission ran under macOS bash 3.2');
+  const duplicate = spawnSync('bash', [ADMISSION, f.orch, 'same-owner', f.root, 'ordinary', 'true'], { ...pinned, encoding: 'utf8' });
+  assert.equal(duplicate.status, 75);
+  assert.match(duplicate.stderr, /duplicate heavy work/);
+  assert.equal(await new Promise((resolve) => first.once('exit', resolve)), 0);
+
+  const fullMarker = join(f.root, 'full-corpus-started');
+  const full = spawn('bash', [ADMISSION, f.orch, 'eval-a', f.root, 'full-corpus', 'bash', '-c', `touch ${fullMarker}; sleep 3`], pinned);
+  await waitFor(() => existsSync(fullMarker));
+  const overlap = spawnSync('bash', [ADMISSION, f.orch, 'eval-b', f.root, 'full-corpus', 'true'], { ...pinned, encoding: 'utf8' });
+  assert.equal(overlap.status, 75);
+  assert.match(overlap.stderr, /another full-corpus pass/);
+  assert.equal(await new Promise((resolve) => full.once('exit', resolve)), 0);
+  assert.match(readFileSync(FLEET, 'utf8'), /fleet-admission\.sh.*--fleet-admitted/s,
+    'local and remote slot calls both pass through the coordinator admission wrapper');
+}
+
+test('duplicate heavy work and full-corpus passes are refused fleet-wide before queueing twice', { timeout: 30_000 },
+  () => admissionRefusals(false));
+
+test('under macOS /bin/bash 3.2, duplicate heavy work and full-corpus passes are refused fleet-wide before queueing twice',
+  { timeout: 30_000, skip: !HAS_MAC_BASH32 && 'needs macOS /bin/bash 3.2' }, () => admissionRefusals(true));
+
+test('remote slot stages and invokes one plugin script with vibe\'s plugin root and nothing from vibe-core', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const result = f.run(['remote', 'slot', 'shared', 'writer', f.root, '--shipped-plugin-script',
+    'handoff/scripts/frozen-render.mjs', '--worktree', f.root]);
+  assert.equal(result.status, 0, result.stderr);
+  const shipped = join(shippedRoot(f), 'plugins');
+  assert.ok(existsSync(join(shipped, 'vibe', 'skills', 'handoff', 'scripts', 'frozen-render.mjs')));
+  assert.ok(existsSync(join(shipped, 'vibe', '.codex-plugin', 'plugin.json')));
+  assert.equal(existsSync(join(shipped, 'vibe-core')), false);
+  assert.match(result.stdout, /frozen-render\.mjs/);
+  const escaped = f.run(['local', 'slot', 'shared', 'writer', f.root, '--shipped-plugin-script', '../handoff/scripts/frozen-render.mjs']);
+  assert.equal(escaped.status, 2);
+  assert.match(escaped.stderr, /skills-relative mjs path/);
+});
+
+test('two fleet remote commands survive overlapping extraction into separate stages', TIMEOUT, async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.root, { recursive: true, force: true }));
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  const probe = join(f.root, 'extract');
+  mkdirSync(probe);
+  const tar = join(f.root, 'bin', 'tar');
+  // Report the historical tar collision if both real remote shell invocations target one directory.
+  writeFileSync(tar, `#!/usr/bin/env bash
+if [[ "\${1:-}" != -C || "\${3:-}" != -xf ]]; then exec /usr/bin/tar "$@"; fi
+probe=${JSON.stringify(probe)}
+destination=$2
+collision_guard=$destination.extracting
+printf '%s\n' "$destination" > "$probe/$SHIP_TEST_SIDE.path"
+if ! mkdir "$collision_guard" 2>/dev/null; then
+  touch "$probe/$SHIP_TEST_SIDE.ready"
+  printf "tar: Can't create 'plugins/vibe/.codex-plugin/plugin.json': File exists\n" >&2
+  exit 1
+fi
+trap 'rmdir "$collision_guard"' EXIT
+touch "$probe/$SHIP_TEST_SIDE.ready"
+for (( attempt=0; attempt<150; attempt++ )); do
+  if [[ -f "$probe/first.ready" && -f "$probe/second.ready" ]]; then /usr/bin/tar "$@"; exit $?; fi
+  sleep 0.05
+done
+exit 72
+`, { mode: 0o755 });
+
+  const start = (side, script) => startFleet(f, ['remote', 'slot', side, side, f.root,
+    '--shipped-plugin-script', script, '--help'], { SHIP_TEST_SIDE: side, CODEX_THREAD_ID: '', CLAUDE_CODE_SESSION_ID: '' });
+  const firstScript = 'handoff/scripts/frozen-render.mjs';
+  const secondScript = 'handoff/scripts/review-gap-rules.mjs';
+  const runs = [start('first', firstScript), start('second', secondScript)];
+  const results = await Promise.all(runs.map((run) => run.exited));
+  assert.deepEqual(results.map(({ code }) => code), [0, 0], results.map(({ stderr }) => stderr).join('\n'));
+  const destinations = ['first', 'second'].map((side) => readFileSync(join(probe, `${side}.path`), 'utf8').trim());
+  assert.notEqual(...destinations, 'each archive has a private destination during forced overlap');
+  for (const [index, script] of [firstScript, secondScript].entries()) {
+    const args = f.argv(results[index]);
+    const suffix = `/plugins/vibe/skills/${script}`;
+    const command = args.find((arg) => arg.endsWith(suffix));
+    assert.ok(command, `dispatched ${script}`);
+    const generation = command.slice(0, -suffix.length);
+    assert.ok(existsSync(command));
+    assert.ok(existsSync(join(generation, 'plugins/vibe/.codex-plugin/plugin.json')));
+    assert.ok(generation.startsWith(join(f.root, 'remote', 'sessions', '.fleet-orchestrator.generations', 'generation-')));
+  }
 });
 
 test('typed local and remote E2E build slots route a post-acquisition disk preflight', TIMEOUT, () => {
@@ -648,252 +752,44 @@ test('a heavy slot refuses a machine whose load per core is over the limit and n
   assert.doesNotMatch(readFileSync(LOAD_CHECK, 'utf8'), /FLEET_LOAD/, 'production admission has no caller-supplied load override');
 });
 
-/** A fleet fixture whose node runs capture-guard.mjs for real, with a capture worktree cloned from a bare origin. */
-function captureFixture() {
-  const f = fixture();
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*capture-guard.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
-  chmodSync(join(f.root, 'bin', 'node'), 0o755);
-  const git = (cwd, ...args) => {
-    const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-    return result.stdout.trim();
-  };
-  git(f.root, 'init', '-q', '--bare', '-b', 'main', 'origin.git');
-  git(f.root, 'clone', '-q', join(f.root, 'origin.git'), 'wt');
-  const wt = join(f.root, 'wt');
-  writeFileSync(join(wt, 'file.txt'), 'one\n');
-  git(wt, 'add', 'file.txt');
-  git(wt, '-c', 'user.name=t', '-c', 'user.email=fixture.invalid', 'commit', '-q', '-m', 'one');
-  git(wt, 'push', '-q', 'origin', 'main');
-  let n = 0;
-  const spec = (fields) => {
-    const file = join(f.root, `spec-${n += 1}.json`);
-    writeFileSync(file, JSON.stringify({ ticket: 'ISS-1', ref: 'origin/main', pages: 2, states: 2, ...fields }));
-    return file;
-  };
-  const entries = () => JSON.parse(readFileSync(join(f.orch, 'captures', 'ISS-1.json'), 'utf8')).captures;
-  // A capture's ticket is a tracker ticket only with a tracker bound, so the lead runs bound to the provider this repository ships.
-  const home = join(f.root, 'home');
-  const bound = { HOME: home, ...bindProvider(home) };
-  return { ...f, wt, spec, entries, git, bound, run: (args, env = {}) => f.run(args, { ...bound, ...env }) };
+/** Unpack the shipped archive on the loopback remote, then make its declared generation incomplete. */
+function dropOnRemoteUnpack(f, script) {
+  const realTar = spawnSync('sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).stdout.trim();
+  writeFileSync(join(f.root, 'bin', 'tar'), `#!/usr/bin/env bash\n${JSON.stringify(realTar)} "$@" || exit $?\nif [ "$1" = -C ] && [ "$3" = -xf ]; then rm -f "$2/plugins/vibe/skills/fleet-orchestrator/scripts/${script}"; fi\n`);
+  chmodSync(join(f.root, 'bin', 'tar'), 0o755);
 }
 
-test('AC-3 a local --capture slot refuses a main ref already captured for the ticket before any slot or command', TIMEOUT, () => {
-  const f = captureFixture();
-  const first = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'touch first-ran']);
-  assert.equal(first.status, 0, first.stderr);
-  assert.ok(existsSync(join(f.wt, 'first-ran')), 'the admitted capture ran in its worktree');
-  assert.deepEqual(f.entries().map((entry) => [entry.status, entry.main, entry.owner]), [['ok', true, 'w1 shots']]);
-  const again = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'touch second-ran'],
-    { FLEET_TEST_LOAD: '1000' });
-  assert.equal(again.status, 79, again.stderr);
-  assert.doesNotMatch(again.stderr, /load-check/, 'the guard refuses before the load check runs');
-  assert.match(again.stderr, /^capture-guard: refused: [0-9a-f]{40} is a main commit already captured for ISS-1; reuse that baseline\./);
-  assert.equal(existsSync(join(f.wt, 'second-ran')), false, 'a refused capture never runs');
-  assert.equal(f.entries().length, 1, 'a refused capture records nothing');
-  const undeclared = f.run(['local', 'slot', 'heavy', 'w1 tests', f.wt, 'bash', '-c', 'touch undeclared-ran']);
-  assert.equal(undeclared.status, 0, undeclared.stderr);
-  assert.ok(existsSync(join(f.wt, 'undeclared-ran')), 'a slot without --capture is unchanged');
-});
-
-test('a failed --capture command is recorded failed and never blocks the retry', TIMEOUT, () => {
-  const f = captureFixture();
-  const failed = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'exit 3']);
-  assert.equal(failed.status, 3, failed.stderr);
-  assert.deepEqual(f.entries().map((entry) => entry.status), ['failed']);
-  const retry = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'true']);
-  assert.equal(retry.status, 0, retry.stderr);
-  assert.deepEqual(f.entries().map((entry) => entry.status), ['failed', 'ok']);
-});
-
-test('AC-4 a remote --capture slot refuses an over-budget capture before the remote slot runs', TIMEOUT, () => {
-  const f = captureFixture();
-  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
-  const over = f.run(['remote', 'slot', 'heavy', 'w2 shots', f.wt, '--capture', f.spec({ pages: 25, states: 10 }), 'bash', '-c', 'touch remote-ran']);
-  assert.equal(over.status, 79, over.stderr);
-  assert.match(over.stderr, /capture-guard: refused: 25 pages x 10 states is 250 shots, over the 240 shot budget for one capture/);
-  assert.equal(existsSync(join(f.wt, 'remote-ran')), false, 'a refused capture never reaches the remote slot');
-  const lastRemoteCall = readFileSync(join(f.root, 'ssh-args'), 'utf8');
-  assert.match(lastRemoteCall, /capture-guard\.mjs(?:\\)? facts/);
-  assert.doesNotMatch(lastRemoteCall, /slot-lock\.sh/);
-  const admitted = f.run(['remote', 'slot', 'heavy', 'w2 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'touch remote-ran']);
-  assert.equal(admitted.status, 0, admitted.stderr);
-  assert.ok(existsSync(join(f.wt, 'remote-ran')));
-  assert.deepEqual(f.entries().map((entry) => [entry.status, entry.main]), [['ok', true]], 'the program ledger on the orchestrator host records the remote capture');
-  assert.ok(Number.isInteger(f.entries()[0].seconds), 'the remote command time comes back');
-  const rebaseline = f.run(['remote', 'slot', 'heavy', 'w2 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'true']);
-  assert.equal(rebaseline.status, 79, rebaseline.stderr);
-});
-
-test('AC-4 a fleet capture records the seconds its command ran, and the measured rate refuses a later one over 20 minutes', { timeout: 40_000 }, () => {
-  const f = captureFixture();
-  f.git(f.wt, 'checkout', '-q', '-b', 'feature');
-  writeFileSync(join(f.wt, 'branch.txt'), 'branch\n');
-  f.git(f.wt, 'add', 'branch.txt');
-  f.git(f.wt, '-c', 'user.name=t', '-c', 'user.email=fixture.invalid', 'commit', '-q', '-m', 'branch');
-  const slow = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({ ref: 'HEAD', pages: 1, states: 1 }), 'bash', '-c', 'sleep 6']);
-  assert.equal(slow.status, 0, slow.stderr);
-  const [entry] = f.entries();
-  assert.equal(entry.status, 'ok');
-  assert.ok(Number.isInteger(entry.seconds) && entry.seconds >= 6, `seconds recorded: ${entry.seconds}`);
-  const longer = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({ ref: 'HEAD', pages: 21, states: 10 }), 'bash', '-c', 'touch longer-ran']);
-  assert.equal(longer.status, 79, longer.stderr);
-  assert.match(longer.stderr, /capture-guard: refused: 210 shots at \d+ s each is about \d+ minutes, over the 20 minute budget for one capture/);
-  assert.equal(existsSync(join(f.wt, 'longer-ran')), false);
-});
-
-/** Starts `fleet.sh <args>` like fixture's run, but asynchronously, with its exit as a promise. */
-function startFleet(f, args, env = {}) {
-  const child = spawn('bash', [FLEET, f.orch, ...args], {
-    env: { ...process.env, PATH: `${join(f.root, 'bin')}:${process.env.PATH}`, SLOT_LOCK_DIR: join(f.root, 'locks'), ...f.bound, ...env },
-  });
-  let stderr = '';
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal, stderr })));
-  return { child, exited };
-}
-
-async function waitFor(check, ms = 15_000) {
-  const deadline = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error('timed out waiting');
-    await new Promise((resolve) => setTimeout(resolve, 100));
+test('a remote heavy slot exits 74 (retryable shipment failure) and runs nothing when its shipment arrives without a gate script', TIMEOUT, () => {
+  for (const script of ['load-check.sh', 'slot-lock.sh']) {
+    const f = fixture();
+    writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+    dropOnRemoteUnpack(f, script);
+    for (const typed of [[], ['--containerized-e2e-build']]) {
+      const result = f.run(['remote', 'slot', 'heavy', 'w2 tests', f.root, ...typed, 'echo', 'must-not-run']);
+      assert.equal(result.status, 74, `${script} ${typed}: ${result.stdout}${result.stderr}`);
+      assert.doesNotMatch(result.stdout, /must-not-run/, script);
+      assert.match(result.stderr, new RegExp(`fleet atomic install: staged file is missing: .*${script.replace('.', '\\.')}`), script);
+    }
   }
-}
-
-function alive(pid) {
-  try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
-}
-
-test('a SIGTERM to a --capture slot stops its command, frees the slot and records the capture failed', { timeout: 40_000 }, async () => {
-  const f = captureFixture();
-  const pidFile = join(f.root, 'command.pid');
-  const run = startFleet(f, ['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', `echo $$ > ${pidFile}; sleep 30`]);
-  await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
-  const commandPid = Number(readFileSync(pidFile, 'utf8').trim());
-  assert.ok(commandPid > 1 && run.child.pid > 1, 'only processes this test started are signalled');
-  const signalled = Date.now();
-  run.child.kill('SIGTERM');
-  const { code } = await run.exited;
-  assert.equal(code, 143);
-  assert.ok(Date.now() - signalled < 10_000, 'the slot stops promptly, not when the command would have finished');
-  await waitFor(() => !alive(commandPid), 10_000);
-  assert.equal(existsSync(join(f.root, 'locks', 'heavy-1.lock')), false, 'the slot is freed');
-  assert.deepEqual(f.entries().map((entry) => entry.status), ['failed']);
 });
 
-test('AC-3 AC-4 a fleet capture is overridden only by a ruling in the program rulings.md', { timeout: 30_000 }, () => {
-  const f = captureFixture();
-  assert.equal(f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'true']).status, 0);
-  const repeat = f.spec({ override: { quote: 'retake the baseline capture' } });
-  const refusedRun = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', repeat, 'bash', '-c', 'true']);
-  assert.equal(refusedRun.status, 79, 'no rulings.md line yet');
-  writeFileSync(join(f.orch, 'rulings.md'), '- Ruling 2026-11-13 (operator): "retake the baseline capture" ISS-1 capture-guard override: baseline\n');
-  const allowed = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', repeat, 'bash', '-c', 'true']);
-  assert.equal(allowed.status, 0, allowed.stderr);
-  assert.equal(f.entries().at(-1).override.rulings, 'rulings.md');
-});
-
-test('AC-4 the recorded seconds exclude the time the capture waited for the slot', { timeout: 40_000 }, async () => {
-  const f = captureFixture();
-  const holder = startFleet(f, ['local', 'slot', 'heavy', 'w0 holder', f.root, 'sleep', '8'], { SLOT_LOCK_POLL_SECONDS: '0.2' });
-  await waitFor(() => existsSync(join(f.root, 'locks', 'heavy-1.lock', 'owner')));
-  const started = Date.now();
-  const queued = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', 'true'], { SLOT_LOCK_POLL_SECONDS: '0.2' });
-  assert.equal(queued.status, 0, queued.stderr);
-  const waited = (Date.now() - started) / 1000;
-  await holder.exited;
-  const [entry] = f.entries();
-  assert.ok(waited >= 4, `the capture queued behind the holder (${waited} s)`);
-  assert.ok(Number.isInteger(entry.seconds) && entry.seconds < waited - 2, `recorded ${entry.seconds} s against a ${waited} s wait`);
-});
-
-test('a SIGTERM to a remote --capture slot stops the remote command, frees its slot and records the running capture failed', { timeout: 40_000 }, async () => {
-  const f = captureFixture();
-  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
-  const pidFile = join(f.root, 'remote-command.pid');
-  const run = startFleet(f, ['remote', 'slot', 'heavy', 'w2 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', `echo $$ > ${pidFile}; sleep 30`]);
-  await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
-  const commandPid = Number(readFileSync(pidFile, 'utf8').trim());
-  assert.ok(commandPid > 1 && run.child.pid > 1, 'only processes this test started are signalled');
-  assert.deepEqual(f.entries().map((entry) => entry.status), ['running'], 'running while the remote command is alive');
-  const signalled = Date.now();
-  run.child.kill('SIGTERM');
-  const { code } = await run.exited;
-  assert.ok(Date.now() - signalled < 15_000, 'the remote slot stops promptly, not when the command would have finished');
-  assert.notEqual(code, 0);
-  await waitFor(() => !alive(commandPid), 10_000);
-  assert.equal(existsSync(join(f.root, 'locks', 'heavy-1.lock')), false, 'the remote slot is freed');
-  assert.deepEqual(f.entries().map((entry) => entry.status), ['failed']);
-});
-
-test('a SIGTERM before the remote slot starts keeps it from starting and records the capture failed', { timeout: 40_000 }, async () => {
-  const f = captureFixture();
-  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
-  writeFileSync(join(f.root, 'bin', 'ssh'), `#!/usr/bin/env bash\ncase "\${@: -1}" in *slot-lock.sh*) sleep 3 ;; esac\nexec bash -c "\${@: -1}"\n`);
-  chmodSync(join(f.root, 'bin', 'ssh'), 0o755);
-  const ran = join(f.root, 'remote-ran');
-  const run = startFleet(f, ['remote', 'slot', 'heavy', 'w2 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', `touch ${ran}; sleep 30`]);
-  await waitFor(() => existsSync(join(f.orch, 'captures', 'ISS-1.json')) && f.entries().length === 1);
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  assert.ok(run.child.pid > 1);
-  const signalled = Date.now();
-  run.child.kill('SIGTERM');
-  const { code } = await run.exited;
-  assert.notEqual(code, 0);
-  assert.ok(Date.now() - signalled < 15_000, 'no wait for a capture that never started');
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  assert.equal(existsSync(ran), false, 'the remote command never started');
-  assert.deepEqual(f.entries().map((entry) => entry.status), ['failed']);
-  const remoteDir = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
-  assert.deepEqual(readdirSync(remoteDir).filter((name) => name.startsWith('capture-')), [], 'stop marker, pid and timing files are cleaned');
-});
-
-test('a remote capture whose command ignores the stop and exits 0 is recorded ok', { timeout: 40_000 }, async () => {
-  const f = captureFixture();
-  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
-  const pidFile = join(f.root, 'stubborn.pid');
-  const run = startFleet(f, ['remote', 'slot', 'heavy', 'w2 shots', f.wt, '--capture', f.spec({}), 'bash', '-c', `trap '' TERM; echo $$ > ${pidFile}; sleep 2; exit 0`]);
-  await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
-  assert.ok(run.child.pid > 1);
-  run.child.kill('SIGTERM');
-  const { code } = await run.exited;
-  assert.equal(code, 0, 'the real remote exit is recorded, not an assumed failure');
-  assert.deepEqual(f.entries().map((entry) => entry.status), ['ok']);
-});
-
-test('a --capture spec that is missing or unreadable is a usage error before any slot or command', TIMEOUT, () => {
-  const f = captureFixture();
-  const ran = join(f.wt, 'spec-ran');
-  // A load over the gate makes any slot path that runs first exit 4 with a load-check line instead of the usage error.
-  const missing = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', join(f.root, 'no-such-spec.json'), 'bash', '-c', `touch ${ran}`],
-    { FLEET_TEST_LOAD: '1000' });
-  assert.equal(missing.status, 2, missing.stderr);
-  assert.match(missing.stderr, /slot <lockName> <owner> <dir> \[--containerized-e2e-build\] \[--capture <spec\.json>\] <command\.\.\.>/);
-  assert.doesNotMatch(missing.stderr, /load-check|slot-lock/, 'a missing spec is refused before the load check and the slot');
-  const unreadable = f.spec({});
-  chmodSync(unreadable, 0o000);
-  const locked = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, '--capture', unreadable, 'bash', '-c', `touch ${ran}`],
-    { FLEET_TEST_LOAD: '1000' });
-  chmodSync(unreadable, 0o600);
-  assert.equal(locked.status, 2, locked.stderr);
-  assert.match(locked.stderr, /^capture-guard: invalid spec$/m);
-  assert.doesNotMatch(locked.stderr, /load-check|slot-lock/, 'an unreadable spec is refused before the load check and the slot');
-  assert.equal(existsSync(ran), false, 'no command runs');
-  assert.equal(existsSync(join(f.root, 'locks')), false, 'slot-lock never started: it creates the lock root on every start');
-  assert.equal(existsSync(join(f.orch, 'captures', 'ISS-1.json')), false, 'nothing is recorded');
-});
-
-test('--capture and --containerized-e2e-build are accepted in either order', TIMEOUT, () => {
-  for (const flags of [['--capture', null, '--containerized-e2e-build'], ['--containerized-e2e-build', '--capture', null]]) {
-    const f = captureFixture();
-    const spec = f.spec({});
-    const args = flags.map((flag) => flag ?? spec);
-    const ran = join(f.wt, 'ordered-ran');
-    const result = f.run(['local', 'slot', 'heavy', 'w1 shots', f.wt, ...args, 'bash', '-c', `touch ${ran}`]);
-    assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
-    assert.ok(existsSync(ran), `${args.join(' ')}: the command ran`);
-    assert.ok(f.argv(result).some((arg) => arg.endsWith('e2e-lock.mjs')), `${args.join(' ')}: the disk preflight ran`);
-    assert.deepEqual(f.entries().map((entry) => [entry.status, entry.main]), [['ok', true]], `${args.join(' ')}: the guard admitted and recorded it`);
+test('LOCAL_HEAVY_BARRED=1 refuses a local heavy slot with 78 and points at the remote slot; nothing else changes', TIMEOUT, () => {
+  const f = fixture('LOCAL_HEAVY_BARRED=1\n');
+  for (const env of [{}, { FLEET_FORCE_HERE: '1', FLEET_FORCE_REASON: 'operator wants it here' }]) {
+    const barred = f.run(['local', 'slot', 'heavy', 'w1 typecheck', f.root, 'echo', 'must-not-run'], env);
+    assert.equal(barred.status, 78, JSON.stringify(env) + barred.stdout + barred.stderr);
+    assert.doesNotMatch(barred.stdout, /must-not-run/);
+    assert.match(barred.stderr, /LOCAL_HEAVY_BARRED=1.*fleet\.sh <orchDir> remote slot heavy/);
   }
+  assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran']).stdout, 'ran\n', 'only heavy slots are barred');
+  for (const config of [undefined, 'LOCAL_HEAVY_BARRED=0\n', 'LOCAL_HEAVY_BARRED=yes\n', 'HEAVY_SLOTS=2\n']) {
+    const g = fixture(config);
+    const ran = g.run(['local', 'slot', 'heavy', 'w1 typecheck', g.root, 'echo', 'ran']);
+    assert.equal(ran.status, 0, `${config}: ${ran.stderr}`);
+    assert.equal(ran.stdout, 'ran\n', String(config));
+  }
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'LOCAL_HEAVY_BARRED=1\n'));
+  const remote = f.run(['remote', 'slot', 'heavy', 'w2 typecheck', f.root, 'echo', 'ran']);
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.match(remote.stdout, /^ran$/m, 'the bar is for this machine only');
 });

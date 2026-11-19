@@ -6,16 +6,18 @@ Moved out of `quality-loop.md`, which says when to read it; later edits to that 
 1. Read `status` and the bounded binding facts from the private ledger. Wait
    for source and record turns to finish with actual stopped-turn evidence;
    a short-lived CLI PID exiting does not release an owned turn. While the
-   recorded definition is present, resolve any writer refusal in the original
-   request first. Never migrate around a refusal the recorded writer can still
-   settle. Once the recorded definition is missing, that writer can never run
-   again, so a `BLOCKED` request of any reason is carried over unchanged as the
-   active request and the new writer settles it before any other work (step 5).
+   recorded definition is compatible with the installed release, resolve any
+   writer refusal in the original request first. Never migrate around a refusal
+   the recorded writer can still settle. When the recorded definition is missing,
+   or it is intact in an older cached release but differs from the proven newer
+   installed definition, the launcher cannot run that writer. A `BLOCKED` request
+   of any reason is carried over unchanged as the active request and the new writer
+   settles it before any other work (step 5).
    That is the recovery `guardrails.md` promises for a turn stranded by a
-   plugin upgrade, not a bypass. Migration rejects `BLOCKED`
-   (except a removed definition, below) while the recorded definition is
-   present, running leases, matching definitions, unproven upgrades and stale
-   identity.
+   plugin upgrade, not a bypass. Migration rejects `BLOCKED` (except a removed
+   definition, below) while the recorded definition is present, compatible,
+   leased or unchanged, and also rejects unproven upgrades and stale
+   identity. On the unavailable-definition path, a `BLOCKED` request of any reason is carried over unchanged as the active request.
 2. Codex: spawn one current canonical `vibe-change-worker` with a read-only
    hold brief and obtain its actual native ID. No source/test/record writes
    until migration succeeds. Claude: the command allocates the new session ID;

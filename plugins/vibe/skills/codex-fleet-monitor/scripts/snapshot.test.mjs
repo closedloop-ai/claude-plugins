@@ -111,7 +111,7 @@ test('AC-005 remote watcher ships its checker imports and compares the owning ho
   writeFileSync(join(state, 'w1.json'), JSON.stringify({ threadId: 'T1', cwd: '/remote/worktree', loadedSkill: { ...loaded, version: '1.1.38' } }));
   const output = f.run('ok');
   assert.ok(output.split('\n').includes(`SKILL-STALE w1 1.1.38 -> ${loaded.version}`), output);
-  assert.ok(existsSync(join(state, '.fleet-monitor/plugins/vibe-core/lib/vibe/scripts/loaded-skill.mjs')));
+  assert.ok(existsSync(join(state, '.fleet-monitor/plugins/vibe/lib/vibe/scripts/loaded-skill.mjs')));
   assert.doesNotMatch(output, /^(?:PATH|HOME|SHELL)=/m, 'a remote env wrapper must execute a command, never print the environment');
 });
 
@@ -124,16 +124,14 @@ test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, ()
   writeFileSync(join(f.work, 'sessions.txt'), ''); writeFileSync(join(f.work, 'prs.txt'), '');
   f.run('ok');
   const entries = execFileSync('tar', ['-tf', archive], { encoding: 'utf8', timeout: 5000 }).trim().split('\n');
-  // The usage scripts and what they load, from both plugins laid out as a checkout; no freshness checker.
+  // The usage scripts and what they load, from vibe alone laid out as a checkout; no freshness checker.
   assert.deepEqual(entries, [
-    'plugins/vibe-core/.claude-plugin/plugin.json', 'plugins/vibe-core/.codex-plugin/plugin.json',
-    'plugins/vibe-core/lib/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe-core/lib/codex-fleet-monitor/scripts/work-dir.mjs',
-    // work-dir.mjs resolves a chat's bound program (ISS-14028).
-    'plugins/vibe-core/lib/fleet-orchestrator/scripts/chat-binding.mjs', 'plugins/vibe-core/lib/vibe/scripts/harness-identity.mjs',
-    'plugins/vibe-core/lib/vibe/scripts/sandbox-refusal.mjs', 'plugins/vibe-core/lib/vibe/scripts/session-record.mjs',
-    // liveness.mjs takes isEntryPoint from vibe-core's resolver.
-    'plugins/vibe-core/shared/plugin-roots.mjs',
     'plugins/vibe/.claude-plugin/plugin.json', 'plugins/vibe/.codex-plugin/plugin.json',
+    'plugins/vibe/lib/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe/lib/codex-fleet-monitor/scripts/work-dir.mjs',
+    // work-dir.mjs resolves a chat's bound program (ISS-14028).
+    'plugins/vibe/lib/fleet-orchestrator/scripts/chat-binding.mjs', 'plugins/vibe/lib/vibe/scripts/harness-identity.mjs',
+    'plugins/vibe/lib/vibe/scripts/sandbox-refusal.mjs', 'plugins/vibe/lib/vibe/scripts/session-record.mjs',
+    'plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs',
     'plugins/vibe/shared/plugin-roots.mjs', 'plugins/vibe/shared/vibe-core.mjs',
     'plugins/vibe/skills/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe/skills/codex-fleet-monitor/scripts/ratelimit.mjs',
     'plugins/vibe/skills/codex-fleet-monitor/scripts/recover.mjs', 'plugins/vibe/skills/codex-fleet-monitor/scripts/usage-state.mjs',

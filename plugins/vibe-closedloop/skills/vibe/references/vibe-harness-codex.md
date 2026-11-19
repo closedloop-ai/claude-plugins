@@ -37,8 +37,8 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 <!-- block: codex-hooks-and-compaction -->
 - vibe's hooks (the shell, kill and merge guards, the away checklist and the
   compaction resume) ship in the vibe-core plugin. Codex loads its
-  `hooks/hooks.json` but runs it only once it is reviewed and trusted in
-  Codex's `/hooks`, and again after vibe-core changes.
+  `hooks/hooks.json` but runs it only once a person trusts it (the setup
+  check's hook line names the steps), and again after vibe-core changes.
   So after any context compaction in Codex, before the next action, run
   fleet-orchestrator's `scripts/fleet-home.mjs resume` when you orchestrate a
   fleet and read each `READ` file it prints, then reread the session record

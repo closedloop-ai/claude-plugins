@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test, { after } from "node:test";
-import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
+import { isPageComposer, parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
+import { isComparatorLine } from "./review-gap-rules.mjs";
+import { linguistGenerated } from "./generated-files.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
 import { git, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
@@ -89,6 +91,31 @@ test("a new Desktop sync lane needs the shared give-up, the shared backoff, a Su
   assert.deepEqual(done.found, []);
 });
 
+test("ISS-14128 moved and explicitly non-sync Desktop files are not invented sync lanes", (t) => {
+  const lane = "apps/desktop/src/main/agent-sync/placement-outbox.ts";
+  const moved = ["export function one() {}", "export function two() {}", "export function three() {}"].join("\n");
+  assert.deepEqual(run(t, { base: { "apps/desktop/src/main/large.ts": `${moved}\n` }, head: {
+    "apps/desktop/src/main/large.ts": "", [lane]: `${moved}\n`,
+  } }).found.filter(([rule]) => rule === "desktop-sync-lane"), []);
+  assert.deepEqual(run(t, { head: { [lane]: "export const sendOnce = () => true;\n" },
+    changeLog: "Synchronizing-susan: not a sync lane; one-attempt Session Mesh queue\n" }).found.filter(([rule]) => rule === "desktop-sync-lane"), []);
+});
+
+test("ISS-14171 a version-only or ISS-14395 specifier-only Storybook manifest edit does not select frozen stories; another field does", (t) => {
+  const story = "apps/storybook/stories/frozen.stories.tsx";
+  const manifest = "apps/storybook/package.json";
+  const frozen = 'export default { title: "Composites v1.0/Frozen" };\nexport const Default = {};\n';
+  const baseManifest = JSON.stringify({ version: "1.0.0", dependencies: { react: "1" } });
+  const versionOnly = run(t, { base: { [story]: frozen, [manifest]: baseManifest }, head: {
+    [story]: frozen, [manifest]: JSON.stringify({ version: "1.1.0", dependencies: { react: "1" } }),
+  } });
+  assert.deepEqual(versionOnly.found.filter(([rule]) => rule === "frozen-render"), []);
+  const otherField = run(t, { base: { [story]: frozen, [manifest]: baseManifest }, head: {
+    [story]: frozen, [manifest]: JSON.stringify({ version: "1.1.0", dependencies: { react: "1" }, sideEffects: false }),
+  } });
+  assert.equal(otherField.found.filter(([rule]) => rule === "frozen-render").length, 1);
+});
+
 test("a dropped ticketed comment blocks while its code survives; moved, reworded or deleted with its code it does not", (t) => {
   const comment = (slug) => `// ${slug}: keep the id tiebreak so equal ranks stay stable\nexport const order${slug.slice(4)} = (a, b) => a.id.localeCompare(b.id);\n`;
   const result = run(t, {
@@ -157,7 +184,7 @@ test("a change anywhere in a frozen story's import closure blocks until its iden
   // A hand-rolled capture's line no longer passes the gate (ISS-13291).
   const handRolled = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
   assert.deepEqual(handRolled.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
-  assert.match(handRolled.blocking[0].fix, /frozen-render\.mjs/);
+  assert.match(handRolled.blocking[0].fix, /frozen-render-gate\.mjs/);
 });
 
 test("frozen story dependency closure includes imported styles and token JSON (ISS-13411 review)", (t) => {
@@ -417,6 +444,11 @@ test("a #8922-shaped capability composed by sibling list adapters needs one shar
       .blocking.filter((finding) => finding.rule === "shared-capability-owner"),
     []
   );
+  for (const unauthorized of ["recorded debt", "orchestrator ruling"]) {
+    assert.equal(run(t, { base, head, changeLog: `Shared capability exception: FilterPopover: ${unauthorized}\n` })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner").length, 1,
+    `${unauthorized} cannot expand human waiver authority without an operator decision`);
+  }
 
   const owner = "packages/app/shared/components/generic-artifact-list-shell.tsx";
   const inherited = {
@@ -803,6 +835,133 @@ test("a change to a spec the base has needs a dated human source; a new spec or 
   assert.deepEqual(prd, [["spec-change", "docs/prds/board.md"]], "deleting a spec is a change");
 });
 
+test("ISS-14252 consolidated batch transactions require measured limit, timeout and lock evidence", (t) => {
+  const service = "apps/api/app/items/service.ts";
+  const limit = "packages/api/src/types/batch-limits.ts";
+  const scaleTest = "apps/api/__tests__/unit/items-scale.test.ts";
+  const head = {
+    [service]: "export async function moveBatch(tx, ids) {\n  return withDb.tx(async (tx) => tx.item.updateMany({ where: { id: { in: ids } } }));\n}\n",
+    [limit]: "export const BATCH_ITEM_LIMIT = 500;\n",
+    [scaleTest]: "test('500 items stay inside " + "timeout', () => {});\n",
+  };
+  const missing = run(t, { head });
+  assert.ok(missing.blocking.some((finding) => finding.rule === "transaction-scale" && finding.file === service));
+  const record = `Transaction scale: ${service}: limit 500; duration 4100ms; ${"time" + "out"} 30000ms; ambient timeout ignored; lock hold 3900ms; test ${scaleTest}\n`;
+  const measured = run(t, { head, changeLog: record });
+  assert.deepEqual(measured.blocking.filter((finding) => finding.rule === "transaction-scale"), []);
+  assert.ok(measured.requiredTests.some((entry) => entry.path === scaleTest));
+});
+
+test("ISS-14252 user id collapse requires order, case, duplicate and whitespace proof", (t) => {
+  const service = "apps/api/app/items/collapse-selection.ts";
+  const proof = "apps/api/__tests__/unit/collapse-selection.test.ts";
+  const head = {
+    [service]: "export function collapseSelectionToRoots(selectedIds) {\n  return [...new Set(selectedIds)];\n}\n",
+    [proof]: "test('selection permutations and normalization', () => {});\n",
+  };
+  assert.ok(run(t, { head }).blocking.some((finding) => finding.rule === "input-set-proof"));
+  const incomplete = run(t, { head, changeLog: `Input set: ${service}: order permutations; case; duplicates; test ${proof}\n` });
+  assert.ok(incomplete.blocking.some((finding) => finding.rule === "input-set-proof"), "whitespace is required too");
+  const record = `Input set: ${service}: order permutations; case; duplicates; whitespace; test ${proof}\n`;
+  const covered = run(t, { head, changeLog: record });
+  assert.deepEqual(covered.blocking.filter((finding) => finding.rule === "input-set-proof"), []);
+  assert.ok(covered.requiredTests.some((entry) => entry.path === proof));
+});
+
+test("a git that cannot read attributes at the base marks nothing generated", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-generated-");
+  t.after(cleanup);
+  const checkout = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
+  put(checkout, { ".gitattributes": "dist/** linguist-generated=true\n" });
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], home);
+  assert.deepEqual([...linguistGenerated(checkout, ["dist/a.mjs", "src/a.mjs"], "HEAD")], ["dist/a.mjs"]);
+  assert.deepEqual([...linguistGenerated(checkout, ["dist/a.mjs"], "no-such-commit")], [], "an unreadable base exempts nothing");
+});
+
+test("build output marked linguist-generated is judged through its source, not as a second author", (t) => {
+  const helper = "export function inputDigest(input) {\n  return createHash(\"sha256\").update(input).digest(\"hex\");\n}\n";
+  const head = {
+    "tools/worker/src/ledger.ts": `import { createHash } from "node:crypto";\n${helper}export const ledger = (input) => inputDigest(input);\n`,
+    "plugins/worker/dist/a.mjs": `${helper}export const a = (input) => inputDigest(input);\n`,
+    "plugins/worker/dist/b.mjs": `${helper}export const b = (input) => inputDigest(input);\n`,
+  };
+  const unmarked = run(t, { head });
+  assert.ok(unmarked.found.some(([rule, file]) => rule === "duplicate-helper" && file.startsWith("plugins/worker/dist/")));
+  const marked = run(t, { base: { ".gitattributes": "plugins/worker/dist/** linguist-generated=true\n" }, head });
+  assert.deepEqual(marked.found.filter(([rule]) => rule === "duplicate-helper"), []);
+  const selfMarked = run(t, { head: { ...head, ".gitattributes": "plugins/worker/dist/** linguist-generated=true\n" } });
+  assert.ok(selfMarked.found.some(([rule, file]) => rule === "duplicate-helper" && file.startsWith("plugins/worker/dist/")),
+    "a diff cannot mark its own files generated: the base's attributes decide");
+  const copied = run(t, { base: { ".gitattributes": "plugins/worker/dist/** linguist-generated=true\n" },
+    head: { ...head, "tools/worker/src/copy.ts": `${helper}export const copy = (input) => inputDigest(input);\n` } });
+  assert.deepEqual(copied.found.filter(([rule]) => rule === "duplicate-helper"), [["duplicate-helper", "tools/worker/src/ledger.ts"]]);
+});
+
+test("Q1 condition 3 (ISS-14051 plan, decision 7; Q-M2): a generator header exempts a file from every rule but duplicate-helper, and a header the diff adds to a base file exempts nothing", (t) => {
+  const banner = "// Generated by tools/worker/build.mjs; do not edit.\n";
+  const dump = "writeFileSync(report, JSON.stringify(process.env, null, 2));\n";
+  const envDumps = (result) => result.found.filter(([rule]) => rule === "env-dump").map(([, file]) => file);
+  const generated = run(t, { head: { "plugins/worker/dist/a.mjs": `${banner}${dump}`, "scripts/diag.mjs": dump, "plugins/worker/dist/app.min.js": dump } });
+  assert.deepEqual(envDumps(generated), ["scripts/diag.mjs"], "a headered or minified file is judged through its source");
+  const selfMarked = run(t, { base: { "scripts/diag.mjs": "export const x = 1;\n" }, head: { "scripts/diag.mjs": `${banner}${dump}export const x = 1;\n` } });
+  assert.deepEqual(envDumps(selfMarked), ["scripts/diag.mjs"], "a diff cannot exempt its own source by adding a header");
+  const helper = "export function inputDigest(input) {\n  return createHash(\"sha256\").update(input).digest(\"hex\");\n}\n";
+  const copied = run(t, { base: { "tools/worker/src/ledger.ts": `${helper}export const ledger = (input) => inputDigest(input);\n` },
+    head: { "plugins/worker/dist/b.mjs": `${banner}${helper}export const b = (input) => inputDigest(input);\n` } });
+  assert.deepEqual(copied.found.filter(([rule]) => rule === "duplicate-helper"), [["duplicate-helper", "plugins/worker/dist/b.mjs"]],
+    "ISS-14127 AC-2: a headered bundle that copies a helper it did not inline is still flagged");
+});
+
+test("ISS-14252 input-set proof reads every record and needs the id collection on the transform line", (t) => {
+  const first = "apps/api/app/items/collapse-selection.ts";
+  const second = "apps/api/app/items/dedupe-members.ts";
+  const proof = "apps/api/__tests__/unit/collapse-selection.test.ts";
+  const head = {
+    [first]: "export function collapseSelectionToRoots(selectedIds) {\n  return [...new Set(selectedIds)];\n}\n",
+    [second]: "export const dedupeMembers = (memberIds) => [...new Set(memberIds)];\n",
+    [proof]: "test('selection permutations and normalization', () => {});\n",
+  };
+  const records = [first, second].map((file) => `Input set: ${file}: order permutations; case; duplicates; whitespace; test ${proof}`);
+  const both = run(t, { head, changeLog: `${records.join("\n")}\n` });
+  assert.deepEqual(both.blocking.filter((finding) => finding.rule === "input-set-proof"), []);
+  const onlySecond = run(t, { head, changeLog: `${records[1]}\n` });
+  assert.deepEqual(onlySecond.blocking.filter((finding) => finding.rule === "input-set-proof").map((finding) => finding.file), [first]);
+  const unrelated = {
+    "packages/tools/paths.ts": "export const resolve = (item) => path.posix.normalize(item.id);\n// dedupe selectedIds before the request\nexport const message = \"must be a distinct branch\";\n",
+  };
+  assert.deepEqual(run(t, { head: unrelated }).blocking.filter((finding) => finding.rule === "input-set-proof"), []);
+  const wrapped = {
+    "apps/api/app/items/wrapped.ts": "export const roots = (input) => collapseSelectionToRoots(\n  input.artifactIds,\n);\n",
+    "apps/api/app/items/by-item.ts": "export const unique = (selection) => dedupeBy(selection, (item) => item.id);\n",
+  };
+  assert.deepEqual(run(t, { head: wrapped }).blocking.filter((finding) => finding.rule === "input-set-proof").map((finding) => finding.file).sort(),
+    ["apps/api/app/items/by-item.ts", "apps/api/app/items/wrapped.ts"], "a wrapped call and a selection of items are id sets too");
+  const combobox = { "packages/ui/combobox.ts": "const normalized = query.trim().toLowerCase();\nconst selected = options.find((option) => option.label === normalized);\n" };
+  assert.deepEqual(run(t, { head: combobox }).blocking.filter((finding) => finding.rule === "input-set-proof"), [], "a selected option is not an id set");
+});
+
+test("ISS-14137 repository owner E2E rules require each mounted shell and verify their source sentence", (t) => {
+  const appOwner = "packages/app/AGENTS.md";
+  const desktopOwner = "apps/desktop/AGENTS.md";
+  const surface = "packages/app/documents/components/move-dialog.tsx";
+  const base = {
+    [appOwner]: "### E2E Coverage\nUI bug fix ⇒ regression e2e that would fail without the fix.\n",
+    [desktopOwner]: "### E2E Coverage\na `packages/app` surface needs this Electron spec and the web `e2e/` spec.\n",
+    [surface]: "export const Dialog = () => null;\n",
+  };
+  const head = { [surface]: "export const Dialog = () => <button>Move</button>;\n" };
+  const missing = run(t, { base, head, changeLog: "Request kind: bug fix\n" });
+  assert.equal(missing.blocking.filter((finding) => finding.rule === "owner-test-rule").length, 2);
+  const listed = run(t, { base, head, changeLog: ["Request kind: bug fix",
+    `Owner test: ${appOwner}: missing tests web regression E2E`,
+    `Owner test: ${desktopOwner}: missing tests Desktop regression E2E`, ""].join("\n") });
+  assert.deepEqual(listed.blocking.filter((finding) => finding.rule.startsWith("owner-test-rule")), []);
+  const drifted = run(t, { base: { ...base, [desktopOwner]: "rule moved\n" }, head, changeLog: "Request kind: bug fix\n" });
+  assert.ok(drifted.blocking.some((finding) => finding.rule === "owner-test-rule-source" && finding.file === desktopOwner));
+});
+
 test("with no provider bound, only the generic rules run: no repository path rules, and a ticket is a URL or a #number", (t) => {
   const migration = "packages/database/prisma/migrations/20261021000000_link_kind/migration.sql";
   const sql = "UPDATE \"artifact_links\" SET \"kind\" = 'x';\n";
@@ -822,4 +981,56 @@ test("with no provider bound, only the generic rules run: no repository path rul
   assert.deepEqual(dropped("#12", null), [["ticketed-comment", "p/a.ts"]]);
   assert.deepEqual(dropped("ISS-12", null), [], "a tracker slug is not a reference without that tracker");
   assert.deepEqual(dropped("ISS-12", undefined), [["ticketed-comment", "p/a.ts"]]);
+});
+
+test("ISS-14394 a page composer is named by a whole file-name word, so a pager or pagination file is not one", () => {
+  const layouts = [
+    ["packages/app/projects/projects-page.tsx", true],
+    ["apps/app/page.tsx", true],
+    ["packages/app/documents/DocumentsPage.tsx", true],
+    ["packages/app/documents/documents_list.jsx", true],
+    ["packages/app/shell/app.shell.tsx", true],
+    ["packages/app/routes/RouteAdapter.tsx", true],
+    ["packages/app/shared/pager.tsx", false],
+    ["apps/storybook/support/pager-fixture.tsx", false],
+    ["packages/app/shared/list-pagination-visibility.ts", false],
+    ["packages/app/shared/Pagination.tsx", false],
+    ["packages/app/shared/listing-card.tsx", false],
+    ["packages/app/shared/router-utils.tsx", false],
+    ["packages/app/projects/projects-page.ts", false],
+  ];
+  for (const [file, expected] of layouts) assert.equal(isPageComposer(file), expected, file);
+  // Main's substring regex: the whole-word match only drops partial-word hits, it never adds one.
+  const mainRule = /(?:^|\/)[^/]*(?:page|route|toolbar|list|shell|surface|adapter)[^/]*\.[jt]sx$/i;
+  const words = ["page", "pager", "route", "router", "list", "listing", "shell", "surface", "adapter", "toolbar", "card", "Page", "List"];
+  for (const first of words) for (const second of words) for (const join of ["-", "_", ".", ""]) {
+    const file = `packages/app/x/${first}${join}${second}.tsx`;
+    if (isPageComposer(file)) assert.equal(mainRule.test(file), true, file);
+  }
+});
+
+test("a comparator is a two-parameter sort callback or compare function, never a compare-named function of other arity", () => {
+  const layouts = [
+    ["rows.sort((a, b) => a.rank - b.rank);", true],
+    ["rows.toSorted((left, right) => left.rank - right.rank);", true],
+    ["rows.sort(function (a, b) { return a - b; });", true],
+    ["function compareRows(a, b) {", true],
+    ["const compareRows = (a, b) => a.rank - b.rank;", true],
+    ["export function compare(a, b) {", true],
+    ["export function compareRows(a: Row, b: Row): number {", true],
+    ["function compareRows(", true],
+    ["function compareRows(a: Row,", true],
+    ["function compareRows(a,", true],
+    ["async function compareAndRecord({ repo, base, out }) {", false],
+    ["function compareAndRecord(options) {", false],
+    ["const compareResult = await compare(summary);", false],
+    ["function compareTrees(a, b, c) {", false],
+    ["function compareAndRecord({", false],
+    ["function compareWith(options: Options) {", false],
+    ["rows.sort();", false],
+  ];
+  for (const [line, expected] of layouts) assert.equal(isComparatorLine(line), expected, line);
+  // Main's rule: the narrowed rule only drops matches, it never adds one.
+  const mainRule = /\.(?:sort|toSorted)\(\s*(?:\(\s*[\w$]+\s*,\s*[\w$]+\s*\)\s*=>|function\b)|\b(?:const|function)\s+compare[A-Z]?\w*\s*(?:=\s*\(\s*[\w$]+\s*,\s*[\w$]+|\()/;
+  for (const [line] of layouts) if (isComparatorLine(line)) assert.equal(mainRule.test(line), true, line);
 });

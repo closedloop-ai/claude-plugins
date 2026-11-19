@@ -20,6 +20,7 @@ import type { EvalRuntime } from "./eval-policy.ts";
 import { evalCaseCatalog, skillFromPrompt } from "./eval-selection.ts";
 import type { EvalCaseDefinition } from "./eval-selection.ts";
 import type { EvalCommands } from "./eval-driver.ts";
+import type { PrivateReplyRejection } from "./eval-private-reply.ts";
 import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegressions,
   deterministicNightlyFailures, evalCaseIds,
   deliverPendingRegressionReports, evalModelProcessEnv, failedCases,
@@ -72,6 +73,14 @@ test("model processes inherit only the explicit environment allow-list", () => {
   assert.deepEqual(inherited, { PATH: "/bin" });
   assert.throws(() => evalModelProcessEnv({ PATH: "/bin", ANTHROPIC_API_KEY: "secret" }),
     /eval-model-api-credential-forbidden:ANTHROPIC_API_KEY/);
+  const cloud = evalModelProcessEnv({ PATH: "/bin", CLAUDE_CODE_REMOTE: "true", AWS_ACCESS_KEY_ID: "session-access",
+    AWS_SECRET_ACCESS_KEY: "session-secret", AWS_SESSION_TOKEN: "session-token", ANTHROPIC_BASE_URL: "https://cloud.invalid" });
+  assert.deepEqual(cloud, { PATH: "/bin", CLAUDE_CODE_REMOTE: "true", AWS_ACCESS_KEY_ID: "session-access",
+    AWS_SECRET_ACCESS_KEY: "session-secret", AWS_SESSION_TOKEN: "session-token", ANTHROPIC_BASE_URL: "https://cloud.invalid" });
+  assert.throws(() => evalModelProcessEnv({ CLAUDE_CODE_REMOTE: "true", AWS_ACCESS_KEY_ID: "session-access", ANTHROPIC_API_KEY: "user-key" }),
+    /eval-model-api-credential-forbidden:ANTHROPIC_API_KEY/);
+  assert.throws(() => evalModelProcessEnv({ CLAUDE_CODE_REMOTE: "false", AWS_ACCESS_KEY_ID: "user-access" }),
+    /eval-model-api-credential-forbidden:AWS_ACCESS_KEY_ID/);
 });
 
 test("ISS-13760 AC-003 Claude final replies use the private Codex case shape and clean temp traces", () => {
@@ -110,10 +119,13 @@ test("ISS-13760 AC-003 Claude final replies use the private Codex case shape and
     const privateTrace = trace("e-private", [{ type: "result",
       result: "saved at /Users/example/private/reply.txt" }]);
     mkdirSync(join(root, "private-output"));
-    assert.throws(() => preserveClaudeReplies({
+    const rejected: PrivateReplyRejection[] = [];
+    const kept = preserveClaudeReplies({
       cases: [item("pm-prd-children-are-scope", privateTrace)],
-    }, join(root, "private-output"), ["pm-prd-children-are-scope"], root),
-    /eval-private-reply-private-data/);
+    }, join(root, "private-output"), ["pm-prd-children-are-scope"], root, [], () => "", rejected);
+    assert.deepEqual(rejected, [{ caseId: "pm-prd-children-are-scope", category: "absolute-path" }]);
+    assert.equal(kept.has("pm-prd-children-are-scope"), true);
+    assert.deepEqual(readdirSync(join(root, "private-output")), []);
     assert.equal(existsSync(join(root, "e-private")), true);
 
     const unsafe = join(root, "trace.jsonl");
@@ -385,15 +397,12 @@ test("scheduled task wrapper keeps T2 behind the local heavy slot", () => {
   assert.doesNotMatch(readme, /SLACK_BOT_TOKEN|SLACK_CHANNEL_ID|vibe-eval\.env/);
 });
 
-// ISS-14162 (Q-14162-15): every quarantined case reached its bar, so the committed quarantine is
-// empty; it still carries the shared owner and deadline loadEvalQuarantine requires.
-test("the committed quarantine is empty and keeps its owner and deadline", () => {
-  assert.deepEqual(loadEvalQuarantine(), []);
-  const raw = JSON.parse(readFileSync(new URL("../eval-quarantine.json", import.meta.url), "utf8")) as
-    { owner?: unknown; deadline?: unknown; entries?: unknown };
-  assert.equal(raw.owner, "vibe-maintainers");
-  assert.equal(raw.deadline, "2026-11-13");
-  assert.deepEqual(raw.entries, []);
+// The committed quarantine holds one case, the generic-arm case that failed 2 of 3 Codex samples on 2026-11-18
+// (operator ruling: quarantine only on 2 or more failed samples, owned by ISS-14116 for 7 days); it carries the
+// shared owner and deadline loadEvalQuarantine requires.
+test("the committed quarantine holds only the measured generic-arm case, with its owner and deadline", () => {
+  assert.deepEqual(loadEvalQuarantine().map(({ runtime, case: id, owner, deadline }) => ({ runtime, case: id, owner, deadline })),
+    [{ runtime: "codex", case: "pm-generic-repo-gates-not-shipped", owner: "ISS-14116", deadline: "2026-11-25" }]);
 });
 
 test("T2 store rolls reliability forward and resolves only its atomic newest baseline", () => {
@@ -616,7 +625,8 @@ test("expired quarantine remains readable, gates failures and is surfaced for Sl
     catalog, pluginVersion: "1.2.3", createdAt: "2026-10-29T00:00:00Z" });
   assert.doesNotThrow(() => verifyEvalBaseline(baseline));
   const quarantine = evalQuarantineStatus(new Date("2026-11-14T00:00:00Z"));
-  assert.deepEqual(quarantine.entries, []);
+  // The committed quarantine's one case (ISS-14116, deadline 2026-11-25) is not expired on this date.
+  assert.deepEqual(quarantine.entries.map((entry) => entry.case), ["pm-generic-repo-gates-not-shipped"]);
   assert.deepEqual(quarantine.expired, []);
   const failedAfterExpiry = buildEvalBaseline({
     results: [comparisonEval("b".repeat(40), { "case-a": false })], catalog,
@@ -1473,8 +1483,8 @@ function createEvalFixtureRepo(root: string, options: { vibeCore?: boolean } = {
     "---\nname: vibe-change-worker\nmodel: opus\n---\n");
   writeFileSync(join(repo, "plugins/vibe/skills/vibe/SKILL.md"), "fixture skill\n");
   for (const name of ["tested-head.mjs", "session-record.mjs"]) {
-    // The identity helper's code lives in vibe-core; the fixture places its bytes where the driver runs it.
-    cpSync(join(import.meta.dirname, `../../../plugins/vibe-core/lib/vibe/scripts/${name}`),
+    // The identity helper's code lives in vibe's lib/; the fixture places its bytes where the driver runs it.
+    cpSync(join(import.meta.dirname, `../../../plugins/vibe/lib/vibe/scripts/${name}`),
       join(repo, `plugins/vibe/skills/vibe/scripts/${name}`));
   }
   writeFileSync(join(repo, `plugins/vibe/evals/${CASE}/prompt.md`), options.vibeCore
@@ -1558,7 +1568,14 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
       new FakeCommands(true, mode));
       const claude = invalid.result.runtimes.find((item) => item.runtime === "claude")!;
       const codex = invalid.result.runtimes.find((item) => item.runtime === "codex")!;
-      assert.match(claude.invalidReason ?? "", /^eval-(?:case|claude|private|native)-/);
+      if (mode === "private") {
+        // ISS-14116: a private reply fails its own case with the category, not the whole runtime.
+        assert.equal(claude.invalidReason, null);
+        assert.deepEqual(claude.result?.cases.map((item) => [item.id, item.passed, item.failedGraders]),
+          [[CASE, false, ["private-reply:absolute-path"]]]);
+      } else {
+        assert.match(claude.invalidReason ?? "", /^eval-(?:case|claude|private|native)-/);
+      }
       assert.ok(codex.result, `${mode} lost usable Codex settlement`);
       assert.equal(existsSync(join(runRoot, "claude-temp")), false);
       assert.equal(existsSync(join(runRoot, "claude", codexCaseId(CASE), "reply.txt")),

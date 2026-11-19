@@ -89,11 +89,12 @@ test("every runtime behavior category schedules nightly evaluation", () => {
 
 test("vibe-core's runtime is vibe behavior; its tests and README are not", () => {
   for (const path of ["plugins/vibe-core/hooks/hooks.json", "plugins/vibe-core/hooks/pre-tool-use.mjs",
-    "plugins/vibe-core/lib/vibe/scripts/session-record.mjs", "plugins/vibe-core/shared/plugin-roots.mjs",
+    "plugins/vibe/lib/vibe/scripts/session-record.mjs", "plugins/vibe/hooks/kill-guard.mjs",
+    "plugins/vibe-core/shared/plugin-roots.mjs",
     "plugins/vibe-core/.codex-plugin/plugin.json"]) {
     assert.deepEqual(classifyVibeChangeScope([path], VIBE).behaviorFiles, [path], path);
   }
-  for (const path of ["plugins/vibe-core/hooks/kill-guard.test.mjs", "plugins/vibe-core/README.md"]) {
+  for (const path of ["plugins/vibe/hooks/kill-guard.test.mjs", "plugins/vibe-core/shared/plugin-roots.test.mjs", "plugins/vibe-core/README.md"]) {
     assert.deepEqual(classifyVibeChangeScope([path], VIBE).behaviorFiles, [], path);
     assert.deepEqual(classifyVibeChangeScope([path], VIBE).nonBehaviorFiles, [path], path);
   }

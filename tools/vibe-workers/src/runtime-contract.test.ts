@@ -1,7 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assembleProviderText, sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { assembleProviderText, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { capabilitiesSchema, unsupportedCapabilities, type Capability } from "./contracts.js";
 import { missingMcpTools } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
@@ -85,6 +86,13 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(bound["vibe-ticket-worker"]?.handoff).toContain("upload_attachment");
   });
 
+  it("documents every ticket-worker handoff capability the provider grant requires", () => {
+    const handoff = readFileSync(resolve(pluginRoot,
+      "../vibe-closedloop-provider/skills/closedloop-provider/references/handoff-skill.md"), "utf8");
+    expect(recordModes(sessionBinding())["vibe-ticket-worker"]?.handoff).toContain("upload_attachment");
+    expect(handoff).toMatch(/complete handoff record grant[\s\S]*upload_attachment/);
+  });
+
   it("parses a ledger's capabilities by shape in any chat and checks a grant against the session's provider", () => {
     const write = { name: "mcp__closedloop__create_document", service: "tracker", operation: "create_document", access: "write" } as const;
     const graphRead = { name: "mcp__closedloop-graph__code_symbols", service: "graph", operation: "code_symbols", access: "read" } as const;
@@ -149,9 +157,12 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(environment).toContain("currently loaded ClosedLoop tool");
     expect(verify).toContain("vibe-control-runs/");
     expect(verify).toMatch(/Leave any other session's\s+captures alone/);
-    expect(verify).toMatch(/`testSelection` is an\s+array/);
+    // The evidence field guide moved from the verifier's prose into the schema tool's `--example` output.
+    const guide = execFileSync(process.execPath, [join(pluginRoot, "skills", "handoff", "scripts", "pr-evidence-schema.mjs"), "--example"], { encoding: "utf8" });
+    expect(verify).toContain("pr-evidence-schema.mjs --example");
+    expect(guide).toMatch(/`testSelection` is an\s+array/);
     expect(verify).toContain("pr-evidence-schema.mjs --file");
-    expect(verify).toContain("status: \"passed\"");
+    expect(guide).toContain("status: \"passed\"");
     expect(verify).toContain("e2e-capability-probe.mjs --worktree");
     expect(verify).toContain("Never set `dockerPresent: false`");
   });

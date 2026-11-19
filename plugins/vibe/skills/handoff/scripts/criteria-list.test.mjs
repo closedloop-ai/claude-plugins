@@ -88,3 +88,28 @@ test("ISS-14136 AC-4: the oracle finds every box c3a48f20 dropped, so it is not 
     assert.deepEqual(oracleMisses(row.ticket, row.states, criteriaStates), row.dropped, row.name);
   }
 });
+
+// ISS-14116 item 29 (#433's last adversarial review): a second `- Acceptance criteria:` list that starts inside an open
+// list section keeps that section's outermost heading level and indent. Each row: the layout, what is read (ids match
+// main), and the boxes reported under Acceptance criteria.
+const DOUBLE_LIST_CASES = [
+  ["a second list under a deeper heading, then a sibling deeper heading (the reported drop)",
+    "## Scope\n\n- Acceptance criteria:\n  - [ ] a\n\n### Web\n\n- Acceptance criteria:\n  - [ ] b\n\n### Desktop\n\n- [ ] c\n", ["a", "b"], ["c"]],
+  ["a second list under a deeper heading, then a heading at the outer level closes it",
+    "## Scope\n\n- Acceptance criteria:\n  - [ ] a\n\n### Web\n\n- Acceptance criteria:\n  - [ ] b\n\n## Environment\n\n- [ ] run the app\n", ["a", "b"], []],
+  ["a second list under a same-level heading starts a fresh section",
+    "## Scope\n\n- Acceptance criteria:\n  - [ ] a\n\n## Web\n\n- Acceptance criteria:\n  - [ ] b\n\n### Desktop\n\n- [ ] c\n", ["a", "b"], ["c"]],
+  ["a second list indented inside the first keeps the first list's indent",
+    "## Scope\n\n- Acceptance criteria:\n  - [ ] a\n  - Acceptance criteria:\n    - [ ] b\n\n### Desktop\n\n- [ ] c\n", ["a", "b"], ["c"]],
+  ["a first list with no heading closes at any heading, so a later list there starts fresh",
+    "- Acceptance criteria:\n  - [ ] a\n\n### Web\n\n- Acceptance criteria:\n  - [ ] b\n\n### Desktop\n\n- [ ] c\n", ["a", "b"], []],
+];
+
+for (const [what, ticket, read, reported] of DOUBLE_LIST_CASES) {
+  test(`ISS-14116 item 29: ${what}`, () => {
+    assert.deepEqual(criteriaStates(ticket).map(({ id, text }) => [id, text]), read.map((text, index) => [`AC-${index + 1}`, text]));
+    const states = checkboxStates(ticket);
+    assert.deepEqual(states.filter((box) => box.reportedUnder === "Acceptance criteria").map((box) => box.text), reported);
+    assert.deepEqual(oracleMisses(ticket, states, criteriaStates), []);
+  });
+}

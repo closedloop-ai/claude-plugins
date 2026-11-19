@@ -64,7 +64,7 @@ test("an answer that could not be read is retried, and its alert still comes onc
   assert.deepEqual(await hookApprovalWatch("local", dir, { versions, approval: unchecked.approval }), { line: first.line, checked: true });
   const needed = approvals({ state: HookApproval.Needed, blocked: [`${KEY} is untrusted`] });
   const alert = await hookApprovalWatch("local", dir, { versions, approval: needed.approval });
-  assert.match(alert.line, /is untrusted\), so vibe's guards cannot run there: open Codex once and approve vibe-core's hooks in \/hooks$/);
+  assert.ok(alert.line.endsWith(`is untrusted), so vibe's guards cannot run there: ${APPROVE_HOOKS}`), alert.line);
   assert.equal(unchecked.asked.count, 2);
 });
 
@@ -72,7 +72,8 @@ test("a missing vibe-core names its add command; an older vibe, an unreadable li
   const dir = stateDir(t);
   const never = approvals({ state: HookApproval.Approved });
   const missing = await hookApprovalWatch("local", dir, { versions: { vibe: "1.1.71", "vibe-core": null }, approval: never.approval });
-  assert.match(missing.line, /^HOOK-APPROVAL local vibe 1\.1\.71 vibe-core none: vibe-core is not installed in Codex, .*run `codex plugin add vibe-core@closedloop-ai`, then open Codex once and approve vibe-core's hooks in \/hooks$/);
+  assert.match(missing.line, /^HOOK-APPROVAL local vibe 1\.1\.71 vibe-core none: vibe-core is not installed in Codex, .*run `codex plugin add vibe-core@closedloop-ai`, then /);
+  assert.ok(missing.line.endsWith(`, then ${APPROVE_HOOKS}`), missing.line);
   assert.equal(never.asked.count, 0, "nothing to list without vibe-core");
   const older = await hookApprovalWatch("local", stateDir(t), { versions: { vibe: "1.1.70", "vibe-core": null }, approval: never.approval });
   assert.deepEqual(older, { line: null, checked: true }, "a vibe that still runs its own hooks needs no vibe-core");

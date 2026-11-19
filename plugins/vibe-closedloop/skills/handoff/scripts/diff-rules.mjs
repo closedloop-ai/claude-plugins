@@ -9,21 +9,24 @@
 // docs folders) are the bound provider's `recipes.diffRules`; without one those
 // rules do not run and only the generic rules apply.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { isLocalPlanPath, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
+import { isLocalPlanPath, localPlanPaths, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { lineIndex } from "./line-index.mjs";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
-import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
-import { checkCommentRules, citationPattern } from "./comment-rules.mjs";
+import { checkCommentRules, citationPattern, commentBody } from "./comment-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
+import { checkFlagRetirement } from "./flag-retirement.mjs";
 import { routeSpecs } from "./route-specs.mjs";
-import { createImportClosure, escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
-import { frozenInputs, isFrozenGlobalInput, storybookPreviewImportClosure } from "./frozen-render.mjs";
+import { escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
+import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { isGeneratedFile } from "./generated-files.mjs";
+import { frozenAffectedStoryFiles, frozenInputs } from "./frozen-render.mjs";
+import { DEEPEN_STEPS, gitRepo, lines } from "./diff-rules-repo.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
@@ -41,6 +44,14 @@ const CAPTURE_CALL = /\bcapture[A-Z]\w*\(/;
 const TX_OPEN = /withDb\.tx\(/g;
 const TX_WRITE = /\btx\.(?:\w+\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw)/;
 const RESULT_ERR_RETURN = /\breturn\s+(?:Result\.)?err\(/;
+const BATCH_LIMIT_SIGNAL = /\b(?:BATCH|BULK)[A-Z0-9_]*LIMIT\b|\b(?:batch|bulk)\s+limit\b/i;
+const SET_TRANSFORM_SIGNAL = /\b(?:collapse|dedupe|deduplicate|normaliz|distinct|unique)[A-Za-z0-9_]*\b/i;
+// A collection of ids on the transform line or the two added lines after it (a wrapped call): `selectedIds`,
+// `artifactUUIDs`, `ids`, or a user's `selection`. A lone `id` field or a file that merely mentions ids elsewhere is
+// not a set of user-supplied ids.
+const ID_COLLECTION_SIGNAL = /[a-z0-9_](?:Ids|IDs|UUIDs|Uuids)\b|\b(?:ids|uuids|IDs|UUIDs|selection)\b/;
+const TRANSACTION_SCALE_RECORD = /^\s*(?:[-*]\s+)?Transaction scale:\s*(\S+):\s*limit\s+\d+;\s*duration\s+\d+(?:\.\d+)?ms;\s*timeout\s+\d+ms;\s*ambient timeout\s+(?:honored|ignored);\s*lock hold\s+\d+(?:\.\d+)?ms;\s*test\s+(\S+)\s*$/im;
+const INPUT_SET_RECORD = /^\s*(?:[-*]\s+)?Input set:\s*(\S+):(?=[^\n]*\border permutations\b)(?=[^\n]*\bcase\b)(?=[^\n]*\bduplicates\b)(?=[^\n]*\bwhitespace\b)[^\n]*;\s*test\s+(\S+)\s*$/gim;
 const LINK_DELETE = /\.artifactLink\.deleteMany\(|\bDELETE\s+FROM\s+"?artifact_links"?/i;
 const LINK_EDGE_KEYS = [/\bsourceId\b|\bsource_id\b/, /\btargetId\b|\btarget_id\b/, /\blinkType\b|\blink_type\b/];
 const SYNC_TABLE = /outbox|sync/i;
@@ -55,7 +66,6 @@ const GENERIC_SOURCE = String.raw`(?:#\d+|https?:\/\/\S+)`;
 const GENERIC_DOCS = ["docs/", ".claude/"];
 const STORY_COMPONENT = /\bcomponent:\s*([A-Z]\w*)/;
 const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
-const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
 const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
 const FROZEN_LINE_STATES = /; states ([^;]*);/;
@@ -65,6 +75,7 @@ const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
 const WINDOW = 25;
 const COPY_FILE = /\.[jt]sx$/;
+const UI_PATH = /\.(?:[jt]sx|css|scss|sass|less|html?|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot|mp4|webm|og[gv]|mp3|wav)$/i;
 const COPY_LITERALS = [
   /\bsearchLabel\s*[=:]\s*\{?\s*(["'\x60])((?:(?!\1)[^\\]|\\.)*)\1/g,
   /\btoast(?:\.\w+)?\(\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
@@ -72,7 +83,6 @@ const COPY_LITERALS = [
   /()(?<=[\w"'}/])>([^<>{}=&|();]*[A-Za-z]{2,}[^<>{}=&|();]*)</g,
 ];
 const WORDING = /[A-Z]|\s/;
-const TEMPLATE_PART = /\$\{[^}]*\}/;
 const TEMPLATE_PARTS = /\$\{[^}]*\}/g;
 const SCRIPT_FILE = /\.(?:[cm]?[jt]sx?|sh|bash|zsh|py)$/;
 const ENV_DUMP = [
@@ -84,8 +94,6 @@ const ENV_DUMP = [
 ];
 const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 const RESTORE_LIMIT = 40;
-const DEEPEN_STEPS = ["--deepen=1000", "--deepen=10000", "--unshallow"];
-const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
 const CONTROL_PROP = /\b((?:show|enable|allow|with|render|on)[A-Z][A-Za-z0-9]*)\s*(?::|=)/;
 const CONTROL_TERM = /selectall|checkbox|button|menu|action|toolbar|filter|search|picker|popover|dialog|drawer|toggle|favorite|star|bulk|control|disclosure|pagination/i;
 const CONTROL_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
@@ -94,7 +102,8 @@ const IMPORT_DECLARATION = /\bimport\s+(?!["'])([\s\S]*?)\s+from\s+["']([^"']+)[
 const DESIGN_SYSTEM_CONTROL = /^@repo\/design-system\/components\/ui\//;
 const CAPABILITY_COMPONENT = /search|filter|sort|range|toolbar|pagination|control|picker|menu|popover/i;
 const PRIMITIVE_LEAF = /(?:Item|Content|Trigger)$/;
-const PAGE_COMPOSER = /(?:^|\/)[^/]*(?:page|route|toolbar|list|shell|surface|adapter)[^/]*\.[jt]sx$/i;
+// The file-name words that mark a page composer; matched as whole words, so "pager" is not "page".
+const PAGE_COMPOSER_WORDS = new Set(["page", "route", "toolbar", "list", "shell", "surface", "adapter"]);
 
 /**
  * Parses `git diff --unified=0` output into per-file added and removed lines, leaving out the in-worktree
@@ -137,12 +146,21 @@ export function parseUnifiedDiff(text, planPrefix = null) {
   return files.filter((file) => file.path && !isLocalPlanPath(file.path, planPrefix));
 }
 
+/** Whether a diff touches a rendered UI path; tests and snapshots are evidence, not product UI. */
+export function touchesUiPath(files) {
+  return files.some((file) => file.status !== "D" && UI_PATH.test(file.path) && !isTestFile(file.path));
+}
+
 /**
  * Applies every rule. `repo` supplies reads: `head(path)` and `base(path)` file
  * text or null, `headFiles`
- * (tracked paths at head) and `importerCounts(paths)` (non-test files importing each).
+ * (tracked paths at head), `importerCounts(paths)` (non-test files importing each) and optional `generatedFiles`
+ * (head paths the repository marks `linguist-generated`); a generator header is read through `head` and `base`.
  */
-export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
+export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-request") {
+  // One predicate for every rule: build output repeats its hand-written source, which carries any finding; the build
+  // lanes byte-check the output. duplicate-helper skips only linguist-generated files (isGeneratedFile).
+  const files = changedFiles.filter((file) => !isGeneratedFile(repo, file.path));
   const blocking = [];
   const requiredTests = [];
   const requiredChecks = [];
@@ -173,6 +191,8 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
     checkTransactions(file, head, add);
     checkLinkDeletes(file, head, add);
   }
+  checkHighRiskBatchChanges(live, changeLog, repo, add, requiredTests);
+  checkOwnerTestRules(live, changeLog, repo, add, requiredTests);
   if (rules.desktopLane) checkDesktopLane(live, repo, logged, add, rules);
   checkTicketedComments(files, repo, logged, add, rules);
   checkCommentRules(live, repo, add);
@@ -188,13 +208,73 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   }
   checkCapabilityRemovals(live, files, repo, logged, add);
   checkSpecChanges(files, changeLog, add);
+  const flagRetirements = checkFlagRetirement(files, repo, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
   checkComparators(live, repo, logged, add, changeLog, phase);
   checkUnusedExports(live, repo, logged, add);
-  checkDuplicateHelpers(live, repo, add);
+  checkDuplicateHelpers(changedFiles.filter((file) => file.status !== "D" && !isGeneratedFile(repo, file.path, { header: false })), repo, add);
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo, add), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
-  return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
+  return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks, ...(flagRetirements.length ? { flagRetirements } : {}) };
+}
+
+/** Consolidated transactions and user-id set transforms need measured, mutation-backed evidence before review. */
+function checkHighRiskBatchChanges(files, changeLog, repo, add, requiredTests) {
+  const source = files.filter((file) => SOURCE_FILE.test(file.path) && !isTestFile(file.path));
+  const addedText = source.flatMap((file) => file.added.map((entry) => entry.text)).join("\n");
+  const transaction = source.find((file) => file.added.some((entry) => /\bwithDb\.tx\(/.test(entry.text))
+    && /\b(?:updateMany|createMany|deleteMany|\$executeRaw)\b/.test(repo.head(file.path) ?? ""));
+  if (transaction && BATCH_LIMIT_SIGNAL.test(addedText)) {
+    const record = TRANSACTION_SCALE_RECORD.exec(changeLog);
+    if (!record || record[1] !== transaction.path || repo.head(record[2]) === null) {
+      add("transaction-scale", transaction.path, transaction.added.find((entry) => /\bwithDb\.tx\(/.test(entry.text))?.line ?? 1,
+        "consolidates batch work into one transaction without measured limit, duration, effective timeout, ambient-timeout and lock-hold evidence",
+        "measure the documented batch limit before review and record `Transaction scale: <file>: limit <n>; duration <ms>; timeout <ms>; ambient timeout honored|ignored; lock hold <ms>; test <path>`");
+    } else {
+      requiredTests.push({ path: record[2], reason: `transaction scale evidence for ${transaction.path}` });
+    }
+  }
+  const inputSetRecords = [...changeLog.matchAll(INPUT_SET_RECORD)];
+  for (const file of source) {
+    const code = file.added.filter((entry) => !COMMENT_LINE.test(entry.text));
+    const transform = code.find((entry, index) => SET_TRANSFORM_SIGNAL.test(entry.text)
+      && code.slice(index, index + 3).some((next) => next.line - entry.line <= 2 && ID_COLLECTION_SIGNAL.test(next.text)));
+    if (!transform) continue;
+    const record = inputSetRecords.find((match) => match[1] === file.path && repo.head(match[2]) != null);
+    if (!record) {
+      add("input-set-proof", file.path, transform.line,
+        "adds set, dedupe, normalization or collapse logic over a user-supplied id collection without order and normalization evidence",
+        "test order permutations plus case, duplicates and whitespace, then record `Input set: <file>: order permutations; case; duplicates; whitespace; test <path>`");
+    } else {
+      requiredTests.push({ path: record[2], reason: `input set evidence for ${file.path}` });
+    }
+  }
+}
+
+/** Repository-owned UI bug rules must stay source-bound and cover every mounted shell. */
+function checkOwnerTestRules(files, changeLog, repo, add, requiredTests) {
+  const rules = repo.rules?.ownerTestRules;
+  if (!rules || !rules.bugSignal.test(changeLog) || !files.some((file) => rules.paths.test(file.path))) return;
+  for (const requirement of rules.requirements) {
+    const source = repo.base(requirement.owner) ?? "";
+    if (!source.includes(requirement.sentence)) {
+      add("owner-test-rule-source", requirement.owner, 1,
+        `the provider's owner test rule no longer matches its source sentence: ${requirement.sentence}`,
+        "update the provider rule from the repository owner file before relying on it");
+      continue;
+    }
+    const added = files.find((file) => file.status === "A" && requirement.tests.test(file.path));
+    const record = changeLog.split("\n").find((line) => line.includes(`Owner test: ${requirement.owner}:`));
+    const recordedTest = record ? /:\s*test\s+(\S+)\s*$/.exec(record)?.[1] : null;
+    if (added) requiredTests.push({ path: added.path, reason: requirement.sentence });
+    else if (recordedTest && requirement.tests.test(recordedTest) && repo.head(recordedTest) !== null) {
+      requiredTests.push({ path: recordedTest, reason: requirement.sentence });
+    } else if (!record || !/:\s*missing tests\b/i.test(record)) {
+      add("owner-test-rule", files.find((file) => rules.paths.test(file.path))?.path ?? requirement.owner, 1,
+        `UI bug fix has no ${requirement.tests.source} regression E2E or Missing tests record; source: ${requirement.owner}: ${requirement.sentence}`,
+        `add the required spec, or record \`Owner test: ${requirement.owner}: missing tests <shell and behavior>\``);
+    }
+  }
 }
 
 /**
@@ -275,7 +355,7 @@ function componentImports(source) {
  */
 function checkSharedCapabilityOwners(files, changeLog, repo, add, { slugSource }) {
   const checked = new Set();
-  for (const file of files.filter((entry) => PAGE_COMPOSER.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+  for (const file of files.filter((entry) => isPageComposer(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
     const addedLines = new Set(file.added.map((entry) => entry.line));
     const baseImports = componentImports(repo.base(file.oldPath ?? file.path) ?? "");
     const composedOnBase = (source, name) => baseImports.some((entry) => entry.source === source && entry.names.includes(name));
@@ -290,7 +370,7 @@ function checkSharedCapabilityOwners(files, changeLog, repo, add, { slugSource }
         if (checked.has(key)) continue;
         checked.add(key);
         const composers = repo.wordFiles(name).filter((candidate) =>
-          PAGE_COMPOSER.test(candidate) && !isTestFile(candidate) && !STORY_FILE.test(candidate) &&
+          isPageComposer(candidate) && !isTestFile(candidate) && !STORY_FILE.test(candidate) &&
           componentImports(repo.head(candidate) ?? "").some((entry) => entry.source === imported.source && entry.names.includes(name))
         );
         if (composers.length < 2) continue;
@@ -396,7 +476,20 @@ function checkLinkDeletes(file, head, add) {
 }
 
 function checkDesktopLane(files, repo, logged, add, { desktopLane: lane, migrations }) {
-  const laneFiles = files.filter((file) => file.status === "A" && lane.files.test(file.path) && !isTestFile(file.path));
+  const movedFromBase = (file) => {
+    const lines = file.added.map((entry) => entry.text.trim()).filter((text) => text && !COMMENT_LINE.test(text));
+    return lines.length >= 3 && lines.every((text) => repo.baseContains(text));
+  };
+  const ruledNotLane = (file) => {
+    if (!logged("Synchronizing-susan: not a sync lane")) return false;
+    const token = path.posix.basename(file.path).replace(/\.[^.]+$/, "");
+    const roster = `${repo.head(lane.roster) ?? ""}\n${repo.base(lane.roster) ?? ""}`;
+    const rostered = roster.includes(file.path) || roster.includes(token);
+    const importedBySync = repo.wordFiles(token).some((candidate) => candidate.startsWith(lane.importPrefix));
+    return !rostered && !importedBySync;
+  };
+  const laneFiles = files.filter((file) => file.status === "A" && lane.files.test(file.path) && !isTestFile(file.path)
+    && !movedFromBase(file) && !ruledNotLane(file));
   const syncTables = files
     .filter((file) => file.status === "A" && migrations?.desktop?.test(file.path))
     .flatMap((file) => [...(repo.head(file.path) ?? "").matchAll(SQL_CREATE_TABLE)].map((found) => ({ file: file.path, table: found[1] })))
@@ -419,10 +512,6 @@ function checkDesktopLane(files, repo, logged, add, { desktopLane: lane, migrati
   if (syncTables.length > 0 && !logged(`Engineering needed (forbidden path): ${lane.roster}`)) {
     add("desktop-sync-lane", syncTables[0].file, 1, `new sync table ${syncTables[0].table} is not on the lane roster`, `record \`Engineering needed (forbidden path): ${lane.roster}; why: the lane roster names the new lane\``);
   }
-}
-
-function commentBody(text) {
-  return text.replace(/^\s*(?:\/\/+|\/\*+|\*+)\s?/, "").replace(/\*\/\s*$/, "").trim();
 }
 
 /**
@@ -498,22 +587,16 @@ function checkStories(files, allFiles, repo, logged, add) {
  * itself are the inventory's `v1Stories` and `compileOnlyV1Repairs`.
  */
 function checkFrozenRenders(files, repo, changeLog, add) {
-  const changed = new Set(files.flatMap((file) => [file.path, file.oldPath].filter(Boolean)));
   const stories = repo.frozenStories();
   if (stories.length === 0) {
     return;
   }
-  const baseClosure = createImportClosure(repo.baseFiles, repo.baseBlobs);
-  const headFiles = new Set(repo.headFiles);
-  const headClosure = createImportClosure(headFiles,
-    (paths) => new Map(paths.map((file) => [file, repo.head(file)])));
-  const previewClosure = storybookPreviewImportClosure(repo.baseFiles, headFiles, repo.base, repo.head);
-  const globalChanged = [...changed].some((file) => isFrozenGlobalInput(file, previewClosure));
-  const affected = stories.filter((story) => {
-    if (globalChanged) return true;
-    return [...baseClosure([story]), ...headClosure([story])]
-      .some((file) => file !== story && changed.has(file));
-  });
+  if (Object.keys(repositoryLayout() ?? {}).length === 0) {
+    add("frozen-render", stories[0], 1, "no vibe provider layout is bound; selection cannot be computed", "bind the session's vibe provider, then run the inventory again");
+    return;
+  }
+  const affected = frozenAffectedStoryFiles({ changed: files, stories, baseFiles: repo.baseFiles, headFiles: new Set(repo.headFiles),
+    baseText: repo.base, headText: repo.head, baseBlobs: repo.baseBlobs });
   // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion.
   // It counts story files, as `affected` does; their stories follow in parentheses. It names the
   // rendered states and their dependency inputs. Unrelated branch changes do not invalidate that evidence.
@@ -530,7 +613,7 @@ function checkFrozenRenders(files, repo, changeLog, add) {
   };
   const recorded = changeLog.split("\n").some((line) => line.includes(prefix) && line.includes(": frozen-render.mjs ") && current(line));
   if (affected.length && !recorded) {
-    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged; rerun it only when qa-impact.mjs names one of these story states or its dependency inputs changed`);
+    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render-gate.mjs as its own shell step, never a capture of your own; on FROZEN PASS it records the \`Frozen render unchanged\` line itself, on FROZEN BLOCK keep the frozen renders unchanged; rerun it only when qa-impact.mjs names one of these story states or its dependency inputs changed`);
   }
 }
 
@@ -761,110 +844,6 @@ export function sidebarOrderTests(files, repo) {
     : [];
 }
 
-function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules) {
-  let deepened = 0;
-  const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
-  const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
-  const blobs = new Map();
-  const baseBlobs = (paths) => {
-    const missing = [...new Set(paths)].filter((file) => !blobs.has(file) && baseFiles.has(file));
-    if (missing.length) {
-      readBlobs(worktree, base, missing).forEach((text, file) => blobs.set(file, text));
-    }
-    return new Map(paths.map((file) => [file, blobs.get(file)]));
-  };
-  const read = memoize((file) => {
-    const absolute = path.join(worktree, file);
-    return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
-  });
-  const baseRead = memoize((file) => {
-    try {
-      return git(worktree, ["show", `${base}:${file}`]);
-    } catch {
-      return null;
-    }
-  });
-  return {
-    head: read,
-    base: baseRead,
-    shallow: () => lines(() => git(worktree, ["rev-parse", "--is-shallow-repository"]))[0] === "true",
-    deepen: () => {
-      const step = DEEPEN_STEPS[deepened++] ?? "--unshallow";
-      try {
-        execFileSync("git", ["-C", worktree, "fetch", "--quiet", step], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: DEEPEN_TIMEOUT_MS });
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, reason: `git fetch ${step}: ${String(error?.stderr ?? error?.message ?? error).trim().split("\n")[0]}` };
-      }
-    },
-    headFiles,
-    baseFiles,
-    baseBlobs,
-    wordFiles: (word) => lines(() => git(worktree, ["grep", "-l", "-w", "-F", "--untracked", "-e", word])),
-    storyReplacements,
-    deletionOf: (file) => {
-      const hit = lines(() => git(worktree, ["log", "--diff-filter=D", "-n", "1", "--format=%h %s", base, "--", file]))[0];
-      return hit ? `commit ${hit}` : null;
-    },
-    unmountOf: (name, file) => {
-      const mount = new RegExp(`<${name}\\b`);
-      for (const hit of lines(() => git(worktree, ["log", "-G", `<${name}([^A-Za-z0-9]|$)`, "-n", "20", "--format=%H %h %s", base, "--", file]))) {
-        const [sha, ...summary] = hit.split(" ");
-        const diff = lines(() => git(worktree, ["show", "--format=", "--unified=0", sha, "--", file]));
-        const count = (sign) => diff.filter((text) => text.startsWith(sign) && !text.startsWith(`${sign}${sign}${sign}`) && mount.test(text)).length;
-        if (count("-") > count("+")) {
-          return `commit ${summary.join(" ")}`;
-        }
-      }
-      return null;
-    },
-    baseContains: (text) => {
-      const parts = text.split(TEMPLATE_PART);
-      const search = parts.length > 1 ? ["-E", "-e", parts.map((part) => part.replace(/[.[\]()*+?{}|^$\\]/g, "\\$&")).join(".*")] : ["-F", "-e", text];
-      try {
-        git(worktree, ["grep", "-q", ...search, base]);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    frozenInputs: (ref, stories) => { try { return frozenInputs(worktree, ref, stories); } catch { return null; } },
-    filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"])),
-    rules,
-    isFrozenStory,
-    frozenStories: () => {
-      const candidates = lines(() => git(worktree, ["grep", "-l", "-E", FROZEN_CANDIDATE, base, "--", "*.stories.tsx", "*.stories.ts"]))
-        .map((hit) => hit.slice(base.length + 1));
-      const texts = baseBlobs(candidates);
-      return candidates.filter((story) => !isUnversionedStory(texts.get(story)) && isFrozenStory(texts.get(story) ?? ""));
-    },
-    baseStoriesRendering: (component) =>
-      lines(() => git(worktree, ["grep", "-l", "-E", `component:[[:space:]]*${component}([^[:alnum:]_]|$)`, base, "--", "*.stories.tsx", "*.stories.ts"]))
-        .map((hit) => hit.slice(base.length + 1)),
-    importersOf: (files) => importersOf(worktree, files),
-    importerCounts: (files) => new Map([...importersOf(worktree, files)].map(([file, importing]) => [file, [...importing].filter((hit) => !isTestFile(hit)).length])),
-  };
-}
-
-function memoize(read) {
-  const cache = new Map();
-  return (key) => {
-    if (!cache.has(key)) {
-      cache.set(key, read(key));
-    }
-    return cache.get(key);
-  };
-}
-
-/** Non-empty output lines of a git read; a command that matches nothing (grep's exit 1) or a missing path is empty. */
-function lines(read) {
-  try {
-    return read().split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 function untrackedAsAdded(worktree, planPrefix) {
   return git(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)
     .filter((file) => !isLocalPlanPath(file, planPrefix))
@@ -875,27 +854,6 @@ function untrackedAsAdded(worktree, planPrefix) {
       added: readFileSync(path.join(worktree, file), "utf8").split("\n").map((text, index) => ({ line: index + 1, text })),
       removed: [],
     }));
-}
-
-/** Reads many base blobs through one `git cat-file --batch`. */
-function readBlobs(worktree, base, files) {
-  const output = execFileSync("git", ["cat-file", "--batch"], {
-    cwd: worktree, input: files.map((file) => `${base}:${file}`).join("\n") + "\n", maxBuffer: 512 * 1024 * 1024,
-  });
-  const texts = new Map();
-  let offset = 0;
-  for (const file of files) {
-    const end = output.indexOf(10, offset);
-    const header = output.subarray(offset, end).toString();
-    const size = Number(header.split(" ")[2]);
-    offset = end + 1;
-    if (header.endsWith("missing")) {
-      continue;
-    }
-    texts.set(file, output.subarray(offset, offset + size).toString("utf8"));
-    offset += size + 1;
-  }
-  return texts;
 }
 
 /**
@@ -914,33 +872,20 @@ export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), i
     .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements, compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding)), phase);
+  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements,
+    compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding), sessionInternalIds(worktree, log)), phase);
 }
 
-/** Every tracked file importing each of `files` by its directory and stem, or by `./stem` beside it. */
-function importersOf(worktree, files) {
-  const targets = files.map((file) => {
-    const stem = path.basename(file).replace(/\.[jt]sx?$/, "");
-    const directory = path.dirname(file);
-    return { file, directory, elsewhere: `${path.basename(directory)}/${stem}`, sibling: `./${stem}`, stem };
-  });
-  const hits = targets.length === 0 ? [] : lines(() => git(worktree, ["grep", "-F", ...targets.flatMap((target) => ["-e", target.elsewhere, "-e", target.sibling]), "--", "*.ts", "*.tsx", "*.js", "*.jsx"]));
-  const found = new Map();
-  for (const target of targets) {
-    const elsewhere = new RegExp(`from ["'][^"']*/${escapeRegExp(target.elsewhere)}(?:\\.js)?["']`);
-    const sibling = new RegExp(`from ["']\\./${escapeRegExp(target.stem)}(?:\\.js)?["']`);
-    const importing = new Set();
-    for (const hit of hits) {
-      const at = hit.indexOf(":");
-      const hitFile = hit.slice(0, at);
-      const text = hit.slice(at + 1);
-      if (hitFile !== target.file && (elsewhere.test(text) || (path.dirname(hitFile) === target.directory && sibling.test(text)))) {
-        importing.add(hitFile);
-      }
+/** The private row ids (decision tables, change log) the copy rules treat as session-internal. */
+export function sessionInternalIds(worktree, changeLog) {
+  const texts = [changeLog];
+  const directory = path.dirname(localPlanPaths(worktree).decisionTable);
+  try {
+    for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".md"))) {
+      texts.push(readFileSync(path.join(directory, name), "utf8"));
     }
-    found.set(target.file, importing);
-  }
-  return found;
+  } catch { /* A session with no table contributes no private row ids. */ }
+  return [...new Set(texts.flatMap((text) => text.match(/\b(?:DT|ROW|DEC)-[A-Za-z0-9.-]+\b/g) ?? []))];
 }
 
 /**
@@ -953,11 +898,16 @@ export function compileDiffRules(data, binding = null) {
     ? { server: pattern(data.migrations.server), desktop: pattern(data.migrations.desktop), checks: data.migrations.checks ?? [] } : null;
   const lane = data?.desktopLane;
   const parity = data?.hostParity;
+  const ownerTests = data?.ownerTestRules;
   return {
     migrations,
     activityCapture: data?.activityCapture?.fix ? { fix: data.activityCapture.fix } : null,
-    desktopLane: lane?.files ? { ...lane, files: pattern(lane.files), giveUpImport: pattern(lane.giveUpImport) } : null,
+    desktopLane: lane?.files ? { ...lane, files: pattern(lane.files), giveUpImport: pattern(lane.giveUpImport),
+      importPrefix: typeof lane.importPrefix === "string" ? lane.importPrefix : "\0" } : null,
     sharedPaths: pattern(data?.sharedPaths),
+    flagRetirementRegistry: data?.flagRetirementRegistry,
+    ownerTestRules: ownerTests?.paths ? { paths: pattern(ownerTests.paths), bugSignal: pattern(ownerTests.bugSignal),
+      requirements: (ownerTests.requirements ?? []).map((item) => ({ ...item, tests: pattern(item.tests) })) } : null,
     hostParity: parity?.gridTest ? { ...parity, gridTable: pattern(parity.gridTable), gridSymbol: pattern(parity.gridSymbol),
       hostTests: pattern(parity.hostTests), breadcrumbPaths: pattern(parity.breadcrumbPaths), headerInput: pattern(parity.headerInput),
       headerUse: pattern(parity.headerUse) } : null,
@@ -969,4 +919,11 @@ export function compileDiffRules(data, binding = null) {
     slugSource: providerDataOr(binding, "tickets", "slugSource", null) ?? GENERIC_SOURCE,
     criterionSource: providerDataOr(binding, "tickets", "criterionSource", null) ?? GENERIC_SOURCE,
   };
+}
+
+/** Whether a .jsx/.tsx file name holds a page-composer word, split at `-`, `_`, `.` and camelCase boundaries. */
+export function isPageComposer(file) {
+  const name = /(?:^|\/)([^/]+)\.[jt]sx$/i.exec(file)?.[1];
+  if (!name) return false;
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[-_.\s]+/).some((word) => PAGE_COMPOSER_WORDS.has(word.toLowerCase()));
 }

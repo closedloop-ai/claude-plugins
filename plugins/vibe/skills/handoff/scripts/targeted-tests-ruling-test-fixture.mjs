@@ -37,7 +37,7 @@ export function ruledEvidence(source = "rulings") {
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit: COMMIT,
       laneReport: { command: "pnpm test:lanes", matches: [LANE] },
       entries: [{ kind: "vitest", path: TARGET, cases: ["lists"], command: TARGET_COMMAND }] },
-    testSelection: [{ file: SOURCE, selector: "code_tests_for", tests: [TARGET, SELECTED_ONLY] },
+    testSelection: [{ file: SOURCE, selector: "code_tests_for_changes", tests: [TARGET, SELECTED_ONLY] },
       { file: SOURCE, selector: "e2e-reference", tests: [] }],
     testRuns: [{ path: TARGET, cases: ["lists"], command: TARGET_COMMAND, status: "passed", commit: COMMIT },
       { path: SELECTED_ONLY, command: `pnpm --filter @repo/app exec vitest run ${SELECTED_ONLY}`, ...ruled },

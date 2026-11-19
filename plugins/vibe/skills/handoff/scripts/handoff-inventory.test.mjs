@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, mutationPreload, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
+import { seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -44,6 +45,7 @@ function setup(t, slug, extraFiles = {}, { repoName = "symphony-alpha", remoteUr
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);
+  seedAlignedDecisionTable(created.json.session.worktree);
   return { ...fixture, checkout, origin, worktree: created.json.session.worktree };
 }
 
@@ -58,6 +60,22 @@ function useMasterDefault({ home, checkout, origin, worktree }) {
 
 const PATH_POLICY = "vibe-handoff-paths.json";
 const CLAUDE_PLUGIN_POLICY = readFileSync(path.resolve(HERE, "../../../../..", PATH_POLICY), "utf8");
+
+test("AC-019 build inventory reports when the table cannot advance to handoff", (t) => {
+  const { home, worktree } = setup(t, "stale-table");
+  const table = seedAlignedDecisionTable(worktree);
+  const verified = readFileSync(table, "utf8");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+  writeFileSync(table, verified.replace("- Checked the fixture behavior.", "(post-implementation)"));
+  const build = runNode(INVENTORY, ["--worktree", worktree, "--phase", "build"], home);
+  assert.equal(build.json.decisionTableReadyForHandoff, false);
+  assert.match(build.json.decisionTableProblems.join("\n"), /Verification Findings is empty/);
+  const blocked = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(blocked.json.blocking.decisionTablesCurrent, false);
+  writeFileSync(table, verified);
+  const reconciled = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(reconciled.json.blocking.decisionTablesCurrent, true);
+});
 
 test("target repository declaration admits claude-plugins source, tools, evals, changelog and docs", (t) => {
   const { home, worktree } = setup(t, "claude-paths", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
@@ -76,6 +94,38 @@ test("target repository declaration admits claude-plugins source, tools, evals, 
   const blocked = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
   assert.equal(blocked.json.blocking.forbiddenPaths, false);
   assert.deepEqual(blocked.json.forbidden, [{ path: "plugins/vibe/AGENTS.md", status: "A" }]);
+});
+
+test("the claude-plugins handoff exception admits only edits to its existing root AGENTS.md", (t) => {
+  const { home, worktree } = setup(t, "root-instructions", {
+    [PATH_POLICY]: CLAUDE_PLUGIN_POLICY,
+    "AGENTS.md": "Root instructions\n",
+    "CLAUDE.md": "Load AGENTS.md\n",
+    "plugins/vibe/AGENTS.md": "Nested instructions\n",
+  }, { repoName: "claude-plugins", remoteUrl: "git@github.com:closedloop-ai/claude-plugins.git", declared: false });
+  git(worktree, ["config", "vibe.baseRef", "main"], home);
+  write(worktree, "AGENTS.md", "Root instructions, edited\n");
+  const inventory = (phase = "pull-request") => runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home).json;
+  for (const phase of ["handoff", "pull-request"]) {
+    const result = inventory(phase);
+    assert.equal(result.blocking.forbiddenPaths, true, JSON.stringify(result.forbidden));
+    assert.deepEqual(result.outsideAllowed, []);
+  }
+
+  for (const file of ["CLAUDE.md", "plugins/vibe/AGENTS.md", "plugins/vibe/CLAUDE.md", "AGENTS.override.md", ".github/workflows/ci.yml"]) {
+    write(worktree, file, "Still protected\n");
+  }
+  const blocked = inventory();
+  assert.equal(blocked.blocking.forbiddenPaths, false);
+  assert.deepEqual(blocked.forbidden.map(({ path }) => path).sort(), [
+    ".github/workflows/ci.yml", "AGENTS.override.md", "CLAUDE.md", "plugins/vibe/AGENTS.md", "plugins/vibe/CLAUDE.md",
+  ]);
+  unlinkSync(path.join(worktree, "AGENTS.md"));
+  assert.ok(inventory().forbidden.some(({ path, status }) => path === "AGENTS.md" && status === "D"));
+
+  write(worktree, "AGENTS.md", "Root instructions, edited\n");
+  git(worktree, ["config", "remote.origin.url", "git@github.com:example/claude-plugins.git"], home);
+  assert.ok(inventory().forbidden.some(({ path, status }) => path === "AGENTS.md" && status === "M"));
 });
 
 test("root declaration uses the verified origin default when the captured base lacks one", (t) => {
@@ -366,6 +416,17 @@ test("malformed or duplicate declarations fail closed with a target-owned diagno
   const ambiguous = runNode(INVENTORY, ["--worktree", duplicate.worktree], duplicate.home);
   assert.equal(ambiguous.json.blocking.forbiddenPaths, false);
   assert.match(ambiguous.json.pathPolicyProblem, /found 2/);
+});
+
+test("ISS-14221 path policy treats bracket segments literally instead of as glob syntax", (t) => {
+  const policy = JSON.stringify({ ...JSON.parse(SYMPHONY_PATH_POLICY), allowedPrefixes: ["apps/[orgSlug]/"] });
+  const { home, worktree } = setup(t, "policy-bracket-literal", { "vibe-handoff-paths.json": policy });
+  const route = "apps/[orgSlug]/page.tsx";
+  write(worktree, route, "export const page = 2;\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.pathPolicyProblem, undefined);
+  assert.deepEqual(result.json.changedFiles, [{ path: route, status: "A" }]);
+  assert.equal(result.json.blocking.forbiddenPaths, true);
 });
 
 function write(worktree, file, content) {
@@ -1136,4 +1197,15 @@ for (const kind of ["bytes", "removed", "renamed", "permissions", "source", "mod
   const result = runNode(INVENTORY, ["--worktree", f.worktree], f.home).json;
   assert.equal(result.blocking.forbiddenPaths, false);
   assert.deepEqual(result.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+});
+
+test("an inventory longer than one 64 KiB pipe buffer reaches a spawnSync reader whole, as the handoff gate reads it", (t) => {
+  const { home, worktree } = setup(t, "large-inventory");
+  mkdirSync(path.join(worktree, "apps", "app", "generated-pages"), { recursive: true });
+  for (let index = 0; index < 900; index += 1) {
+    write(worktree, `apps/app/generated-pages/a-page-with-a-long-descriptive-file-name-number-${String(index).padStart(4, "0")}.ts`, `export const page${index} = ${index};\n`);
+  }
+  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "build"], home);
+  assert.ok(result.json.changedFiles.length >= 900, "every changed file is listed");
+  assert.ok(JSON.stringify(result.json).length > 64 * 1024, "the output is larger than one pipe buffer");
 });

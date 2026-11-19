@@ -2,6 +2,10 @@
 
 Each block replaces the stub of the same id there, in a session bound to this provider.
 
+<!-- block: related-delivery-principle -->
+3. **Fold related work into the in-flight unit or pull request.** Operator ruling, 2026-11-17: “we need to group work into less tickets and PRs”. Recommend folding. The separate option names its own test lanes, CI, reviews, and merge-queue time.
+<!-- end: related-delivery-principle -->
+
 <!-- block: sequencing-ruling -->
    Before recording a sequencing ruling, run `node ../handoff/scripts/rulings-check.mjs --sequencing <candidate-ruling.md> --pr-tickets <pr-number-to-ticket.json>`, resolve every pull request number to its ticket, and report every reference that cannot be resolved. For each resolved dependency, call `create-artifact-link` with `BLOCKS` from the prerequisite ticket to the waiting ticket and list the links to confirm them. Normalize that receipt as blocker-to-blocked link JSON, then run `node ../handoff/scripts/rulings-check.mjs --record-sequencing <candidate-ruling.md> --program <orchDir>/rulings.md --pr-tickets <pr-number-to-ticket.json> --links <confirmed-links.json>`. This command is the only sequencing-ruling writer: it refuses a missing link and appends only after every receipt matches. A direction authored by the orchestrator stays operational text marked `(orchestrator)` and never enters `rulings.md`; only quoted operator words with their source use this path.
 <!-- end: sequencing-ruling -->

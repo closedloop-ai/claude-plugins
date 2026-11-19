@@ -1,16 +1,13 @@
 // Finds a sibling plugin's root (one from vibe's marketplace) from the plugin a module lives
-// in. vibe loads vibe-core's code through it, and vibe-core's
-// guards find vibe's install through it to read that install as data.
-// It also tells a script whether node was started with it (isEntryPoint),
-// which a vibe command line needs before it can load vibe-core, and holds the
-// names vibe is published under and the marketplace an install comes from, so
-// every vibe and vibe-core module reads them from one place.
+// in. vibe finds vibe-core through it, and vibe-core's hook loader (hooks/vibe-runtime.mjs)
+// finds the vibe a session uses through it, then imports that vibe's hooks/runtime.mjs, so
+// Codex's approval of vibe-core's hooks covers the loader and not the guard code it loads.
+// It also tells a script whether node was started with it (isEntryPoint), and holds the
+// names vibe is published under and the marketplace an install comes from.
 //
-// The canonical copy is plugins/vibe-core/shared/plugin-roots.mjs. vibe ships
-// a byte-identical copy at plugins/vibe/shared/plugin-roots.mjs because it has
-// to find vibe-core before it can load anything from it, and vibe-core never
-// loads vibe's code. plugin-roots.test.mjs fails when the copies differ or when
-// either imports anything but a node: builtin.
+// vibe ships its own copy at plugins/vibe/shared/plugin-roots.mjs, which may change with vibe.
+// This copy changes only with vibe-core's hooks: tools/plugin-manifests pins vibe-core's bundle,
+// and its tests check that both copies resolve the same layouts and import only node: builtins.
 //
 // Three layouts, decided from the caller's own plugin root R:
 // - a repository checkout (or a plugin loaded in place): R is plugins/<folder>
@@ -266,7 +263,8 @@ function readRegistry(file) {
   }
 }
 
-function realOrSame(file) {
+/** The real path of `file`, or `file` itself when it cannot be resolved. */
+export function realOrSame(file) {
   try {
     return realpathSync(file);
   } catch {
@@ -290,7 +288,8 @@ function listDirectories(dir) {
   }
 }
 
-function isDirectory(file) {
+/** Whether `file` is a directory; false when it cannot be read. */
+export function isDirectory(file) {
   try {
     return statSync(file).isDirectory();
   } catch {

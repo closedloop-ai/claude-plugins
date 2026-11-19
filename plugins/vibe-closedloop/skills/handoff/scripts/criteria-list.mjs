@@ -102,8 +102,11 @@ function checkboxes(ticket) {
     }
     if (CRITERIA_START.test(line)) {
       inList = true;
-      listIndent = indentOf(line);
-      listHeadingLevel = lastHeadingLevel;
+      // A list that starts inside an open list section (under a deeper heading or deeper indent) keeps that section's
+      // outermost heading level and indent, so the outer section still closes only where it would have.
+      const outer = listIndent !== null;
+      listIndent = outer ? Math.min(listIndent, indentOf(line)) : indentOf(line);
+      listHeadingLevel = outer && listHeadingLevel ? Math.min(listHeadingLevel, lastHeadingLevel) : lastHeadingLevel;
       continue;
     }
     const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;

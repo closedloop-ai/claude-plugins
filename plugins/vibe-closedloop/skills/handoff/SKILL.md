@@ -281,16 +281,18 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 `shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names. A `frozen-render` finding is settled
-only by `scripts/frozen-render.mjs`, run in step 4 by
-`vibe-storybook-decomposer`: the writer records the `Frozen render
-unchanged` line that command prints, and nobody captures frozen stories any
-other way. Give it the prepared base worktree, never base or head server URLs:
-the renderer starts both through the verifier's owned run wrapper and stops
-both before it returns, including after failure. The line names the session
-files it rendered and counts only while their story states and dependency
-inputs are unchanged. A later commit or main
-merge reruns it only when `qa-impact.mjs` names one of those states or the
-frozen-render dependency digest changes. A finding's `fix` is written for the writer, never relayed to the
+only by one shell step that launches no agent:
+`node scripts/frozen-render-gate.mjs --repo <worktree> --base <base>`. Run it
+as its own step, never inside `fleet.sh … slot heavy`: its builds take the
+heavy lock themselves. `FROZEN PASS` has already recorded the `Frozen render
+unchanged` line; on `FROZEN BLOCK`, read only the cropped diffs that
+results.json's blocking entries name (a blocking story's changed render held
+over the base confirmation renders, or its branch play failure reproduced);
+`FROZEN ERROR` is a setup problem to fix before rerunning. Nobody captures
+frozen stories any other way. The line names the session files it rendered
+and counts only while their story states and dependency inputs are
+unchanged. A later commit or main merge reruns it only when `qa-impact.mjs`
+names one of those states or the frozen-render dependency digest changes. A finding's `fix` is written for the writer, never relayed to the
 person as a step (`../vibe/references/plain-words.md`, "What the person is
 asked to do").
 
@@ -524,7 +526,7 @@ step 5's checks and step 7's validation:
 - Run every e2e spec the session touched, and every spec covering a touched
   screen, and no other spec.
 - Run them through the repo's containerized path (the `local-ci` skill's
-  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  `zsh -lic 'e2e/run-containerized.sh ...'`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
   "Existing checks"), never natively on the person's Mac. The lock gives
   each run its own compose project, so a teardown removes only its own
   stack; `--foreign-compose <project>` names a stack started outside the
@@ -550,10 +552,8 @@ they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
 steps 3 to 6 run again on the result, with visual QA as one pass scoped to
 the changes since the last reviewed capture
-(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). Before handoff, the findings file must pass
-`node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings
-<findings.json> --require-disposition`; every finding on a touched surface has
-`fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
+(`../vibe/references/quality-loop-visual-qa.md`, "When to capture screenshots"). The handoff gate's `--visual-qa` check holds the
+findings file to `finding-brief.mjs --require-disposition`. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 
 Storybook plays run in a real browser, and card or narrow-layout
@@ -622,7 +622,8 @@ person accepted (`../vibe/references/quality-loop.md`, "Frozen behavior at
 handoff"). Have it refresh that section after any behavior answer that changes
 the table, before the ticket worker sees the table again.
 
-The read-only verifier runs `scripts/live-ticket-check.mjs` on the private candidate ticket
+The read-only verifier runs `scripts/live-ticket-check.mjs` on the private candidate ticket;
+the script resolves the session's canonical private change-log rulings record itself,
 before readiness. Behavior questions and code gaps return to the SAME writer
 and repeat these gates before the first commit. After publication, the ticket
 worker binds accepted evidence and deployment metadata. A metadata-only mismatch
@@ -773,6 +774,9 @@ engineering finishing is the usual route, but the person decides.
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the next owner (full name and email), whether the person asked
 for a pull request, the inventory path, the
+complete handoff record grant from the provider contract, including
+`upload_attachment` for each decision table (a brief that omits that capability
+is refused before launch), the
 confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,
@@ -874,6 +878,8 @@ pull request body stale and skip the guardrails. When
 the person asks for changes on their vibe pull request ("please fix the
 review comments", "engineering asked for changes on my PR", a link to the
 pull request, or engineering's request passed on through them), the session
-resumes and every fix goes through this path, never around it:
+resumes and every fix goes through this path, never around it. A ruling
+that changes scope is recorded with `vibe-sessions.mjs touch --body-stale
+"<ruling>"`, and the next push waits for `env-ctl.mjs pr-update`:
 
 > Read `references/handoff-pr.md` (block `section-10-changes`) when a handed-off session's pull request is open or the person asks for changes on it.

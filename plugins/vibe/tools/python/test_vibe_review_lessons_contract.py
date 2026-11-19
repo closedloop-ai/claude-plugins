@@ -26,6 +26,7 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 DIFF_RULES = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules.mjs"
+DIFF_RULES_REPO = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules-repo.mjs"
 CL_EXECUTE_PR = PLUGIN_ROOT / "skills" / "cl-execute" / "references" / "implementation-review-pr.md"
 
 
@@ -94,7 +95,7 @@ def test_lost_and_stale_story_ids_are_searched_and_block() -> None:
     rules = skill_split.read(DIFF_RULES)
     assert '"lost-story-id"' in rules
     # The places a story ID can be named: the repository's e2e roots, its docs (the provider's diff rules) and tests.
-    assert '"--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"' in rules
+    assert '"--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"' in skill_split.read(DIFF_RULES_REPO)
     docs = PROVIDER_DATA["recipes"]["diffRules"]["docs"]
     for spec in ("docs/", "apps/web/content/docs/", ".claude/"):
         assert spec in docs, spec
@@ -218,14 +219,14 @@ def test_verify_runs_sort_order_tests_by_capability_and_reads_ci_tiers() -> None
     assert "apps/storybook/__tests__/preview-story-sort-order.test.ts" in PROVIDER_DATA["recipes"]["diffRules"]["storybook"]["sidebarOrderTests"]
     assert_all(verify, (
         "`diffRules.requiredTests`",
-        "Tier A: its container path (`run-containerized.sh` or Dagger)",
+        "`zsh -lic 'e2e/run-containerized.sh ...'`",
         "Tier B: otherwise run the same specs natively, headless",
-        "Tier C: otherwise use the operator's configured remote runner",
+        "Tier C: otherwise use the clean, push-ready remote worktree",
         "read `.github/pr-test-event-tiers.md` and cite the tier",
     ))
     # The repository's containerized E2E path and CI tiers file are the provider's handoff text for its repository.
     handoff = flat(skill_split.read(PROVIDER_REFERENCES / "handoff-skill.md"))
-    assert "`dagger call e-2-e`" in handoff
+    assert "`zsh -lic 'e2e/run-containerized.sh ...'`" in handoff
     assert "`.github/pr-test-event-tiers.md`" in handoff
 
 
@@ -284,11 +285,33 @@ def test_reuse_and_wording_checks_grep_shared_owners_first() -> None:
     assert "`rg` the repo's shared app hooks and helpers (its auth helpers included) and the existing `use-*` hooks" in writer
 
 
-def test_pr_body_files_are_named_per_ticket_and_read_back_before_gh() -> None:
+def test_weekend_review_miss_classes_are_first_pass_contracts() -> None:
+    writer = flat(agent("vibe-change-worker"))
+    assert_all(writer, (
+        "comments, docstrings and docs, including claims about other readers",
+        "`flag-keys.mjs record` before handoff",
+        "limit, duration, effective/ambient timeout and lock hold",
+        "tests order, case, duplicates and whitespace",
+    ))
+    adversarial = flat(agent("vibe-adversarial-reviewer"))
+    assert_all(adversarial, (
+        "cached negative results",
+        "closures stale after forget/clear",
+        "A global limit must not starve one key",
+        "zero inputs cannot go green",
+        "typed wrappers/aliases cannot bypass it",
+        "partial batch commits",
+        "route service logic",
+        "cursor/page with no progress",
+        "request fields read from shared state",
+    ))
+
+
+def test_pr_body_files_are_read_back_before_gh() -> None:
     environment = section(agent("vibe-environment-worker"), "## Pull-request mode")
     assert_all(environment, (
-        "named for the live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as `pr-body.md`",
-        "Read the file back right before the `gh` command",
+        "the body must name every member while the title may name the lead",
+        "Read the returned `prBody` file back right before the `gh` command",
         "the file named and re-read as step 4 says",
     ))
     cl_execute = flat(skill_split.read(CL_EXECUTE_PR))
@@ -312,7 +335,7 @@ def test_new_text_uses_no_emdashes_or_double_hyphen_dashes() -> None:
 def test_diff_rules_run_inside_the_inventory_and_block() -> None:
     inventory = skill_split.read(INVENTORY)
     rules = skill_split.read(DIFF_RULES)
-    assert 'import { runDiffRules } from "./diff-rules.mjs";' in inventory
+    assert 'import { runDiffRules, sessionInternalIds } from "./diff-rules.mjs";' in inventory
     assert "diffRulesClear: diffRulesBlocking.length === 0" in inventory
     assert 'const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);' in inventory
     for rule in ("migration-precedent", "migration-backfill", "activity-capture", "tx-result-after-write",

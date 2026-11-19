@@ -8,7 +8,8 @@ the user owns, and every app on the operator's laptop died, twice.
    pid to a call that sends a signal, writes such a pid into a `pids` ledger,
    or calls `endProcesses` without injecting a fake `kill`.
 2. No plugin source signals a process group (`process.kill(-x)`, `kill(-x)`,
-   `kill -- -x`) unless `x` is checked above 1 on the lines just before it.
+   `kill -- -x`) unless `x` is checked above 1 on the lines just before it, or the
+   call is a reviewed entry in REVIEWED_GROUP_SIGNALS with the reason it is safe.
 """
 
 from __future__ import annotations
@@ -30,6 +31,12 @@ SHELL_UNSAFE = re.compile(r"\bkill\b(?:\s+-[A-Za-z0-9]+)*(?:\s+\"?\$\$\"?|\s+\"?
 COMMENT = re.compile(r"(?:^|\s)(?://|/\*|#|\*)")
 UNSAFE_PID = re.compile(r"^\s*(?:-\s*\d+|[01])\s*$|process\.p?pid")
 UNSAFE_LEDGER = re.compile(r"pids\s*:\s*\[[^\]]*(?:process\.p?pid|(?<![\w.])-?\s*[01](?![\w.]))")
+# Reviewed group signals the window guard cannot see, as (path, offender) with the reason each is safe.
+REVIEWED_GROUP_SIGNALS = {
+    ("plugins/vibe/lib/vibe/scripts/e2e-lock.mjs", "kill(-process.pid)"):
+        "the child gate signals its own group: run spawns it detached, so it leads that group, and a spawned process is "
+        "never pid 1; a gate that leads no group gets ESRCH and signals its command child instead",
+}
 
 
 def _sources() -> list[Path]:
@@ -139,9 +146,12 @@ def test_no_plugin_test_signals_pid_1_or_lower_or_itself() -> None:
 
 
 def test_no_plugin_source_signals_a_group_it_did_not_check_above_1() -> None:
-    offenders = [f"{path.relative_to(PLUGIN_ROOT.parents[1])}: {found}"
-                 for path in _sources() for found in group_kill_offenders(path.read_text())]
-    assert offenders == []
+    found = [(path.relative_to(PLUGIN_ROOT.parents[1]).as_posix(), offender)
+             for path in _sources() for offender in group_kill_offenders(path.read_text())]
+    assert [f"{path}: {offender}" for path, offender in found if (path, offender) not in REVIEWED_GROUP_SIGNALS] == []
+    for reviewed, reason in REVIEWED_GROUP_SIGNALS.items():
+        assert reason.strip(), reviewed
+        assert reviewed in found, f"reviewed group signal no longer present: {reviewed}"
 
 
 def test_the_scans_catch_the_shapes_that_killed_every_process() -> None:

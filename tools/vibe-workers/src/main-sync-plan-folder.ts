@@ -1,5 +1,5 @@
 import { isLocalPlanPath, knownLocalPlanPrefixes, sessionLocalPlanPrefix } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
-import { sessionBinding } from "../../../plugins/vibe-core/lib/vibe/scripts/provider.mjs";
+import { sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 
 const prefixes = new Map<string, string | null>();
 const knownPrefixes = new Map<string, string[]>();

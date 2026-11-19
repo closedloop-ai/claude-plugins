@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkStaleCitations, citationPattern } from "./comment-rules.mjs";
+import { checkAgentDecisionCitations, checkCommentClaims, checkExcuseComments, checkGuardedConstants, checkRemovedNameComments, checkSessionPointers, checkStaleCitations, citationPattern } from "./comment-rules.mjs";
 import { bindProvider, makeHome, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -93,6 +93,9 @@ test("an excuse comment needs a ticket; ordinary comments with those words elsew
   assert.deepEqual(collect((add) => checkExcuseComments(diff(["// Works around a known issue in the date picker (ISS-1234)."]), add, TICKETED)), []);
   assert.deepEqual(collect((add) => checkExcuseComments(diff(["// The parsing bug flag shows the banner.", "// Guards a regression in sort order."]), add, TICKETED)), []);
   assert.deepEqual(collect((add) => checkExcuseComments(diff(["const onMain = 'pre-existing';"]), add, TICKETED)), [], "code, not a comment");
+  assert.deepEqual(collect((add) => checkExcuseComments(diff(["//   pre-pr-lanes.mjs record --result main-preexisting --main-sha <sha>"]), add, TICKETED)), [],
+    "a hyphenated name such as the main-preexisting record kind is not an excuse");
+  assert.equal(collect((add) => checkExcuseComments(diff(["// Preexisting flake, left as is."]), add, TICKETED)).length, 1, "the word on its own still is");
 });
 
 test("a guarded constant needs every use guarded and the diff to touch it", () => {
@@ -127,6 +130,83 @@ test("citation and removed-name candidates find the PR #9732 DI-13 lines and lef
   const stale = "// Builds the editRow for the lead.\nconst toolbarParts = {};\n";
   assert.deepEqual(collect((add) => checkRemovedNameComments(removedDiff, { head: () => stale }, add)).map(({ rule, line }) => [rule, line]), [["removed-name-comment", 1]]);
   assert.deepEqual(collect((add) => checkRemovedNameComments(removedDiff, { head: () => "// Builds the toolbar parts.\nconst toolbarParts = {};\n" }, add)), []);
+});
+
+test("ISS-14137 comment claims are checked against all current readers", () => {
+  const source = "/** Read at ONE site. */\nexport const FLAG_KEY = 'flag';\n";
+  const changed = files("diff --git a/key.ts b/key.ts\n--- a/key.ts\n+++ b/key.ts\n@@ -0,0 +1,2 @@\n+/** Read at ONE site. */\n+export const FLAG_KEY = 'flag';\n");
+  const found = collect((add) => checkCommentClaims(changed, { head: () => source,
+    wordFiles: () => ["key.ts", "a.ts", "b.ts", "c.ts"] }, add));
+  assert.equal(found[0].rule, "claim-vs-readers");
+  assert.match(found[0].problem, /3 reader files.*a\.ts, b\.ts, c\.ts/);
+});
+
+test("ISS-14137 session pointers and agent product decisions are blocking in test comments too", () => {
+  const changed = files("diff --git a/x.test.ts b/x.test.ts\n--- a/x.test.ts\n+++ b/x.test.ts\n@@ -0,0 +1,3 @@\n+// rulings.md 578\n+// DT-CUSTOM-7\n+// orchestrator decision: Remove project goes first\n");
+  const repo = { sessionIds: ["DT-CUSTOM-7"], rules: RULES };
+  const pointers = collect((add) => checkSessionPointers(changed, repo, add));
+  assert.deepEqual(pointers.map((entry) => entry.rule), ["session-internal-pointer", "session-internal-pointer"]);
+  assert.equal(collect((add) => checkAgentDecisionCitations(changed, repo, add))[0].rule, "agent-decision-citation");
+  const cited = files("diff --git a/x.test.ts b/x.test.ts\n--- a/x.test.ts\n+++ b/x.test.ts\n@@ -0,0 +1 @@\n+// ISS-13590: Remove project goes first\n");
+  assert.deepEqual(collect((add) => checkAgentDecisionCitations(cited, repo, add)), []);
+  const homeFile = files("diff --git a/x.mjs b/x.mjs\n--- a/x.mjs\n+++ b/x.mjs\n@@ -0,0 +1 @@\n+// <fleetHome>/config.env, standing-rulings.md, lessons.md\n");
+  assert.deepEqual(collect((add) => checkSessionPointers(homeFile, repo, add)), [], "a file name that ends in rulings.md is not the session's rulings.md");
+});
+
+test("ISS-14137 an agent decision citation is matched by the criterion's own trigger list beside an ordering or wording subject", () => {
+  const repo = { sessionIds: [], rules: RULES };
+  const mentions = files("diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -0,0 +1,3 @@\n+// One captured session serves every case; the admission case runs last.\n+// The binding is read once, on the first key a caller asks for.\n+export {};\n");
+  assert.deepEqual(collect((add) => checkAgentDecisionCitations(mentions, repo, add)), []);
+  const citing = files("diff --git a/y.ts b/y.ts\n--- a/y.ts\n+++ b/y.ts\n@@ -0,0 +1,2 @@\n+// Ruled by the agent: archived rows show last.\n+export {};\n");
+  assert.equal(collect((add) => checkAgentDecisionCitations(citing, repo, add))[0].rule, "agent-decision-citation");
+  // ISS-14137's own trigger list (orchestrator, lane, ruled, decision <n>, a decision-table id) beside an ordering,
+  // wording, glyph or visibility subject is a citation; every layout review raised without one of those is not.
+  const cases = [
+    ["// orchestrator decision: Remove project goes first", true],
+    ["// Archived rows show last (orchestrator, 2026-11-17).", true],
+    ["// Ruled in review: archived rows show last.", true],
+    ["// Per decision 12, archived rows show last.", true],
+    ["// DT-7: archived rows show last.", true],
+    ["// The lane picked this order for the menu.", true],
+    ["// The binding is read once, on the first key a lane asks for.", false],
+    ["// ISS-13590 orchestrator decision: Remove project goes first", false],
+    ["// Show one row per session, newest first.", false],
+    ["// Show one badge per agent, last.", false],
+    ["// Agent decisions show first in the trace.", false],
+    ["// Hide the reviewer's choice until saved.", false],
+    ["// Show the decision table rows first.", false],
+    ["// Rows show last (session expired).", false],
+    ["// Copy the token (session storage) first.", false],
+    ["// Idle helper panes hide first when a helper (reviewer, verifier, QA prep, poller) stops.", false],
+    ["// Sort by (session, index), newest first.", false],
+    ["// Group findings by (session, rule) first.", false],
+    ["// (session, decision)", false],
+    ["// Show the row-actions menu on hover so the table stays quiet.", false],
+    ["// Ruled out sorting by name first; the API already orders by date.", false],
+    ["// Keep the dt-label visible above the value.", false],
+    ["// Cells are stored in ROW-MAJOR order, so the first index is the row.", false],
+    ["// Use the row-2 layout first on narrow screens.", false],
+    ["// DEC-13590: Remove project shows first.", true],
+  ];
+  for (const [comment, cited] of cases) {
+    const diff = files(`diff --git a/m.ts b/m.ts\n--- a/m.ts\n+++ b/m.ts\n@@ -0,0 +1,2 @@\n+${comment}\n+export {};\n`);
+    assert.equal(collect((add) => checkAgentDecisionCitations(diff, repo, add)).length, cited ? 1 : 0, comment);
+  }
+  // A citation wrapped across comment lines is still one sentence.
+  for (const [lines, cited] of [
+    [["// Archived rows show last (orchestrator,", "// 2026-11-17)."], true],
+    [["// Archived rows show last, as the", "// orchestrator decided."], true],
+    [["// Archived rows show last.", "// Sorted by (session, index)."], false],
+  ]) {
+    const diff = files(`diff --git a/w.ts b/w.ts\n--- a/w.ts\n+++ b/w.ts\n@@ -0,0 +1,3 @@\n${lines.map((line) => `+${line}`).join("\n")}\n+export {};\n`);
+    assert.equal(collect((add) => checkAgentDecisionCitations(diff, repo, add)).length, cited ? 1 : 0, lines.join(" "));
+  }
+});
+
+test("ISS-14137 diff-rules derives private row ids from the session evidence", (t) => {
+  const result = run(t, { head: { "x.test.ts": "// DT-CUSTOM-7 is the reason\nexport {};\n" },
+    changeLog: "Affected rows: DT-CUSTOM-7\n" });
+  assert.ok(result.blocking.some((finding) => finding.rule === "session-internal-pointer" && finding.problem.includes("DT-CUSTOM-7")));
 });
 
 test("the command prints blocking findings and reviewer candidates for a worktree diff", (t) => {

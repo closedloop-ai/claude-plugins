@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { bindProvider, PROVIDER_BINDING } from "./test-fixtures.mjs";
-import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes } from "./pre-pr-lanes.mjs";
+import { fleetLaneInvocation, graphSelectionFromItem, lanePreflightProblem, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes, sharedMainFailures, targetedE2eCoverage, targetedRecord } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
 import { spawnSync } from "node:child_process";
+import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { workflowLaneDefinitions } from "../../handoff/scripts/ci-job-shape.mjs";
+
+const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 
 // The ClosedLoop provider's staging identity key, as a session it is bound to reads it.
 const STAGING_IDENTITY_KEY = stagingIdentity(PROVIDER_BINDING).key;
@@ -30,6 +35,60 @@ test("every lane the report names is required, e2e lanes and lanes with the step
   assert.deepEqual(reportLanes(REPORT), ["pnpm --filter @repo/app test", "pnpm test:desktop-renderer", DESKTOP_E2E]);
   assert.deepEqual(reportLanes("No paths changed against origin/main; there is nothing to cover.\n"), []);
   assert.equal(reportLanes("something went wrong\n"), null, "an unreadable report is never read as no lanes");
+});
+
+test("AC-018 pre-PR lanes records the exact declared workflow recipe for non-pnpm CI", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-workflow-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  git(worktree, ["remote", "add", "origin", "https://github.com/acme/widgets.git"], home);
+  const workflow = ".github/workflows/ci.yml";
+  const workflowText = JSON.stringify({ on: "push", jobs: { python: { "runs-on": "ubuntu-latest",
+    steps: [{ run: "uv run pytest -q" }] } } });
+  mkdirSync(path.join(worktree, path.dirname(workflow)), { recursive: true });
+  writeFileSync(path.join(worktree, workflow), workflowText);
+  writeFileSync(path.join(worktree, "vibe-handoff-paths.json"), JSON.stringify({ laneSource: { kind: "github-workflow", path: workflow } }));
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "workflow"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home);
+  const reportFile = path.join(root, "lanes.json");
+  const matches = workflowLaneDefinitions(workflowText).map(({ name, command }) => ({ name, command }));
+  assert.match(matches[0].command, /uv run pytest -q/);
+  const report = { source: { kind: "github-workflow", path: workflow, commit: head,
+    sha256: createHash("sha256").update(workflowText).digest("hex") }, matches };
+  writeFileSync(reportFile, JSON.stringify(report));
+  const run = (action, ...args) => spawnSync(process.execPath, [SCRIPT, action, "--worktree", worktree, "--report", reportFile, ...args], {
+    cwd: worktree, env: { ...process.env, HOME: home, CODEX_THREAD_ID: "", CLAUDE_CODE_SESSION_ID: "" }, encoding: "utf8",
+  });
+  const needed = run("check");
+  assert.equal(needed.status, 1, needed.stderr);
+  assert.ok(needed.stdout.includes(`MISSING-LANE ${matches[0].command}`));
+  const triedShell = run("run", "--head", head, "--command", matches[0].command);
+  assert.equal(triedShell.status, 2, triedShell.stderr);
+  assert.match(triedShell.stderr, /workflow recipe is a CI lane identity/);
+  const cloudResult = path.join(root, "cloud-result.json");
+  writeFileSync(cloudResult, JSON.stringify({ commit: head, repository: "acme/widgets",
+    provenance: { host: "claude-cloud-1", remote: "true", origin: "https://github.com/acme/widgets.git", commit: head },
+    laneSource: report.source,
+    lanes: [{ name: "python", command: matches[0].command, exitCode: 0, passed: true }] }));
+  const wrongRepo = path.join(root, "wrong-repo.json");
+  writeFileSync(wrongRepo, readFileSync(cloudResult, "utf8").replaceAll("acme/widgets", "elsewhere/repo"));
+  const refusedCloud = run("record", "--head", head, "--command", matches[0].command, "--result", "pass", "--cloud-result", wrongRepo);
+  assert.equal(refusedCloud.status, 2, refusedCloud.stderr);
+  assert.match(refusedCloud.stderr, /repository differs/);
+  const recorded = run("record", "--head", head, "--command", matches[0].command, "--result", "pass", "--cloud-result", cloudResult);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  const evidence = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"))[0];
+  assert.deepEqual({ host: evidence.ranOn.host, repository: evidence.ranOn.repository, proofCommit: evidence.ranOn.proofCommit,
+    lane: evidence.ranOn.lane, source: evidence.ranOn.source }, {
+    host: "claude-cloud-1", repository: "acme/widgets", proofCommit: head, lane: "python", source: "cloud-worker",
+  });
+  assert.equal(run("check").status, 0);
+  writeFileSync(reportFile, JSON.stringify({ ...report, matches: [{ name: "python", command: "uv run pytest -q" }] }));
+  const tampered = run("check");
+  assert.equal(tampered.status, 2, tampered.stderr);
+  assert.match(tampered.stderr, /every exact workflow job\/matrix recipe/);
 });
 
 test("a selected lane needs a passing record at the source it exercises", () => {
@@ -58,6 +117,22 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   assert.equal(run("check", "--worktree", worktree, "--report", report, "--skip", "e2e").status, 2, "a skip needs the operator ruling that waives it");
   const waived = run("check", "--worktree", worktree, "--report", report, "--skip", "test:e2e", "--skip-ruling", "deadline mode, operator, 2026-10-22, rulings.md");
   assert.match(waived.stdout, /^SKIPPED-LANE DESKTOP_E2E_SPECS=.* \(deadline mode, operator, 2026-10-22, rulings.md\)$/m);
+  const rulings = path.join(root, "rulings.md");
+  writeFileSync(rulings, "## R-TARGETED-TESTS (operator, 2026-10-23)\n- Run the diff-targeted tests and carry other test lanes to CI.\n");
+  const targeted = run("check", "--worktree", worktree, "--report", report, "--targeted", "@repo/app",
+    "--targeted-ruling-id", "R-TARGETED-TESTS", "--targeted-ruling-source", "rulings", "--rulings", rulings);
+  assert.equal(targeted.status, 1);
+  assert.match(targeted.stdout, /^MISSING-LANE pnpm --filter @repo\/app test:/m);
+  assert.match(targeted.stdout, /^RULED-LANE pnpm test:desktop-renderer \(R-TARGETED-TESTS, rulings:/m);
+  assert.doesNotMatch(targeted.stdout, /^MISSING-LANE pnpm test:desktop-renderer:/m);
+  const ruledRecords = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
+  assert.ok(ruledRecords.some((row) => row.command === "pnpm test:desktop-renderer" && row.result === "not-run"
+    && row.ruling === "R-TARGETED-TESTS" && row.rulingSource === "rulings"));
+  writeFileSync(rulings, "## R-TARGETED-TESTS (orchestrator, 2026-10-23)\n- Run targeted tests.\n");
+  const unruled = run("check", "--worktree", worktree, "--report", report, "--targeted", "@repo/app",
+    "--targeted-ruling-id", "R-TARGETED-TESTS", "--targeted-ruling-source", "rulings", "--rulings", rulings);
+  assert.equal(unruled.status, 2);
+  assert.match(unruled.stderr, /orchestrator direction, not an operator ruling/);
   const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
   for (const lane of reportLanes(REPORT)) assert.equal(run("record", "--worktree", worktree, "--head", head, "--command", lane, "--result", "pass", "--report", report).status, 0);
   assert.equal(run("check", "--worktree", worktree, "--report", report).status, 0);
@@ -92,6 +167,150 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   writeFileSync(selected, JSON.stringify({ lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
     featureMap: { entries: [] }, laneSelections: { files: { [testFile]: [] } }, config: { docs: [] } }));
   assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 2, "an empty lane list for the changed file is refused");
+});
+
+test("ISS-14172 a lane can run through a fleet heavy slot and remote fleet binds exact HEAD", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-fleet-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "base"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const command = "pnpm test:affected";
+  const orch = path.join(root, "orch");
+  mkdirSync(orch);
+  const source = { head, diffSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" };
+  const local = fleetLaneInvocation({ worktree, command, "fleet-where": "local", "fleet-orch": orch, "fleet-owner": "ISS-14172" }, source);
+  assert.deepEqual(local.args.slice(1, 8), [orch, "local", "slot", "heavy", "ISS-14172", worktree, "sh"]);
+  assert.equal(local.args.at(-1), command);
+  assert.deepEqual(local.receipt, { where: "local", owner: "ISS-14172", head });
+  const remote = fleetLaneInvocation({ worktree, command: "pnpm test", "fleet-where": "remote", "fleet-orch": orch, "fleet-owner": "ISS-14172" }, source);
+  assert.equal(remote.args[2], "remote");
+  assert.match(remote.args.at(-1), new RegExp(head));
+  assert.throws(() => fleetLaneInvocation({ worktree, command: "pnpm test", "fleet-where": "remote", "fleet-orch": orch, "fleet-owner": "ISS-14172" },
+    { head, diffSha256: "1".repeat(64) }), /clean worktree/);
+});
+
+test("ISS-14193 containerized web lane preflight names the missing login-shell identity", () => {
+  const recipe = { sandboxOrgIdentityKey: "SEED_SANDBOX_CLERK_ORG_ID" };
+  assert.match(lanePreflightProblem("e2e/run-containerized.sh", {}, recipe) ?? "", /SEED_SANDBOX_CLERK_ORG_ID.*login shell/);
+  assert.equal(lanePreflightProblem("e2e/run-containerized.sh", { SEED_SANDBOX_CLERK_ORG_ID: "org_1" }, recipe), null);
+});
+
+test("ISS-14307: a repository-authorized targeted E2E receipt is scope-bound and includes changed specs", async (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-targeted-e2e-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  mkdirSync(path.join(worktree, "e2e"));
+  git(worktree, ["remote", "add", "origin", "git@github.com:example/product.git"], home);
+  writeFileSync(path.join(worktree, "AGENTS.md"), [
+    "An e2e lane (`e2e`, `desktop-e2e`) is the exception: locally it is satisfied by the specs closedloop-graph selects for the diff (`code_tests_for_changes`), plus every spec the PR adds or edits.",
+    "The full lane runs after merge.",
+  ].join("\n"));
+  writeFileSync(path.join(worktree, "e2e/existing.spec.ts"), "export const existing = true;\n");
+  writeFileSync(path.join(worktree, "e2e/direct.spec.ts"), "export const direct = true;\n");
+  writeFileSync(path.join(worktree, "deleted.ts"), "export const removed = true;\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], home);
+  const base = git(worktree, ["rev-parse", "HEAD"], home);
+  git(worktree, ["update-ref", "refs/remotes/origin/main", base], home);
+  writeFileSync(path.join(worktree, "e2e/added.spec.ts"), "export const added = true;\n");
+  rmSync(path.join(worktree, "deleted.ts"));
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "change"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home);
+  const lane = "pnpm test:e2e";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `    ${lane}\n`);
+  const graphItem = { type: "mcpToolCall", id: "graph-call-1", server: "graph", tool: "code_tests_for_changes", status: "completed",
+    arguments: { repo: "product", files: [{ path: "e2e/added.spec.ts", status: "added" }, { path: "deleted.ts", status: "deleted" }] },
+    result: { structuredContent: { repo: "product", desktop_e2e: { verdict: "RUN_ALL", start_here: { specs: ["e2e/existing.spec.ts"], specs_total: 1 } },
+      tier2: { rows: [{ test: "e2e/direct.spec.ts" }], candidates_total: 1 }, unrelated: "e2e/unrelated.spec.ts" } } };
+  const readTurn = async () => ({ items: [graphItem] });
+  const baseValues = { worktree, base, graphSelector: "code_tests_for_changes", "graph-session": "thread-1", "graph-turn": "turn-1" };
+  const graphQuery = JSON.stringify(graphItem.arguments);
+  const specs = ["e2e/added.spec.ts", "e2e/direct.spec.ts", "e2e/existing.spec.ts"];
+  const record = (...specs) => targetedRecord({ ...baseValues, "targeted-specs": JSON.stringify(specs), "graph-query": graphQuery }, lane, readTurn);
+  assert.deepEqual(graphSelectionFromItem(graphItem, "code_tests_for_changes")?.result,
+    { mode: "RUN_ALL", selected: ["e2e/direct.spec.ts", "e2e/existing.spec.ts"] });
+
+  await assert.rejects(record("e2e/existing.spec.ts"), /exactly match graph-selected plus added or edited/);
+  // Decision 17 (operator ruling, 2026-11-18): the recording syntax lives in the refusal, not in the worker's instructions.
+  await assert.rejects(targetedRecord({ ...baseValues, "graph-session": undefined, "graph-turn": undefined, "graph-launcher-result": undefined,
+    "targeted-specs": JSON.stringify(specs), "graph-query": graphQuery }, lane, readTurn),
+  /--graph-session <native thread> --graph-turn <completed turn> in Codex, or --graph-launcher-result <owned Claude launcher result> in Claude/);
+  await assert.rejects(targetedRecord({ ...baseValues, "targeted-specs": JSON.stringify(["e2e/existing.spec.ts", "e2e/added.spec.ts"]),
+    "graph-query": "   " }, lane, readTurn), /non-empty graph query/);
+  const recorded = await record(...specs);
+  const checkArguments = (args) => () => ({ items: [{ ...graphItem, arguments: args }] });
+  const alteredProof = (args) => targetedRecord({ ...baseValues, "targeted-specs": JSON.stringify(specs),
+    "graph-query": JSON.stringify(args) }, lane, checkArguments(args));
+  await assert.rejects(alteredProof({ ...graphItem.arguments, repo: "another-repo" }), /repository/);
+  await assert.rejects(alteredProof({ ...graphItem.arguments, e2e: false }), /excluded E2E selection/);
+  const narrowed = { ...graphItem.arguments, files: ["e2e/added.spec.ts"] };
+  await assert.rejects(alteredProof(narrowed), /exact changed-file scope/);
+  const incomplete = structuredClone(graphItem);
+  incomplete.result.structuredContent.desktop_e2e.start_here.specs_total = 2;
+  await assert.rejects(targetedRecord({ ...baseValues, "targeted-specs": JSON.stringify(specs), "graph-query": graphQuery },
+    lane, () => ({ items: [incomplete] })), /incomplete/);
+  const selected = { laneKey: "scope-1", source: { treeSha256: "tree-1" } };
+  const records = [{ command: lane, result: "pass", targeted: recorded, laneKey: selected.laneKey, source: selected.source }];
+  assert.deepEqual(await targetedE2eCoverage(baseValues, [lane], records, selected, readTurn),
+    [{ lane, specs }]);
+  const replay = structuredClone(records);
+  replay[0].targeted.graphQuery = JSON.stringify(narrowed);
+  replay[0].targeted.graph.query = JSON.stringify(narrowed);
+  assert.deepEqual(await targetedE2eCoverage(baseValues, [lane], replay, selected, checkArguments(narrowed)), []);
+
+  const desktopLane = "pnpm --filter desktop run test:e2e";
+  const desktopProof = (args) => targetedRecord({ ...baseValues, "targeted-specs": JSON.stringify(specs),
+    "graph-query": JSON.stringify(args) }, desktopLane, checkArguments(args));
+  assert.deepEqual((await desktopProof({ repo: "product", change: { base, head } })).specs, specs);
+  const baseBlob = git(worktree, ["rev-parse", `${base}:deleted.ts`], home);
+  for (const hunks of [
+    { "deleted.ts": { base_blob: baseBlob, hunks: [{ base_start: 1, base_count: 1, added: [] }] } },
+    { "deleted.ts": { base_blob: "0".repeat(40), hunks: [{ base_start: 1, base_count: 1, added: [] }] } },
+  ]) {
+    const callerHunks = { ...graphItem.arguments, hunks };
+    await assert.rejects(desktopProof(callerHunks), /caller-supplied hunks/);
+    const stale = structuredClone(records);
+    stale[0].command = desktopLane;
+    stale[0].targeted.graphQuery = JSON.stringify(callerHunks);
+    stale[0].targeted.graph.query = stale[0].targeted.graphQuery;
+    assert.deepEqual(await targetedE2eCoverage(baseValues, [desktopLane], stale, selected, checkArguments(callerHunks)), []);
+  }
+
+  const trace = path.join(root, "claude-graph-trace.jsonl");
+  const launcher = path.join(root, "claude-graph-result.json");
+  writeFileSync(trace, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "claude-graph-1",
+    name: "mcp__graph__code_tests_for_changes", input: graphItem.arguments }] } })}\n${JSON.stringify({ type: "user", message: { content: [{
+    type: "tool_result", tool_use_id: "claude-graph-1", content: JSON.stringify(graphItem.result.structuredContent) }] } })}\n`);
+  writeFileSync(launcher, JSON.stringify({ runtime: "claude", status: "DONE", sessionId: "claude-session-1", tracePath: trace, source: sourceIdentity(worktree) }));
+  const claudeValues = { worktree, base, graphSelector: "code_tests_for_changes", "graph-launcher-result": launcher,
+    "graph-query": graphQuery, "targeted-specs": JSON.stringify(specs) };
+  const claudeTargeted = await targetedRecord(claudeValues, lane);
+  assert.equal(claudeTargeted.graph.runtime, "claude");
+  const claudeRecords = [{ command: lane, result: "pass", targeted: claudeTargeted, laneKey: selected.laneKey, source: selected.source }];
+  assert.equal((await targetedE2eCoverage(claudeValues, [lane], claudeRecords, selected)).length, 1);
+  writeFileSync(trace, `${readFileSync(trace, "utf8")}\n`);
+  assert.deepEqual(await targetedE2eCoverage(claudeValues, [lane], claudeRecords, selected), []);
+
+  const missingRuntime = structuredClone(records);
+  delete missingRuntime[0].targeted.graph;
+  assert.deepEqual(await targetedE2eCoverage(baseValues, [lane], missingRuntime, selected, readTurn), []);
+  const changedRead = async () => ({ items: [{ ...graphItem, result: { structuredContent: { mode: "SELECTED", selected: ["e2e/other.spec.ts"] } } }] });
+  assert.deepEqual(await targetedE2eCoverage(baseValues, [lane], records, selected, changedRead), []);
+
+  writeFileSync(path.join(worktree, "README.md"), "scope moved\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "moved"], home);
+  assert.deepEqual(await targetedE2eCoverage(baseValues, [lane], records, selected, readTurn), []);
+
+  writeFileSync(path.join(worktree, "AGENTS.md"), "Every lane runs in full locally.\n");
+  git(worktree, ["add", "."], home);
+  git(worktree, ["commit", "--quiet", "-m", "remove policy"], home);
+  assert.deepEqual(await targetedE2eCoverage(baseValues, [lane], records, selected, readTurn), []);
 });
 
 test("a result names the commit it ran: a run refuses another HEAD or a modified tracked file (23/23 reported for an untested PR)", (t) => {
@@ -322,3 +541,90 @@ test("a repository with no e2e recipe needs no staging identity", (t) => {
   assert.equal(hasStagingE2eIdentity(root, {}, null), true);
   assert.equal(hasStagingE2eIdentity(root, {}, stagingIdentity(PROVIDER_BINDING)), false);
 });
+
+test("ISS-14225: record binds a lane that ran on another host to the head by Git tree, never by a proof commit this clone lacks", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-ran-on-");
+  t.after(cleanup);
+  const wt = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", wt], home);
+  writeFileSync(path.join(wt, "a.txt"), "one\n");
+  git(wt, ["add", "a.txt"], home);
+  git(wt, ["commit", "--quiet", "-m", "base"], home);
+  git(wt, ["commit", "--quiet", "--allow-empty", "-m", "published head"], home);
+  const head = git(wt, ["rev-parse", "HEAD"], home);
+  const tree = git(wt, ["rev-parse", "HEAD^{tree}"], home);
+  const slot = path.join(root, "slot");
+  git(root, ["clone", "--quiet", wt, slot], home);
+  const proof = git(slot, ["commit-tree", tree, "-p", "HEAD~1", "-m", "proof made on the heavy slot"], home);
+  assert.throws(() => git(wt, ["cat-file", "-e", `${proof}^{commit}`], home), undefined, "the proof commit exists only on the slot");
+  const pass = 'node -e "process.exit(0)"';
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `    ${pass}\n`);
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const record = (...extra) => run("record", "--worktree", wt, "--head", head, "--command", pass, "--result", "pass", "--report", report, ...extra);
+  const ranOn = ["--ran-on", "heavy-slot", "--proof-commit", proof, "--git-tree", tree];
+  assert.equal(run("check", "--worktree", wt, "--report", report).status, 1);
+  const recorded = record(...ranOn);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  assert.equal(run("check", "--worktree", wt, "--report", report).status, 0, "check keys on the lane scope and the source tree");
+  const row = JSON.parse(readFileSync(path.join(wt, ".git", "vibe-lane-results.json"), "utf8")).find((item) => item.command === pass);
+  assert.deepEqual(row.ranOn, { host: "heavy-slot", proofCommit: proof, gitTree: tree, command: pass });
+  assert.equal(row.source.head, head, "the row's source is this clean head, whose content the proof shares");
+  const otherTree = git(wt, ["mktree"], home);
+  git(wt, ["commit", "--quiet", "--allow-empty", "-m", "same tree, other commit"], home);
+  const moved = git(wt, ["rev-parse", "HEAD"], home);
+  const refused = (args, pattern, why) => {
+    const result = run("record", "--worktree", wt, "--head", moved, "--command", pass, "--result", "pass", "--report", report, ...args);
+    assert.equal(result.status, 2, why);
+    assert.match(result.stderr, pattern, why);
+  };
+  refused(["--ran-on", "heavy-slot", "--proof-commit", proof, "--git-tree", otherTree], /Git tree/, "a proof tree that is not HEAD's tree");
+  refused(["--ran-on", "heavy-slot", "--proof-commit", proof], /--git-tree/, "a host without the proof tree");
+  refused(["--proof-commit", proof, "--git-tree", tree], /--ran-on/, "a proof without its host");
+  refused(["--ran-on", "heavy slot;", "--proof-commit", proof, "--git-tree", tree], /host/, "a host that is not a plain name");
+  refused([...ranOn, "--source", JSON.stringify(row.source)], /--source/, "a remote record never carries a local dirty identity");
+  writeFileSync(path.join(wt, "a.txt"), "uncommitted\n");
+  refused(ranOn, /clean/, "uncommitted inputs are not the proof tree");
+});
+
+test("ISS-14387 a lane run elsewhere is recorded main-preexisting only with a main commit and the same failures on both sides", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-record-main-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  writeFileSync(path.join(worktree, "a.txt"), "main\n");
+  git(worktree, ["add", "a.txt"], home);
+  git(worktree, ["commit", "--quiet", "-m", "main"], home);
+  const mainSha = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  git(worktree, ["update-ref", "refs/remotes/origin/main", mainSha], home);
+  writeFileSync(path.join(worktree, "a.txt"), "session\n");
+  git(worktree, ["commit", "--quiet", "--all", "-m", "session"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const lane = "pnpm --filter @repo/app test";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `IN THE TURBO GRAPH: 1 packages\n    ${lane}\n`);
+  const red = { id: "list.test.ts > sorts rows", assertion: "expected [ 2, 1 ] to deeply equal [ 1, 2 ]" };
+  const failures = (input) => { const file = path.join(root, `failures-${Math.random().toString(16).slice(2)}.json`); writeFileSync(file, JSON.stringify(input)); return file; };
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, "record", "--worktree", worktree, "--head", head, "--command", lane, "--report", report, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const refused = [
+    [["--result", "main-preexisting", "--main-sha", mainSha], /needs --main-sha and --failures/],
+    [["--result", "main-preexisting", "--main-sha", head, "--failures", failures({ branch: [red], main: [red] })], /not a commit on this clone's fetched origin\/main/],
+    [["--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [red], main: [{ ...red, assertion: "expected 3" }] })], /does not fail on main with the same assertion/],
+    [["--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [], main: [red] })], /nonempty branch and main lists/],
+    [["--result", "pass", "--failures", failures({ branch: [red], main: [red] })], /--failures goes only with it/],
+  ];
+  for (const [args, message] of refused) {
+    const out = run(...args);
+    assert.notEqual(out.status, 0, args.join(" "));
+    assert.match(out.stderr + out.stdout, message, args.join(" "));
+  }
+  assert.equal(existsSync(path.join(worktree, ".git", "vibe-lane-results.json")), false, "a refused record writes nothing");
+  const recorded = run("--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [red], main: [red, { id: "other", assertion: "x" }] }));
+  assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+  const [entry] = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
+  assert.deepEqual([entry.result, entry.mainSha, entry.mainSource.head, entry.failures], ["main-preexisting", mainSha, mainSha, [red]]);
+  const checked = spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  assert.match(checked.stdout, /^MAIN-PREEXISTING-LANE pnpm --filter @repo\/app test/m);
+  assert.deepEqual(sharedMainFailures({ branch: [red], main: [red] }), [red]);
+});
+

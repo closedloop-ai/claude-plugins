@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pin:vibe-core-bundle": "PIN_VIBE_CORE_BUNDLE=1 vitest run src/vibe-core-bundle.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

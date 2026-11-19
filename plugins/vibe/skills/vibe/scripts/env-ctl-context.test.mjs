@@ -94,6 +94,40 @@ test("request hands dispatch-inputs the same exact bytes", async (t) => {
   assert.deepEqual(rec.inputs("dispatch-inputs"), [bytes]);
 });
 
+test("AC-024 env-ctl distinguishes a real subprocess timeout from the child refusal", async () => {
+  const bytes = envelope({ worktree: "/wt" });
+  const timedOut = execCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeoutMs: 40 });
+  assert.equal(timedOut.status, 124);
+  const run = async (dispatch) => {
+    const rec = recorder(routesFor({ dispatch }));
+    const result = await createEnvCtl({ ...BOUND, run: rec.run, ...clock() }).request({ worktree: "/wt", mode: "redeploy", stdin: bytes });
+    assert.equal(rec.calls.some(({ line }) => line.includes("workflow run")), false);
+    return result;
+  };
+  const timeout = await run(timedOut);
+  assert.equal(timeout.code, "DISPATCH_INPUTS_TIMEOUT");
+  assert.match(timeout.error, /dispatch-inputs timed out/);
+  assert.match(timeout.detail, /ETIMEDOUT/);
+  assert.deepEqual(await run({ status: 1, stdout: '{"ok":false,"status":"NEEDS_CHANGE","error":"exact child refusal"}', stderr: "" }),
+    { status: "NEEDS_CHANGE", error: "exact child refusal" });
+  assert.deepEqual(await run({ status: 1, stdout: "", stderr: "remote branch lookup failed" }),
+    { status: "BLOCKED", error: "remote branch lookup failed" });
+  assert.equal((await run({ status: 127, stdout: "", stderr: "node could not start" })).code, "DISPATCH_INPUTS_SPAWN_FAILED");
+});
+
+test("AC-024 dispatch-inputs allows the child's documented Git lookup bound plus local work", async () => {
+  const bytes = envelope({ worktree: "/wt" });
+  const rec = recorder(routesFor());
+  const run = (command, args, options) => args.includes("dispatch-inputs")
+    ? (options.timeoutMs ?? 120_000) > 15 * 60_000
+      ? { status: 1, stdout: '{"ok":false,"status":"NEEDS_CHANGE","error":"the remote branch differs"}', stderr: "" }
+      : { status: 124, stdout: "", stderr: "spawn node ETIMEDOUT" }
+    : rec.run(command, args, options);
+  const result = await createEnvCtl({ ...BOUND, run, ...clock() }).request({ worktree: "/wt", mode: "redeploy", stdin: bytes });
+  assert.deepEqual(result, { status: "NEEDS_CHANGE", error: "the remote branch differs" });
+  assert.equal(rec.calls.some(({ line }) => line.includes("workflow run")), false);
+});
+
 test("redeploy hands the same bytes to main-sync-push and then to dispatch-inputs, in that order", async (t) => {
   const { context } = realContext(t);
   const bytes = envelope(context);

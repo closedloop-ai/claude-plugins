@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createEnvCtl, extractFailure, NO_ANALYTICS_KEY, NOT_CONFIRMED_READY, parseWorkflowInputs, runForRequest, Status, uncommittedDeliverables,
 } from "./env-ctl.mjs";
+import { makeHome } from "./test-fixtures.mjs";
 
 const YAML = `name: dispatch
 on:
@@ -31,6 +32,13 @@ const BOUND = { repo: "closedloop-ai/symphony-alpha", environmentFor: () => ENVI
 const CTX = JSON.stringify({ context: { runtime: "codex", worktree: "/wt", workerId: "w1", requestId: "r1", mode: "record", recordAction: "redeploy", lease: "lease-1" } });
 const ok = (stdout = "") => ({ status: 0, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr: "" });
 const bad = (stderr = "boom") => ({ status: 1, stdout: "", stderr });
+
+function prPlacementFixture(t) {
+  const { root, cleanup } = makeHome("env-ctl-pr-placement-");
+  t.after(cleanup);
+  return { env: { FLEET_HOME: root, CODEX_THREAD_ID: "", CLAUDE_CODE_SESSION_ID: "" },
+    read: () => "Delivery placement: unrelated: no in-flight unit owns this standalone change.\n" };
+}
 
 /** A command router: `routes` maps a matcher over the joined command line to a result or a function of the call. */
 function router(routes, calls = []) {
@@ -299,7 +307,7 @@ test("VIBE_REDEPLOY_UI_ONLY=1 skips the environment request only when every chan
   assert.ok(requested(unknown), "a diff git cannot compute never skips");
 });
 
-test("the pull request is opened only when origin is at the verified commit, and an open one is reused", () => {
+test("AC-020 a new PR needs delivery placement after preflight, and an open one is reused", (t) => {
   const sha = "c".repeat(40);
   const base = [["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)]];
   const stale = createEnvCtl({ ...BOUND, run: router([["ls-remote", ok(`${"d".repeat(40)}\trefs/heads/vibe/a`)]]) });
@@ -307,16 +315,21 @@ test("the pull request is opened only when origin is at the verified commit, and
   const reuse = createEnvCtl({ ...BOUND, run: router([...base, ["pr list", ok([{ url: "https://github.com/x/pull/3", number: 3 }])]]) });
   assert.deepEqual(reuse.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }), { status: Status.Done, created: false, url: "https://github.com/x/pull/3", number: 3 });
   const calls = [];
-  const create = createEnvCtl({ ...BOUND, run: router([...base, ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/4\n")]], calls) });
-  const made = create.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", bodyFile: "/b.md", base: "e".repeat(40) });
+  const options = { ...BOUND, ...prPlacementFixture(t), run: router([...base, ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/4\n")]], calls) };
+  const input = { worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", bodyFile: "/b.md", base: "e".repeat(40) };
+  const blocked = createEnvCtl({ ...options, read: () => "Unrelated to the fixture." }).openPullRequest(input);
+  assert.equal(blocked.status, Status.Blocked);
+  assert.match(blocked.error, /record one Delivery placement line/);
+  assert.ok(!calls.some((call) => call.line.includes("pr create")));
+  const made = createEnvCtl(options).openPullRequest(input);
   assert.deepEqual(made, { status: Status.Done, created: true, url: "https://github.com/x/pull/4" });
   assert.ok(!calls.some((call) => call.line.includes("--draft") || call.line.includes("merge")));
 });
 
-test("--draft opens the pull request as a draft and is never the default (ISS-13947)", () => {
+test("--draft opens the pull request as a draft and is never the default (ISS-13947)", (t) => {
   const sha = "c".repeat(40);
   const calls = [];
-  const create = createEnvCtl({ ...BOUND, run: router([["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/5\n")]], calls) });
+  const create = createEnvCtl({ ...BOUND, ...prPlacementFixture(t), run: router([["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/5\n")]], calls) });
   const made = create.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", bodyFile: "/b.md", base: "e".repeat(40), draft: true });
   assert.deepEqual(made, { status: Status.Done, created: true, url: "https://github.com/x/pull/5" });
   assert.ok(calls.some((call) => call.line.includes("pr create") && call.line.includes("--draft")));
@@ -345,10 +358,10 @@ test("with no environment recipe, requests are refused before any gh call and a 
   assert.deepEqual(extractFailure(log), { errors: ["refused"], refusal: null, orgs: null, orgLines: [] });
 });
 
-test("the pull request opens in the repository origin names, against its default branch", () => {
+test("the pull request opens in the repository origin names, against its default branch", (t) => {
   const sha = "c".repeat(40);
   const calls = [];
-  const ctl = createEnvCtl({ environmentFor: () => null, run: router([
+  const ctl = createEnvCtl({ ...prPlacementFixture(t), environmentFor: () => null, run: router([
     ["config --get remote.origin.url", ok("https://github.com/acme/widgets.git\n")],
     ["rev-parse --abbrev-ref origin/HEAD", ok("origin/trunk\n")],
     ["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])], ["pr-preflight.mjs", ok({ ok: true, problems: [] })],
@@ -360,4 +373,49 @@ test("the pull request opens in the repository origin names, against its default
   assert.match(create, /--base trunk /);
   const remoteless = createEnvCtl({ environmentFor: () => null, run: router([["config --get remote.origin.url", ok("/srv/git/widgets.git\n")]]) });
   assert.throws(() => remoteless.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }), /not a GitHub repository/);
+});
+
+test("item 20: a PR opens with the body file the handoff gate checked, never a copy", (t) => {
+  const sha = "c".repeat(40);
+  const gated = "/git/pr-body-gated.md";
+  const witness = JSON.stringify({ evidence: { body: { path: gated } } });
+  const placement = prPlacementFixture(t);
+  const read = (file) => file.endsWith("vibe-handoff-gate.json") ? witness : placement.read(file);
+  const calls = [];
+  const ctl = createEnvCtl({ ...BOUND, ...placement, read, realpath: (file) => file, run: router([
+    ["rev-parse --absolute-git-dir", ok("/git\n")], ["ls-remote", ok(`${sha}\trefs/heads/vibe/a\n`)], ["pr list", ok([])],
+    ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["pr create", ok("https://github.com/x/pull/6\n")]], calls) });
+  const input = { worktree: "/wt", branch: "vibe/a", commit: sha, title: "ISS-1: Do it", base: "e".repeat(40) };
+  const copy = ctl.openPullRequest({ ...input, bodyFile: "/git/pr-body-copy.md" });
+  assert.equal(copy.status, Status.Blocked);
+  assert.match(copy.error, /checked the body file \/git\/pr-body-gated\.md.*never a copy/);
+  assert.ok(!calls.some((call) => call.line.includes("pr create")), "a copy opens nothing");
+  const made = ctl.openPullRequest({ ...input, bodyFile: gated });
+  assert.deepEqual(made, { status: Status.Done, created: true, url: "https://github.com/x/pull/6" });
+  assert.ok(calls.some((call) => call.line.includes("pr create") && call.line.includes(`--body-file ${gated}`)));
+});
+
+test("a recorded scope change blocks the next push until pr-update saves a refreshed body, and then clears the mark", () => {
+  const stale = { reason: "operator ruling: items 17 to 36 join this PR", at: "2026-11-18T05:00:00.000Z" };
+  const staleShow = ok({ ok: true, session: { baseCommit: "b".repeat(40), vercel: {}, prBodyStale: stale } });
+  const pushCalls = [];
+  const blocked = createEnvCtl({ ...BOUND, run: router(publishRoutes({ show: staleShow }), pushCalls) }).publish({ stdin: CTX, worktree: "/wt" });
+  assert.equal(blocked.status, Status.Blocked);
+  assert.match(blocked.error, /recorded scope change \(operator ruling: items 17 to 36 join this PR, 2026-11-18T05:00:00\.000Z\) left the pull request body stale/);
+  assert.equal(pushCalls.some((call) => call.line.includes("main-sync-push")), false, "nothing is pushed");
+
+  const published = "## Summary\nOld scope.\n";
+  const update = (body, calls) => createEnvCtl({ ...BOUND, read: () => body, run: router([
+    ["pr-preflight.mjs", ok({ ok: true, problems: [] })], ["vibe-sessions.mjs show", staleShow], ["pr view", ok(published)],
+    ["pr edit", ok("")], ["vibe-sessions.mjs touch", ok({ ok: true })]], calls) })
+    .updatePullRequest({ worktree: "/wt", pr: 438, bodyFile: "/wt/body.md", title: "ISS-1: Fix" });
+  const unchangedCalls = [];
+  const unchanged = update(published, unchangedCalls);
+  assert.equal(unchanged.status, Status.Blocked);
+  assert.match(unchanged.error, /published body unchanged/);
+  assert.equal(unchangedCalls.some((call) => call.line.includes("pr edit")), false);
+  const refreshedCalls = [];
+  assert.deepEqual(update("## Summary\nNew scope.\n", refreshedCalls), { status: Status.Done, pr: 438 });
+  assert.ok(refreshedCalls.some((call) => call.line.includes("vibe-sessions.mjs touch --worktree /wt --body-refreshed")), "the mark is cleared after the edit");
+  assert.ok(refreshedCalls.findIndex((call) => call.line.includes("pr edit")) < refreshedCalls.findIndex((call) => call.line.includes("--body-refreshed")));
 });

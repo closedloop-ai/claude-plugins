@@ -1,16 +1,23 @@
 // Whether vibe's guards can run in Codex: vibe-core carries them, and Codex runs a
-// plugin's hooks only after a person approves them in /hooks (and again after the
+// plugin's hooks only after a person approves them (and again after the
 // plugin's bundle changes). Codex's App Server `hooks/list` reports each hook's
 // trust. The setup check, the version update, the fleet writer launch check and the
 // fleet watcher all read it through here, so they agree on when to ask a person to
 // approve, and they ask only when a hook actually needs it.
 
 import { codexAppServerRequest } from "./codex-app-server.mjs";
-import { VIBE_CORE_INSTALL } from "../../../shared/vibe-core.mjs";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { VIBE_CORE_INSTALL, vibeCoreRoot } from "../../../shared/vibe-core.mjs";
 
 export const HookApproval = Object.freeze({ Approved: "approved", Needed: "needed", Missing: "missing", Unchecked: "unchecked" });
-/** The one step only the developer can take; the orchestrator often runs in Claude Code, so it names Codex. */
-export const APPROVE_HOOKS = "open Codex once and approve vibe-core's hooks in /hooks";
+/**
+ * The one step only the developer can take, as the person reads it. The ChatGPT app's Codex has no working /hooks
+ * command, so its settings path comes first; /hooks is the Codex CLI's.
+ */
+/** The settings entry named when vibe-core's own manifest cannot be read (not installed beside this vibe). */
+export const UNREAD_PLUGIN_NAME = "the vibe-core entry";
+export const APPROVE_HOOKS = approveHooksStep(codexDisplayName());
 export const ADD_VIBE_CORE = VIBE_CORE_INSTALL.codex;
 
 /** The first vibe release whose hooks ship in vibe-core; an older vibe runs its own. */
@@ -78,5 +85,21 @@ export function hookApprovalLine(approval) {
       return `couldn't check whether vibe-core's hooks are approved in Codex (${approval.reason})`;
     default:
       return null;
+  }
+}
+
+/** The approval steps for `plugin`'s hooks, listed in Codex's settings as `name`. */
+export function approveHooksStep(name, plugin = "vibe-core") {
+  return `approve ${plugin}'s hooks: in the ChatGPT app, open Settings > Hooks > From Plugins > ${name}, trust each of its hooks, `
+    + "then start a new session (in the Codex CLI, run /hooks instead)";
+}
+
+/** The name Codex shows for vibe-core, from its Codex manifest; UNREAD_PLUGIN_NAME when it cannot be read. */
+function codexDisplayName() {
+  try {
+    const name = JSON.parse(readFileSync(path.join(vibeCoreRoot(), ".codex-plugin", "plugin.json"), "utf8"))?.interface?.displayName;
+    return typeof name === "string" && name.trim() ? name.trim() : UNREAD_PLUGIN_NAME;
+  } catch {
+    return UNREAD_PLUGIN_NAME;
   }
 }

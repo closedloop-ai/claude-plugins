@@ -9,6 +9,7 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { escapeRegExp } from "./source-imports.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { expectArgumentSpan, moduleExportReturnsOnlyNull, moduleNamedImport, responsiveTestRanges, viewportWidthMutation } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
 const RESPONSIVE_NAME = /(?:narrow|mobile)/i;
@@ -111,21 +112,152 @@ function responsiveStoryCandidates(file, source, changedLines) {
   return candidates;
 }
 
+function responsiveTestCandidates(file, source, changedLines) {
+  if (STORY_FILE.test(file.path) || !isTestFile(file.path)) return [];
+  const ranges = responsiveTestRanges(file.path, source) ?? [];
+  if (ranges.length === 0) return [];
+  const assertions = ranges.flatMap((range) => {
+    const line = lineNumberAt(source, range.start);
+    const endLine = lineNumberAt(source, range.end);
+    if (!changedLines.some((entry) => entry.line >= line && entry.line <= endLine)) return [];
+    return [{ ...range, line, endLine, column: range.start - source.lastIndexOf("\n", range.start),
+      text: source.slice(range.start, range.end).replace(/\s+/g, " ") }];
+  });
+  const perLineCount = new Map();
+  for (const assertion of assertions) perLineCount.set(assertion.line, (perLineCount.get(assertion.line) ?? 0) + 1);
+  const perLineOrdinal = new Map();
+  return assertions.map((assertion) => {
+    const ordinal = (perLineOrdinal.get(assertion.line) ?? 0) + 1;
+    perLineOrdinal.set(assertion.line, ordinal);
+    return { ...candidate("responsive", file.path, assertion.line, assertion.caseName,
+      "changed assertion is in a responsive viewport test file", assertion.text,
+      perLineCount.get(assertion.line) > 1 ? `:${ordinal}` : "",
+      `${file.path}:${assertion.line}:${assertion.column}`), viewportSetup: assertion.setupText };
+  });
+}
+
+function codeOnly(source) {
+  const chars = source.split("");
+  let quote = null;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  const parenthesisControls = [];
+  let regexAfterControl = false;
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index];
+    if (lineComment) { if (char === "\n") lineComment = false; else chars[index] = " "; continue; }
+    if (blockComment) {
+      if (char === "*" && chars[index + 1] === "/") { chars[index] = " "; chars[++index] = " "; blockComment = false; }
+      else if (char !== "\n") chars[index] = " ";
+      continue;
+    }
+    if (quote) {
+      if (char !== "\n") chars[index] = " ";
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "/" && chars[index + 1] === "/") { chars[index] = " "; chars[++index] = " "; lineComment = true; continue; }
+    if (char === "/" && chars[index + 1] === "*") { chars[index] = " "; chars[++index] = " "; blockComment = true; continue; }
+    if (char === "/") {
+      const end = regexLiteralEnd(source, index, regexAfterControl);
+      if (end >= 0) {
+        for (; index <= end; index += 1) if (chars[index] !== "\n") chars[index] = " ";
+        index -= 1;
+        regexAfterControl = false;
+        continue;
+      }
+    }
+    if (char === "(") {
+      const keyword = source.slice(0, index).match(/([A-Za-z_$][\w$]*)\s*$/)?.[1];
+      parenthesisControls.push(["if", "while", "for", "with", "switch", "catch"].includes(keyword ?? ""));
+      regexAfterControl = false;
+    } else if (char === ")") {
+      regexAfterControl = parenthesisControls.pop() === true;
+    } else if (!/\s/.test(char)) regexAfterControl = false;
+    if (char === '"' || char === "'" || char === "`") { chars[index] = " "; quote = char; }
+  }
+  return chars.join("");
+}
+
+function regexLiteralEnd(source, start, forced = false) {
+  let previous = start - 1;
+  while (previous >= 0 && /\s/.test(source[previous])) previous -= 1;
+  const prefix = source.slice(0, start).match(/([A-Za-z_$][\w$]*)\s*$/)?.[1];
+  if (!forced && previous >= 0 && !/[([{:;,=!?&|+\-*%^~<>]/.test(source[previous])
+    && !["return", "throw", "case", "yield", "await", "void", "typeof", "delete", "new",
+      "in", "instanceof", "of", "else", "do", "default", "extends"].includes(prefix ?? "")) return -1;
+  let escaped = false;
+  let characterClass = false;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "\n") return -1;
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\") { escaped = true; continue; }
+    if (char === "[") { characterClass = true; continue; }
+    if (char === "]") { characterClass = false; continue; }
+    if (char === "/" && !characterClass) {
+      while (/[A-Za-z]/.test(source[index + 1] ?? "")) index += 1;
+      return index;
+    }
+  }
+  return -1;
+}
+
 function nearby(sourceLines, line, radius = 12) {
   return sourceLines.slice(Math.max(0, line - radius - 1), line + radius).join("\n");
 }
 
+/** Locate changed expect/expect.soft calls and their matcher chains without trusting strings or comments. */
+function assertionCalls(source, changedLines) {
+  const code = codeOnly(source);
+  const calls = [];
+  for (const match of code.matchAll(/\bexpect(?:\s*\.\s*soft)?(?:\s*<[^>\n]+>)?\s*\(/g)) {
+    const open = code.indexOf("(", match.index);
+    const close = matchingParenthesis(code, open);
+    if (close < 0) continue;
+    let end = close;
+    let cursor = close + 1;
+    while (cursor < code.length) {
+      while (/\s/.test(code[cursor] ?? "")) cursor += 1;
+      if (code[cursor] !== ".") break;
+      cursor += 1;
+      while (/\s/.test(code[cursor] ?? "")) cursor += 1;
+      const method = /^[A-Za-z_$][\w$]*/.exec(code.slice(cursor))?.[0];
+      if (!method) break;
+      cursor += method.length;
+      end = cursor;
+      while (/\s/.test(code[cursor] ?? "")) cursor += 1;
+      if (code[cursor] === "(") {
+        const methodClose = matchingParenthesis(code, cursor);
+        if (methodClose < 0) break;
+        end = methodClose;
+        cursor = methodClose + 1;
+      }
+    }
+    const line = lineNumberAt(source, match.index);
+    const endLine = lineNumberAt(source, end);
+    if (!changedLines.some((entry) => entry.line >= line && entry.line <= endLine)) continue;
+    calls.push({ line, endLine, column: match.index - source.lastIndexOf("\n", match.index), start: match.index, end: end + 1,
+      text: source.slice(match.index, end + 1).replace(/\s+/g, " ") });
+  }
+  return calls;
+}
+
 /** Discover complete expect assertions, including positive ones that must not fall through as absence candidates. */
 function parsedAssertions(source, changedLines) {
+  const code = codeOnly(source);
   const matches = [];
-  for (const match of source.matchAll(/\bexpect(?:\s*\.\s*soft)?\s*\(/g)) {
-    const open = source.indexOf("(", match.index);
-    const close = matchingParenthesis(source, open);
+  for (const match of code.matchAll(/\bexpect(?:\s*\.\s*soft)?\s*\(/g)) {
+    const open = code.indexOf("(", match.index);
+    const close = matchingParenthesis(code, open);
     if (close < 0) continue;
-    const matcher = ABSENCE_MATCHER.exec(source.slice(close + 1));
+    const matcher = ABSENCE_MATCHER.exec(code.slice(close + 1));
     if (!matcher) continue;
     const matcherOpen = close + 1 + matcher[0].length - 1;
-    const matcherClose = matchingParenthesis(source, matcherOpen);
+    const matcherClose = matchingParenthesis(code, matcherOpen);
     if (matcherClose < 0) continue;
     const negative = Boolean(matcher[1]);
     const method = matcher[2];
@@ -136,7 +268,7 @@ function parsedAssertions(source, changedLines) {
     const endLine = lineNumberAt(source, matcherClose);
     if (!changedLines.some((entry) => entry.line >= line && entry.line <= endLine)) continue;
     const column = match.index - source.lastIndexOf("\n", match.index);
-    matches.push({ line, column, endLine, absence, start: match.index, end: matcherClose + 1, argumentStart: open + 1, argumentEnd: close,
+    matches.push({ line, column, endLine, absence, argument, expectArgument: source.slice(open + 1, close).trim(), start: match.index, end: matcherClose + 1, argumentStart: open + 1, argumentEnd: close,
       text: source.slice(match.index, matcherClose + 1).replace(/\s+/g, " ") });
   }
   return matches;
@@ -147,7 +279,7 @@ function absenceAssertions(source, changedLines) {
 }
 
 function nearestCase(sourceLines, line) {
-  const before = sourceLines.slice(Math.max(0, line - 20), line).join("\n");
+  const before = sourceLines.slice(0, line).join("\n");
   const matches = [...before.matchAll(/\b(?:it|test)(?:\.each\([\s\S]*?\))?\s*\(\s*["'`]([^"'`]+)["'`]/g)];
   return matches.at(-1)?.[1] ?? `line ${line}`;
 }
@@ -158,6 +290,25 @@ function candidate(kind, path, line, caseName, claim, assertionLine, suffix = ""
     ...(assertionLocation === undefined ? {} : { assertionLocation }) };
 }
 
+const TEST_STAND_IN_PATH = /(?:^|\/)test\/e2e\/helpers\//;
+
+/** Whether an absence assertion reads a helper whose test-only implementation is itself the null stand-in. */
+function testStandInAssertion(filePath, source, assertion, read) {
+  if (!/(?:^|\/)test\/e2e\//.test(filePath)) return false;
+  const called = /^(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/.exec(assertion.expectArgument)?.[1];
+  if (!called) return false;
+  const binding = moduleNamedImport(filePath, source, called);
+  const specifier = binding?.specifier;
+  const imported = binding?.imported ?? called;
+  if (!specifier?.startsWith(".")) return false;
+  const base = path.posix.normalize(path.posix.join(path.posix.dirname(filePath), specifier));
+  const helperPath = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, `${base}/index.ts`, `${base}/index.tsx`]
+    .find((candidatePath) => TEST_STAND_IN_PATH.test(candidatePath) && typeof read(candidatePath) === "string");
+  if (!helperPath) return false;
+  const helper = read(helperPath);
+  return moduleExportReturnsOnlyNull(helperPath, helper, imported) === true;
+}
+
 /** Candidates in changed test/story code that need failing-mutation proof. */
 export function testIntegrityCandidates(files, read) {
   const found = [];
@@ -166,8 +317,10 @@ export function testIntegrityCandidates(files, read) {
     const sourceLines = source.split("\n");
     const changedLines = addedLines(file);
     found.push(...responsiveStoryCandidates(file, source, changedLines));
+    found.push(...responsiveTestCandidates(file, source, changedLines));
     const parsedMatches = parsedAssertions(source, changedLines);
-    const absenceMatches = parsedMatches.filter((match) => match.absence);
+    const allAbsenceMatches = parsedMatches.filter((match) => match.absence);
+    const absenceMatches = allAbsenceMatches.filter((match) => !testStandInAssertion(file.path, source, match, read));
     const perLineCount = new Map();
     for (const match of absenceMatches) perLineCount.set(match.line, (perLineCount.get(match.line) ?? 0) + 1);
     const perLineOrdinal = new Map();
@@ -181,15 +334,13 @@ export function testIntegrityCandidates(files, read) {
     }
     for (const entry of changedLines) {
       const context = nearby(sourceLines, entry.line, 4);
+      const executableEntry = codeOnly(entry.text);
+      const executableContext = codeOnly(context);
       const caseName = nearestCase(sourceLines, entry.line);
-      if (!STORY_FILE.test(file.path) && RESPONSIVE_NAME.test(entry.text) && /\b(?:it|test)\b/.test(nearby(sourceLines, entry.line))) {
-        found.push(candidate("responsive", file.path, entry.line, caseName,
-          "changed test names a narrow or mobile state"));
-      }
-      const inParsedAssertion = absenceMatches.some((match) => entry.line >= match.line && entry.line <= match.endLine)
+      const inParsedAssertion = allAbsenceMatches.some((match) => entry.line >= match.line && entry.line <= match.endLine)
         || onlyPositiveAssertionText(source, entry.line, parsedMatches);
-      if (!inParsedAssertion && (ABSENCE_ASSERTION.test(entry.text)
-        || (QUERY_ASSERTION.test(entry.text) && /(?:toBeNull|not\.toBe|toHaveCount\(\s*0)/.test(context)))) {
+      if (!inParsedAssertion && (ABSENCE_ASSERTION.test(executableEntry)
+        || (QUERY_ASSERTION.test(executableEntry) && /(?:toBeNull|not\.toBe|toHaveCount\(\s*0)/.test(executableContext)))) {
         found.push(candidate("absence", file.path, entry.line, caseName,
           "changed assertion claims an element is absent", entry.text.trim(), "",
           `${file.path}:${entry.line}:${entry.text.search(/\S/) + 1}`));
@@ -241,7 +392,7 @@ function stripAnsi(value) {
 }
 
 /** Vitest prints the matcher or multiline closing line; the source excerpt must still name the candidate assertion. */
-function runnerAssertionAt(failure, actualLine, actualColumn, expectedLine, expectedColumn, assertionLine, source) {
+function runnerAssertionAt(failure, actualLine, actualColumn, expectedPath, expectedLine, expectedColumn, assertionLine, source) {
   const vitest = /\bFAIL\s+.+\.(?:test|spec|stories)\.[cm]?[jt]sx?/m.test(failure)
     && /^\s*❯\s+.+\.(?:test|spec|stories)\.[cm]?[jt]sx?:\d+:\d+/m.test(failure);
   const playwright = /^\s*\d+\)\s+\[[^\]]+\]\s+›\s+.+\.spec\.[cm]?[jt]sx?/m.test(failure)
@@ -252,7 +403,12 @@ function runnerAssertionAt(failure, actualLine, actualColumn, expectedLine, expe
   if (!at) return false;
   const snippet = at.replace(/…$/, "").trim().replace(/;$/, "");
   if (source) {
-    const candidate = absenceAssertions(source, [{ line: expectedLine }]).find((match) =>
+    const responsive = (responsiveTestRanges(expectedPath, source) ?? []).map((range) => ({
+      line: lineNumberAt(source, range.start), endLine: lineNumberAt(source, range.end),
+      column: range.start - source.lastIndexOf("\n", range.start), start: range.start, end: range.end,
+      text: source.slice(range.start, range.end).replace(/\s+/g, " "),
+    }));
+    const candidate = [...assertionCalls(source, [{ line: expectedLine }]), ...responsive].find((match) =>
       match.line === expectedLine && match.column === expectedColumn && match.text === assertionLine);
     const lines = source.split("\n");
     const sourceLine = lines[actualLine - 1];
@@ -260,7 +416,7 @@ function runnerAssertionAt(failure, actualLine, actualColumn, expectedLine, expe
       && lines[expectedLine - 1]?.slice(expectedColumn - 1).replace(/\s+/g, " ").includes(assertionLine);
     if ((!candidate && !sameLineFallback) || candidate && actualLine > candidate.endLine
       || !sourceLine?.trim().startsWith(snippet) || actualColumn > sourceLine.length + 1
-      || nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn)
+      || nestedAssertionFrame(source, expectedPath, expectedLine, expectedColumn, actualLine, actualColumn)
       || candidate && actualLine === candidate.endLine && actualLine !== expectedLine
         && sourceOffset(source, actualLine, actualColumn) >= candidate.end) return false;
   } else if (!assertionLine.includes(snippet) && !snippets.map((match) => match[2]).join(" ").replace(/\s+/g, " ").includes(assertionLine)) return false;
@@ -358,13 +514,13 @@ function exactAssertionFailure(proof, source, receipt = {}) {
   if (!diagnosticPathMatches(actualPath, expectedPath)) return false;
   // Only the runner's own failure frame binds the assertion; authored text that
   // merely names the coordinate is not proof.
-  return runner && (runnerAssertionAt(failure, Number(actualLine), Number(actualColumn), Number(expectedLine), Number(expectedColumn), proof.assertionLine, source)
+  return runner && (runnerAssertionAt(failure, Number(actualLine), Number(actualColumn), expectedPath, Number(expectedLine), Number(expectedColumn), proof.assertionLine, source)
     || instrumentedStoryAssertion(failure, proof, source, receipt));
 }
 
 /** Resolve a private immutable runner receipt; a summary alone cannot prove a Storybook mutation ran. */
 function rawProofReceipt(proof, receiptDir, readSource) {
-  const required = proof?.class === "absence";
+  const required = proof?.class === "absence" || (proof?.class === "responsive" && text(proof?.assertionLocation));
   if (!proof?.rawReceipt && !required) return { output: null, problems: [] };
   const label = `testIntegrityProofs ${proof?.candidate ?? "entry"}`;
   if (typeof proof?.rawReceipt !== "string" || !/^[A-Za-z0-9_.-]+\.json$/.test(proof.rawReceipt)
@@ -436,13 +592,19 @@ function rawProofReceipt(proof, receiptDir, readSource) {
 
 function validAssertionLocation(proof) {
   if (!text(proof?.path) || !text(proof?.candidate) || !text(proof?.assertionLocation)) return false;
-  const prefix = `absence:${proof.path}:`;
+  const prefix = `${proof.class}:${proof.path}:`;
   if (!proof.candidate.startsWith(prefix)) return false;
   const identity = /^(\d+)(?::(\d+))?$/.exec(proof.candidate.slice(prefix.length));
   if (!identity) return false;
   const location = `${proof.path}:${identity[1]}`;
   return proof.assertionLocation.startsWith(`${location}:`)
     && /^\d+$/.test(proof.assertionLocation.slice(location.length + 1));
+}
+
+function verifiedDesktopWidthMutation(receipt, proof) {
+  if (!receipt.mutationEditVerified || receipt.target !== proof.path) return false;
+  if (!text(proof.viewportSetup) || receipt.mutationEdit?.old.trim() !== proof.viewportSetup.trim()) return false;
+  return viewportWidthMutation(String(receipt.mutationEdit?.old ?? ""), String(receipt.mutationEdit?.new ?? "")) === true;
 }
 
 /** Structural problems in the verifier's optional test-integrity proof list. */
@@ -462,18 +624,14 @@ export function testIntegrityProofShapeProblems(evidence, receiptDir, readSource
     }
     if (proof?.restoredPass !== true) problems.push(`${label} must record restoredPass: true`);
     if (!SHA.test(proof?.commit ?? "")) problems.push(`${label} needs the tested 40-character commit SHA`);
+    const assertionProof = proof?.class === "absence" || (proof?.class === "responsive" && text(proof?.assertionLocation));
     if (proof?.class === "responsive" && (proof.viewportSource !== "registered" || !text(proof.desktopWidthMutation))) {
       problems.push(`${label} responsive proof needs viewportSource: "registered" and desktopWidthMutation`);
     }
-    if (proof?.class === "absence") {
+    if (assertionProof) {
       const receipt = rawProofReceipt(proof, receiptDir, pathSafe ? readSource : undefined);
       problems.push(...receipt.problems);
-      if (proof.ownerBoundary !== "production" || !text(proof.mountedSignal)) {
-        problems.push(`${label} absence proof needs ownerBoundary: "production" and mountedSignal`);
-      }
-      if (!text(proof.presentState) || !text(proof.assertionLine)) {
-        problems.push(`${label} absence proof needs presentState and assertionLine`);
-      }
+      if (!text(proof.assertionLine)) problems.push(`${label} assertion proof needs assertionLine`);
       if (!validAssertionLocation(proof)) {
         problems.push(`${label} assertionLocation must name the candidate path, line and column`);
       }
@@ -481,16 +639,27 @@ export function testIntegrityProofShapeProblems(evidence, receiptDir, readSource
         || !Number.isInteger(proof.mutationRun?.exitCode)
         || proof.mutationRun.exitCode <= 0
         || !text(proof.mutationRun.assertionFailure)) {
-        problems.push(`${label} absence proof needs a mutation run with the exact command, nonzero exitCode and assertionFailure`);
+        problems.push(`${label} assertion proof needs a mutation run with the exact command, nonzero exitCode and assertionFailure`);
       }
       const proofSource = pathSafe ? readSource?.(proof.path) : null;
       if (typeof readSource === "function" && (proofSource === null || proofSource === undefined)) {
         // Without the tested source the frame cannot be bound to the assertion (main required an exact match).
-        problems.push(`${label} absence proof source could not be read to bind the assertion`);
+        problems.push(`${label} assertion proof source could not be read to bind the assertion`);
       } else if (!receipt.problems.length && !exactAssertionFailure(receipt.output === null ? proof : {
         ...proof, mutationRun: { ...proof.mutationRun, assertionFailure: receipt.output },
       }, proofSource, receipt)) {
-        problems.push(`${label} absence proof needs the exact assertion failure at the primary assertion location, not a setup or runtime error`);
+        problems.push(`${label} assertion proof needs the exact assertion failure at the primary assertion location, not a setup or runtime error`);
+      }
+      if (proof?.class === "responsive" && !receipt.problems.length && !verifiedDesktopWidthMutation(receipt, proof)) {
+        problems.push(`${label} responsive proof needs a verified narrow-to-desktop width mutation in the tested source`);
+      }
+    }
+    if (proof?.class === "absence") {
+      if (proof.ownerBoundary === "production") {
+        if (!text(proof.mountedSignal)) problems.push(`${label} production absence proof needs mountedSignal`);
+        if (!text(proof.presentState)) problems.push(`${label} production absence proof needs presentState`);
+      } else if (proof.ownerBoundary !== "test-stand-in") {
+        problems.push(`${label} absence proof needs ownerBoundary: "production" or truthful "test-stand-in"`);
       }
     }
     if (proof?.class === "layout" && (!text(proof.baseline) || !text(proof.layoutAssertion))) {
@@ -519,11 +688,17 @@ export function testIntegrityProblems(evidence, files, read, commit, receiptDir,
     if (proof.path !== item.path || proof.case !== item.case || proof.class !== item.kind) {
       problems.push(`${item.id}: proof path, case and class must match the recomputed candidate`);
     }
-    if (item.kind === "absence" && proof.assertionLine !== item.assertionLine) {
-      problems.push(`${item.id}: proof assertionLine must match the changed absence assertion`);
+    if (["absence", "responsive"].includes(item.kind) && proof.assertionLine !== item.assertionLine) {
+      problems.push(`${item.id}: proof assertionLine must match the changed assertion`);
     }
-    if (item.kind === "absence" && proof.assertionLocation !== item.assertionLocation) {
-      problems.push(`${item.id}: proof assertionLocation must match the changed absence assertion`);
+    if (["absence", "responsive"].includes(item.kind) && proof.assertionLocation !== item.assertionLocation) {
+      problems.push(`${item.id}: proof assertionLocation must match the changed assertion`);
+    }
+    if (item.kind === "absence" && proof.ownerBoundary === "test-stand-in") {
+      problems.push(`${item.id}: a production absence candidate cannot use the test-stand-in boundary`);
+    }
+    if (item.kind === "responsive" && proof.viewportSetup !== item.viewportSetup) {
+      problems.push(`${item.id}: proof viewportSetup must match the assertion's parsed setup statement`);
     }
     if (commit && proof.commit !== commit) problems.push(`${item.id}: proof covers ${proof.commit ?? "no commit"}, not ${commit}`);
   }
@@ -681,15 +856,12 @@ function onlyPositiveAssertionText(source, line, matches) {
 }
 
 /** A frame strictly inside the candidate's expect argument belongs to whatever ran there, not to the candidate's matcher. */
-function nestedAssertionFrame(source, expectedLine, expectedColumn, actualLine, actualColumn) {
+function nestedAssertionFrame(source, path, expectedLine, expectedColumn, actualLine, actualColumn) {
   const start = sourceOffset(source, expectedLine, expectedColumn);
-  const head = /^(?:await\s+)?expect(?:\s*\.\s*soft)?\s*\(/.exec(source.slice(start));
-  if (!head) return false;
-  const open = start + head[0].length - 1;
-  const close = matchingParenthesis(source, open);
+  const argument = expectArgumentSpan(path, source, start);
+  if (!argument) return false;
   const actual = sourceOffset(source, actualLine, actualColumn);
-  if (close < 0 || actual <= open || actual >= close) return false;
-  return true;
+  return actual >= argument.start && actual < argument.end;
 }
 
 function sourceOffset(source, line, column) {

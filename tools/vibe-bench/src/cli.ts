@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compareResults } from "./comparison.ts";
 import type { RegressionExplanation } from "./report.ts";
@@ -114,10 +114,31 @@ export async function main(args: string[], baselineRepo = fileURLToPath(new URL(
   if (command === "eval-local" && rest.length >= 8) {
     const mode = rest[7];
     if (mode !== "full" && mode !== "deterministic") throw new Error("eval-mode-invalid");
+    const tail = [...rest.slice(8)];
+    let runtime: "claude" | "codex" | "both" = "both";
+    let resultFile: string | null = null;
+    while (tail[0]?.startsWith("--")) {
+      const option = tail.shift()!;
+      if (option.startsWith("--runtime=")) {
+        const value = option.slice("--runtime=".length);
+        if (value !== "claude" && value !== "codex" && value !== "both") throw new Error("eval-runtime-invalid");
+        runtime = value;
+      } else if (option.startsWith("--result-file=")) {
+        resultFile = option.slice("--result-file=".length);
+        if (!/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/-]+\.json$/.test(resultFile)
+          || /(?:^|\/)auth\.json$/i.test(resultFile)) throw new Error("eval-result-file-invalid");
+      } else throw new Error("eval-option-invalid");
+    }
+    const runtimes = runtime === "both" ? ["claude", "codex"] as const : [runtime] as const;
     const output = await runLocalEvals({ repo: rest[0], pluginSha: rest[1], runRoot: rest[2],
       outputDir: rest[3], claudeExecutable: rest[4], codexExecutable: rest[5],
       uvExecutable: rest[6], deterministicOnly: mode === "deterministic",
-      selectedCases: rest.slice(8) });
+      runtimes: [...runtimes], selectedCases: tail });
+    if (resultFile) {
+      const destination = resolve(rest[0], resultFile);
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(destination, readFileSync(output.jsonFile), { flag: "wx" });
+    }
     return `${output.jsonFile}\n${output.reportFile}`;
   }
   if (command === "eval-scope" && rest.length === 2) {
@@ -152,7 +173,7 @@ export async function main(args: string[], baselineRepo = fileURLToPath(new URL(
       statefulTargetRef: rest[6] === rest[1] ? undefined : rest[6], runtimes: [...runtimes] });
     return `${output.jsonFile}\n${output.reportFile}`;
   }
-  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <local-eval-run> [--baseline latest|<version>] | compare <baseline-results-or-batch-json> <candidate-results-or-batch-json> <base-words> <candidate-words> <output-dir> <vibe-or-fleet-one-writer> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> <nightly-results-store> | eval-scope <claude-plugins-repo> <base-ref> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [case ...] | eval-t2 <clean-main-repo> <sha> <empty-run-root> <results-store> <claude> <codex> <uv> <gh> | eval-upgrade-resume <claude-plugins-checkout> <worktree-head-sha> <empty-run-root> <output-dir> <claude> <codex> <target-ref> [claude|codex|both] [upgrade-resume-changed-definition|upgrade-resume-unchanged-definition]");
+  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <local-eval-run> [--baseline latest|<version>] | compare <baseline-results-or-batch-json> <candidate-results-or-batch-json> <base-words> <candidate-words> <output-dir> <vibe-or-fleet-one-writer> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> <nightly-results-store> | eval-scope <claude-plugins-repo> <base-ref> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [--runtime=claude|codex|both] [--result-file=<repo-relative.json>] [case ...] | eval-t2 <clean-main-repo> <sha> <empty-run-root> <results-store> <claude> <codex> <uv> <gh> | eval-upgrade-resume <claude-plugins-checkout> <worktree-head-sha> <empty-run-root> <output-dir> <claude> <codex> <target-ref> [claude|codex|both] [upgrade-resume-changed-definition|upgrade-resume-unchanged-definition]");
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {

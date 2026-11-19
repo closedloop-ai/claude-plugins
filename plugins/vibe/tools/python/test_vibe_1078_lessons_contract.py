@@ -71,8 +71,8 @@ def test_green_watch_fixes_bind_clean_and_dirty_e2e_evidence_to_real_inputs() ->
     assert "whose old value `rg` still finds anywhere in the repo" in reviewer
     scripts = PLUGIN / "skills" / "vibe" / "scripts"
     lanes = skill_split.read(scripts / "pre-pr-lanes.mjs")
-    # e2e-lock.mjs and tested-head.mjs live in vibe-core; vibe keeps command wrappers at these paths.
-    core_scripts = PLUGIN.parent / "vibe-core" / "lib" / "vibe" / "scripts"
+    # e2e-lock.mjs and tested-head.mjs live in vibe's lib; vibe keeps command wrappers at these paths.
+    core_scripts = PLUGIN / "lib" / "vibe" / "scripts"
     lock = skill_split.read(core_scripts / "e2e-lock.mjs")
     identity = skill_split.read(core_scripts / "tested-head.mjs")
     verifier = flat(skill_split.read(PLUGIN / "agents" / "vibe-verify-worker.md"))
@@ -80,7 +80,6 @@ def test_green_watch_fixes_bind_clean_and_dirty_e2e_evidence_to_real_inputs() ->
     assert "sameSource(enteredSource, source)" in lock, "queued edits must invalidate E2E evidence"
     assert "testedSource" in lanes and "testedHead" in lanes, "dirty candidate and clean captured-main boundaries stay distinct"
     assert "DIRTY-WORKTREE" in identity and "export function testedHead" in identity
-    assert "external `e2e-slot.sh --head <HEAD> <owner> <command...>`" in verifier
     assert "imported `testedHead` enforces that boundary" in verifier
 
 

@@ -60,11 +60,12 @@ def test_ignored_local_agent_and_editor_config_never_blocks_main_sync() -> None:
 
 def test_frozen_renders_use_the_shipped_driver_and_base_failures_do_not_block() -> None:
     assert (HANDOFF_SCRIPTS / "frozen-render.mjs").is_file()
+    assert (HANDOFF_SCRIPTS / "frozen-render-gate.mjs").is_file()
+    # ISS-14395: the gate runs the driver; the decomposer only points at it.
     decomposer = flat(skill_split.read(AGENTS / "vibe-storybook-decomposer.md"))
-    assert "../skills/handoff/scripts/frozen-render.mjs" in decomposer
-    assert "never a capture of your own" in decomposer
-    assert "`story-play-verdict.mjs`" in decomposer
-    assert "A `same-failure` story fails the same way on the base" in decomposer
+    assert "../skills/handoff/scripts/frozen-render-gate.mjs" in decomposer
+    driver = skill_split.read(HANDOFF_SCRIPTS / "frozen-render.mjs")
+    assert "story-play-verdict.mjs" in driver and "same-failure" in driver
     template = flat(skill_split.read(PROVIDER_REFERENCES / "ticket-template.md"))
     assert "`- [ ] Known main failure: frozen story <story ID>; fails the same way on base <base>; evidence: <its reason>`" in template
 

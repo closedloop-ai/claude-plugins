@@ -5,17 +5,16 @@ import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, isFrozenGlobalInput, prepareBase, rebuildStatic, runOwnedFrozenComparison, storybookPreviewImportClosure, storyFileChanges } from "./frozen-render.mjs";
-import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenGlobalInputAffectsRender, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, isFrozenGlobalInput, prepareBase, rebuildStatic, runOwnedFrozenComparison, storybookPreviewImportClosure, storyFileChanges } from "./frozen-render.mjs";
+import { CROP_MAX_WIDTH, decodePng } from "./png-diff.mjs";
 import { git, makeHome, mutateSourceRead, PROVIDER_BINDING } from "../../vibe/scripts/test-fixtures.mjs";
+import { BASE, BLUE, fakeBrowser, GREY, HEAD, passes, sandbox, shot, throws } from "./frozen-render-test-fixture.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "frozen-render.mjs");
-const BASE = "http://storybook-base";
-const HEAD = "http://storybook-head";
 
 test("the central comparison owns both servers and closes them after success or render failure", async () => {
   const events = [];
@@ -60,15 +59,16 @@ test("static comparison rebuilds both outputs for the named current heads before
   }
   const events = [];
   const withServer = async (dir, _port, action) => { events.push(`serve ${dir}`); return action(`http://${dir}`); };
-  await runOwnedFrozenComparison({ repo, baseDir, base: "main~1", storyFiles: [], out: fixture.root }, {
+  await runOwnedFrozenComparison({ repo, baseDir, base: "main~1", storyFiles: ["s/a.stories.tsx"], out: fixture.root }, {
     withServer, nextPort: async (other) => other ? 6122 : 6121,
     resolveCommit: (dir, ref) => { events.push(`resolve ${dir} ${ref}`); return "base-commit-full"; },
     headOf: (dir) => dir === repo ? "head-commit" : "base-commit-full",
-    buildStatic: async (dir, head) => { events.push(`build ${dir} ${head}`); },
+    // Both checkouts build together, each collecting only the compared story files (ISS-14395).
+    buildStatic: async (dirs, { storyFiles }) => { events.push(`build ${dirs.join(" ")} ${storyFiles.join(" ")}`); },
     launch: async () => ({ close: async () => {} }), compare: async () => ({}),
   });
   assert.deepEqual(events, [
-    `resolve ${repo} main~1`, `build ${baseDir} base-commit-full`, `build ${repo} head-commit`, `serve ${baseDir}`, `serve ${repo}`,
+    `resolve ${repo} main~1`, `build ${baseDir} ${repo} s/a.stories.tsx`, `serve ${baseDir}`, `serve ${repo}`,
   ]);
 });
 
@@ -182,79 +182,13 @@ test("the configured heavy slot wait wraps the bounded Storybook build", (t) => 
   assert.equal(readFileSync(path.join(output, "index.html"), "utf8"), "fresh");
 });
 
-/** A small solid screenshot, with one pixel of `dot` color when given. */
-function shot(color, dot) {
-  const [width, height] = [6, 4];
-  const data = new Uint8Array(width * height * 4);
-  for (let i = 0; i < width * height; i++) data.set([...color, 255], i * 4);
-  if (dot) data.set([...dot, 255], (2 * width + 3) * 4);
-  return encodePng({ width, height, data });
-}
-
-const GREY = [200, 200, 200];
-const BLUE = [0, 0, 255];
-
-/**
- * A stand-in for Playwright's browser. `plays[url][storyId]` is what that Storybook does for the story, either one
- * play or a list consumed render by render: the channel events it emits ({type, storyId?, message?}; none means the
- * play never finishes) and its screenshot.
- */
-function fakeBrowser(plays) {
-  const visits = [];
-  const served = new Map();
-  return {
-    visits,
-    newContext: async (options) => {
-      const visit = { options, clock: null, recorder: false, closed: false };
-      return {
-        newPage: async () => {
-          let play = null;
-          return {
-            clock: { setFixedTime: async (time) => { visit.clock = new Date(time).toISOString(); } },
-            addInitScript: async (source) => { visit.recorder = source.includes("__vibePlayEvents"); },
-            goto: async (url) => {
-              const [origin, query] = url.split("/iframe.html?");
-              const id = decodeURIComponent(new URLSearchParams(query).get("id"));
-              Object.assign(visit, { origin, id });
-              visits.push(visit);
-              const key = `${origin} ${id}`;
-              const configured = plays[origin]?.[id] ?? { events: [{ type: "storyMissing", storyId: id }], png: shot([0, 0, 0]) };
-              const index = served.get(key) ?? 0;
-              served.set(key, index + 1);
-              play = Array.isArray(configured) ? configured[Math.min(index, configured.length - 1)] : configured;
-            },
-            waitForFunction: async () => {
-              if (!play.events.length) throw new Error("Timeout");
-            },
-            evaluate: async (fn) => (String(fn).includes("fonts") ? undefined : play.events.map((event) => ({ storyId: null, status: null, message: null, ...event }))),
-            screenshot: async (options) => {
-              visit.screenshot = options;
-              return play.png;
-            },
-          };
-        },
-        close: async () => { visit.closed = true; },
-      };
-    },
-  };
-}
-
-const passes = (png) => ({ events: [{ type: "storyRendered" }, { type: "storyFinished", status: "success" }], png });
-const throws = (message, png = shot([255, 0, 0])) => ({ events: [{ type: "storyThrewException", message }, { type: "storyFinished", status: "error" }], png });
-
-function sandbox(t) {
-  const fixture = makeHome("vibe-frozen-render-");
-  t.after(fixture.cleanup);
-  return { ...fixture, out: path.join(fixture.root, "out") };
-}
-
 test("byte-identical screenshots skip PNG decode, while different bytes with identical pixels still compare equal", async (t) => {
   const { out } = sandbox(t);
   const png = shot(GREY);
   const differentlyEncoded = Buffer.concat([png, Buffer.from([0])]);
   const browser = fakeBrowser({
-    [BASE]: { "a--same": passes(png), "b--same-pixels": [passes(png), passes(differentlyEncoded)] },
-    [HEAD]: { "a--same": passes(png), "b--same-pixels": passes(png) },
+    [BASE]: { "a--same": passes(png), "b--same-pixels": passes(png) },
+    [HEAD]: { "a--same": passes(png), "b--same-pixels": passes(differentlyEncoded) },
   });
   let decodes = 0;
   const dependencies = { decodePng: (bytes) => { decodes++; return decodePng(bytes); } };
@@ -263,7 +197,7 @@ test("byte-identical screenshots skip PNG decode, while different bytes with ide
   const details = JSON.parse(readFileSync(path.join(out, "results.json"), "utf8")).details;
   assert.equal(decodes, 2, "the all-equal story does no decode; the two byte-distinct groups decode once each");
   assert.deepEqual(details.map((story) => story.outcome), [FrozenOutcome.Identical, FrozenOutcome.Identical]);
-  assert.deepEqual(Object.values(details[0].renders).map((render) => render.timingsMs.decode), [0, 0, 0]);
+  assert.deepEqual(Object.values(details[0].renders).map((render) => render.timingsMs.decode), [0, 0]);
   assert.equal(new Set(Object.values(details[1].renders).map((render) => render.pixels)).size, 1,
     "different PNG bytes with identical decoded pixels share the exact pixel hash");
   assert.equal(summary.ok, true);
@@ -325,15 +259,17 @@ test("each class: identical, unstable on base, same failure, changed render, new
   const crop = decodePng(readFileSync(summary.blocking[0].crop));
   assert.ok(crop.width <= CROP_MAX_WIDTH);
   assert.ok(!existsSync(path.join(out, "diffs", "a--identical.png")));
-  // Each story renders twice on the base, then once on the branch, each in its own pinned context.
-  assert.deepEqual(browser.visits.slice(0, 3).map((visit) => `${visit.origin} ${visit.id}`), [`${BASE} a--identical`, `${BASE} a--identical`, `${HEAD} a--identical`]);
+  // An unchanged story renders once on the base, then once on the branch, each in its own pinned context (ISS-14395).
+  assert.deepEqual(browser.visits.slice(0, 2).map((visit) => `${visit.origin} ${visit.id}`), [`${BASE} a--identical`, `${HEAD} a--identical`]);
   for (const visit of browser.visits) {
     assert.deepEqual(visit.options, { viewport: { width: 1280, height: 800 }, ...PINNED_CONTEXT });
     assert.equal(visit.clock, DEFAULT_NOW);
     assert.ok(visit.recorder && visit.closed);
     assert.deepEqual(visit.screenshot, { animations: "disabled", caret: "hide", scale: "css", fullPage: true });
   }
-  for (const side of ["base", "base-again", "head"]) assert.ok(existsSync(path.join(out, side, "a--identical.png")));
+  for (const side of ["base", "head"]) assert.ok(existsSync(path.join(out, side, "a--identical.png")));
+  assert.ok(!existsSync(path.join(out, "base-again", "a--identical.png")));
+  assert.ok(existsSync(path.join(out, "base-again", "d--changed.png")));
 });
 
 test("only unstable-on-base and same-failure stories clear: the line names both classes and passes with no blocking", async (t) => {
@@ -375,8 +311,8 @@ test("a blocking story is rendered twice more on the base and becomes unstable o
   assert.ok(existsSync(details[0].crop));
   assert.deepEqual(Object.keys(details[2].renders), ["base", "base-again", "head", "base-confirm-1", "base-confirm-2"]);
   const visits = (id) => browser.visits.filter((visit) => visit.id === id).map((visit) => visit.origin === BASE ? "base" : "head");
-  assert.deepEqual(visits("c--changed"), ["base", "base", "head", "base", "base"]);
-  assert.deepEqual(visits("d--same"), ["base", "base", "head"]);
+  assert.deepEqual(visits("c--changed"), ["base", "head", "base", "base", "base"]);
+  assert.deepEqual(visits("d--same"), ["base", "head"]);
   assert.deepEqual(summary.blocking.map((story) => story.storyId), ["c--changed"]);
   assert.ok(existsSync(path.join(out, "base-confirm-2", "c--changed.png")));
 });
@@ -679,6 +615,33 @@ test("preview reachability includes imports added or removed across the comparis
   assert.equal(isFrozenGlobalInput(oldCss, closure), true);
   assert.equal(isFrozenGlobalInput(newCss, closure), true);
   assert.equal(isFrozenGlobalInput("apps/storybook/.storybook/unrelated.css", closure), false);
+});
+
+test("ISS-14171 version-only and ISS-14395 specifier-only render manifest changes preserve frozen inputs while other fields invalidate them", (t) => {
+  const fixture = makeHome("vibe-frozen-version-only-");
+  t.after(fixture.cleanup);
+  const checkout = path.join(fixture.root, "wt");
+  git(fixture.root, ["init", "--quiet", "--initial-branch=main", checkout], fixture.home);
+  const story = "apps/storybook/stories/frozen.stories.tsx";
+  const manifest = "apps/storybook/package.json";
+  mkdirSync(path.dirname(path.join(checkout, story)), { recursive: true });
+  writeFileSync(path.join(checkout, story), 'export default { title: "Composites v1.0/Frozen" };\nexport const Default = {};\n');
+  writeFileSync(path.join(checkout, manifest), JSON.stringify({ version: "1.0.0", dependencies: { react: "1" } }));
+  git(checkout, ["add", "-A"], fixture.home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], fixture.home);
+  const base = git(checkout, ["rev-parse", "HEAD"], fixture.home);
+  const before = frozenInputs(checkout, base, [story]);
+  const oldManifest = readFileSync(path.join(checkout, manifest), "utf8");
+  writeFileSync(path.join(checkout, manifest), JSON.stringify({ version: "1.1.0", dependencies: { react: "1" } }));
+  assert.equal(frozenGlobalInputAffectsRender(manifest, new Set(), oldManifest, readFileSync(path.join(checkout, manifest), "utf8")), false);
+  assert.equal(frozenInputs(checkout, base, [story]), before);
+  // A dependency specifier alone renders nothing differently; the lockfile carries any resolved change (ISS-14395).
+  writeFileSync(path.join(checkout, manifest), JSON.stringify({ version: "1.1.0", dependencies: { react: "2" } }));
+  assert.equal(frozenGlobalInputAffectsRender(manifest, new Set(), oldManifest, readFileSync(path.join(checkout, manifest), "utf8")), false);
+  assert.equal(frozenInputs(checkout, base, [story]), before);
+  writeFileSync(path.join(checkout, manifest), JSON.stringify({ version: "1.1.0", dependencies: { react: "1" }, sideEffects: false }));
+  assert.equal(frozenGlobalInputAffectsRender(manifest, new Set(), oldManifest, readFileSync(path.join(checkout, manifest), "utf8")), true);
+  assert.notEqual(frozenInputs(checkout, base, [story]), before);
 });
 
 test("frozen input digests include global HTML, config, manifests, lockfile and public bytes but exclude unrelated CSS (ISS-13752)", (t) => {

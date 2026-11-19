@@ -66,6 +66,9 @@ def _create_args(**overrides: str) -> _Args:
     args.type = "PRD"
     args.project_id = None
     args.workstream_id = None
+    args.status = None
+    args.assignee_id = None
+    args.repository_selection = None
     for key, value in overrides.items():
         setattr(args, key, value)
     return args
@@ -175,3 +178,125 @@ def test_main_prints_one_parseable_json_document_with_the_id(
     assert json.loads(printed)["operationReceipt"] == RECEIPT
     assert OPERATION_ID in SHELL_CLAIM_RE.findall(printed)
     assert fake.calls[0][0] == "create-document"
+
+
+@dataclass
+class _StoredDocument:
+    """A server whose version write can save and then fail the response stream."""
+
+    latest_version: int = 4
+    content_length: int = 10
+    save_then_fail: bool = False
+    fail_before_save: bool = False
+    fail_reads: bool = False
+    stored_length_delta: int = 0
+    calls: list[str] = field(default_factory=list)
+
+    async def call_tool(self, name: str, arguments: dict) -> _Result:
+        self.calls.append(name)
+        if name == "get-document":
+            if self.fail_reads:
+                raise RuntimeError("connection refused")
+            body = {
+                "latestVersion": self.latest_version,
+                "version": {"version": self.latest_version, "contentLength": self.content_length},
+            }
+            return _Result(content=[_Text(json.dumps(body))])
+        assert name == "create-document-version"
+        if self.fail_before_save:
+            raise RuntimeError("SSE stream failed: connection reset")
+        self.latest_version += 1
+        self.content_length = len(arguments["content"].encode("utf-16-le")) // 2 + self.stored_length_delta
+        if self.save_then_fail:
+            raise RuntimeError("SSE stream failed: Server-sent event exceeded the 1048576 byte limit")
+        return _Result(content=[_Text(json.dumps({"id": "v", "slug": "PLN-9"}))])
+
+
+def _upload_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, server: _StoredDocument, content: str
+) -> dict:
+    content_file = tmp_path / "plan.md"
+    content_file.write_text(content, encoding="utf-8")
+
+    @asynccontextmanager
+    async def fake_connect(_args: _Args) -> AsyncIterator[_StoredDocument]:
+        yield server
+
+    monkeypatch.setattr(upload_artifact, "_connect", fake_connect)
+    args = _create_args(file=str(content_file), artifact_id="PLN-9")
+    args.verify = False
+    return asyncio.run(upload_artifact.upload(args))
+
+
+def test_a_version_saved_before_the_stream_failed_is_success_and_not_written_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = _StoredDocument(save_then_fail=True)
+    # An astral character is two UTF-16 units on the server and one in Python.
+    output = _upload_version(tmp_path, monkeypatch, server, "plan \U0001f600 body")
+
+    assert output["status"] == "success"
+    assert output["recovered_after_transport_error"] is True
+    assert output["saved_version"] == 5
+    assert server.calls.count("create-document-version") == 1
+    assert server.latest_version == 5
+
+
+def test_a_stream_failure_before_the_save_says_a_retry_is_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = _StoredDocument(fail_before_save=True)
+    output = _upload_version(tmp_path, monkeypatch, server, "plan body")
+
+    assert output["retry_safe"] is True
+    assert "error" in output
+    assert server.latest_version == 4
+
+
+def test_a_stored_version_that_does_not_match_the_file_is_never_called_saved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = _StoredDocument(save_then_fail=True, stored_length_delta=-3)
+    output = _upload_version(tmp_path, monkeypatch, server, "plan body")
+
+    assert output["retry_safe"] is False
+    assert "error" in output
+    assert output["stored_version"] == 5
+
+
+def test_a_version_without_a_transport_error_is_written_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = _StoredDocument()
+    output = _upload_version(tmp_path, monkeypatch, server, "plan body")
+
+    assert output["status"] == "success"
+    assert "recovered_after_transport_error" not in output
+    assert server.calls == ["get-document", "create-document-version"]
+
+
+def test_create_passes_status_assignee_and_repository_selection() -> None:
+    fake = _FakeSession({"id": "d1", "slug": "PLN-9"})
+    args = _create_args(
+        type="IMPLEMENTATION_PLAN",
+        status="DRAFT",
+        assignee_id="u1",
+        repository_selection='{"primary": {"repository": "org/repo", "branch": "b"}}',
+    )
+    asyncio.run(_create_document(cast(ClientSession, fake), args, "hello"))
+
+    sent = fake.calls[0][1]
+    assert sent["status"] == "DRAFT"
+    assert sent["assigneeId"] == "u1"
+    assert sent["repositorySelection"] == {"primary": {"repository": "org/repo", "branch": "b"}}
+
+
+def test_a_failed_baseline_read_writes_nothing_and_says_a_retry_is_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = _StoredDocument(fail_reads=True)
+    output = _upload_version(tmp_path, monkeypatch, server, "plan body")
+
+    assert output["retry_safe"] is True
+    assert "error" in output
+    assert "create-document-version" not in server.calls

@@ -199,23 +199,23 @@ def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None
 
 
 def copied_identity_helper(output: Path) -> Path:
-    """Place real runtime helper bytes in the fixture's installed payload (vibe-core holds them)."""
-    target = output / "market/plugins/vibe-core/lib/vibe/scripts"
+    """Place real runtime helper bytes in the fixture's installed payload (vibe's lib holds them)."""
+    target = output / "market/plugins/vibe/lib/vibe/scripts"
     target.mkdir(parents=True, exist_ok=True)
-    for name in ("tested-head.mjs", "session-record.mjs"):
+    for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs"):
         (target / name).write_bytes((runner.IDENTITY_SCRIPTS / name).read_bytes())
     return target / "tested-head.mjs"
 
 
 def test_receipts_use_copied_helper_after_live_helper_mutates(tmp_path: Path, monkeypatch) -> None:
     copied = copied_identity_helper(tmp_path)
-    (tmp_path / "market/plugins/vibe").mkdir()
+    (tmp_path / "market/plugins/vibe").mkdir(exist_ok=True)
     (tmp_path / "market/plugins/closedloop-core").mkdir()
     (tmp_path / "suite").mkdir()
     live = tmp_path / "live"
-    live_scripts = live / "vibe-core/lib/vibe/scripts"
+    live_scripts = live / "vibe/lib/vibe/scripts"
     live_scripts.mkdir(parents=True)
-    for name in ("tested-head.mjs", "session-record.mjs"):
+    for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs"):
         (live_scripts / name).write_bytes((copied.parent / name).read_bytes())
     monkeypatch.setattr(runner, "IDENTITY_SCRIPTS", live_scripts)
     monkeypatch.setattr(runner, "IDENTITY", live_scripts / "tested-head.mjs")
@@ -1034,6 +1034,28 @@ def test_generic_cases_cover_the_walk_and_load_no_provider() -> None:
     assert any(runner.case_arm(case) == "provider" for case in runner.cases())
 
 
+def test_iss_14116_a_selection_naming_both_arms_is_refused_and_each_arm_accepts_its_own(
+    monkeypatch, capsys
+) -> None:
+    """The nightly passed every ordinary case to one provider-arm run; the driver now splits them by arm."""
+    names = {arm: [c["name"] for c in runner.cases() if runner.case_arm(c) == arm] for arm in ("provider", "generic")}
+    assert names["provider"] and names["generic"]
+
+    def listed(arm: str, selection: list[str]) -> int:
+        argv = ["run.py", "--list", "--arm", arm] + [x for name in selection for x in ("--case", name)]
+        monkeypatch.setattr(sys, "argv", argv)
+        try:
+            return runner.main()
+        except SystemExit as stop:
+            return stop.code if isinstance(stop.code, int) else 1
+
+    assert listed("provider", names["provider"] + names["generic"]) == 2
+    assert "unknown or empty case selection" in capsys.readouterr().err
+    for arm in ("provider", "generic"):
+        assert listed(arm, names[arm]) == 0
+        assert sorted(capsys.readouterr().out.split()) == sorted(names[arm])
+
+
 def _tree_bytes(root: Path) -> dict[str, bytes]:
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
 
@@ -1251,6 +1273,31 @@ def test_the_real_check_binds_the_provider_and_writes_under_the_run_home(tmp_pat
         "the built folder's own provider binds, not a separate plugin"
     assert "recipes" in checked["provider"]["capabilities"], "the arm's opt-in file is the one the provider accepts"
     assert (home / ".codex/vibe/plugin-version").is_dir(), "the binding is recorded under the HOME the model sees"
+
+
+def test_failed_case_keeps_only_its_resumable_session_and_never_auth(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    sessions = home / "sessions/2026/11/16"
+    sessions.mkdir(parents=True)
+    (home / "auth.json").write_text("secret")
+    (sessions / "rollout-thread-failed.jsonl").write_text('{"type":"session_meta"}\n')
+    (sessions / "rollout-thread-passed.jsonl").write_text('{"type":"session_meta"}\n')
+    output = tmp_path / "output"
+    output.mkdir()
+    failed = {"case": "failed-case", "passed": False, "session_id": "thread-failed"}
+    passed = {"case": "passed-case", "passed": True, "session_id": "thread-passed"}
+
+    runner.retain_failed_sessions(output, home, [failed, passed])
+
+    kept = output / "failed-sessions/failed-case/sessions/2026/11/16/rollout-thread-failed.jsonl"
+    assert kept.read_text() == '{"type":"session_meta"}\n'
+    assert not (output / "failed-sessions/passed-case").exists()
+    assert not list((output / "failed-sessions").rglob("auth.json"))
+    assert failed["retained_session"] == {
+        "id": "thread-failed",
+        "path": "failed-sessions/failed-case/sessions",
+        "resume_command": "codex resume thread-failed",
+    }
 
 
 def _graded(name: str, reply: str, tmp_path: Path, trace: list | None = None) -> dict[str, bool]:

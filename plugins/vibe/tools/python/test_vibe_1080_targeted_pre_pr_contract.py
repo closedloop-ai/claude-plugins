@@ -26,11 +26,14 @@ def test_handoff_requires_final_diff_inventory_before_pr_creation() -> None:
         "`targetedInventory` in that file as a read-only actor. "
         "Read its declared lane source for repository-owned names and exact recipes"
     ) in lane_rules
-    assert "or typed `source` from the committed root declaration `vibe-handoff-paths.json`" in lane_rules
+    # The evidence file's field guide moved into the schema tool (operator ruling, 2026-11-18, "shrink more, then accept").
+    guide = flat((ROOT / "skills/handoff/scripts/pr-evidence-guide.mjs").read_text(encoding="utf-8").replace('",\n  "', " "))
+    assert "or typed `source` from the committed root declaration `vibe-handoff-paths.json`" in guide
     assert (
         "For `github-workflow`, bind the workflow path, commit and SHA-256; "
         "use every job/matrix recipe"
-    ) in lane_rules
+    ) in guide
+    assert "pr-evidence-schema.mjs --example" in lane_rules
     assert "run `pnpm test:lanes` only for the command-based source" in lane_rules
     assert "post-merge-only lane" in verify
     assert "rerun only that failed case" in verify

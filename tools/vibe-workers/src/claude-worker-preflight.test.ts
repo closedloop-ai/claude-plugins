@@ -187,7 +187,34 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
     expect(result.status).toBe(1);
     expect(result.json.code).toBe("MCP_TOOLS_MISSING");
     expect(String(result.json.summary)).toContain("pending");
+    expect(String(result.json.summary)).toMatch(/custom_graph \(still pending after \d+ launch attempts? over \d+ s/);
+    expect(result.json.pendingConnections).toEqual(["custom_graph"]);
     expect(proofCount(value)).toBe(0);
+  });
+  it("ISS-14394 holds Claude's start for a slow granted connection instead of racing relaunches", () => {
+    const value = setup();
+    const result = launch(value, { agentRoot: value.agentRoot, input: "Build it" }, { FAKE_CLAUDE_PENDING_UNLESS_WAITED: "1" });
+    expect(result.status, JSON.stringify(result.json)).toBe(0);
+    const starts = readFileSync(join(value.metadata, "fake-mcp-starts.jsonl"), "utf8").trim()
+      .split("\n").map((line) => JSON.parse(line) as { pending: boolean; mcpWait?: string });
+    expect(starts).toEqual([{ id: expect.any(String), pending: false, failedServer: false, mcpWait: "60000" }]);
+  });
+  it("ISS-14394 sizes Claude's own connection hold to the launcher's startup budget", () => {
+    expect(worker.childMcpStartupWaitMs(1_800_000, null)).toBe(60_000);
+    expect(worker.childMcpStartupWaitMs(20_000, null)).toBe(15_000);
+    expect(worker.childMcpStartupWaitMs(1_800_000, 30_000)).toBe(25_000);
+    expect(worker.childMcpStartupWaitMs(3_000, null)).toBe(0);
+  });
+  it("ISS-14116 retains an MCP_TOOLS_MISSING request and teaches the same-ID continuation", () => {
+    const value = setup();
+    const first = launch(value, { agentRoot: value.agentRoot, input: "Build it", timeoutMs: 1000 },
+      { FAKE_CLAUDE_PENDING_FOREVER: "1" });
+    expect(first.json.code).toBe("MCP_TOOLS_MISSING");
+    const duplicate = launch(value, { agentRoot: value.agentRoot, input: "Retry the same request" });
+    expect(duplicate.json.code).toBe("REQUEST_ID_EXISTS");
+    expect(String(duplicate.json.summary)).toContain("continuation");
+    const continued = launch(value, { agentRoot: value.agentRoot, continuation: "Continue after restoring the connection" });
+    expect(continued.status, JSON.stringify(continued.json)).toBe(0);
   });
   it("ISS-13563 refuses a failed graph without a startup retry", () => {
     const value = setup();

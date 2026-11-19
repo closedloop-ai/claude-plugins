@@ -58,9 +58,14 @@ export function createClaudeEvalIsolation(root: string, claudeExecutable: string
   writeFileSync(mcpConfigFile, `${JSON.stringify({ mcpServers }, null, 2)}\n`,
     { flag: "wx", mode: 0o600 });
   const python = findPython3(searchPath, binDir);
+  // The released launcher can call this wrapper again with its bin already first on PATH.
   const script = `#!/bin/sh\n${python ? pillowInstallStep(python, binDir) : ""}` +
-    `PATH=${shellQuote(binDir)}:\"$PATH\"\nexport PATH\n` +
-    `exec ${shellQuote(claudeExecutable)} --setting-sources '' --mcp-config ` +
+    `wrapper_bin=${shellQuote(binDir)}\n` +
+    `source_path=\"\${PATH#\"$wrapper_bin:\"}\"\n` +
+    `real_claude=$(PATH=\"$source_path\" command -v -- ${shellQuote(claudeExecutable)}) || exit 127\n` +
+    `[ \"$real_claude\" != ${shellQuote(executable)} ] || exit 127\n` +
+    `export PATH=\"$wrapper_bin:$source_path\"\n` +
+    `exec \"$real_claude\" --setting-sources '' --mcp-config ` +
     `${shellQuote(mcpConfigFile)} --strict-mcp-config \"$@\"\n`;
   if (python) {
     writeFileSync(pillowRequirementsFile(binDir), pillowRequirements(), { flag: "wx", mode: 0o600 });

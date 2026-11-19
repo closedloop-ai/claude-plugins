@@ -62,8 +62,9 @@ test('ISS-14112: a test that imports the cl-sweep fixture runs with an empty tem
   }
 });
 
-test('ISS-14112: with no fixture codex in front, the codex a test spawns is the shim, which fails with "real codex spawned in test"', () => {
-  // A shim of its own, so this deliberate call does not reach the sandbox shim the file's `after` hook checks.
+test('ISS-14112: a codex shim records each call in its log and fails with "real codex spawned in test"', () => {
+  // A shim of its own, so this deliberate call does not reach the sandbox shim the file's `after` hook checks. That a
+  // sandboxed file resolves `codex` to the sandbox shim is pinned in core-client-fixture.test.mjs.
   const { codex, log } = writeCodexShim();
   const result = spawnSync('codex', ['plugin', 'list', '--json'], {
     encoding: 'utf8', env: { ...process.env, PATH: `${dirname(codex)}:/usr/bin:/bin` },
@@ -73,9 +74,10 @@ test('ISS-14112: with no fixture codex in front, the codex a test spawns is the 
   assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter(Boolean), ['plugin list --json']);
 });
 
-test('ISS-14112: with 9d3fe998\'s model-list fake in front (it refused plugin list), core discovery fails loudly instead of resolving through a live Codex', () => {
+test('ISS-14112: with 9d3fe998\'s model-list fake in front (it refused plugin list), core discovery fails with that fake\'s own error', () => {
   // The fake as 9d3fe998 wrote it: it answered only the model list, so core discovery fell back to the bundled Codex
-  // app, which on a machine with closedloop-core installed under the real HOME resolved and hid the bug.
+  // app, which on a machine with closedloop-core installed under the real HOME resolved and hid the bug. The sandbox
+  // hides that app in every process (core-client-fixture.test.mjs pins it), so the error is the PATH fake's.
   const directory = mkdtempSync(join(tmpdir(), 'cl-sweep-9d3fe998-fake-'));
   writeFileSync(join(directory, 'codex'), `#!/usr/bin/env node
 if (process.argv[2] === 'app-server' && process.argv.length === 3) ${catalogServerCode(LISTED_MODELS)}
@@ -87,6 +89,7 @@ else { process.stderr.write('fake codex: only app-server on stdio'); process.exi
   });
   assert.notEqual(result.status, 0, `discovery resolved: ${result.stdout}`);
   assert.equal(result.stdout, '');
+  assert.match(result.stderr, /fake codex: only app-server on stdio/);
 });
 
 test('ISS-14112 AC-6: a Codex whose model list names gpt-6.2-sol runs it, with no note', async () => {

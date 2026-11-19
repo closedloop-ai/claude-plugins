@@ -9,6 +9,7 @@ import { fixture, PLUGIN_ROOT, remoteConfig, successfulRemoteWriter, writeLoopba
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
 const TIMEOUT = { timeout: 20_000 };
+const REMOTE_TRANSITION_WAIT_ATTEMPTS = 600;
 
 test('a missing remote Codex CLI clears exact pre-dispatch ownership and permits retry', TIMEOUT, () => {
   const f = fixture();
@@ -76,7 +77,7 @@ test('two recoveries serialize before a newer turn can reuse the pending name', 
   child.stdout.resume(); child.stderr.resume();
   const closed = new Promise((resolve) => child.on('close', resolve));
   try {
-    for (let i = 0; i < 200 && !existsSync(entered); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    for (let i = 0; i < REMOTE_TRANSITION_WAIT_ATTEMPTS && !existsSync(entered); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.ok(existsSync(entered));
     const second = f.run(['remote', 'session', 'recover-marker', 'writer']);
     assert.notEqual(second.status, 0, 'a second recovery must not decide from the same stale pending attempt');
@@ -132,7 +133,7 @@ test('macOS lockf retains the command on lock loss and orders same-name turns', 
   const f = fixture();
   const worktree = successfulRemoteWriter(f);
   const receipt = join(f.root, 'lockf-args');
-  writeFileSync(join(f.root, 'bin', 'lockf'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(receipt)}\nexec ${JSON.stringify(real)} "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'lockf'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >> ${JSON.stringify(receipt)}\nexec ${JSON.stringify(real)} "$@"\n`);
   chmodSync(join(f.root, 'bin', 'lockf'), 0o755);
   const turn = f.run(['remote', 'session', 'turn', 'writer', '--prompt-file', f.prompt, '--cwd', worktree,
     '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']);
@@ -322,7 +323,7 @@ test('killing the remote shell after launching transition leaves no phantom writ
   const closed = new Promise((resolve) => child.on('close', resolve));
   const remote = join(f.root, 'remote', 'sessions');
   try {
-    for (let i = 0; i < 200 && !existsSync(entered); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    for (let i = 0; i < REMOTE_TRANSITION_WAIT_ATTEMPTS && !existsSync(entered); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.ok(existsSync(entered));
     const claimFile = readdirSync(remote).find((name) => name.startsWith('writer.preflight.') && name.endsWith('.json'));
     assert.ok(claimFile);

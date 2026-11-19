@@ -64,14 +64,18 @@ const option = key => args[args.indexOf(key) + 1];
 const id = option(args.includes('--resume') ? '--resume' : '--session-id');
 const dropped = (process.env.FAKE_CLAUDE_DROP_SERVER || '').split(',').filter(Boolean);
 const startsFile = path.join(process.cwd(), '.git', 'fake-mcp-starts.jsonl');
-const trackStartup = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1'
+const pendingUnlessWaited = process.env.FAKE_CLAUDE_PENDING_UNLESS_WAITED === '1';
+const mcpWait = process.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS;
+const trackStartup = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1' || pendingUnlessWaited
   || process.env.FAKE_CLAUDE_PENDING_ONCE === '1' || process.env.FAKE_CLAUDE_FAILED_SERVER === '1';
 const starts = trackStartup && fs.existsSync(startsFile)
   ? fs.readFileSync(startsFile, 'utf8').trim().split('\n').filter(Boolean).length : 0;
+// Models a connection that is slower than Claude's default startup hold but within a held wait (ISS-14394).
 const pending = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1'
-  || (process.env.FAKE_CLAUDE_PENDING_ONCE === '1' && starts === 0);
+  || (process.env.FAKE_CLAUDE_PENDING_ONCE === '1' && starts === 0)
+  || (pendingUnlessWaited && !(Number(mcpWait) >= 30000));
 const failedServer = process.env.FAKE_CLAUDE_FAILED_SERVER === '1';
-if (trackStartup) fs.appendFileSync(startsFile, JSON.stringify({ id, pending, failedServer }) + '\n');
+if (trackStartup) fs.appendFileSync(startsFile, JSON.stringify({ id, pending, failedServer, mcpWait }) + '\n');
 let initTools = (option('--tools') || '').split(',').filter(tool =>
   !(pending || failedServer || dropped.includes('custom_graph')) || !tool.startsWith('mcp__custom_graph__'));
 if (process.env.FAKE_CLAUDE_HYPHENATE_MCP === '1') {
@@ -114,6 +118,19 @@ process.stdin.on('end', () => {
     process.exit(1);
   }
   if (payload.input.includes('WAIT_FOR_CANCEL')) { setInterval(() => {}, 1000); return; }
+  if (payload.input.includes('STDERR_EXIT')) {
+    process.stderr.write('starting\nline two\nline three\nline four\nline five\nError: hook refused the write (refusal R-31)\n');
+    process.exit(3);
+  }
+  // TOOL_WAIT_<ms>x<count>: that many tool calls, one after another, each running <ms>.
+  const toolWait = /TOOL_WAIT_(\d+)(?:x(\d+))?/.exec(payload.input);
+  for (let call = 0; toolWait && call < Number(toolWait[2] ?? 1); call += 1) {
+    fs.writeSync(1, JSON.stringify({ type: 'assistant', session_id: id,
+      message: { content: [{ type: 'tool_use', id: 'toolu_fixture_' + call, name: 'Bash', input: {} }] } }) + '\n');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(toolWait[1]));
+    fs.writeSync(1, JSON.stringify({ type: 'user', session_id: id,
+      message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_fixture_' + call, content: 'ok' }] } }) + '\n');
+  }
   if (payload.input.includes('USAGE_')) {
     const overage = payload.input.includes('USAGE_OVERAGE');
     const rejected = payload.input.includes('USAGE_REJECTED');
@@ -163,6 +180,14 @@ process.stdin.on('end', () => {
     compact.data.environmentId = 'fixture-preview';
   }
   if (payload.input.includes('LONG_SUMMARY')) compact.summary = 'x'.repeat(5000);
+  if (payload.input.includes('LARGE_DATA')) compact.data = { blob: 'y'.repeat(20 * 1024) };
+  const declaredSchema = args.includes('--json-schema') ? JSON.parse(option('--json-schema')) : null;
+  const declaredSummaryLimit = declaredSchema?.properties?.summary?.maxLength;
+  if (typeof declaredSummaryLimit === 'number' && compact.summary.length > declaredSummaryLimit) {
+    process.stdout.write(JSON.stringify({ type: 'result', session_id: id, is_error: true,
+      terminal_reason: 'structured_output_retry_exhausted' }) + '\n');
+    return;
+  }
   if (payload.input.includes('REVIEW_RECEIPT')) {
     const graphTool = option('--tools').split(',').find(tool => tool.startsWith('mcp__custom_graph__'));
     process.stdout.write(JSON.stringify({ type: 'assistant', session_id: id,
@@ -173,6 +198,14 @@ process.stdin.on('end', () => {
   if (discardReceipt) compact.data.discardReceipt = discardReceipt;
   const result = { type: 'result', session_id: reportedId, is_error: false,
     result: JSON.stringify(compact) };
+  if (payload.input.includes('PERMISSION_DENIAL')) result.permission_denials = [{ tool_name: 'Bash' }];
+  if (payload.input.includes('TOOL_USE_STOP')) result.stop_reason = 'tool_use';
+  if (payload.input.includes('REVIEW_SOURCE_CHANGE')) {
+    const cp = require('node:child_process');
+    fs.writeFileSync(path.join(process.cwd(), 'review-source-change.txt'), 'changed during review\n');
+    cp.execFileSync('git', ['add', 'review-source-change.txt'], { cwd: process.cwd() });
+    cp.execFileSync('git', ['commit', '-m', 'Change during review'], { cwd: process.cwd(), stdio: 'ignore' });
+  }
   const schemaTool = definition[option('--agent')].tools.includes('StructuredOutput')
     && option('--tools').split(',').includes('StructuredOutput')
     && option('--allowedTools').split(',').includes('StructuredOutput');

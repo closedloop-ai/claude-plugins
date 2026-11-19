@@ -23,7 +23,9 @@
 // session with members needs `--child-evidence`.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of the tracker provider's live ticket
-// template (`provider:ticket-template.md`).
+// template (`provider:ticket-template.md`). A ticket vibe did not create (no
+// VIBE_TICKET_MARKER line, or the record says `liveTicketCreatedBySession: false`)
+// is human-authored and is checked only for APPENDED_SECTIONS.
 //
 // Usage: live-ticket-check.mjs --file <ticket body .md> [--base-commit <sha>] [--worktree <path>]
 //          [--child-evidence <map .json>] [--now <iso>]
@@ -37,6 +39,7 @@ import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
+import { parseUnifiedDiff, touchesUiPath } from "./diff-rules.mjs";
 import { documentKey } from "../../vibe/scripts/tracker-key.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
@@ -60,6 +63,11 @@ export const TICKET_SECTIONS = [
   "Engineering checklist",
 ];
 
+/** The template's own line, which only a ticket vibe created carries. */
+export const VIBE_TICKET_MARKER = "Built in a vibe session by";
+/** The sections vibe appends to a human-authored ticket it adopted; its other sections are never vibe's to rewrite. */
+export const APPENDED_SECTIONS = ["Sessions", "Handoff", "Grading"];
+
 const SECTION_HEADING = /^## (.+?)\s*$/;
 const PENDING_MARKER = /(^|\s)Pending\.\s*$/m;
 const PLACEHOLDER = /<[a-z][^<>\n]*>/i;
@@ -68,11 +76,18 @@ const INLINE_CODE = /`[^`\n]*`/g;
 const ENVIRONMENT_BASE = /^- Branch: .*\(base: [^)]* at `([0-9a-f]+)`\)/m;
 const SHORT_SHA_LENGTH = 10;
 const ORCHESTRATOR_LINE = /^- (Codex session|Claude Code session) \(orchestrator\): `([^`]+)`$/gm;
+const NO_ENVIRONMENT = /^- No environment:\s*(\S.*)$/m;
+function humanNoEnvironmentAuthority(value, rulingsText) {
+  const match = /^([^,]+),\s*(\d{4}-\d{2}-\d{2}),\s*(\S.*)$/.exec(value.trim());
+  if (!match || /\b(?:orchestrator|reviewer|agent|worker|model|system)\b/i.test(match[1])) return false;
+  if (!/\b(?:AskUserQuestion|operator message|ticket|chat|session|PR #\d+|ruling)\b/i.test(match[3])) return false;
+  return typeof rulingsText === "string" && rulingsText.split("\n").some((line) => line.trim() === `- No environment: ${value.trim()}`);
+}
 const REQUIRED_CONTENT = {
   Environment: [
-    [/^- App: https:\/\/\S+/m, "has no App URL"],
-    [/^- API: https:\/\/\S+/m, "has no API URL"],
-    [/^- Storybook: https:\/\/\S+/m, "has no Storybook URL"],
+    [/^- App: (?![^\n]*\(not deployed\b)https:\/\/\S+/im, "has no App URL"],
+    [/^- API: (?![^\n]*\(not deployed\b)https:\/\/\S+/im, "has no API URL"],
+    [/^- Storybook: (?![^\n]*\(not deployed\b)https:\/\/\S+/im, "has no Storybook URL"],
   ],
   "Production flag snapshot": [
     [/^\| Flag \| Value \|$/m, "has no flag table"],
@@ -108,10 +123,24 @@ export function parseSections(body) {
   return sections;
 }
 
-export function checkLiveTicket(body, { baseCommit, record, headSha, branch, planCount = 0, planPrefix = null } = {}) {
+export function checkLiveTicket(body, { baseCommit, record, headSha, branch, planCount = 0, planPrefix = null, diffFiles = null, rulingsText = null } = {}) {
   const sections = parseSections(body);
   const problems = [];
   const prototype = isOwnedPrototypeSession(record);
+  const noEnvironmentMatch = NO_ENVIRONMENT.exec(sections.get("Environment") ?? "");
+  const noEnvironment = Boolean(noEnvironmentMatch && humanNoEnvironmentAuthority(noEnvironmentMatch[1], rulingsText));
+  const noUi = Array.isArray(diffFiles) && !touchesUiPath(diffFiles);
+  // A ticket the record says this session created is checked in full even when its editable marker line was removed.
+  const adopted = record?.liveTicketCreatedBySession === false
+    || (record?.liveTicketCreatedBySession !== true && !body.includes(VIBE_TICKET_MARKER));
+  if (noEnvironmentMatch && !noEnvironment) {
+    problems.push({ section: "Environment", problem: "a no-environment ruling needs a dated human identity and source copied exactly from the session's canonical private vibe-changes.md" });
+  }
+  if (noEnvironment && !noUi) {
+    problems.push({ section: "Environment", problem: Array.isArray(diffFiles)
+      ? "records a no-environment ruling, but the diff touches a UI path"
+      : "records a no-environment ruling without a classified diff" });
+  }
   if (prototype) {
     if (branch !== undefined && !isOwnedPrototypeSession(record, branch)) {
       problems.push({ section: "Environment", problem: "worktree is not on its owned prototype branch" });
@@ -119,13 +148,13 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
     try { requirePrototypePublication(record, headSha); }
     catch (error) { problems.push({ section: "Environment", problem: error.message }); }
   }
-  for (const heading of TICKET_SECTIONS) {
+  for (const heading of adopted ? APPENDED_SECTIONS : TICKET_SECTIONS) {
     const content = sections.get(heading);
     if (content === undefined) {
       problems.push({ section: heading, problem: "missing" });
       continue;
     }
-    problems.push(...checkSection(heading, content, prototype));
+    problems.push(...checkSection(heading, content, prototype, noEnvironment && noUi));
     if (heading === "Sessions" && record && (record.codexSessions || record.claudeSessions)) {
       const expected = [
         ...(record.codexSessions?.orchestrators ?? []).map(({ id }) => `Codex session:${id}`),
@@ -174,7 +203,7 @@ function checkSessionPlan(record, planCount) {
   return [];
 }
 
-function checkSection(heading, content, prototype) {
+function checkSection(heading, content, prototype, noEnvironment) {
   if (content.trim() === "") {
     return [{ section: heading, problem: "empty" }];
   }
@@ -187,7 +216,8 @@ function checkSection(heading, content, prototype) {
   if (placeholder) {
     problems.push({ section: heading, problem: `still has the template placeholder ${placeholder[0].slice(0, 60)}` });
   }
-  const requirements = prototype && (heading === "Environment" || heading === "Production flag snapshot")
+  const environmentOptional = noEnvironment && (heading === "Environment" || heading === "Production flag snapshot");
+  const requirements = (prototype || environmentOptional) && (heading === "Environment" || heading === "Production flag snapshot")
     ? [] : REQUIRED_CONTENT[heading] ?? [];
   for (const [pattern, problem] of requirements) {
     if (!pattern.test(content)) {
@@ -225,6 +255,7 @@ function main() {
       throw new Error("--file is required.");
     }
     const record = values.worktree ? readSessionRecord(values.worktree) : undefined;
+    const rulingsFile = values.worktree ? path.join(git(values.worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md") : null;
     const result = checkLiveTicket(readFileSync(path.resolve(values.file), "utf8"), {
       baseCommit: values["base-commit"],
       record,
@@ -232,6 +263,9 @@ function main() {
       headSha: values.worktree ? git(values.worktree, ["rev-parse", "HEAD"]) : undefined,
       planCount: values.worktree ? localPlanFiles(path.resolve(values.worktree)).length : 0,
       planPrefix: values.worktree ? sessionLocalPlanPrefix(path.resolve(values.worktree)) : null,
+      diffFiles: values.worktree && values["base-commit"]
+        ? parseUnifiedDiff(git(values.worktree, ["diff", "--unified=0", values["base-commit"], "--"])) : null,
+      rulingsText: rulingsFile && existsSync(rulingsFile) ? readFileSync(rulingsFile, "utf8") : null,
     });
     if (values["child-evidence"]) {
       result.children = checkChildren(values, record);

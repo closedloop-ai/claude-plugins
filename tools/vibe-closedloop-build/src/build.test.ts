@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -61,12 +61,23 @@ function tree(dir: string): Map<string, string> {
 }
 
 describe("the files the build reads", () => {
+  it("AC-018 refuses duplicate marketplace display names before replacing the output", () => {
+    const codex = ".codex-plugin/plugin.json";
+    const paths = fixture({ [codex]: JSON.stringify({ name: "vibe-generic", interface: { displayName: "Acme Vibe" } }) }, {},
+      { manifests: { [codex]: { interface: { displayName: " acme vibe " } } } });
+    const marker = join(paths.output, "existing.txt");
+    write(marker, "prior generation\n");
+    expect(() => buildClosedLoopVibe(paths)).toThrow(/same marketplace display name/);
+    expect(readFileSync(marker, "utf8")).toBe("prior generation\n");
+  });
+
   it("leaves out tests, evals, fixtures, caches and test support, and keeps runtime files that only look like tests", () => {
     const paths = fixture({
       "evals/case/prompt.md": "x", "evals/codex/model-policy.json": "{}", "tools/python/test_a.py": "x", "tools/python/skill_split.py": "x",
       "skills/a/scripts/run.test.mjs": "x", "skills/a/scripts/fixtures/f.json": "{}", "skills/a/scripts/__pycache__/m.pyc": "x",
       "skills/cl-work-report/scripts/test_render_report.py": "x", "skills/vibe/scripts/test-fixtures.mjs": "x",
       "skills/vibe/scripts/skill-split.mjs": "x", "skills/handoff/scripts/diff-rules-test-fixture.mjs": "x",
+      "skills/handoff/scripts/frozen-render-test-fixture.mjs": "x", "skills/any/scripts/new-module-test-fixture.mjs": "x",
       "skills/codex-fleet-monitor/scripts/test-support.mjs": "x", "skills/fleet-orchestrator/scripts/fleet-test-support.mjs": "x",
       "skills/cl-sweep/scripts/core-client-fixture.mjs": "x", "skills/a/scripts/next-test-fixture.mjs": "x",
       "skills/a/scripts/run.mjs": "x", "skills/vibe/scripts/test-files.mjs": "x", "skills/handoff/scripts/targeted-tests-ruling.mjs": "x",
@@ -78,9 +89,9 @@ describe("the files the build reads", () => {
   it("ships every runtime file of plugins/vibe and no test", () => {
     const files = sourceFiles(DEFAULT_PATHS.source);
     // The Codex model policy is runtime data (cl-sweep/scripts/model-policy.mjs reads it at load); no other eval file ships.
-    expect(files.filter((file) => /\.test\.|(?:^|\/)test_[^/]*\.py$|^evals\/(?!codex\/model-policy\.json$)|^tools\/|\/fixtures\//.test(file))).toEqual([]);
+    expect(files.filter((file) => /\.test\.|(?:^|\/)test_[^/]*\.py$|^evals\/(?!codex\/model-policy\.json$)|^tools\/|\/fixtures\/|-test-fixture\.mjs$|(?:^|\/|-)test-support\.mjs$/.test(file))).toEqual([]);
     for (const runtime of ["skills/vibe/scripts/test-files.mjs", "skills/vibe/scripts/tested-head.mjs", "skills/handoff/scripts/test-integrity.mjs",
-      "skills/vibe/scripts/dist/main-sync.mjs", "skills/cl-work-report/assets/mermaid-11.16.0.min.js", "evals/codex/model-policy.json"]) expect(files).toContain(runtime);
+      "skills/vibe/scripts/dist/main-sync.mjs", "lib/vibe/scripts/provider.mjs", "hooks/hook-dispatch.mjs", "hooks/protected-write-guard.mjs", "shared/process-identity.mjs", "skills/cl-work-report/assets/mermaid-11.16.0.min.js", "evals/codex/model-policy.json"]) expect(files).toContain(runtime);
     expect(isExcluded("skills/vibe/scripts/test-fixtures.mjs")).toBe(true);
   });
 });
@@ -184,6 +195,15 @@ describe("assembly", () => {
 });
 
 describe("the ClosedLoop vibe from this repository", () => {
+  it("AC-018 exposes distinct marketplace names for the generic and provider variants", () => {
+    const codex = ".codex-plugin/plugin.json";
+    const generic = JSON.parse(readFileSync(join(DEFAULT_PATHS.source, codex), "utf8"));
+    const built = JSON.parse(builtText(codex));
+    expect(generic.interface.displayName).toBe("Vibe Generic");
+    expect(generic.interface.shortDescription).toBe("Start a vibe session in any Git repository.");
+    expect(built.interface.displayName).toBe("ClosedLoop Vibe");
+  });
+
   const output = () => {
     const dir = join(temp(), "vibe");
     buildClosedLoopVibe({ ...DEFAULT_PATHS, output: dir });
@@ -268,8 +288,8 @@ describe("the ClosedLoop vibe from this repository", () => {
     const version = JSON.parse(readFileSync(join(dir, ".codex-plugin/plugin.json"), "utf8")).version as string;
     mkdirSync(join(cache, "vibe"), { recursive: true });
     symlinkSync(dir, join(cache, "vibe", version));
-    const core = join(cache, "vibe-core", "1.0.0");
-    cpSync(join(REPO, "plugins/vibe-core"), core, { recursive: true, filter: (path) => !path.includes("node_modules") });
+    // The provider module ships inside the built vibe (lib/ moved there from vibe-core, ISS-14116); load it from the installed copy.
+    const core = join(cache, "vibe", version);
     const repo = join(home, "repo");
     write(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
     write(join(repo, ".closedloop-ai", "vibe-recipes.json"), JSON.stringify({ schema: 1, provider: "vibe-closedloop-provider" }));
