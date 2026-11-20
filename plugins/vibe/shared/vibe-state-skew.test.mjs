@@ -13,16 +13,11 @@ import { launcherWorker, recordWorkerScope } from "../lib/vibe/scripts/worker-sc
 import { Layout, VIBE_SOURCE, machine, tempRoot, writePlugin } from "./vibe-core-skew-test-support.mjs";
 
 const FORCE_PUSH = ["git", "push", "-f", "origin", "fix/x"].join(" ");
-/** What a vibe needs to run its guards: the runtime's import closure and both manifests. */
-const RUNTIME_PARTS = Object.freeze(["hooks", "lib", "shared"]);
-
 /** Installs a copy of this checkout's vibe, as version `version`, in machine `m`'s cache without registering it. */
 function installCopy(m, version) {
-  const root = writePlugin(path.join(m.cache, "vibe", version), { name: "vibe", version });
-  for (const part of RUNTIME_PARTS) {
-    cpSync(path.join(VIBE_SOURCE, part), path.join(root, part), { recursive: true, filter: (file) => !file.endsWith(".test.mjs") });
-  }
-  return root;
+  const root = path.join(m.cache, "vibe", version);
+  cpSync(VIBE_SOURCE, root, { recursive: true, filter: file => !file.endsWith(".test.mjs") && path.basename(file) !== "node_modules" });
+  return writePlugin(root, { name: "vibe", version });
 }
 
 /** The module at `relative` in the vibe copy at `root`. */

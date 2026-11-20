@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { parse } from "yaml";
+import { agentFrontmatter } from "../../../plugins/vibe/lib/vibe/scripts/agent-frontmatter.mjs";
 import { z } from "zod";
 import { capabilitiesSchema, type Capability } from "./contracts.js";
 import { isVibePlugin } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 import { readPluginManifest } from "./plugin-root.js";
 
-const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 const metadataSchema = z.object({ name: z.string(), description: z.string().min(1),
   model: z.string().min(1), tools: z.union([z.string(), z.array(z.string())]),
   skills: z.union([z.string(), z.array(z.string())]).optional(),
@@ -25,15 +24,14 @@ export function readDefinition(agentRoot: string, agentName: string, capabilityI
     readPluginManifest(root),
   );
   const source = readFileSync(file, "utf8");
-  const match = source.match(frontmatter);
-  if (!match) throw new Error("Agent has no canonical frontmatter");
-  const metadata = metadataSchema.parse(parse(match[1] ?? ""));
+  const { metadata: fields, prompt } = agentFrontmatter(source);
+  const metadata = metadataSchema.parse(fields);
   if (metadata.name !== agentName) throw new Error("Agent name does not match canonical file");
   const tools = asList(metadata.tools);
   if (tools.some((tool) => !builtins.has(tool))) throw new Error("Unrecognized canonical built-in tool");
   const capabilities = capabilitiesSchema.parse(capabilityInput).sort((a, b) => a.name.localeCompare(b.name));
   const digest = createHash("sha256").update(source).update(JSON.stringify(capabilities)).digest("hex");
-  return { root, version: manifest.version, name: `${manifest.name}:${agentName}`, metadata, prompt: match[2] ?? "", tools,
+  return { root, version: manifest.version, name: `${manifest.name}:${agentName}`, metadata, prompt, tools,
     skills: asList(metadata.skills), binding: { agentRoot: root, agentName, digest, capabilities } };
 }
 

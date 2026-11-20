@@ -7270,7 +7270,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse6(src, reviver, options) {
+    function parse5(src, reviver, options) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -7311,7 +7311,7 @@ var require_public_api = __commonJS({
         return value.toString(options);
       return new Document.Document(value, _replacer, options).toString(options);
     }
-    exports.parse = parse6;
+    exports.parse = parse5;
     exports.parseAllDocuments = parseAllDocuments;
     exports.parseDocument = parseDocument2;
     exports.stringify = stringify;
@@ -7372,7 +7372,7 @@ var require_dist = __commonJS({
 
 // node_modules/picomatch/lib/constants.js
 var require_constants = __commonJS({
-  "node_modules/picomatch/lib/constants.js"(exports, module6) {
+  "node_modules/picomatch/lib/constants.js"(exports, module7) {
     "use strict";
     var WIN_SLASH = "\\\\/";
     var WIN_NO_SLASH = `[^${WIN_SLASH}]`;
@@ -7443,7 +7443,7 @@ var require_constants = __commonJS({
       word: "A-Za-z0-9_",
       xdigit: "A-Fa-f0-9"
     };
-    module6.exports = {
+    module7.exports = {
       DEFAULT_MAX_EXTGLOB_RECURSION,
       MAX_LENGTH: 1024 * 64,
       POSIX_REGEX_SOURCE,
@@ -7638,7 +7638,7 @@ var require_utils = __commonJS({
 
 // node_modules/picomatch/lib/scan.js
 var require_scan = __commonJS({
-  "node_modules/picomatch/lib/scan.js"(exports, module6) {
+  "node_modules/picomatch/lib/scan.js"(exports, module7) {
     "use strict";
     var utils = require_utils();
     var {
@@ -7970,13 +7970,13 @@ var require_scan = __commonJS({
       }
       return state;
     };
-    module6.exports = scan;
+    module7.exports = scan;
   }
 });
 
 // node_modules/picomatch/lib/parse.js
 var require_parse = __commonJS({
-  "node_modules/picomatch/lib/parse.js"(exports, module6) {
+  "node_modules/picomatch/lib/parse.js"(exports, module7) {
     "use strict";
     var constants = require_constants();
     var utils = require_utils();
@@ -8227,7 +8227,7 @@ var require_parse = __commonJS({
       }
       return { risky: false };
     };
-    var parse6 = (input, options) => {
+    var parse5 = (input, options) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected a string");
       }
@@ -8397,7 +8397,7 @@ var require_parse = __commonJS({
             output = token.close = `)$))${extglobStar}`;
           }
           if (token.inner.includes("*") && (rest = remaining()) && /^\.[^\\/.]+$/.test(rest)) {
-            const expression = parse6(rest, { ...options, fastpaths: false }).output;
+            const expression = parse5(rest, { ...options, fastpaths: false }).output;
             output = token.close = `)${expression})${extglobStar})`;
           }
           if (token.prev.type === "bos") {
@@ -8920,7 +8920,7 @@ var require_parse = __commonJS({
       }
       return state;
     };
-    parse6.fastpaths = (input, options) => {
+    parse5.fastpaths = (input, options) => {
       const opts = { ...options };
       const max = typeof opts.maxLength === "number" ? Math.min(MAX_LENGTH, opts.maxLength) : MAX_LENGTH;
       const len = input.length;
@@ -8985,16 +8985,16 @@ var require_parse = __commonJS({
       }
       return source;
     };
-    module6.exports = parse6;
+    module7.exports = parse5;
   }
 });
 
 // node_modules/picomatch/lib/picomatch.js
 var require_picomatch = __commonJS({
-  "node_modules/picomatch/lib/picomatch.js"(exports, module6) {
+  "node_modules/picomatch/lib/picomatch.js"(exports, module7) {
     "use strict";
     var scan = require_scan();
-    var parse6 = require_parse();
+    var parse5 = require_parse();
     var utils = require_utils();
     var constants = require_constants();
     var isObject = (val) => val && typeof val === "object" && !Array.isArray(val);
@@ -9082,7 +9082,7 @@ var require_picomatch = __commonJS({
     picomatch4.isMatch = (str, patterns, options) => picomatch4(patterns, options)(str);
     picomatch4.parse = (pattern, options) => {
       if (Array.isArray(pattern)) return pattern.map((p) => picomatch4.parse(p, options));
-      return parse6(pattern, { ...options, fastpaths: false });
+      return parse5(pattern, { ...options, fastpaths: false });
     };
     picomatch4.scan = (input, options) => scan(input, options);
     picomatch4.compileRe = (state, options, returnOutput = false, returnState = false) => {
@@ -9108,10 +9108,10 @@ var require_picomatch = __commonJS({
       }
       let parsed = { negated: false, fastpaths: true };
       if (options.fastpaths !== false && (input[0] === "." || input[0] === "*")) {
-        parsed.output = parse6.fastpaths(input, options);
+        parsed.output = parse5.fastpaths(input, options);
       }
       if (!parsed.output) {
-        parsed = parse6(input, options);
+        parsed = parse5(input, options);
       }
       return picomatch4.compileRe(parsed, options, returnOutput, returnState);
     };
@@ -9125,13 +9125,13 @@ var require_picomatch = __commonJS({
       }
     };
     picomatch4.constants = constants;
-    module6.exports = picomatch4;
+    module7.exports = picomatch4;
   }
 });
 
 // node_modules/picomatch/index.js
 var require_picomatch2 = __commonJS({
-  "node_modules/picomatch/index.js"(exports, module6) {
+  "node_modules/picomatch/index.js"(exports, module7) {
     "use strict";
     var pico = require_picomatch();
     var utils = require_utils();
@@ -9142,15 +9142,15 @@ var require_picomatch2 = __commonJS({
       return pico(glob, options, returnState);
     }
     Object.assign(picomatch4, pico);
-    module6.exports = picomatch4;
+    module7.exports = picomatch4;
   }
 });
 
 // node_modules/typescript/lib/typescript.js
 var require_typescript = __commonJS({
-  "node_modules/typescript/lib/typescript.js"(exports, module6) {
+  "node_modules/typescript/lib/typescript.js"(exports, module7) {
     var ts5 = {};
-    ((module7) => {
+    ((module8) => {
       "use strict";
       var __defProp2 = Object.defineProperty;
       var __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
@@ -11416,7 +11416,7 @@ var require_typescript = __commonJS({
         writeFileEnsuringDirectories: () => writeFileEnsuringDirectories,
         zipWith: () => zipWith
       });
-      module7.exports = __toCommonJS(typescript_exports);
+      module8.exports = __toCommonJS(typescript_exports);
       var versionMajorMinor = "5.9";
       var version = "5.9.3";
       var Comparison = /* @__PURE__ */ ((Comparison3) => {
@@ -196034,7 +196034,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         return ts_textChanges_exports.ChangeTracker.with(
           { host, formatContext, preferences },
           (changeTracker) => {
-            const parsed = contents.map((c) => parse6(sourceFile, c));
+            const parsed = contents.map((c) => parse5(sourceFile, c));
             const flattenedLocations = focusLocations && flatten(focusLocations);
             for (const nodes of parsed) {
               placeNodeGroup(
@@ -196047,7 +196047,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           }
         );
       }
-      function parse6(sourceFile, content) {
+      function parse5(sourceFile, content) {
         const nodeKinds = [
           {
             parse: () => createSourceFile(
@@ -219880,8 +219880,8 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
       return ts5;
     }, set exports(v) {
       ts5 = v;
-      if (typeof module6 !== "undefined" && module6.exports) {
-        module6.exports = v;
+      if (typeof module7 !== "undefined" && module7.exports) {
+        module7.exports = v;
       }
     } });
   }
@@ -224250,7 +224250,7 @@ async function readInput(stream = process.stdin, emptyError) {
 }
 
 // src/main-sync-ci.ts
-var import_yaml3 = __toESM(require_dist(), 1);
+var import_yaml2 = __toESM(require_dist(), 1);
 import { spawnSync } from "node:child_process";
 
 // src/ledger.ts
@@ -224264,10 +224264,13 @@ var module3 = await vibeCore("lib/vibe/scripts/test-state-isolation.mjs");
 var { assertIsolatedTestRead } = module3;
 
 // src/definition.ts
-var import_yaml = __toESM(require_dist(), 1);
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync3, realpathSync as realpathSync3 } from "node:fs";
 import { join as join2 } from "node:path";
+
+// vibe-core:lib/vibe/scripts/agent-frontmatter.mjs
+var module4 = await vibeCore("lib/vibe/scripts/agent-frontmatter.mjs");
+var { agentFrontmatter, agentFrontmatterName } = module4;
 
 // src/plugin-root.ts
 import { existsSync, readFileSync as readFileSync2, realpathSync as realpathSync2 } from "node:fs";
@@ -224312,7 +224315,6 @@ function isPluginRoot(root) {
 }
 
 // src/definition.ts
-var frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 var metadataSchema = external_exports.object({
   name: external_exports.string(),
   description: external_exports.string().min(1),
@@ -224343,9 +224345,8 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
     readPluginManifest(root)
   );
   const source = readFileSync3(file, "utf8");
-  const match = source.match(frontmatter);
-  if (!match) throw new Error("Agent has no canonical frontmatter");
-  const metadata = metadataSchema.parse((0, import_yaml.parse)(match[1] ?? ""));
+  const { metadata: fields, prompt } = agentFrontmatter(source);
+  const metadata = metadataSchema.parse(fields);
   if (metadata.name !== agentName) throw new Error("Agent name does not match canonical file");
   const tools = asList(metadata.tools);
   if (tools.some((tool) => !builtins.has(tool))) throw new Error("Unrecognized canonical built-in tool");
@@ -224356,7 +224357,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
     version: manifest.version,
     name: `${manifest.name}:${agentName}`,
     metadata,
-    prompt: match[2] ?? "",
+    prompt,
     tools,
     skills: asList(metadata.skills),
     binding: { agentRoot: root, agentName, digest: digest2, capabilities }
@@ -225067,8 +225068,8 @@ import { existsSync as existsSync4, readFileSync as readFileSync6 } from "node:f
 import { join as join5 } from "node:path";
 
 // vibe-core:lib/vibe/scripts/repository-commands.mjs
-var module4 = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
-var { LOCKFILE_INSTALLS, agentsTestCommand } = module4;
+var module5 = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
+var { LOCKFILE_INSTALLS, agentsTestCommand } = module5;
 
 // src/main-sync-recipe.ts
 var argvSchema = external_exports.array(external_exports.string().min(1)).min(1).max(256);
@@ -225147,11 +225148,11 @@ function uncheckedReason(purpose, commandCount) {
 }
 
 // vibe-core:lib/vibe/scripts/github-remote.mjs
-var module5 = await vibeCore("lib/vibe/scripts/github-remote.mjs");
-var { githubRepository } = module5;
+var module6 = await vibeCore("lib/vibe/scripts/github-remote.mjs");
+var { githubRepository } = module6;
 
 // src/workflow-lane-definitions.ts
-var import_yaml2 = __toESM(require_dist(), 1);
+var import_yaml = __toESM(require_dist(), 1);
 var workflowScalar = external_exports.union([external_exports.string(), external_exports.number().finite(), external_exports.boolean()]);
 var workflowRun = external_exports.object({ "working-directory": external_exports.string().optional(), shell: external_exports.string().optional() }).strict();
 var condition = external_exports.union([external_exports.string(), external_exports.boolean()]).refine((value) => {
@@ -225198,7 +225199,7 @@ var laneWorkflow = external_exports.object({
   defaults: external_exports.object({ run: workflowRun.optional() }).strict().optional()
 }).strict();
 function workflowLaneDefinitions(source) {
-  const document = (0, import_yaml2.parseDocument)(source, { uniqueKeys: true });
+  const document = (0, import_yaml.parseDocument)(source, { uniqueKeys: true });
   if (document.errors.length || document.warnings.length) throw new Error("invalid/unsupported workflow YAML");
   const workflow2 = laneWorkflow.parse(document.toJS({ maxAliasCount: 0 }));
   const { jobs, ...globals } = workflow2;
@@ -225328,7 +225329,7 @@ function verifyExternalCi(value, input) {
   });
 }
 function reviewedProducer(workflowText) {
-  const steps = producerSchema2.parse((0, import_yaml3.parse)(workflowText)).jobs["desktop-e2e"].steps;
+  const steps = producerSchema2.parse((0, import_yaml2.parse)(workflowText)).jobs["desktop-e2e"].steps;
   const checkout = only(steps.filter((step2) => step2.name === "Checkout repository"));
   const test = only(steps.filter((step2) => step2.name === "Run Electron e2e"));
   if (!checkout.uses?.startsWith("actions/checkout@") || checkout.with?.ref !== REVIEWED_CHECKOUT_REF || !test.run || digest(test.run) !== REVIEWED_ELECTRON_RUN_SHA256) throw new MainSyncError("Pinned loaded-main CI producer has no recognized trusted source/verdict interface");
@@ -225392,7 +225393,7 @@ function rejectReportReplay(command) {
 // src/main-sync-report-command.ts
 import { existsSync as existsSync6, readFileSync as readFileSync9 } from "node:fs";
 import { dirname as dirname5, isAbsolute as isAbsolute3, join as join8, relative as relative2, resolve as resolve4 } from "node:path";
-var import_yaml4 = __toESM(require_dist(), 1);
+var import_yaml3 = __toESM(require_dist(), 1);
 var import_picomatch2 = __toESM(require_picomatch2(), 1);
 
 // src/main-sync-input-references.ts
@@ -225713,8 +225714,8 @@ function builtin(expression, names) {
   if (import_typescript.default.isIdentifier(expression)) {
     const declaration2 = localDeclaration(expression);
     if (!declaration2 || !import_typescript.default.isImportSpecifier(declaration2)) return false;
-    const module6 = declaration2.parent.parent.parent;
-    return import_typescript.default.isImportDeclaration(module6) && import_typescript.default.isStringLiteral(module6.moduleSpecifier) && names.includes(module6.moduleSpecifier.text);
+    const module7 = declaration2.parent.parent.parent;
+    return import_typescript.default.isImportDeclaration(module7) && import_typescript.default.isStringLiteral(module7.moduleSpecifier) && names.includes(module7.moduleSpecifier.text);
   }
   if (!import_typescript.default.isPropertyAccessExpression(expression) || !import_typescript.default.isIdentifier(expression.expression)) return false;
   const declaration = localDeclaration(expression.expression);
@@ -226031,8 +226032,8 @@ function importedConstant(root, source, declaration, environment) {
   const name = (declaration.propertyName ?? declaration.name).text;
   for (const file of files) {
     if (!existsSync5(join7(root, file)) || !MODULE_PATH.test(file) || isPlanFile(root, file)) continue;
-    const module6 = readInputModule(root, file, environment);
-    for (const statement of module6.statements) {
+    const module7 = readInputModule(root, file, environment);
+    for (const statement of module7.statements) {
       if (!import_typescript.default.isVariableStatement(statement) || !statement.modifiers?.some((modifier) => modifier.kind === import_typescript.default.SyntaxKind.ExportKeyword) || !(statement.declarationList.flags & import_typescript.default.NodeFlags.Const)) continue;
       const item = statement.declarationList.declarations.find((item2) => import_typescript.default.isIdentifier(item2.name) && item2.name.text === name);
       if (item?.initializer) return { expression: item.initializer, file };
@@ -226548,7 +226549,7 @@ function scriptsAt(directory) {
 function workspaceDirectories(root, workspace) {
   const files = committedFiles(root).filter((file) => file.endsWith("/package.json") || file === "package.json");
   if (files.length > 4096) throw unresolved("workspace manifest bound");
-  const config = external_exports.object({ packages: external_exports.array(external_exports.string()).optional() }).passthrough().parse((0, import_yaml4.parse)(readFileSync9(workspace, "utf8")));
+  const config = external_exports.object({ packages: external_exports.array(external_exports.string()).optional() }).passthrough().parse((0, import_yaml3.parse)(readFileSync9(workspace, "utf8")));
   const patterns = config.packages ?? [];
   const finite = config.packages !== void 0 && patterns.every((pattern) => WORKSPACE_PATTERN.test(pattern));
   const matches = finite ? (0, import_picomatch2.default)(patterns, { dot: true }) : void 0;
@@ -226662,8 +226663,8 @@ function constant(node) {
 function declares(statement, declaration) {
   return Boolean(statement && import_typescript2.default.isVariableStatement(statement) && statement.declarationList.declarations.length === 1 && statement.declarationList.declarations[0] === declaration);
 }
-function nativeCall(node, name, module6) {
-  return import_typescript2.default.isCallExpression(node) && inputCallName(node.expression) === name && inputBuiltin(node.expression, [`node:${module6}`, module6]);
+function nativeCall(node, name, module7) {
+  return import_typescript2.default.isCallExpression(node) && inputCallName(node.expression) === name && inputBuiltin(node.expression, [`node:${module7}`, module7]);
 }
 function sameIdentifier(expression, declaration) {
   return Boolean(expression && import_typescript2.default.isIdentifier(expression) && inputDeclaration(expression) === declaration);
@@ -227494,7 +227495,7 @@ import { existsSync as existsSync9, lstatSync as lstatSync5, readFileSync as rea
 import { createRequire } from "node:module";
 import { dirname as dirname9, join as join14, relative as relative5, sep as sep3 } from "node:path";
 import { realpathSync as realpathSync10 } from "node:fs";
-var import_yaml5 = __toESM(require_dist(), 1);
+var import_yaml4 = __toESM(require_dist(), 1);
 
 // src/main-sync-input-files.ts
 import { lstatSync as lstatSync4, readFileSync as readFileSync12, readdirSync as readdirSync2, realpathSync as realpathSync9 } from "node:fs";
@@ -227704,7 +227705,7 @@ function targetPackageVersion(root, owner, installed) {
   if (!specifier?.startsWith("catalog:")) return installed;
   const file = join14(root, WORKSPACE);
   if (!existsSync9(file)) throw new MainSyncError(`Catalog-backed producer has no pnpm workspace: ${owner.name}`, "NEEDS_CHANGE");
-  const workspace = workspaceSchema.parse((0, import_yaml5.parse)(readFileSync13(file, "utf8")));
+  const workspace = workspaceSchema.parse((0, import_yaml4.parse)(readFileSync13(file, "utf8")));
   const catalogName = specifier.slice("catalog:".length);
   const version = (catalogName ? workspace.catalogs?.[catalogName] : workspace.catalog)?.[owner.name];
   if (!version) throw new MainSyncError(`Catalog has no producer version: ${owner.name}`, "NEEDS_CHANGE");
@@ -228491,7 +228492,7 @@ function biomeCheckCommands(paths) {
 
 // src/pull-request-workflows.ts
 var import_picomatch3 = __toESM(require_picomatch2(), 1);
-var import_yaml6 = __toESM(require_dist(), 1);
+var import_yaml5 = __toESM(require_dist(), 1);
 var PULL_REQUEST_EVENTS = ["pull_request", "pull_request_target"];
 var patternList = external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional();
 var eventFilter = external_exports.object({ paths: patternList, "paths-ignore": patternList }).passthrough().nullable();
@@ -228505,7 +228506,7 @@ function pathFilteredPullRequestWorkflows(workflows, changedFiles) {
   for (const file of workflows) {
     let parsed;
     try {
-      parsed = workflow.parse((0, import_yaml6.parse)(file.text, { maxAliasCount: 0 }));
+      parsed = workflow.parse((0, import_yaml5.parse)(file.text, { maxAliasCount: 0 }));
     } catch (error) {
       throw new Error(`${file.path}: not a readable workflow (${error instanceof Error ? error.message : String(error)})`);
     }

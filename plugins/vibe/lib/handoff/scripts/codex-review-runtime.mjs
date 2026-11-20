@@ -1,7 +1,30 @@
 // Read a managed Codex reviewer's exact completed turn from App Server.
 // Its saved MCP items have type mcpToolCall with server, tool and status:
 // https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/thread_history.rs
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { fileURLToPath } from "node:url";
+import { finalMarker, read as readHelpers, readHelperInput, resolveHelperBrief } from "../../fleet-orchestrator/scripts/helpers.mjs";
+import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { assembleProviderText, sessionBinding } from "../../vibe/scripts/provider.mjs";
+import { graphAliases } from "./mcp-tool-names.mjs";
 import { connectViaProxy, daemonSocket } from "../../codex-fleet-monitor/scripts/liveness.mjs";
+import { findCli } from "../../../skills/vibe/scripts/plugin-cli.mjs";
+
+/** Use the same installed executable to discover a daemon and connect its proxy. */
+function connectReviewProxy(discover, connect, resolveCli = findCli) {
+  const codex = resolveCli("codex");
+  if (!codex) throw new Error("Could not find a Codex executable on PATH or in the ChatGPT app bundle");
+  return connect(discover(codex), codex);
+}
+
+/** Open the independent receipt reader's proxy connection. */
+export function reviewReadClient({ discover = daemonSocket, connect = connectViaProxy, resolveCli } = {}) {
+  return connectReviewProxy(discover, connect, resolveCli);
+}
 
 function nativeMcpName(item) {
   return `mcp__${item.server.replaceAll("-", "_")}__${item.tool}`;
@@ -32,7 +55,7 @@ export function codexGraphSetupProblem(runtime, aliases) {
 
 /** Read one exact completed turn and its raw App Server items. */
 export async function readCodexTurnItems(sessionId, turnId, client) {
-  const owned = client ?? connectViaProxy(daemonSocket());
+  const owned = client ?? reviewReadClient();
   try {
     if (!client) await owned.initialize();
     const { thread } = await owned.request("thread/read", { threadId: sessionId, includeTurns: false });
@@ -62,4 +85,128 @@ export async function readCodexReviewTurn(sessionId, turnId, client) {
   const loadedTurn = { ...turn, items };
   delete loadedTurn.itemsView;
   return observedCodexTurn({ ...thread, turns: [loadedTurn] }, sessionId, turnId);
+}
+
+const helperCli = fileURLToPath(new URL("../../fleet-orchestrator/scripts/helpers.mjs", import.meta.url));
+
+/** Use the ledger's guarded command entry for each transition, including its file lock. */
+function helperAction(orchDir, action, name, ...args) {
+  execFileSync(process.execPath, [helperCli, orchDir, action, name, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** The Codex host's core client owns daemon discovery, the transport and the live connection. */
+export async function managedReviewClient({ core, resolveCli } = {}) {
+  const { AppServerClient, initializeClient, managedDaemon } = core ?? await import("../../../skills/cl-sweep/scripts/core-client-process.mjs");
+  const client = connectReviewProxy(codex => managedDaemon({ runtime: "codex", codex }).socketPath,
+    (socket, codex) => new AppServerClient({ runtime: "codex", transport: "proxy", socket, codex }), resolveCli);
+  try { await initializeClient(client); return client; }
+  catch (error) { client.close(); throw error; }
+}
+
+/** Run a read-only managed turn and save the actual final answer. Acceptance is a separate coordinator action. */
+export async function runManagedReviewer(input, openClient = managedReviewClient) {
+  const { REVIEW_ROLES } = await import("./review-receipts.mjs");
+  if (!REVIEW_ROLES.includes(input.role)) throw new Error("Unknown native review role: " + input.role);
+  const { initializeSession, startThread, runTurn, parseGenericCallback, EVENT_PREFIX } =
+    await import("../../../skills/cl-sweep/scripts/native-app-server-orchestrator.mjs");
+  const { DEFAULT_REASONING_EFFORT } = await import("../../../skills/cl-sweep/scripts/model-policy.mjs");
+  const worktree = realpathSync(input.worktree);
+  const orchDir = realpathSync(resolveWorkDir(input.orchDir).dir);
+  if (orchDir === worktree || orchDir.startsWith(worktree + path.sep)) throw new Error("Reviewer evidence belongs outside the source worktree");
+  if (Object.hasOwn(readHelpers(orchDir), input.helper)) throw new Error("Choose a fresh reviewer helper name");
+  const capabilities = readHelperInput(input.capabilities);
+  const reads = JSON.parse(capabilities.text);
+  const binding = sessionBinding(worktree);
+  const aliases = graphAliases(reads);
+  if (reads.some(capability => capability.access !== "read")) throw new Error("Reviewers require read-only capabilities");
+  const brief = readHelperInput(resolveHelperBrief(orchDir, input.brief));
+  const definitionPath = fileURLToPath(new URL(`../../../agents/${input.role}.md`, import.meta.url));
+  if (realpathSync(definitionPath) !== definitionPath) throw new Error("Canonical reviewer definition must be inside its owning plugin");
+  const definition = readHelperInput(definitionPath);
+  const directory = mkdtempSync(path.join(orchDir, "codex-review-"));
+  const stateFile = path.join(directory, "session.json");
+  const report = path.join(directory, "report.json");
+  const deliverable = path.join(directory, "final.txt");
+  const client = await openClient();
+  let helper;
+  let activeTurn;
+  try {
+    const { listModels } = await import("../../../skills/cl-sweep/scripts/model-catalog.mjs");
+    const modelCatalog = await listModels(client);
+    const session = initializeSession({ stateFile, cwd: worktree, serviceName: input.helper, approvalPolicy: "never",
+      sandbox: "read-only", model: input.model, effort: DEFAULT_REASONING_EFFORT, modelCatalog });
+    if (session.options.model !== input.model) throw new Error("The managed Codex App Server cannot run the requested review model " + input.model);
+    // Both operations share one initialized connection, including the first turn on a newly allocated thread.
+    const connection = { client, initializeClient: async () => {} };
+    const { threadId } = await startThread({ stateFile }, connection);
+    helperAction(orchDir, "start", input.helper, "--kind", input.role === "vibe-verify-worker" ? "verifier" : "reviewer",
+      "--runtime", "codex", "--role", input.role, "--agent-definition", definitionPath, "--worker-id", threadId,
+      "--worktree", worktree, "--brief", input.brief, "--capabilities", capabilities.fingerprint.path);
+    helper = readHelpers(orchDir)[input.helper];
+    if (!isDeepStrictEqual(helper.agentDefinition, definition.fingerprint) || !isDeepStrictEqual(helper.capabilities, capabilities.fingerprint) ||
+        !isDeepStrictEqual(helper.briefEvidence, brief.fingerprint)) throw new Error("Reviewer inputs changed before registration");
+    const instruction = [
+      "You are a read-only reviewer. Follow the canonical agent definition at " + definitionPath + ". Resolve its relative paths from that file.",
+      assembleProviderText(definition.text, binding), brief.text,
+      reads.length ? "Use only these MCP reads: " + reads.map(read => read.name).join(", ") : "Do not call MCP tools.",
+      aliases.length ? "First call a relevant graph read from " + aliases.join(", ") + ". Stop immediately on approval refusal." : "",
+      "Return your final answer as one JSON object with runtime, role, workerId, source, completion, observedToolCalls and findings, then the exact FINAL line.",
+      "Use the identity and FINAL line supplied in the follow-up message for this turn. Verify and cite every finding's material premises. Make no changes.",
+    ].filter(Boolean).join("\n\n");
+    const finished = await runTurn({ stateFile, prompt: instruction, deliver: false, timeoutMs: 30 * 60 * 1000 }, {
+      ...connection,
+      afterRemoteTurnStart: async ({ turn }) => {
+        activeTurn = { threadId, turnId: turn.id };
+        const completion = { sessionId: threadId, turnId: turn.id, status: "completed" };
+        const fields = { runtime: "codex", role: input.role, workerId: threadId, source: helper.source, completion };
+        const result = await client.request("turn/steer", { threadId, expectedTurnId: turn.id,
+          input: [{ type: "text", text: "Use these fields: " + JSON.stringify(fields) + "\nLast line: " + finalMarker(helper, completion) }] });
+        if (result.turnId !== turn.id) throw new Error("App Server steered another review turn");
+      },
+      parseEvent(message, context) {
+        activeTurn = undefined;
+        // The child's delivered bytes are the evidence. The managed session's separate lifecycle event contains no findings.
+        writeFileSync(deliverable, message, { flag: "wx", mode: 0o600 });
+        return parseGenericCallback(EVENT_PREFIX + JSON.stringify({ event_id: randomUUID(), kind: "review",
+          status: "completed", terminal: true, payload: {} }), context);
+      },
+    });
+    const observed = await readCodexReviewTurn(threadId, finished.turnId, client);
+    const setupProblem = codexGraphSetupProblem(observed, aliases);
+    if (setupProblem) throw new Error(setupProblem);
+    if (aliases.length && !observed.toolCalls.some(name => aliases.includes(name))) throw new Error("Recorded graph capability has no observed tool call");
+    helperAction(orchDir, "final", input.helper, "--deliverable", deliverable, "--session-id", threadId,
+      "--turn-id", finished.turnId, "--out", report);
+    return { threadId, report, deliverable };
+  } catch (error) {
+    const cleanup = [];
+    if (activeTurn) {
+      try { await client.request("turn/interrupt", activeTurn); }
+      catch (failure) { cleanup.push("interrupt: " + failure.message); }
+    }
+    if (helper) {
+      try { helperAction(orchDir, "abandoned", input.helper, "--reason", "Managed review did not finalize"); }
+      catch (failure) { cleanup.push("abandon: " + failure.message); }
+    }
+    if (cleanup.length) throw new Error(error.message + "; cleanup: " + cleanup.join("; "), { cause: error });
+    throw error;
+  } finally { client.close(); }
+}
+
+/** Record the coordinator's acceptance and capture the native receipt using its registered report. */
+export async function acceptManagedReviewer(input, runtimeRead = readCodexReviewTurn) {
+  const { captureNativeReviewReceipt, REVIEW_ROLES } = await import("./review-receipts.mjs");
+  const orchDir = realpathSync(resolveWorkDir(input.orchDir).dir);
+  const helper = readHelpers(orchDir)[input.helper];
+  const report = realpathSync(input.report);
+  const directory = path.dirname(report);
+  if (!helper?.finalizedAt || helper.abandonedAt || helper.loadedSkill?.runtime !== "codex" ||
+      !REVIEW_ROLES.includes(helper.role) || helper.finalReportPath !== report ||
+      path.dirname(directory) !== orchDir || !path.basename(directory).startsWith("codex-review-") || path.basename(report) !== "report.json") {
+    throw new Error("Use the finalized report returned by this managed reviewer");
+  }
+  if (!helper.acceptedAt) helperAction(orchDir, "accepted", input.helper, "--report", report);
+  const receipt = path.join(directory, "receipt.json");
+  await captureNativeReviewReceipt({ worktree: helper.worktree, orchDir, helperName: helper.name, outFile: receipt, role: helper.role }, runtimeRead);
+  return { threadId: helper.workerId, receipt };
 }

@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.104
+
+#### Added
+- ISS-14552 adds one managed Codex App Server reviewer launcher with native receipts, quoted-role support, critic guidance and multi-document completion parsing.
+- Across all plugin Markdown, including eval prompts and graders and each plugin's README, the change is about 52 words shorter than v1.1.103. This count excludes the generated `plugins/vibe-closedloop` mirror.
+
 ### vibe v1.1.103
 
 #### Changed

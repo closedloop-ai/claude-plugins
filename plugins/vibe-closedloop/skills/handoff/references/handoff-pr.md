@@ -39,19 +39,8 @@ launcher result for each mandatory read-only review role with
 output file> --role <role> --out <private receipt file>`. The receipt records
 the model its trace shows the CLI ran; a launcher input with `"reviewModel":
 "claude-fable-5-2"` runs a review role on Fable 5.2.
-For a native Codex reviewer or verifier, use a managed App Server thread whose
-`thread/read` exposes completed turn items. Register its exact thread ID with
-`helpers.mjs start --kind reviewer|verifier --runtime codex --worker-id <thread ID>
---capabilities <parent-discovered capability record> --brief <file>
---role <agent name> --agent-definition <canonical agent file>
---worktree "<wt>"`. The helper writes a private final deliverable containing
-one JSON object `{runtime:"codex", role, workerId, source, completion:
-{sessionId,turnId,status:"completed"}, observedToolCalls, findings}` followed
-by the exact `FINAL` line from the fleet template. It runs `helpers.mjs final`
-and returns that report path; ROOT reads it and runs `helpers.mjs accepted
---report` only after the final result is verified. Capture with
-`review-receipts.mjs --native --orch-dir <dir> --helper <name> --worktree
-"<wt>" --role <role> --out <private receipt file>`. The receipt gate rechecks
+For a native Codex reviewer or verifier, run `node ../vibe/scripts/dist/codex-reviewer.mjs run --orch-dir <dir> --helper <fresh-name> --worktree <wt> --role <agent> --model <model> --capabilities <parent-discovered-capabilities.json> --brief <file>`. It registers a read-only managed App Server thread and returns its thread ID, deliverable and report. ROOT independently checks the findings, then runs the same entry with `accept --orch-dir <dir> --helper <name> --report <returned-report>` for the native receipt. A raw `codex exec` result cannot provide one.
+The receipt gate rechecks
 the owning helper ledger, role definition, source, completion marker,
 capability record, actual App Server turn items and findings. The helper's
 `observedToolCalls` field is informational; only machine-observed turn items
