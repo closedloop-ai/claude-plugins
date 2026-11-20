@@ -52,7 +52,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -62,6 +62,7 @@ import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDoc
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
 import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
 import { graphAliases } from "../../handoff/scripts/mcp-tool-names.mjs";
 import { promptProblems } from "./skill-freshness.mjs";
@@ -87,12 +88,61 @@ export function finalMarker(helper, completion) {
   return `FINAL ${helper.finalToken} ${helper.source.treeSha256} ${helper.workerId} ${completion.sessionId} ${completion.turnId} completed`;
 }
 
-/** App Server thread/read is a first-party completion witness when its thread is available. */
+/** Read the same regular-file bytes that the named helper registers as a launch input. */
+export function readHelperInput(file) {
+  const fingerprint = evidenceFingerprint(file);
+  const bytes = readFileSync(fingerprint.path);
+  if (createHash("sha256").update(bytes).digest("hex") !== fingerprint.sha256) throw new Error("Reviewer input changed while reading");
+  return { fingerprint, text: bytes.toString("utf8") };
+}
+
+/** Relative briefs belong to the orchestration directory and may link to a shared brief. */
+export function resolveHelperBrief(orchDir, brief) {
+  return realpathSync(path.resolve(orchDir, brief));
+}
+
+/** Split saved thread/read objects at their outer braces. JSON.parse validates each complete page. */
+function threadReadPages(text) {
+  const pages = [];
+  let start = 0;
+  let depth = 0;
+  let quoted = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (quoted) {
+      if (char === "\\") index++;
+      else if (char === '"') quoted = false;
+    } else if (char === "{") {
+      if (depth === 0) start = index;
+      depth++;
+    } else if (depth === 0) {
+      if (!" \t\r\n".includes(char)) return null;
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === "}" && --depth === 0) {
+      try { pages.push(JSON.parse(text.slice(start, index + 1))); }
+      catch { return null; }
+    }
+  }
+  return depth === 0 && pages.length ? pages : null;
+}
+
+/** Every saved page must belong to the named thread. At least one must confirm the exact completed turn. */
 export function completionEventProblem(event, completion) {
-  const thread = event?.thread ?? event;
-  const turn = Array.isArray(thread?.turns) ? thread.turns.find(item => item?.id === completion.turnId) : null;
-  if (thread?.id !== completion.sessionId || turn?.status !== "completed") return "runtime did not confirm the named completed turn";
-  return null;
+  const pages = typeof event === "string" ? threadReadPages(event) : [event];
+  if (!pages) return "invalid App Server thread/read completion evidence: expected complete JSON object pages with no trailing output";
+  const unconfirmed = "runtime did not confirm the named completed turn";
+  let confirmed = false;
+  for (const page of pages) {
+    const thread = page?.thread ?? page;
+    if (thread?.id !== completion.sessionId || (thread.turns !== undefined && !Array.isArray(thread.turns))) return unconfirmed;
+    for (const turn of thread.turns ?? []) {
+      if (turn?.id !== completion.turnId) continue;
+      if (turn.status !== "completed") return unconfirmed;
+      confirmed = true;
+    }
+  }
+  return confirmed ? null : unconfirmed;
 }
 
 /** Only the helper's explicit final report and unchanged deliverable justify acceptance. */
@@ -112,7 +162,7 @@ export function finalReportProblem(helper, reportFile) {
     if (JSON.stringify(evidenceFingerprint(helper.agentDefinition?.path)) !== JSON.stringify(helper.agentDefinition)) return "helper canonical agent definition changed";
     if (report.completionEvidence) {
       if (JSON.stringify(evidenceFingerprint(report.completionEvidence.path)) !== JSON.stringify(report.completionEvidence)) return "helper runtime completion evidence changed";
-      const runtimeProblem = completionEventProblem(JSON.parse(readFileSync(report.completionEvidence.path, "utf8")), report.completion);
+      const runtimeProblem = completionEventProblem(readFileSync(report.completionEvidence.path, "utf8"), report.completion);
       if (runtimeProblem) return runtimeProblem;
     }
     if (!sameSource(report.source ?? {}, sourceIdentity(helper.worktree))) return "helper report is stale for the current source";
@@ -482,17 +532,19 @@ async function main(argv) {
     if (!["claude", "codex"].includes(runtime)) throw new Error("--runtime must be claude or codex");
     // The helper is a fresh thread: record the installed definition it starts on, labeled as such.
     const spawnLoad = FINAL_KINDS.has(kind) ? loadedSkillEvidence(values["worker-id"], runtime, vibeRoot(values.worktree ?? process.cwd()), "fleet-orchestrator", LoadBasis.InstalledAtSpawn) : null;
+    let briefEvidence;
     if (FINAL_KINDS.has(kind)) {
-      const briefFile = path.isAbsolute(values.brief) ? values.brief : path.resolve(orchDir, values.brief);
+      const briefPath = runtime === "codex" ? resolveHelperBrief(orchDir, values.brief) : path.resolve(orchDir, values.brief);
+      const bytes = readFileSync(briefPath);
+      if (runtime === "codex") briefEvidence = { path: briefPath, sha256: createHash("sha256").update(bytes).digest("hex") };
       const actorRecord = { loadedSkill: spawnLoad };
-      const problems = promptProblems(actorRecord, readFileSync(briefFile, "utf8"), { actorId: values["worker-id"], pluginRoot: vibeRoot(values.worktree ?? process.cwd()), worktree: values.worktree });
+      const problems = promptProblems(actorRecord, bytes.toString("utf8"), { actorId: values["worker-id"], pluginRoot: vibeRoot(values.worktree ?? process.cwd()), worktree: values.worktree });
       if (problems.length) throw new Error(problems.join("; "));
     }
-    const capabilityRecord = FINAL_KINDS.has(kind) ? evidenceFingerprint(values.capabilities) : null;
-    if (capabilityRecord) graphAliases(JSON.parse(readFileSync(capabilityRecord.path, "utf8")));
-    const agentDefinition = FINAL_KINDS.has(kind) ? evidenceFingerprint(values["agent-definition"]) : null;
-    if (agentDefinition && !readFileSync(agentDefinition.path, "utf8").split("\n").slice(0, 12)
-      .some(line => line.trim() === `name: ${values.role}`)) throw new Error("canonical agent definition does not name the requested role");
+    const capabilities = FINAL_KINDS.has(kind) ? readHelperInput(values.capabilities) : null;
+    if (capabilities) graphAliases(JSON.parse(capabilities.text));
+    const definition = FINAL_KINDS.has(kind) ? readHelperInput(values["agent-definition"]) : null;
+    if (definition && agentFrontmatterName(definition.text) !== values.role) throw new Error("canonical agent definition does not name the requested role");
     // A QA rerun must never change the stack a human is testing on.
     if (values.stack && stacks[values.stack]) {
       process.stderr.write(`stack ${values.stack} is handed to ${stacks[values.stack].guide}; launch this helper on its own stack\n`);
@@ -515,8 +567,9 @@ async function main(argv) {
     ledger[name] = { name, kind, requiresFinal: FINAL_KINDS.has(kind), finalToken: randomUUID(), startedAt: at,
       ...(kind === "scratch" ? { ownerToken: randomUUID(), expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
         writerLease: captureScratchLease(orchDir, values.owner, values.worktree) } : {}),
-      ...(capabilityRecord ? { workerId: values["worker-id"], role: values.role, agentDefinition, capabilities: capabilityRecord,
+      ...(capabilities ? { workerId: values["worker-id"], role: values.role, agentDefinition: definition.fingerprint, capabilities: capabilities.fingerprint,
         loadedSkill: spawnLoad } : {}),
+      ...(briefEvidence ? { briefEvidence } : {}),
       ...(values.brief ? { brief: values.brief } : {}), ...(values.worktree ? { worktree: path.resolve(values.worktree), source: sourceIdentity(values.worktree) } : {}), ...(values.stack ? { stack: values.stack } : {}),
       ...(values.owner ? { owner: values.owner } : {}), ...(values.ticket ? { ticket: values.ticket } : {}),
       ...(values.repo ? { repo: values.repo } : {}), ...(values.pr ? { pr: values.pr } : {}),
@@ -566,7 +619,7 @@ async function main(argv) {
     const completion = { sessionId: values["session-id"], turnId: values["turn-id"] };
     const completionEvidence = values["completion-event"] ? evidenceFingerprint(values["completion-event"]) : null;
     if (completionEvidence) {
-      const problem = completionEventProblem(JSON.parse(readFileSync(completionEvidence.path, "utf8")), completion);
+      const problem = completionEventProblem(readFileSync(completionEvidence.path, "utf8"), completion);
       if (problem) throw new Error(problem);
     }
     evidenceFingerprint(values.deliverable);

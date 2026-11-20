@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { codexGraphSetupProblem, observedCodexTurn, readCodexReviewTurn, readCodexTurnItems } from "./codex-review-runtime.mjs";
+import { codexGraphSetupProblem, managedReviewClient, observedCodexTurn, readCodexReviewTurn, readCodexTurnItems, reviewReadClient } from "./codex-review-runtime.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
+
+test("launch and receipt clients use the bundled Codex executable for both daemon discovery and proxy", async t => {
+  const codex = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
+  const socket = "/fixture/managed.sock";
+  const resolveCli = t.mock.fn(() => codex);
+  const daemon = t.mock.fn(() => ({ socketPath: socket }));
+  const core = { managedDaemon: daemon, AppServerClient: class { constructor(options) { this.options = options; } }, initializeClient() {} };
+  const launched = await managedReviewClient({ core, resolveCli });
+  assert.deepEqual(daemon.mock.calls[0].arguments, [{ runtime: "codex", codex }]);
+  assert.deepEqual(launched.options, { runtime: "codex", transport: "proxy", socket, codex });
+
+  const discover = t.mock.fn(() => socket);
+  const connect = t.mock.fn(() => ({}));
+  reviewReadClient({ discover, connect, resolveCli });
+  assert.deepEqual(discover.mock.calls[0].arguments, [codex]);
+  assert.deepEqual(connect.mock.calls[0].arguments, [socket, codex]);
+  assert.deepEqual(resolveCli.mock.calls.map(call => call.arguments), [["codex"], ["codex"]]);
+  assert.throws(() => reviewReadClient({ resolveCli: () => null }), /Codex executable/);
+});
 
 test("managed Codex reviewer calls come only from its completed App Server turn items", async () => {
   const thread = { id: "thread-1", turns: [{ id: "turn-1", status: "completed", items: [

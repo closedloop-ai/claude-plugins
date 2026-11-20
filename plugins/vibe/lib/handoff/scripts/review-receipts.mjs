@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { EVENT_PREFIX, parseGenericCallback } from "../../../skills/cl-sweep/scripts/native-app-server-orchestrator.mjs";
 import { evidenceFingerprint } from "./handoff-evidence.mjs";
 import { sourceIdentity, validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { premiseProblems } from "./review-premises.mjs";
@@ -74,6 +75,27 @@ export function captureReviewReceipt({ worktree, resultFile, outFile, role, take
   return receipt;
 }
 
+/** Native reviewers can include the managed completion event immediately before the helper FINAL. */
+function nativeReviewResult(deliverable, helper, completion) {
+  const marker = finalMarker(helper, completion);
+  const lines = deliverable.split(/\r?\n/);
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.pop() !== marker) throw new Error("Native FINAL marker must be the exact final line");
+  if (lines.at(-1)?.startsWith(EVENT_PREFIX)) {
+    try {
+      const event = parseGenericCallback(lines.pop(), {
+        session: { sessionId: completion.sessionId, threadId: helper.workerId, cwd: helper.worktree }, turnId: completion.turnId,
+      });
+      if (!event.terminal || event.status !== "completed") throw new Error();
+    } catch { throw new Error("Invalid native FINAL completion event"); }
+  }
+  let result;
+  const body = lines.join("\n").replace(/^\uFEFF/, "");
+  try { result = JSON.parse(body); } catch { /* Report invalid framing at the receipt boundary. */ }
+  if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("Native FINAL requires one JSON review object before its completion markers");
+  return result;
+}
+
 /** Capture a Codex-native helper's private FINAL artifact through its owning helper ledger. */
 export async function captureNativeReviewReceipt({ worktree, orchDir, helperName, outFile, role }, runtimeRead = readCodexReviewTurn) {
   if (!REVIEW_ROLES.includes(role)) throw new Error(`unknown review role ${role}`);
@@ -84,9 +106,7 @@ export async function captureNativeReviewReceipt({ worktree, orchDir, helperName
   if (problem) throw new Error(`${role}: ${problem}`);
   const report = JSON.parse(readFileSync(helper.report.path, "utf8"));
   const deliverable = readFileSync(report.deliverable.path, "utf8");
-  const marker = finalMarker(helper, report.completion);
-  const body = deliverable.slice(0, deliverable.lastIndexOf(marker)).trim();
-  const result = JSON.parse(body);
+  const result = nativeReviewResult(deliverable, helper, report.completion);
   if (result.runtime !== "codex" || result.role !== role || result.workerId !== helper.workerId
     || result.completion?.status !== "completed" || result.completion?.sessionId !== report.completion.sessionId
     || result.completion?.turnId !== report.completion.turnId || !validSourceIdentity(result.source)
@@ -141,7 +161,7 @@ export function reviewReceiptProblems(receipts, source, { reusableRoles = new Se
         }
         const report = JSON.parse(readFileSync(receipt.result.path, "utf8"));
         const deliverable = readFileSync(receipt.trace.path, "utf8");
-        const result = JSON.parse(deliverable.slice(0, deliverable.lastIndexOf(finalMarker(helper, report.completion))).trim());
+        const result = nativeReviewResult(deliverable, helper, report.completion);
         const runtime = JSON.parse(readFileSync(receipt.runtimeEvidence.path, "utf8"));
         const aliases = graphAliases(JSON.parse(readFileSync(helper.capabilities.path, "utf8")));
         if (result.runtime !== "codex" || result.role !== role || result.workerId !== helper.workerId

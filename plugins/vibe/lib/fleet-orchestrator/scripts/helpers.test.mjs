@@ -10,7 +10,7 @@ import { removeOwnedDockerResources } from '../../vibe/scripts/owned-docker.mjs'
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
-import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity,
+import { completionEventProblem, endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity,
   reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 import { captureScratchLease, reconcileExpiredScratchHelpers, sweepScratchHelpers } from './scratch-cleanup.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
@@ -109,6 +109,46 @@ const fakeTable = (processes) => {
 const recorded = (pid, group, identity = `id-${pid}`) => ({ pid, group, identity });
 const FAKE = 2_147_480_000;
 
+const pageCompletion = { sessionId: 'session-1', turnId: 'turn-1' };
+
+function threadReadPage(id, turns) {
+  return { thread: { id, turns, title: 'Braces }{ and a quoted "title" with a backslash \\' }, readState: {} };
+}
+
+test('AC-10 R20: two thread/read pages in NDJSON or concatenated JSON confirm the matching turn', () => {
+  const first = threadReadPage(pageCompletion.sessionId, []);
+  const last = threadReadPage(pageCompletion.sessionId, [{ id: pageCompletion.turnId, status: 'completed' }]);
+  for (const separator of ['\n', '', '\r\n \t']) {
+    const stream = JSON.stringify(first) + separator + JSON.stringify(last, null, separator ? 0 : 2);
+    assert.equal(completionEventProblem(stream, pageCompletion), null);
+  }
+});
+
+test('a summary with no turns field also precedes a complete thread/read page', () => {
+  const summary = { thread: { id: pageCompletion.sessionId }, readState: {} };
+  const full = { thread: { id: pageCompletion.sessionId, turns: [{ id: pageCompletion.turnId, status: 'completed' }] }, readState: {} };
+  assert.equal(completionEventProblem(JSON.stringify(summary) + JSON.stringify(full), pageCompletion), null);
+  assert.match(completionEventProblem(JSON.stringify(summary), pageCompletion), /did not confirm/);
+});
+
+test('AC-10 R21: trailing text and truncated thread/read pages give a completion-evidence error', () => {
+  const valid = JSON.stringify(threadReadPage(pageCompletion.sessionId, [{ id: pageCompletion.turnId, status: 'completed' }]));
+  for (const suffix of ['\nproxy closed', '{"thread":', '{}junk', '{"bad",false}']) {
+    assert.match(completionEventProblem(valid + suffix, pageCompletion), /invalid App Server thread\/read completion evidence/);
+  }
+});
+
+test('AC-10 R22: unrelated threads and incomplete turns cannot establish paged completion', () => {
+  const completed = { id: pageCompletion.turnId, status: 'completed' };
+  const correct = threadReadPage(pageCompletion.sessionId, [completed]);
+  const forged = threadReadPage('another-thread', [completed]);
+  const incomplete = threadReadPage(pageCompletion.sessionId, [{ ...completed, status: 'inProgress' }]);
+  for (const pages of [[correct, forged], [forged, correct], [correct, incomplete], [incomplete],
+    [threadReadPage(pageCompletion.sessionId, [{ ...completed, id: 'other-turn' }])]]) {
+    assert.match(completionEventProblem(pages.map(page => JSON.stringify(page)).join('\n'), pageCompletion), /did not confirm/);
+  }
+});
+
 test('idle notice cannot accept or stop a reviewer without its source-bound FINAL deliverable', (t) => {
   const dir = tempDir(t);
   const help = run([dir]);
@@ -166,7 +206,14 @@ test('idle notice cannot accept or stop a reviewer without its source-bound FINA
   const event = (status) => ({ thread: { id: 'session-1', turns: [{ id: 'turn-1', status }] } });
   writeFileSync(completionEvent, JSON.stringify(event('inProgress')));
   assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--completion-event', completionEvent, '--out', finalReport]).status, 0, 'runtime still working cannot finalize');
-  writeFileSync(completionEvent, JSON.stringify(event('completed')));
+  const pages = JSON.stringify(threadReadPage(final.completion.sessionId, [])) + '\n' + JSON.stringify(event('completed'));
+  writeFileSync(completionEvent, pages + '\nproxy closed');
+  const invalid = run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1',
+    '--completion-event', completionEvent, '--out', finalReport]);
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /invalid App Server thread\/read completion evidence/);
+  assert.doesNotMatch(invalid.stderr, /SyntaxError/);
+  writeFileSync(completionEvent, pages);
   final.completionEvidence = evidenceFingerprint(completionEvent);
   assert.equal(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--completion-event', completionEvent, '--out', finalReport]).status, 0);
   assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--out', path.join(dir, 'second-final.json')]).status, 0, 'the FINAL token is consumed once');
@@ -180,7 +227,7 @@ test('idle notice cannot accept or stop a reviewer without its source-bound FINA
   writeFileSync(deliverable, `verified findings\n${finalMarker(helper, final.completion)}\n`);
   writeFileSync(completionEvent, JSON.stringify(event('inProgress')));
   assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'runtime completion evidence is rechecked');
-  writeFileSync(completionEvent, JSON.stringify(event('completed')));
+  writeFileSync(completionEvent, pages);
   assert.equal(run([dir, 'stopped', 'reviewer']).status, 0);
 });
 
