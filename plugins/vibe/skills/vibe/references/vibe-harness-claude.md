@@ -4,7 +4,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 
 <!-- block: claude-launcher -->
 - Claude Code: invoke as `/vibe-generic:vibe`; plugin agents are available as
-  `vibe:<name>`. Launch every worker through `scripts/dist/claude-worker.mjs`,
+  `vibe-generic:<name>`. Launch every worker through `scripts/dist/claude-worker.mjs`,
   never through the native Agent tool: a plugin agent dispatched natively gets
   only the built-in tools its file lists, with no tracker or graph MCP
   tools, so a natively dispatched ticket worker comes back `BLOCKED` and a

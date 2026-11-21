@@ -32,8 +32,12 @@ from test_vibe_no_person_names_contract import names_in
 
 REPO = Path(__file__).resolve().parents[4]
 
+# The desktop package's vibe:profile script is not a harness skill.
+WRONG_NAMESPACE = re.compile(r"(?<![\w-])vibe:(?!profile(?![\w-]))(?:[a-z0-9][a-z0-9-]*|<[a-z][a-z0-9-]*>)")
+
 # Ordered: the first family that matches a line is its primary family.
 GATING: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("skill-namespace", WRONG_NAMESPACE),
     ("machine", re.compile(r"/Users/[A-Za-z]|/home/[a-z][a-z0-9._-]*/|~/Source/|\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")),
     ("graph", re.compile(
         r"closedloop-graph|clgraph|closedloop-intel|blast_radius_tickets|query_collisions|search_memory_facts"
@@ -84,9 +88,9 @@ GATED_ROOTS = ("plugins/vibe", "plugins/vibe-core", "tools/vibe-workers/src")
 # Files kept in vibe by operator ruling (the cl-* skills and the seed refresh with its three workers), the
 # generated bundles (gated through their sources), tests and fixtures (they exercise both arms), evals, and the
 # contract-test tooling that has to name what it looks for.
+PROVIDER_AWARE = re.compile(r"^plugins/vibe/(?:skills/(?:cl-[a-z-]+|vibe-seed-refresh)/|agents/vibe-seed-(?:check|fix|pr)-worker\.md$)")
 EXEMPT = re.compile(
-    r"^plugins/vibe/(?:skills/(?:cl-[a-z-]+|vibe-seed-refresh)/|agents/vibe-seed-(?:check|fix|pr)-worker\.md$"
-    r"|evals/|tools/python/)"
+    r"^plugins/vibe/(?:evals/|tools/python/)"
     r"|/dist/|\.test\.(?:mjs|cjs|js|ts)$|(?:^|/)test-fixtures?[^/]*\.(?:mjs|ts)$|-test-fixtures?\.(?:mjs|ts)$|-test-support\.(?:mjs|ts)$"
     r"|(?:^|/)(?:__tests__|fixtures?|tests?)/|\.fixture\.|(?:^|/)global-setup\.ts$|\.d\.mts$"
 )
@@ -102,6 +106,7 @@ PUBLISHER_FIELD = re.compile(
     r'^\s*"(?:author|homepage|repository|developerName|email|websiteURL|privacyPolicyURL|termsOfServiceURL|name|source'
     r'|path|displayName)"\s*:'
 )
+
 
 
 # Lines that name the publisher or a compatibility alias on purpose, each by its exact stripped text and the
@@ -157,7 +162,7 @@ def gated(relative: str) -> bool:
         return True
     if not relative.startswith(tuple(f"{root}/" for root in GATED_ROOTS)):
         return False
-    return EXEMPT.search(relative) is None
+    return EXEMPT.search(relative) is None and PROVIDER_AWARE.search(relative) is None
 
 
 def walk(root: Path, tops: Iterable[str]) -> Iterator[str]:
@@ -200,7 +205,9 @@ def findings(root: Path = REPO) -> list[str]:
     allowed = allowed_lines()
     tops = [*GATED_ROOTS, *MANIFESTS]
     for relative in walk(root, tops):
-        if not gated(relative):
+        # Provider-aware skills ship in the generic plugin. Only their namespace is checked.
+        namespace_only = PROVIDER_AWARE.search(relative) is not None and EXEMPT.search(relative) is None
+        if not namespace_only and not gated(relative):
             continue
         text = lines_of(root, relative)
         if text is None:
@@ -212,6 +219,8 @@ def findings(root: Path = REPO) -> list[str]:
             if line.strip() in allowed.get(relative, ()):
                 continue
             hit = families(line, semantic=False)
+            if namespace_only:
+                hit = tuple(family for family in hit if family == "skill-namespace")
             if hit:
                 found.append(f"{relative}:{number} {','.join(hit)}: {line.strip()[:160]}")
     return found

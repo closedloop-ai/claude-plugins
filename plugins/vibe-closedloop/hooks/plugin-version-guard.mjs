@@ -5,12 +5,11 @@
 // give worse results. Audited sessions on 1.0.72 and 1.0.85 ran whole programs
 // on whatever was installed, and nobody was told.
 //
-// Starting either skill (the Skill tool, or a `/vibe:vibe` or
-// `/vibe:fleet-orchestrator` prompt, or the same under vibe-generic) marks the conversation pending unless it
+// Starting either skill through the Skill tool or its qualified slash command marks the conversation pending unless it
 // already has a record. Until the check has run, and while it found an
 // outdated plugin with no recorded choice or a stale loaded skill, every writer
 // launch is refused: an Agent call that starts a vibe worker or a vibe writer
-// (a prompt invoking vibe:vibe, as fleet-orchestrator's worker preamble does),
+// (a prompt invoking the vibe skill, as fleet-orchestrator's worker preamble does),
 // `claude-worker.mjs`, and `fleet.sh ... session turn`. Inside a vibe or fleet
 // conversation every Agent and SendMessage dispatch is held the same way, and
 // a dispatch naming a vibe plugin script the installed release lacks is

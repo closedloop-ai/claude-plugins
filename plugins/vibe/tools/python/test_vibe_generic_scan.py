@@ -12,6 +12,7 @@ import vibe_generic_scan as scan
 
 # One sample per gating family, each written the way it once appeared in vibe's runtime files.
 SAMPLES = {
+    "skill-namespace": "invoke /vibe:handoff",
     "machine": "see /Users/someone/Source/x",
     "graph": "call closedloop-graph `sync_status` first",
     "memory": "query workflow-memory before planning",
