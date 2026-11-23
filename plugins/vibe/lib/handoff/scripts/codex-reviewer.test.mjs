@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireLedgerLock, finalMarker, read as readLedger, write as writeLedger } from "../../fleet-orchestrator/scripts/helpers.mjs";
+import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { captureReviewReceipt, reviewReceiptProblems } from "./review-receipts.mjs";
 import { acceptManagedReviewer, readCodexReviewTurn, runManagedReviewer } from "./codex-review-runtime.mjs";
 
@@ -93,16 +94,48 @@ test("AC-1, AC-2, AC-3, AC-6, AC-7: the named read-only managed reviewer yields 
 
 const helperCli = fileURLToPath(new URL("../../fleet-orchestrator/scripts/helpers.mjs", import.meta.url));
 
+/** Wait inside an isolated child fixture until the test releases it, including a bound on test failure. */
+function waitForFileCommand(file) {
+  return `"${process.execPath}" -e 'const end = Date.now() + 20000;
+    while (!require("node:fs").existsSync(process.argv[1]) && Date.now() < end)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30);
+    if (!require("node:fs").existsSync(process.argv[1])) process.exit(1)' "${file}" || exit 1`;
+}
+
+/** Observe full reads of the external fixture report, including its streaming hash. */
+function observeReportReads(bin, report, owner) {
+  const hook = path.join(bin, "report-reads.cjs");
+  writeFileSync(hook, `const fs = require("node:fs");
+    const read = fs.readFileSync;
+    for (const method of ["openSync", "readFileSync"]) {
+      const original = fs[method];
+      fs[method] = function (file, ...args) {
+        if (file === ${JSON.stringify(report)}) {
+          let locked = false;
+          try { locked = JSON.parse(read(${JSON.stringify(owner)})).pid === process.pid; }
+          catch (error) { if (error.code !== "ENOENT") throw error; }
+          fs.writeFileSync(${JSON.stringify(bin)} + (locked ? "/locked-report" : "/read-report"), "");
+        }
+        return original.call(this, file, ...args);
+      };
+    }
+    require("node:module").syncBuiltinESMExports();`);
+  return ["--require", hook];
+}
+
 /** Pause the first Git source read of one real helper command inside this test's temporary directory. */
-async function pauseHelperSource(input, args, { waitingForLock } = {}) {
+async function pauseHelperSource(input, args, { waitingForLock, ownerPid = process.pid, resumeProbe } = {}) {
   const bin = path.join(input.orchDir, "bin");
   mkdirSync(bin);
   const git = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
   if (waitingForLock) {
-    // Only the live-owner branch asks ps for this test process's identity.
+    // This probe is reached only after the ledger command reads the peer's owner record.
     const ps = execFileSync("which", ["ps"], { encoding: "utf8" }).trim();
     writeFileSync(path.join(bin, "ps"), `#!/bin/sh
-if [ "$4" = "${process.pid}" ]; then touch "${waitingForLock}"; fi
+if [ "$4" = "${ownerPid}" ]; then
+  touch "${waitingForLock}"
+  ${resumeProbe ? waitForFileCommand(resumeProbe) : ""}
+fi
 exec "${ps}" "$@"
 `, { mode: 0o700 });
   }
@@ -120,19 +153,22 @@ fi
 if [ "$3" = ls-files ] && [ "$4" = --others ] && [ ! -f "${entered}" ]; then
   touch "${entered}"
   # The fixture always releases on success or failure, including if a test process exits early.
-  "${process.execPath}" -e 'const end = Date.now() + 20000;
-    while (!require("node:fs").existsSync(process.argv[1]) && Date.now() < end)
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30);
-    if (!require("node:fs").existsSync(process.argv[1])) process.exit(1)' "${resume}" || exit 1
+  ${waitForFileCommand(resume)}
 fi
 exec "${git}" "$@"
 `, { mode: 0o700 });
-  const finished = promisify(execFile)(process.execPath, [helperCli, input.orchDir, ...args],
+  const report = args.includes("--report") ? args[args.indexOf("--report") + 1] : null;
+  const options = report ? observeReportReads(bin, report, owner) : [];
+  const finished = promisify(execFile)(process.execPath, [...options, helperCli, input.orchDir, ...args],
     { env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH } }).then(() => null, error => error);
   const release = async () => {
     writeFileSync(resume, "");
     const failure = await finished;
     assert.ok(!existsSync(locked), "the helper held the shared ledger lock during a Git source read");
+    if (report) {
+      assert.ok(existsSync(path.join(bin, "read-report")), "the helper read its fixture report");
+      assert.ok(!existsSync(path.join(bin, "locked-report")), "the helper read the report while it held the ledger lock");
+    }
     if (failure) throw failure;
   };
   const deadline = Date.now() + 10_000;
@@ -317,6 +353,73 @@ test("acceptance rechecks the worktree when its fingerprint predates a ledger wa
   }
   await assert.rejects(accepted, /helper source changed since start/);
   assert.equal(readHelper().acceptedAt, undefined);
+});
+
+test("finalization retains a PID recorded for the same helper during source verification", async t => {
+  const fixture = reviewFixture(t);
+  const { input, readHelper } = fixture;
+  const args = await competingCommand(fixture, "final");
+  const finish = await pauseHelperSource(input, args);
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  t.after(() => child.kill());
+  try {
+    execFileSync(process.execPath, [helperCli, input.orchDir, "pid", input.helper, String(child.pid)]);
+  } finally {
+    await finish();
+  }
+  assert.ok(readHelper().finalizedAt);
+  assert.ok(readHelper().pids.includes(child.pid));
+  assert.ok(readHelper().identities[child.pid]);
+});
+
+test("acceptance refuses a replaced report after preparation and preserves the registration", async t => {
+  const fixture = reviewFixture(t);
+  const { input, readHelper } = fixture;
+  const args = await competingCommand(fixture, "accepted");
+  const before = readHelper();
+  const finish = await pauseHelperSource(input, args);
+  const report = args.at(-1);
+  const replacement = path.join(input.orchDir, "replacement-report.json");
+  // Identical valid bytes isolate the file-version witness from content and source validation.
+  writeFileSync(replacement, readFileSync(report));
+  renameSync(replacement, report);
+  await assert.rejects(finish(), /helper evidence changed during verification/);
+  assert.deepEqual(readHelper(), before);
+});
+
+test("start refreshes when the previous lock owner exits during its identity check", async t => {
+  const { input, readHelper } = reviewFixture(t);
+  const waiting = path.join(input.orchDir, "probing-fixture-owner");
+  const resumeProbe = path.join(input.orchDir, "fixture-owner-exited");
+  const owner = spawn(process.execPath, ["--input-type=module", "-e", `
+    import { acquireLedgerLock } from ${JSON.stringify(helperCli)};
+    const release = await acquireLedgerLock(${JSON.stringify(input.orchDir)});
+    process.stdout.write("ready");
+    for await (const _ of process.stdin) break;
+    release();
+  `], { stdio: ["pipe", "pipe", "inherit"] });
+  const exited = new Promise(resolve => owner.once("exit", resolve));
+  t.after(() => owner.stdin.end());
+  await new Promise((resolve, reject) => {
+    owner.stdout.once("data", resolve);
+    owner.once("error", reject);
+    owner.once("exit", () => reject(new Error("fixture owner exited before registration")));
+  });
+  const finish = await pauseHelperSource(input, ["start", input.helper, "--worktree", input.worktree],
+    { waitingForLock: waiting, ownerPid: owner.pid, resumeProbe });
+  const started = finish();
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(waiting) && Date.now() < deadline) await delay(20);
+    assert.ok(existsSync(waiting), "the helper observed the fixture lock owner");
+    writeFileSync(path.join(input.worktree, "saved.txt"), "saved before registration");
+    owner.stdin.end();
+    assert.equal(await exited, 0);
+  } finally {
+    writeFileSync(resumeProbe, "");
+    await started;
+  }
+  assert.deepEqual(readHelper().source, sourceIdentity(input.worktree));
 });
 
 test("managed failure cleanup preserves a replacement registration under the same helper name", async t => {

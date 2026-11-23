@@ -396,11 +396,14 @@ export async function acquireLedgerLock(orchDir, { waitMs = LEDGER_WAIT_MS, cloc
       };
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
+      // Even a peer that releases before its identity check invalidates pre-lock preparation.
+      onWait?.();
       let saved;
       try { saved = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { saved = null; }
+      const unclaimed = !saved && statSync(dir, { throwIfNoEntry: false });
+      if (!saved && !unclaimed) continue;
       if (saved?.identity && readIdentity(saved.pid) === saved.identity
-        || !saved && Date.now() - statSync(dir).mtimeMs < 60_000) {
-        onWait?.();
+        || unclaimed && Date.now() - unclaimed.mtimeMs < 60_000) {
         await new Promise((resolve) => setTimeout(resolve, 100));
         continue;
       }
@@ -496,6 +499,13 @@ function prepareTransition(action, entry, values, orchDir) {
   };
 }
 
+/** PID and resource updates are independent of final evidence. Cleanup reads them from the locked entry. */
+function preparationRecord(action, entry) {
+  if (action === "start" || !entry) return entry;
+  const { pids, groups, identities, dockerResources, ...registration } = entry;
+  return registration;
+}
+
 /** After real contention, release the grant and reread all inputs within the original wait budget. */
 async function lockWithFreshSource(orchDir, prepare) {
   if (!prepare) return { releaseLedger: await acquireLedgerLock(orchDir) };
@@ -503,9 +513,9 @@ async function lockWithFreshSource(orchDir, prepare) {
   while (true) {
     const checkedInput = prepare();
     const started = Date.now();
-    let waited = false;
-    const releaseLedger = await acquireLedgerLock(orchDir, { waitMs, onWait: () => { waited = true; } });
-    if (!waited) return { releaseLedger, checkedInput };
+    let collided = false;
+    const releaseLedger = await acquireLedgerLock(orchDir, { waitMs, onWait: () => { collided = true; } });
+    if (!collided) return { releaseLedger, checkedInput };
     releaseLedger();
     waitMs -= Date.now() - started;
   }
@@ -591,7 +601,7 @@ async function main(argv) {
   try {
   const ledger = read(orchDir);
   // Another transition may have replaced this registration while Git was reading it.
-  if (checksSource && !isDeepStrictEqual(registered, ledger[positionals[0]])) {
+  if (checksSource && !isDeepStrictEqual(preparationRecord(action, registered), preparationRecord(action, ledger[positionals[0]]))) {
     throw new Error("helper registration changed while verifying its source; retry with its current record");
   }
   if ((action === "final" || action === "accepted") && ledger[positionals[0]]?.abandonedAt) {
