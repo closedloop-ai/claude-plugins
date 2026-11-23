@@ -93,6 +93,139 @@ def test_manifest_publisher_fields_pass_and_descriptions_gate(tmp_path: Path) ->
     assert hit.startswith("plugins/vibe/.codex-plugin/plugin.json:3 organization")
 
 
+@pytest.mark.parametrize(("relative", "stale", "valid"), [
+    ("plugins/vibe/skills/handoff/SKILL.md", "Use _vibe:handoff_.",
+     "Use _vibe-generic:handoff_. Keep _vibe:profile_, team_vibe:handoff and my-vibe:handoff."),
+    ("plugins/vibe/skills/handoff/SKILL.md", "_vibe:handoff finishes the session_.",
+     "_vibe-generic:handoff finishes the session_. _team_vibe:handoff and my-vibe:handoff work_."),
+    ("plugins/vibe/skills/handoff/SKILL.md", "Run __vibe:handoff to finish__.", "Run __vibe:profile to launch__."),
+    ("plugins/vibe/shared/vibe-install.mjs", "return `vibe:${skill}`;",
+     "return `vibe-generic:${skill}`; // my-vibe:${skill} belongs to another plugin"),
+    ("plugins/vibe/shared/vibe-install.mjs", 'return "vibe:" + skill;', 'return "vibe-generic:" + skill;'),
+    ("plugins/vibe/shared/vibe-install.mjs", "return 'vibe:'+skill;", "return 'team_vibe:'+skill;"),
+], ids=["markdown-emphasis", "markdown-phrase", "markdown-strong", "javascript-template", "concatenation", "tight-concatenation"])
+def test_ac3_namespace_in_formatted_and_generated_instructions(tmp_path: Path, relative: str, stale: str, valid: str) -> None:
+    write(tmp_path, relative, valid)
+    assert scan.findings(tmp_path) == []
+    write(tmp_path, relative, stale)
+    assert scan.findings(tmp_path) == [f"{relative}:1 skill-namespace: {stale}"]
+
+
+@pytest.mark.parametrize("relative", scan.MANIFESTS)
+def test_ac3_marketplace_reports_the_owning_plugin(tmp_path: Path, relative: str) -> None:
+    entries = [{"description": "Run /vibe:handoff.", "name": name} for name in ("vibe", "other", "vibe-generic")]
+    catalog = {"description": "Help /vibe:start.", "plugins": entries}
+    for indent in (2, None):
+        source = json.dumps(catalog, indent=indent)
+        write(tmp_path, relative, source)
+        lines = source.splitlines()
+        catalog_line = next(i for i, line in enumerate(lines, 1) if "/vibe:start" in line)
+        generic_line = max(i for i, line in enumerate(lines, 1) if "/vibe:handoff" in line)
+        assert scan.findings(tmp_path) == [
+            f"{relative}:{catalog_line} skill-namespace: description: Help /vibe:start.",
+            f"{relative}:{generic_line} skill-namespace: plugins[2].description: Run /vibe:handoff.",
+        ]
+    entries[0]["description"] = "Use workflow-memory."
+    entries[2]["description"] = "Run /vibe-generic:handoff."
+    write(tmp_path, relative, json.dumps({"plugins": entries}, indent=2))
+    [hit] = scan.findings(tmp_path)
+    assert ' memory: "description": "Use workflow-memory."' in hit
+
+
+def test_ac3_generated_prompt_whitespace_escapes(tmp_path: Path) -> None:
+    relative = "tools/vibe-workers/src/claude-worker.ts"
+    for escape in (r"\n", r"\r\n", r"\t", r"\v", r"\f", r"\x20", r"\u000a", r"\u{20}", r"\\\n"):
+        line = rf'const msg = "Instructions:{escape}vibe:handoff";'
+        write(tmp_path, relative, line)
+        assert scan.findings(tmp_path) == [f"{relative}:1 skill-namespace: {line}"]
+    valid = r'const msg = "\nvibe-generic:handoff \tvibe:profile \rmy-vibe:handoff \fteam_vibe:handoff \\nvibe:handoff \x61vibe:handoff";'
+    write(tmp_path, relative, valid)
+    assert scan.findings(tmp_path) == []
+    write(tmp_path, "plugins/vibe/skills/handoff/SKILL.md", r"Literal \nvibe:handoff in prose.")
+    assert scan.findings(tmp_path) == []
+
+
+@pytest.mark.parametrize("separator", [" ", "\n    ", "\n\n    "])
+def test_ac3_js_concatenation_reports_prefix_line(tmp_path: Path, separator: str) -> None:
+    relative = "plugins/vibe/shared/vibe-install.mjs"
+    for prefix in ("vibe-generic", "vibe"):
+        source = f'function id(skill) {{\n  return "{prefix}:"{separator}+ skill;\n}}'
+        write(tmp_path, relative, source)
+        expected = [f"{relative}:2 skill-namespace: {source.splitlines()[1].strip()}"] if prefix == "vibe" else []
+        assert scan.findings(tmp_path) == expected
+
+
+def test_ac3_js_property_key_and_instruction_text(tmp_path: Path) -> None:
+    relative = "plugins/vibe/skills/codex-fleet-monitor/scripts/hook-approval.mjs"
+    lines = [
+        "return { vibe:version(OWN_PLUGIN) };",
+        'const prompt = "Run vibe:version";',
+        "const prompt = `Run vibe:version`;",
+        "// Run vibe:version",
+        "/* Operator note:",
+        " * Run vibe:version */",
+        r'const escaped = "Run \"vibe:version\"";',
+        'const nested = `first ${flag ? `Run vibe:version` : ""} next`;',
+        "const expression = `${format({ vibe:version(OWN_PLUGIN) })}`;",
+        'const quote = /"/; const msg = "Run vibe:version";',
+    ]
+    write(tmp_path, relative, "\n".join(lines))
+    assert scan.findings(tmp_path) == [f"{relative}:{i} skill-namespace: {lines[i - 1].strip()}" for i in (2, 3, 4, 6, 7, 8, 10)]
+
+
+def test_ac3_codex_default_prompt_next_to_publisher_metadata(tmp_path: Path) -> None:
+    relative = "plugins/vibe/.codex-plugin/plugin.json"
+    for skill in ("vibe-generic", "vibe"):
+        interface = {"displayName": "ClosedLoop /vibe:label", "defaultPrompt": [f"Run /{skill}:handoff."], "developerName": "ClosedLoop"}
+        manifest = {"name": "vibe-generic", "version": "1.2.3", "interface": interface}
+        multiline = json.dumps(manifest, indent=2)
+        compact = '{\n  "name": "vibe-generic", "version": "1.2.3", "interface": {\n    ' + json.dumps(interface)[1:-1] + '\n  }\n}'
+        root_name_line = "{\n  " + json.dumps(manifest)[1:]
+        for source in (multiline, compact, root_name_line):
+            assert json.loads(source) == manifest
+            write(tmp_path, relative, source)
+            if skill == "vibe-generic":
+                assert scan.findings(tmp_path) == []
+            else:
+                number = next(i for i, line in enumerate(source.splitlines(), 1) if "/vibe:handoff" in line)
+                [hit] = scan.findings(tmp_path)
+                assert hit == f"{relative}:{number} skill-namespace: interface.defaultPrompt[0]: Run /vibe:handoff."
+
+
+@pytest.mark.parametrize(("platform", "skill", "path"), [
+    ("claude", "vibe", "description"),
+    ("codex", "vibe", "interface.shortDescription"),
+    ("codex", "vibe-generic", "interface.shortDescription"),
+])
+def test_ac3_manifest_fields_ignore_layout(tmp_path: Path, platform: str, skill: str, path: str) -> None:
+    relative = f"plugins/vibe/.{platform}-plugin/plugin.json"
+    value = f'Use "{skill}:handoff" here.'
+    manifest: dict[str, object] = {"name": "generic"}
+    if platform == "codex":
+        interface = {"displayName": "Generic /vibe:label", "shortDescription": value,
+                     "defaultPrompt": ["Run my-vibe:handoff or team_vibe:handoff."]}
+        manifest["interface"] = interface
+    else:
+        manifest["description"] = value
+    pretty = json.dumps(manifest, indent=2)
+    packed = "{\n  " + json.dumps(manifest)[1:]
+    publisher_line = pretty.replace('",\n    "shortDescription"', '", "shortDescription"')
+    interface_line = pretty.replace('"interface": {\n    "displayName"', '"interface": {"displayName"')
+    for source in (publisher_line, packed, interface_line, pretty, json.dumps(manifest).replace(":handoff", r"\u003ahandoff")):
+        assert json.loads(source) == manifest
+        write(tmp_path, relative, source)
+        number = next(i for i, line in enumerate(source.splitlines(), 1) if "Use " in line)
+        expected = [f"{relative}:{number} skill-namespace: {path}: {value}"] if skill == "vibe" else []
+        assert scan.findings(tmp_path) == expected
+
+
+def test_ac3_malformed_manifest_falls_back_to_source_lines(tmp_path: Path) -> None:
+    relative = "plugins/vibe/.claude-plugin/plugin.json"
+    source = '{\n  "name": "Generic vibe:label",\n  "description": "Run vibe:handoff",\n}'
+    write(tmp_path, relative, source)
+    assert scan.findings(tmp_path) == [f'{relative}:3 skill-namespace: "description": "Run vibe:handoff",']
+
+
 def test_snapshot_holds_digests_never_text() -> None:
     rows = [scan.Row("plugins/vibe/x.md", 4, ("machine",), "/Users/someone/Source/secret")]
     [record] = scan.snapshot(rows)

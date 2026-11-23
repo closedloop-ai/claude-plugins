@@ -32,8 +32,23 @@ from test_vibe_no_person_names_contract import names_in
 
 REPO = Path(__file__).resolve().parents[4]
 
-# The desktop package's vibe:profile script is not a harness skill.
-WRONG_NAMESPACE = re.compile(r"(?<![\w-])vibe:(?!profile(?![\w-]))(?:[a-z0-9][a-z0-9-]*|<[a-z][a-z0-9-]*>)")
+# Underscores can wrap a Markdown ID. Keep underscores inside other plugin names and the desktop profile script.
+WRONG_NAMESPACE = re.compile(
+    r"(?<![\w-])_*vibe:(?!profile(?![a-z0-9-]))"
+    r"""(?:[a-z0-9][a-z0-9-]*|<[a-z][a-z0-9-]*>|\$\{|["'`]\s*\+)"""
+)
+JS_SUFFIXES = {".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"}
+JS_TEXT_TOKEN = re.compile(
+    # At expression start a regex can contain quotes, backticks or braces that aren't JS text delimiters.
+    r"(?P<regex>(?:(?<=[=(\[!,:;?&|>])|(?<=\breturn))\s*/(?![*/])"
+    r"(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\[\n])+/[a-z]*)|"
+    r'''//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'|[`{}]'''
+)
+JS_TEMPLATE_PART = re.compile(r"(?:\\[\s\S]|\$(?!\{)|[^`\\$])*(?P<end>\$\{|`|\Z)")
+JS_ADDITION = re.compile(r"(?:\s|//[^\n]*\n|/\*[\s\S]*?\*/)*\+(?![+=])")
+JS_ESCAPE = re.compile(r"\\(?:\\|[fnrtv]|x[\da-fA-F]{2}|u(?:[\da-fA-F]{4}|\{[\da-fA-F]{1,6}\}))", re.ASCII)
+# ECMAScript whitespace and line terminators, including the U+2000–U+200A space separators.
+JS_WHITESPACE = {ord(char) for char in "\t\n\v\f\r \xa0\u1680\u2028\u2029\u202f\u205f\u3000\ufeff"} | set(range(0x2000, 0x200B))
 
 # Ordered: the first family that matches a line is its primary family.
 GATING: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -102,12 +117,10 @@ MANIFESTS = (
     ".claude-plugin/marketplace.json",
     ".agents/plugins/marketplace.json",
 )
-PUBLISHER_FIELD = re.compile(
-    r'^\s*"(?:author|homepage|repository|developerName|email|websiteURL|privacyPolicyURL|termsOfServiceURL|name|source'
-    r'|path|displayName)"\s*:'
-)
-
-
+PUBLISHER_KEYS = ("author", "homepage", "repository", "developerName", "email", "websiteURL",
+                  "privacyPolicyURL", "termsOfServiceURL", "name", "source", "path", "displayName")
+PUBLISHER_FIELD = re.compile(r'^\s*"(?:' + "|".join(PUBLISHER_KEYS) + r')"\s*:')
+JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 
 # Lines that name the publisher or a compatibility alias on purpose, each by its exact stripped text and the
 # reason it stays. A line that changes no longer matches and gates again.
@@ -147,8 +160,82 @@ def text_digest(text: str) -> str:
     return hashlib.sha256(re.sub(r"\s+", " ", text).strip().encode()).hexdigest()[:20]
 
 
-def families(line: str, semantic: bool = True) -> tuple[str, ...]:
-    found = [name for name, pattern in GATING if pattern.search(line)]
+def js_whitespace_boundary(match: re.Match[str]) -> str:
+    """Expose whitespace to the namespace matcher while preserving literal backslash pairs and other escapes."""
+    escape = match[0]
+    if escape == r"\\":
+        return escape
+    if len(escape) == 2 or int(escape[2:].strip("{}"), 16) in JS_WHITESPACE:
+        return " "
+    return escape
+
+
+def js_text_spans(source: str) -> Iterator[tuple[int, int]]:
+    """Yield strings, comments and literal template parts. Substitution expressions resume code scanning."""
+    offset = 0
+    template = False
+    braces: list[int] = []
+    while offset < len(source):
+        if template:
+            part = JS_TEMPLATE_PART.match(source, offset)
+            if part is None:
+                break
+            yield part.span()
+            if part["end"] == "${":
+                braces.append(0)
+            template = False
+            offset = part.end()
+            continue
+        token = JS_TEXT_TOKEN.search(source, offset)
+        if token is None:
+            break
+        offset = token.end()
+        if token.lastgroup == "regex":
+            continue
+        if token[0] == "`":
+            template = True
+        elif token[0] == "{":
+            if braces:
+                braces[-1] += 1
+        elif token[0] == "}":
+            if braces and braces[-1] == 0:
+                braces.pop()
+                template = True
+            elif braces:
+                braces[-1] -= 1
+        else:
+            yield token.span()
+
+
+def js_namespace_lines(relative: str, lines: list[str]) -> set[int] | None:
+    """Return source lines containing stale JS instructions, attributing concatenation to its prefix."""
+    if Path(relative).suffix not in JS_SUFFIXES:
+        return None
+    hits: set[int] = set()
+    source = "\n".join(lines)
+    if "vibe:" not in source:
+        return hits
+    previous, number = 0, 1
+    for start, end in js_text_spans(source):
+        text = source[start:end]
+        if "vibe:" not in text:
+            continue
+        number += source.count("\n", previous, start)
+        previous = start
+        if not text.startswith(("//", "/*")) and text.endswith(('"', "'", "`")) and JS_ADDITION.match(source, end):
+            text += "+"
+        for index, line in enumerate(text.split("\n"), number):
+            if WRONG_NAMESPACE.search(JS_ESCAPE.sub(js_whitespace_boundary, line)):
+                hits.add(index)
+    return hits
+
+
+def families(line: str, semantic: bool = True, *, namespace_hit: bool | None = None) -> tuple[str, ...]:
+    found = []
+    for name, pattern in GATING:
+        match = namespace_hit if name == "skill-namespace" and namespace_hit is not None else pattern.search(line)
+        if match:
+            found.append(name)
     if names_in(line):
         found.append("people")
     if semantic:
@@ -185,6 +272,38 @@ def lines_of(root: Path, relative: str) -> list[str] | None:
         return None
 
 
+def manifest_namespace_hits(lines: list[str], *, marketplace: bool) -> dict[int, list[str]] | None:
+    """Map stale non-publisher string values to their source lines, or return None for malformed JSON."""
+    try:
+        # Ordered member pairs preserve every source token, including repeated keys. Arrays remain lists.
+        document = json.loads("\n".join(lines), object_pairs_hook=tuple)
+    except json.JSONDecodeError:
+        return None
+
+    # JSON strings occupy one physical line. Use tokens only to locate decoded keys and values.
+    locations = (number for number, line in enumerate(lines, 1) for _ in JSON_STRING.finditer(line))
+    hits: dict[int, list[str]] = {}
+
+    def visit(value: object, path: str, exempt: bool) -> None:
+        if isinstance(value, tuple):
+            for key, child in value:
+                next(locations)  # Skip the key's token.
+                visit(child, f"{path}.{key}" if path else key, exempt or key in PUBLISHER_KEYS)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                # Only the generic distribution's entry promises to resolve generic skill IDs.
+                other_plugin = (marketplace and path == "plugins" and isinstance(child, tuple)
+                                and dict(child).get("name") != "vibe-generic")
+                visit(child, f"{path}[{index}]", exempt or other_plugin)
+        elif isinstance(value, str):
+            number = next(locations)
+            if not exempt and WRONG_NAMESPACE.search(value):
+                hits.setdefault(number, []).append(f"{path}: {value}")
+
+    visit(document, "", False)
+    return hits
+
+
 def scan(root: Path, tops: Iterable[str]) -> list[Row]:
     """Every line under `tops` (repo-relative) that matches a family, gating or semantic."""
     rows: list[Row] = []
@@ -192,8 +311,9 @@ def scan(root: Path, tops: Iterable[str]) -> list[Row]:
         text = lines_of(root, relative)
         if text is None:
             continue
+        js_hits = js_namespace_lines(relative, text)
         for number, line in enumerate(text, 1):
-            found = families(line)
+            found = families(line, namespace_hit=number in js_hits if js_hits is not None else None)
             if found:
                 rows.append(Row(relative, number, found, line.strip()))
     return rows
@@ -213,12 +333,17 @@ def findings(root: Path = REPO) -> list[str]:
         if text is None:
             continue
         manifest = relative.endswith("plugin.json") or relative in MANIFESTS
+        manifest_hits = manifest_namespace_hits(text, marketplace=relative in MANIFESTS) if manifest else None
+        js_hits = js_namespace_lines(relative, text)
         for number, line in enumerate(text, 1):
-            if manifest and PUBLISHER_FIELD.search(line):
+            if manifest_hits is not None:
+                for detail in manifest_hits.get(number, ()):
+                    found.append(f"{relative}:{number} skill-namespace: {detail[:160]}")
+            if line.strip() in allowed.get(relative, ()) or (manifest and PUBLISHER_FIELD.search(line)):
                 continue
-            if line.strip() in allowed.get(relative, ()):
-                continue
-            hit = families(line, semantic=False)
+            hit = families(line, semantic=False, namespace_hit=number in js_hits if js_hits is not None else None)
+            if manifest_hits is not None:
+                hit = tuple(family for family in hit if family != "skill-namespace")
             if namespace_only:
                 hit = tuple(family for family in hit if family == "skill-namespace")
             if hit:
