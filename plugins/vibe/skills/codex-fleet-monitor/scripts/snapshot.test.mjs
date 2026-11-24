@@ -93,12 +93,10 @@ test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, ()
     'plugins/vibe/lib/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe/lib/codex-fleet-monitor/scripts/work-dir.mjs',
     // work-dir.mjs resolves a chat's bound program (ISS-14028).
     'plugins/vibe/lib/fleet-orchestrator/scripts/chat-binding.mjs', 'plugins/vibe/lib/vibe/scripts/captured-json.mjs', 'plugins/vibe/lib/vibe/scripts/harness-identity.mjs',
-    'plugins/vibe/lib/vibe/scripts/sandbox-refusal.mjs', 'plugins/vibe/lib/vibe/scripts/session-record.mjs',
-    'plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs',
     'plugins/vibe/shared/plugin-roots.mjs', 'plugins/vibe/shared/vibe-core.mjs',
     'plugins/vibe/skills/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe/skills/codex-fleet-monitor/scripts/ratelimit.mjs',
     'plugins/vibe/skills/codex-fleet-monitor/scripts/recover.mjs', 'plugins/vibe/skills/codex-fleet-monitor/scripts/usage-state.mjs',
-    'plugins/vibe/skills/codex-fleet-monitor/scripts/work-dir.mjs', 'plugins/vibe/skills/vibe/scripts/session-questions.mjs',
+    'plugins/vibe/skills/codex-fleet-monitor/scripts/work-dir.mjs', 'plugins/vibe/skills/vibe/scripts/question-wait-policy.mjs',
   ]);
   for (const checker of ['skill-freshness.mjs', 'loaded-skill.mjs', 'plugin-script-references.mjs']) {
     assert.ok(!entries.some((entry) => entry.endsWith(`/${checker}`)), checker);

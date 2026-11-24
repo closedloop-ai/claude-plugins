@@ -49,7 +49,11 @@ export function sessionRecordPath(worktree) {
 
 /** Reads the persisted record without adding surface-specific defaults. */
 export function readSessionRecord(worktree) {
-  const file = recordPath(worktree);
+  return readSessionRecordFile(recordPath(worktree));
+}
+
+/** Read the current contents of a session record previously resolved for this worktree. */
+export function readSessionRecordFile(file) {
   assertIsolatedTestRead(file);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
 }

@@ -41,11 +41,14 @@ export function sharedContract(ours, theirs) {
  * vibe-core. Never throws or rejects, and leaves the exit code 0: it sets process.exitCode and installs a
  * process-wide uncaughtException handler, so drive it in its own process, never inside a test runner.
  */
-export async function runEvent(event, { read = () => readFileSync(0, "utf8"), write = (text) => process.stdout.write(text),
+export async function runEvent(event, { read = () => readFileSync(0, "utf8"), write = (text) => new Promise((resolve, reject) =>
+  process.stdout.write(text, error => error ? reject(error) : resolve())),
   report = (line) => process.stderr.write(`${line}\n`), from = import.meta.url } = {}) {
   keepExitZero(event, report);
   // The VibeProblem an unexpected throw from here on means; null before vibe is looked up.
   let stage = null;
+  let settle;
+  let delivered = false;
   try {
     const input = JSON.parse(read() || "{}");
     const cwd = typeof input?.cwd === "string" ? input.cwd : process.cwd();
@@ -67,15 +70,23 @@ export async function runEvent(event, { read = () => readFileSync(0, "utf8"), wr
     if (contract === null) throw problem(Math.min(...theirs) > Math.max(...SHIM_CONTRACTS) ? VibeProblem.Newer : VibeProblem.Older);
     stage = VibeProblem.Failed;
     const core = ownPluginRoot(from);
-    const output = await runtime.runHook({ event, input, core: { root: core.root, version: core.version, contract }, report });
-    if (typeof output === "string") write(`${output}\n`);
-    else if (output !== null && typeof output === "object") write(`${JSON.stringify(output)}\n`);
+    const output = await runtime.runHook({ event, input, core: { root: core.root, version: core.version, contract }, report,
+      afterOutput(callback) { settle = callback; } });
+    if (typeof output !== "string" && (output === null || typeof output !== "object")) return;
+    const text = typeof output === "string" ? output : JSON.stringify(output);
+    try {
+      await write(`${text}\n`);
+      delivered = true;
+    } catch (error) { report(`vibe-core ${event}: ${errorText(error)}`); }
   } catch (error) {
     const reason = error?.vibeProblem ?? stage;
     if (reason === null) report(`vibe-core ${event}: ${errorText(error)}`);
     else if (event !== PLAIN_TEXT_EVENT && NOTICE_EVENTS.includes(event)) {
-      write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: degradedNotice(reason) } })}\n`);
+      try { await write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: degradedNotice(reason) } })}\n`); }
+      catch (writeError) { report(`vibe-core ${event}: ${errorText(writeError)}`); }
     }
+  } finally {
+    try { settle?.(delivered); } catch (error) { report(`vibe-core ${event}: ${errorText(error)}`); }
   }
 }
 

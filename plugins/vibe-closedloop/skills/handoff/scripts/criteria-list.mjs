@@ -43,6 +43,20 @@ export function numberedCriteriaIds(ticket, lines = proseLines(ticket)) {
   return ids;
 }
 
+/** Ignore examples and hidden comments in cited ticket or PR text. */
+export function visibleMarkdownLines(body) {
+  const lines = [];
+  let fence = "";
+  for (const line of body.replace(/<!--[\s\S]*?(?:-->|$)/g, "").split(/\r?\n/)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = "";
+    } else if (!fence) lines.push(line);
+  }
+  return lines;
+}
+
 /** The ticket's acceptance criteria as AC-n ids with their text. */
 export function ticketCriteria(ticket) {
   return criteriaStates(ticket).map(({ id, text }) => ({ id, text }));

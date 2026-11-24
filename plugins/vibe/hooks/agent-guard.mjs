@@ -2,6 +2,9 @@
 // capability-binding launcher. Native dispatch skips session and graph tools.
 
 import { deny, eventCwd } from "./hook-dispatch.mjs";
+import path from "node:path";
+import { commandCalls } from "./command-calls.mjs";
+import { conversationSkill } from "./hook-session-scope.mjs";
 import { vibeSkillOf } from "../shared/plugin-roots.mjs";
 import { vibeScriptPath, vibeSkill } from "../shared/vibe-install.mjs";
 import { briefProviderProblem } from "../lib/vibe/scripts/provider-brief.mjs";
@@ -20,6 +23,35 @@ const STARTUP_ROLES = new Set(["vibe-requirements-worker", "vibe-setup-worker"])
 const TAKEOVER_REVIEWERS = new Set(["vibe-adversarial-reviewer", "vibe-guardrails-reviewer"]);
 const LAUNCHER = "skills/vibe/scripts/dist/claude-worker.mjs";
 const REVIEW_RECEIPTS = "skills/handoff/scripts/review-receipts.mjs";
+
+const CODEX_GLOBAL_VALUES = new Set(["-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox",
+  "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "--enable", "--disable", "--local-provider", "-i", "--image"]);
+
+/** The executable subcommand, after global options; quoted prompts and ordinary state commands are data. */
+function rawCodexLaunch(words) {
+  if (path.basename(words?.[0] ?? "") !== "codex") return false;
+  let i = 1;
+  while (words[i]?.startsWith("-")) {
+    if (words[i] === "--") { i++; break; }
+    i += CODEX_GLOBAL_VALUES.has(words[i]) ? 2 : 1;
+  }
+  return ["exec", "e", "review"].includes(words[i]);
+}
+
+/** Fleet-only launch policy. Managed launchers start their child internally and never issue a raw parent tool call. */
+export function fleetLaunchGuard(event, home) {
+  const input = event?.tool_input;
+  const native = event.tool_name === "Agent";
+  const candidate = native
+    ? !/^(?:\$vibe\b|\/(?:vibe|vibe-generic):vibe\b)/.test(input?.prompt?.trim() ?? "")
+      && !["Ticket writer:", "Helper branch and worktree:", "Exclusive file allowlist:", "Assignment:", "Test authority:", "Return:"]
+        .every(field => String(input?.prompt ?? "").split("\n").some(line => line.startsWith(field) && line.slice(field.length).trim()))
+    : typeof input?.command === "string";
+  if (!candidate || conversationSkill(event, home) !== "fleet-orchestrator") return null;
+  if (!native && !commandCalls(input.command, eventCwd(event)).some(({ words, value }) => rawCodexLaunch(words.map(word => value(word) ?? word)))) return null;
+  return deny("Fleet ticket analysis uses dist/claude-worker.mjs with vibe-requirements-worker in sessionless startup mode. "
+    + "Use dist/codex-reviewer.mjs for review, dist/codex-reviewer.mjs run --role visual-qa-critic --agent-definition <repo-agent-file> for visual QA, or fleet.sh session turn for assigned worker work.");
+}
 
 /** The refusal for a direct internal vibe-worker launch, or null. */
 export function agentLaunchProblem(input, cwd = process.cwd()) {

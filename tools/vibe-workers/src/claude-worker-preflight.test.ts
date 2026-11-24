@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveAgentRoot } from "./plugin-root.js";
 import * as worker from "./claude-worker.js";
-import { bundleDirectory, fixture, graph, liveReads, readProof } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, liveReads, readProof, withReviewCriteria } from "./test-fixtures.js";
 
 const installedRoot = resolve(bundleDirectory, "../../../..");
 /** The name the installed plugin is published under: this source is vibe-generic, its ClosedLoop build vibe. */
@@ -15,7 +15,7 @@ function setup() { const value = fixture(); fixtures.push(value); return value; 
 function launch(value: ReturnType<typeof fixture>, input: Record<string, unknown>, env: Record<string, string> = {}) {
   const result = spawnSync(process.execPath, [join(bundleDirectory, "claude-worker.mjs")], {
     input: JSON.stringify({ worktree: value.worktree, agentName: "vibe-change-worker", capabilities: graph,
-      mode: "request", requestId: "first", ...input }),
+      mode: "request", requestId: "first", ...withReviewCriteria(input, value.base) }),
     encoding: "utf8", env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}`, ...env }, timeout: 15000,
   });
   return { status: result.status, json: JSON.parse(result.stdout || "{}") as Record<string, unknown> };

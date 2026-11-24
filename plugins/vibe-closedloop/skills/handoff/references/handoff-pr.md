@@ -5,6 +5,12 @@ Steps in this file written for symphony-alpha apply only in a repository that co
 Moved out of `../SKILL.md`, which says when to read it; later edits to that text land here. Markdown links are relative to this file; other paths stay relative to the skill folder.
 
 <!-- block: requested-pull-request -->
+Copy each `pathCitations[].disclosure` from the pull-request inventory into
+the PR body on its own line. The gate checks the exact file and criterion
+against the session's current ticket evidence and records them in its witness.
+
+For each review or verification turn, read the current ticket by slug. Append the output of `node <pluginRoot>/lib/handoff/scripts/review-context.mjs --ticket <slug> --read <full tracker response.json>` to the actual input, passing `--rulings <program rulings.md>` for program decisions. Report a conflict with a criterion or ruling as a QUESTION for the operator.
+
 When the person explicitly asks for a pull request to
 be raised, full tests for every change in the session are required before it
 opens. Resume the SAME writer in `pull-request` mode, the only turn whose
@@ -57,6 +63,8 @@ cannot pass. Pass the four receipts (guardrails, adversarial, Storybook
 decomposer and final verifier), criteria audit and matrix paths, and verifier evidence path to
 the PR worker. A hand-written empty findings list is never a receipt. Any
 current blocking finding prevents the PR, even if someone marks it waived.
+In the PR body's **Engineering review**, name each engineer-only check, available evidence and the reviewer's next action (including any required service credential). Attribute proceeding to `(orchestrator)` and continue delivery.
+
 After composing the final PR body, the PR worker runs `handoff-gate.mjs`
 immediately before `gh pr create` with the body, verifier evidence, receipts,
 current fetched base, and when available the criteria ticket, audit
@@ -87,8 +95,7 @@ reason on the Engineering checklist as a verified human-only blocker does
 (`../vibe/references/guardrails.md`, "Plugins and tooling"), tell the
 person in one plain line what prevented the pull request and which paths
 were tried. Check for a safe retry or accepted alternative first. When it
-remains a verified engineering-only block, offer to pass the pushed work
-to someone now; never give them the branch to merge instead. When they name
+is a credential-limited check recorded by `pre-pr-lanes.mjs check`, copy its command, head, lane key, reason and `engineeringCredential` into a `not-run` verifier row. Include its note under Engineering review and open the PR. An actual failed test still blocks. When it remains a verified engineering-only block, offer to pass the pushed work to someone now. When they name
 someone, run step 8's
 lookup and assign mode as for passing it on. Then mark the
 session handed off as below.

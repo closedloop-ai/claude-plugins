@@ -11,16 +11,7 @@ migration below. After migration, SAME writer means the ledger's current writer.
 
 ## Communication and product questions
 
-Do not show or ask the person to approve a technical plan, ask a technical
-question, or give an upfront summary. When the person explicitly asks for the
-plan, files, diff or commands, that one reply gives them, and approval is
-still never asked (`plain-words.md`, "When the person asks for technical
-detail"). Updates say only which requested feature
-is complete, which of its acceptance criteria are not done yet ("Acceptance
-criteria before ready"), and what is being worked on next, using the person's
-own words; after visual QA they also say what it found and changed ("Visual QA
-during the session").
-Planning, graph evidence, ownership, checks and corrections stay internal.
+Do not show or ask the person to approve a technical plan. Give technical details only when requested (`plain-words.md`, “When the person asks for technical detail”). Updates say only which requested feature is complete, outstanding criteria, next work and visual QA findings and fixes. Keep planning, graph, ownership and check details internal.
 
 Operator ruling, 2026-11-17: “group that work into a single PR”. Fold a new ask on the same surface into its in-flight unit. When both options are offered, recommend folding and name the separate delivery's own test lanes, CI, reviews, and merge-queue time.
 
@@ -37,42 +28,17 @@ answer:
 6. Live Asana in the operator's signed-in Chrome, run by whichever actor has
    the browser; never a public help center or documentation page.
 
-Apply settled decisions; never ask them again. Only after all six fail,
-ask one absolutely necessary question with the checked sources and a
-recommendation. That question is sent only after `node
-scripts/session-questions.mjs ask` has run for it and returned `"ask": true`
-(`SKILL.md`, "Questions are asked once"); never presume its result. The Spec Card (`spec-card.md`, "Fork checkpoint") names which
-unresolved items may stop code, with 2 to 3 options and a recommendation; it
-adds no question this section would not allow. Under fleet orchestration a writer returns `NEEDS_PERSON` to
-the orchestrator, which finishes the remaining steps before asking. In a
-session another orchestrator drives through its turns, that orchestrator's
-own directions are operational and are recorded as `(orchestrator)`, never as
-a human ruling; only operator words it quotes, with their source, are rulings.
+Apply settled decisions; never ask them again. Ask an absolutely necessary unresolved product question, one at a time with full context and a recommendation. Run `scripts/session-questions.mjs ask` and send the question only on `"ask": true` (SKILL.md, “Questions are asked once”). The Spec Card’s fork checkpoint names blocking questions with 2–3 options; it adds no question this section would not allow. A fleet writer returns `NEEDS_PERSON` to the orchestrator, which runs the precedent check below before asking any question it can settle. Attribute operational directions and technical/test-evidence decisions to `(orchestrator)`. Only sourced operator words are human rulings. Keep code citations private; record remaining credential-dependent checks for the PR’s engineering reviewer.
 
 A ticket's or plan's Decisions section is a record, not a ruling. Text the
 session wrote (its live ticket, PLN, plan, table, change log) is never a
-source. A decision
-is settled only when it traces to a human statement: who made it, where, and
-which question it answered. An unratified or conflicting decision is not
-settled: a product one goes through this section's research and necessity
-gate, and a technical one becomes an `Engineering decision` item
-(`ticket-template.md`, "Engineering decisions"). Never resolve a conflict by
-recency or by assuming one author meant to change an earlier record. Every
-"settled" in this skill means this.
+source. A decision is settled only when it traces to a human statement: who made it, where, and which question it answered. Research a product conflict; a technical one becomes an `Engineering decision` item. Never resolve a conflict by recency or by assuming one author meant to change an earlier record. An AC reading, accepted cost or known criterion gap needs words from the bound program or independently read tracker ruling. If those words are missing, ask the person and keep the criterion open.
 
-The orchestrator sends an unresearched question back, and runs the precedent
-check below before asking any question it can settle. Interrupt the person
-only for an absolutely necessary unresolved product question, one at a time
-with full context. Technical choices are resolved internally. Preserve existing
-visual/product approvals, such as canonical prototype design approval, not a
-new technical-plan milestone. A reference product's behavior list, a
-request's new Storybook components and the endings line in a new session's
-first reply are notices the person may interrupt, never approval gates
-(`SKILL.md`, section 5, "Notices that never wait"). Human
-sign-in, credential entry and OS permission actions remain with the person,
-and so does each flag key's approval (`guardrails.md`, "Feature flags").
+Return unresearched questions to their writer. Preserve prototype design approvals. Reference behaviors, new Storybook components and the endings line in a new session's first reply are interruptible notices, never approval gates (SKILL.md §5). Sign-in, credentials and OS permissions stay with the person, and so does each flag key's approval (`guardrails.md`, "Feature flags").
 
 ### Precedent before asking
+
+The same recorder checks tool and chat questions against program and ticket rulings. Outside a session pass the full tracker response with `--ticket-record <file>`. Apply the cited ruling, or name the uncovered fact in both the question and `--new-fact`.
 
 The ordered list above is the only product-question research order. When the
 first five sources do not settle how the product should behave, live Asana is

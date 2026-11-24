@@ -41,7 +41,11 @@ export function evidenceFingerprint(file) {
 
 /** Read the authenticated bytes once, optionally checking an independently saved fingerprint. */
 export function readEvidence(file, expected, maxBytes) {
-  const result = inspectEvidence(file, true, maxBytes);
+  return expectEvidence(inspectEvidence(file, true, maxBytes), expected, file);
+}
+
+/** Refuse evidence already read from `file` when it differs from an independently saved fingerprint. */
+export function expectEvidence(result, expected, file) {
   if (expected && (expected.path !== result.fingerprint.path || expected.sha256 !== result.fingerprint.sha256)) {
     throw new Error(`Evidence changed: ${file}`);
   }

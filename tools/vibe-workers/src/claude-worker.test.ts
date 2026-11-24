@@ -2,14 +2,15 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, createTurnCap, DEFAULT_WORKER_TIMEOUT_MS, dispatchFreshnessProblem, MAX_WORKER_TIMEOUT_MS, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, stderrTail, testAuthoringGranted, workerResultJsonSchemaFor, workerSessionName } from "./claude-worker.js";
+import { capWorkerResult } from "./worker-result-cap.js";
+import { boundDefinition, checkPreviewResult, createTurnCap, DEFAULT_WORKER_TIMEOUT_MS, dispatchFreshnessProblem, MAX_WORKER_TIMEOUT_MS, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, stderrTail, testAuthoringGranted, workerResultJsonSchemaFor, workerSessionName } from "./claude-worker.js";
 import { providerAware } from "./cli.js";
 import { ProviderBroken } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { recordModes } from "./record-context.js";
-import { bundleDirectory, fixture, graph, liveReads, PROVIDER_BINDING, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, liveReads, PROVIDER_BINDING, readProof, recordWrite, withReviewCriteria, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
 
@@ -84,11 +85,11 @@ it("environment DONE is bounded by a provider receipt for the exact request", ()
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup() { const value = fixture(); fixtures.push(value); return value; }
 function run(value: ReturnType<typeof fixture>, input: Record<string, unknown>, entry = join(bundleDirectory, "claude-worker.mjs"),
-  extraEnv: Record<string, string> = {}) {
+  extraEnv: Record<string, string> = {}, includeReviewCriteria = true) {
   return spawnSync(process.execPath, [entry], {
     input: JSON.stringify({ worktree: value.worktree, agentRoot: value.agentRoot,
       agentName: "vibe-change-worker", capabilities: graph, mode: "request", requestId: "first",
-      ...input }),
+      ...(includeReviewCriteria ? withReviewCriteria(input, value.base) : input) }),
     encoding: "utf8", env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}`, ...extraEnv }, timeout: 10000,
   });
 }
@@ -100,6 +101,22 @@ function launchedModel(value: ReturnType<typeof fixture>, agent = "vibe:vibe-cha
 }
 
 describe("production Claude CLI adapter", () => {
+  it.each(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-consolidated-reviewer", "vibe-verify-worker"])(
+    "AC 12 binds the tracker read before starting %s and delivers a conflict as a QUESTION", agentName => {
+      const value = setup();
+      writeAgent(value.agentRoot, agentName, "Read, Grep, Glob, Bash, Skill");
+      const request = { agentName, input: "REVIEW_RECEIPT REVIEW_CONFLICT" };
+      const refused = run(value, request, undefined, {}, false);
+      expect(refused.stdout).toContain("REVIEW_CRITERIA_REQUIRED");
+      expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+      const accepted = run(value, request);
+      expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0);
+      expect(JSON.parse(accepted.stdout).data).toMatchObject({ findings: [],
+        questions: [{ kind: "QUESTION", contradicts: "Preserve the original label.", question: "Should the label change?" }] });
+      const sent = JSON.stringify(readProof(value.metadata).at(-1)?.payload);
+      expect(sent).toContain("Preserve the original label.");
+      expect(sent).toContain("keeps the label on mobile");
+    });
   it("AC-020 Claude dispatch accepts a repository test shorthand and names a real missing plugin script", () => {
     const value = setup();
     const directory = join(value.worktree, "plugins", "vibe", "skills", "vibe", "scripts");
@@ -613,6 +630,33 @@ describe("production Claude CLI adapter", () => {
     expect(busy.status).toBe(1);
     expect(readProof(value.metadata)).toHaveLength(3);
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(true);
+  });
+  it("DT-03 AC-3 verifies the saved analysis against the managed requirements worker completion", () => {
+    const value = setup();
+    rmSync(join(value.metadata, "vibe-session.json"));
+    const requirements = run(value, { agentName: "vibe-requirements-worker", input: "Read scope", sessionless: { kind: "startup" },
+      capabilities: [...graph, ...liveReads] });
+    expect(requirements.status).toBe(0);
+    const check = (record: unknown, requestId = "first") => spawnSync(process.execPath,
+      [join(bundleDirectory, "claude-worker.mjs"), "check-analysis", value.worktree, requestId],
+      { input: JSON.stringify(record), encoding: "utf8" });
+    const analysis = JSON.parse(requirements.stdout);
+    expect(check(analysis).status).toBe(0);
+    expect(check(analysis, "other").status).toBe(1);
+    for (const altered of [{ summary: "ad hoc report" }, { agentName: "vibe-setup-worker" },
+      { workerId: "not-a-worker" }, { runtime: "codex" }]) {
+      expect(check({ ...analysis, ...altered }).status).toBe(1);
+    }
+    const evidence = readFileSync(analysis.tracePath, "utf8");
+    writeFileSync(analysis.tracePath, evidence.trimEnd().split("\n").at(-1)!);
+    expect(check(analysis).status).toBe(1);
+    writeFileSync(analysis.tracePath, evidence.trimEnd().split("\n").slice(0, -1).join("\n"));
+    expect(check(analysis).status).toBe(1);
+    const incomplete = run(value, { agentName: "vibe-requirements-worker", input: "PERSON_FIRST", sessionless: { kind: "startup" },
+      capabilities: [...graph, ...liveReads] });
+    const pending = JSON.parse(incomplete.stdout);
+    expect(pending.status).toBe("NEEDS_PERSON");
+    expect(check(pending).status).toBe(1);
   });
   it("requires parent-held discard evidence and a stable existing checkout for post-discard cancellation", () => {
     const value = setup();
