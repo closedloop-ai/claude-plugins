@@ -3,7 +3,8 @@
 // A guard whose rule binds one skill's sessions checks it here, so a worker's
 // or another skill's session never gets that skill's refusals or reminders.
 
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { VIBE_NAME_PATTERN, vibeSkillPattern } from "../shared/plugin-roots.mjs";
 import { assertIsolatedTestRead } from "../lib/vibe/scripts/test-state-isolation.mjs";
 
@@ -46,6 +47,50 @@ export function readTranscript(file) {
     return null;
   } finally {
     if (fd !== null) closeSync(fd);
+  }
+}
+
+/** Capture the append position from which this turnless prompt's host can record its hook output. */
+export function transcriptPosition(file) {
+  if (typeof file !== "string" || !file) return null;
+  assertIsolatedTestRead(file);
+  try {
+    const { dev, ino, size } = statSync(file, { bigint: true });
+    return `${dev}-${ino}-${size}`;
+  } catch { return null; }
+}
+
+/** Yield contiguous, complete rollout records, optionally from a previously observed file position. */
+export function* transcriptLines(file, position) {
+  if (typeof file !== "string" || !file) return;
+  assertIsolatedTestRead(file);
+  let fd;
+  try {
+    fd = openSync(file, "r");
+    const stat = fstatSync(fd, { bigint: true });
+    const size = Number(stat.size);
+    let offset = 0;
+    if (position !== undefined) {
+      const [dev, ino, length] = position.split("-");
+      offset = Number(length);
+      if (dev !== String(stat.dev) || ino !== String(stat.ino) || !Number.isSafeInteger(offset) || offset < 0 || offset > size) return;
+    }
+    const buffer = Buffer.alloc(64 * 1024);
+    const decoder = new StringDecoder("utf8");
+    let pending = "";
+    while (offset < size) {
+      const count = readSync(fd, buffer, 0, Math.min(buffer.length, size - offset), offset);
+      if (!count) return;
+      offset += count;
+      const lines = decoder.write(buffer.subarray(0, count)).split("\n");
+      lines[0] = pending + lines[0];
+      pending = lines.pop();
+      yield* lines;
+    }
+  } catch {
+    // A missing or incomplete transcript cannot prove a notice was absent.
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 

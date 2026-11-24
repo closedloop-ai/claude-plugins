@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.106
+
+#### Added
+- ISS-14576 reports late watcher ticks and adds a one-line sleep notice to the orchestrator’s next prompt when macOS confirms sleep.
+- Across all plugin Markdown, including eval prompts and graders and each plugin's README, the net instruction-word change is zero (about 0 words longer than v1.1.105). This count excludes the generated `plugins/vibe-closedloop` mirror.
+
+### vibe-core v1.0.16
+
+#### Fixed
+- ISS-14576 lets vibe retry a sleep notice when its prompt output fails. Codex users must approve this release’s hooks again.
+
 ### vibe v1.1.105
 
 #### Fixed
