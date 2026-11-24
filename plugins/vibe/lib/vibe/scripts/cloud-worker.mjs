@@ -6,7 +6,7 @@
  * Usage: cloud-worker.mjs record-evidence|brief|dispatch|poll|import|followup|refresh-import|ready|validate|abandon --request <json>
  *        refresh-import and ready also take --title <PR title>
  *        cloud-worker.mjs complete-from-commit|import-from-git --request <json> --commit <sha> [--confirm]
- *        cloud-worker.mjs check [--request <json>]
+ *        cloud-worker.mjs check|pin [--request <json>]
  *        cloud-worker.mjs routines [--adopt <routine id>] [--retire <routine id>] [--confirm] [--request <json>]
  * Claude runs reuse this machine's one standing routine (cloud-routines.mjs); `routines` prints its ledger,
  * `--adopt` records an existing "vibe cloud worker" routine as it, `--retire` queues a routine whose `get` name
@@ -40,23 +40,35 @@
  * the fleet home's config.env) and is refused with a named error without one.
  * `check` reports the environment, the API and its fixes; exit 1 on a failure.
  */
+import { logText } from "./cloud-validation-log.mjs";
+import { capturedJson } from "./captured-json.mjs";
+import { readGitInventory } from "./git-inventory.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
+import { recordCloudCheck } from "../../fleet-orchestrator/scripts/cloud-slot-routing.mjs";
+import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { decideCloudPlacement } from "../../fleet-orchestrator/scripts/cloud-placement.mjs";
 import { assertVibeCreatedWorktree, sessionLiveTicket } from "./session-record.mjs";
 import { sameSource, sourceIdentity } from "./tested-head.mjs";
+import { currentClaudeAccount } from "./cloud-account-pin.mjs";
 import { checkCloudSetup, cloudSetupError, CloudSetupError, createRefusal, githubTokenMissing, resolveClaudeEnvironment, runNotCreated, sessionInitError } from "./cloud-environment.mjs";
-import { adoptStanding, chromeRemoval, hasIntent, markRun, NO_EXECUTOR, pendingCount, pendingLine, readLedger, retireRoutine, runOnStanding, sweepRemovals } from "./cloud-routines.mjs";
-import { dispatchReceiptName, TERMINAL, validationReceiptName } from "./cloud-receipts.mjs";
+import { adoptStanding, chromeRemoval, hasIntent, markRun, NO_EXECUTOR, pendingCount, pendingLine, readLedger, recordEnvironmentPin, retireRoutine, runOnStanding, sweepRemovals } from "./cloud-routines.mjs";
+import { dispatchReceiptName, TERMINAL, validationCommandKey, validationReceiptName } from "./cloud-receipts.mjs";
+import { directValidationLanes, isCheckCommand } from "./cloud-check-command.mjs";
+import { boundProbeReceipt, cloudHostInstruction, describeCloudLanes, executeCloudValidation, recordRuntimeFromValidation, syntaxOnlyLane, validationRuntimeAdmission } from "./cloud-validation-environment.mjs";
+import { validationPrerequisites, validatePrerequisiteOutcomes } from "./cloud-validation-prerequisites.mjs";
+import { checkStreamDirectories, privateStreamEvidence, validationReportInstruction, validationReportLanes, validationReportSummary } from "./cloud-validation-report.mjs";
 import { codexEnvironment, installInstruction, PROVENANCE_COMMAND, provenanceProblem, resolveRepository } from "./cloud-repository.mjs";
+import { findRun } from "./cloud-validation-admission.mjs";
 import { workflowLaneDefinitions } from "./workflow-lane-definitions.mjs";
 import { connectionLabel, providerDataOr, sessionBinding } from "./provider.mjs";
 import { failScript } from "./provider.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { checkCloudcheckRequest, prepareCloudcheckProof } from "./cloudcheck-proof.mjs";
 import { cloudPrProblem, completeFromCommit, importFromGit, importResult, readyForPr, refreshImportWitness, unconfirmed } from "./cloud-import.mjs";
 
 const MAX_WALL_MS = 35 * 60 * 1000;
@@ -73,16 +85,9 @@ const RETRIED_MS = 180 * 1000;
 const RETRY_PAUSES_MS = [5_000, 15_000];
 export const CloudCallError = Object.freeze({ Timeout: "CLOUD_CALL_TIMEOUT", PollTimeout: "CLOUD_POLL_TIMEOUT" });
 const GRAPH_FIELDS = ["ownership", "collisions", "blastRadius"];
-const LIST_RUNS_PAGES = 10;
+
 const PERSISTED_BYTES = 64 * 1024 * 1024;
 const TOO_LARGE = "the routine service answered, but the reply was too large to read here";
-const CHECK_ENTRY_POINT = /^(?:uv run |node |pnpm |ruff |pyright|pytest )/;
-const SHELL_CONTROL = /[;&|`$<>\n]/;
-const RESULT_MARKER = "VIBE_VALIDATION_RESULT";
-// The condensed run log folds a message onto one line, so the marker need not start one.
-const RESULT_LINE = /VIBE_VALIDATION_RESULT (\{.*\})\s*$/gm;
-// The condensed run log cuts an assistant message at 2,000 characters and marks the cut.
-const CUT_RESULT_LINE = /VIBE_VALIDATION_RESULT \{[^\n]*… \[\+\d+ chars\]\s*$/m;
 const TAIL_CHARS = 300;
 const DIAGNOSIS_CHARS = 150;
 
@@ -188,7 +193,6 @@ function checkPollingBounds(request) {
   if (!Number.isInteger(request.pollMs ?? DEFAULT_POLL_MS) || (request.pollMs ?? DEFAULT_POLL_MS) < 1000 || (request.pollMs ?? DEFAULT_POLL_MS) > 60_000) throw new Error("pollMs must be between 1 and 60 seconds");
 }
 
-function isCheckCommand(command) { return typeof command === "string" && CHECK_ENTRY_POINT.test(command) && !SHELL_CONTROL.test(command); }
 
 /** Render the same sourced input for either remote harness. */
 export function generateBrief(request, record, rules = requestRules(request)) {
@@ -213,10 +217,10 @@ export function generateBrief(request, record, rules = requestRules(request)) {
 
 function parseJsonOutput(output, context) {
   let data;
-  try { data = JSON.parse(output); } catch { throw new Error(`${context} did not return JSON`); }
+  try { data = capturedJson(output); } catch { throw new Error(`${context} did not return JSON`); }
   if (data?.structured_output) return data.structured_output;
   if (typeof data?.result === "string") {
-    try { return JSON.parse(data.result); } catch { /* reported text is not proof */ }
+    try { return capturedJson(data.result); } catch { /* reported text is not proof */ }
   }
   return data;
 }
@@ -247,7 +251,7 @@ function toolResultText(body, structured) {
   } catch { throw tooLarge(); }
   if (text.trimStart().startsWith("[")) {
     try {
-      const blocks = JSON.parse(text);
+      const blocks = capturedJson(text);
       if (Array.isArray(blocks)) text = blocks.map((item) => item?.text ?? "").join("\n");
     } catch { /* a saved string result is used as it is */ }
   }
@@ -261,8 +265,7 @@ function remoteTriggerStream(stdout) {
   let terminal = null;
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
-    let event;
-    try { event = JSON.parse(line); } catch { continue; }
+    const event = capturedJson(line);
     if (event?.type === "result") terminal = event;
     const content = event?.message?.content;
     if (!Array.isArray(content)) continue;
@@ -281,10 +284,10 @@ function remoteTriggerStream(stdout) {
 }
 
 /** One line of reported text with credential strings removed, or "" for a non-string. */
-function redactedLine(value) {
-  return typeof value === "string" ? value
-    .replace(/\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+|\bBearer\s+[A-Za-z0-9._~+-]+/gi, "[redacted]")
-    .replace(/[\x00-\x20\x7f]+/g, " ").trim() : "";
+function redactedLine(value, preserveFormatting = false) {
+  if (typeof value !== "string") return "";
+  const clean = value.replace(/\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+|\bBearer\s+[A-Za-z0-9._~+-]+/gi, "[redacted]");
+  return preserveFormatting ? clean.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "") : clean.replace(/[\x00-\x20\x7f]+/g, " ").trim();
 }
 
 /** Keep failure evidence bounded and omit lookalike lifecycle events and credential strings. */
@@ -322,8 +325,12 @@ function remoteTriggerOnce(action, payload, { run = runCommand, cwd, intent, hom
   if (action === "create" && !hasIntent(home, intent)) throw new Error(unexpected);
   const sent = JSON.parse(JSON.stringify({ action, ...payload }));
   const prompt = `Call RemoteTrigger exactly once with this complete tool input: ${JSON.stringify(sent)}. Do not call any other tool or take any other action.`;
-  const result = run("claude", ["-p", prompt, "--no-session-persistence", "--tools", "RemoteTrigger", "--allowedTools", "RemoteTrigger", "--max-turns", "3", "--output-format", "stream-json", "--verbose"], { cwd, timeout });
-  const { terminal, executed } = remoteTriggerStream(result.stdout ?? "");
+  const result = run("claude", ["-p", prompt, "--no-session-persistence", "--tools", "RemoteTrigger", "--allowedTools", "RemoteTrigger", "--max-turns", action === "create" ? "1" : "3", "--output-format", "stream-json", "--verbose"], { cwd, timeout });
+  let frames;
+  try { frames = remoteTriggerStream(result.stdout ?? ""); }
+  catch (error) { if (result.error?.code !== "ETIMEDOUT") throw error; }
+  const terminal = frames?.terminal;
+  const executed = frames?.executed ?? [];
   const last = executed.at(-1);
   const diagnostic = triggerDiagnostic(result, terminal, last);
   if (result.error?.code === "ETIMEDOUT") {
@@ -340,20 +347,26 @@ function remoteTriggerOnce(action, payload, { run = runCommand, cwd, intent, hom
   if (echoProblem && action !== "create") throw new Error(`${echoProblem}${processFailed ? details : ""}`);
   const body = toolResultText(last.raw, last.structured);
   const [statusLine, jsonLine] = body.split("\n");
-  if (statusLine !== "HTTP 200" || !jsonLine) {
+  const createdStatus = action === "create" && statusLine === "HTTP 200 CREATE_TRIGGER_OUTCOME_CREATED";
+  if ((statusLine !== "HTTP 200" && !createdStatus) || !jsonLine) {
     if (echoProblem) throw new Error(`${echoProblem}${processFailed ? details : ""}`);
     const status = Number(/^HTTP (\d{3})\b/.exec(statusLine ?? "")?.[1]);
-    if (status === 401 && jsonLine) {
-      let error;
-      try { error = JSON.parse(jsonLine); } catch { /* an unstructured 401 is still an ordinary HTTP refusal */ }
-      if ([error?.error, error?.code, error?.type, error?.error?.code, error?.error?.type].includes("github_token_missing")) {
-        throw githubTokenMissing(diagnostic);
-      }
-    }
-    throw Object.assign(new Error(`RemoteTrigger ${action} failed: ${firstLine(body)}${details}`), Number.isInteger(status) ? { httpStatus: status } : {});
+    let response;
+    try { response = capturedJson(jsonLine); } catch { /* preserve the HTTP refusal without structured data */ }
+    const codes = [response?.error, response?.code, response?.type, response?.error?.code, response?.error?.type, response];
+    if (status === 401 && codes.includes("github_token_missing")) throw githubTokenMissing(diagnostic);
+    const http = Number.isInteger(status) ? { httpStatus: status } : {};
+    if (action === "create" && status === 400 && codes.includes("environment_not_found")) http.apiCode = "environment_not_found";
+    throw Object.assign(new Error(`RemoteTrigger ${action} failed: ${firstLine(body)}${details}`), http);
   }
-  if (processFailed) throw new Error(`Claude RemoteTrigger ${action} failed: ${diagnostic || `exit ${result.status}`}`);
-  const parsed = parseJsonOutput(jsonLine, `RemoteTrigger ${action}`);
+  // Updates and log reads have a one-line JSON header followed by provider-owned transport text.
+  const headerFramed = action === "update" || action === "get_run_log";
+  const parsed = parseJsonOutput(headerFramed ? jsonLine : body.slice(statusLine.length + 1), `RemoteTrigger ${action}`);
+  const verifiedCreate = action === "create" && !echoProblem && /^[\w-]+$/.test(parsed?.trigger?.id ?? "");
+  const verifiedRun = action === "run" && !echoProblem && /^[\w-]+$/.test(parsed?.run_id ?? parsed?.run?.id ?? parsed?.session_id ?? "");
+  if (processFailed && !verifiedRun && !(verifiedCreate && terminal?.subtype === "error_max_turns")) {
+    throw new Error(`Claude RemoteTrigger ${action} failed: ${diagnostic || `exit ${result.status}`}`);
+  }
   if (echoProblem) {
     const createdId = parsed?.trigger?.id;
     if (action !== "create" || typeof createdId !== "string" || !createdId) throw new Error(echoProblem);
@@ -368,14 +381,15 @@ function remoteTriggerOnce(action, payload, { run = runCommand, cwd, intent, hom
  * then for each run its job_config is updated (connectors cleared, or set to the allow list) and it is run under
  * the machine lock. The run is bound by the id the run call returns.
  */
-export async function startClaude(request, brief, { remote = remoteTrigger, env = process.env, home = os.homedir(), label = request.ticket ?? null } = {}) {
+export async function startClaude(request, brief, { remote = remoteTrigger, env = process.env, home = os.homedir(), label = request.ticket ?? null, account = currentClaudeAccount, requestKey, beforeRun } = {}) {
   const environment = resolveClaudeEnvironment(request, { env });
+
   const ccr = {
     environment_id: environment.id,
     session_context: { model: request.model, sources: [{ git_repository: { url: `https://github.com/${requireRepository(request)}` } }], allowed_tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"] },
   };
   const { routineId, runId, sessionId } = await runOnStanding({
-    remote, home, environment, ccr, brief, allowlist: request.connectorAllowlist ?? [], label,
+    remote, home, environment, ccr, brief, allowlist: request.connectorAllowlist ?? [], label, account, requestKey, beforeRun,
     waitMs: request.maxWallMs ?? DEFAULT_WALL_MS, refusal: (error) => createRefusal(error, environment, remote),
   });
   return { provider: "claude", taskId: runId, runId, sessionId, routineId, environment, startedAt: new Date().toISOString() };
@@ -403,18 +417,6 @@ export function codexStatus(taskId, { run = runCommand, cwd } = {}) {
   throw new Error(`Codex cloud status was unrecognized: ${firstLine(output)}`);
 }
 
-/** A routine's run by id: the standing routine serves every run, so pages after the newest are read too. */
-function findRun(remote, routineId, runId) {
-  let cursor;
-  for (let page = 0; page < LIST_RUNS_PAGES; page += 1) {
-    const listed = remote("list_runs", { trigger_id: routineId, ...(cursor ? { cursor } : {}) });
-    const run = listed?.data?.find((item) => item.id === runId);
-    if (run || !listed?.next_cursor) return run;
-    cursor = listed.next_cursor;
-  }
-  return undefined;
-}
-
 /** A local RemoteTrigger timeout during a poll, named as the poll's: the cloud task may still run, and `resume` says how to pick it up. */
 function pollTimeout(error, receipt, resume) {
   if (error?.code !== CloudCallError.Timeout) return error;
@@ -424,12 +426,12 @@ function pollTimeout(error, receipt, resume) {
 
 /** Poll one active task until it ends; after the budget, return an overdue receipt that a later poll can reconcile. */
 export async function pollTask(receipt, request, { codex = codexStatus, remote = remoteTrigger, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now,
-  resume = "run the same cloud-worker.mjs command with the same request again; its saved receipt resumes this poll" } = {}) {
-  try { return await pollUntilEnd(receipt, request, { codex, remote, sleep, now }); }
+  resume = "run the same cloud-worker.mjs command with the same request again; its saved receipt resumes this poll", waitForVisibility = false } = {}) {
+  try { return await pollUntilEnd(receipt, request, { codex, remote, sleep, now, waitForVisibility }); }
   catch (error) { throw pollTimeout(error, receipt, resume); }
 }
 
-async function pollUntilEnd(receipt, request, { codex, remote, sleep, now }) {
+async function pollUntilEnd(receipt, request, { codex, remote, sleep, now, waitForVisibility }) {
   const started = Date.parse(receipt.startedAt);
   if (!Number.isFinite(started)) throw new Error("task receipt has no valid start time");
   const deadline = started + (request.maxWallMs ?? DEFAULT_WALL_MS);
@@ -438,6 +440,10 @@ async function pollUntilEnd(receipt, request, { codex, remote, sleep, now }) {
     if (receipt.provider === "codex") state = codex(receipt.taskId);
     else {
       const run = findRun(remote, receipt.routineId, receipt.runId ?? receipt.taskId);
+      if (!run && waitForVisibility && now() < deadline) {
+        await sleep(request.pollMs ?? DEFAULT_POLL_MS);
+        continue;
+      }
       if (!run) throw runNotCreated(receipt.routineId, receipt.environment ?? { id: "(not recorded)", source: "an older receipt" }, requireRepository(request), remote);
       const remoteStatus = String(run.status ?? "").toLowerCase();
       const workerStatus = String(run.worker_status ?? "").toLowerCase();
@@ -618,7 +624,9 @@ export async function abandonDispatch(request, { confirm = false, home = os.home
 /** End a validation that will not be read: its receipt is abandoned and recorded routines are swept. */
 export async function abandonValidation(request, { confirm = false, home = os.homedir(), remote = cliRemote(request.worktree), executor = chromeRemoval(), stderr } = {}) {
   validateValidationRequest(request);
-  const file = validationReceiptPath(request, sha256(JSON.stringify(request)));
+  const base = validationReceiptPath(request, sha256(JSON.stringify(request)));
+  const file = request.lanes?.some(lane => lane.name === "cloud-capabilities")
+    ? boundProbeReceipt(base, validationLanes(request).lanes, readLedger(home), resolveClaudeEnvironment(request)) : base;
   if (!existsSync(file)) throw new Error("no cloud task exists to poll");
   const receipt = JSON.parse(readFileSync(file, "utf8"));
   const abandoned = TERMINAL.has(receipt.status) ? receipt : { ...receipt, status: "abandoned", finishedAt: new Date().toISOString() };
@@ -640,13 +648,20 @@ export async function routinesCommand({ adopt, retire, confirm, worktree, home =
 
 async function main(argv) {
   const [action, ...rest] = argv;
-  const { values } = parseArgs({ args: rest, options: { request: { type: "string" }, "evidence-file": { type: "string" }, "body-file": { type: "string" }, title: { type: "string" }, "session-id": { type: "string" }, message: { type: "string" }, adopt: { type: "string" }, retire: { type: "string" }, confirm: { type: "boolean" }, commit: { type: "string" } } });
+  const { values } = parseArgs({ args: rest, options: { request: { type: "string" }, "fleet-dir": { type: "string" }, "evidence-file": { type: "string" }, "body-file": { type: "string" }, title: { type: "string" }, "session-id": { type: "string" }, message: { type: "string" }, adopt: { type: "string" }, retire: { type: "string" }, confirm: { type: "boolean" }, commit: { type: "string" } } });
+  if (action === "pin") {
+    const request = values.request ? JSON.parse(readFileSync(values.request, "utf8")) : {};
+    return recordEnvironmentPin({ environmentId: resolveClaudeEnvironment(request).id, accountUuid: currentClaudeAccount() });
+  }
   if (action === "check") {
     const request = values.request ? JSON.parse(readFileSync(values.request, "utf8")) : {};
+    let account;
+    try { account = { uuid: currentClaudeAccount() }; } catch (error) { account = { error }; }
     const { ledger, problem } = ledgerForCheck(os.homedir());
     const pending = ledger && pendingCount(ledger) > 0 ? pendingLine(pendingCount(ledger)) : null;
     const result = checkCloudSetup(request, { remote: cliRemote(request.worktree), standing: ledger?.standing ?? null,
-      pending, ledgerProblem: problem, githubTokenMissingAt: ledger?.githubTokenMissingAt });
+      pending, ledgerProblem: problem, githubTokenMissingAt: ledger?.githubTokenMissingAt, account, environmentPin: ledger?.environmentPin });
+    if (values["fleet-dir"]) recordCloudCheck(resolveWorkDir(values["fleet-dir"]).dir, result);
     if (!result.ok) process.exitCode = 1;
     return result;
   }
@@ -722,12 +737,17 @@ async function main(argv) {
 
 /** Resolve caller-safe commands or immutable, repository-owned workflow lane recipes. */
 export function validationLanes(request) {
+  const read = (file) => committedFile(request.worktree, request.commit, file);
   if (request.laneSource === undefined) {
-    if (request.lanes.some((lane) => !/^[a-z0-9][a-z0-9:_-]*$/.test(lane?.name ?? "") || !isCheckCommand(lane.command) || lane.command.length > 1000)) {
-      throw new Error("each lane needs a name and a documented check entry point without shell control");
-    }
-    return { lanes: request.lanes.map((lane) => ({ name: lane.name, command: lane.command })), laneSource: null };
+    const lanes = directValidationLanes(request, { readCommitted: read, currentHead: () => git(request.worktree, ["rev-parse", "HEAD"]) });
+    if (request.frozenRender !== undefined && !lanes.some((lane) => lane.cloudFrozen)) throw new Error("frozenRender requires the documented direct frozen-render gate lane");
+    const setup = validationPrerequisites(lanes.filter((lane) => !lane.capabilityProbe && !lane.cloudFrozen && !syntaxOnlyLane(lane.command) && !lane.command.startsWith("e2e/")), {
+      read, files: () => readGitInventory(request.worktree, ["ls-tree", "-r", "--name-only", request.commit]).trim().split("\n"),
+    });
+    if (setup.some(({ name }) => lanes.some((lane) => lane.name === name))) throw new Error("a lane name conflicts with a derived prerequisite");
+    return { lanes: describeCloudLanes([...setup, ...lanes], { read, commit: request.commit }), laneSource: null };
   }
+  if (request.frozenRender !== undefined) throw new Error("frozenRender cannot be combined with workflow lanes");
   const source = request.laneSource;
   if (!source || Object.keys(source).some((key) => !["kind", "path", "commit", "sha256"].includes(key))
     || source.kind !== "github-workflow" || !/^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/.test(source.path ?? "")
@@ -737,15 +757,18 @@ export function validationLanes(request) {
   if (request.lanes.some((lane) => !lane || Object.keys(lane).length !== 1 || typeof lane.name !== "string")) {
     throw new Error("workflow validation lanes name committed recipes; caller commands are refused");
   }
-  const text = committedFile(request.worktree, request.commit, source.path);
+  const text = read(source.path);
   if (sha256(text) !== source.sha256) throw new Error("committed workflow SHA-256 differs from laneSource");
   const definitions = workflowLaneDefinitions(text);
   const lanes = request.lanes.map(({ name }) => {
     const matches = definitions.filter((definition) => definition.name === name);
     if (matches.length !== 1) throw new Error(`workflow lane ${name} is missing or ambiguous at ${request.commit}`);
+    if (/e2e/i.test(source.path) || /(?:^|[^a-z])e2e(?:$|[^a-z])/i.test(name)) {
+      throw new Error("Pass a documented direct cloud E2E lane instead of a whole E2E workflow recipe.");
+    }
     return { name, command: matches[0].command, workflow: { path: source.path, commit: source.commit, sha256: source.sha256 } };
   });
-  return { lanes, laneSource: { kind: source.kind, path: source.path, commit: source.commit, sha256: source.sha256 } };
+  return { lanes: describeCloudLanes(lanes, { read, commit: request.commit }), laneSource: source };
 }
 
 /** Check a validation-only request; Codex Cloud returns no task report to bind lane results to. */
@@ -758,6 +781,8 @@ export function validateValidationRequest(request) {
   if (!/^[0-9a-f]{40}$/.test(request.commit ?? "")) throw new Error("a full 40-character commit SHA is required");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(request.model ?? "")) throw new Error("a pinned model is required");
   if (typeof request.worktree !== "string" || !request.worktree) throw new Error("a local checkout of the repository is required as worktree");
+  checkCloudcheckRequest(request);
+  if (Object.hasOwn(request, "env") || Object.hasOwn(request, "envValues")) throw new Error("caller test environment values are refused");
   if (!Array.isArray(request.lanes) || request.lanes.length === 0) throw new Error("at least one lane is required");
   if (new Set(request.lanes.map((lane) => lane.name)).size !== request.lanes.length) throw new Error("lane names must be unique");
   validationLanes(request);
@@ -784,7 +809,7 @@ export function validateValidationRequest(request) {
  */
 export const LANE_DISCIPLINE = "Run every lane in the foreground and wait for it to exit, however long it takes: never "
   + "background a command yourself, never hand a lane to a monitor or a later turn, and never end your turn before "
-  + "every lane has an exit code or a recorded reason it has none. Give each lane's Bash call the 600000 ms timeout. The Bash "
+  + "every lane has an exit code or a recorded reason it has none. Capture full output in a private file outside the checkout and print a compact status under 400 characters; read that file for redacted report parts. Give each lane's Bash call the 600000 ms timeout. The Bash "
   + "tool stops waiting after 10 minutes and moves a longer command to the background itself: when it does that to a lane, "
   + "keep waiting in this turn with a foreground `until` loop that checks whether the lane has exited and ends within one Bash "
   + "call, repeated until it has, then take the exit code from that task's completion notification; never start the lane "
@@ -793,13 +818,14 @@ export const LANE_DISCIPLINE = "Run every lane in the foreground and wait for it
   + "with \"exitCode\": null and \"notRun\": the reason. Print the result line only after every lane has finished. In a "
   + "message before your final one, list every failing test of each failed lane by name, as its runner printed it. Your "
   + "final message is the result line alone, under 1,800 characters: the run log keeps only the first 2,000 characters of a "
-  + "message, so shorten or drop tails to fit.";
+  + "message. Keep lane evidence in the separate parts; do not shorten or drop tails to fit.";
 
 /** The validation-only brief: exact checkout, install, lanes, no changes, one bound result line. */
-export function validationBrief(request) {
+export function validationBrief(request, managedHost = null, provedBranch = null) {
   validateValidationRequest(request);
   const resolved = validationLanes(request);
   const artifact = request.resultArtifact;
+  const branch = provedBranch ?? request.branch;
   const finish = artifact
     ? [
       `The full eval result must exist at \`${artifact.path}\`. It is the only tracked file this validation may change. Refuse if it is missing, malformed JSON, or named auth.json.`,
@@ -808,36 +834,48 @@ export function validationBrief(request) {
     ]
     : ["Change no files. Do not edit, create or delete a tracked file, commit or push. After the lanes, run `git status --porcelain` and keep its lines."];
   return [
-    `Validation only. Repository: ${requireRepository(request)}. Branch: ${request.branch}. Commit: ${request.commit}.`,
-    `Check out the exact commit: run \`git fetch origin refs/heads/${request.branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
+    `Validation only. Repository: ${requireRepository(request)}. Branch: ${branch}. Commit: ${request.commit}.`,
+    `Check out the exact commit: run \`git fetch origin refs/heads/${branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
     `After checkout, run \`${PROVENANCE_COMMAND}\` as one call, exactly as written, and keep its four lines.`,
-    installInstruction(request),
+    ...(managedHost ? [] : [installInstruction(request)]),
     ...(resolved.laneSource ? [
       `The lanes below are immutable recipes read from ${resolved.laneSource.path} at ${resolved.laneSource.commit} (SHA-256 ${resolved.laneSource.sha256}), not caller shell. For each recipe, apply its workflow/job environment, defaults, matrix row, working directories and conditions; perform its committed setup/action steps, then run its committed run steps in order. Refuse rather than substitute or omit an unsupported step.`,
     ] : []),
-    "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + resolved.lanes.map((lane) => `- ${lane.name}: ${lane.command}`).join("\n"),
+    managedHost ? cloudHostInstruction(managedHost, { lanes: resolved.lanes, commit: request.commit })
+      : "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + resolved.lanes.map((lane) => `- ${lane.name}: ${lane.cloudFrozen ?? lane.cloudE2E ?? lane.command}`).join("\n"),
+    ...(resolved.lanes.some((lane) => lane.capabilityProbe || lane.cloudFrozen) ? [
+      "For the capability probe, redirect full stdout and stderr to private session files and preserve the exit code. Read the CLOUD_CAPABILITY_STATUS and CLOUD_HOST_RUNTIME lines from that file into stdoutTail as separate lines, including on success. Preserve exact redacted errors on failure. For frozen-render lanes include complete output in stdoutTail and stderrTail. Use lane record chunks for the report.",
+    ] : []),
+    ...(resolved.lanes.some((lane) => lane.cloudFrozen) ? [
+      "The frozen-render command uses the checked-out proof tooling and pinned application inputs. Run it exactly as supplied. Chromium preflight uses no --with-deps or visible window. Report the exact FROZEN or CLOUD_FROZEN_UNAVAILABLE output.",
+    ] : []),
+    ...(resolved.lanes.some((lane) => lane.containerPnpm) ? [
+      "The pnpm wrapper writes private output to the printed log and returns a compact exit summary under 400 characters. Keep credentials in the environment. Read the file locally for redacted diagnostics.",
+    ] : []),
+    ...(resolved.lanes.some((lane) => lane.cloudE2E) ? [
+      "Use the supplied preflight-wrapped E2E command exactly. A CLOUD_E2E_UNAVAILABLE line is the host limitation; report it and do not substitute a headed or alternate E2E route.",
+    ] : []),
+    ...(resolved.lanes.some((lane) => lane.prerequisite) ? [
+      "The setup: lanes are committed prerequisites. Run them once in the shown order before any requested lane. If a prerequisite fails, report its exit code, then report every remaining step as not run with the named prerequisite reason.",
+    ] : []),
     LANE_DISCIPLINE,
     ...finish,
     "Do not open a pull request or trigger a review.",
-    `Your final message ends with one line: ${RESULT_MARKER}, a space, then a JSON object with "commit" (the validated commit, before any result commit), "provenance" ({"host", "remote", "origin", "commit"}, each the value from its line of that command, an empty string when the line is empty), "lanes" (one {"name", "exitCode"} per lane above, in order; for a lane that failed or did not run, also "tail", its last output lines in at most ${TAIL_CHARS} characters, and "diagnosis", your one-sentence reading of why, in at most ${DIAGNOSIS_CHARS} characters), "status" (the final git status --porcelain lines, an empty list when there are none)${artifact ? `, and "artifact" ({"path":"${artifact.path}","branch":"${artifact.branch}","commit":"<full result commit>","sha256":"<full file SHA-256>"})` : ""}.`,
+    validationReportInstruction(artifact),
   ].join("\n\n") + "\n";
 }
 
 /** Bind the worker's last result line to the requested commit and lanes; refuse any changed file. */
-export function parseValidationResult(text, request) {
+export function parseValidationResult(text, request, {managedHost = false} = {}) {
   const resolved = validationLanes(request);
-  const lines = [...String(text ?? "").matchAll(RESULT_LINE)];
-  if (lines.length === 0 && CUT_RESULT_LINE.test(String(text ?? ""))) throw new Error("cloud validation result line was cut off in the run log, which keeps 2,000 characters of a message; result refused");
-  if (lines.length === 0) throw new Error("cloud validation returned no result line");
-  let result;
-  try { result = JSON.parse(lines.at(-1)[1]); } catch { throw new Error("cloud validation result line is not JSON"); }
+  const result = validationReportSummary(text);
   if (result?.commit !== request.commit) throw new Error(`cloud validation ran commit ${result?.commit}, not the requested ${request.commit}; result refused`);
   const unproven = provenanceProblem(result.provenance, { repository: requireRepository(request), commit: request.commit });
   if (unproven) throw new Error(`cloud validation ${unproven}; result refused`);
   if (!Array.isArray(result.status)) throw new Error("cloud validation result has no git status; result refused");
   if (result.status.length > 0) throw new Error(`cloud validation changed files (${result.status.join(", ")}); result refused`);
-  if (!Array.isArray(result.lanes) || result.lanes.length !== resolved.lanes.length) throw new Error("cloud validation did not report every requested lane; result refused");
-  const lanes = resolved.lanes.map((lane, index) => reportedLane(lane, result.lanes[index]));
+  const report = validationReportLanes(text, result, request.commit, resolved.lanes.length);
+  const lanes = resolved.lanes.map((lane, index) => reportedLane(lane, report.lanes[index], report.structured,index,managedHost));
   let artifact;
   if (request.resultArtifact) {
     artifact = result.artifact;
@@ -846,6 +884,8 @@ export function parseValidationResult(text, request) {
       throw new Error("cloud validation result artifact identity is missing or differs from the request");
     }
   } else if (result.artifact !== undefined) throw new Error("cloud validation returned an unrequested result artifact");
+  if (managedHost) checkStreamDirectories(lanes);
+  validatePrerequisiteOutcomes(resolved.lanes, lanes);
   const { host, remote, origin } = result.provenance;
   return { commit: request.commit, branch: request.branch, repository: request.repository, provenance: { host, remote, origin, commit: request.commit }, lanes,
     ...(resolved.laneSource ? { laneSource: resolved.laneSource } : {}), passed: lanes.every((lane) => lane.passed), ...(artifact ? { artifact } : {}) };
@@ -855,13 +895,23 @@ export function parseValidationResult(text, request) {
  * One requested lane as the worker reported it. A lane with no integer exit code did not run to its end: it is kept as
  * not run, with the worker's reason, so the other lanes' results stand and the whole result never reads as passed.
  */
-function reportedLane(lane, reported) {
+function reportedLane(lane, reported, structured,index,managedHost) {
   if (reported?.name !== lane.name) throw new Error(`cloud validation reported lane ${redactedLine(String(reported?.name ?? "none")).slice(0, 80)} where ${lane.name} was requested; result refused`);
-  const tail = redactedLine(reported.tail).slice(-TAIL_CHARS);
-  const diagnosis = redactedLine(reported.diagnosis).slice(0, DIAGNOSIS_CHARS);
-  const evidence = { ...(tail ? { tail } : {}), ...(diagnosis ? { diagnosis } : {}) };
+  const clean = (value, limit) => structured ? redactedLine(value, true) : redactedLine(value).slice(...limit);
+  if (structured && (!Number.isInteger(reported.exitCode) && (reported.exitCode !== null || !reported.notRun?.trim?.())
+    || reported.exitCode !== 0 && ["stdoutTail", "stderrTail", "diagnosis"].some((field) => typeof reported[field] !== "string"))) {
+    throw new Error(`cloud validation lane ${lane.name} has incomplete outcome evidence; result refused`);
+  }
+  const tail = clean(reported.tail, [-TAIL_CHARS]);
+  const diagnosis = clean(reported.diagnosis, [0, DIAGNOSIS_CHARS]);
+  // Archived combined tails retain their original rendering; versioned records keep full reported evidence.
+  const tails = Object.fromEntries(["stdoutTail", "stderrTail"].flatMap((stream) =>
+    typeof reported[stream] === "string" ? [[stream, clean(reported[stream], [-Math.floor(TAIL_CHARS / 2)])]] : []));
+  const preflightFailed = lane.prerequisites?.capabilities.includes("chromium") &&
+    Number.isInteger(reported.exitCode) && reported.exitCode !== 0 && reported.diagnosis === "Chromium preflight failed";
+  const evidence = { ...privateStreamEvidence(reported.privateStreams,index,managedHost && Number.isInteger(reported.exitCode) && !preflightFailed), ...tails, ...(tail ? { tail } : {}), ...(diagnosis ? { diagnosis } : {}) };
   if (!Number.isInteger(reported.exitCode)) {
-    const notRun = redactedLine(reported.notRun).slice(0, DIAGNOSIS_CHARS) || "the worker reported no exit code";
+    const notRun = clean(reported.notRun, [0, DIAGNOSIS_CHARS]) || "the worker reported no exit code";
     return { name: lane.name, command: lane.command, exitCode: null, passed: false, notRun, ...evidence };
   }
   return { name: lane.name, command: lane.command, exitCode: reported.exitCode, passed: reported.exitCode === 0, ...evidence };
@@ -883,16 +933,8 @@ export function readValidationArtifact(request, artifact, { run = runCommand, gi
   const bytes = shown.stdout;
   if (sha256(bytes) !== artifact.sha256) throw new Error("cloud validation result artifact SHA-256 differs");
   let result;
-  try { result = JSON.parse(bytes); } catch { throw new Error("cloud validation result artifact is not JSON"); }
+  try { result = capturedJson(bytes); } catch { throw new Error("cloud validation result artifact is not JSON"); }
   return { ...artifact, result };
-}
-
-/** Every string in a run log, whatever its shape, so the worker's final message can be found. */
-function logText(value) {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(logText).join("\n");
-  if (value && typeof value === "object") return Object.values(value).map(logText).join("\n");
-  return "";
 }
 
 /** An ended validation's status, session and recorded init error, for its refusal. */
@@ -908,34 +950,41 @@ function archivedInitError(remote, sessionId) {
 function validationReceiptPath(request, digest) { return path.join(gitDir(request.worktree), validationReceiptName(request.commit, digest)); }
 
 /** Start (or resume) a Claude cloud session on the commit, poll it, and return results bound to that commit. */
-export async function validateCommit(request, { remote = cliRemote(request.worktree), sleep, now, home = os.homedir(), executor = chromeRemoval(), stderr, artifactReader = readValidationArtifact } = {}) {
+export async function validateCommit(request, { remote = cliRemote(request.worktree), sleep, now, home = os.homedir(), executor = chromeRemoval(), stderr, artifactReader = readValidationArtifact, signal, proofGit = git, currentAccount = currentClaudeAccount } = {}) {
   validateValidationRequest(request);
   const routed = { ...request, repository: verifyRepository(request.worktree, request.repository) };
   const digest = sha256(JSON.stringify(request));
   const file = validationReceiptPath(request, digest);
-  let started;
-  if (existsSync(file)) {
-    started = JSON.parse(readFileSync(file, "utf8"));
-    if (started.requestDigest !== digest) throw new Error("validation receipt belongs to another request; refusing replay");
-    if (TERMINAL.has(started.status) && started.status !== "completed") throw new Error(`cloud validation already ended: ${endedDetail(started)}`);
-  } else {
-    await sweepRemovals({ home, remote, worktree: request.worktree, executor, ...(stderr ? { stderr } : {}) });
-    started = await startClaude({ ...routed, connectorAllowlist: [] }, validationBrief(routed), { remote, home, label: `validate ${request.commit.slice(0, 12)}` });
-    started = { ...started, requestDigest: digest, commit: request.commit };
-    writeFileSync(file, `${JSON.stringify(started, null, 2)}\n`, { mode: 0o600 });
-  }
-  const resume = `run the same cloud-worker.mjs validate --request again; its receipt ${file} resumes this poll`;
-  const finished = started.status === "completed" ? started : await pollTask(started, routed, { remote, resume, ...(sleep ? { sleep } : {}), ...(now ? { now } : {}) });
-  if (finished.status === "archived" && finished.sessionId && finished.initError === undefined) finished.initError = archivedInitError(remote, finished.sessionId);
-  writeFileSync(file, `${JSON.stringify(finished, null, 2)}\n`, { mode: 0o600 });
-  if (started.status !== finished.status) await markRun(home, finished.runId ?? finished.taskId, finished.status, DEFAULT_WALL_MS);
-  if (finished.status !== "completed") throw new Error(`cloud validation ended ${endedDetail(finished)}`);
-  let log;
-  try { log = remote("get_run_log", { session_id: finished.sessionId }); }
-  catch (error) { throw pollTimeout(error, finished, resume); }
-  const result = parseValidationResult(logText(log), routed);
-  const artifact = result.artifact ? artifactReader(routed, result.artifact) : null;
-  return { ...result, ...(artifact ? { artifact } : {}), provider: "claude", taskId: finished.taskId, sessionId: finished.sessionId, wallMs: finished.wallMs, receipt: file };
+  const { lanes } = validationLanes(routed);
+  const laneKeys = lanes.map(({ command }) => validationCommandKey(command));
+  const env = resolveClaudeEnvironment(routed);
+  const ledger = () => readLedger(home);
+  const admission = () => validationRuntimeAdmission(lanes, { home, env, ledger, currentAccount, tool: request.runtimeTool });
+  const selected = boundProbeReceipt(file, lanes, ledger(), env);
+  if (!existsSync(selected)) admission();
+  const resume = `run the same cloud-worker.mjs validate --request again; its receipt ${selected} resumes this poll`;
+  return executeCloudValidation({ file, digest, request: routed, env, lanes, laneKeys, home, ledger, currentAccount, remote, signal, timeoutMs: DEFAULT_WALL_MS,
+    async start(launching) {
+      const managedHost = admission();
+      const proof = request.cloudProof ? prepareCloudcheckProof({ worktree: request.worktree, commit: request.commit, key: digest, gitDir: path.dirname(file), git: proofGit }) : null;
+      await sweepRemovals({ home, remote, worktree: request.worktree, executor, account: currentAccount, ...(stderr ? { stderr } : {}) });
+      const subject = proof ? { ...routed, branch: proof.branch } : routed;
+      const started = await startClaude({ ...subject, connectorAllowlist: [] }, validationBrief(routed, managedHost, proof?.branch), { remote, home,
+        account: currentAccount, requestKey: digest, beforeRun: launch => launching(launch,{managedHost:Boolean(managedHost)}), label: `validate ${request.commit.slice(0, 12)}` });
+      return { ...started, ...(managedHost ? {managedHost:true} : {}), ...(proof ? {proof} : {}) };
+    },
+    poll: (started) => pollTask(started, routed, { remote, resume, waitForVisibility: true, ...(sleep ? { sleep } : {}), ...(now ? { now } : {}) }),
+    archiveProblem: (sessionId) => archivedInitError(remote, sessionId),
+    mark: (finished) => markRun(home, finished.runId ?? finished.taskId, finished.status, DEFAULT_WALL_MS),
+    parse(finished) {
+      let log;
+      try { log = remote("get_run_log", { session_id: finished.sessionId }); }
+      catch (error) { throw pollTimeout(error, finished, resume); }
+      return parseValidationResult(logText(log), finished.proof ? { ...routed, branch: finished.proof.branch } : routed, {managedHost:finished.managedHost});
+    },
+    onReport: (result, finished) => recordRuntimeFromValidation({ lanes, ledger, currentAccount, home, branch: request.branch }, result, finished),
+    endedDetail, artifactReader,
+  });
 }
 
 if (isEntryPoint(import.meta.url)) {

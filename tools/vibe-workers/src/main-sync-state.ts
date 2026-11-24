@@ -17,18 +17,27 @@ const MAX_PRIVATE_BYTES = 1024 * 1024;
 const claudeOwnerSchema = z.object({ context: operationContextSchema, branch: z.string(),
   primaryOwner: z.object({ workerId: z.string(), lease: z.string().uuid() }).strict().optional() }).strict();
 
-/** Resolves the same active private session and its canonical Git metadata before any operation. */
-export function syncLocation(worktree: string) {
+/** Resolve the exact active session and authoritative checkout for read-only source provenance. */
+export function ownedSyncCheckout(worktree: string) {
   const place = checkoutLocation(worktree);
   readPrivateJson(join(place.dir, "vibe-session.json"));
   const session = sessionSchema.parse(readSessionRecord(place.root));
   if (session.branch !== place.branch || (session.worktree && realpathSync(session.worktree) !== place.root)
-    || (session.branch.startsWith("prototype/") ? session.mode !== null || !isOwnedPrototypeSession(session, place.branch)
-      // A session with no hosted environment (no provider recipe names one) has no data mode.
-      : session.mode === null && session.vercel !== null && session.vercel !== undefined)) {
-    throw new MainSyncError("Main-sync requires the exact active owned session branch and mode");
+    || ((session.kind === "prototype" || session.branch.startsWith("prototype/")) && !isOwnedPrototypeSession(session, place.branch))) {
+    throw new MainSyncError("Main-sync requires the exact active owned session branch");
   }
   return { ...place, session };
+}
+
+/** Hosted publication and legacy prototype transactions retain their data-mode prerequisites. */
+export function syncLocation(worktree: string) {
+  const place = ownedSyncCheckout(worktree);
+  const { session } = place;
+  const prototype = isOwnedPrototypeSession(session, place.branch);
+  if (prototype ? session.mode !== null : session.mode === null && session.vercel != null) {
+    throw new MainSyncError("Main-sync requires the exact active owned session branch and mode");
+  }
+  return place;
 }
 
 /** Borrows only the caller's current exact record turn; the parent remains its cleanup owner. */
@@ -86,6 +95,9 @@ export function syncContext(raw: unknown, operation: "prepare" | "inputs" | "val
     if (!allowed || writer?.running) throw new MainSyncError("This exact role/action cannot prepare or publish; request-only grants never gain push rights");
     if (operation === "share" && actual.agentName !== "vibe-prototype-worker") throw new MainSyncError("Canonical share requires the owned prototype publisher");
   }
+  if (operation === "prepare" && !actual.publicationPurpose) {
+    throw new MainSyncError("MAIN_SYNC_PURPOSE_REQUIRED: preparation needs Root-issued publicationPurpose");
+  }
   return { input, place, context: actual, purpose: actual.publicationPurpose ?? "build" };
 }
 
@@ -105,6 +117,11 @@ export function saveSyncReceipt(dir: string, receipt: MainSyncState) {
   if (Buffer.byteLength(serialized, "utf8") > MAX_PRIVATE_BYTES) {
     throw new MainSyncError("Complete main-sync receipt exceeds the unchanged private byte bound; prior evidence is preserved", "NEEDS_CHANGE");
   }
+  writePrivateSyncReport(file, serialized);
+}
+
+/** Publish bounded diagnostics and receipts in the checkout's private Git directory without following links. */
+export function writePrivateSyncReport(file: string, serialized: string) {
   const temp = `${file}.${randomUUID()}.tmp`;
   try { writeFileSync(temp, serialized, { mode: 0o600, flag: "wx" }); renameSync(temp, file); }
   finally { rmSync(temp, { force: true }); }

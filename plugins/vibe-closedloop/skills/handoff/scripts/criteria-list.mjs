@@ -10,6 +10,7 @@
 // or whose text leads with a criterion id. What is read, and so every id, is
 // unchanged.
 
+import { proseLines } from "../../../shared/markdown-lines.mjs";
 import { readFileSync } from "node:fs";
 import { trackerKey } from "../../vibe/scripts/tracker-key.mjs";
 
@@ -24,6 +25,23 @@ const ANY_CHECKBOX = /^\s*(?:[-*+]|\d+[.)])\s*\[([ xX])\]\s*(\S.*)$/;
 const LIST_LABEL = /^\s*[-*]\s+([^[\s].*?):\s*$/;
 const NAMES_CRITERIA = /\bcriteri(?:a|on)\b/i;
 const LEADS_WITH_ID = /^AC-\d+\b/;
+
+/** Ordered, unboxed acceptance items in the ticket body's dedicated Markdown section. */
+export function numberedCriteriaIds(ticket) {
+  const ids = new Set();
+  let level = 0;
+  for (const [,line] of proseLines(ticket)) {
+    const heading = HEADING.exec(line);
+    if (heading) {
+      if (CRITERIA_HEADING.test(line)) level = level ? Math.min(level, heading[1].length) : heading[1].length;
+      else if (heading[1].length <= level) level = 0;
+    } else if (level) {
+      const item = /^(\d+)[.)]\s+(?!\[[ xX]\])\S/.exec(line);
+      if (item) ids.add("AC-" + (ids.size + 1));
+    }
+  }
+  return ids;
+}
 
 /** The ticket's acceptance criteria as AC-n ids with their text. */
 export function ticketCriteria(ticket) {
@@ -130,7 +148,7 @@ function checkboxes(ticket) {
 }
 
 /** Each member ticket's criteria as <slug>:AC-n, and the recorded members that have no body. */
-export function memberCriteria(members, recorded = []) {
+export function memberCriteria(members, recorded = [], read = file => readFileSync(file, "utf8")) {
   const problems = [];
   const criteria = [];
   const given = new Set();
@@ -139,7 +157,7 @@ export function memberCriteria(members, recorded = []) {
     const slug = entry.slice(0, at);
     if (at <= 0 || !new RegExp(`^${trackerKey()}$`).test(slug)) throw new Error(`--member needs <slug>=<ticket body file>, got ${entry}`);
     given.add(slug);
-    const body = readFileSync(entry.slice(at + 1), "utf8");
+    const body = read(entry.slice(at + 1));
     const own = ticketCriteria(body).map(({ id, text }) => ({ id: `${slug}:${id}`, text }));
     if (own.length === 0) problems.push(`member ${slug} has no acceptance criteria checklist`);
     problems.push(...unreadCriteriaProblems(body).map((problem) => `member ${slug}: ${problem}`));

@@ -101,7 +101,7 @@ lane-source metadata only when base, freshly fetched merge target and candidate
 share one regular workflow with identical bytes/modes and unchanged permission
 fields.
 
-For an owned `prototype/<slug>` mockup session, the repository's canonical
+For an owned prototype mockup session, the repository's canonical
 <!-- generic: prototype-paths -->
 prototype skill owns sandbox rules instead of the full-app rules in this
 section, and its allowed paths are the ones that skill names. Mock state stays

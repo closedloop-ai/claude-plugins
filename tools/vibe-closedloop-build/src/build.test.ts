@@ -173,6 +173,21 @@ describe("assembly", () => {
       + " or `cache/<marketplace>/vibe/<version>/`; `my-vibe-generic@x`, `vibe-generic-x/`, `vibe-generic.md` and `/vibe-generic` stay.\n");
   });
 
+  it("keeps a replacement description inside its flow mapping", () => {
+    const paths = fixture({ "agents/a.md": "---\n{name: sample, description: Old}\n---\nBody.\n" }, {},
+      { descriptions: { "agents/a.md": "Build, then verify." } });
+    buildClosedLoopVibe(paths);
+    expect(readFileSync(join(paths.output, "agents/a.md"), "utf8")).toContain('{name: sample, description: "Build, then verify."}');
+  });
+
+  it("AC-082 replaces the YAML description scalar and preserves the rest of the skill", () => {
+    const before = "\uFEFF---\r\n'description': 'old' # retained\r\nname: a\r\n---\r\ndescription: body\r\n";
+    const paths = fixture({ "agents/a.md": before }, {}, { descriptions: { "agents/a.md": "value: with punctuation" } });
+    buildClosedLoopVibe(paths);
+    const built = readFileSync(join(paths.output, "agents/a.md"), "utf8");
+    expect(built).toBe(before.replace("'old'", '"value: with punctuation"'));
+  });
+
   it("writes the provider's manifest and frontmatter descriptions, its contract with the placement, and each placed file over the source's", () => {
     const paths = fixture({ "agents/a.md": "---\nname: a\ndescription: generic words\nmodel: x\n---\nBody.\n", "bin/run.sh": "#!/bin/sh\n",
       "skills/vibe/references/graph.md": "Generic graph text.\n" },
