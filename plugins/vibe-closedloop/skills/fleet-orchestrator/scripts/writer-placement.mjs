@@ -11,10 +11,13 @@
 // earlier keep-local reason. `placement <ticket> --keep-local <reason>` records
 // the operator's reason to keep a cloud-placed ticket local.
 
+import path from "node:path";
 import { readFileSync } from "node:fs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { exactOperatorRuling } from "../../handoff/scripts/rulings-check.mjs";
 import { workItem } from "../../vibe/scripts/tracker-key.mjs";
 
+const { verifyCloudImportPlacement } = await vibeCore("lib/vibe/scripts/cloud-import.mjs");
 const { decideCloudPlacement } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-placement.mjs");
 
 const Placement = Object.freeze({ Cloud: "cloud", Local: "local" });
@@ -31,20 +34,30 @@ export function readPlacementEvidence(file) {
 }
 
 /** Records the check's decision for `ticket` from `evidence`, or the operator's `keepLocal` reason against a cloud decision. */
-export function recordPlacement(placements, ticket, { evidence, keepLocal }, at) {
+export function recordPlacement(placements, ticket, { evidence, keepLocal, rulingSource, rulings, imported }, at) {
   if (!workItem().test(ticket ?? "")) throw new Error("placement needs a work item: the tracker's ticket slug, or a #number with no tracker.");
-  if (evidence === undefined && keepLocal === undefined) {
+  if (evidence === undefined && keepLocal === undefined && !imported) {
     throw new Error("placement needs --evidence <file> (the check runs on it) or --keep-local <the operator's reason>.");
   }
-  const reason = keepLocal?.trim();
-  if (keepLocal !== undefined && !reason) throw new Error("--keep-local needs the operator's reason to keep the ticket local.");
+  const reason = keepLocal;
+  if (keepLocal !== undefined && !reason?.trim()) throw new Error("--keep-local needs the operator's reason to keep the ticket local.");
   const decision = evidence === undefined ? placements[ticket] : { ...decideCloudPlacement(evidence), evidence, at };
   if (!decision) throw new Error(`no placement decision for ${ticket} yet; record it with --evidence <file> first.`);
   if (reason && decision.placement !== Placement.Cloud) {
     throw new Error(`${ticket} is placed local (${decision.reason}); a keep-local reason is only for a cloud decision.`);
   }
-  const { keepLocal: _earlier, ...fresh } = decision;
-  placements[ticket] = reason ? { ...fresh, keepLocal: { reason, at } } : fresh;
+  if (reason && imported) throw new Error("choose one of a human keep-local ruling or a completed cloud import");
+  if (reason && !exactOperatorRuling(rulings, { quote: reason, source: rulingSource, ticket })) {
+    throw new Error("--keep-local requires exact quoted operator words and --ruling-source matching this ticket in rulings.md.");
+  }
+  if (imported && decision.placement !== Placement.Cloud) throw new Error("a completed cloud import is only for a cloud placement");
+  const assignment = imported && verifyCloudImportPlacement(imported.worktree, ticket, imported.requestFile, imported.laneReceiptName);
+  const { keepLocal: _earlier, imported: _priorImport, ...fresh } = decision;
+  placements[ticket] = {
+    ...fresh,
+    ...(reason ? { keepLocal: { reason, source: rulingSource, at } } : {}),
+    ...(assignment ? { imported: assignment } : {}),
+  };
   return placements[ticket];
 }
 
@@ -55,7 +68,7 @@ export function writerTickets(board, name, row = board.writers[name] ?? {}) {
 }
 
 /** Why a board writer cannot take `tickets`, or null: each needs a recorded decision, and a cloud one the operator's keep-local reason. */
-export function writerPlacementProblem(placements, writer, tickets) {
+export function writerPlacementProblem(placements, writer, tickets, { rulings, worktree } = {}) {
   if (tickets.length === 0) {
     return `writer ${writer} names no ticket: pass --tickets <slug,slug> (or record its unit with --writer ${writer}) so its placement is checked.`;
   }
@@ -66,8 +79,16 @@ export function writerPlacementProblem(placements, writer, tickets) {
     if (!decision) {
       return [`no placement decision for ${ticket}: run board.mjs <orchDir> placement ${ticket} --evidence <file> before starting writer ${writer}`];
     }
-    if (decision.placement === Placement.Cloud && !decision.keepLocal) {
-      return [`${ticket} is placed cloud (${decision.reason}): dispatch it with ../vibe/scripts/cloud-worker.mjs, or record the operator's reason with board.mjs <orchDir> placement ${ticket} --keep-local <reason>`];
+    if (decision.placement === Placement.Cloud) {
+      const { keepLocal, imported } = decision;
+      if (exactOperatorRuling(rulings, { quote: keepLocal?.reason, source: keepLocal?.source, ticket })) return [];
+      if (imported && worktree && path.resolve(worktree) === imported.worktree) {
+        try {
+          const proof = verifyCloudImportPlacement(worktree, ticket, imported.requestFile, imported.laneReceiptName);
+          if (proof.taskId === imported.taskId) return [];
+        } catch (error) { return [`${ticket} cloud import cannot be assigned: ${error.message}`]; }
+      }
+      return [`${ticket} is placed cloud (${decision.reason}): dispatch it with ../vibe/scripts/cloud-worker.mjs, or record the operator's reason with board.mjs <orchDir> placement ${ticket} --keep-local <reason> --ruling-source <citation>`];
     }
     return [];
   });
@@ -91,6 +112,7 @@ export function renderPlacements(placements) {
 
 function describe(decision) {
   if (!decision) return "none: no placement decision recorded";
+  if (decision.imported) return `cloud, imported ${decision.imported.taskId} (check: ${decision.reason})`;
   if (decision.keepLocal) return `cloud, kept local: ${decision.keepLocal.reason} (check: ${decision.reason})`;
   return `${decision.placement}: ${decision.reason}`;
 }

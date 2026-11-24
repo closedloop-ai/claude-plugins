@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { execFile, spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -8,7 +9,7 @@ import { providerDataOr, sessionBinding } from "../../../plugins/vibe/lib/vibe/s
 /** A launch refused before or at worker start, carrying the one plain step a person can take when there is one. */
 export class LaunchPrecheckError extends Error {
   constructor(readonly code: "CLAUDE_SIGN_IN_NEEDED" | "CLAUDE_CLI_MISSING" | "MCP_TOOLS_MISSING" | "MISSING_CAPABILITIES"
-    | "USAGE_LIMIT_REACHED" | "PROTECTED_PATH_HOOK_UNAVAILABLE",
+    | "USAGE_LIMIT_REACHED" | "PROTECTED_PATH_HOOK_UNAVAILABLE" | "GUARDS_DISABLED",
     message: string, readonly personAction?: string) { super(message); }
 }
 
@@ -94,7 +95,7 @@ function checkClaudeSignInResult(stdout: string, error: Error | null): void {
     throw new LaunchPrecheckError("CLAUDE_CLI_MISSING", "The claude command is not on this shell's PATH");
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(stdout); } catch { return; }
+  try { parsed = capturedJson(stdout); } catch { return; }
   if (parsed && typeof parsed === "object" && (parsed as { loggedIn?: unknown }).loggedIn === false) {
     throw new LaunchPrecheckError("CLAUDE_SIGN_IN_NEEDED", "The standalone Claude CLI is signed out", SIGN_IN_PERSON_ACTION);
   }

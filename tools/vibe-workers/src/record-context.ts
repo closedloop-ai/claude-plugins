@@ -41,6 +41,7 @@ export const recordContextSchema = z.object({
   mode: z.enum(["plan", "request", "fix", "handoff", "pull-request", "record"]),
   recordAction: recordActionSchema.optional(),
   exclusiveRecordTurn: z.literal(true).optional(),
+  publicationStep: z.literal("prepare").optional(),
   publicationPurpose: z.enum(["build", "handoff"]).optional(),
   mainSyncTransactionId: z.string().uuid().optional(),
   mainSyncRequestContinuations: z.array(requestContinuationSchema).min(1).max(2).optional(),
@@ -92,6 +93,9 @@ export function isRequestContext(input: Pick<RecordContext, "agentName" | "mode"
 
 /** Both runtimes resolve the same bounded role/action and stable sessionless contexts. */
 export function resolveRecordContext(input: RecordContext) {
+  if (input.publicationStep && (!isPublisherContext(input) || !input.publicationPurpose || input.sessionless)) {
+    throw new WorkerRefusal("MAIN_SYNC_PURPOSE_REQUIRED", "Preparing publication needs the Root-issued publisher role and publicationPurpose.");
+  }
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record"
     || input.recordAction !== "progress" || !input.exclusiveRecordTurn
     || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {

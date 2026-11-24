@@ -16,6 +16,7 @@ function session(t, prototype = false) {
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "symphony-alpha");
   makeCheckout({ ...fixture, checkout, files: {
+    ".claude/skills/prototype/SKILL.md": "# Prototype fixture\n",
     "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
     "packages/app/issues/list.test.tsx": "test('list', () => {});\n",
     "apps/prototypes/scripts/check-catalog-imports.mjs": portableSurfaceChecker([]),

@@ -8,12 +8,9 @@
 // Prints one JSON object { schema, routed, class, runtime, qaGuide, reason }; exit 0 whenever it
 // printed a decision, 2 on bad usage.
 //
-// Off unless `--enable` or FLEET_CLASS_ROUTING=1: then `routed` is false, `runtime` is null and
-// `qaGuide` is `launch`, so the orchestrator chooses as it does today ("Runtime choice" in the
-// skill: judgment-heavy work to Claude, bulk mechanical work to Codex) and launches the QA guide.
-// A missing or invalid manifest, or class `unknown`, is the same as off.
-//
-// The class to runtime mapping is NOT human-ruled yet (flagged for the owner in the pull request): the
+// Enabled by default under the 2026-11-19 runtime-mix ruling. FLEET_CLASS_ROUTING=0
+// restores operator selection. A missing or invalid manifest or unknown class also leaves it to the operator.
+// The class mapping uses the existing distinction between mechanical and judgment work. The
 // classes below are the plan's "small tickets", the rest are judgment work. The QA guide is skipped only for
 // `docs-config`; `trivial-ui` still changes UI and keeps its guide (owner ruling on the pull request review). A usage line at or above its HIGH band, or at a limit, moves the choice to the
 // other runtime when that one is not; both high, or an unreadable line, keeps the class's choice.
@@ -82,7 +79,7 @@ export function routeClass({ manifestClass, codexIsHigh = null, claudeIsHigh = n
 }
 
 /** The whole decision; anything short of an enabled switch, a valid manifest and a decided class is today's behavior. */
-export function chooseDispatch({ enabled, manifest, codexUsage, claudeUsage, codexReadAt, claudeReadAt, now, staleSeconds, placementInput }) {
+export function chooseDispatch({ enabled = true, manifest, codexUsage, claudeUsage, codexReadAt, claudeReadAt, now, staleSeconds, placementInput }) {
   const bound = { now, staleSeconds };
   const placement = decideCloudPlacement(placementInput);
   const today = (reason) => ({ routed: false, class: null, runtime: null, qaGuide: QaGuide.Launch, reason, placement });
@@ -107,7 +104,7 @@ function main(argv) {
     try { placementInput = JSON.parse(readFileSync(values["placement-file"], "utf8")); }
     catch { /* invalid evidence is local-only */ }
   }
-  const enabled = Boolean(values.enable) || process.env[SWITCH_ENV] === "1";
+  const enabled = Boolean(values.enable) || process.env[SWITCH_ENV] !== "0";
   const decision = chooseDispatch({ enabled, manifest, codexUsage: values["codex-usage"], claudeUsage: values["claude-usage"],
     codexReadAt: values["codex-read-at"], claudeReadAt: values["claude-read-at"],
     ...(values["stale-seconds"] ? { staleSeconds: Number(values["stale-seconds"]) } : {}), placementInput });

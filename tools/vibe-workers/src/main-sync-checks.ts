@@ -1,3 +1,4 @@
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
@@ -5,18 +6,19 @@ import { join } from "node:path";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { MAX_CHECK_MS, MainSyncError, mainSyncStateSchema, type MainComparison, type MainSyncReceipt, type OriginProof, type e2eLimitationSchema } from "./main-sync-contracts.js";
-import { committedIdentity, digest, syncContext, readPrivateJson, saveSyncReceipt, MAIN_SYNC_FILE } from "./main-sync-state.js";
+import { committedIdentity, digest, syncContext, readPrivateJson, writePrivateSyncReport, saveSyncReceipt, MAIN_SYNC_FILE } from "./main-sync-state.js";
 import { CapturedMainComparison, comparisonLogs, runBounded } from "./main-sync-main-comparison.js";
 import { comparisonBudgetMs } from "./main-sync-validation-recipe.js";
 import { discoverRequiredE2eLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
 import { committedLocalPlans } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { artifactRootOf, isPlanFile, planPrefixesOf } from "./main-sync-plan-folder.js";
-import { verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
-import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
+import { invalidReportParent, verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
+import { inputProducers, presentProducers, producerInputProblems, producerFor, producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
+import { isOwnedPrototypeSession } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { checkSteps, reportOutputsFor, type MainSyncStep } from "./main-sync-recipe.js";
 import { originIdentity, sameOriginFiles } from "./main-sync-input-files.js";
-import { readWriterSummary } from "./ledger.js";
+import { checkoutLocation, readWriterSummary } from "./ledger.js";
 import { bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
 import { verifyReportRecipe, verifyReportExecution } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
@@ -55,53 +57,105 @@ export function inspectInputInventory(root: string) {
   return inspectInventory(root, "standalone").inventory;
 }
 
+/** Classify a single candidate while retaining the existing producer, private input and report checks. */
+function inspectUntrackedPath(root: string, file: string, ignored: boolean, headSha: string, reportOutputs: ReadonlySet<string>): boolean {
+  if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return false;
+  if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return false;
+  if (isPlanFile(root, file)) {
+    if (!ignored) throw new MainSyncError(`Private planning evidence must remain ignored: ${file}`, "NEEDS_CHANGE");
+    verifyPrivateInput(root, file, headSha);
+    return false;
+  }
+  const artifactRoot = artifactRootOf(root);
+  if (PRIVATE_ARTIFACT.test(file) && ((artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`)) || file.startsWith(".control/"))) return false;
+  if (producerFor(root, file)) {
+    if (!ignored) throw new MainSyncError(`Canonical generated dependency must remain ignored: ${file}`, "NEEDS_CHANGE");
+    return false;
+  }
+  if (ignored && reportOutputs.has(file)) {
+    const stat = lstatSync(join(root, file));
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
+    return false;
+  }
+  if (ignored && file === GENERATED_BIOME_PATH) {
+    verifyGeneratedBiomeInput(root, headSha);
+    return true;
+  }
+  if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) {
+    throw new MainSyncError(`Committed validation inputs differ from HEAD: unsupported generated-input path ${file}`, "NEEDS_CHANGE");
+  }
+  if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
+  return false;
+}
+
+/** Store every blocking path privately and return a deterministic, byte-bounded refusal. */
+function refuseInputPaths(root: string, paths: { path: string; reason: string }[]): never {
+  paths.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  const file = "vibe-main-sync-blocking-inputs.json";
+  writePrivateSyncReport(join(checkoutLocation(root).dir, file), JSON.stringify({ paths }));
+  const lines: string[] = [];
+  let size = 0;
+  for (const row of paths) {
+    const label = row.reason.includes(row.path) ? row.reason : row.path + ": " + row.reason;
+    const line = label.replace(/[\x00-\x1f\x7f]/g, " ");
+    size += Buffer.byteLength(line) + 1;
+    if (size > 2048) break;
+    lines.push(line);
+  }
+  throw new MainSyncError(`${lines.join("\n")}\n${paths.length} blocking input(s). Full report in the private Git directory: ${file}`, "NEEDS_CHANGE");
+}
+
 function inspectInventory(root: string, completion: "standalone" | "origin") {
   const before = trackedInputs(root);
-  verifyPrivateRoot(root);
+  const invalidPrivateRoots = verifyPrivateRoot(root);
   const reportOutputs = reportOutputsFor(root);
+  const blocking = new Map(invalidPrivateRoots);
   for (const path of reportOutputs) {
-    if (lstatSync(join(root, path), { throwIfNoEntry: false })) verifyEvidencePath(root, path, "Retained report");
+    const invalid = invalidReportParent(root, path);
+    if (invalid) {
+      blocking.set(invalid, "Retained report requires a canonical directory parent: " + invalid);
+      continue;
+    }
+    if (!lstatSync(join(root, path), { throwIfNoEntry: false })) continue;
+    try { verifyEvidencePath(root, path, "Retained report"); }
+    catch (error) {
+      if (!(error instanceof MainSyncError)) throw error;
+      blocking.set(path, `${path}: ${error.message}`);
+    }
   }
   const generated = lstatSync(join(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
-    throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
+    blocking.set(GENERATED_BIOME_PATH, `Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`);
   }
   let recognizedDerivative = false;
   const untracked: string[] = [];
+
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...(ignored ? ["--ignored"] : [])];
-    for (const file of git(root, args).split("\0").filter(Boolean)) {
+    for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
+      if (blocking.has(file) || [...invalidPrivateRoots.keys()].some(parent => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
-      if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) continue;
-      if (isPlanFile(root, file)) {
-        if (!ignored) throw new MainSyncError(`Private planning evidence must remain ignored: ${file}`, "NEEDS_CHANGE");
-        verifyPrivateInput(root, file, before.headSha);
-        continue;
+      try {
+        if (inspectUntrackedPath(root, file, ignored, before.headSha, reportOutputs)) recognizedDerivative = true;
+      } catch (error) {
+        if (!(error instanceof MainSyncError)) throw error;
+        blocking.set(file, error.message);
       }
-      const artifactRoot = artifactRootOf(root);
-      if (PRIVATE_ARTIFACT.test(file) && ((artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`)) || file.startsWith(".control/"))) continue;
-      if (producerFor(root, file)) {
-        if (!ignored) throw new MainSyncError(`Canonical generated dependency must remain ignored: ${file}`, "NEEDS_CHANGE");
-        continue;
-      }
-      if (ignored && reportOutputs.has(file)) {
-        const stat = lstatSync(join(root, file));
-        if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
-        continue;
-      }
-      if (ignored && file === GENERATED_BIOME_PATH) {
-        verifyGeneratedBiomeInput(root, before.headSha);
-        recognizedDerivative = true;
-        continue;
-      }
-      if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) {
-        throw new MainSyncError(`Committed validation inputs differ from HEAD: unsupported generated-input path ${file}`, "NEEDS_CHANGE");
-      }
-      if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
     }
   }
-  const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans((args) => git(root, args), prefix));
+  const producers = inputProducers(root).filter(producer => {
+    const roots = producer.roots.filter(output => {
+      const parent = invalidReportParent(root, output);
+      if (parent) blocking.set(parent, "Producer output requires a canonical directory: " + parent);
+      return !parent;
+    });
+    return presentProducers(root, [{ ...producer, roots }]).length > 0;
+  });
+  for (const { path, reason } of producerInputProblems(producers, untracked)) {
+    if (!blocking.has(path)) blocking.set(path, reason);
+  }
+  if (blocking.size) refuseInputPaths(root, Array.from(blocking, ([path, reason]) => ({ path, reason })));
+  const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans(root, prefix));
   if (plans.length) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   if (recognizedDerivative) {
     const after = trackedInputs(root);
@@ -109,7 +163,6 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
       throw new MainSyncError("Committed validation inputs changed during the read-only derivative probe", "NEEDS_CHANGE");
     }
   }
-  const producers = presentProducers(root);
   let metadata: string | undefined;
   if (completion === "origin" && producers.length) metadata = verifyProducerInputsForOrigin(root, before.headSha, producers, untracked);
   else verifyProducerInputs(root, before.headSha, producers, untracked);
@@ -163,7 +216,7 @@ export function trackedInputs(root: string) {
   const identity = committedIdentity(root);
   if (git(root, ["write-tree"]) !== identity.treeSha) throw new MainSyncError("Committed validation inputs differ from HEAD: staged source", "NEEDS_CHANGE");
   const hash = createHash("sha256");
-  const entries = git(root, ["ls-tree", "-r", "-z", "HEAD"]);
+  const entries = readGitInventory(root, ["ls-tree", "-r", "-z", "HEAD"]);
   for (const entry of entries.split("\0").filter(Boolean)) {
     const tab = entry.indexOf("\t");
     const [mode, kind, object] = entry.slice(0, tab).split(" ");
@@ -187,7 +240,7 @@ export function trackedInputs(root: string) {
 export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt) {
   const root = value.place.root;
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
-  const prototype = value.place.branch.startsWith("prototype/");
+  const prototype = isOwnedPrototypeSession(value.place.session,value.place.branch);
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync(join(root, file)));
   const commands: CheckCommand[] = [];
   const e2eLimitations: z.infer<typeof e2eLimitationSchema>[] = [];

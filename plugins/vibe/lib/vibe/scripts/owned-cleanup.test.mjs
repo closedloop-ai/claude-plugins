@@ -120,6 +120,49 @@ test('bootstrapped symphony outputs are regenerable while unknown ignored conten
   assert.equal(readFileSync(path.join(g.worktree, 'private-cache', 'human'), 'utf8'), 'keep');
 });
 
+// The ignored Desktop outputs a real build and e2e run left in three laptop 2 checkouts (fleet evidence
+// iss14476/item144-real-desktop-ignored-outputs.txt), with the files those run directories held.
+const DESKTOP_IGNORES = ['test-results-e2e/', 'playwright-report-e2e/', '*.tsbuildinfo', 'apps/desktop/.local/',
+  'apps/desktop/src/main/database/generated/', 'apps/desktop/src/main/database/migration/migrations-manifest.ts',
+  'apps/desktop/src/main/docs-help/docs-bundle-manifest.ts', 'apps/desktop/src/shared/auth-handoff-assets.generated.ts',
+  'apps/desktop/src/shared/build-info.ts'];
+const DESKTOP_OUTPUTS = ['playwright-report-e2e/index.html', 'playwright-report-e2e/results.json',
+  'playwright-report-e2e/dd-quarantine.json', `playwright-report-e2e/data/${'a1'.repeat(20)}.md`,
+  'test-results-e2e/.last-run.json', 'test-results-e2e/liveblocks-editor-shortcut-08cb5-paste-electron/error-context.md',
+  'test-results-e2e/dashboard-kpi-1a2b3-values-electron/dashboard-kpi-values.png',
+  'src/main/database/generated/client/index.ts', 'src/main/database/migration/migrations-manifest.ts',
+  'src/main/docs-help/docs-bundle-manifest.ts', 'src/shared/auth-handoff-assets.generated.ts', 'src/shared/build-info.ts',
+  ...['', '.e2e', '.renderer', '.scripts', '.tests', '.type-tests'].map((name) => `tsconfig${name}.tsbuildinfo`)]
+  .map((file) => `apps/desktop/${file}`);
+
+function desktopRun(t, extra = []) {
+  const f = fixture(t);
+  writeFileSync(f.sessionFile, JSON.stringify({ status: 'handed-off', pullRequest: { repo: f.pr.repo, number: f.pr.number, head: f.pr.head },
+    provider: PROVIDER_BINDING }));
+  writeFileSync(path.join(f.repo, '.git', 'info', 'exclude'), `${DESKTOP_IGNORES.join('\n')}\n`);
+  for (const file of [...DESKTOP_OUTPUTS, ...extra]) {
+    mkdirSync(path.dirname(path.join(f.worktree, file)), { recursive: true });
+    writeFileSync(path.join(f.worktree, file), 'run output');
+  }
+  assert.ok(f.register());
+  return f;
+}
+
+test('AC-91 the real ignored Desktop build and e2e outputs are recipe-owned and never block retirement', async (t) => {
+  const f = desktopRun(t);
+  assert.deepEqual((await f.sweep()).removed, [f.worktree], 'every recorded Desktop output is a declared recipe output');
+});
+
+test('AC-91 leaked gh state and undeclared files inside the Desktop run directories still block retirement', async (t) => {
+  for (const file of ['apps/desktop/.local/state/gh/device-id', 'apps/desktop/playwright-report-e2e/notes.txt',
+    'apps/desktop/playwright-report-e2e/trace/index.html', 'apps/desktop/test-results-e2e/leftover.json',
+    'apps/desktop/test-results-e2e/dashboard-kpi-1a2b3-values-electron/trace.zip', 'apps/web/test-results-e2e/.last-run.json']) {
+    const f = desktopRun(t, [file]);
+    assert.deepEqual((await f.sweep()).removed, [], `${file} is not a declared recipe output, so it keeps the worktree`);
+    assert.equal(readFileSync(path.join(f.worktree, file), 'utf8'), 'run output');
+  }
+});
+
 test('manual bounded sweep repairs a persisted retirement record whose pending marker was lost', async (t) => {
   const f = fixture(t);
   assert.ok(f.register());

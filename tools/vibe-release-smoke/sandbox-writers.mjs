@@ -16,7 +16,7 @@ export function sandboxWriters({ scripts, repo, head, node: nodePath = "node" })
       "--default", "carry on", "--deadline-minutes", "10"), justification: "Save the questions for this vibe session", escalated: true, cwd: repo },
     { name: "precedent-check.mjs", argv: node("precedent-check.mjs", "run", "--question", "Smoke question?", "--code-evidence", "README.md:1",
       "--claude", "/usr/bin/false", "--timeout-seconds", "5"), justification: "Save the comparison with the other app", escalated: false, cwd: repo },
-    { name: "e2e-lock.mjs", argv: node("e2e-lock.mjs", "run", "--head", head, "--wait-seconds", "1", "true"),
+    { name: "e2e-lock.mjs", argv: node("e2e-lock.mjs", "run", "--head", head, "--ticket", "QA-1", "--wait-seconds", "1", "true"),
       justification: "Reserve the shared setup for the automatic checks", escalated: true, cwd: repo },
     { name: "image-head.mjs", argv: node("image-head.mjs", "record", "--project", "vibe-smoke", "--worktree", repo, "--head", head, "--", "docker", "compose", "up", "--build"),
       justification: "Record which version the automatic checks' setup was built from", escalated: true, cwd: repo },

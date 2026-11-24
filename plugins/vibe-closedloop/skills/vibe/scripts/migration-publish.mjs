@@ -21,6 +21,7 @@
 // origin/main, which is the main it merged) is left out (two
 // migrations a main merge brought in blocked a publication twice).
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -85,7 +86,7 @@ function main(argv) {
   const added = files.map((file) => ({ path: file, sql: git(worktree, ["show", `HEAD:${file}`]) }));
   const logFile = values["change-log"] ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const changeLog = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  const tracked = new Set(git(worktree, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n"));
+  const tracked = new Set(readGitInventory(worktree, ["ls-tree", "-r", "--name-only", "HEAD"]).trim().split("\n"));
   const problems = migrationProblems(added, changeLog, (file) => tracked.has(file));
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, migrations: files, problems }, null, 2)}\n`);
   return problems.length === 0 ? 0 : 1;
@@ -97,7 +98,7 @@ function mainFiles(worktree, main) {
   if (!ref) {
     try { ref = git(worktree, ["merge-base", "HEAD", "origin/main"]); } catch { return new Set(); }
   }
-  return new Set(git(worktree, ["ls-tree", "-r", "--name-only", ref]).split("\n").filter(Boolean));
+  return new Set(readGitInventory(worktree, ["ls-tree", "-r", "--name-only", ref]).trim().split("\n").filter(Boolean));
 }
 
 if (isEntryPoint(import.meta.url)) {

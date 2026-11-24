@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Checks a tracker issue write before it is made (operator rulings,
-// 2026-10-21): a new or follow-up ticket goes in the current sprint project,
-// never a past one, and is never linked under a parent that is already
+// 2026-10-21, project selection updated 2026-11-19): new tickets use the configured backlog.
+// A new ticket is never linked under a parent that is already
 // EXECUTED, OBSOLETE, DONE or CANCELED; an issue moves to IN_REVIEW only with the pull request
 // that delivers it. Prints one JSON object; exits 0 when the write may go
 // ahead and 1 otherwise. Changes nothing.
@@ -22,11 +22,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_YEAR_MS = 183 * DAY_MS;
 
 /** Problems with a ticket write; `parents` are `{slug, status}`, dates are ISO strings. */
-export function ticketWriteProblems({ projectName, projectEnd, parents = [], status, pullRequest, today }) {
+export function ticketWriteProblems({ projectName, projectEnd, operation, parents = [], status, pullRequest, today }) {
   const now = Date.parse(today ?? new Date().toISOString().slice(0, 10));
   const problems = parents.filter((parent) => CLOSED_PARENT.has(parent.status))
-    .map((parent) => `${parent.slug} is ${parent.status}; a follow-up is never linked under a finished parent, so file it in the current sprint without that link`);
-  if (projectName !== undefined || projectEnd !== undefined) {
+    .map((parent) => `${parent.slug} is ${parent.status}; a follow-up is never linked under a finished parent, so file it in the saved backlog without that link`);
+  if (operation === "create") {
+    if (!projectName || RANGE.test(projectName)) problems.push("Create the ticket in the saved backlog project reported by ticket-project.mjs.");
+    if (status === "IN_PROGRESS") problems.push("Create the ticket first, then use the separate verified work-start transition.");
+  } else if (projectName !== undefined || projectEnd !== undefined) {
     const end = projectEnd === undefined ? endFromName(projectName, now) : Date.parse(projectEnd);
     if (!Number.isFinite(end)) {
       problems.push(`project ${JSON.stringify(projectName)} has no date range; pass --project-end, or file the ticket in the current sprint project`);
@@ -59,6 +62,7 @@ function main() {
     options: {
       "project-name": { type: "string" },
       "project-end": { type: "string" },
+      operation: { type: "string" },
       parent: { type: "string", multiple: true },
       status: { type: "string" },
       "pull-request": { type: "string" },
@@ -71,7 +75,7 @@ function main() {
   });
   const problems = ticketWriteProblems({
     projectName: values["project-name"],
-    projectEnd: values["project-end"],
+    projectEnd: values["project-end"], operation: values.operation,
     parents,
     status: values.status?.toUpperCase(),
     pullRequest: values["pull-request"],

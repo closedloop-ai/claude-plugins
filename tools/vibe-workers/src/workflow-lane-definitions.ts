@@ -1,3 +1,4 @@
+export { workspacePackages } from "./workspace-packages.js";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 
