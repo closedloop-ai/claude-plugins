@@ -355,6 +355,40 @@ test("acceptance rechecks the worktree when its fingerprint predates a ledger wa
   assert.equal(readHelper().acceptedAt, undefined);
 });
 
+for (const action of ["final", "accepted"]) {
+  test(`DT-03: ${action} validates process, source, revision and evidence in order`, async t => {
+    const fixture = reviewFixture(t);
+    const { input } = fixture;
+    const args = await competingCommand(fixture, action);
+    const evidence = args[args.indexOf(action === "final" ? "--deliverable" : "--report") + 1];
+    const trace = path.join(input.orchDir, "validation-order");
+    const observer = path.join(input.orchDir, "observe-order.cjs");
+    // Observe the real, successful CLI without changing its inputs or the results of any call.
+    writeFileSync(observer, `const fs = require("node:fs");
+      const cp = require("node:child_process");
+      const locked = () => fs.existsSync(${JSON.stringify(path.join(input.orchDir, "helpers.lock", "owner.json"))});
+      const record = (step) => fs.appendFileSync(${JSON.stringify(trace)}, step + "\\n");
+      const { spawnSync, execFileSync } = cp;
+      cp.spawnSync = function (cmd, args, ...rest) {
+        if (cmd === "ps" && args.at(-1) === String(process.pid)) record("owner");
+        return spawnSync(cmd, args, ...rest);
+      };
+      cp.execFileSync = function (cmd, args, ...rest) {
+        if (cmd === "git" && args.includes("--others")) record(locked() ? "locked scan" : "source");
+        if (cmd === "git" && args.join(" ") === "rev-parse HEAD" && locked()) record("revision");
+        return execFileSync(cmd, args, ...rest);
+      };
+      const { lstatSync } = fs;
+      fs.lstatSync = function (file, ...rest) {
+        if (file === ${JSON.stringify(evidence)} && locked()) record("evidence");
+        return lstatSync(file, ...rest);
+      };
+      require("node:module").syncBuiltinESMExports();`);
+    execFileSync(process.execPath, ["--require", observer, helperCli, input.orchDir, ...args]);
+    assert.deepEqual(readFileSync(trace, "utf8").trim().split("\n"), ["owner", "source", "revision", "evidence"]);
+  });
+}
+
 for (const action of ["final", "accepted", "start", "stopped"]) {
   test(`DT-03: ${action} preserves the ledger when the locked HEAD check sees a new revision`, async t => {
     const fixture = reviewFixture(t);

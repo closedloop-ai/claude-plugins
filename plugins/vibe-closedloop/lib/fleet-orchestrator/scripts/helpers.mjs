@@ -378,11 +378,22 @@ export function read(orchDir) {
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
 }
 
+/** Resolve the current process before reading any source that depends on this grant. */
+function ledgerProcess() {
+  const identity = readIdentity(process.pid);
+  if (!identity) throw new Error('helper ledger process identity is unreadable');
+  return { pid: process.pid, identity };
+}
+
 /** Acquire the helper ledger lock and return its identity-checked release callback. */
-export async function acquireLedgerLock(orchDir, { waitMs = LEDGER_WAIT_MS, clock = Date.now, onWait } = {}) {
+export async function acquireLedgerLock(orchDir, options) {
+  return acquireForProcess(orchDir, ledgerProcess(), options);
+}
+
+/** Reuse our verified process identity, but issue a fresh release token for every grant. */
+async function acquireForProcess(orchDir, processOwner, { waitMs = LEDGER_WAIT_MS, clock = Date.now, onWait } = {}) {
   const dir = path.join(orchDir, 'helpers.lock');
-  const owner = { pid: process.pid, identity: readIdentity(process.pid), token: randomUUID() };
-  if (!owner.identity) throw new Error('helper ledger process identity is unreadable');
+  const owner = { ...processOwner, token: randomUUID() };
   const deadline = clock() + waitMs;
   while (clock() < deadline) {
     try {
@@ -498,12 +509,12 @@ function prepareTransition(action, entry, values, orchDir) {
     return () => { throw error; };
   }
   return () => {
-    for (const [file, version] of versions) {
-      if (!isDeepStrictEqual(version, evidenceVersion(file))) throw new Error("helper evidence changed during verification");
-    }
     // Recheck only the ref while holding the ledger lock. A full source scan belongs to preparation.
     if (revision && git(revision.worktree, ["rev-parse", "HEAD"], { timeout: 1000 }) !== revision.head) {
       throw new Error("helper HEAD changed during verification");
+    }
+    for (const [file, version] of versions) {
+      if (!isDeepStrictEqual(version, evidenceVersion(file))) throw new Error("helper evidence changed during verification");
     }
     return result;
   };
@@ -519,12 +530,13 @@ function preparationRecord(action, entry) {
 /** After real contention, release the grant and reread all inputs within the original wait budget. */
 async function lockWithFreshSource(orchDir, prepare) {
   if (!prepare) return { releaseLedger: await acquireLedgerLock(orchDir) };
+  const processOwner = ledgerProcess();
   let waitMs = LEDGER_WAIT_MS;
   while (true) {
     const checkedInput = prepare();
     const started = Date.now();
     let collided = false;
-    const releaseLedger = await acquireLedgerLock(orchDir, { waitMs, onWait: () => { collided = true; } });
+    const releaseLedger = await acquireForProcess(orchDir, processOwner, { waitMs, onWait: () => { collided = true; } });
     if (!collided) return { releaseLedger, checkedInput };
     releaseLedger();
     waitMs -= Date.now() - started;
