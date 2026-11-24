@@ -179,14 +179,61 @@ function isWriterPull(url, row) {
   return Boolean(match) && match[2] === String(row.pr) && (!row.repo || match[1] === row.repo);
 }
 
+/** Read the tracker and code host snapshot used by both the sweep and assignment. */
+export function readStatusSnapshot(file) {
+  try { return JSON.parse(readFileSync(file, "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+}
+
+function snapshotChildren(snapshot) {
+  return (Array.isArray(snapshot?.prds) ? snapshot.prds : [])
+    .flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []).map((child) => ({ child, prdSlug: prd?.slug })));
+}
+
+/** Admission requires a current ticket read. An existing writer PR must match the delivering link. */
+export function assignmentStatusProblems(snapshot, tickets, writer) {
+  const children = snapshotChildren(snapshot);
+  return tickets.flatMap(slug => {
+    const reads = children.filter(({ child }) => child?.slug === slug).map(({ child }) => child);
+    const valid = row => row.status === "IN_PROGRESS" || (row.status === "IN_REVIEW" &&
+      Array.isArray(row.pullRequests) && row.pullRequests.some(pr => pr?.state === "OPEN" &&
+        (writer.pr ? isWriterPull(pr.url, writer) : /^https:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(pr.url ?? ""))));
+    if (reads.length && reads.every(valid)) return [];
+    const status = [...new Set(reads.map(row => row.status ?? "unread"))].join(", ") || "unread";
+    return [`${slug} is ${status}; set the ticket to IN_PROGRESS and refresh status-audit.json, or verify an open delivering PR for IN_REVIEW`];
+  });
+}
+
+/** Report a pre-start tracker status for every ticket still held by a live board writer. */
+export function liveTicketStatusFindings(snapshot, units, writers) {
+  const held = new Set();
+  for (const [name, row] of Object.entries(writers ?? {})) {
+    if (row.retiredAt) continue;
+    const assigned = Object.values(units).filter(unit => unit.writer === name);
+    for (const slug of row.tickets ?? []) {
+      if (!assigned.some(unit => unit.closed && unit.tickets.includes(slug))) held.add(slug);
+    }
+    for (const unit of assigned.filter(unit => !unit.closed)) for (const slug of unit.tickets) held.add(slug);
+  }
+  const found = new Map();
+  for (const { child } of snapshotChildren(snapshot)) {
+    if ((held.has(child.slug) || (!writers && child.writer)) && ["TRIAGE", "BACKLOG", "TODO"].includes(child.status)) {
+      found.set(child.slug, { kind: "TICKET-NOT-IN-PROGRESS", slug: child.slug, status: child.status });
+    }
+  }
+  return [...found.values()];
+}
+
+export const ticketStatusLine = finding => `TICKET-NOT-IN-PROGRESS ${finding.slug} ${finding.status}: set the assigned ticket to IN_PROGRESS`;
+
 /** Every child that disagrees with its evidence, and every one ruled out of scope. */
-export function auditStatuses(snapshot, units = {}, writers = {}, reviewProblem = () => null) {
+export function auditStatuses(snapshot, units = {}, writers, reviewProblem = () => null) {
   const ruled = new Map((Array.isArray(snapshot?.outOfScope) ? snapshot.outOfScope : [])
     .filter((entry) => typeof entry?.slug === "string" && typeof entry.reason === "string" && entry.reason.trim() !== "")
     .map((entry) => [entry.slug, entry.reason.trim()]));
-  const children = (Array.isArray(snapshot?.prds) ? snapshot.prds : [])
-    .flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []).map((child) => ({ child, prdSlug: prd?.slug })));
-  const findings = [...sequencingFindings(snapshot), ...applyUnits(children, units, writers, reviewProblem)];
+  const children = snapshotChildren(snapshot);
+  const held = liveTicketStatusFindings(snapshot, units, writers);
+  const findings = [...sequencingFindings(snapshot), ...applyUnits(children, units, writers ?? {}, reviewProblem)];
   const outOfScope = [];
   for (const { child, prdSlug } of children) {
     findings.push(...sweepFindings(child).map((found) => ({ slug: child.slug, status: child.status, ...found })));
@@ -197,6 +244,7 @@ export function auditStatuses(snapshot, units = {}, writers = {}, reviewProblem 
     else if (reason) findings.push({ slug: child.slug, status: child.status, kind: "UNSCOPED", reason });
     else findings.push({ slug: child.slug, status: child.status, ...finding });
   }
+  findings.push(...held);
   return { children: children.length, findings, outOfScope };
 }
 
@@ -225,8 +273,11 @@ function main(argv) {
   }
   const board = values.board ? readBoard(resolveWorkDir(values.board).dir) : { units: {}, writers: {} };
   const reviewProblem = values.board ? (name, unit) => unitReviewProblem(values.board, name, unit) : () => null;
-  const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")), board.units, board.writers, reviewProblem);
+  const snapshot = readStatusSnapshot(values.snapshot);
+  if (!snapshot) throw new Error("The tracker status snapshot is missing");
+  const { children, findings, outOfScope } = auditStatuses(snapshot, board.units, values.board ? board.writers : undefined, reviewProblem);
   const lines = {
+    "TICKET-NOT-IN-PROGRESS": ticketStatusLine,
     UNOWNED: (finding) => `UNOWNED ${finding.slug} ${finding.status}`,
     "PLAN-OPEN": (finding) => `PLAN-OPEN ${finding.slug}: ${finding.plan} is ${finding.planStatus}; a DONE ticket's plan is EXECUTED`,
     "ABSORBED-OPEN": (finding) => `ABSORBED-OPEN ${finding.slug} ${finding.status}: absorbed by ${finding.umbrella}, which is DONE; close it in the same step with that merge as evidence`,

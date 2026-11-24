@@ -56,6 +56,7 @@ test('the command prints each finding and exits 1 until the statuses match', (t)
     'UNCHECKED d DONE: AC-1; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)',
     'UNREAD e DONE: no ticket body in the snapshot; read it so its acceptance criteria are checked',
     'UNOWNED f BACKLOG',
+    'TICKET-NOT-IN-PROGRESS c BACKLOG: set the assigned ticket to IN_PROGRESS',
     'status audit: 5 children, 2 mismatched, 1 unowned, 2 unchecked, 0 unscoped, 0 open plans, 0 absorbed open',
     '',
   ].join('\n'));

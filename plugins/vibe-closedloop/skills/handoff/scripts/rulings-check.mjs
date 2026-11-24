@@ -42,7 +42,7 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { issueKey, requirementsKey, trackerKey } from "../../vibe/scripts/tracker-key.mjs";
-import { criteriaStates } from "./criteria-audit.mjs";
+import { criteriaStates, visibleMarkdownLines } from "./criteria-list.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -64,6 +64,17 @@ const EXCLUSION_HEADING = /^#{2,6}\s+(?:out[- ]of[- ]scope|non-?goals?|excluded|
 const EXCLUSION_PHRASE = /\b(?:out[- ]of[- ]scope|outside (?:of )?(?:this|the) (?:\w+ )?scope|not covered|deferred|descoped|obsolete)\b/i;
 const humanSource = () => new RegExp(String.raw`\b${requirementsKey()}\b|\b${trackerKey()}\s+AC-?\d+\b|\bacceptance criteri(?:on|a)\b|\boperator\b|\brulings?\b|\bruled\b|\bapproved by\b`, "i");
 const SELF_APPROVED = /^>\s*Self-approved:/m;
+const ENTRY_START = /^\s*(?:[-*+]|\d+[.)]|#{1,6})\s/;
+const DECISION_ENTRY = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?\**Decision\b[^:\n]*:/;
+const RULING_ENTRY = /^\s*(?:[-*+]\s+)?Ruling\b/;
+const CRITERION_ID = /\bAC-\d+\b/;
+const TRADE_LABEL = /(?:^|[\s(;,])(?:accepted\s+(?:costs?|trade-?offs?|gaps?|risks?)|deliberately\s+not\s+(?:fixed|built))(?=\s*[:)])/i;
+const KNOWN_GAP_ON_CRITERION = /\bAC-\d+\b[^\n]*\bknown\s+gaps?\b|\bknown\s+gaps?\b[^\n]*\bAC-\d+\b/i;
+const QUOTED = /"([^"\n]+)"|“([^”\n]+)”/g;
+const INLINE_CODE_SPAN = /`[^`\n]*`/g;
+const SOURCED_RULING = /^\s*[-*]?\s*Ruling\s+(?:(\d{4}-\d{2}-\d{2})\s+)?\(([^)\n]+)\):\s*(\S.*?)\s*$/gm;
+const DATE = /\b\d{4}-\d{2}-\d{2}\b/;
+const MIN_PARTIAL_QUOTE_WORDS = 3;
 const NOTHING = /^(?:none|nothing|n\/a|-)\.?$/i;
 
 /** The exclusions in a plan body that cite no human source. */
@@ -134,6 +145,46 @@ function normalize(text) {
   return text.replace(/["“”']/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+// Match the terms that identify the decision, ignoring ordinary question framing.
+const QUESTION_FRAMING = new Set(("a an and are as at be been being by can could did do does for from had has have how i if in into is it its may me my of on or our should that the their them then there these they this those to us was we were what when whether which who why will with would you your new fact rule satisfy satisfies count required use using change tell know please need want show happen happens").split(" "));
+
+function decisionTerms(text) {
+  return new Set((normalize(text).match(/[\p{L}\p{N}]+/gu) ?? []).filter(word => word.length > 1 && !QUESTION_FRAMING.has(word))
+    .map(word => word.replace(/(?:ing|s)$/u, "")));
+}
+
+/** Reuse the record reader for ticket and program formats, returning the original dated operator lines. */
+export function questionRulings(question, records, newFact = "") {
+  const namedFact = newFact.trim().replace(/[.!?]$/, "");
+  const offset = namedFact ? question.toLowerCase().indexOf(namedFact.toLowerCase()) : -1;
+  const subject = offset < 0 ? question : question.slice(0, offset) + question.slice(offset + namedFact.length);
+  const words = [...decisionTerms(subject)];
+  const literal = normalize(subject).replace(/^[\s.,:;!?]+|[\s.,:;!?]+$/g, "");
+  const matches = new Set();
+  for (const record of records) {
+    for (const match of record.matchAll(RECORD_RULING)) {
+      const line = match[0].trim();
+      if (/\(orchestrator\b/i.test(line)) continue;
+      const body = match[1].replace(AMENDS, "");
+      // Two terms from unrelated clauses of a long ruling do not establish the same decision.
+      const related = body.split(/;|[.!?]\s/u).some(clause => {
+        const terms = decisionTerms(clause);
+        return terms.has(words[0]) && words.filter(word => terms.has(word)).length >= Math.max(2, Math.ceil(words.length / 2));
+      });
+      if ((literal && normalize(body).includes(literal)) || related) {
+        matches.add(line);
+      }
+    }
+  }
+  const rulings = [...matches];
+  if (offset >= 0 && words.length === 0) return { allowed: false, rulings };
+  if (!rulings.length) return { allowed: true, rulings };
+  const factWords = decisionTerms(newFact);
+  const known = decisionTerms(rulings.join("\n"));
+  const uncovered = offset >= 0 && factWords.size >= 3 && [...factWords].filter(word => !known.has(word)).length >= 2;
+  return { allowed: uncovered, rulings };
+}
+
 /** The decisions recorded in a QA record or resume log. */
 export function recordRulings(text) {
   return [...text.matchAll(RECORD_RULING)].map((match) => match[1]);
@@ -177,6 +228,83 @@ export function exactOperatorRuling(program, { quote, source, ticket }) {
     return kind !== "ticket" && citation === source && words.includes(quote)
       && rulingNamesScope(reference, [ticket]);
   });
+}
+
+/** Locate the program's exact quoted operator decision and its ticket scope. Operational notes cannot authorize a split. */
+export function separationRuling(program, reason, tickets) {
+  for (const match of program.matchAll(PROGRAM_RULING)) {
+    const [, date, channel, source, decision] = match;
+    const quoted = /^["“]([^"”]+)["”]/u.exec(decision)?.[1] ?? decision;
+    if (quoted === reason && rulingNamesScope(decision, tickets)) return { date, channel, source, decision };
+  }
+  return null;
+}
+
+/** Whether a ruling's attribution names an agent rather than a person. */
+export function isAgentAttribution(text) {
+  return /\b(?:orchestrator|reviewer|agent|worker|model|system)\b/i.test(text);
+}
+
+/** The words of every dated `Ruling` line attributed to a person, across ticket bodies and ruling records. */
+export function humanRulingWords(texts) {
+  const rulings = [];
+  for (const text of texts.filter((value) => typeof value === "string")) {
+    for (const match of visibleMarkdownLines(text).join("\n").matchAll(SOURCED_RULING)) {
+      if (!(match[1] || DATE.test(match[2])) || !match[2].trim() || isAgentAttribution(match[2])) continue;
+      const decision = match[3].replace(AMENDS, "");
+      rulings.push({ decision: normalize(decision), quotes: quotedWords(decision) });
+    }
+  }
+  return rulings;
+}
+
+/**
+ * Body entries that settle an acceptance-criterion reading or record a trade
+ * with no quoted human ruling: `{ entry, kind }`, kind `decision`, `trade` or
+ * `known-gap`. `sources` are the texts whose dated human `Ruling` lines count
+ * (the independent tracker read and the bound program’s rulings).
+ */
+export function unratifiedSettlements(body, sources = []) {
+  const rulings = humanRulingWords(sources);
+  const cites = (text) => quotedWords(text).some((quote) => rulings.some((ruling) => ruling.quotes.includes(quote)
+    || (quote.split(" ").length >= MIN_PARTIAL_QUOTE_WORDS && ruling.decision.includes(quote))));
+  const unratified = [];
+  for (const entry of bodyEntries(body)) {
+    if (RULING_ENTRY.test(entry)) continue;
+    const prose = entry.replace(INLINE_CODE_SPAN, "");
+    const trade = TRADE_LABEL.exec(prose);
+    if (trade && !cites(prose.slice(trade.index))) unratified.push({ entry, kind: "trade" });
+    else if (DECISION_ENTRY.test(prose) && CRITERION_ID.test(prose) && !cites(prose)) unratified.push({ entry, kind: "decision" });
+    else if (KNOWN_GAP_ON_CRITERION.test(prose) && !cites(prose)) unratified.push({ entry, kind: "known-gap" });
+  }
+  return unratified;
+}
+
+/** One refusal per unratified settlement, phrased as the question only the person can answer. */
+export function settlementProblems(body, sources = []) {
+  const what = { decision: "reads an acceptance criterion", trade: "records an accepted cost or trade", "known-gap": "records a known gap against an acceptance criterion" };
+  return unratifiedSettlements(body, sources).map(({ entry, kind }) =>
+    `"${entry.trim().slice(0, 200)}" ${what[kind]} with no cited human ruling; an agent cannot settle it. Return NEEDS_PERSON (behavior) with this question, record the answer as - Ruling <date> (<who>): "<their words>"; amends: <criteria>, and quote those words in the entry, or remove the entry and leave the criterion open`);
+}
+
+function quotedWords(text) {
+  return [...text.matchAll(QUOTED)].map((match) => normalize(match[1] ?? match[2])).filter(Boolean);
+}
+
+/** List items, headings and paragraph lines of a markdown body outside fenced code; continuation lines join their item. */
+function bodyEntries(body) {
+  const entries = [];
+  let open = false;
+  for (const line of visibleMarkdownLines(body)) {
+    if (!line.trim()) {
+      open = false;
+      continue;
+    }
+    if (open && !ENTRY_START.test(line) && /^\s/.test(line)) entries[entries.length - 1] += ` ${line.trim()}`;
+    else entries.push(line);
+    open = true;
+  }
+  return entries;
 }
 
 /** Problems with the program-wide ruling index and the records it reconciles. */

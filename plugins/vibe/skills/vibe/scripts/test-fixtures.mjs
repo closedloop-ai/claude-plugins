@@ -13,6 +13,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { localPlanPaths } from "./local-plans.mjs";
 
+/** Supply a tracker sweep for fleet tests that exercise another admission rule. */
+export function writeActiveTicketSnapshot(program, slugs) {
+  writeFileSync(path.join(program, "status-audit.json"), JSON.stringify({ prds: [{ children: slugs.map(slug => ({ slug, status: "IN_PROGRESS" })) }] }));
+}
+
 export const SYMPHONY_REMOTE = "git@github.com:closedloop-ai/symphony-alpha.git";
 // Fixture mirror of symphony-alpha/vibe-handoff-paths.json; production loads the target repository itself.
 export const SYMPHONY_PATH_POLICY = readFileSync(new URL("./fixtures/symphony-vibe-handoff-paths.json", import.meta.url), "utf8");

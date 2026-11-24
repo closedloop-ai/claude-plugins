@@ -113,19 +113,22 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
-import { acquireLedgerLock } from "../../../lib/fleet-orchestrator/scripts/helpers.mjs";
 import { remoteWriterRead, retirementExclusions, writerRetirement } from "./writer-retirement.mjs";
 import { runtimeMixLine } from "./fleet-capacity.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
-import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
+import { freeUnitName, joinReasons, renderUnits, unitMemberProblems, validTickets } from "./ticket-units.mjs";
+import { separationRuling } from "../../handoff/scripts/rulings-check.mjs";
+import { vibeBriefTicket } from "./writer-launch.mjs";
 import { placementLines, readPlacementEvidence, recordPlacement, renderPlacements, writerPlacementProblem, writerTickets } from "./writer-placement.mjs";
 import { assertScopeDeliveryAllowed, writerScopeLock } from "./writer-scope-lock.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { trackerBound, workItem } from "../../vibe/scripts/tracker-key.mjs";
+import { assignmentStatusProblems, liveTicketStatusFindings, readStatusSnapshot, ticketStatusLine } from "./status-audit.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
 const { cloudCapacityLines } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-slot-routing.mjs");
+const { acquireLedgerLock } = await vibeCore("lib/fleet-orchestrator/scripts/helpers.mjs");
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { homeProblems, programShape, Shape } = await vibeCore("lib/fleet-orchestrator/scripts/fleet-home.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -300,7 +303,7 @@ export function render(board) {
 function read(orchDir) {
   const file = path.join(orchDir, STATE);
   const board = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
-  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, units: board.units ?? {}, placements: board.placements ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
+  return { ...board, writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, units: board.units ?? {}, placements: board.placements ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
 }
 
 function write(orchDir, board, line, at) {
@@ -554,6 +557,95 @@ export function unitReviewLines(orchDir, board) {
   });
 }
 
+/** Retain the same repository, file, screen-map and graph evidence that ticket grouping used. */
+function recordCandidates(board, file) {
+  const candidates = JSON.parse(readFileSync(file, "utf8"));
+  const tickets = validTickets(candidates, workItem());
+  board.surfaces ??= {};
+  for (const [index, { slug, repo }] of tickets.entries()) {
+    const incoming = candidates.tickets[index];
+    const fact = { ...board.surfaces[slug], slug, repo };
+    for (const key of ["files", "surfaces", "historyFiles", "prd", "operatorAssigned"]) {
+      if (Object.hasOwn(incoming, key)) fact[key] = incoming[key];
+    }
+    board.surfaces[slug] = fact;
+  }
+  const edges = new Map((board.collisions ?? []).map(pair => [[pair.a, pair.b].sort().join(":"), pair]));
+  for (const pair of candidates.collisions ?? []) edges.set([pair.a, pair.b].sort().join(":"), pair);
+  board.collisions = [...edges.values()];
+}
+
+/** Open units claim all their members. A standalone writer owns its remaining active tickets. */
+function activeOwners(board) {
+  const units = Object.entries(board.units);
+  const owners = units.filter(([, unit]) => !unit.closed).map(([name, unit]) => ({ ...unit, unit: name, label: "unit " + name }));
+  for (const [writer, row] of Object.entries(board.writers)) {
+    if (row.retiredAt) continue;
+    const tickets = (row.tickets ?? []).filter(ticket => !units.some(([, unit]) => unit.writer === writer && unit.tickets.includes(ticket)));
+    const unresolved = !row.tickets?.length && !units.some(([, unit]) => unit.writer === writer);
+    if (tickets.length || unresolved) owners.push({ writer, tickets, repo: row.repo, unresolved, label: "writer " + writer });
+  }
+  return owners;
+}
+
+/** The fleet's existing tracker sweep supplies one program-local snapshot for new assignments and status. */
+function requireAssignmentStatus(orchDir, tickets, writer) {
+  if (!tickets.length || !trackerBound()) return;
+  let snapshot;
+  try { snapshot = readStatusSnapshot(path.join(orchDir, "status-audit.json")); }
+  catch { throw new Error(`${tickets.join(", ")} status unread; refresh status-audit.json and set the assigned tickets to IN_PROGRESS`); }
+  const problems = assignmentStatusProblems(snapshot, tickets, writer);
+  if (problems.length) throw new Error(problems.join("; "));
+}
+
+/** Authorize only the concrete conflicting assignments covered by this operator decision. */
+function admit(orchDir, board, { unit, writer, tickets, repo, placementOnly = false, changes = [] }, values, at) {
+  const conflicts = [...changes];
+  const target = unit ? "unit " + unit : "writer " + writer;
+  for (const owner of activeOwners(board)) {
+    if (unit && owner.unit === unit || writer && owner.writer === writer && (!unit || !owner.unit)) continue;
+    if (!placementOnly && owner.unresolved && !(repo && owner.repo && repo !== owner.repo)) {
+      conflicts.push(`reconcile the tickets of ${owner.label} before assigning ${tickets.join(", ")}; fold into ${owner.label} if related`);
+    }
+    for (const ticket of tickets) for (const member of owner.tickets) {
+      if (ticket === member) {
+        conflicts.push(`${ticket} already belongs to ${owner.label}; fold into ${owner.label}`);
+        continue;
+      }
+      const candidate = board.surfaces?.[ticket];
+      const existing = board.surfaces?.[member];
+      const leftRepo = candidate?.repo ?? repo;
+      const rightRepo = existing?.repo ?? owner.repo;
+      if (leftRepo && rightRepo && leftRepo !== rightRepo) continue;
+      if (!candidate || !existing) {
+        // An unstaffed unit may be provisionally listed; the writer must supply evidence at admission.
+        if (placementOnly || (unit && !board.writers[writer])) continue;
+        conflicts.push(`check overlap of ${ticket} and ${member} with --candidates <grouping file> before separating from ${owner.label}`);
+        continue;
+      }
+      const reasons = joinReasons(candidate, existing, board.collisions);
+      if (reasons.length) conflicts.push(`${ticket} shares scope with ${member} (${reasons.join(", ")}); fold into ${owner.label}`);
+    }
+  }
+  // A writer implementing an already-authorized split inherits only its unit's exact conflicts.
+  const permitted = new Set();
+  if (!unit && !changes.length) {
+    for (const decision of board.separations ?? []) {
+      if (writer && (decision.writer === writer || (decision.unit && board.units[decision.unit]?.writer === writer && !board.units[decision.unit].closed))) {
+        for (const conflict of decision.conflicts) permitted.add(conflict);
+      }
+    }
+  }
+  const outstanding = [...new Set(conflicts)].filter(conflict => !permitted.has(conflict));
+  if (!outstanding.length) return;
+  const reason = values["separate-reason"]?.trim();
+  if (!reason) throw new Error(outstanding.join("; ") + ". To separate, record --separate-reason <operator words>.");
+  const rulings = path.join(orchDir, "rulings.md");
+  const source = existsSync(rulings) && separationRuling(readFileSync(rulings, "utf8"), reason, tickets);
+  if (!source) throw new Error("The separate reason must quote an operator ruling in rulings.md for this ticket assignment.");
+  (board.separations ??= []).push({ target, unit, writer, tickets, conflicts: outstanding, reason, source, at });
+}
+
 /** Adds or extends a unit; tickets are only ever added, and the resume log records each change. */
 function programRulings(orchDir) {
   const file = path.join(orchDir, "rulings.md");
@@ -581,8 +673,6 @@ function recordUnit(orchDir, board, name, values, at) {
     throw new Error("unit needs --tickets <slug,slug>: every ticket the unit delivers.");
   }
   if (board.units[name]?.closed) throw new Error(`unit ${name} is closed; start the new unit as ${freeUnitName(name, Object.keys(board.units))}, the name ticket-units.mjs group prints`);
-  const owner = Object.entries(board.units).find(([other, unit]) => other !== name && !unit.closed && unit.tickets.some((slug) => tickets.includes(slug)));
-  if (owner) throw new Error(`${owner[1].tickets.filter((slug) => tickets.includes(slug)).join(", ")} already belongs to unit ${owner[0]}; one ticket has one writer`);
   const previous = board.units[name];
   const added = tickets.filter((slug) => !previous?.tickets.includes(slug));
   const unit = {
@@ -593,10 +683,13 @@ function recordUnit(orchDir, board, name, values, at) {
     at: previous?.at ?? at,
   };
   const assigned = unit.writer !== previous?.writer ? unit.tickets : added;
+  const changes = previous?.writer && previous.writer !== unit.writer ? [`unit ${name} already has writer ${previous.writer}`] : [];
   if (unit.writer && board.writers[unit.writer] && assigned.length > 0) {
     const problem = writerPlacementProblem(board.placements, unit.writer, assigned, { rulings: programRulings(orchDir), worktree: board.writers[unit.writer]?.worktree });
     if (problem) throw new Error(problem);
   }
+  if (assigned.length) admit(orchDir, board, { unit: name, writer: unit.writer, tickets: assigned, repo: unit.repo, changes }, values, at);
+  if (unit.writer) requireAssignmentStatus(orchDir, assigned, board.writers[unit.writer] ?? {});
   board.units[name] = unit;
   const change = previous ? (added.length ? `folded ${added.join(", ")}` : "updated") : "started";
   write(orchDir, board, `unit ${name} ${change}: ${unit.tickets.join(", ")}`, at);
@@ -617,6 +710,8 @@ async function main(argv) {
       evidence: { type: "string" }, "keep-local": { type: "string" }, "ruling-source": { type: "string" },
       "scope-locked": { type: "string" },
       "import-request": { type: "string" }, "lane-receipt": { type: "string" },
+      candidates: { type: "string" }, branch: { type: "string" }, "separate-reason": { type: "string" },
+      "launch-brief": { type: "string" },
       reason: { type: "string" }, "visual-qa": { type: "string" }, runs: { type: "string" }, retired: { type: "boolean" },
     },
   });
@@ -624,14 +719,16 @@ async function main(argv) {
     throw new Error(`Usage: board.mjs <orchDir> ${ACTIONS.join("|")} ...`);
   }
   const { dir: orchDir, home } = resolveWorkDir(workDir);
-  const readsOnly = new Set(["push-check", "pending", "watch-exclusions"]);
-  const release = home && !readsOnly.has(action) ? await acquireLedgerLock(orchDir, { file: "board.lock" }) : null;
-  try { return boardAction(workDir, orchDir, home, action, values, positionals); }
+  // In a fleet home, status and watch-lines record writer retirements, so they write too.
+  const readOnly = ["push-check", "pending", "watch-exclusions"].includes(action) || (!home && ["status", "watch-lines"].includes(action));
+  const release = readOnly ? null : await acquireLedgerLock(orchDir, { file: "board.lock" });
+  try { return boardAction({ workDir, action, values, positionals, orchDir, home }); }
   finally { release?.(); }
 }
 
-function boardAction(workDir, orchDir, home, action, values, positionals) {
+function boardAction({ workDir, action, values, positionals, orchDir, home }) {
   const board = read(orchDir);
+  if (values.candidates && ["placement", "unit", "writer"].includes(action)) recordCandidates(board, values.candidates);
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();
   const automatic = ["status", "watch-lines", "watch-exclusions"].includes(action);
@@ -676,6 +773,8 @@ function boardAction(workDir, orchDir, home, action, values, positionals) {
     return 0;
   }
   if (action === "status") {
+    const ticketFindings = trackerBound() ? liveTicketStatusFindings(readStatusSnapshot(path.join(orchDir, "status-audit.json")), board.units, board.writers) : [];
+    for (const finding of ticketFindings) process.stdout.write(ticketStatusLine(finding) + "\n");
     const pushed = pushedHeads(board, values.pushed ?? []);
     const stale = staleRows(board, pushed);
     const commits = unreadyCommits(board, pushed);
@@ -725,7 +824,7 @@ function boardAction(workDir, orchDir, home, action, values, positionals) {
     const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
     for (const line of home) process.stdout.write(`${line}\n`);
     process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${cloud.length} cloud validation gaps, ${members.length} unit member problems, ${reviews.length} units unreviewed${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
-    return signals.length + cloud.length + visual.length + members.length + reviews.length + commits.length + holds.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    return ticketFindings.length + signals.length + cloud.length + visual.length + members.length + reviews.length + commits.length + holds.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {
@@ -832,6 +931,10 @@ function boardAction(workDir, orchDir, home, action, values, positionals) {
     const decision = recordPlacement(board.placements, name, {
       evidence, keepLocal: values["keep-local"], rulingSource: values["ruling-source"], rulings: programRulings(orchDir), imported,
     }, at);
+    const owner = activeOwners(board).find(current => current.tickets.includes(name));
+    if (values.writer || !owner) {
+      admit(orchDir, board, { writer: values.writer, tickets: [name], repo: values.repo, placementOnly: !values.writer }, values, at);
+    }
     write(orchDir, board, `placement ${name}: ${decision.placement}${decision.keepLocal ? `, kept local: ${decision.keepLocal.reason}` : ""} (${decision.reason})`, at);
     process.stdout.write(`PLACEMENT ${name} ${decision.placement}: ${decision.reason}\n`);
     return 0;
@@ -846,6 +949,9 @@ function boardAction(workDir, orchDir, home, action, values, positionals) {
     return 0;
   }
   if (action === "writer") {
+    for (const field of ["pr", "repo", "branch", "worktree"]) {
+      if (values[field] !== undefined && !values[field].trim()) throw new Error(`--${field} needs a nonempty value`);
+    }
     if (values.retired) {
       if (!values.pr || Object.keys(values).some((key) => !["retired", "pr", "now"].includes(key))) throw new Error("--retired needs only the writer’s exact bound --pr <n>");
       const { record, problem } = retire(name, values.pr);
@@ -856,7 +962,6 @@ function boardAction(workDir, orchDir, home, action, values, positionals) {
       }
       return 0;
     }
-    if (board.writers[name]?.retiredAt) throw new Error("the retired writer is retained as history; choose a new writer name");
     if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
       throw new Error("--runtime must be codex or claude.");
     }
@@ -866,14 +971,37 @@ function boardAction(workDir, orchDir, home, action, values, positionals) {
     const shapeProblem = board.writers[name] ? null : writerShapeProblem(programShape(orchDir), Object.keys(board.writers));
     if (shapeProblem) throw new Error(shapeProblem);
     const row = board.writers[name] ?? {};
-    const named = values.tickets === undefined ? [] : list(values.tickets);
-    const taking = board.writers[name] ? named.filter((ticket) => !(row.tickets ?? []).includes(ticket)) : writerTickets(board, name, { tickets: named });
+    if (row.retiredAt) throw new Error(`writer ${name} retired at ${row.retiredAt}; use a fresh writer name to take new work`);
+    const named = list(values.tickets);
+    if (values["launch-brief"]) {
+      const ticket = vibeBriefTicket().exec(readFileSync(values["launch-brief"], "utf8"))?.[1];
+      if (!ticket || (named.length && !named.includes(ticket))) throw new Error("The writer launch brief must name the assigned ticket");
+      if (board.writers[name] && !writerTickets(board, name).includes(ticket)) throw new Error(`writer ${name} is not assigned to ${ticket}`);
+      if (!named.includes(ticket)) named.push(ticket);
+    }
+    const taking = board.writers[name] && !values["launch-brief"] ? named.filter((ticket) => !(row.tickets ?? []).includes(ticket)) : writerTickets(board, name, { tickets: named });
     const placementProblem = taking.length > 0 || !board.writers[name] ? writerPlacementProblem(board.placements, name, taking, {
       rulings: programRulings(orchDir), worktree: values.worktree ?? row.worktree,
     }) : null;
     if (placementProblem) throw new Error(placementProblem);
     const worktree = values.worktree === undefined ? undefined : path.resolve(values.worktree);
-    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree, where: values.where })
+    let branch = values.branch;
+    const localTree = worktree ?? row.worktree;
+    if (localTree && (values.where ?? row.where) !== "remote") {
+      let observedBranch;
+      try { observedBranch = repositoryGit(localTree, ["symbolic-ref", "--short", "HEAD"]); } catch { /* Detached or unavailable tree. */ }
+      if (branch && observedBranch && branch !== observedBranch) throw new Error(`--branch ${branch} differs from the worktree's branch ${observedBranch}`);
+      branch ??= observedBranch;
+    }
+    const changes = [];
+    for (const [key, next] of Object.entries({ pr: values.pr, worktree, branch, repo: values.repo })) {
+      if (row[key] && next && next !== row[key]) changes.push(`writer ${name} already owns ${key} ${row[key]}; requested ${next}`);
+    }
+    if (taking.length || changes.length) admit(orchDir, board, { writer: name, tickets: changes.length ? writerTickets(board, name, { tickets: [...(row.tickets ?? []), ...named] }) : taking,
+      repo: values.repo ?? row.repo, changes }, values, at);
+    requireAssignmentStatus(orchDir, [...new Set([...named, ...taking])], { repo: values.repo ?? row.repo, pr: values.pr ?? row.pr });
+    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, branch: branch === row.branch ? undefined : branch,
+      head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree, where: values.where })
       .filter(([, value]) => value !== undefined));
     if (named.length > 0) update.tickets = [...new Set([...(row.tickets ?? []), ...named])];
     if (values["scope-locked"] !== undefined) {

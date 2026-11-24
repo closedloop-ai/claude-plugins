@@ -94,11 +94,16 @@ export function mergeResults(eventName, results) {
  */
 export function runHookScript(scriptName, dispatch) {
   const report = (line) => process.stderr.write(`${line}\n`);
+  let settle;
   try {
     const event = JSON.parse(readFileSync(0, "utf8") || "{}");
-    const output = dispatch(event, report);
-    if (output) process.stdout.write(`${typeof output === "string" ? output : JSON.stringify(output)}\n`);
+    const output = dispatch(event, report, callback => { settle = callback; });
+    if (output) {
+      const text = typeof output === "string" ? output : JSON.stringify(output);
+      process.stdout.write(`${text}\n`, error => settle?.(!error));
+    } else settle?.(false);
   } catch (error) {
+    settle?.(false);
     report(`${scriptName}: ${errorText(error)}`);
   }
 }

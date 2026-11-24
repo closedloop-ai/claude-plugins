@@ -20,7 +20,7 @@ import {
   appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { waitsForPerson } from '../../vibe/scripts/session-questions.mjs';
+import { waitsForPerson } from '../../vibe/scripts/question-wait-policy.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 

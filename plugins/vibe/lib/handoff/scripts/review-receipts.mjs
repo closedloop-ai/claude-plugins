@@ -12,6 +12,7 @@ import { premiseProblems } from "./review-premises.mjs";
 import { acquireLedgerLock, read as readHelpers, write as writeHelpers, verifiedFinalReport } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { writeAtomic } from "../../vibe/scripts/owned-state.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
+import { reviewQuestions } from "./review-context.mjs";
 import { codexGraphSetupProblem, readCodexReviewTurn } from "./codex-review-runtime.mjs";
 import { exitOnProviderBroken } from "../../vibe/scripts/provider.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
@@ -82,13 +83,16 @@ export function captureReviewReceipt({ worktree, resultFile, outFile, role, take
   const source = result.source;
   const receipt = { role, runtime: result.runtime, worktree: realpathSync(worktree), source, result: resultEvidence.fingerprint, trace: trace.fingerprint, sessionId: result.sessionId,
     requestId: result.requestId, graphStatus: result.graphToolAliases.length === 0 ? "unavailable" : "used",
-    graphCalls: usedGraphCalls, findings: result.data.findings, model: facts.model, ...(takeover ? { takeover } : {}) };
+    graphCalls: usedGraphCalls, findings: result.data.findings, ...(result.data.questions ? { questions: result.data.questions } : {}), model: facts.model, ...(takeover ? { takeover } : {}) };
   writeFileSync(outFile, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
   return receipt;
 }
 
-/** Native reviewers can include the managed completion event immediately before the helper FINAL. */
-function nativeReviewResult(bodyLines, helper, completion) {
+/**
+ * Parse a native deliverable's body lines, those before its exact FINAL line (finalBodyLines in helpers.mjs).
+ * Native reviewers can include the managed completion event immediately before the helper FINAL.
+ */
+export function nativeReviewResult(bodyLines, helper, completion) {
   const lines = [...bodyLines];
   if (lines.at(-1)?.startsWith(EVENT_PREFIX)) {
     try {
@@ -102,7 +106,7 @@ function nativeReviewResult(bodyLines, helper, completion) {
   const body = lines.join("\n").replace(/^\uFEFF/, "");
   try { result = capturedJson(body); } catch { /* Report invalid framing at the receipt boundary. */ }
   if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("Native FINAL requires one JSON review object before its completion markers");
-  return result;
+  return reviewQuestions(result, helper.reviewCriteria);
 }
 
 /** Capture a Codex-native helper's private FINAL artifact through its owning helper ledger. */
@@ -138,7 +142,7 @@ export async function captureNativeReviewReceipt({ worktree, orchDir, helperName
     result: evidence.record.fingerprint, trace: evidence.deliverable.fingerprint,
     capabilities: evidence.capabilities.fingerprint, sessionId: report.completion.sessionId,
     requestId: report.completion.turnId, graphStatus: aliases.length === 0 ? "unavailable" : "used",
-    graphCalls: usedGraphCalls, findings: result.findings };
+    graphCalls: usedGraphCalls, findings: result.findings, ...(result.questions ? { questions: result.questions } : {}) };
   const unlock = await acquireLedgerLock(orchDir);
   try {
     const ledger = readHelpers(orchDir);
@@ -203,6 +207,7 @@ export function reviewReceiptProblems(receipts, source, { reusableRoles = new Se
           || result.completion?.turnId !== receipt.requestId || result.source?.treeSha256 !== receipt.source.treeSha256
           || findingShapeProblems(result.findings, receipt.worktree).length
           || JSON.stringify(result.findings) !== JSON.stringify(receipt.findings)
+          || JSON.stringify(result.questions) !== JSON.stringify(receipt.questions)
           || runtime.sessionId !== helper.workerId || runtime.turnId !== receipt.requestId || runtime.status !== "completed"
           || !Array.isArray(runtime.toolCalls)
           || (aliases.length > 0 && !runtime.toolCalls.some(name => aliases.includes(name)))) problems.push(`${role}: native FINAL content or capability evidence differs`);
@@ -221,6 +226,7 @@ export function reviewReceiptProblems(receipts, source, { reusableRoles = new Se
       if (result.runtime !== receipt.runtime || result.agentName !== role || result.status !== "DONE" || result.source?.treeSha256 !== receipt.source?.treeSha256 || result.sessionId !== receipt.sessionId
         || result.requestId !== receipt.requestId || trace.sessionId !== receipt.sessionId) problems.push(`${role}: completion identity differs`);
       if (receipt.model !== undefined && receipt.model !== trace.model) problems.push(`${role}: recorded model differs from its trace`);
+      if (JSON.stringify(result.data?.questions) !== JSON.stringify(receipt.questions)) problems.push(`${role}: questions differ from launcher output`);
       const usedGraphCalls = graphCalls(result, trace);
       if (result.graphToolAliases.length > 0 && usedGraphCalls.length === 0) problems.push(`${role}: graph calls missing`);
       if (findingShapeProblems(result.data?.findings, receipt.worktree).length || JSON.stringify(result.data.findings) !== JSON.stringify(receipt.findings)) problems.push(`${role}: findings differ from launcher output or are malformed`);

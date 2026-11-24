@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.106
+### vibe v1.1.109
 
 #### Added
 
@@ -46,12 +46,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Ticket and project-list tracker replies that carry no `organizationId` are kept and read as the recorded current user's organization, so exact-name backlog answers resolve and the work-start move is allowed. A record naming another organization is still refused.
 - Only reviewer launches require the plugin scripts their brief names to exist in the review worktree. A writer's brief may name a script its change adds, and the plugin-version hook and skill-freshness check no longer refuse it by default.
 - In the ticket-project hooks, a call to a tool that is not an MCP server tool (such as Bash, Read or Edit) never reads session or provider state.
-- Compared with 1.1.105, all plugin Markdown, including eval prompts and graders and the generated plugin, is about 1109 words longer (`instruction-words.mjs --path plugins`). The generic Vibe plugin alone grew by 547 words.
+- A visual-QA critic run through the managed Codex reviewer launcher, which returns its findings inline as JSON, finalizes again. Only a critic whose deliverable names one findings file records accepted findings, and only that critic must supply runtime completion evidence. Board writes take their own `board.lock`, and a local Codex writer turn passes board admission before the installed plugin root is verified.
+- Compared with 1.1.108, all plugin Markdown, including eval prompts and graders and the generated plugin, is about 1109 words longer (`instruction-words.mjs --path plugins`). The generic Vibe plugin alone grew by 547 words.
 
 ### vibe-closedloop-provider v1.0.7
 
 - Declares tracker project operations and repository-owned validation recipes used by the generic Vibe hooks and validation host, including the root services (`postgresql`, `redis-server`) the cloud validation host starts before its lanes.
 - Declares the Desktop Playwright `apps/desktop/test-results-e2e/.last-run.json` as a retained report. Desktop Playwright attachments (report `data/<sha1>.md|png` and per-test `*.md|*.png`) are declared as cleanup outputs, so they no longer block retirement. Leaked tool state under `apps/desktop/.local` still blocks retirement.
+
+### vibe v1.1.108
+
+#### Fixed
+- ISS-14654 routes fleet analysis, review and QA through managed workers and verifies saved requirements-worker results. Operator questions keep local paths and technical decisions private. Engineer-only follow-up goes in the pull request.
+- The fleet board refuses overlapping and duplicate assignments unless the operator records a reason to separate them. It checks tracker status before assignment or a fold and reports tickets held in triage, backlog or to do.
+- The managed Codex visual-QA critic returns head-bound findings for the ready gate.
+- Reviewers, verifiers and critics require the ticket's original acceptance criteria and recorded operator amendments. A proposed fix that conflicts with them becomes a question.
+- Before an operator question, the question recorder and tool hook check program and ticket rulings. A repeated decision returns its sources, and a question about an uncovered fact records that fact.
+- A file outside the repository allowlist can pass when the writer cites a ticket criterion that names the exact path. The pull request shows the citation and its gate verifies the supporting ticket evidence.
+- ISS-14679 adds the PM rehearsal for an unresolved criterion reading. Ticket and PR checks now require independently recorded operator words before an agent can mark a reading or trade as settled.
+- Across all plugin Markdown, including eval prompts and graders, the release is about 76 words shorter than v1.1.107. The count covers the source files in `plugins/vibe` and excludes the generated ClosedLoop edition.
+
+### vibe v1.1.107
+
+#### Fixed
+- The committed `vibe-workers` dist bundles under `plugins/vibe` and `plugins/vibe-closedloop` are rebuilt from source, so CI's dist check passes.
+- Helpers fingerprint worktrees outside the shared ledger lock when starting, finalizing, accepting or stopping a review. They refresh the fingerprint after a lock wait, and a failed managed reviewer preserves any replacement registered under its name.
+- Across all plugin Markdown, including eval prompts and graders and each plugin’s README, the release is about 0 words longer than v1.1.106. The count excludes the generated `plugins/vibe-closedloop` mirror.
+
+### vibe v1.1.106
+
+#### Added
+- ISS-14576 reports late watcher ticks and adds a one-line sleep notice to the orchestrator’s next prompt when macOS confirms sleep.
+- Across all plugin Markdown, including eval prompts and graders and each plugin's README, the net instruction-word change is zero (about 0 words longer than v1.1.105). This count excludes the generated `plugins/vibe-closedloop` mirror.
+
+### vibe-core v1.0.16
+
+#### Fixed
+- ISS-14576 lets vibe retry a sleep notice when its prompt output fails. Codex users must approve this release’s hooks again.
 
 ### vibe v1.1.105
 

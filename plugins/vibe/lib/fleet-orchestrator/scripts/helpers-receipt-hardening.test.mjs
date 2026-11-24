@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { finalMarker } from './helpers.mjs';
+import { reviewBrief } from '../../handoff/scripts/review-context-test-support.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
 
 // ISS-14552 receipt hardening moved to ISS-14476 (AC-88): direct helper transitions through the real helper CLI.
@@ -27,7 +28,7 @@ function registered(t, { name = 'reviewer', kind = 'reviewer', role = kind, runt
   execFileSync('git', ['-C', worktree, 'add', '.']);
   execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
   const file = (base, text) => { const target = path.join(dir, base); writeFileSync(target, text); return target; };
-  const started = run([dir, 'start', name, '--kind', kind, '--runtime', runtime, '--brief', file('brief.md', 'Review the current diff.\n'), '--worktree', worktree,
+  const started = run([dir, 'start', name, '--kind', kind, '--runtime', runtime, '--brief', file('brief.md', reviewBrief(dir, 'Review the current diff.')), '--worktree', worktree,
     '--worker-id', workerId, '--role', role, '--agent-definition', file('definition.md', `---\nname: ${role}\n---\n`), '--capabilities', file('capabilities.json', '[]\n')]);
   assert.equal(started.status, 0, started.stderr);
   const helper = ledger(dir)[name];

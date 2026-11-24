@@ -102,9 +102,14 @@ export function loadProvenance(stderr) {
 /** The lane report's lines this script acts on, from `pre-pr-lanes.mjs check`'s output. */
 export function parseLaneCheck(output) {
   const grab = (prefix, pattern) => output.split("\n").filter((line) => line.startsWith(prefix)).map((line) => pattern.exec(line)).filter(Boolean);
+  const engineering = grab("ENGINEERING-LANE ", /^ENGINEERING-LANE (.*)$/).map((match) => JSON.parse(match[1]));
+  const notRun = grab("NOT-RUN-LANE ", /^NOT-RUN-LANE (.*?) \((.*)\)$/).map((match) => {
+    const [ , lane, reason ] = match;
+    return engineering.find((entry) => entry.lane === lane && entry.reason === reason) ?? { lane, reason };
+  });
   return {
     missing: grab("MISSING-LANE ", /^MISSING-LANE (.*?): run it,? with/).map((match) => match[1]),
-    notRun: grab("NOT-RUN-LANE ", /^NOT-RUN-LANE (.*) \((.*)\)$/).map((match) => ({ lane: match[1], reason: match[2] })),
+    notRun,
     mainPreexisting: grab("MAIN-PREEXISTING-LANE ", /^MAIN-PREEXISTING-LANE (.*?) \(/).map((match) => match[1]),
     skipped: grab("SKIPPED-LANE ", /^SKIPPED-LANE (.*) \((.*)\)$/).map((match) => ({ lane: match[1], reason: match[2] })),
   };
@@ -250,7 +255,11 @@ export function createVerifyRun({
     const entries = lanes.map((lane) => {
       const name = `lane: ${lane}`;
       const notRun = checked.notRun.find((item) => item.lane === lane);
-      if (notRun) return { record: required(name, lane, Status.NotRun, { reason: notRun.reason, owner: "ci" }) };
+      if (notRun) {
+        const { reason, engineeringCredential, commit, laneKey } = notRun;
+        const owner = engineeringCredential ? "engineering reviewer" : "ci";
+        return { record: required(name, lane, Status.NotRun, { reason, owner, ...(engineeringCredential ? { engineeringCredential, commit, laneKey } : {}) }) };
+      }
       if (checked.mainPreexisting.includes(lane)) return { record: required(name, lane, Status.MainPreexisting, { reason: "also fails on the captured main", owner: "known main failures" }) };
       if (!checked.missing.includes(lane)) return { record: required(name, lane, Status.Cached, { reason: "a passing record at this head exists from an earlier run" }) };
       const key = `${head}\u0000${lane}`;

@@ -35,7 +35,7 @@ import { reusableReviewRoles } from "./review-impact.mjs";
 const { sameSource, sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { evidenceFingerprint, readEvidence } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { reviewReceiptProblems } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
-const { EVIDENCE_KEYS, checkedMergeProblem, gatePath, memberNameProblems, mergeTargets, readReviewEvidence, reviewFindingProblems, sessionMembers } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
+const { EVIDENCE_KEYS, checkedMergeProblem, gatePath, memberNameProblems, mergeTargets, pathCitationProblem, readReviewEvidence, reviewFindingProblems, sessionMembers } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
 const { exitOnProviderBroken, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { changedPaths, readVisualQaFindings, visualQaRequired } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
 const { placementLineProblem } = await vibeCore("lib/fleet-orchestrator/scripts/delivery-placement.mjs");
@@ -235,7 +235,10 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
   const current = mergeTargets(worktree, base);
   if (current.base.oid !== targets.base.oid) throw new Error("PR base moved during the handoff gate");
   if (current.main?.oid !== targets.main?.oid) throw new Error("current main moved during the handoff gate");
+  const citationProblem = pathCitationProblem(worktree, inventory.pathCitations, inventory.pathCitationEvidence);
+  if (citationProblem) throw new Error(citationProblem);
   writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts,
+    ...(inventory.pathCitations?.length ? { pathCitations: inventory.pathCitations, pathCitationEvidence: inventory.pathCitationEvidence } : {}),
     reviewCarry: [...reusableRoles].sort(), memberTickets, unitReviewPassed: Boolean(review),
     visualQa: { required: visual.required, reason: visual.reason, findings: visual.required ? visual.fingerprint : null }, inventoryPassed: true,
     prBodyPassed: true, prEvidencePassed: true, reviewPassed: true, ...(overridden ? { inventoryOverride: "diffRulesClear" } : {}) })}\n`, { mode: 0o600 });

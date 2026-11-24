@@ -228,17 +228,17 @@ export function groupLines({ units, blocked, otherOwners = [] }) {
 }
 
 /** Validates the candidate shapes; malformed input is refused, never guessed at. */
-function validTickets(candidates) {
+export function validTickets(candidates, ticketPattern = slugPattern()) {
   if (!Array.isArray(candidates?.tickets)) throw new Error("candidates need a tickets array");
   for (const key of ["collisions", "apart"]) {
     const list = candidates[key];
-    if (list !== undefined && (!Array.isArray(list) || list.some((pair) => !slugPattern().test(pair?.a ?? "") || !slugPattern().test(pair?.b ?? "")))) {
+    if (list !== undefined && (!Array.isArray(list) || list.some((pair) => !ticketPattern.test(pair?.a ?? "") || !ticketPattern.test(pair?.b ?? "")))) {
       throw new Error(`${key} must be an array of {"a", "b"} ticket pairs`);
     }
   }
   const seen = new Set();
   return candidates.tickets.map((ticket) => {
-    if (!slugPattern().test(ticket?.slug ?? "")) throw new Error(`candidate ${JSON.stringify(ticket?.slug)} is not a ticket slug`);
+    if (!ticketPattern.test(ticket?.slug ?? "")) throw new Error(`candidate ${JSON.stringify(ticket?.slug)} is not a ticket slug`);
     const slug = ticket.slug;
     if (typeof ticket.repo !== "string" || !ticket.repo.includes("/")) throw new Error(`${slug} needs its repo as <owner>/<repo>`);
     if (seen.has(slug)) throw new Error(`${slug} is listed twice`);
