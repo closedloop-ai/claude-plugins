@@ -2,11 +2,13 @@
 // the render-relevant text of a render manifest (a package manifest without its version and dependency specifiers,
 // a pnpm lockfile as what the render manifests' importers resolve). frozen-render-cache.mjs hashes this file with the
 // renderer's own source, so a change here invalidates cached base renders as a change in frozen-render.mjs does.
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { importerResolution } from "./lockfile-manifest.mjs";
 
-const SELECTION_MAX_BUFFER = 512 * 1024 * 1024;
+/** Preserve the existing large static-selection output budget. */
+export const SELECTION_MAX_BUFFER = 512 * 1024 * 1024;
 export const PNPM_LOCKFILE = /(?:^|\/)pnpm-lock\.yaml$/;
 const PACKAGE_MANIFEST = /(?:^|\/)package\.json$/;
 const MANIFEST_DEPENDENCY_FIELDS = Object.freeze(["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]);
@@ -47,7 +49,7 @@ export function gitBaseReader(repo, base) {
   const run = (args, input) => execFileSync("git", ["-C", repo, ...args], { encoding: input === undefined ? "utf8" : undefined, input,
     maxBuffer: SELECTION_MAX_BUFFER, stdio: ["pipe", "pipe", "pipe"] });
   const list = (args) => run(args).split("\0").filter(Boolean);
-  const baseFiles = new Set(list(["ls-tree", "-r", "-z", "--name-only", base]));
+  const baseFiles = new Set(readGitInventory(repo, ["ls-tree", "-r", "-z", "--name-only", base], { maxBuffer: SELECTION_MAX_BUFFER }).split("\0").filter(Boolean));
   const blobs = new Map();
   const baseBlobs = (files) => {
     const missing = [...new Set(files)].filter((file) => !blobs.has(file));

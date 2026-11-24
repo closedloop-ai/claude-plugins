@@ -36,10 +36,27 @@ export const CONTRACT_FILE = "provider.json";
 /** The folder of vibe's own install that holds a provider built into it at release. */
 export const BUNDLED_PROVIDER_DIR = "provider";
 export const ProviderState = Object.freeze({ None: "none", Bound: "bound", Disconnected: "bound-disconnected", Unprobed: "unprobed" });
+
+/** The stored provider contract, rather than a tool prefix, owns the check's connection argument names. */
+export function providerConnectionArguments(connections) {
+  return Object.keys(connections ?? {}).map((name) => `--connection ${name}=<state>`).join(" ");
+}
 const UNPROBED_REASON = "the plugin version check ran without connection states";
 const UNPROBED_FIX = "make the calls it named and run it again first";
 /** Why a step refuses while this chat's check left the installed provider unprobed: no state may read as generic. */
 export const UNPROBED_REFUSAL = `${UNPROBED_REASON}; ${UNPROBED_FIX}`;
+
+/** Actionable setup refusal before dispatch, from the exact probes declared by the provider. */
+export function providerProbeProblem(binding, { disconnected = false } = {}) {
+  if (binding?.state !== ProviderState.Unprobed
+    && !(disconnected && binding?.state === ProviderState.Disconnected)) return null;
+  const specs = Array.isArray(binding.connectionsNeeded)
+    ? Object.fromEntries(binding.connectionsNeeded.map(({ name, ...spec }) => [name, spec])) : binding.connections;
+  const expected = providerConnectionArguments(specs);
+  if (!expected) return UNPROBED_REFUSAL;
+  const probes = Object.values(specs).map((spec) => spec?.check).filter(Boolean);
+  return `Provider connections need checking${probes.length ? `: ${probes.join(", ")}` : ""}. Run plugin-version.mjs check ${expected} with the observed states, then resume the same turn.`;
+}
 /** What a provider can supply; a stub or call names one of these. */
 export const Capability = Object.freeze({
   Tickets: "tickets",
@@ -464,7 +481,10 @@ export function useSessionWorktree(worktree) {
  */
 export function boundWith(binding, capability) {
   // An unprobed binding is neither bound nor generic: every read stops until the check runs again with the states.
-  if (binding?.state === ProviderState.Unprobed) throw new ProviderBroken(UNPROBED_REASON, binding.name, UNPROBED_FIX);
+  if (binding?.state === ProviderState.Unprobed) {
+    const problem = providerProbeProblem(binding);
+    throw new ProviderBroken(UNPROBED_REASON, binding.name, problem === UNPROBED_REFUSAL ? UNPROBED_FIX : problem);
+  }
   if (!claims(binding, capability)) return null;
   const root = currentRoot(binding);
   const contract = root ? readContract(root) : null;

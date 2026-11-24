@@ -7,6 +7,8 @@
 // `data.recipes.prEvidence`; without it a changed E2E spec cannot be left for
 // CI and must pass locally.
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
@@ -18,16 +20,18 @@ import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/loca
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
 import { GENERIC_AREAS, isUiFile, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
-import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
+import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, verifiedMainFailureEvidence } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { boundProbeCommit, requiredContainerIdentity, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { probeE2eCapability, remoteCapabilityProbe } from "./e2e-capability-probe.mjs";
-import { prBodyClaimProblems } from "./pr-body-claims.mjs";
+import { currentPrTreeFacts, prBodyClaimProblems } from "./pr-body-claims.mjs";
+import { surfaceFixProblems } from "./surface-fix-evidence.mjs";
 import { GRAPH_CHANGE_SELECTOR, GRAPH_SELECTOR, prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
-import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
+import { QaImpact, qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
 import { leftByRuling, RULING_HOST_LANES, targetedTestsRuling } from "./targeted-tests-ruling.mjs";
 import { pathFilteredPullRequestWorkflows, readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
+import { assertionChanges, regularTestText } from "./test-repair-moves.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { withStableSource, validSourceIdentity, sameSource, sourceIdentity, committedSourceIdentity, committedFile } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
@@ -40,8 +44,6 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 const GH_LIST_FILE_CAP = 100;
 const SCOPED_CORPUS_AUTHORITY = Symbol("scoped pull-request corpus authenticated by inventory");
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-const ASSERTION = /\b(?:expect|assert)\s*[.(]|\.(?:toBe|toEqual|toStrictEqual|toMatch|toThrow|toContain|toHave\w*)\b/;
-const SKIP = /\b(?:it|test|describe)\.(?:skip|todo|only)\s*\(/;
 const EXPORT = /^\s*export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|type|interface|enum)\s+([\w$]+)/;
 const BODY_EXPORT = /^export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function|class|interface)\b/;
 const REFUSAL = /\bstatus\s*[:=(]\s*(4\d\d)\b/;
@@ -53,7 +55,7 @@ const CITATION = /(?<![\w/.-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z]{1,5}):(\d+)\b/g
 const PR_NUMBER = /#(\d{3,6})\b/g;
 const TEMPLATE_PATHS = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const TEMPLATE_HEADING = /^#{1,6}\s+\S.*$/gm;
-const SHA = /^[a-f0-9]{40}$/;
+export { assertionChanges };
 export const KNOWN_MAIN_FAILURES = "Known main failures";
 const CI_CHECK_PATH = /^(?:\.github\/(?:workflows|actions)\/|scripts\/)|(?:^|\/)(?:package\.json|turbo\.json|biome\.jsonc?)$|(?:^|\/)(?:lint|checks?|gates?)\//;
 export const GENERIC_PR_RULES = Object.freeze({ e2eOwners: null, desktopSpecs: null, laneReport: null, refusalPaths: [], workspaceAliases: [] });
@@ -74,6 +76,8 @@ export function parseDiff(text) {
       hunk = undefined;
     } else if (file && !hunk && line.startsWith("deleted file mode")) {
       file.status = "D";
+    } else if (file && !hunk && line.startsWith("new file mode")) {
+      file.status = "A";
     } else if (file && HUNK.test(line)) {
       const [, oldStart, , newStart, newCount] = HUNK.exec(line);
       hunk = { newStart: Number(newStart), newCount: newCount === undefined ? 1 : Number(newCount), removed: [], added: [] };
@@ -92,7 +96,7 @@ export function parseDiff(text) {
 /** The session diff against `base`, untracked files counted as added. */
 export function readDiff(worktree, base) {
   const files = parseDiff(git(worktree, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", base]));
-  for (const file of git(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)) {
+  for (const file of readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard"]).trim().split("\n").filter(Boolean)) {
     const lines = readFileSync(path.join(worktree, file), "utf8").replace(/\n$/, "").split("\n");
     files.push({ path: file, status: "A", hunks: [{ newStart: 1, newCount: lines.length, removed: [], added: lines.map((text, i) => ({ line: i + 1, text })) }] });
   }
@@ -136,24 +140,6 @@ function importsOf(worktree, file, aliases = prRules(worktree).workspaceAliases)
     const found = bases.flatMap((base) => SUFFIXES.map((suffix) => base + suffix))
       .find((candidate) => SOURCE.test(candidate) && existsSync(path.join(worktree, candidate)));
     return found ? [found] : [];
-  });
-}
-
-/** Flipped and removed assertions, added skips and deleted test files. */
-export function assertionChanges(files) {
-  return files.filter((file) => isTestFile(file.path)).flatMap((file) => {
-    if (file.status === "D") {
-      return [{ kind: "deleted-test-file", path: file.path }];
-    }
-    return file.hunks.flatMap((hunk) => {
-      const added = hunk.added.filter((line) => ASSERTION.test(line.text));
-      return [
-        ...hunk.removed.filter((line) => ASSERTION.test(line.text)).map((line, i) => (added[i]
-          ? { kind: "flipped", path: file.path, line: added[i].line, before: line.text.trim(), after: added[i].text.trim() }
-          : { kind: "removed", path: file.path, line: hunk.newStart, before: line.text.trim() })),
-        ...hunk.added.filter((line) => SKIP.test(line.text)).map((line) => ({ kind: "skip-added", path: file.path, line: line.line })),
-      ];
-    });
   });
 }
 
@@ -210,7 +196,7 @@ export function requiredLanes(changed, touchFlows = [], areas = GENERIC_AREAS) {
  * main the same command also failed on.
  */
 export function isMainPreexisting(run) {
-  return run?.status === "main-preexisting" && SHA.test(run.mainSha ?? "");
+  return run?.status === "main-preexisting" && verifiedMainFailureEvidence(run);
 }
 
 function passedOrMainPreexisting(run) {
@@ -338,24 +324,42 @@ function recomputedImpact(runsFile, worktree, commit) {
   } catch (error) { return { problem: `tree-equivalent carry refused: ${error.message}` }; }
 }
 
-/**
- * Every required lane finished and passed for its recomputed changed-file scope.
- * A recorded targeted-tests ruling (`rulingId`, targeted-tests-ruling.mjs) may
- * leave a host lane not run on a row that names it.
- */
+const FOLLOW_UP_QA_LANES = new Set([...RULING_HOST_LANES, "webkit-iphone", "chromium-pixel"]);
+
+/** An exact prior published QA run may carry only across a recomputed non-rendering delta. */
+function unaffectedFollowUpQa(run, evidence, commit, worktree, rulingId) {
+  if (run?.status !== "not-run" || !FOLLOW_UP_QA_LANES.has(run.lane) || !text(run.reason)
+    || !text(run.command) || run.commit !== commit || !worktree) return false;
+  const prior = readSessionRecord(worktree)?.pullRequest;
+  const from = prior?.head;
+  if (!Number.isSafeInteger(prior?.number) || !/^[a-f0-9]{40}$/.test(from ?? "") || from === commit
+    || !/^[a-f0-9]{40}$/.test(commit ?? "")) return false;
+  if (leftByRuling(run, rulingId, commit)) return true;
+  if (run.carriedFrom !== from || evidence.qaImpactRequest?.lastQa?.boundary !== from
+    || !evidence.runs.some((entry) => entry?.lane === run.lane && entry.command === run.command
+      && entry.commit === from && entry.status === "passed" && text(entry.outcome))) return false;
+  try {
+    git(worktree, ["merge-base", "--is-ancestor", from, commit]);
+    return qaImpactDirectCommitScope(worktree, evidence.qaImpactRequest, commit).outcome === QaImpact.None;
+  } catch { return false; }
+}
+
+/** Require each selected lane or its explicitly verified follow-up disposition. */
 export function evidenceProblems(runsFile, changed, commit, worktree, rulingId = null) {
   if (!Array.isArray(runsFile?.touchFlows) || (runsFile.touchFlows.length === 0 && !runsFile.touchFlowsReason)) {
     return ["list every touched card, narrow or touch flow in touchFlows, or [] with a touchFlowsReason"];
   }
   const allRuns = Array.isArray(runsFile?.runs) ? runsFile.runs : [];
-  const older = Boolean(commit) && allRuns.some((run) => run?.commit && run.commit !== commit);
+  const follows = new Set(allRuns.filter((run) => unaffectedFollowUpQa(run, runsFile, commit, worktree, rulingId)));
+  const carriedProof = (run) => run?.commit !== commit && [...follows].some((next) => next.carriedFrom === run?.commit && next.lane === run?.lane && next.command === run?.command);
+  const older = Boolean(commit) && allRuns.some((run) => run?.commit && run.commit !== commit && !carriedProof(run));
   const recomputed = older || runsFile?.treeEquivalentCarry !== undefined ? recomputedImpact(runsFile, worktree, commit) : null;
   if (recomputed?.problem) return [recomputed.problem];
   const impactKey = recomputed?.impact?.laneKey;
   return requiredLanes(changed, runsFile.touchFlows, sessionAreas(worktree)).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit, prRules(worktree), worktree))).flatMap((lane) => {
-    const runs = allRuns.filter((run) => run.lane === lane);
+    const runs = allRuns.filter((run) => run?.lane === lane && !carriedProof(run));
     if (runs.length === 0) return [`${lane}: no run recorded`];
-    return runs.flatMap((run) => RULING_HOST_LANES.includes(lane) && leftByRuling(run, rulingId, commit)
+    return runs.flatMap((run) => follows.has(run) || RULING_HOST_LANES.includes(lane) && leftByRuling(run, rulingId, commit)
       ? (run.command ? [] : [`${lane}: command missing`]) : [
       ...(passedOrMainPreexisting(run) ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
@@ -388,7 +392,7 @@ export function bodyProblems(body, facts, files, prBase, template = "", runsFile
     ...facts.asks.filter((ask) => !flat.includes(ask)).map((ask) => `ticket ask not quoted and answered: ${ask}`),
     ...(prBase !== "main" && !flat.includes(STACKED_BASE_STATEMENT) ? [`base is ${prBase}; add verbatim: ${STACKED_BASE_STATEMENT}`] : []),
     ...pointerProblems(body, planPrefix).map(({ line, kind }) => `body line ${line}: ${kind}`),
-    ...prBodyClaimProblems(body, runsFile),
+    ...prBodyClaimProblems(body, runsFile, facts.tree),
     ...templateHeadingProblems(body, template),
   ];
 }
@@ -405,7 +409,7 @@ export function sessionRepository(worktree) {
 /** Every open PR of the session's repository with its complete file list; GitHub's diff endpoint caps large patches at 300 files. */
 export function loadOpenPrs(worktree) {
   const repo = sessionRepository(worktree);
-  const prs = JSON.parse(gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number,title,headRefName,files"]));
+  const prs = capturedJson(gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number,title,headRefName,files"]));
   return prs.map(({ files, ...pr }) => {
     if (files.length < GH_LIST_FILE_CAP) return { ...pr, files: files.map((file) => file.path) };
     const endpoint = `repos/${repo}/pulls/${pr.number}`;
@@ -436,7 +440,10 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     const facts = {
       serverOnly: !changed.some((file) => isUiFile(file, areas)),
       requiredLanes: requiredLanes(changed, [], areas),
-      assertionChanges: assertionChanges(files),
+      assertionChanges: assertionChanges(files, {
+        readBase: (file) => committedFile(worktree, base, file).toString("utf8"),
+        readHead: (file) => regularTestText(worktree, file),
+      }),
       contractChanges: contracts,
       refusals,
       asks: ticketText ? [...new Set([...ticketText.matchAll(ASK)].map(([ask]) => ask.replace(/\s+/g, " ").trim()))] : [],
@@ -447,8 +454,12 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     return {
       ...facts,
       ...(body === undefined ? {} : { prBodyProblems: [
-        ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base), runs, sessionLocalPlanPrefix(worktree)),
+        ...bodyProblems(body, { ...facts, tree: currentPrTreeFacts(worktree, base, current.head) }, files, prBase, template ?? readTemplate(worktree, base), runs, sessionLocalPlanPrefix(worktree)),
         ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
+        ...(/^\s*(?:[-*]\s+)?Fix surface:/m.test(body) ? surfaceFixProblems(body, files, {
+          head: (file) => proofSourceAt(worktree, file), headFiles: readGitInventory(worktree, ["ls-files", "-z"]).trim().split("\0"),
+          currentHead: () => current.head, receiptDir: git(worktree, ["rev-parse", "--absolute-git-dir"]), surfaceProofs: () => runs,
+        }).map(({ reason }) => reason) : []),
       ] }),
       ...(runs === undefined ? {} : { prEvidenceProblems: [
         ...bindingProblems,
@@ -868,12 +879,16 @@ function desktopLeftForCi(run) {
  * so the reviewer sees what the pull request did not cause.
  */
 export function knownMainFailureProblems(body, runsFile) {
-  const known = [...(runsFile?.runs ?? []), ...(runsFile?.testRuns ?? [])].filter(isMainPreexisting);
+  const known = [...(runsFile?.runs ?? []), ...(runsFile?.testRuns ?? [])].filter((run) => run?.status === "main-preexisting");
   if (known.length === 0) return [];
-  const at = body.indexOf(KNOWN_MAIN_FAILURES);
-  const listed = at < 0 ? "" : body.slice(at);
-  return known.filter((run) => ![run.path, run.command, run.lane].filter(Boolean).some((name) => listed.includes(name)))
-    .map((run) => `${run.path ?? run.lane ?? run.command} fails on main too; list its path, lane, or command under "${KNOWN_MAIN_FAILURES}" with the main commit`);
+  const section = /^(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?Known main failures(?:\*\*)?\s*:?[^\n]*\n?(?:[^]*?)(?=^#{1,6}\s|$(?![^]))/m.exec(body)?.[0] ?? "";
+  const names = (run) => [run.path, run.lane, run.command].filter((name) => typeof name === "string" && name.trim());
+  const listed = (name) => new RegExp(`(?:^|[^\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\w.-])`, "m").test(section);
+  return known.flatMap((run) => {
+    const name = run.path ?? run.lane ?? run.command;
+    if (!isMainPreexisting(run)) return [`${name}: record matching branch/main failure ids and assertions, then list the path or lane under "${KNOWN_MAIN_FAILURES}" with the main commit`];
+    return names(run).some(listed) ? [] : [`${name} fails on main too; list its path, lane, or command under "${KNOWN_MAIN_FAILURES}" with the main commit`];
+  });
 }
 
 function finalFileHash(inventory, worktree, file) {
@@ -887,7 +902,7 @@ function finalFileHash(inventory, worktree, file) {
 
 /** Read the first existing base template; absence is optional, but Git failures still propagate. */
 function readTemplate(worktree, base) {
-  const present = new Set(git(worktree, ["ls-tree", "-r", "--name-only", base, "--", ...TEMPLATE_PATHS]).split("\n").filter(Boolean));
+  const present = new Set(readGitInventory(worktree, ["ls-tree", "-r", "--name-only", base, "--", ...TEMPLATE_PATHS]).trim().split("\n").filter(Boolean));
   const file = TEMPLATE_PATHS.find((candidate) => present.has(candidate));
   return file ? git(worktree, ["show", `${base}:${file}`]) : "";
 }
@@ -972,7 +987,7 @@ export function pathWorkflowProblems(runsFile, changed, workflows, commit) {
 
 /** Every workflow file under `.github/workflows` at `commit`, read strictly: a git failure throws rather than reading as none. */
 function workflowsAt(worktree, commit) {
-  return git(worktree, ["ls-tree", "-r", "--name-only", commit, "--", ".github/workflows/"]).split("\n")
+  return readGitInventory(worktree, ["ls-tree", "-r", "--name-only", commit, "--", ".github/workflows/"]).trim().split("\n")
     .filter((file) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file))
     .map((file) => ({ path: file, text: committedFile(worktree, commit, file).toString("utf8") }));
 }

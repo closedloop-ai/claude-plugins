@@ -7,7 +7,7 @@
 // stack to be free, runs the command, and releases the lock when the command
 // ends. A lock left by a process that no longer exists is taken over.
 //
-// Usage: e2e-lock.mjs run --head <sha> [--source-hash <treeSha256>] [--owner <writer>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
+// Usage: e2e-lock.mjs run --head <sha> [--source-hash <treeSha256>] [--owner <writer>] [--label <label>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
 //        e2e-lock.mjs status [--lock-dir <dir>]
 //
 // The lock's own options come first; the first other word starts the command,
@@ -45,6 +45,7 @@
 // {"status":"busy","holder":{...}} and exits 75. `status` prints
 // {"status":"free"} or {"status":"held","holder":{...}}.
 
+import { capturedJson } from "./captured-json.mjs";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
@@ -54,11 +55,12 @@ import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { setTimeout as pause } from 'node:timers/promises';
-import { imageProblem, recordImages } from "./image-head.mjs";
+import { imageProblem, invalidateImages, recordImages } from "./image-head.mjs";
+import { readSessionRecord, sessionLiveTicket } from "./session-record.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { testedSource, sameSource, withStableSource } from "./tested-head.mjs";
 
-import { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
+import { buildsComposeImages, certifiesComposeImages, explicitComposeProject, isContainerizedBuild, isContainerizedStack, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
 import { installOwnedBuildShim, ownedBuildEnvironment, prepareRunOwnedBuild, recordBuiltTags } from './owned-builder.mjs';
 import { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetirements,
   registerWorktreeRetirement, remainingCleanupBudget, sweepOwnedCleanups } from './owned-cleanup.mjs';
@@ -75,6 +77,8 @@ export { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetir
   registerWorktreeRetirement, remainingCleanupBudget, sweepOwnedCleanups } from './owned-cleanup.mjs';
 export { captureOwnedDockerResources, plannedLocalTags, reconcileGeneratedE2E, recordE2EChild,
   removeOwnedDockerResources, reserveGeneratedE2E } from './owned-docker.mjs';
+
+import { claimMachineSlot, machineSlotHolder, MACHINE_SLOT, releaseMachineSlot, shellSlotOwner } from './machine-stack-slot.mjs';
 
 export const BUSY_EXIT = 75;
 export const DUPLICATE_EXIT = 76;
@@ -111,7 +115,10 @@ export function tryAcquire(lockDir, owner) {
 /** A dead wrapper cannot release its lock while its recorded detached command group is still alive. */
 function pendingChildGroupAlive(lockDir, holder) {
   try {
-    const record = JSON.parse(readFileSync(path.join(path.dirname(lockDir), `e2e-cleanup-${holder.token}.json`), 'utf8'));
+    const directory = path.dirname(lockDir);
+    const command = path.join(directory, `e2e-command-${holder.token}.json`);
+    const file = existsSync(command) ? command : path.join(directory, `e2e-cleanup-${holder.token}.json`);
+    const record = JSON.parse(readFileSync(file, 'utf8'));
     if (record.owner?.token !== holder.token || !Number.isSafeInteger(record.child?.pgid) || record.child.pgid <= 1) return false;
     process.kill(-record.child.pgid, 0);
     return true;
@@ -197,7 +204,7 @@ function isAlive(pid) {
   }
 }
 
-const OWN_OPTIONS = new Set(["--source-hash", "--head", "--owner", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
+const OWN_OPTIONS = new Set(["--source-hash", "--head", "--owner", "--label", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
 const REPEATED_OPTIONS = new Set(["--foreign-compose"]);
 const COMMAND_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 
@@ -212,7 +219,7 @@ export function runningForeignCompose(projects, docker = process.env.VIBE_E2E_DO
   }
   let stacks;
   try {
-    stacks = JSON.parse(listed.stdout || "[]");
+    stacks = capturedJson(listed.stdout || "[]");
   } catch {
     return null;
   }
@@ -244,7 +251,7 @@ function parseCommandLine(argv) {
     }
     index += 2;
   }
-  const [command, ...args] = rest.slice(index);
+  const [command, ...args] = rest.slice(rest[index] === "--" ? index + 1 : index);
   return { action, values, command, args };
 }
 
@@ -296,24 +303,30 @@ function runCommand(command, args, env, record) {
   });
 }
 
-function ticketFromBranch(worktree) {
+/** Resolve the originating stack ticket before a lane enters a detached comparison checkout. */
+export function originatingStackTicket(worktree) {
+  const recorded = sessionLiveTicket(readSessionRecord(worktree) ?? {});
+  if (recorded) return recorded;
   try {
     const branch = execFileSync("git", ["-C", worktree, "branch", "--show-current"], { encoding: "utf8" }).trim();
     return /\bISS-\d+\b/i.exec(branch)?.[0].toUpperCase() ?? null;
   } catch { return null; }
 }
 
-async function main(argv) {
+/** Run one local E2E command; only fixture callers inject a disposable machine slot. */
+export async function runE2e(argv, machineSlot = MACHINE_SLOT) {
   const { action, values, command, args } = parseCommandLine(argv);
   const lockDir = path.resolve(values["lock-dir"] ?? defaultLockDir());
+  if (action === 'machine-owner') return shellSlotOwner(command, args[0]);
   if (action === "status") {
     const holder = readHolder(lockDir);
     const held = holder && (isAlive(holder.pid) || pendingChildGroupAlive(lockDir, holder));
-    process.stdout.write(`${JSON.stringify(held ? { status: "held", holder } : { status: "free" })}\n`);
+    const current = held ? holder : machineSlotHolder(machineSlot);
+    process.stdout.write(`${JSON.stringify(current ? { status: "held", holder: current } : { status: "free" })}\n`);
     return 0;
   }
   if (action !== "run" || !command) {
-    throw new Error("Usage: e2e-lock.mjs run --head <sha> [--owner <writer>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
+    throw new Error("Usage: e2e-lock.mjs run --head <sha> [--owner <writer>] [--label <label>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
   }
   const worktree = worktreeOf(process.cwd());
   const enteredSource = testedSource(worktree, values.head);
@@ -322,14 +335,21 @@ async function main(argv) {
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
     throw new Error("--wait-seconds must be zero or a positive number of seconds.");
   }
+  const token = randomUUID();
+  const name = (values.owner ?? path.basename(worktree)).trim();
+  const label = (values.label ?? name).trim();
+  if (!name || !label) throw new Error('E2E slot owner and label must be nonempty');
+  const ticket = values.ticket ?? originatingStackTicket(worktree);
+  if (!ticket?.trim()) throw new Error("E2E admission needs --ticket, a recorded ticket or a ticket-bearing branch");
+  const selectedProject = explicitComposeProject(command,args) ?? process.env.COMPOSE_PROJECT_NAME;
+  const composeProject = composeProjectFor({COMPOSE_PROJECT_NAME:selectedProject}, token);
   const owner = {
     pid: process.pid,
     identity: readProcessIdentity(process.pid),
-    token: randomUUID(),
+    token,
     cwd: process.cwd(),
     worktree,
-    name: values.owner ?? path.basename(worktree),
-    ticket: values.ticket ?? ticketFromBranch(worktree),
+    name, label, ticket, composeProject,
     command: [command, ...args].join(" ").slice(0, 500),
     startedAt: new Date().toISOString(),
   };
@@ -338,6 +358,10 @@ async function main(argv) {
   if (duplicate) {
     process.stdout.write(`${JSON.stringify({ status: "duplicate", entry: duplicate, reason: "this worktree already holds or waits for the stack; put every selected spec in one run per head" })}\n`);
     return DUPLICATE_EXIT;
+  }
+  function releaseRun() {
+    releaseMachineSlot(machineSlot, lockDir, owner.token);
+    release(lockDir, owner);
   }
   const foreign = [...values["foreign-compose"], ...(process.env.VIBE_E2E_FOREIGN_COMPOSE ?? "").split(",")]
     .map((name) => name.trim()).filter(Boolean);
@@ -357,12 +381,13 @@ async function main(argv) {
       if (!attempt.acquired) {
         break;
       }
-      const busyProject = runningForeignCompose(foreign);
-      if (!busyProject) {
+      const machineHolder = claimMachineSlot(machineSlot, lockDir, owner, lease => isAlive(lease.pid) || pendingChildGroupAlive(lockDir, lease));
+      const busyProject = machineHolder ? null : runningForeignCompose(foreign);
+      if (!machineHolder && !busyProject) {
         break;
       }
-      release(lockDir, owner);
-      attempt = { acquired: false, holder: { composeProject: busyProject } };
+      releaseRun();
+      attempt = { acquired: false, holder: machineHolder ?? { composeProject: busyProject } };
       if (Date.now() >= deadline) {
         break;
       }
@@ -370,7 +395,7 @@ async function main(argv) {
     }
     abort.signal.throwIfAborted();
   } catch (error) {
-    if (attempt?.acquired) release(lockDir, owner);
+    if (attempt?.acquired) releaseRun();
     throw error;
   } finally {
     rmSync(waiter, { force: true });
@@ -382,9 +407,9 @@ async function main(argv) {
   }
   // Admission follows the queue: another build can consume space while this
   // run waits. Caller-owned projects and verified --no-build runs are exempt.
-  if (!process.env.COMPOSE_PROJECT_NAME && isContainerizedBuild(command, args)) {
+  if (!selectedProject && isContainerizedBuild(command, args)) {
     try { requireDockerDisk(); }
-    catch (error) { release(lockDir, owner); throw error; }
+    catch (error) { releaseRun(); throw error; }
   }
   // Fingerprint after waiting: queued edits must not be reported as the command's inputs.
   let source;
@@ -395,14 +420,13 @@ async function main(argv) {
       throw new Error('SOURCE-HASH-MISMATCH --source-hash must identify the current working tree');
     }
   }
-  catch (error) { release(lockDir, owner); throw error; }
-  const composeProject = composeProjectFor(process.env, owner.token);
-  const generatedProject = !process.env.COMPOSE_PROJECT_NAME;
-  const containerizedBuild = generatedProject && isContainerizedBuild(command, args)
-    && [command, ...args].some((word) => /(?:^|\/)run-containerized\.sh$/.test(word));
+  catch (error) { releaseRun(); throw error; }
+  const generatedProject = !selectedProject;
+  const buildsImages = certifiesComposeImages(command, args, owner.worktree, owner.cwd);
+  const containerizedBuild = generatedProject && buildsComposeImages(command, args);
   const dockerReady = generatedProject && spawnSync(process.env.VIBE_E2E_DOCKER || "docker", ["version"],
     { encoding: "utf8", timeout: 10_000 }).status === 0;
-  if (containerizedBuild && !dockerReady) { release(lockDir, owner); throw new Error("Owned E2E build needs Docker."); }
+  if (containerizedBuild && !dockerReady) { releaseRun(); throw new Error("Owned E2E build needs Docker."); }
   const cleanupFile = path.join(path.dirname(lockDir), `e2e-cleanup-${owner.token}.json`);
   let cleanupRecord;
   const managedHome = lockDir === defaultLockDir() ? os.homedir() : undefined;
@@ -415,12 +439,15 @@ async function main(argv) {
       { home: managedHome });
       if (containerizedBuild) cleanupRecord.requiredBuiltTags = [];
     } catch (error) {
-      release(lockDir, owner);
+      releaseRun();
       throw error;
     }
   }
+  // Caller-owned compose resources have no Docker cleanup ledger. Their child still owns the machine lease.
+  const commandRecord = cleanupRecord ?? { kind: 'e2e', owner, token: owner.token.replace(/-/g, ''),
+    file: path.join(path.dirname(lockDir), `e2e-command-${owner.token}.json`) };
   process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\ne2e-lock: source ${JSON.stringify(source)}\n`);
-  const images = { project: composeProject, worktree: owner.worktree, head: tested, source, command: [command, ...args].join(" "),
+  const images = { project: composeProject, worktree: owner.worktree, cwd:owner.cwd, head: tested, source, argv:[command,...args], command: [command, ...args].join(" "),
     records: path.join(path.dirname(lockDir), "e2e-images") };
   let outcome;
   try {
@@ -440,13 +467,14 @@ async function main(argv) {
         installOwnedBuildShim(cleanupRecord, dockerBinary);
         childEnv = ownedBuildEnvironment(cleanupRecord, childEnv);
       }
-      return { exitCode: await runCommand(command, args, childEnv, cleanupRecord), executed: true };
+      invalidateImages(images);
+      return { exitCode: await runCommand(command, args, childEnv, commandRecord), executed: true };
     }, { head: tested });
     if (cleanupRecord) cleanupRecord.buildFinished = outcome.executed && outcome.exitCode === 0;
     if (containerizedBuild && outcome.executed) {
       recordBuiltTags(cleanupRecord);
     }
-    if (outcome.executed && outcome.exitCode === 0) recordImagesOrSay(images);
+    if (buildsImages && outcome.executed && outcome.exitCode === 0) recordImagesOrSay(images);
     return outcome.exitCode;
   } catch (error) {
     if (!error.message.startsWith('SOURCE-MOVED')) throw error;
@@ -470,7 +498,11 @@ async function main(argv) {
         writeFileSync(path.join(receipts, `${owner.token}.json`), `${JSON.stringify({ command: owner.command, startedAt: owner.startedAt, ...outcome }, null, 2)}\n`, { mode: 0o600 });
       }
     } finally {
-      release(lockDir, owner);
+      if (!cleanupRecord) {
+        rmSync(commandRecord.file, { force: true });
+        rmSync(path.join(path.dirname(lockDir), `e2e-gate-${commandRecord.token}.ready`), { force: true });
+      }
+      releaseRun();
     }
   }
 }
@@ -536,20 +568,22 @@ async function runCleanupSweep(argv) {
 }
 
 async function diskCommand([action, command, ...args]) {
+  if (action === 'stack-intent') return isContainerizedStack(command, args) ? 0 : 1;
   if (action === 'intent') return isContainerizedBuild(command, args) ? 0 : 1;
   if (action !== 'check') throw new Error('Unknown disk admission action');
   process.stdout.write(JSON.stringify(requireDockerDisk()) + '\n');
   return 0;
 }
 
-if (isEntryPoint(import.meta.url)) {
-  const task = process.argv[2] === 'child-gate'
-    ? runChildGate(process.argv.slice(3))
-    : process.argv[2] === 'cleanup-sweep'
-      ? runCleanupSweep(process.argv.slice(3))
-      : ['check', 'intent'].includes(process.argv[2])
-        ? diskCommand(process.argv.slice(2)) : main(process.argv.slice(2));
-  task.then(
+/** Shared CLI result, failure reporting and exit status for the shipped entry and isolated fixture. */
+export function e2eLockCli(argv, machineSlot = MACHINE_SLOT) {
+  const task = argv[0] === 'child-gate'
+    ? runChildGate(argv.slice(1))
+    : argv[0] === 'cleanup-sweep'
+      ? runCleanupSweep(argv.slice(1))
+      : ['check', 'intent', 'stack-intent'].includes(argv[0])
+        ? diskCommand(argv) : runE2e(argv, machineSlot);
+  return task.then(
     (code) => {
       if (typeof code === 'number') process.exit(code);
       process.stdout.write(JSON.stringify(code) + '\n');
@@ -560,3 +594,5 @@ if (isEntryPoint(import.meta.url)) {
     }
   );
 }
+
+if (isEntryPoint(import.meta.url)) await e2eLockCli(process.argv.slice(2));

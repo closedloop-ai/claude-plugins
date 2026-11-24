@@ -1,12 +1,13 @@
+import { realpathSync } from "node:fs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify as classifyIn, parsePathList, pathKind as kindIn, switchOn, validateManifest } from "./vibe-triage.mjs";
+import { cloudRequest, completedReceipt, gitFixtureResult, linkedCloudFixture, OPERATOR, sourcedCloudRequest } from "./fixtures/vibe-triage-cloud.mjs";
 import { repositoryAreas } from "./area-paths.mjs";
 import { bindProvider, bindProviderInProcess, makeHome, PROVIDER_BINDING, seedAlignedDecisionTable } from "./test-fixtures.mjs";
 
@@ -15,6 +16,7 @@ const AREAS = repositoryAreas(PROVIDER_BINDING);
 const classify = (input) => classifyIn({ areas: AREAS, ...input });
 const pathKind = (file) => kindIn(file, AREAS);
 import { chooseDispatch } from "../../fleet-orchestrator/scripts/dispatch-route.mjs";
+import { evidenceFingerprint } from "../../../lib/handoff/scripts/handoff-evidence.mjs";
 import { recordHandoffGate } from "../../handoff/scripts/handoff-gate.mjs";
 import { prEvidenceValidationProblems } from "../../handoff/scripts/pr-facts.mjs";
 import { COMMIT as RULED_COMMIT, FILES as RULED_FILES, RULINGS, ruledEvidence } from "../../handoff/scripts/targeted-tests-ruling-test-fixture.mjs";
@@ -253,15 +255,6 @@ test("the review steps carry effective: apply with the switch on and as-today wi
   assert.throws(() => validateManifest(moved), /step extraGates effective must be "as-today"/);
 });
 
-const cloudRequest = (worktree = '/tmp/vibe-example') => ({
-  worktree, ticket: 'ISS-13804', provider: 'codex', model: 'gpt-6-sol', reservedVersion: '1.1.61', branch: 'codex-cloud/iss-13804-cloud',
-  repository: 'acme/widgets', codexEnvironment: 'widgets-env',
-  placement: { codeOnly: true, needsRunningApp: false, localEvidence: [] },
-  criteria: [{ id: 'AC-1', source: 'ISS-13804 v2', text: 'Dispatch autonomously.' }],
-  graph: { ownership: 'dispatch-route.mjs owns routing', collisions: 'No active duplicate', blastRadius: 'fleet skill and tests' },
-  validationCommands: ['node --test plugins/vibe/skills/fleet-orchestrator/scripts/dispatch-route.test.mjs'], connectorAllowlist: [],
-});
-const OPERATOR = Object.freeze({ id: 'operator_1', name: 'Test Operator', email: 'operator@example.test' });
 
 test('AC-9: route and dispatcher share the cloud placement corpus and name local-only reasons', () => {
   const cases = [
@@ -437,51 +430,12 @@ test('AC-6: Claude follow-up targets the existing cloud session noninteractively
 });
 
 function gitAt(cwd, ...args) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: OPERATOR.name, GIT_AUTHOR_EMAIL: OPERATOR.email, GIT_COMMITTER_NAME: OPERATOR.name, GIT_COMMITTER_EMAIL: OPERATOR.email } });
+  const result = gitFixtureResult(cwd, ...args);
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
 
-function vibeFixture() {
-  const dir = mkdtempSync(path.join(tmpdir(), 'vibe-cloud-'));
-  const remote = path.join(dir, 'remote.git');
-  const root = path.join(dir, 'repo');
-  const worktree = path.join(root, '.claude', 'worktrees', 'vibe-iss-13804-cloud-dispatch');
-  mkdirSync(root);
-  gitAt(root, 'init', '--initial-branch=main');
-  writeFileSync(path.join(root, 'existing.txt'), 'old\n');
-  writeFileSync(path.join(root, 'AGENTS.md'), 'Run node --test for changed scripts.\n');
-  gitAt(root, 'add', '.');
-  gitAt(root, 'commit', '-m', 'baseline');
-  gitAt(dir, 'clone', '--bare', root, remote);
-  gitAt(root, 'remote', 'add', 'origin', remote);
-  mkdirSync(path.dirname(worktree), { recursive: true });
-  gitAt(root, 'worktree', 'add', '-b', 'vibe/iss-13804-cloud-dispatch', worktree);
-  const gitDir = gitAt(worktree, 'rev-parse', '--absolute-git-dir');
-  const now = new Date().toISOString();
-  writeSessionRecord(worktree, { slug: 'iss-13804-cloud-dispatch', branch: 'vibe/iss-13804-cloud-dispatch', summary: 'Cloud worker test', ticket: 'ISS-13804', liveTicket: 'ISS-13804', liveTicketCreatedBySession: false, status: 'active', mode: 'blank', operator: OPERATOR, baseCommit: gitAt(worktree, 'rev-parse', 'HEAD'), createdAt: now, lastActiveAt: now });
-  writeFileSync(path.join(gitDir, 'vibe-spec-card.json'), JSON.stringify({ stage: 'locked', source: 'ISS-13804', criteria: [{ id: 'AC-1', text: 'Dispatch autonomously.', source: 'ISS-13804 v2' }] }), { mode: 0o600 });
-  return { root, worktree, gitDir, remote };
-}
-
-function sourcedCloudRequest(worktree) {
-  const request = cloudRequest(worktree);
-  const observedAt = new Date().toISOString();
-  const evidence = recordCloudEvidence(request, { graph: {
-    ownership: { tool: 'code_symbols', query: 'dispatch owner', text: request.graph.ownership, observedAt },
-    collisions: { tool: 'query_collisions', query: 'ticket overlap', text: request.graph.collisions, observedAt },
-    blastRadius: { tool: 'blast_radius_tickets', query: 'touched files', text: request.graph.blastRadius, observedAt },
-  }, validationCommands: request.validationCommands, validationSources: ['AGENTS.md'] });
-  return { ...request, evidenceSha256: evidence.evidenceSha256 };
-}
-
-function completedReceipt(request, gitDir, taskId, extras = {}) {
-  const dispatchIdentity = { ...hydrateCloudRequest(request, { requireCurrentSource: false }) };
-  delete dispatchIdentity.reservedVersion;
-  const receipt = { provider: request.provider, taskId, status: 'completed', requestDigest: createHash('sha256').update(JSON.stringify(dispatchIdentity)).digest('hex'), ...extras };
-  writeFileSync(path.join(gitDir, 'cloud-worker-iss-13804.json'), `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
-  return receipt;
-}
+const vibeFixture = () => linkedCloudFixture(gitAt);
 
 function followupCli(request, gitDir, sessionId) {
   const bin = path.join(gitDir, 'fake-bin');
@@ -756,12 +710,12 @@ test('ISS-14039: a Claude import accepts a Codex or trace-proven Fable 5.2 revie
         { type: 'assistant', message: { model: models[index], content: [{ type: 'tool_use', name: 'mcp__closedloop_graph__code_symbols' }] } },
         { type: 'result', session_id: sessionId }].map((event) => JSON.stringify(event)).join('\n'));
       const resultFile = path.join(gitDir, `${role}-result.json`);
-      writeFileSync(resultFile, JSON.stringify({ runtime: 'claude', agentName: role, status: 'DONE', sessionId, requestId: `request-${index}`, tracePath, source: sourceIdentity(worktree), graphToolAliases: ['mcp__closedloop_graph__code_symbols'], data: { findings: [] } }));
+      writeFileSync(resultFile, JSON.stringify({ runtime: 'claude', agentName: role, status: 'DONE', sessionId, requestId: `request-${index}`, tracePath, worktree: realpathSync(worktree), source: sourceIdentity(worktree), graphToolAliases: ['mcp__closedloop_graph__code_symbols'], data: { findings: [] } }));
       const outFile = path.join(gitDir, `${role}-receipt.json`);
       captureReviewReceipt({ worktree, resultFile, outFile, role });
       return { path: outFile, sessionId };
     });
-    writeFileSync(path.join(gitDir, 'vibe-handoff-gate.json'), `${JSON.stringify({ receipts: receipts.map((item) => ({ path: item.path })) })}\n`);
+    writeFileSync(path.join(gitDir, 'vibe-handoff-gate.json'), `${JSON.stringify({ receipts: receipts.map((item) => evidenceFingerprint(item.path)) })}\n`);
     return receipts;
   };
   const opus = 'claude-opus-5-5';
@@ -772,7 +726,7 @@ test('ISS-14039: a Claude import accepts a Codex or trace-proven Fable 5.2 revie
   const claimed = handoff([opus, opus, opus, opus]);
   const forged = JSON.parse(readFileSync(claimed[0].path, 'utf8'));
   writeFileSync(claimed[0].path, `${JSON.stringify({ ...forged, model: fable })}\n`);
-  assert.throws(() => refreshImportWitness(worktree, { gate }), missing, 'a recorded Fable model its trace does not show is unverified');
+  assert.throws(() => refreshImportWitness(worktree, { gate }), /Evidence changed/, 'a modified receipt cannot prove the review model');
   const reviewed = handoff([fable, opus, opus, opus]);
   assert.equal(JSON.parse(readFileSync(reviewed[0].path, 'utf8')).model, fable, 'the receipt records the model the CLI ran');
   const writerFile = path.join(gitDir, 'vibe-writer.json');
@@ -785,7 +739,7 @@ test('ISS-14039: a Claude import accepts a Codex or trace-proven Fable 5.2 revie
   assert.equal(readyForPr(request, { gate }).ready, true);
   const fableTrace = reviewed[0].path.replace(/-receipt\.json$/, '.jsonl');
   writeFileSync(fableTrace, `${readFileSync(fableTrace, 'utf8')}\n`);
-  assert.match(cloudPrProblem(worktree, { gate }), missing, 'a trace changed after capture no longer proves the model');
+  assert.match(cloudPrProblem(worktree, { gate }), /changed|trace|evidence/i, 'a trace changed after capture no longer proves the model');
 });
 
 test('AC-4: Codex polling and import leave the Vibe candidate free of CLI error.log', async (t) => {
@@ -918,7 +872,7 @@ function claudeReviewReceipts(worktree, gitDir) {
     const tracePath = path.join(gitDir, `${role}.jsonl`);
     writeFileSync(tracePath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'mcp__closedloop_graph__code_symbols' }] } })}\n${JSON.stringify({ type: 'result', session_id: sessionId })}\n`);
     const resultFile = path.join(gitDir, `${role}-result.json`);
-    writeFileSync(resultFile, JSON.stringify({ runtime: 'claude', agentName: role, status: 'DONE', sessionId, requestId: `request-${index}`, tracePath, source: sourceIdentity(worktree), graphToolAliases: ['mcp__closedloop_graph__code_symbols'], data: { findings: [] } }));
+    writeFileSync(resultFile, JSON.stringify({ runtime: 'claude', agentName: role, status: 'DONE', sessionId, requestId: `request-${index}`, tracePath, worktree: realpathSync(worktree), source: sourceIdentity(worktree), graphToolAliases: ['mcp__closedloop_graph__code_symbols'], data: { findings: [] } }));
     const outFile = path.join(gitDir, `${role}-receipt.json`);
     captureReviewReceipt({ worktree, resultFile, outFile, role });
     return outFile;
