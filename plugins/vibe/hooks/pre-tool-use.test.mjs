@@ -82,6 +82,28 @@ const killReason = (command) => `Signal only processes this session started and 
 // chat that never did.
 const ACTIVATED_SESSION = "vibe-chat";
 
+test("DT-01/02 AC-2/4 fleet delegation runs at the PreToolUse boundary", (t) => {
+  const { dir, run } = sandbox(t);
+  recordHookSkill("fleet", "vibe:fleet-orchestrator", dir);
+  const call = (tool_name, tool_input, session_id = "fleet") => run(PRE_TOOL_USE, { tool_name, tool_input, session_id, cwd: dir }).stdout;
+  for (const command of ["codex exec -m example -s read-only < analysis.md", "git status && env codex exec review", "sh -c 'codex exec QA'", "codex review --uncommitted"]) {
+    assert.match(call("Bash", { command }), /codex-reviewer\.mjs/, command);
+    assert.equal(call("Bash", { command }, ACTIVATED_SESSION), "");
+  }
+  for (const input of [{ subagent_type: "Explore", description: "Analyze ticket requirements", prompt: "Inspect the acceptance criteria" },
+    { subagent_type: "general-purpose", prompt: "Check this diff for bugs" },
+    { subagent_type: "general-purpose", prompt: "Run the visual QA recheck" }, { subagent_type: "code-reviewer", prompt: "Check the change" }]) {
+    assert.match(call("Agent", input), /vibe-requirements-worker/);
+  }
+  assert.match(call("Bash", { command: "action=review; codex $action" }), /codex-reviewer\.mjs/);
+  for (const command of ["node skills/vibe/scripts/dist/claude-worker.mjs < requirements.json",
+    "node skills/vibe/scripts/dist/codex-reviewer.mjs run", "fleet.sh program local session turn writer",
+    "node skills/vibe/scripts/dist/codex-reviewer.mjs run --role visual-qa-critic --agent-definition .claude/agents/visual-qa-critic.md",
+    "git status", "gh pr view 12", "cat board.md", "echo 'codex exec review'"]) {
+    assert.equal(call("Bash", { command }), "", command);
+  }
+});
+
 function sandbox(t) {
   const dir = mkdtempSync(path.join(tmpdir(), "vibe-pre-tool-use-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

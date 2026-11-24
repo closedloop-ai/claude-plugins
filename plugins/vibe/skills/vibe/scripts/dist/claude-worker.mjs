@@ -100,7 +100,8 @@ var { capturedJson, capturedJsonDocuments } = module;
 import { execFileSync as execFileSync2, spawn, spawnSync as spawnSync2 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { closeSync, existsSync as existsSync9, openSync, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync3, writeFileSync as writeFileSync4, writeSync } from "node:fs";
-import { join as join10 } from "node:path";
+import { basename as basename3, join as join10 } from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 import { StringDecoder } from "node:string_decoder";
 
 // node_modules/zod/v3/external.js
@@ -5100,7 +5101,7 @@ function bindTakeoverWriter(worktree, binding) {
 
 // vibe-core:lib/handoff/scripts/review-receipts.mjs
 var module5 = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
-var { REVIEW_ROLES, captureNativeReviewReceipt, captureReviewReceipt, graphCalls, reviewReceiptProblems, reviewTraceFacts, verifiedReviewModel } = module5;
+var { REVIEW_ROLES, captureNativeReviewReceipt, captureReviewReceipt, graphCalls, nativeReviewResult, reviewReceiptProblems, reviewTraceFacts, verifiedReviewModel } = module5;
 
 // vibe-core:lib/vibe/scripts/plugin-script-references.mjs
 var module6 = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
@@ -5232,7 +5233,7 @@ import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module9 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module9;
+var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, readSessionRecordFile, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module9;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -5993,6 +5994,10 @@ function signalFailure(pid, error) {
   return new OwnedCleanupError("Unable to prove the owned process group stopped; writer lease retained", { cause: error });
 }
 
+// vibe-core:lib/handoff/scripts/review-context.mjs
+var module10 = await vibeCore("lib/handoff/scripts/review-context.mjs");
+var { boundReviewContext, formatReviewContext, reviewDoctrine, reviewQuestions } = module10;
+
 // src/claude-worker.ts
 var MAX_WORKER_TIMEOUT_MS = 30 * 60 * 1e3;
 var DEFAULT_WORKER_TIMEOUT_MS = MAX_WORKER_TIMEOUT_MS;
@@ -6050,6 +6055,7 @@ var structuredOutputTool = "StructuredOutput";
 var readerRoles = /* @__PURE__ */ new Set([
   "vibe-adversarial-reviewer",
   "vibe-guardrails-reviewer",
+  "vibe-consolidated-reviewer",
   "vibe-handoff-summarizer",
   "vibe-requirements-worker",
   "vibe-backend-worker",
@@ -6077,7 +6083,12 @@ function workerResultJsonSchemaFor(agentName) {
   schema.properties.data = {
     type: "object",
     additionalProperties: true,
-    properties: { findings: { type: "array", items: {
+    properties: { questions: { type: "array", items: {
+      type: "object",
+      additionalProperties: false,
+      properties: { kind: { const: "QUESTION" }, contradicts: { type: "string", minLength: 1 }, question: { type: "string", minLength: 1 } },
+      required: ["kind", "contradicts", "question"]
+    } }, findings: { type: "array", items: {
       type: "object",
       additionalProperties: true,
       properties: {
@@ -6385,6 +6396,15 @@ async function runWorker(rawInput) {
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
   const persistent = input.agentName === "vibe-change-worker";
+  const groundedReview = /^vibe-.*-reviewer$/.test(input.agentName) || input.agentName === "vibe-verify-worker";
+  let reviewCriteria;
+  if (groundedReview) {
+    try {
+      reviewCriteria = boundReviewContext(input.input ?? "", input.worktree);
+    } catch (error) {
+      throw new WorkerRefusal("REVIEW_CRITERIA_REQUIRED", error instanceof Error ? error.message : "Supply the review-ticket block.");
+    }
+  }
   if (!persistent) checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   checkSharedHostGuards(place.root);
@@ -6407,6 +6427,7 @@ async function runWorker(rawInput) {
   let lease;
   let resume = false;
   let turnInput = input.input ?? input.continuation ?? "";
+  if (reviewCriteria) turnInput += "\n\n" + reviewDoctrine;
   if (persistent) {
     if (takeover) bindTakeoverWriter(place.root, { prUrl: takeover.prUrl, headSha: takeover.headSha, sourceBranch: takeover.sourceBranch });
     const registered = registerWriter({
@@ -6528,6 +6549,7 @@ async function runWorker(rawInput) {
     process.removeListener("SIGTERM", cancelBeforeLaunch);
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
+    if (reviewCriteria && output.data) output.data = reviewQuestions(output.data, reviewCriteria);
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
     const endingReviewSource = reviewSource ? reviewSourceIdentity(definition.root, place.root) : void 0;
     if (reviewSource && JSON.stringify(endingReviewSource) !== JSON.stringify(reviewSource)) {
@@ -6551,11 +6573,12 @@ async function runWorker(rawInput) {
       status: output.status,
       resultSummary: output.summary
     });
-    return {
+    const result = {
       ...output,
       runtime: "claude",
       agentName: input.agentName,
       ...reviewSource ? { source: reviewSource, worktree: realpathSync9(place.root) } : {},
+      ...reviewCriteria ? { reviewCriteria } : {},
       ...takeover ? { takeover } : {},
       graphToolIdentities: graphCapabilities.map((capability) => mcpToolIdentity(capability.name)),
       graphToolAliases,
@@ -6564,6 +6587,10 @@ async function runWorker(rawInput) {
       tracePath,
       writer: persistent ? readWriterSummary(input.worktree) : void 0
     };
+    if (input.agentName === "vibe-requirements-worker" && result.status === "DONE") {
+      writeSync(trace, JSON.stringify({ type: "requirements_completion", record: result }) + "\n");
+    }
+    return result;
   } catch (error) {
     cleanupBlocked = error instanceof OwnedCleanupError;
     let leaseRetained = persistent && Boolean(lease);
@@ -6970,6 +6997,36 @@ async function main(argv) {
   }
   let input;
   try {
+    if (argv[0] === "check-analysis") {
+      if (argv.length !== 3) throw new Error("Usage: check-analysis <worktree> <request-id> < result.json");
+      const record = external_exports.object({
+        runtime: external_exports.literal("claude"),
+        agentName: external_exports.literal("vibe-requirements-worker"),
+        requestId: identifierSchema,
+        workerId: external_exports.string().uuid(),
+        sessionId: external_exports.string().uuid(),
+        tracePath: external_exports.string()
+      }).passthrough().parse(await readInput());
+      const file = basename3(record.tracePath);
+      const directory = checkoutLocation(argv[1]).dir;
+      const expected = join10(directory, file);
+      if (record.requestId !== argv[2] || record.sessionId !== record.workerId || !/^vibe-worker-[\da-f-]{36}\.jsonl$/i.test(file) || record.tracePath !== expected || realpathSync9(expected) !== join10(realpathSync9(directory), file)) {
+        throw new Error("Analysis identity differs from its request or checkout");
+      }
+      const events = readFileSync10(expected, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+      const completion = events.pop();
+      events.reverse();
+      const init = events.find((event) => initSchema.safeParse(event).success);
+      const terminal = resultSchema2.safeParse(events.find((event) => event.type === "result"));
+      if (completion?.type !== "requirements_completion" || !isDeepStrictEqual2(completion.record, record) || init?.session_id !== record.sessionId || !terminal.success || terminal.data.session_id !== record.sessionId || terminal.data.is_error) {
+        throw new Error("No matching requirements-worker completion in the launcher's private trace");
+      }
+      const data = terminal.data.structured_output ?? JSON.parse(terminal.data.result ?? "null");
+      const outcome = workerResultSchema.parse(capWorkerResult(data));
+      if (outcome.status !== "DONE" || record.status !== outcome.status || record.summary !== outcome.summary || !isDeepStrictEqual2(record.data, outcome.data)) throw new Error("Requirements analysis has no matching completed outcome");
+      process.stdout.write(JSON.stringify({ verified: true, requestId: record.requestId, workerId: record.workerId }) + "\n");
+      return 0;
+    }
     if (argv.length) throw new Error("Send the worker brief and capability metadata on stdin, never argv");
     input = await readInput();
     const result = await runWorker(input);

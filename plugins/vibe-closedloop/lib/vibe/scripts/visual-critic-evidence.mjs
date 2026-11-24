@@ -4,12 +4,15 @@ import { absoluteGitDir } from "./session-record.mjs";
 import { writeAtomic } from "./owned-state.mjs";
 import { evidenceFingerprint, readEvidence } from "../../handoff/scripts/handoff-evidence.mjs";
 
-/** A path-only critic deliverable delegates its content to precisely one bounded findings file. */
+/**
+ * A path-only critic deliverable delegates its content to precisely one bounded findings file. Any other body
+ * (the managed launcher's inline JSON result, which that launcher validates and publishes itself) records no
+ * findings, so no accepted-critic consumer can read it.
+ */
 export function criticFindings(helper, lines) {
   if (helper.kind !== "critic" || helper.role !== "visual-qa-critic") return null;
   const names = lines.map(line => line.trim()).filter(Boolean);
-  if (names.length !== 1 || !path.isAbsolute(names[0])) throw new Error("visual critic needs one absolute findings file");
-  return evidenceFingerprint(names[0]);
+  return names.length === 1 && path.isAbsolute(names[0]) ? evidenceFingerprint(names[0]) : null;
 }
 
 function acceptanceFile(worktree, head) {

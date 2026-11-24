@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { reviewBrief } from '../../handoff/scripts/review-context-test-support.mjs';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -167,11 +168,11 @@ test('idle notice cannot accept or stop a reviewer without its source-bound FINA
   const brief = path.join(dir, 'review.md');
   writeFileSync(brief, 'Review the current diff.\n');
   assert.notEqual(run([dir, 'start', 'missing', '--kind', 'reviewer', '--worktree', worktree]).status, 0, 'reviewer needs a brief');
-  writeFileSync(brief, 'Run handoff/scripts/qa-merge-order.mjs.\n');
+  writeFileSync(brief, reviewBrief(dir, 'Run handoff/scripts/qa-merge-order.mjs.'));
   assert.notEqual(run([dir, 'start', 'missing-script', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
     '--worker-id', 'native-reviewer-missing', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0,
   'Claude helper launch refuses a deleted installed plugin script');
-  writeFileSync(brief, 'Review the current diff.\n');
+  writeFileSync(brief, reviewBrief(dir, 'Review the current diff.'));
   assert.equal(run([dir, 'start', 'reviewer', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
     '--worker-id', 'native-reviewer-1', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
   assert.notEqual(run([dir, 'accepted', 'reviewer']).status, 0, 'idle is not a final report');
@@ -231,6 +232,48 @@ test('idle notice cannot accept or stop a reviewer without its source-bound FINA
   assert.equal(run([dir, 'stopped', 'reviewer']).status, 0);
 });
 
+/** Fake an empty project and record its three discovery calls without contacting Docker. */
+function emptyDockerProject(dir) {
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\ncase "$1 $2" in "container ls"|"volume ls"|"network ls") echo "$1" >> "$0.log";; *) exit 2;; esac\n', { mode: 0o755 });
+  return docker;
+}
+
+test('DT-03: project-backed reviewer registers and finalizes the source captured after Docker discovery', (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'source');
+  execFileSync('git', ['init', '-q', worktree]);
+  writeFileSync(path.join(worktree, 'tracked.txt'), 'reviewed content\n');
+  execFileSync('git', ['-C', worktree, 'add', '.']);
+  execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const brief = path.join(dir, 'brief.md');
+  const definition = path.join(dir, 'reviewer.md');
+  const capabilities = path.join(dir, 'capabilities.json');
+  writeFileSync(brief, reviewBrief(dir, 'Review the current diff.'));
+  writeFileSync(definition, '---\nname: reviewer\n---\n');
+  writeFileSync(capabilities, '[]');
+  const docker = emptyDockerProject(dir);
+  const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(dir, 'git'), `#!/bin/sh
+if [ "$3" = ls-files ] && [ "$4" = --others ]; then echo source >> "${docker}.log"; fi
+exec "${git}" "$@"
+`, { mode: 0o755 });
+  const start = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'review',
+    '--kind', 'reviewer', '--worktree', worktree, '--worker-id', 'native-review', '--role', 'reviewer',
+    '--project', 'test-review', '--brief', brief, '--agent-definition', definition, '--capabilities', capabilities],
+  { encoding: 'utf8', env: { ...process.env, VIBE_E2E_DOCKER: docker, PATH: dir + path.delimiter + process.env.PATH } });
+  assert.equal(start.status, 0, start.stderr);
+  assert.deepEqual(readFileSync(docker + '.log', 'utf8').trim().split('\n'), ['container', 'volume', 'network', 'source']);
+  const record = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).review;
+  assert.deepEqual(record.source, sourceIdentity(worktree));
+  const completion = { sessionId: record.workerId, turnId: 'turn-1' };
+  const deliverable = path.join(dir, 'deliverable.md');
+  writeFileSync(deliverable, finalMarker(record, completion));
+  const final = run([dir, 'final', 'review', '--deliverable', deliverable, '--session-id', completion.sessionId,
+    '--turn-id', completion.turnId, '--out', path.join(dir, 'report.json')]);
+  assert.equal(final.status, 0, final.stderr);
+});
+
 test('scratch helper start requires owner, exact project, finite TTL and label proof', (t) => {
   const dir = tempDir(t);
   const worktree = path.join(dir, 'scratch-worktree');
@@ -241,8 +284,7 @@ test('scratch helper start requires owner, exact project, finite TTL and label p
   execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
   const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
   writeFileSync(path.join(gitDir, 'vibe-session.json'), JSON.stringify({ createdAt: '2026-11-03T00:00:00Z', status: 'active' }));
-  const docker = path.join(dir, 'docker');
-  writeFileSync(docker, '#!/bin/sh\ncase "$1 $2" in "container ls"|"volume ls"|"network ls") exit 0;; esac\nexit 2\n', { mode: 0o755 });
+  const docker = emptyDockerProject(dir);
   const result = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'scratch-pg',
     '--kind', 'scratch', '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree,
     '--project', 'iss42-scratch-pg', '--ttl-seconds', '600'],
@@ -261,6 +303,39 @@ test('scratch helper start requires owner, exact project, finite TTL and label p
   const kept = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['scratch-pg'];
   assert.equal(kept.project, saved.project);
   assert.equal(kept.ownerToken, saved.ownerToken);
+});
+
+test('DT-03: scratch start rejects a different private Git directory at the same HEAD', (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'original');
+  const sibling = path.join(dir, 'sibling');
+  const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  execFileSync(git, ['init', '-q', worktree]);
+  execFileSync(git, ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '--allow-empty', '-qm', 'base']);
+  execFileSync(git, ['-C', worktree, 'worktree', 'add', '-q', '--detach', sibling, 'HEAD']);
+  const resolve = (cwd, ...args) => execFileSync(git, ['-C', cwd, 'rev-parse', ...args], { encoding: 'utf8' }).trim();
+  assert.equal(resolve(worktree, 'HEAD'), resolve(sibling, 'HEAD'));
+  const originalDir = resolve(worktree, '--absolute-git-dir');
+  const siblingDir = resolve(sibling, '--absolute-git-dir');
+  assert.notEqual(originalDir, siblingDir);
+  writeFileSync(path.join(originalDir, 'vibe-session.json'), JSON.stringify({ createdAt: 'original', status: 'active' }));
+  assert.equal(existsSync(path.join(siblingDir, 'vibe-session.json')), false);
+  const ledger = path.join(dir, 'helpers.json');
+  writeFileSync(ledger, JSON.stringify({ existing: { name: 'existing', kind: 'other' } }));
+  const before = readFileSync(ledger);
+  // Resolve the locked compound query with real Git in the sibling checkout. Other operations see the original.
+  writeFileSync(path.join(dir, 'git'), `#!/bin/sh
+if [ "$*" = "rev-parse HEAD --absolute-git-dir" ] && [ -f "${dir}/helpers.lock/owner.json" ]; then
+  exec "${git}" -C "${sibling}" "$@"
+fi
+exec "${git}" "$@"
+`, { mode: 0o755 });
+  const result = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'scratch',
+    '--kind', 'scratch', '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree, '--project', 'scratch-dir', '--ttl-seconds', '600'],
+  { encoding: 'utf8', env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: emptyDockerProject(dir), PATH: dir + path.delimiter + process.env.PATH } });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /scratch worktree Git directory changed/);
+  assert.deepEqual(readFileSync(ledger), before);
 });
 
 test('ISS-14222 scratch lease refusal names both machine-local proof paths and keeps cwd and ended guards', (t) => {
@@ -582,7 +657,7 @@ test('a helper whose result was accepted and that still runs is a stop candidate
   writeFileSync(definition, '---\nname: review-a\n---\n');
   const brief = path.join(dir, 'prompts', 'review-a-01.md');
   mkdirSync(path.dirname(brief));
-  writeFileSync(brief, 'Review.\n');
+  writeFileSync(brief, reviewBrief(dir));
   assert.equal(run([dir, 'start', 'review-a', '--kind', 'reviewer', '--brief', 'prompts/review-a-01.md', '--worktree', source,
     '--worker-id', 'native-reviewer-a', '--role', 'review-a', '--agent-definition', definition,
     '--capabilities', capabilities, '--now', '2026-10-21T10:00:00Z']).status, 0);
@@ -613,7 +688,7 @@ test('ISS-14117 an interrupted reviewer closes through recorded abandonment with
   execFileSync('git', ['-C', source, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
   const capabilities = path.join(dir, 'abandoned-capabilities.json'); writeFileSync(capabilities, '[]\n');
   const definition = path.join(dir, 'abandoned-review.md'); writeFileSync(definition, '---\nname: review-abandoned\n---\n');
-  const brief = path.join(dir, 'abandoned-brief.md'); writeFileSync(brief, 'Review.\n');
+  const brief = path.join(dir, 'abandoned-brief.md'); writeFileSync(brief, reviewBrief(dir));
   assert.equal(run([dir, 'start', 'review-abandoned', '--kind', 'reviewer', '--brief', brief, '--worktree', source,
     '--worker-id', 'native-reviewer-abandoned', '--role', 'review-abandoned', '--agent-definition', definition,
     '--capabilities', capabilities]).status, 0);

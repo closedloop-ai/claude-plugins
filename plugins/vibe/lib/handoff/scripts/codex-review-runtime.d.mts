@@ -5,12 +5,13 @@ interface ReviewOwner { orchDir: string; helper: string }
 interface LaunchReview extends ReviewOwner {
   worktree: string;
   role: string;
+  agentDefinition?: string;
   model: string;
   capabilities: string;
   brief: string;
 }
 
-export function runManagedReviewer(input: LaunchReview): Promise<{ threadId: string; report: string; deliverable: string }>;
+export function runManagedReviewer(input: LaunchReview): Promise<{ threadId: string; report: string; deliverable: string } | { threadId: string; visualQa: string }>;
 export function acceptManagedReviewer(input: ReviewOwner & { report: string }): Promise<{ threadId: string; receipt: string }>;
 
 /** Begin an independent QA guide and return its operator-resumable thread and durable state. */

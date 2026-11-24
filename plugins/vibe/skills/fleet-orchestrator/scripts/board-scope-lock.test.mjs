@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess, writeActiveTicketSnapshot } from "../../vibe/scripts/test-fixtures.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 bindProviderInProcess(after);
@@ -26,6 +26,7 @@ function fixture(t) {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const dir = path.join(home, "programs", "test");
   mkdirSync(dir, { recursive: true });
+  writeActiveTicketSnapshot(dir, Array.from({ length: 9 }, (_, i) => "ISS-" + (i + 1)));
   writeFileSync(path.join(home, "current"), "test\n");
   writeFileSync(path.join(dir, "handover.md"), "## Next\n- Next vibe PR: ISS-7, the prevention batch.\n");
   writeFileSync(path.join(dir, "plugin-version.json"), JSON.stringify({
@@ -50,8 +51,11 @@ function fixture(t) {
     assert.equal(result.status, 0, result.stderr);
   };
   writeFileSync(response, JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ["fixture"] }));
+  // Grouping evidence with disjoint files lets each writer start separately under the board's overlap check.
+  const candidates = path.join(home, "candidates.json");
+  writeFileSync(candidates, JSON.stringify({ tickets: ["ISS-1", "ISS-2"].map((slug, i) => ({ slug, repo: REPO, files: ["file-" + i], surfaces: [] })) }));
   for (const [name, ticket, pr] of [["locked", "ISS-1", "7"], ["free", "ISS-2", "8"]]) {
-    okay(["placement", ticket, "--evidence", response]);
+    okay(["placement", ticket, "--evidence", response, "--candidates", candidates]);
     okay(["writer", name, "--tickets", ticket, "--repo", REPO, "--pr", pr, "--worktree", home]);
   }
   writeFileSync(path.join(dir, "rulings.md"), [

@@ -86,11 +86,7 @@ workflow instead and returns a shareable Vercel preview link.
 
 ## Why the result can be trusted
 
-**One writer, one branch.** A single implementation agent writes every change
-in a session, in one worktree and one `vibe/<slug>` branch, keeping its context
-from the first request to handoff. Specialists for backend, components,
-Storybook and requirements advise it and never write code themselves. No agent
-commits; the orchestrator commits through the repository's normal hooks.
+**One writer, one branch.** One persistent writer owns the session worktree and `vibe/<slug>` branch through handoff. Specialists advise; the orchestrator commits through repository hooks.
 
 **Built from the design system, frontend and backend.** The writer reuses the
 component catalog and the paved paths in `packages/app` before building
@@ -115,19 +111,9 @@ reads it itself, turns what it shows into criteria mapped to tokens and
 components, and compares a screenshot of each touched screen with it, in light
 and in dark wherever the screen supports both, before saying it is ready.
 
-**Tests are never weakened.** The writer repairs an existing test its change
-broke without changing what the test asserts, and handoff lists missing tests
-for engineering. The worker can write tests when its top-level turn explicitly
-requires them. Handoff inventory admits newly authored tests only in the
-pull-request phase, where full tests pass before the pull request opens.
+**Tests.** The writer repairs broken tests without weakening assertions and lists missing coverage for engineering. Authoring requires a top-level grant. Handoff inventory admits authored tests only in the pull-request phase, which requires passing full tests.
 
-**Paths come from the target repository.** A target can declare its handoff
-paths in repo-root `vibe-handoff-paths.json`, as this plugin repository does.
-Inventory reads the committed declaration from the target's captured base or
-verified fetched default branch. A nested declaration does not count, and a
-session diff cannot add, edit, or delete any file with that name. Without one,
-handoff takes its test lanes from the repository's CI workflow and the test
-command its `AGENTS.md` names, and protects no path classes.
+**Paths.** Inventory reads the root `vibe-handoff-paths.json` from the captured base or verified default branch. Sessions cannot change this declaration or substitute a nested one. Repositories without it use their CI workflow and `AGENTS.md` test command with no protected path classes.
 
 **A complete record.** The live ClosedLoop ticket links the document the
 session started from, the session's implementation plan (published as a
@@ -143,10 +129,7 @@ product-contract QA. It also drives each touched screen in the running web app
 and Desktop. Confirmed findings go back to the same writer. A check that also
 fails on main is recorded for engineering instead of blamed on the session.
 
-**Humans merge.** vibe opens a pull request only when the person asks, and
-never enqueues or merges it. When reviewers ask for changes, the session
-resumes and the same writer fixes them, reruns the review and checks, pushes
-to the same branch and answers each review thread.
+**Humans merge.** On request, vibe opens the PR. The same writer fixes review findings, repeats checks and answers threads on that branch. The person handles queueing and merge.
 
 ### Storybook placement
 
@@ -202,23 +185,11 @@ credits are used only when the person says to use them.
 
 ### `handoff`
 
-Finishes a session. It checks and reviews the work, verifies the final
-environment or prototype preview, completes the live ticket, and ends the
-session the way the person chose: a pull request they take through review and
-merge, opened as handoff's last step with the ticket left with them, or
-assigning the ticket to the next owner they name. Plain words such as "I'll
-get the PR merged" or "I'll ship it myself" count as asking for a pull
-request.
+[Handoff](skills/handoff/SKILL.md) verifies the work and preview and updates the ticket. It opens a PR for someone taking the change through merge (including "I'll get the PR merged" or "I'll ship it myself"), or assigns the ticket to their chosen next owner.
 
 ### `pr-takeover`
 
-An engineer starts with a pull request URL in a new Claude Code or Codex chat.
-The skill reviews the PR independently, checks each finding against its source,
-routes verified bugs to one writer on the PR branch, and sends verified vibe
-mistakes to a prevention ticket and worker. It runs the required web and
-Desktop E2E lanes through supported headless or displayless paths, records
-their actual results on the PR, answers review threads, and leaves the PR
-open for the engineer to merge.
+[PR takeover](skills/pr-takeover/SKILL.md) starts from a PR URL in Claude Code or Codex. Independent findings go to one writer on the PR branch. It records prevention work, headless web and displayless Desktop E2E results and thread replies. The engineer merges.
 
 ### `vibe-seed-refresh`
 
@@ -230,33 +201,11 @@ the merge queue and mark the ticket Done.
 
 ### `fleet-orchestrator`
 
-A playbook for a Claude Code session running delivery work for an operator who
-does QA and merges: several Codex and Claude workers on parallel pull
-requests, one writer on one pull request, or a session with no writer
-(design, research, analysis). It covers who may write where, state that
-survives a reboot or compaction, Codex budget rules, a Claude takeover of a
-stopped Codex writer, CPU and shared e2e stack locks across machines,
-agent-first QA and a lessons ledger. Runtime and machine routing requires a
-fresh usage reading, with stale readings re-read before work moves. `fleet.sh`
-starts, steers, reads and ends
-Codex threads on this machine or over ssh; each new thread is named for its
-writer and grouped in the Codex app's "Fleet workers" sidebar section, and an
-ended one is archived.
+[Fleet orchestration](skills/fleet-orchestrator/SKILL.md) coordinates parallel PRs, one writer, or research without a writer. It covers ownership, durable state, usage-based routing, takeover, shared machines, E2E locks, QA and lessons. `fleet.sh` manages named local or SSH Codex threads in “Fleet workers” and archives completed threads.
 
 ### `codex-fleet-monitor`
 
-Watches a fleet of Codex threads and the pull requests they produce, and exits
-on the first change: a session going idle, stalling or failing, a merge
-conflict, new review comments, settled check changes or a new pull request. A
-turn left open by a silent usage limit shows as `STALLED` instead of looking
-busy forever. It persists each Codex and Claude usage read, including failed
-reads, with its read time and source in bounded, atomically replaced state.
-Its status command prints the latest reading and age per runtime and machine
-and flags readings older than 30 minutes by default, while usage lines still
-wake the watcher only on material changes such as a band change. It resumes a
-turn that failed
-on a transient provider error after a backoff, and `supervise.sh` runs that
-recovery on each host with no orchestrator awake.
+[Fleet monitoring](skills/codex-fleet-monitor/SKILL.md) wakes on worker or PR changes, including silent stalls. It tracks usage, read failures and age by runtime and machine, flags readings older than 30 minutes, and wakes on material usage changes. `supervise.sh` handles transient provider errors with backoff on each host.
 
 ### Internal pipeline skills
 
@@ -303,19 +252,19 @@ applies to other shared skills such as `decision-table`.
 | Agent | Default model | Responsibility |
 |---|---|---|
 | `vibe-setup-worker` | sonnet | Machine preflight, worktree bootstrap, owned local processes, and confirmed session discard |
-| `vibe-requirements-worker` | sonnet | Read-only requirements, overlap and owning-route discovery; reference mode (the behaviors and visual and UX requirements of a product the person named or showed in a screenshot); precedent mode (how an established product behaves, observed live in the operator's signed-in browser, never public help centers or documentation) |
-| `vibe-ticket-worker` | sonnet | With a tracker provider bound: live ticket creation and source link, the session plan as a linked plan document, next-owner lookup, handoff grading, assignment, and cancellation |
-| `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
-| `vibe-change-worker` | opus | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
-| `vibe-backend-worker` | sonnet | Read-only decision-table and backend guidance for that writer |
-| `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
-| `vibe-prototype-worker` | sonnet | Read-only canonical prototype guidance or operational immutable Vercel sharing of the writer's reviewed committed result |
-| `vibe-storybook-decomposer` | sonnet | Read-only Storybook placement owner (precedent search on sibling entities before any story or shared component is placed) and component extraction, story and control guidance for that writer |
-| `vibe-verify-worker` | sonnet | Read-only targeted existing checks (the tests related to each changed file), the e2e specs the change needs, handoff coverage review, Storybook footprint and handoff running app checks |
-| `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement (including Storybook precedent placement), copy provenance, accessibility, and tests |
-| `vibe-adversarial-reviewer` | opus | Separate read-only handoff review of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
-| `vibe-consolidated-reviewer` | opus | Read-only single read of the final diff over the precomputed guardrails findings, used only when `review-scope.mjs` chooses the consolidated path (off unless `VIBE_CONSOLIDATED_REVIEW=1`) |
-| `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |
+| `vibe-requirements-worker` | sonnet | Read-only ownership, overlaps, requirements, reference-product behavior and live precedent (signed-in browser, never public help centers or documentation) |
+| `vibe-ticket-worker` | sonnet | Tracker tickets, source and plan links, handoff grading, assignment and cancellation |
+| `vibe-environment-worker` | sonnet | Environment and prototype publication, flag snapshots, Desktop setup and requested PR creation |
+| `vibe-change-worker` | opus | Persistent writer for planning, implementation, stories, fixes, missing-test lists and serial records |
+| `vibe-backend-worker` | sonnet | Read-only backend and decision-table guidance |
+| `vibe-primitive-worker` | sonnet | Read-only primitive and component specifications |
+| `vibe-prototype-worker` | sonnet | Read-only prototype guidance and immutable publication of reviewed commits |
+| `vibe-storybook-decomposer` | sonnet | Read-only Storybook placement, sibling precedents, extraction, stories and controls |
+| `vibe-verify-worker` | sonnet | Read-only related tests, E2E selection, coverage, Storybook footprint and running app checks |
+| `vibe-guardrails-reviewer` | sonnet | Read-only reuse, placement, copy, accessibility and test review |
+| `vibe-adversarial-reviewer` | opus | Independent ownership, dependency, contract, regression and web/Desktop review |
+| `vibe-consolidated-reviewer` | opus | Single read of final diff and guardrails findings when `review-scope.mjs` selects consolidation (`VIBE_CONSOLIDATED_REVIEW=1`) |
+| `vibe-handoff-summarizer` | sonnet | Read-only summary of inventory, changes and overlaps |
 | `vibe-seed-check-worker` | sonnet | Fresh-main seed checks and latest Vibe Seed Walk inspection |
 | `vibe-seed-fix-worker` | opus | Seed drift fixes, validation, and follow-up PR-check and review-comment fixes |
 | `vibe-seed-pr-worker` | sonnet | Seed PR push, status, main sync, merge queue, review replies, and owned worktree cleanup |
@@ -333,29 +282,11 @@ removes it. Any model name is accepted. cl-sweep ticket-owner sessions use the C
 
 ### Evals
 
-`evals/` holds 125 one-turn rehearsals plus two deterministic stateful
-upgrade-resume cases. Each one-turn case carries the session state in its
-prompt, so it needs no target repository checkout. The stateful cases run only in
-the local nightly and drive real Claude and Codex root sessions across an
-installed plugin upgrade. Claude tests the root's own resume or migration
-decision. Codex tests its real install, cache and thread-resume boundaries plus
-the released writer-state contracts with a harness-directed migration payload;
-it does not test the Codex skill's independent migration decision. Cases are
-named by persona: `exec-` for someone who describes the work and passes it on,
-`pm-` for someone who iterates from reference
-screenshots and may take it to a pull request themselves, and `orch-` for a
-fleet orchestrator. Tags select a group, for example:
+The [eval suite](evals/) includes 125 one-turn persona rehearsals and two stateful upgrade-resume cases. One-turn prompts supply their own session state. The local nightly exercises real Claude and Codex root sessions across an installed upgrade. Claude tests the root’s migration decision. Codex tests installation, caching, thread resume and released writer-state contracts using a harness-directed migration.
 
-- how a session ends: `pr-intent`, `pass-on`, `unclear-end`, `pr-path`,
-  `post-pr`, `pr-facts`;
-- setup and questions: `setup`, `sample-data`, `questions`, `precedent`,
-  `version-check`, `technical-detail`;
-- visual work: `visual-cues` (reference screenshots, light and dark, tokens),
+Select persona prefixes (`exec-`, `pm-`, `orch-`) or tags including `visual-cues`,
   `visual-qa`, `storybook`;
-- handoff decisions: `main-failures`, `review-lessons`, `review-gates`,
-  `qa-lessons`, `ticket-lessons`, `ledger-lessons`, `plan-links`;
-- orchestration: `orchestrator`, `orchestration-lessons`, `fleet-single-use`,
-  `pr-takeover`.
+  `questions`, `pr-intent`, `review-gates`, `orchestration-lessons`.
 
 Run from the repository root. Each wrapper call requires a fresh empty output
 directory and records both copied plugins before starting Claude:
@@ -383,17 +314,8 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.106` contains 17 skills and 17 agents, and no hook manifest: the
+Version `1.1.109` contains 17 skills and 17 agents, and no hook manifest: the
 `vibe-core` plugin, which vibe declares as a dependency, registers the hooks and
-runs `hooks/runtime.mjs` from the vibe a session uses. The guards (`hooks/`) and
-the modules they run (`lib/`) ship in vibe; the commands among them keep thin
-wrappers at their skill paths. It has no standalone commands, root-level shell scripts,
-or production Python tools under `tools/python/`; that directory contains the
-skill-contract test modules, the generic scan (`vibe_generic_scan.py` and its
-JSON data), and `vibe_contract_text.py` and `skill_split.py`, the text helpers
-they share. Runtime helpers and tests live alongside their owning skills, or under
-`shared/` when reused across skills. They include vibe session and prototype records, the triage classifier and its manifest (recommendations off by default), local-plan publication guards, bundled
-persistent writer state, Claude launch/resume and shared main-sync publication
-helpers, handoff checks, sweep ownership and worker recovery, and the
-work-report renderer, the WS3 control scripts (`setup-ctl`, `env-ctl`, `graph-pack`, `guardrails-gate`, `verify-run`, `req-gather`, `prototype-share`, `ticket-ctl` and the handoff inventory's `bundle`) that run a worker's mechanical steps with no model, each optional for the worker that uses it, and the WS8 load-aware execution scripts (`heavy-budget`, `load-admission`, `lane-pool`, `verify-background`) that make `run-bounded` and `verify-run` cooperate under load, the fleet dispatch scripts (`dispatch-route`, `dispatch-budget`, `cloud-placement`, `writer-placement`), the Vibe `cloud-worker` command, and `references/` files split out of the handoff, vibe, quality-loop, guardrails and fleet-orchestrator text that each skill reads only when its stated condition holds (`skill-split.mjs` reads a split file whole for tests). Shared PR-monitor notification delivery and manual-QA
-browser helpers live in `closedloop-core`.
+runs `hooks/runtime.mjs` from the vibe a session uses. Skill commands forward to guards in `hooks/` and runtime modules in `lib/`. The package has no standalone commands, root shell scripts or production Python tools. Tests sit beside their owners; Python contract helpers and the generic scan live in `tools/python/`.
+
+The [vibe skill](skills/vibe/SKILL.md) documents session records, triage (recommendations off by default), optional WS3 controls and WS8 load admission. [Handoff](skills/handoff/SKILL.md) documents publication checks. [Fleet orchestration](skills/fleet-orchestrator/SKILL.md) covers dispatch and cloud validation. Shared PR notifications and manual-QA browser helpers live in `closedloop-core`.

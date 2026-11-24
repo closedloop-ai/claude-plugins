@@ -21,8 +21,8 @@ const DISPATCH = Object.freeze(Object.assign(Object.create(null), {
   SessionStart: async () => (await import("./session-start.mjs")).sessionStart,
 }));
 
-/** The output for hook `event` with stdin `input`, or null (contract 1). */
-export async function runHook({ event, input, report = (line) => process.stderr.write(`${line}\n`) }) {
+/** Contract 1 output. Capable writers accept an optional afterOutput callback registration for pending receipts. */
+export async function runHook({ event, input, report = (line) => process.stderr.write(`${line}\n`), afterOutput }) {
   const load = DISPATCH[event];
-  return load ? (await load())(input ?? {}, report) ?? null : null;
+  return load ? (await load())(input ?? {}, report, afterOutput) ?? null : null;
 }

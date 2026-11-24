@@ -34,6 +34,7 @@ export function classifyHandoffPath({
   declaration = null,
   prototype = null,
   portableSurfaceAllowed = false,
+  pathCitations = [],
   retiredDeletion = false,
 }) {
   if (isForbiddenHandoffPath(policy, file)) {
@@ -54,22 +55,27 @@ export function classifyHandoffPath({
     prototype,
     portableSurfaceAllowed,
   });
+  // A citation changes location eligibility only. Test phase, snapshot and retirement rules still apply.
+  const citation = allowedPath ? undefined : pathCitations.find(entry => entry.path === file.path);
+  const cited = citation ? { citation } : {};
   if (isTestFile(file.path)) {
-    const testLocationAllowed = allowedPath || Boolean(policy?.rootTests && isRootTest(file.path));
+    const rootTest = Boolean(policy?.rootTests && isRootTest(file.path));
+    const testLocationAllowed = allowedPath || rootTest || citation;
     if (file.status === "M" && !isSnapshot(file.path) && testLocationAllowed) {
-      return { disposition: PathDisposition.Allowed, reason: "test-repair" };
+      return { disposition: PathDisposition.Allowed, reason: "test-repair", ...(rootTest ? {} : cited) };
     }
     if (file.status === "D" && retiredDeletion && testLocationAllowed) {
-      return { disposition: PathDisposition.Allowed, reason: "retired-test" };
+      return { disposition: PathDisposition.Allowed, reason: "retired-test", ...(rootTest ? {} : cited) };
     }
-    const pullRequestTest = allowedPath || Boolean(policy?.rootTests && isRootTest(file.path) && TEST_SPEC_PATTERN.test(file.path));
+    const standard = allowedPath || (rootTest && TEST_SPEC_PATTERN.test(file.path));
+    const pullRequestTest = standard || citation;
     return phase === "pull-request" && pullRequestTest
-      ? { disposition: PathDisposition.Allowed, reason: "pull-request-test" }
+      ? { disposition: PathDisposition.Allowed, reason: "pull-request-test", ...(standard ? {} : cited) }
       : { disposition: PathDisposition.Outside, reason: "test-not-admitted" };
   }
-  return allowedPath
-    ? { disposition: PathDisposition.Allowed, reason: "allowed-path" }
-    : { disposition: PathDisposition.Outside, reason: "outside-allowed" };
+  if (allowedPath) return { disposition: PathDisposition.Allowed, reason: "allowed-path" };
+  if (citation) return { disposition: PathDisposition.Allowed, reason: "ticket-criterion", citation };
+  return { disposition: PathDisposition.Outside, reason: "outside-allowed" };
 }
 
 /** A declaration can admit edits to an exact protected basename. Deletions, protected directories and the declaration stay protected. */

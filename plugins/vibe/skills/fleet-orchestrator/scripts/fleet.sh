@@ -145,9 +145,18 @@ has_option() {
   return 1
 }
 
+# Bind a fresh thread's ticket, worktree and host on the program board before dispatch.
+admit_writer_turn() {
+  local name=$1 prompt=$2 tree=$3 ticket=$4
+  local admission=(--launch-brief "$prompt" --where "$where" --runtime codex)
+  [ -z "$tree" ] || admission+=(--worktree "$tree")
+  [ -z "$ticket" ] || admission+=(--tickets "$ticket")
+  node "$here/board.mjs" "$orch" writer "$name" "${admission[@]}" >/dev/null
+}
+
 session() {
   [ $# -ge 2 ] || usage
-  local command=$1 name=$2 i prompt= target_cwd= plugin_root expected_version locked=
+  local command=$1 name=$2 i prompt= target_cwd= ticket= plugin_root expected_version locked=
   shift 2
   if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
     echo "fleet: session name must be letters, digits, dot, dash or underscore" >&2
@@ -183,6 +192,8 @@ session() {
       --prompt-file=*) prompt=${args[$i]#--prompt-file=} ;;
       --cwd) target_cwd=${args[$((i + 1))]:-} ;;
       --cwd=*) target_cwd=${args[$i]#--cwd=} ;;
+      --ticket) ticket=${args[$((i + 1))]:-} ;;
+      --ticket=*) ticket=${args[$i]#--ticket=} ;;
     esac
   done
   plugin_root=$(cd "$skills/.." && pwd)
@@ -209,6 +220,8 @@ session() {
   fi
   if [ "$where" = local ]; then
     local state=${LOCAL_STATE_DIR:-$orch/sessions}
+    # Board admission refuses an overlapping writer before any installed-plugin check can mask that refusal.
+    if [ "$command" = turn ] && [ ! -s "$state/$name.json" ]; then admit_writer_turn "$name" "$prompt" "$target_cwd" "$ticket"; fi
     case "$command" in
       turn|steer|reload)
         if ! plugin_root=$(node "$here/codex-session.mjs" verified-plugin-root); then
@@ -284,6 +297,7 @@ session() {
       echo "fleet: prepared remote marker already exists or cannot be created; run remote session recover-marker $name" >&2
       return 2
     fi
+    if [ ! -f "$marker" ]; then admit_writer_turn "$name" "$prompt" "$target_cwd" "$ticket"; fi
     if [ -f "$marker" ]; then resumed=1; fi
     owner_started=$(ps -o lstart= -p "$$" 2>/dev/null) || owner_started=
     if [ -z "$owner_started" ]; then

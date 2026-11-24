@@ -14,7 +14,7 @@ import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { evidenceFingerprint, evidenceObject, readEvidence } from "./handoff-evidence.mjs";
 import { reviewReceiptProblems } from "./review-receipts.mjs";
 import { missingTicketNames } from "./ticket-names.mjs";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { readSessionRecord, sessionLiveTicket } from "../../vibe/scripts/session-record.mjs";
 import { BodyFileError, readPrBodyFile } from "./gate-override.mjs";
 import { decisionTableProblems } from "./decision-table-gate.mjs";
 
@@ -63,6 +63,23 @@ export function gatePath(worktree) {
   return path.join(gitDir, GATE_FILE);
 }
 
+/** Recheck the ticket and private evidence that authorized each exceptional path at inventory time. */
+export function pathCitationProblem(worktree, citations = [], evidence = []) {
+  if (!citations.length) return null;
+  const session = readSessionRecord(worktree);
+  if (session?.status !== "active" || citations.some(row => row.ticket !== sessionLiveTicket(session))) {
+    return "path citation belongs to a different or inactive ticket session";
+  }
+  if (citations.some(row => row.source === "session" && !session.pathCitations?.some(claim =>
+    claim.ticket === row.ticket && claim.path === row.path && claim.cites === row.criterion && claim.text === row.text))) {
+    return "the session's recorded path citation changed since inventory";
+  }
+  if (!evidence.length || evidence.some(saved => evidenceFingerprint(saved.path).sha256 !== saved.sha256)) {
+    return "path citation evidence changed since inventory";
+  }
+  return null;
+}
+
 /** Current gate problem, or null when the final inventory covered this source. */
 export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
   try { readPrBodyFile(bodyFile, 8 * 1024 * 1024); }
@@ -77,6 +94,8 @@ export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
       return "handoff gate has no passing pull-request inventory for this branch";
     }
     if (!sameSource(record.source, sourceIdentity(worktree))) return "handoff gate is stale for the current source";
+    const citationProblem = pathCitationProblem(worktree, record.pathCitations, record.pathCitationEvidence);
+    if (citationProblem) return citationProblem;
     const tableProblems = decisionTableProblems(worktree);
     if (tableProblems.length) return `handoff decision table needs reconciliation: ${tableProblems.join("; ")}`;
     if (base && base.replace(/^origin\//, "") !== record.base?.name) return "PR base does not match the handoff gate";

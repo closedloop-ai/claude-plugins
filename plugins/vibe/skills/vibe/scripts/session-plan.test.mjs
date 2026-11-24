@@ -125,6 +125,7 @@ test("ISS-14217: plan publication evidence uses one writable machine-private dir
     planDocument: path.join(paths.root, "vibe-live-plan-document.json"),
     childEvidence: path.join(paths.root, "vibe-child-evidence.json"),
     liveTicket: path.join(paths.root, "vibe-live-ticket.md"),
+    liveTicketDocument: path.join(paths.root, "vibe-live-ticket-document.json"),
     users: path.join(paths.root, "vibe-users"),
     flagSnapshot: path.join(paths.root, "vibe-flag-snapshot.new.json"),
     dispatchInputs: path.join(paths.root, "vibe-dispatch-inputs.json"),

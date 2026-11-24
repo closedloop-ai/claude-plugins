@@ -153,6 +153,14 @@ entry continues while it waits.
 
 ## File justification check (diff budget)
 
+For a file outside the repository allowlist, the writer cites the exact relative
+path and criterion in `plan.justifications`, with the bound ticket slug as the
+criterion's source. If the card is already locked, record it with
+`vibe-sessions.mjs touch --worktree <wt> --cite-path <file> --criterion AC-n`.
+Have the ticket worker refresh the complete bound ticket read before intake.
+The current criterion must name that literal file. Forbidden paths retain their
+existing protection. The inventory supplies the citation line for the PR body.
+
 The `locked` plan lists the files the change owns (`plan.ownerFiles`) and the
 files it deliberately leaves alone (`plan.notTouched`). Requirements come
 first: every criterion is met before the diff is judged small. There is no cap

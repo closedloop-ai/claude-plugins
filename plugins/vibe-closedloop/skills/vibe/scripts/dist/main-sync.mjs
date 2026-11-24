@@ -224034,7 +224034,7 @@ var NEVER = INVALID;
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module2 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { absoluteGitDir, assertVibeCreatedWorktree, git, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module2;
+var { absoluteGitDir, assertVibeCreatedWorktree, git, readSessionRecord, readSessionRecordFile, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module2;
 
 // ../../plugins/vibe/skills/vibe/scripts/area-paths.mjs
 var { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
