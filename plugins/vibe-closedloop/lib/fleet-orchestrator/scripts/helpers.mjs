@@ -520,10 +520,13 @@ function prepareTransition(action, entry, values, orchDir) {
     return () => { throw error; };
   }
   return () => {
-    if (readLease) result.writerLease = readLease();
-    // Recheck only the ref while holding the ledger lock. A full source scan belongs to preparation.
-    if (revision && git(revision.worktree, ["rev-parse", "HEAD"], { timeout: 1000 }) !== revision.head) {
-      throw new Error("helper HEAD changed during verification");
+    // Scratch leases belong to a private Git directory. Resolve it with HEAD in the same bounded read.
+    if (revision) {
+      const args = ["rev-parse", "HEAD"];
+      if (readLease) args.push("--absolute-git-dir");
+      const [head, ...directory] = git(revision.worktree, args, { timeout: 1000 }).split("\n");
+      if (head !== revision.head) throw new Error("helper HEAD changed during verification");
+      if (readLease) result.writerLease = readLease(directory.join("\n"));
     }
     for (const [file, version] of versions) {
       if (!isDeepStrictEqual(version, evidenceVersion(file))) throw new Error("helper evidence changed during verification");

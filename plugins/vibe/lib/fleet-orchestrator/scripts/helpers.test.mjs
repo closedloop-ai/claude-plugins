@@ -304,6 +304,39 @@ test('scratch helper start requires owner, exact project, finite TTL and label p
   assert.equal(kept.ownerToken, saved.ownerToken);
 });
 
+test('DT-03: scratch start rejects a different private Git directory at the same HEAD', (t) => {
+  const dir = tempDir(t);
+  const worktree = path.join(dir, 'original');
+  const sibling = path.join(dir, 'sibling');
+  const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  execFileSync(git, ['init', '-q', worktree]);
+  execFileSync(git, ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '--allow-empty', '-qm', 'base']);
+  execFileSync(git, ['-C', worktree, 'worktree', 'add', '-q', '--detach', sibling, 'HEAD']);
+  const resolve = (cwd, ...args) => execFileSync(git, ['-C', cwd, 'rev-parse', ...args], { encoding: 'utf8' }).trim();
+  assert.equal(resolve(worktree, 'HEAD'), resolve(sibling, 'HEAD'));
+  const originalDir = resolve(worktree, '--absolute-git-dir');
+  const siblingDir = resolve(sibling, '--absolute-git-dir');
+  assert.notEqual(originalDir, siblingDir);
+  writeFileSync(path.join(originalDir, 'vibe-session.json'), JSON.stringify({ createdAt: 'original', status: 'active' }));
+  assert.equal(existsSync(path.join(siblingDir, 'vibe-session.json')), false);
+  const ledger = path.join(dir, 'helpers.json');
+  writeFileSync(ledger, JSON.stringify({ existing: { name: 'existing', kind: 'other' } }));
+  const before = readFileSync(ledger);
+  // Resolve the locked compound query with real Git in the sibling checkout. Other operations see the original.
+  writeFileSync(path.join(dir, 'git'), `#!/bin/sh
+if [ "$*" = "rev-parse HEAD --absolute-git-dir" ] && [ -f "${dir}/helpers.lock/owner.json" ]; then
+  exec "${git}" -C "${sibling}" "$@"
+fi
+exec "${git}" "$@"
+`, { mode: 0o755 });
+  const result = spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'start', 'scratch',
+    '--kind', 'scratch', '--owner', 'writer', '--ticket', 'ticket-one', '--worktree', worktree, '--project', 'scratch-dir', '--ttl-seconds', '600'],
+  { encoding: 'utf8', env: { ...process.env, HOME: dir, VIBE_E2E_DOCKER: emptyDockerProject(dir), PATH: dir + path.delimiter + process.env.PATH } });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /scratch worktree Git directory changed/);
+  assert.deepEqual(readFileSync(ledger), before);
+});
+
 test('ISS-14222 scratch lease refusal names both machine-local proof paths and keeps cwd and ended guards', (t) => {
   const dir = tempDir(t);
   const worktree = path.join(dir, 'remote-writer-worktree');
