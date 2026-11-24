@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, mutationPreload, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
-import { seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
+import { seedAlignedDecisionTable, writeCheckoutFile as write } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -97,8 +97,11 @@ test("target repository declaration admits claude-plugins source, tools, evals, 
 });
 
 test("the claude-plugins handoff exception admits only edits to its existing root AGENTS.md", (t) => {
+  // Existing repositories can still carry the older declaration without a root instruction allowance.
+  const legacyPolicy = JSON.parse(CLAUDE_PLUGIN_POLICY);
+  legacyPolicy.allowedFiles = legacyPolicy.allowedFiles.filter((file) => file !== "AGENTS.md");
   const { home, worktree } = setup(t, "root-instructions", {
-    [PATH_POLICY]: CLAUDE_PLUGIN_POLICY,
+    [PATH_POLICY]: JSON.stringify(legacyPolicy),
     "AGENTS.md": "Root instructions\n",
     "CLAUDE.md": "Load AGENTS.md\n",
     "plugins/vibe/AGENTS.md": "Nested instructions\n",
@@ -106,6 +109,7 @@ test("the claude-plugins handoff exception admits only edits to its existing roo
   git(worktree, ["config", "vibe.baseRef", "main"], home);
   write(worktree, "AGENTS.md", "Root instructions, edited\n");
   const inventory = (phase = "pull-request") => runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home).json;
+  write(worktree, PATH_POLICY, JSON.stringify({ ...legacyPolicy, allowedFiles: [...legacyPolicy.allowedFiles, "AGENTS.md"] }));
   for (const phase of ["handoff", "pull-request"]) {
     const result = inventory(phase);
     assert.equal(result.blocking.forbiddenPaths, true, JSON.stringify(result.forbidden));
@@ -428,12 +432,6 @@ test("ISS-14221 path policy treats bracket segments literally instead of as glob
   assert.deepEqual(result.json.changedFiles, [{ path: route, status: "A" }]);
   assert.equal(result.json.blocking.forbiddenPaths, true);
 });
-
-function write(worktree, file, content) {
-  const absolute = path.join(worktree, file);
-  mkdirSync(path.dirname(absolute), { recursive: true });
-  writeFileSync(absolute, content);
-}
 
 test('inventory rejects a mutation between source reads and receipt attribution', t => {
   const { root, home, worktree } = setup(t, 'inventory-read-race');

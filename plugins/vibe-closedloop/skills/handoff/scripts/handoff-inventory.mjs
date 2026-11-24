@@ -95,6 +95,8 @@
 // Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff|pull-request]
 //   [--ticket <file>] [--live-ticket] [--rulings <file>] [--body-only] [--overlap] [--prs-json <file>] [--body <file>] [--runs <file> --commit <sha>]
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { laneSourceBootstrap } from "./ci-job-shape.mjs";
 import { laneSourceShapeProblems } from "./pr-evidence-schema.mjs";
 import { execFileSync } from "node:child_process";
@@ -104,7 +106,7 @@ import { parseArgs } from "node:util";
 import { prototypeRecipe, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
 import { committedLocalPlans, isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
-import { readRetiredTests } from "../../vibe/scripts/retired-tests.mjs";
+import { readRetiredTests, wholeRetiredTestPaths } from "../../vibe/scripts/retired-tests.mjs";
 import { sessionPlanEvidencePaths } from "../../vibe/scripts/session-plan.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
@@ -112,7 +114,7 @@ import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-s
 import { unexplainedLockfileEntries } from "./lockfile-manifest.mjs";
 import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs";
 import { runDiffRules, sessionInternalIds } from "./diff-rules.mjs";
-import { hashParts, readInventoryCache, rulesVersion, writeInventoryCache } from "./inventory-cache.mjs";
+import { fileRuleCache, hashParts, readInventoryCache, rulesVersion, writeInventoryCache } from "./inventory-cache.mjs";
 import { buildInventoryBundle } from "./inventory-bundle.mjs";
 import { isPortableSurfaceAllowlistEdit, portableSurfaceChecker } from "./prototype-allowlist.mjs";
 import { loadOpenPrs, proofCorpusBase, pullRequestFacts } from "./pr-facts.mjs";
@@ -127,6 +129,7 @@ import {
 import { localFixPaths } from "./local-fix-paths.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
+const { boundEvidenceReader, readEvidence } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { readSessionRecord, sessionRecordPath } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -163,6 +166,8 @@ const { values } = parseArgs({
     "prs-json": { type: "string" },
     body: { type: "string" },
     runs: { type: "string" },
+    "runs-sha256": { type: "string" },
+    "bound-inputs": { type: "boolean" },
     commit: { type: "string" },
     "body-only": { type: "boolean" },
     out: { type: "string" },
@@ -213,15 +218,15 @@ const result = withStableSource(worktree, (source) => {
   const planPrefix = sessionLocalPlanPrefix(worktree);
   const localPlans = allChangedFiles.filter((file) => isLocalPlanPath(file.path, planPrefix));
   const trackedLocalPlans = [...new Set([
-    ...(planPrefix ? git(["ls-files", "--", planPrefix]).split("\n") : []),
-    ...committedLocalPlans(git, planPrefix),
+    ...(planPrefix ? readGitInventory(worktree, ["ls-files", "--", planPrefix]).trim().split("\n") : []),
+    ...committedLocalPlans(worktree, planPrefix),
   ])].filter(Boolean);
   const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.path) && !isLocalPlanPath(file.path, planPrefix));
   const localFixes = allChangedFiles
     .filter((file) => localFixTickets.has(file.path))
     .map((file) => ({ ...file, ticket: localFixTickets.get(file.path) }));
   const retiredRecord = readRetiredTests(worktree);
-  const retiredFiles = new Set(retiredRecord.filter((entry) => entry.case === undefined).map((entry) => entry.path));
+  const retiredFiles = wholeRetiredTestPaths(retiredRecord);
   const changedStatus = new Map(changedFiles.map((file) => [file.path, file.status]));
   const retiredTests = retiredRecord.map((entry) => ({ ...entry, status: changedStatus.get(entry.path) ?? null }));
   const shrinkOnlyAllowlists = changedFiles.filter((file) => isShrinkOnlyEdit(file));
@@ -276,16 +281,17 @@ const result = withStableSource(worktree, (source) => {
     changedFiles.some((file) => STORY_PATTERN.test(file.path));
   const { v1Stories, compileOnlyV1Repairs } = findV1Stories(changedFiles);
   const retitledStories = findRetitledStories(changedFiles);
+  const localFindings = cached ? null : fileRuleCache(gitDir, cacheKey);
   const computed = cached ?? {
     diffRules: runDiffRules({ worktree, base: baseCommit, exclude: new Set(localFixTickets.keys()), isFrozenStory: isV1Story,
       storyReplacements: new Set((Array.isArray(record?.storyReplacements) ? record.storyReplacements : []).map((entry) => entry?.path)),
-      phase: values.phase,
+      phase: values.phase, fileRuleCache: localFindings,
     }),
     ...(values.phase === "build" ? {} : { bundle: buildBundle() }),
   };
   let inventoryCacheProblem;
   if (!cached) {
-    try { writeInventoryCache(gitDir, cacheKey, computed); }
+    try { localFindings.save(); writeInventoryCache(gitDir, cacheKey, computed); }
     catch (error) { inventoryCacheProblem = `the inventory could not be cached: ${error.code ?? error.message}`; }
   }
   const { diffRules } = computed;
@@ -380,10 +386,12 @@ const result = withStableSource(worktree, (source) => {
     const { probedAt: _probedAt, ...binding } = sessionBinding(worktree) ?? {};
     const recordInputs = [record?.localFixes, record?.storyReplacements, record?.flagKeys, record?.vercel?.storybookUrl,
       record?.stack?.storybookUrl].map((value) => value ?? null);
+    const context = [baseCommit, recordInputs, changeLog, sessionInternalIds(worktree, changeLog), binding,
+      typeof binding.root === "string" ? read(path.join(binding.root, "provider.json")) : null];
     return {
       head: source.head,
-      diffHash: hashParts([baseCommit, source.diffSha256, recordInputs, changeLog, sessionInternalIds(worktree, changeLog), binding,
-        typeof binding.root === "string" ? read(path.join(binding.root, "provider.json")) : null]),
+      diffHash: hashParts([source.diffSha256, ...context]),
+      contextHash: hashParts(context),
       rulesVersion: rulesVersion(),
       phase: values.phase,
     };
@@ -424,7 +432,7 @@ const result = withStableSource(worktree, (source) => {
       const [status, filePath] = line.split("\t");
       files.set(filePath, { path: filePath, status });
     }
-    const untracked = git(["ls-files", "--others", "--exclude-standard"]);
+    const untracked = readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard"]).trim();
     for (const filePath of untracked.split("\n").filter(Boolean)) {
       files.set(filePath, { path: filePath, status: "A" });
     }
@@ -456,7 +464,7 @@ const result = withStableSource(worktree, (source) => {
 
   /** Distinguish an absent declaration from a malformed one at one immutable commit. */
   function readPathPolicyAt(commit, kind, required) {
-    const files = git(["ls-tree", "-rz", "--name-only", commit]).split("\0")
+    const files = readGitInventory(worktree, ["ls-tree", "-rz", "--name-only", commit]).split("\0")
       .filter((file) => path.posix.basename(file) === PATH_POLICY_BASENAME);
     if (files.length === 0) return { policy: null, file: null, problem: null, source: null, missing: true };
     if (files.length !== 1) {
@@ -469,7 +477,7 @@ const result = withStableSource(worktree, (source) => {
         problem: `${required}; found ${file} in ${kind} ${commit}, but the declaration must be at repository root (${PATH_POLICY_BASENAME}).` };
     }
     try {
-      const policy = JSON.parse(git(["show", `${commit}:${file}`]));
+      const policy = capturedJson(git(["show", `${commit}:${file}`]));
       const problem = pathPolicyProblemFor(policy);
       return problem ? { policy: null, file, source: { kind, commit }, problem: `${file}: ${problem}. ${required}.` }
         : { policy, file, source: { kind, commit }, problem: null };
@@ -531,8 +539,12 @@ const result = withStableSource(worktree, (source) => {
   }
 
   function classifyPath(file) {
+    let declaration = null;
     if (file.path === PATH_POLICY_BASENAME && file.status === "M") {
       try {
+        declaration = JSON.parse(readWorktreeFile(file.path));
+        const ownPolicy = classifyHandoffPath({ file, phase: values.phase, policy: pathPolicy, repository, declaration });
+        if (ownPolicy.reason === "publisher-root-instructions") return ownPolicy;
         const target = advertisedRemoteDefault({ fresh: true, branch: getComparison().branch });
         if (laneSourceBootstrap(worktree, baseCommit, target.commit)) return { disposition: PathDisposition.Allowed, reason: "lane-source-bootstrap" };
       } catch { /* Unverified target never authorizes a protected declaration edit. */ }
@@ -541,7 +553,7 @@ const result = withStableSource(worktree, (source) => {
       file,
       phase: values.phase,
       policy: pathPolicy,
-      repository,
+      repository, declaration,
       prototype: { owned: prototype, slug: record?.slug },
       portableSurfaceAllowed: portableSurfaceEditAllowed(file),
       retiredDeletion: isRetiredDeletion(file),
@@ -591,7 +603,7 @@ const result = withStableSource(worktree, (source) => {
     try {
       const after = JSON.parse(readFileSync(path.join(worktree, PATH_POLICY_BASENAME), "utf8"));
       if (after.laneSource?.kind === "github-workflow" && /^[a-f0-9]{40}$/.test(record.baseCommit ?? "")) {
-        const before = JSON.parse(git(["show", `${record.baseCommit}:${PATH_POLICY_BASENAME}`]));
+        const before = capturedJson(git(["show", `${record.baseCommit}:${PATH_POLICY_BASENAME}`]));
         bootstrap = !Object.hasOwn(before, "laneSource");
       }
     } catch { /* Normal repositories keep their existing comparison path. */ }
@@ -760,8 +772,9 @@ process.exitCode = result.ok ? 0 : 1;
  */
 function readInputs() {
   const liveTicket = values["live-ticket"] ? sessionPlanEvidencePaths(worktree).liveTicket : undefined;
+  const primary = values["bound-inputs"] ? boundEvidenceReader(JSON.parse(readFileSync(0, "utf8"))) : file => readFileSync(file, "utf8");
   const read = (file, what) => {
-    try { return readFileSync(file, "utf8"); }
+    try { return primary(file); }
     catch (error) {
       const ticketFix = what === "ticket" ? ` The ticket worker saves the live ticket at ${sessionPlanEvidencePaths(worktree).liveTicket} ` +
         "(session-plan.mjs paths --worktree); run its handoff mode first, then pass --live-ticket." : "";
@@ -770,7 +783,9 @@ function readInputs() {
   };
   let runs;
   if (values.runs) {
-    const text = read(values.runs, "runs");
+    let text;
+    try { text = readEvidence(values.runs, values["runs-sha256"] ? { path: values.runs, sha256: values["runs-sha256"] } : undefined).text; }
+    catch (error) { fail("Cannot verify the runs file: " + error.message); }
     try { runs = JSON.parse(text); } catch (error) { fail(`The runs file ${values.runs} is not JSON: ${error.message}.`); }
   }
   return {

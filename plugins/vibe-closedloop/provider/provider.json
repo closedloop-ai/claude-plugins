@@ -304,6 +304,21 @@
           "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
           "DEVOPS_CLOSEDLOOP_APP_PWD"
         ],
+        "stackCommands": [
+          {
+            "prefix": [
+              "pnpm",
+              "control",
+              "up",
+              "web"
+            ],
+            "option": "--stack",
+            "value": "compose"
+          }
+        ],
+        "stackProducers": [
+          "e2e/run-desktop-sync-harness.sh"
+        ],
         "slotCommand": "~/vibe-remote/e2e-slot.sh",
         "slotUsage": "Usage: e2e-slot.sh [--head <sha>] <owner-label> <command...>",
         "desktopSpecs": "apps/desktop/"
@@ -312,7 +327,8 @@
         "generated": [
           "^(?:\\.closedloop-ai/\\.env\\.setup|\\.biome-noscan\\.jsonc)$",
           "^apps/desktop/src/(?:main/database/(?:generated|migration/migrations-manifest\\.ts)|main/docs-help/docs-bundle-manifest\\.ts|shared/(?:auth-handoff-assets\\.generated\\.ts|build-info\\.ts))$",
-          "^apps/web/\\.source$"
+          "^apps/web/\\.source$",
+          "^apps/desktop/(?:playwright-report-e2e/data/[0-9a-f]{40}|test-results-e2e/[^/]+/[^/]+)\\.(?:md|png)$"
         ],
         "publishedPlans": "^\\.closedloop-ai/(?:vibe-plans|plans)(?:/.*)?$"
       },
@@ -526,7 +542,8 @@
         "reportOutputs": [
           "apps/desktop/playwright-report-e2e/index.html",
           "apps/desktop/playwright-report-e2e/results.json",
-          "apps/desktop/playwright-report-e2e/dd-quarantine.json"
+          "apps/desktop/playwright-report-e2e/dd-quarantine.json",
+          "apps/desktop/test-results-e2e/.last-run.json"
         ],
         "runner": [
           "pnpm",
@@ -657,6 +674,20 @@
           "workflow": ".github/workflows/e2e-test.yml"
         },
         "testHistory": "^apps/desktop/test/"
+      },
+      "cloudValidation": {
+        "toolRoot": "plugins/vibe-closedloop",
+        "desktopRoot": "apps/desktop",
+        "apiDirectory": "apps/api",
+        "apiTestPattern": "(?:^|[\\s;&|])pnpm(?: +--silent)? +(?:(?:--filter|-F)(?:=| +)[\"']?(?:api|@repo/api|\\.?/?apps/api)[\"']?|(?:--dir|-C)(?:=| +)[\"']?\\.?/?apps/api[\"']?) +(?:run +)?test(?:\\s|$)",
+        "apiFixture": "apps/api/.env.test",
+        "apiSetup": "apps/api/__tests__/setup.ts",
+        "apiWorkflow": ".github/workflows/pr-test.yml",
+        "rootServices": [
+          "postgresql",
+          "redis-server"
+        ],
+        "apiWorkflowPattern": "^\\s*run:\\s+pnpm\\s+--(?:filter(?:=| )api|dir(?:=| )apps/api)\\s+[^\\n]*--env-file(?:=| )apps/api/\\.env\\.test(?:\\s|$)"
       }
     },
     "tickets": {
@@ -683,7 +714,6 @@
       },
       "readOperations": [
         "get_document",
-        "get_document_version",
         "get_document_content",
         "get_document_comments",
         "search",
@@ -693,9 +723,7 @@
         "get_me",
         "list_projects",
         "get_project",
-        "list_artifact_links",
-        "list_templates",
-        "get_template"
+        "list_artifact_links"
       ],
       "recordOperations": [
         "create_document",
@@ -777,6 +805,17 @@
           "share": [
             "create_document_version"
           ]
+        }
+      },
+      "projectTracker": {
+        "origin": "https://app.closedloop.ai",
+        "operations": {
+          "identity": "get-me",
+          "projects": "list-projects",
+          "project": "get-project",
+          "ticket": "get-document",
+          "create": "create-document",
+          "update": "update-document"
         }
       }
     },

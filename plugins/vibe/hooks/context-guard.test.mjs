@@ -47,7 +47,7 @@ function runScript(script, input, env) {
 }
 
 test("PostToolUse runs the context guard", () => {
-  assert.deepEqual(POST_TOOL_USE_GUARDS.map((guard) => guard.name), ["context-guard"]);
+  assert.deepEqual(POST_TOOL_USE_GUARDS.map((guard) => guard.name), ["ticket-project-observation", "context-guard"]);
 });
 
 test("launched without the window variable, the operator is told once how to relaunch with the file's window", (t) => {

@@ -221,6 +221,7 @@ test("a session checkout's own plugin source is a script root; another checkout'
   };
   const checkout = path.join(dir, "checkout");
   const own = pluginSource(checkout);
+  writeFileSync(path.join(own, "skills", "vibe", "scripts", "branch-new.mjs"), "export {};\n");
   const other = pluginSource(path.join(dir, "other-checkout"));
   record(dir, { status: "current", loadedSkill: loaded(dir) });
   const send = (message) => pluginVersionGuard({ tool_name: "SendMessage", session_id: SESSION, cwd: checkout,
@@ -231,4 +232,16 @@ test("a session checkout's own plugin source is a script root; another checkout'
   assert.match(send(`Run ${path.join(other, "skills", "vibe", "scripts", "branch-new.mjs")}.`)?.reason ?? "",
     /skills\/vibe\/scripts\/branch-new\.mjs: plugin script does not exist in installed vibe/,
     "a plugin root in a checkout that is not the session's is checked against the installed release");
+});
+
+test("a SendMessage in a session whose provider binding is disconnected is refused with the declared connection keys", (t) => {
+  const dir = home(t);
+  const provider = { state: "bound-disconnected", connectionsNeeded: [{ name: "tracker", check: "mcp tracker get-me" }, { name: "graph", check: "mcp graph sync_status" }] };
+  record(dir, { status: "current", loadedSkill: loaded(dir), provider });
+  const send = { tool_name: "SendMessage", session_id: SESSION, cwd: process.cwd(), tool_input: { to: "writer", message: "continue" } };
+  const refused = pluginVersionGuard(send, dir);
+  assert.equal(refused?.decision, "deny");
+  assert.match(refused.reason, /--connection tracker=<state> --connection graph=<state>/);
+  record(dir, { status: "current", loadedSkill: loaded(dir), provider: { ...provider, state: "bound" } });
+  assert.equal(pluginVersionGuard(send, dir), null, "a bound provider lets the message through");
 });

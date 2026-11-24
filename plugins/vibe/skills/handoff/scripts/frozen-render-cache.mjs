@@ -24,7 +24,7 @@ const FONT_DIRECTORIES = Object.freeze({
   linux: ["/usr/share/fonts", "/usr/local/share/fonts", path.join(homedir(), ".fonts"), path.join(homedir(), ".local", "share", "fonts")],
   win32: [path.join(process.env.WINDIR ?? "C:\\Windows", "Fonts")],
 });
-const RENDERER_SOURCES = ["frozen-render.mjs", "frozen-render-base.mjs", "png-diff.mjs", "../../vibe/scripts/story-play-verdict.mjs"]
+const RENDERER_SOURCES = ["frozen-render.mjs", "frozen-render-base.mjs", "frozen-render-settlement.mjs", "png-diff.mjs", "../../vibe/scripts/story-play-verdict.mjs"]
   .map((file) => fileURLToPath(new URL(file, import.meta.url)));
 
 /** The default cache directory: `$XDG_CACHE_HOME/vibe/frozen-render`, else `~/.cache/vibe/frozen-render`. */

@@ -29,14 +29,20 @@
 // (the reviewer's judgment checks are always listed as skipped and do not
 // change the exit code; they are the reviewer's by design).
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { execCommand, stdoutOf, tailLines, toolDidNotRun } from "../../vibe/scripts/ws3-exec.mjs";
-import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
+import { localPlanPaths, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
-import { parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
+import { readRetiredTests } from "../../vibe/scripts/retired-tests.mjs";
+import { assertionStatements, movedTestCases, regularTestText } from "./test-repair-moves.mjs";
+import { supersededAssertionSpans, testSupersessionApprovals } from "./test-supersession-evidence.mjs";
+import { isGeneratedFile, linguistGenerated } from "./generated-files.mjs";
+import { LINE_CEILING, lineCeilingFailure, sourceLineCount } from "./source-line-ceiling.mjs";
+import { parseUnifiedDiff, runDiffRules, untrackedAsAdded } from "./diff-rules.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -76,7 +82,9 @@ const RENAME_STATEMENT = /^[ \t]*(?:import\b[^;]*?(?:\bfrom\s*)?["'][^"']+["']|e
 const CONSOLE_CALL = /\bconsole\.(?:log|warn|error|debug|info)\(/;
 const RAW_ANCHOR = /<a\s[^>]*href=["']\/(?!\/)/;
 const INLINE_IMPORT = /(?<![\w.])import\(/;
-const LINE_CEILING = 1000;
+const STORY_DEBT_REVIEW_START = Math.floor(LINE_CEILING * 0.9);
+const STORY = /\.stories\.[jt]sx?$/;
+const DEBT_LINE = /^\s*(?:[-*]\s+)?Debt: ([^;]+); added: ([^;]+); reused instead: ([^;]+); reason: (\S.+?)\s*$/;
 const ASSERTION = /\b(?:expect|assert\w*|should)\b[.(]|\.(?:toBe|toEqual|toStrictEqual|toMatch|toContain|toHaveBeenCalled\w*|toHave\w+|toThrow\w*|toBeTruthy|toBeFalsy|toBeNull|toBeDefined|toBeUndefined)\(/;
 const EXPORT_NAME = /^\s*export\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?(?:const|let|function\*?|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/;
 const MIN_EXPORT_NAME = 4;
@@ -199,35 +207,7 @@ export function scanConventions(files, readHead = () => undefined, unread = []) 
   return found;
 }
 
-const squash = (text) => text.replace(/\s+/g, " ").replace(/,\s*([)\]}])/g, "$1").replace(/\s*([()[\]{},;])\s*/g, "$1").replace(/;$/, "").trim();
-const ASSERTION_START = /\b(?:expect|assert[\w.]*)\s*[.(]/g;
-
-/** The assertion statements of `source` (`expect(...)...;` across lines), each with its starting line and whitespace-free form. */
-export function assertionStatements(source) {
-  const found = [];
-  let resume = 0;
-  for (const match of source.matchAll(ASSERTION_START)) {
-    if (match.index < resume) continue;
-    let depth = 0;
-    let quote = null;
-    let end = source.length;
-    for (let at = match.index; at < source.length; at += 1) {
-      const char = source[at];
-      if (quote) {
-        if (char === "\\") at += 1;
-        else if (char === quote) quote = null;
-      } else if (char === '"' || char === "'" || char === "`") quote = char;
-      else if ("([{".includes(char)) depth += 1;
-      else if (")]}".includes(char)) depth -= 1;
-      else if (depth === 0 && (char === ";" || (char === "\n" && /[)\]}]\s*$/.test(source.slice(match.index, at))))) { end = at; break; }
-      if (depth < 0) { end = at; break; }
-    }
-    const raw = source.slice(match.index, end);
-    found.push({ line: source.slice(0, match.index).split("\n").length, raw: raw.replace(/\s+/g, " ").trim(), norm: squash(raw) });
-    resume = end;
-  }
-  return found;
-}
+export { assertionStatements };
 
 /** The words of `after` that are not in `before`, for the evidence of a changed assertion. */
 function changedWords(before, after) {
@@ -238,18 +218,24 @@ function changedWords(before, after) {
 /**
  * An edited test file may only be repaired so it compiles. Assertion statements (not lines, so a call split
  * across lines is one statement) of the base and the head are compared, whitespace and trailing commas ignored:
- * a changed, removed or added assertion is reported with the words that differ. A file whose base or head text
- * cannot be read is returned under `unevaluated`, never counted as clean.
+ * a changed, removed or added assertion is reported with the words that differ. An exact complete case moved
+ * to a unique added sibling is compared as a relocation. Unreadable base or head text is `unevaluated`.
  */
-export function scanTestRepairs(files, readBase, readHead) {
+export function scanTestRepairs(files, readBase, readHead, readMoveHead = readHead, supersessions = {}) {
   const found = [];
   const unevaluated = [];
-  for (const file of files.filter((entry) => (entry.status === "M" || entry.status === "R") && isTestFile(entry.path) && SOURCE.test(entry.path))) {
+  const tests = files.filter((entry) => isTestFile(entry.path) && SOURCE.test(entry.path));
+  for (const file of tests.filter((entry) => entry.status === "M" || entry.status === "R")) {
     const before = readBase(file.oldPath ?? file.path);
     const after = readHead(file.path);
     if (typeof before !== "string" || typeof after !== "string") { unevaluated.push(file.path); continue; }
-    const base = assertionStatements(before);
-    const head = assertionStatements(after);
+    const moves = movedTestCases(file, before, readMoveHead(file.path), tests, readMoveHead);
+    const changes = supersededAssertionSpans(file, before, after, supersessions);
+    // Mask only exact proved spans without changing any surrounding assertion offsets.
+    const mask = (text, spans) => spans.reduce((value, { start, end }) =>
+      value.slice(0, start) + value.slice(start, end).replace(/[^\r\n]/g, " ") + value.slice(end), text);
+    const base = assertionStatements(mask(before, [...moves, ...changes.map(({ prior }) => prior)]));
+    const head = assertionStatements(mask(after, changes.map(({ current }) => current)));
     const claim = (list, other) => {
       const counts = new Map();
       for (const item of other) counts.set(item.norm, (counts.get(item.norm) ?? 0) + 1);
@@ -339,13 +325,37 @@ export function createGuardrailsGate({
     return found;
   }
 
-  function overCeiling({ files, worktree }) {
+  /** Measure new storyboard growth before the existing hard ceiling. */
+  function sizeFindings({ files, worktree, base, readHead, readBase }) {
     const found = [];
-    for (const file of files.filter((entry) => entry.status !== "D" && SOURCE.test(entry.path))) {
-      const full = path.join(worktree, file.path);
-      if (!exists(full)) continue;
-      const lines = read(full).split("\n").length;
-      if (lines > LINE_CEILING) found.push(finding(Check.Conventions, file.path, null, Severity.High, `file is ${lines} lines, over the ${LINE_CEILING}-line ceiling`, `${lines} lines`));
+    const evidence = () => {
+      const queried = git(worktree, ["rev-parse", "--absolute-git-dir"]);
+      const ledger = path.join(queried.stdout.trim(), "vibe-changes.md");
+      return queried.status === 0 && exists(ledger) ? read(ledger).split("\n").map((line) => DEBT_LINE.exec(line)).filter(Boolean) : [];
+    };
+    let debt;
+    const sources = files.filter((entry) => entry.status !== "D" && SOURCE.test(entry.path));
+    const generatedFiles = linguistGenerated(worktree, sources.map((file) => file.path), base);
+    const reader = { generatedFiles, head: readHead, base: readBase };
+    for (const file of sources) {
+      if (isGeneratedFile(reader, file.path)) continue;
+      const current = readHead(file.path);
+      if (current === undefined) continue;
+      const lines = sourceLineCount(current);
+      const prior = sourceLineCount(readBase(file.oldPath ?? file.path));
+      const ceiling = lineCeilingFailure(prior, lines);
+      if (ceiling) {
+        found.push(finding(Check.Conventions, file.path, null, Severity.High, ceiling, `${prior} → ${lines} lines`));
+        continue;
+      }
+      if (lines >= STORY_DEBT_REVIEW_START && STORY.test(file.path)) {
+        if (lines <= prior) continue;
+        debt ??= evidence();
+        const recorded = debt.some(([, kind, added, reused, reason]) => kind.trim() && added.includes(file.path) && reused.trim()
+          && !/^(?:\(?orchestrator|agent|writer)\b/i.test(reason));
+        if (!recorded) found.push(finding(Check.Conventions, file.path, null, Severity.High,
+          `story grew from ${prior} to ${lines} lines near the ${LINE_CEILING}-line ceiling; split it or record the exact Debt line`, `${prior} → ${lines} lines`));
+      }
     }
     return found;
   }
@@ -367,7 +377,11 @@ export function createGuardrailsGate({
       return report;
     }
     const diffText = git(worktree, ["diff", "--no-color", "--unified=0", "-M", baseSha]).stdout;
-    const files = parseUnifiedDiff(diffText, sessionLocalPlanPrefix(worktree));
+    const planPrefix = sessionLocalPlanPrefix(worktree);
+    const untracked = readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard", "-z"], { run });
+    if (untracked.status !== 0) throw new Error("git could not enumerate new files for the guardrails gate");
+    const files = [...parseUnifiedDiff(diffText, planPrefix),
+      ...untrackedAsAdded(worktree, planPrefix, { files: untracked.stdout, read })];
     const changedPaths = new Set(files.filter((file) => file.status !== "D").map((file) => file.path));
     const scripts = exists(path.join(worktree, "package.json")) ? (JSON.parse(read(path.join(worktree, "package.json")))?.scripts ?? {}) : {};
 
@@ -399,9 +413,14 @@ export function createGuardrailsGate({
       return shown.status === 0 ? shown.stdout : undefined;
     };
     const unreadConventions = [];
-    handle.add([...scanConventions(files, readHead, unreadConventions), ...overCeiling({ files, worktree })]);
+    handle.add([...scanConventions(files, readHead, unreadConventions), ...sizeFindings({ files, worktree, base: baseSha, readHead, readBase })]);
     if (unreadConventions.length > 0) { report.checks_run.splice(report.checks_run.indexOf(Check.Conventions), 1); handle.skip(Check.Conventions, `partial: could not read the head text of ${unreadConventions.join(", ")}`); }
-    const repairs = scanTestRepairs(files, readBase, readHead);
+    let supersessions;
+    try {
+      const records = readRetiredTests(worktree).filter((entry) => entry.supersession);
+      if (records.length) supersessions = { records, base: baseSha, approvals: testSupersessionApprovals(read(localPlanPaths(worktree).decisionTable)) };
+    } catch { /* Without both records, the ordinary assertion findings still apply. */ }
+    const repairs = scanTestRepairs(files, readBase, readHead, (file) => regularTestText(worktree, file), supersessions);
     handle.add(repairs.findings);
     if (repairs.unevaluated.length > 0) handle.skip(Check.TestRepair, `partial: findings cover only the files it could read; could not read the base or head text of ${repairs.unevaluated.join(", ")}`);
     else handle.ran(Check.TestRepair);

@@ -67,13 +67,8 @@ record `lastCheck`, report "Seed is current with main (<sha>)", and stop.
 ## 2. Ticket
 
 On `DRIFT`:
-1. ClosedLoop: `get-me` for the assignee and `list-projects` for the current
-   week's project (the date-range name covering today). Use `search` for an
-   open ticket titled "Vibe seed refresh" in that project and reuse it if one
-   is open.
-2. Otherwise `create-document` (`type: ISSUE`, `status: IN_PROGRESS`, assigned
-   to you, title "Vibe seed refresh: <short drift summary>", body listing every
-   drift item).
+1. Read tracker `get-me`. Search open tickets titled "Vibe seed refresh" and reuse an existing match.
+2. Otherwise use the [saved backlog project flow](../vibe/SKILL.md) to create an assigned `ISSUE` in `BACKLOG` with the drift summary. When starting the fix, run its verified work-start transition to place it in the current week and set `IN_PROGRESS`.
 3. Save state with phase `fixing` and the drift list.
 
 ## 3. Fix
@@ -86,8 +81,9 @@ on a Mac through `pnpm vibe walk-linux` (a Linux container on the local
 Docker), on Linux through the native `pnpm vibe up --ci`, `pnpm vibe walk`,
 `pnpm vibe down` sequence. Save its worktree, branch and `Walk:` evidence line
 (route, web and Desktop screen counts, failures, result file) in state. A
-`DONE` without a `Walk:` line is not done: send it back to the fix worker. On
-`BLOCKED`, tell the operator the reason and stop; a refused walk (Docker VM too
+A `DONE` without a `Walk:` line is not done. Verified sourced
+walk-contract repairs are part of refresh. Save and pass any `Walk source:` to the PR worker.
+Ask about a product decision only on `NEEDS_PERSON`. On `BLOCKED`, tell the operator the reason and stop; a refused walk (Docker VM too
 small, the walk's AWS sign-in expired, another walk-linux run active)
 is reported with the tool's exact message, never as a pass and never worked
 around.
@@ -98,7 +94,7 @@ Commit the fix worker's changes with the subject
 `<ISS-slug>: Refresh the vibe seed for <summary>` (64 characters or fewer, so
 it stays within 72 once GitHub appends ` (#NNNN)`; no mention of AI tools).
 Then dispatch `vibe-seed-pr-worker` in open mode with the worktree, ticket,
-the fix worker's summary, and the `Walk:` evidence line, which goes into the
+the fix worker's summary, any verified `Walk source:`, and the `Walk:` evidence line, which goes into the
 PR's Test plan. It pushes and returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
 `projectId`, the branch as `branchName`, and the ticket's UUID as
 `sourceArtifactId`),
@@ -117,7 +113,7 @@ state, then act on it:
   in push mode with those threads and replies; it pushes, replies on each
   thread with the fixing commit, and resolves them. When the fix worker
   re-ran the walk, save its new `Walk:` line in state and pass it to push
-  mode, which updates the Test plan's walk line. A failure unrelated to
+  mode, which updates the Test plan's walk line and verified walk source when provided. A failure unrelated to
   the diff gets one re-run; a second failure gets a note to
   the operator instead of more re-runs.
 - Merge conflict: `vibe-seed-pr-worker` in sync mode (stage a merge of main

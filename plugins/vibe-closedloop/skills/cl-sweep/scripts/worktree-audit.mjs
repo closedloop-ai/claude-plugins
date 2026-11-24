@@ -9,6 +9,7 @@
 // The idea follows pstack's poteto-mode/scripts/worktree-audit.sh (MIT,
 // copyright 2026 Lauren Tan); this implementation is cl-sweep's own.
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -209,7 +210,7 @@ export function auditWorktrees(options) {
     let pr = null;
     if (options.gh !== false && worktree.branch) {
       try {
-        const rows = JSON.parse(run('gh', ['pr', 'list', '--head', worktree.branch, '--state', 'all', '--limit', '1', '--json', 'number,state,url'], repoTop) || '[]');
+        const rows = capturedJson(run('gh', ['pr', 'list', '--head', worktree.branch, '--state', 'all', '--limit', '1', '--json', 'number,state,url'], repoTop) || '[]');
         pr = rows[0] ?? { state: 'NONE' };
       } catch {
         pr = { state: 'UNKNOWN' };

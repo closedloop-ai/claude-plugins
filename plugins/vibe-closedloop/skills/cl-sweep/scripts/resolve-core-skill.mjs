@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
@@ -17,7 +18,7 @@ export const DISCOVERY_STAGE_TIMEOUT_MS = 20_000;
 export const DISCOVERY_TOTAL_TIMEOUT_MS = DISCOVERY_STAGE_TIMEOUT_MS * 4 + 2000;
 
 function jsonCommand(executable, args, input) {
-  return JSON.parse(execFileSync(executable, args, {
+  return capturedJson(execFileSync(executable, args, {
     input, encoding: 'utf8', timeout: DISCOVERY_STAGE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
     stdio: ['pipe', 'pipe', 'pipe'],
   }));
@@ -27,6 +28,16 @@ function jsonCommand(executable, args, input) {
 export function codexSkills(executable, cwd) {
   return codexAppServerRequest(executable, cwd, 'skills/list', { cwds: [cwd], forceReload: true },
     { timeoutMs: DISCOVERY_STAGE_TIMEOUT_MS, label: 'Codex skill discovery', clientName: 'closedloop_core_discovery' });
+}
+
+/** Find one enabled core-owned skill in the App Server's cwd-specific skills/list result. */
+export function enabledCoreSkillPath(result, name) {
+  const candidates = (result.data || []).flatMap(entry => entry.skills || []).filter(skill =>
+    skill.pluginId === CORE_ID && skill.name === name && skill.enabled === true && isAbsolute(skill.path || ''),
+  );
+  const paths = [...new Set(candidates.map(skill => skill.path))];
+  if (paths.length !== 1) throw new Error('Update closedloop-core: its enabled ' + name.split(':').at(-1) + ' skill is missing or ambiguous');
+  return paths[0];
 }
 
 /** Resolve only the core-owned monitor; unrelated or disabled names never satisfy the binding. */
@@ -53,12 +64,7 @@ export async function resolveCoreSkill(options = {}) {
       throw new Error('Install and enable closedloop-core@closedloop-ai before running this workflow');
     }
     const result = await codexSkills(executable, options.cwd || process.cwd());
-    const candidates = (result.data || []).flatMap(entry => entry.skills || []).filter(skill =>
-      skill.pluginId === CORE_ID && skill.name === SKILL_NAME && skill.enabled === true && isAbsolute(skill.path || ''),
-    );
-    const paths = [...new Set(candidates.map(skill => skill.path))];
-    if (paths.length !== 1) throw new Error('Update closedloop-core: its enabled gh-monitor-pr skill is missing or ambiguous');
-    skillDirectory = dirname(paths[0]);
+    skillDirectory = dirname(enabledCoreSkillPath(result, SKILL_NAME));
   } else throw new Error('Runtime must be codex or claude');
   let contract;
   try {
