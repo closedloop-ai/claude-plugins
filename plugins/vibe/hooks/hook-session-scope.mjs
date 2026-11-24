@@ -60,7 +60,7 @@ export function recordHookSkill(sessionId, skill, home = os.homedir(), now = new
   return record.skill;
 }
 
-/** Whether `skill` (a Skill tool name such as "vibe:handoff" or "vibe-generic:handoff") is one of the vibe plugin's skills. */
+/** Whether the Skill tool name belongs to either vibe plugin. */
 export function isVibePluginSkill(skill) {
   return vibeSkillOf(skill) !== null;
 }

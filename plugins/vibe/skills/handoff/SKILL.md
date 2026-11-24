@@ -88,7 +88,7 @@ plugin agents from `../../agents/<name>.md` with the file's body as the
 subagent's instructions and the `model` and `reasoning_effort` that
 `node ../vibe/scripts/worker-model.mjs codex <name>` prints; the vibe skill's
 usage-limit check runs here the same way; in Claude Code use `/vibe-generic:handoff` and the
-`vibe:<name>` agents. Repo agents live in `<repo>/.claude/agents/`. Paths like
+`vibe-generic:<name>` agents. Repo agents live in `<repo>/.claude/agents/`. Paths like
 `scripts/...` and `../vibe/...` are relative to this skill's own folder, not
 the repository. Resolve the plugin root (two levels above this file, as the
 `vibe` skill describes) to an absolute path and start every worker brief with

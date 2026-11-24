@@ -1,7 +1,7 @@
 // The watcher publishes a gap in its snapshot; only a complete, in-window pmset pair can queue a sleep notice.
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { canonicalHome, commandChat, programChats, validChat } from "../../fleet-orchestrator/scripts/chat-binding.mjs";
@@ -112,16 +112,60 @@ async function recordGap(dir, start, end, platform, oldest, reported) {
     }
   }
   const sample = { line: `watch-gap ${start}-${end} ${event}`, notice };
-  if (!oldest) {
-    try {
-      if (commitWindow(dir, sample, reported)) return;
-    } catch (error) {
-      process.stderr.write(`watch.sh: gap publication pending: ${error.message}\n`);
-    }
+  const file = path.join(dir, `watch-window.${start}-${end}.pending`);
+  // Retry a transient write with this exact sample before the watcher advances its clock.
+  let staged;
+  try {
+    staged = stageWindow(file, sample);
+  } catch {
+    staged = stageWindow(file, sample);
   }
-  // A fleet change can end the watcher now. Preserve this exact sample, including its original owner.
-  writeAtomic(path.join(dir, `watch-window.${start}-${end}.pending`), sample);
-  if (oldest) retryWindow(dir, oldest, reported);
+  // A clock correction can make the new window earlier than the queued one.
+  const queued = oldest && oldest !== file && /^watch-window\.(\d+)-(\d+)(?:\.sample)?\.pending$/.exec(path.basename(oldest));
+  const queuedFirst = queued && (Number(queued[1]) < start || (Number(queued[1]) === start && Number(queued[2]) <= end));
+  retryWindow(dir, queuedFirst ? oldest : staged, reported);
+}
+
+function alternateWindow(file) {
+  return file.replace(/\.pending$/, ".sample.pending");
+}
+
+/** Store the entire sample in one filesystem operation, preserving any complete same-window journal. */
+function stageWindow(file, sample) {
+  const alternate = alternateWindow(file);
+  if (readWindow(alternate)) {
+    if (readWindow(file) === null) renameSync(file, `${file}.incomplete`);
+    return alternate;
+  }
+  const contents = JSON.stringify(sample);
+  try {
+    symlinkSync(contents, file);
+    return file;
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    if (readWindow(file)) return file;
+  }
+  // Keep a recoverable replacement before moving the truncated record aside.
+  try {
+    symlinkSync(contents, alternate);
+  } catch (error) {
+    if (error.code !== "EEXIST" || !readWindow(alternate)) throw error;
+  }
+  renameSync(file, `${file}.incomplete`);
+  return alternate;
+}
+
+/** Read a link as data. Null is truncated legacy JSON and undefined is a missing entry. */
+function readWindow(file) {
+  let link;
+  try {
+    link = lstatSync(file).isSymbolicLink();
+    return link ? JSON.parse(readlinkSync(file)) : regularJson(file);
+  } catch (error) {
+    if (error.code === "ENOENT") return undefined;
+    if (link || !(error instanceof SyntaxError)) throw error;
+    return null;
+  }
 }
 
 /** Only the watcher lock holder updates the snapshot. Replaying an already committed window is idempotent. */
@@ -137,7 +181,13 @@ function commitWindow(dir, sample, reported) {
 /** Report at most one saved window per tick so the normal snapshot diff observes each one. */
 function retryWindow(dir, file, reported) {
   try {
-    if (commitWindow(dir, regularJson(file), reported)) unlinkSync(file);
+    let sample = readWindow(file);
+    if (sample === null) {
+      renameSync(file, `${file}.incomplete`);
+      file = alternateWindow(file);
+      sample = readWindow(file);
+    }
+    if (sample && commitWindow(dir, sample, reported)) unlinkSync(file);
   } catch (error) {
     process.stderr.write(`watch.sh: gap publication pending: ${error.message}\n`);
   }

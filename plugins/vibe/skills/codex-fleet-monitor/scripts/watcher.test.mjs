@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -11,16 +10,11 @@ import { takeSleepNotices } from '../../../lib/codex-fleet-monitor/scripts/watch
 import { readProcessIdentity } from '../../../shared/process-identity.mjs';
 import { recordHookSkill } from '../../../hooks/hook-session-scope.mjs';
 import { watcherState } from './watcher.mjs';
+import { gapFixture, interruptGapPublication, workDir } from './test-support.mjs';
 
 const WATCH = fileURLToPath(new URL('./watch.sh', import.meta.url));
 const WATCHER = fileURLToPath(new URL('./watcher.mjs', import.meta.url));
 const NOW = Date.parse('2026-10-21T12:00:00Z');
-
-function workDir(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'fleet-watcher-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
 
 const write = (dir, state) => writeFileSync(join(dir, 'watcher.json'), JSON.stringify(state));
 const at = (seconds) => new Date(NOW - seconds * 1000).toISOString();
@@ -188,61 +182,10 @@ test('a watcher without SendMessage surfaces a new event file', { timeout: 30_00
   assert.match(stdout, /green-moved\.md/);
 });
 
-const PROMPT_HOOK = fileURLToPath(new URL('../../../../vibe-core/hooks/user-prompt-submit.mjs', import.meta.url));
 const BEDTIME = Date.parse('2026-11-19T17:09:00-06:00') / 1000;
 const MORNING = Date.parse('2026-11-20T09:26:00-06:00') / 1000;
 const SLEEP = "2026-11-19 17:09:00 -0600 Sleep               Entering Sleep state due to 'Clamshell Sleep'";
 const WAKE = "2026-11-20 09:26:00 -0600 Wake                Wake from Deep Idle [CDNVA]";
-
-/** A real watcher and hook sharing a temporary fleet and a clock that advances inside sleep. */
-function gapFixture(t, { flat = false, unsetFleetHome = flat, defaultFleet = false } = {}) {
-  const home = workDir(t);
-  const fleetHome = defaultFleet ? join(home, 'fleet-orchestrator') : home;
-  const program = flat ? join(home, 'custom-watcher-dir') : join(fleetHome, 'programs', 'active');
-  const bin = join(home, 'bin');
-  mkdirSync(program, { recursive: true });
-  mkdirSync(bin);
-  if (!flat) writeFileSync(join(fleetHome, 'current'), 'active\n');
-  const command = (name, body) => writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-  command('date', 'if [ "$1" = "+%s" ]; then cat "$HOME/clock"; else exec /bin/date "$@"; fi');
-  command('sleep', 'cp "$HOME/next" "$HOME/clock"');
-  command('uname', 'cat "$HOME/os"');
-  command('pmset', '[ "$*" = "-g log" ] || exit 2; echo read >> "$HOME/reads"; cat "$HOME/log"; exit "$(cat "$HOME/status")"');
-  writeFileSync(join(home, 'snapshot.sh'), 'print "session local active RUN"\n');
-  writeFileSync(join(home, 'status'), '0');
-  writeFileSync(join(home, 'os'), 'Darwin');
-  writeFileSync(join(home, 'log'), '');
-  const env = { ...process.env, HOME: home, FLEET_HOME: fleetHome, TZ: 'America/Chicago', HEARTBEAT_SECONDS: '120',
-    CLAUDE_CODE_SESSION_ID: '', CODEX_THREAD_ID: 'watcher-owner',
-    PATH: `${bin}:${process.env.PATH}`, WATCH_SNAPSHOT: join(home, 'snapshot.sh') };
-  if (unsetFleetHome) delete env.FLEET_HOME;
-  const watch = (start, end, heartbeat = '120', expectedExit = 0, watchDir = program) => {
-    writeFileSync(join(home, 'clock'), String(start));
-    writeFileSync(join(home, 'next'), String(end));
-    const run = spawnSync('zsh', [WATCH, watchDir, '120'], { encoding: 'utf8', timeout: 8000, env: { ...env, HEARTBEAT_SECONDS: heartbeat } });
-    assert.equal(run.status, expectedExit, run.stderr || run.error?.message || run.stdout);
-    return run.stdout;
-  };
-  const prompt = ({ skill = 'fleet-orchestrator', fleetHome = env.FLEET_HOME, chat = 'watcher-owner', tz = 'America/Chicago', output = 'pipe',
-    rejectNotice = false, preload, stderr = '', promptText = 'hello', turn_id, createTranscript = true } = {}) => {
-    const transcript = join(home, `${skill}.jsonl`);
-    if (createTranscript && !existsSync(transcript)) writeFileSync(transcript, JSON.stringify({ type: 'user', message: `Base directory for this skill: /plugins/vibe/skills/${skill}` }));
-    const args = rejectNotice ? ['--input-type=module', '-e', `
-      import { runEvent } from ${JSON.stringify(new URL('../../../../vibe-core/hooks/vibe-runtime.mjs', import.meta.url).href)};
-      await runEvent('UserPromptSubmit', { async write(text) {
-        if (text.includes('Heads up:')) throw new Error('write rejected');
-        process.stdout.write(text);
-      } });
-    `] : [...(preload ? ['--require', preload] : []), PROMPT_HOOK];
-    const run = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 8000, stdio: ['pipe', output, 'pipe'],
-      env: { ...env, ...(fleetHome ? { FLEET_HOME: fleetHome } : {}), TZ: tz },
-      input: JSON.stringify({ session_id: chat, turn_id, prompt: promptText, cwd: home, transcript_path: transcript }) });
-    assert.equal(run.status, 0, run.stderr || run.error?.message);
-    assert.equal(run.stderr, stderr);
-    return run.stdout ? JSON.parse(run.stdout) : null;
-  };
-  return { home, fleetHome, program, watch, prompt, command };
-}
 
 function blockRename(home, command, suffix) {
   // Obstruct the filesystem rename at its real destination, including UUID-bearing receipt names.
@@ -916,6 +859,75 @@ test('AC-3: deleting the fleet baseline keeps a reported gap quiet and an unackn
   rmSync(baseline);
   assert.equal(watch(MORNING + 420, MORNING + 540), 'EVENT\n> WATCH-GAP 5m\n');
   assert.match(watch(MORNING + 540, MORNING + 660), /^HEARTBEAT/);
+});
+
+for (const stage of ['journal', 'snapshot']) test(`AC-3: a hard kill at the first ${stage} write preserves the event and notice`, t => {
+  const { home, program, watch, prompt, command } = gapFixture(t);
+  writeFileSync(join(home, 'log'), [SLEEP, WAKE].join('\n'));
+  interruptGapPublication(home, program, command, stage);
+  assert.equal(watch(BEDTIME, MORNING, '120', null), '');
+  assert.equal(watch(MORNING, MORNING + 120), 'EVENT\n> SLEPT 16h17m (sleep 17:09 CST, wake 09:26 CST)\n');
+  assert.equal(prompt()?.hookSpecificOutput?.additionalContext,
+    'Heads up: this computer was asleep for 16h17m (slept 17:09 CST, woke 09:26 CST).');
+  assert.equal(prompt(), null);
+  assert.match(watch(MORNING + 120, MORNING + 240), /^HEARTBEAT/);
+});
+
+for (const scenario of ['later', 'matching', 'interrupted matching']) test(`AC-3: a truncated regular journal does not block the ${scenario} confirmed window`, t => {
+  const { home, program, watch, prompt, command } = gapFixture(t);
+  const window = scenario === 'later' ? `${BEDTIME - 360}-${BEDTIME - 60}` : `${BEDTIME}-${MORNING}`;
+  const partial = join(program, `watch-window.${window}.pending`);
+  writeFileSync(partial, '{"line":');
+  writeFileSync(join(home, 'log'), [SLEEP, WAKE].join('\n'));
+  const interrupted = scenario === 'interrupted matching';
+  if (interrupted) {
+    interruptGapPublication(home, program, command, 'collision');
+    assert.equal(watch(BEDTIME, MORNING, '120', null), '');
+  }
+  assert.equal(watch(interrupted ? MORNING : BEDTIME, interrupted ? MORNING + 120 : MORNING, '240'),
+    'EVENT\n> SLEPT 16h17m (sleep 17:09 CST, wake 09:26 CST)\n');
+  assert.equal(existsSync(partial), false);
+  assert.equal(readFileSync(`${partial}.incomplete`, 'utf8'), '{"line":');
+  assert.equal(prompt()?.hookSpecificOutput?.additionalContext,
+    'Heads up: this computer was asleep for 16h17m (slept 17:09 CST, woke 09:26 CST).');
+  assert.equal(prompt(), null);
+  assert.match(watch(MORNING, MORNING + 120), /^HEARTBEAT/);
+});
+
+test('AC-3: a failed first journal write retries the same sampled duration', t => {
+  const { home, watch, command } = gapFixture(t);
+  writeFileSync(join(home, 'fail-journal'), '');
+  writeFileSync(join(home, 'later'), String(BEDTIME + 480));
+  writeFileSync(join(home, 'fail-journal.cjs'), `
+    const fs = require('node:fs');
+    const create = fs.symlinkSync;
+    fs.symlinkSync = (value, file) => {
+      const marker = process.env.HOME + '/fail-journal';
+      if (file.endsWith('.pending') && fs.existsSync(marker)) {
+        fs.unlinkSync(marker);
+        throw Object.assign(new Error('journal temporarily unavailable'), { code: 'EIO' });
+      }
+      return create(value, file);
+    };
+    require('node:module').syncBuiltinESMExports();
+  `);
+  command('node', `exec "${process.execPath}" --require "$HOME/fail-journal.cjs" "$@"`);
+  command('sleep', 'if [ -f "$HOME/fail-journal" ]; then cp "$HOME/next" "$HOME/clock"; else cp "$HOME/later" "$HOME/clock"; fi');
+  assert.equal(watch(BEDTIME, BEDTIME + 360, '240'), 'EVENT\n> WATCH-GAP 6m\n');
+  assert.match(watch(BEDTIME + 480, BEDTIME + 600), /^HEARTBEAT/);
+});
+
+test('AC-3: clock rollback recovers a newly sampled earlier window before a later pending one', t => {
+  const { home, program, watch, prompt, command } = gapFixture(t);
+  blockRename(home, command, '/watch-gap');
+  assert.match(watch(MORNING + 120, MORNING + 420), /^HEARTBEAT/);
+  rmSync(join(home, 'block'));
+  rmSync(join(program, 'watch-gap'), { recursive: true });
+  writeFileSync(join(home, 'log'), [SLEEP, WAKE].join('\n'));
+  assert.equal(watch(BEDTIME, MORNING), 'EVENT\n> SLEPT 16h17m (sleep 17:09 CST, wake 09:26 CST)\n');
+  assert.match(prompt()?.hookSpecificOutput?.additionalContext ?? '', /^Heads up:/);
+  assert.equal(prompt(), null);
+  assert.equal(watch(MORNING, MORNING + 120), 'EVENT\n> WATCH-GAP 5m\n');
 });
 
 test('AC-3: interruption after gap acknowledgment but before stdout leaves the exact window pending', t => {

@@ -7,7 +7,7 @@ import { vibeScriptPath, vibeSkill } from "../shared/vibe-install.mjs";
 import { briefProviderProblem } from "../lib/vibe/scripts/provider-brief.mjs";
 import { recordedBinding } from "../lib/vibe/scripts/provider.mjs";
 
-// Roles are agent names within either vibe plugin (`vibe:<role>` or `vibe-generic:<role>`).
+// Roles are agent names qualified by either vibe plugin.
 const VIBE_WORKER = /^vibe-[a-z0-9-]+-worker$/;
 // Seed refresh is a Codex-owned automation; the launcher refuses seed roles by design.
 const SEED_REFRESH_WORKER = /^vibe-seed-[a-z]+-worker$/;
@@ -45,7 +45,7 @@ export function agentGuard(event, home) {
 }
 
 /**
- * A Claude writer started through the Agent tool (a fleet writer preamble that invokes vibe:vibe) works under the
+ * A Claude writer started through the Agent tool (a fleet writer preamble that invokes the vibe skill) works under the
  * binding of the chat that starts it, as a Codex writer does; only a `Provider:` line naming another binding is refused.
  */
 export function writerBindingProblem(event, home) {

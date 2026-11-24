@@ -15,7 +15,8 @@ read_clock() {
 sample_tick() {
   local start=$1 end=$2
   local -a windows
-  windows=( "$W"/watch-window.*.pending(N.Om) )
+  # The filenames carry the clock window, so order them by epoch without following journal links.
+  windows=( "$W"/watch-window.*.pending(N^/n) )
   if [[ -n $start && -n $end ]] && (( end - start > I + 120 )); then
     # Retire the window only after the helper commits it or saves it for retry.
     node "$gap_script" "$W" "$start" "$end" "$(uname -s)" "$windows[1]" "$base_gap" || return 1
