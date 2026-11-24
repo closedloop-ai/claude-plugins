@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { execFile, spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -94,7 +95,7 @@ function checkClaudeSignInResult(stdout: string, error: Error | null): void {
     throw new LaunchPrecheckError("CLAUDE_CLI_MISSING", "The claude command is not on this shell's PATH");
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(stdout); } catch { return; }
+  try { parsed = capturedJson(stdout); } catch { return; }
   if (parsed && typeof parsed === "object" && (parsed as { loggedIn?: unknown }).loggedIn === false) {
     throw new LaunchPrecheckError("CLAUDE_SIGN_IN_NEEDED", "The standalone Claude CLI is signed out", SIGN_IN_PERSON_ACTION);
   }

@@ -10,6 +10,7 @@ import { parseArgs } from "node:util";
 import { compareSkillVersions, isSkillReload, loadedSkillEvidenceProblem, loadedSkillRequired, reloadableSkill, SKILL_RELOAD } from "../../vibe/scripts/loaded-skill.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { installedPluginVersion, pluginScriptProblems } from "../../vibe/scripts/plugin-script-references.mjs";
+import { providerProbeProblem, sessionBinding } from "../../vibe/scripts/provider.mjs";
 import { vibeRoot } from "../../../shared/vibe-install.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -27,7 +28,8 @@ export function skillFreshnessProblem(record, { pluginRoot, actorId, worktree } 
   // Without a load-evidence source (Codex hooks not trusted yet), the check keeps
   // its earlier behavior and never asks for evidence nothing can produce.
   if (!actor) return loadedSkillRequired(record) ? "the target actor has no hook-observed loaded skill version" : null;
-  return loadedSkillEvidenceProblem(record.loadedSkill, { actorId: actor, pluginRoot });
+  const problem = loadedSkillEvidenceProblem(record.loadedSkill, { actorId: actor, pluginRoot });
+  return problem ? `${problem}. Stop any retry with the version-independent owned-PID stop entry, run writer-state.mjs migrate for the recorded writer, reload, then relaunch the same request.` : null;
 }
 
 /** Complete prompt preflight for one program state and installed plugin root. */
@@ -36,7 +38,19 @@ export function promptProblems(record, text, options = {}) {
   const reload = isSkillReload(text) && reloadableSkill(record?.loadedSkill, {
     actorId: options.actorId ?? record?.loadedSkill?.actorId, pluginRoot: options.pluginRoot ?? vibeRoot(options.worktree ?? process.cwd()),
   });
-  return [...(freshness && !reload ? [freshness] : []), ...pluginScriptProblems(text, options.pluginRoot ?? vibeRoot(options.worktree ?? process.cwd()), options.worktree)];
+  const probe = reload ? null : providerProbeProblem(options.provider ?? record?.provider ?? sessionBinding(options.worktree));
+  const smoke = smokeProbeProblem(text);
+  return [...(freshness && !reload ? [freshness] : []), ...(probe ? [probe] : []), ...(smoke ? [smoke] : []),
+    ...pluginScriptProblems(text, options.pluginRoot ?? vibeRoot(options.worktree ?? process.cwd()), options.worktree, { reviewSource: options.reviewSource })];
+}
+
+/** A smoke brief must remain harmless if a hook unexpectedly allows the command. */
+export function smokeProbeProblem(text) {
+  if (!/\b(?:smoke|guard\s+probe|safety\s+probe)\b/i.test(text ?? "")) return null;
+  const directive = /\b(?:run|try|execute|use|probe(?:\s+with)?)\s+(?:(?:the|a)\s+)?[`"']?(?:[^\s`"']*\/)?(?:pkill|killall|kill-family|xargs\s+kill|kill\s+\$\()/i;
+  return directive.test(text)
+    ? "Smoke probes must remain harmless if admitted. Use a nonexistent PID, a nonexistent PR repository, or paths in a disposable owned directory."
+    : null;
 }
 
 async function main(argv) {
@@ -68,9 +82,11 @@ async function main(argv) {
   const migration = values.command === 'turn' && !actorState?.reload && reloadableSkill(record?.loadedSkill, {
     actorId, pluginRoot: values["plugin-root"] ?? vibeRoot(values.worktree ?? process.cwd()),
   });
+  const smoke = smokeProbeProblem(prompt);
   const problems = [
+    ...(smoke && (bootstrap || legacyThread || migration) ? [smoke] : []),
     ...(values["expected-version"] && (expectedOrder === null || expectedOrder < 0)
-      ? [`target host has vibe ${targetVersion ?? "unknown"}, expected at least ${values["expected-version"]}`] : []),
+      ? [`target host has vibe ${targetVersion ?? "unknown"}, expected at least ${values["expected-version"]}. Run writer-state.mjs migrate, reload the current skill, and relaunch the same writer`] : []),
     ...(bootstrap || legacyThread ? pluginScriptProblems(prompt, values["plugin-root"] ?? vibeRoot(values.worktree ?? process.cwd()), values.worktree)
       : promptProblems(record, migration ? SKILL_RELOAD : prompt, { pluginRoot: values["plugin-root"] ?? vibeRoot(values.worktree ?? process.cwd()), actorId, worktree: values.worktree })),
     ...(migration ? pluginScriptProblems(prompt, values['plugin-root'] ?? vibeRoot(values.worktree ?? process.cwd()), values.worktree) : []),

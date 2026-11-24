@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkboxStates, criteriaStates, ticketCriteria, unreadCriteriaProblems } from "./criteria-list.mjs";
+import { createHash } from "node:crypto";
+import { numberedCriteriaIds, checkboxStates, criteriaStates, ticketCriteria, unreadCriteriaProblems } from "./criteria-list.mjs";
 import { C3A48F20_DROPS, fuzzTickets, oracleMisses, READER_ROWS, TICKET, UNREAD } from "./criteria-test-fixture.mjs";
 
 test("ISS-14136 AC-4: checkboxes that read as criteria outside the section are reported, and other checklists are not", () => {
@@ -113,3 +114,58 @@ for (const [what, ticket, read, reported] of DOUBLE_LIST_CASES) {
     assert.deepEqual(oracleMisses(ticket, states, criteriaStates), []);
   });
 }
+
+test("the complete checkbox layout corpus matches the captured base reader", () => {
+  const hash = createHash("sha256");
+  for (const ticket of [...READER_ROWS.map(row => row.ticket), ...fuzzTickets(14136, 50000)]) {
+    hash.update(JSON.stringify([ticketCriteria(ticket),criteriaStates(ticket),checkboxStates(ticket),unreadCriteriaProblems(ticket)]) + "\n");
+  }
+  // Computed by executing the captured base module against this same corpus, including its unread-layout diagnostics.
+  assert.equal(hash.digest("hex"), "013b35e0baae369073fc4f7e4a6a7b63d60cd211f984ef3170213181edf56559");
+});
+
+test("numbered QA criterion references count only unboxed declarations inside criteria sections", () => {
+  for (const eol of ["\n","\r\n"]) for (const marker of [".",")"]) for (const depth of [1,2,3,4]) for (const subsection of [[],["Acceptance criteria"]]) {
+    const h = "#".repeat(depth);
+    const ticket = ["1. Outside",h+" Acceptance criteria", "1"+marker+" First",
+      ...subsection.map(title=>h+"# "+title), h+"# Detail","9"+marker+" Second","1. [x] Checkbox","- [ ] Checkbox","  1. Nested list",
+      h+" Other","3"+marker+" Outside",h+" Acceptance criteria","1"+marker+" Additional"].join(eol);
+    assert.deepEqual([...numberedCriteriaIds(ticket)],["AC-1","AC-2","AC-3"]);
+  }
+});
+
+test("numbered live criteria exclude fenced examples and headings",()=>{
+  for(const marker of ["`","~"]) for(const eol of ["\n","\r\n"]) for(const length of [3,4]){
+    const fence=marker.repeat(length);
+    const lines=["## Acceptance criteria","1. Real",fence+"text","2. Example","## Unrelated",fence+marker,"3. Real","## End","4. Outside"];
+    assert.deepEqual([...numberedCriteriaIds(lines.join(eol))],["AC-1","AC-2"]);
+    assert.deepEqual([...numberedCriteriaIds(lines.slice(0,4).join(eol))],["AC-1"]);
+  }
+});
+
+test("an indented fence lookalike stays inside a top-level example",()=>{
+  const source="## Acceptance criteria\n~~~\n    ~~~\n1. Example only\n2. Another example\n~~~\n1. Actual item";
+  assert.deepEqual([...numberedCriteriaIds(source)],["AC-1"]);
+});
+
+test("list continuation fences end before the next numbered criterion",()=>{
+  for(const mark of ["-","*","1.","10)"]) for(const marker of ["~~~","```"]){
+    const indent=" ".repeat(mark.length+1);
+    const ticket="## Acceptance criteria\n"+mark+" Example\n"+indent+marker+"\n"+indent+"sample\n"+indent+"  "+marker+"\n\n1. Actual item";
+    const count=mark==="-" || mark==="*" ? 1 : 2;
+    assert.equal(numberedCriteriaIds(ticket).size,count);
+  }
+});
+
+test("list columns preserve tabs and empty item markers around examples",()=>{
+  for(const example of ["- Example\n  ~~~\n\tAC-99: illustrated\n  ~~~","-\n  ~~~\n  sample\n    ~~~"]){
+    assert.deepEqual([...numberedCriteriaIds("## Acceptance criteria\n"+example+"\n\n1. Actual")],["AC-1"]);
+  }
+});
+
+test("tab separators and empty item padding preserve the next live criterion",()=>{
+  for(const start of ["1.\t~~~","-\tExample\n    ~~~","-  \n  ~~~"]){
+    const text="## Acceptance criteria\n"+start+"\n    AC-99: illustrative\n    ~~~\n\n1. Actual";
+    assert.deepEqual([...numberedCriteriaIds(text)],["AC-1"]);
+  }
+});

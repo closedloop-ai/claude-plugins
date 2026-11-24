@@ -4141,7 +4141,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, knownProviderContracts, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module;
+var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, knownProviderContracts, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerConnectionArguments, providerData, providerDataOr, providerGuardRule, providerPath, providerProbeProblem, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module;
 
 // ../shared/cli.ts
 import { pathToFileURL as pathToFileURL2 } from "node:url";
@@ -4368,7 +4368,7 @@ import { join as join2 } from "node:path";
 
 // vibe-core:lib/vibe/scripts/agent-frontmatter.mjs
 var module3 = await vibeCore("lib/vibe/scripts/agent-frontmatter.mjs");
-var { agentFrontmatter, agentFrontmatterName } = module3;
+var { agentFrontmatter, agentFrontmatterName, replaceFrontmatterDescription } = module3;
 
 // src/plugin-root.ts
 import { existsSync, readFileSync as readFileSync2, realpathSync as realpathSync3 } from "node:fs";
@@ -4481,7 +4481,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
   const tools = asList(metadata.tools);
   if (tools.some((tool) => !builtins.has(tool))) throw new Error("Unrecognized canonical built-in tool");
   const capabilities = capabilitiesSchema.parse(capabilityInput).sort((a, b) => a.name.localeCompare(b.name));
-  const digest = createHash("sha256").update(source).update(JSON.stringify(capabilities)).digest("hex");
+  const digest2 = createHash("sha256").update(source).update(JSON.stringify(capabilities)).digest("hex");
   return {
     root,
     version: manifest.version,
@@ -4490,7 +4490,7 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
     prompt,
     tools,
     skills: asList(metadata.skills),
-    binding: { agentRoot: root, agentName, digest, capabilities }
+    binding: { agentRoot: root, agentName, digest: digest2, capabilities }
   };
 }
 function asList(value) {
@@ -4595,7 +4595,7 @@ function recordedWriterRoot(worktree) {
   }
 }
 function definitionUpgradeEvidence(ledger, installedRoot) {
-  const { agentRoot, agentName, capabilities, digest } = ledger.binding;
+  const { agentRoot, agentName, capabilities, digest: digest2 } = ledger.binding;
   const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
   const installed = readDefinition(installedRoot, agentName, capabilities);
   const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
@@ -4604,7 +4604,7 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
   const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
   return {
     recordedRoot: agentRoot,
-    recordedDigest: digest,
+    recordedDigest: digest2,
     observedDigest,
     installedDigest: installed.binding.digest,
     sameRelease,
@@ -4930,10 +4930,17 @@ function acquireRecordTurnAt(place, owner) {
         throw new Error("Record continuation requires the exact current source lease");
       }
       if (ledger.active?.lease && (owner?.workerId !== ledger.workerId || owner?.lease !== ledger.active.lease)) {
-        throw new Error("The implementation writer has a running turn; wait before changing shared records");
+        throw new WorkerRefusal("WRITER_BUSY", "The implementation writer has a running turn; wait before changing shared records.");
       }
     } else if (owner) throw new Error("Record continuation requires its registered source writer");
-    mkdirSync(file, { mode: 448 });
+    try {
+      mkdirSync(file, { mode: 448 });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+        throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; wait before changing shared records.");
+      }
+      throw error;
+    }
     return file;
   });
 }
@@ -4970,8 +4977,11 @@ function save(place, ledger) {
 function locked(place, operation) {
   try {
     mkdirSync(place.lock, { mode: 448 });
-  } catch {
-    throw new Error("Writer state is locked by another operation; retry without starting a worker");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      throw new WorkerRefusal("WRITER_BUSY", "Writer state is locked by another operation; retry without starting a worker.");
+    }
+    throw error;
   }
   try {
     return operation();
@@ -5042,8 +5052,13 @@ function writerLocation(worktree) {
 }
 
 // src/native-record.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { readFileSync as readFileSync7, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { readFileSync as readFileSync8, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join7 } from "node:path";
+
+// src/main-sync-preparation.ts
+import { isDeepStrictEqual } from "node:util";
+import { existsSync as existsSync6 } from "node:fs";
 import { join as join6 } from "node:path";
 
 // src/record-context.ts
@@ -5134,6 +5149,7 @@ var recordContextSchema = external_exports.object({
   mode: external_exports.enum(["plan", "request", "fix", "handoff", "pull-request", "record"]),
   recordAction: recordActionSchema.optional(),
   exclusiveRecordTurn: external_exports.literal(true).optional(),
+  publicationStep: external_exports.literal("prepare").optional(),
   publicationPurpose: external_exports.enum(["build", "handoff"]).optional(),
   mainSyncTransactionId: external_exports.string().uuid().optional(),
   mainSyncRequestContinuations: external_exports.array(requestContinuationSchema).min(1).max(2).optional(),
@@ -5170,6 +5186,9 @@ function isPublisherContext(input) {
   return input.mode === "record" && input.exclusiveRecordTurn === true && (input.agentName === "vibe-environment-worker" && ["create", "redeploy"].includes(input.recordAction ?? "") || input.agentName === "vibe-prototype-worker" && input.recordAction === "share");
 }
 function resolveRecordContext(input) {
+  if (input.publicationStep && (!isPublisherContext(input) || !input.publicationPurpose || input.sessionless)) {
+    throw new WorkerRefusal("MAIN_SYNC_PURPOSE_REQUIRED", "Preparing publication needs the Root-issued publisher role and publicationPurpose.");
+  }
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
     throw new WorkerRefusal(
       "VALIDATION_CONTEXT_INVALID",
@@ -5275,6 +5294,287 @@ function missingSessionRoute(agentName) {
   return "This role runs only inside a vibe session; start one with the vibe skill.";
 }
 
+// src/main-sync-contracts.ts
+var mainSyncPurposeSchema = external_exports.enum(["build", "handoff"]);
+var commitSchema = validationCommitSchema;
+var digestSchema = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var originFileSchema = external_exports.object({
+  path: external_exports.string().min(1).max(2048).refine((path3) => !path3.startsWith("/") && !path3.includes("\\") && !path3.includes("\0") && !path3.split("/").includes("..")),
+  bytes: external_exports.number().int().nonnegative().max(128 * 1024 * 1024),
+  sha256: digestSchema,
+  mode: external_exports.literal("100644")
+}).strict();
+var producerInputSchema = originFileSchema.extend({ mode: external_exports.enum(["100644", "100755"]) });
+var canonicalRelativeSchema = external_exports.string().min(1).max(2048).refine((path3) => !path3.startsWith("/") && !path3.includes("\\") && !path3.includes("\0") && !path3.split("/").some((part) => !part || part === "." || part === ".."));
+var packageOwnerSchema = external_exports.object({
+  path: canonicalRelativeSchema,
+  name: external_exports.string().min(1).max(128),
+  version: external_exports.string().min(1).max(128),
+  files: external_exports.number().int().min(1).max(1e4),
+  names: external_exports.string().min(1).max(256 * 1024).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+  sha256: digestSchema
+}).strict();
+var originProofSchema = external_exports.object({
+  headSha: commitSchema,
+  treeSha: commitSchema,
+  trackedInputSha256: digestSchema,
+  inputSha256: digestSchema,
+  source: external_exports.object({
+    runtime: external_exports.enum(["codex", "claude"]),
+    workerId: workerIdSchema
+  }).strict(),
+  checkedAt: external_exports.string().datetime(),
+  files: external_exports.array(originFileSchema).max(1e4),
+  packages: external_exports.array(packageOwnerSchema).max(16).default([]),
+  producers: external_exports.array(external_exports.object({
+    id: external_exports.string().min(1).max(128),
+    ownerPath: canonicalRelativeSchema.optional(),
+    files: external_exports.array(external_exports.string().min(1).max(2048)).max(1e4),
+    log: external_exports.string().min(1),
+    logSha256: digestSchema
+  }).strict()).max(16)
+}).strict();
+var operationContextSchema = external_exports.object({
+  runtime: external_exports.enum(["codex", "claude"]),
+  worktree: external_exports.string().min(1),
+  agentName: identifierSchema,
+  mode: external_exports.literal("record"),
+  recordAction: recordActionSchema,
+  workerId: workerIdSchema,
+  requestId: identifierSchema,
+  lease: external_exports.string().uuid(),
+  publicationPurpose: mainSyncPurposeSchema.optional(),
+  mainSyncTransactionId: external_exports.string().uuid().optional(),
+  mainSyncRequestContinuations: external_exports.array(requestContinuationSchema).min(1).max(2).optional(),
+  mainSyncCiRun: ciRunLocatorSchema.optional(),
+  mainSyncValidation: validationWitnessSchema.optional()
+}).strict();
+var mainSyncInputSchema = external_exports.object({
+  context: operationContextSchema,
+  transactionId: external_exports.string().uuid().optional()
+}).strict();
+var runEvidenceSchema = external_exports.object({ exitCode: external_exports.number().int(), log: external_exports.string().min(1), sha256: external_exports.string().length(64) }).strict();
+var capturedMainRunSchema = external_exports.object({
+  outcome: external_exports.enum(["failed", "passed", "unrunnable"]),
+  argv: external_exports.array(external_exports.string()).min(1).max(256).optional(),
+  exitCode: external_exports.number().int().optional(),
+  log: external_exports.string().min(1).optional(),
+  sha256: external_exports.string().length(64).optional(),
+  reason: external_exports.string().min(1).max(512).optional()
+}).strict();
+var mainComparisonSchema = external_exports.object({
+  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky", "machine-limited"]),
+  mainSha: commitSchema,
+  sessionRuns: external_exports.array(runEvidenceSchema).min(1).max(2),
+  main: capturedMainRunSchema
+}).strict();
+var ACCEPTED_FAILURES = /* @__PURE__ */ new Set(["main-preexisting", "machine-limited"]);
+var commandReceiptSchema = external_exports.object({
+  argv: external_exports.array(external_exports.string()).min(1).max(256),
+  bindings: external_exports.record(external_exports.string()).optional(),
+  cwd: external_exports.string().optional(),
+  timeoutMs: external_exports.number().int().min(1e3).max(2 ** 31 - 1).optional(),
+  exitCode: external_exports.number().int(),
+  log: external_exports.string().min(1),
+  sha256: external_exports.string().length(64),
+  comparison: mainComparisonSchema.optional(),
+  // A check the fleet's remote slot ran: `log` is the stored report, `logSha256` the remote run's own log digest.
+  remote: external_exports.object({ host: external_exports.string().min(1).max(255), commit: commitSchema, logSha256: digestSchema }).strict().optional()
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence").refine((item) => !item.remote || item.exitCode === 0 && !item.comparison, "Remote check evidence must be a passing run");
+var failedCheckSchema = external_exports.object({
+  argv: external_exports.array(external_exports.string()).min(1).max(256),
+  bindings: external_exports.record(external_exports.string()).optional(),
+  cwd: external_exports.string().optional(),
+  comparison: mainComparisonSchema
+}).strict();
+var e2eLimitationSchema = external_exports.object({
+  argv: external_exports.array(external_exports.string()).min(1).max(256),
+  bindings: external_exports.record(external_exports.string()).optional(),
+  reason: external_exports.string().min(1).max(4096)
+}).strict();
+var fileDeltaSchema = external_exports.object({ path: external_exports.string().min(1), status: external_exports.string().min(1) }).strict();
+var publicationTurnSchema = external_exports.object({
+  runtime: external_exports.enum(["codex", "claude"]),
+  workerId: workerIdSchema,
+  requestId: identifierSchema,
+  lease: external_exports.string().uuid()
+}).strict();
+var ciEvidenceSchema = external_exports.object({
+  runId: external_exports.number().int().positive().safe(),
+  attempt: external_exports.number().int().positive().safe(),
+  workflowId: external_exports.number().int().positive().safe(),
+  definitionSha: commitSchema,
+  checkoutSha: commitSchema,
+  treeSha: commitSchema,
+  inputSha256: external_exports.string().length(64),
+  verifiedAt: external_exports.string().datetime(),
+  jobs: external_exports.array(external_exports.object({
+    jobId: external_exports.number().int().positive().safe(),
+    name: external_exports.string().min(1),
+    conclusion: external_exports.literal("success"),
+    logSha256: external_exports.string().length(64)
+  }).strict()).min(1).max(10)
+}).strict();
+var mainSyncReceiptSchema = external_exports.object({
+  version: external_exports.literal(1),
+  phase: external_exports.literal("captured").optional(),
+  transactionId: external_exports.string().uuid(),
+  worktree: external_exports.string(),
+  branch: external_exports.string(),
+  operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).strict(),
+  purpose: mainSyncPurposeSchema,
+  mainSha: commitSchema,
+  startingHead: commitSchema,
+  originalBase: commitSchema,
+  validationSince: commitSchema,
+  fetchedAt: external_exports.string().datetime(),
+  importedFiles: external_exports.array(fileDeltaSchema).max(5e4),
+  importedCommits: external_exports.array(commitSchema).max(5e4).default([]),
+  featureTestHistory: external_exports.array(external_exports.object({ commit: commitSchema, path: external_exports.string().min(1) }).strict()).max(5e4).default([]),
+  validation: external_exports.object({
+    headSha: commitSchema,
+    treeSha: commitSchema,
+    inputSha256: external_exports.string().length(64),
+    commands: external_exports.array(commandReceiptSchema).min(1).max(128),
+    checkedAt: external_exports.string().datetime(),
+    e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
+  }).strict().optional(),
+  ciEvidence: ciEvidenceSchema.optional(),
+  failedChecks: external_exports.array(failedCheckSchema).min(1).max(128).optional(),
+  pushedHead: commitSchema.optional(),
+  preparationTurn: publicationTurnSchema.optional(),
+  publicationTurn: publicationTurnSchema.optional(),
+  requestContinuations: external_exports.array(requestContinuationSchema.extend({ turn: publicationTurnSchema.optional() })).max(2).default([]),
+  inputs: originProofSchema.optional(),
+  recipe: storedValidationRecipeSchema.optional(),
+  deferredMain: external_exports.object({ mainSha: commitSchema, reason: external_exports.string().min(1).max(500) }).strict().optional()
+}).strict();
+var remoteCheckReportSchema = external_exports.object({
+  host: external_exports.string().trim().min(1).max(255),
+  validation: external_exports.object({
+    headSha: commitSchema,
+    treeSha: commitSchema,
+    inputSha256: digestSchema,
+    commands: external_exports.array(external_exports.object({
+      argv: external_exports.array(external_exports.string()).min(1).max(256),
+      bindings: external_exports.record(external_exports.string()).optional(),
+      cwd: external_exports.string().optional(),
+      timeoutMs: external_exports.number().int().optional(),
+      exitCode: external_exports.number().int(),
+      log: external_exports.string().min(1).max(4096),
+      sha256: digestSchema
+    }).strict()).min(1).max(128),
+    checkedAt: external_exports.string().datetime(),
+    e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
+  }).strict()
+}).strict();
+var mainSyncRemoteInputSchema = mainSyncInputSchema.extend({ report: remoteCheckReportSchema }).strict();
+var readinessStateSchema = external_exports.object({
+  version: external_exports.literal(1),
+  phase: external_exports.literal("input-readiness"),
+  transactionId: external_exports.string().uuid(),
+  worktree: external_exports.string(),
+  branch: external_exports.string(),
+  operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).strict(),
+  originalBase: commitSchema,
+  purpose: mainSyncPurposeSchema,
+  inputs: originProofSchema,
+  previous: mainSyncReceiptSchema.optional()
+}).strict();
+var mainSyncStateSchema = external_exports.union([readinessStateSchema, mainSyncReceiptSchema]);
+var sessionSchema = external_exports.object({
+  worktree: external_exports.string().optional(),
+  branch: external_exports.string().regex(/^(?:vibe|prototype)\/[^\s]+$/),
+  slug: external_exports.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  status: external_exports.literal("active"),
+  mode: external_exports.enum(["seeded", "blank"]).nullable(),
+  baseCommit: commitSchema,
+  operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough(),
+  localFixes: external_exports.array(external_exports.object({ ticket: external_exports.string(), paths: external_exports.array(external_exports.string()) }).passthrough()).default([]),
+  vercel: external_exports.object({
+    lastDeployedCommit: commitSchema.nullable().optional(),
+    verifiedAt: external_exports.string().nullable().optional(),
+    verifiedRequestId: external_exports.string().nullable().optional()
+  }).passthrough().nullable().optional(),
+  lastRequestId: external_exports.string().nullable().optional(),
+  mainMerge: external_exports.enum(["deferred", "final"]).optional(),
+  prototype: external_exports.object({ deployedCommit: commitSchema, verifiedAt: external_exports.string(), previewUrl: external_exports.string() }).passthrough().optional()
+}).passthrough();
+var MAX_CHECK_MS = 15 * 60 * 1e3;
+var MainSyncError = class extends Error {
+  constructor(message, status = "BLOCKED") {
+    super(message);
+    this.status = status;
+  }
+  status;
+};
+
+// src/main-sync-state.ts
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import { existsSync as existsSync5, lstatSync, readFileSync as readFileSync7, realpathSync as realpathSync7, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+
+// ../../plugins/vibe/skills/vibe/scripts/area-paths.mjs
+var { providerDataOr: providerDataOr2, sessionBinding: sessionBinding2 } = await vibeCore("lib/vibe/scripts/provider.mjs");
+var GENERIC_BACKEND = /(?:^|\/)(?:prisma|migrations)\/|\.sql$|schema\.prisma$/;
+var GENERIC_AREAS = Object.freeze({ ui: [], desktopHost: [], desktopRelevant: [], prototype: null, backend: GENERIC_BACKEND });
+
+// ../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs
+var { git: git3, readSessionRecord: readSessionRecord2, writeSessionRecord: writeSessionRecord2 } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+
+// src/main-sync-state.ts
+var MAIN_SYNC_FILE = "vibe-main-sync.json";
+var MAX_PRIVATE_BYTES = 1024 * 1024;
+var claudeOwnerSchema = external_exports.object({
+  context: operationContextSchema,
+  branch: external_exports.string(),
+  primaryOwner: external_exports.object({ workerId: external_exports.string(), lease: external_exports.string().uuid() }).strict().optional()
+}).strict();
+function readPrivateJson(file) {
+  assertIsolatedTestRead(file);
+  const stat = lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_PRIVATE_BYTES) throw new MainSyncError("Private main-sync evidence must be a bounded regular file");
+  return JSON.parse(readFileSync7(file, "utf8"));
+}
+function digest(text) {
+  return createHash3("sha256").update(text).digest("hex");
+}
+
+// src/main-sync-preparation.ts
+var resultSchema = external_exports.object({ mainSync: external_exports.object({
+  transactionId: external_exports.string().uuid(),
+  mainSha: external_exports.string(),
+  originalBase: external_exports.string(),
+  importedFileCount: external_exports.number().int().nonnegative().optional(),
+  importedFilesSha256: external_exports.string().regex(/^[a-f0-9]{64}$/).optional(),
+  importedFiles: external_exports.array(external_exports.object({ status: external_exports.string(), path: external_exports.string() })).optional()
+}) });
+function importedFileFacts(files) {
+  return { importedFileCount: files.length, importedFilesSha256: digest(JSON.stringify(files.map(({ path: path3, status }) => [path3, status]))) };
+}
+function checkPreparationResult(output, dir, grant, lease) {
+  if (output.status !== "DONE" && output.status !== "NEEDS_COMMIT") return;
+  const file = join6(dir, MAIN_SYNC_FILE);
+  const refusal = () => new WorkerRefusal("MAIN_SYNC_RESULT_INVALID", "Publication preparation needs its own UUID and captured main facts from the private receipt.");
+  let saved;
+  try {
+    saved = existsSync6(file) ? readPrivateJson(file) : void 0;
+  } catch {
+    throw refusal();
+  }
+  const receipt = mainSyncReceiptSchema.safeParse(saved);
+  const owned = receipt.success && receipt.data.preparationTurn?.lease === lease;
+  if (grant.publicationStep !== "prepare" && !owned) return;
+  const result = resultSchema.safeParse(output.data?.mainSyncResult);
+  if (!owned || !receipt.success || !result.success || receipt.data.purpose !== grant.publicationPurpose) throw refusal();
+  const facts = result.data.mainSync;
+  const compact = importedFileFacts(receipt.data.importedFiles);
+  const hasCompact = facts.importedFileCount !== void 0 || facts.importedFilesSha256 !== void 0;
+  if (hasCompact && (compact.importedFileCount !== facts.importedFileCount || compact.importedFilesSha256 !== facts.importedFilesSha256)) throw refusal();
+  if (!hasCompact && !facts.importedFiles) throw refusal();
+  if (facts.importedFiles && !isDeepStrictEqual(receipt.data.importedFiles, facts.importedFiles)) throw refusal();
+  if (receipt.data.transactionId !== facts.transactionId || receipt.data.mainSha !== facts.mainSha || receipt.data.originalBase !== facts.originalBase) throw refusal();
+}
+
 // src/native-record.ts
 var grantSchema = recordContextSchema.extend({
   agentRoot: external_exports.string().min(1),
@@ -5287,7 +5587,8 @@ var releaseSchema = grantSchema.extend({ lease: external_exports.string().uuid()
   workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
-  state: external_exports.enum(["completed", "failed", "canceled"])
+  state: external_exports.enum(["completed", "failed", "canceled"]),
+  result: external_exports.object({ status: statusSchema, data: external_exports.record(external_exports.unknown()).optional() }).optional()
 }).strict() }).strict();
 var nativeRecordOwnerSchema = external_exports.object({ grant: grantSchema, lease: external_exports.string().uuid(), branch: external_exports.string(), targetDir: external_exports.string().optional() }).strict();
 var ownerFile = "native-owner.json";
@@ -5312,8 +5613,8 @@ function acquireNativeRecord(input) {
   try {
     if (target) targetLock = acquireRecordTurnAt(target);
     lock = acquireRecordTurnAt(place, grant.primaryOwner);
-    const lease = randomUUID2();
-    writeFileSync2(join6(lock, ownerFile), JSON.stringify({
+    const lease = randomUUID3();
+    writeFileSync3(join7(lock, ownerFile), JSON.stringify({
       grant,
       lease,
       branch: place.branch,
@@ -5321,8 +5622,8 @@ function acquireNativeRecord(input) {
     }), { mode: 384, flag: "wx" });
     return { workerId: grant.workerId, requestId: grant.requestId, lease, agentName: grant.agentName, recordAction: grant.recordAction };
   } catch (error) {
-    if (lock) rmSync2(lock, { recursive: true });
-    if (targetLock) rmSync2(targetLock, { recursive: true, force: true });
+    if (lock) rmSync3(lock, { recursive: true });
+    if (targetLock) rmSync3(targetLock, { recursive: true, force: true });
     throw error;
   }
 }
@@ -5335,16 +5636,19 @@ function releaseNativeRecord(input) {
   const place = grant.sessionless ? checkoutLocation(grant.worktree) : location(grant.worktree);
   grant.worktree = place.root;
   releaseRecordTurnAt(place, (lock) => {
-    const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync7(join6(lock, ownerFile), "utf8")));
+    const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync8(join7(lock, ownerFile), "utf8")));
     if (owner.lease !== lease || owner.branch !== place.branch || JSON.stringify(owner.grant) !== JSON.stringify(grant) || stoppedTurn.workerId !== grant.workerId || stoppedTurn.requestId !== grant.requestId || stoppedTurn.lease !== lease) {
       throw new Error("Native record release requires the exact owner's stopped-turn completion evidence");
     }
-    if (owner.targetDir) rmSync2(join6(owner.targetDir, "vibe-record-turn.lock"), { recursive: true, force: true });
+    if (isPublisherContext(owner.grant) && stoppedTurn.state === "completed") {
+      checkPreparationResult(stoppedTurn.result ?? { status: "DONE" }, place.dir, owner.grant, owner.lease);
+    }
+    if (owner.targetDir) rmSync3(join7(owner.targetDir, "vibe-record-turn.lock"), { recursive: true, force: true });
   });
   return { workerId: grant.workerId, requestId: grant.requestId, released: true };
 }
 function verifyStrandedRecordGrant(lock, ledger, retained) {
-  const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync7(join6(lock, ownerFile), "utf8")));
+  const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync8(join7(lock, ownerFile), "utf8")));
   const { grant } = owner;
   const { stoppedTurn } = retained;
   const ownRequest = ledger.active ? ledger.active.id === grant.requestId : ledger.completed.includes(grant.requestId);
@@ -5417,15 +5721,15 @@ async function main(argv) {
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");
   const input = await readInput();
   let result;
-  if (action === "register") result = registerWriter(withInstalledRoot(input));
-  else if (action === "migrate") {
-    result = migrateWriter(input, resolve3(dirname4(fileURLToPath4(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
-  } else if (action === "acquire-record") result = acquireNativeRecord(withInstalledRoot(input));
-  else if (action === "release-record") result = releaseNativeRecord(input);
-  else if (action === "take-input") result = takeWriterInput(input);
-  else if (action === "status") result = readWriterSummary(external_exports.object({ worktree: external_exports.string() }).strict().parse(input).worktree) ?? null;
-  else {
-    try {
+  try {
+    if (action === "register") result = registerWriter(withInstalledRoot(input));
+    else if (action === "migrate") {
+      result = migrateWriter(input, resolve3(dirname4(fileURLToPath4(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
+    } else if (action === "acquire-record") result = acquireNativeRecord(withInstalledRoot(input));
+    else if (action === "release-record") result = releaseNativeRecord(input);
+    else if (action === "take-input") result = takeWriterInput(input);
+    else if (action === "status") result = readWriterSummary(external_exports.object({ worktree: external_exports.string() }).strict().parse(input).worktree) ?? null;
+    else {
       if (action === "drop-pending") result = dropPendingWriter(input);
       else {
         const changed = changeWriter(action, input);
@@ -5433,12 +5737,12 @@ async function main(argv) {
           turn: { id: changed.turn.id, lease: changed.turn.lease, status: changed.turn.status }
         } : {} };
       }
-    } catch (error) {
-      if (!(error instanceof WorkerRefusal)) throw error;
-      process.stdout.write(`${JSON.stringify({ status: "BLOCKED", code: error.code, summary: error.summary })}
-`);
-      return 1;
     }
+  } catch (error) {
+    if (!(error instanceof WorkerRefusal)) throw error;
+    process.stdout.write(`${JSON.stringify({ status: "BLOCKED", code: error.code, summary: error.summary })}
+`);
+    return 1;
   }
   process.stdout.write(`${JSON.stringify(result)}
 `);

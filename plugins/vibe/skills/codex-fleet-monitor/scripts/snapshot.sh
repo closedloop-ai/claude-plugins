@@ -46,9 +46,14 @@ requests() {
   if out=$("$@" 2>/dev/null); then printf '%s' "$out" | awk -v w=$where 'NR==1{f=$0} END{print "requests", w, NR, (NR ? f : "-")}'
   else echo "requests $where UNREADABLE"; fi
 }
+# Keep historical board records without scheduling recovery, session wakes or PR polls for retired writers.
+retired=""
+[ -f "$W/board.json" ] && retired=$(node $K/../../fleet-orchestrator/scripts/board.mjs "$W" watch-exclusions 2>/dev/null)
+retired_writers=$(printf '%s\n' "$retired" | awk '$1=="writer"{print $2}')
+retired_prs=$(printf '%s\n' "$retired" | awk '$1=="pr"{print $2" "$3}')
 # "<where> <name>" reads <stateDir>/<name>.json; "<where> <label> <threadId>" names the thread directly.
-L=$(awk '$1=="local"{print (NF>=3 ? $2"="$3 : $2)}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
-R=$(awk '$1=="remote"{print (NF>=3 ? $2"="$3 : $2)}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
+L=$(awk -v skip="$retired_writers" 'BEGIN{n=split(skip,a,"\n");for(i=1;i<=n;i++)old[a[i]]=1} $1=="local"&&!old[$2]{print (NF>=3 ? $2"="$3 : $2)}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
+R=$(awk -v skip="$retired_writers" 'BEGIN{n=split(skip,a,"\n");for(i=1;i<=n;i++)old[a[i]]=1} $1=="remote"&&!old[$2]{print (NF>=3 ? $2"="$3 : $2)}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
 if [ "${RECOVER:-}" = 1 ]; then
   [ -n "${L// }" ] && AUTO_RESTART_DAEMON=${AUTO_RESTART_DAEMON:-} RECOVERY_BACKOFF_SECONDS=${RECOVERY_BACKOFF_SECONDS:-} \
     RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${CONTINUE_PROMPT_FILE:-} \
@@ -114,7 +119,7 @@ for r in ${=WATCH_NEW_PR_REPOS}; do
   echo "open-prs $r $(keep open-$r "$op")"
   mine=$(gh pr list -R $r --state open --author "${WATCH_PR_AUTHOR:-@me}" --json number --jq '.[].number' 2>/dev/null)
   for n in ${=op} ${(f)mine}; do
-    [[ $'\n'$others$'\n' == *$'\n'"$r $n"$'\n'* ]] && continue
+    [[ $'\n'$others$'\n' == *$'\n'"$r $n"$'\n'* || $'\n'$retired_prs$'\n' == *$'\n'"${(L)r} $n"$'\n'* ]] && continue
     grep -Eq "^$r $n( |\$)" $W/prs.txt || echo "$r $n" >> $W/prs.txt
   done
 done
@@ -135,7 +140,7 @@ THREADS='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullR
 done_prs=()
 while read r n owner; do
   [ -z "$n" ] && continue
-  [[ $'\n'$others$'\n' == *$'\n'"$r $n"$'\n'* ]] && continue
+  [[ $'\n'$others$'\n' == *$'\n'"$r $n"$'\n'* || $'\n'$retired_prs$'\n' == *$'\n'"${(L)r} $n"$'\n'* ]] && continue
   st=$(gh pr view $n -R $r --json state,headRefOid,reviewDecision,mergeable --jq '"\(.state) \(.headRefOid[0:8]) \(.reviewDecision) \(.mergeable)"' 2>/dev/null); st=$(keep st-$r-$n "$st")
   m=${st##* }; k=$W/merge-${r//\//_}-$n.txt
   # GitHub reports UNKNOWN while it recomputes; keep the last known value so it does not flap.
@@ -168,4 +173,8 @@ while read r n owner; do
   [[ ${st%% *} == (MERGED|CLOSED) ]] && done_prs+=("$r $n")
   echo "pr $r#$n $st comments=$c reviews=$v inline=$i threads=$t checks=$ck$blocked$stale"
 done < $W/prs.txt
-for d in $done_prs; do grep -Ev "^$d( |\$)" $W/prs.txt > $W/prs.txt.tmp; mv $W/prs.txt.tmp $W/prs.txt; done
+for d in $done_prs; do
+  # Retain the identity before retiring it so settled closure can recheck the live PR.
+  grep -Fxq -- "$d" "$W/terminal-prs.txt" 2>/dev/null || print -r -- "$d" >> "$W/terminal-prs.txt" || exit 1
+  awk -v pr="$d" '$1 " " $2 != pr' "$W/prs.txt" > "$W/prs.txt.tmp" && mv "$W/prs.txt.tmp" "$W/prs.txt" || exit 1
+done

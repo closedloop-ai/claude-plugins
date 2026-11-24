@@ -279,11 +279,9 @@ change log and keep building every allowed part. It is never `BLOCKED` or
 Before `DONE`, run the handoff inventory in build phase and require its
 `forbiddenPaths` and `diffRulesClear` gates to be true; a `diffRules` finding
 is fixed, or cleared by the change log line it names with a reason that holds.
-A frozen render listed under `diffRules.deferredToHandoff` never holds
-`DONE`: rendering frozen stories is handoff's heavy validation, done only by
-handoff's `scripts/frozen-render-gate.mjs`, which writes the `Frozen render
-unchanged` line itself on a pass. Never capture frozen stories yourself and
-never write that line by hand. Any `forbidden` or `outsideAllowed` entry is
+Report every `diffRules.deferredToHandoff` frozen finding before `DONE`.
+Rendering is done only by handoff's `scripts/frozen-render-gate.mjs`. Refresh stale inputs there. It records the pass; never write that line by hand.
+Any `forbidden` or `outsideAllowed` entry is
 removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
@@ -568,17 +566,17 @@ summary in plain words (`../skills/vibe/references/guardrails.md`, "Checks").
 
 ### Self-review before `DONE`
 
-Run `node <plugin-root>/skills/handoff/scripts/guardrails-gate.mjs --worktree "<wt>" --out <a file outside the worktree>`
-and move each `duplicate-helper` and `owner-duplicates` finding to one owner;
-it leaves out untracked files, so compare new files by hand, and a block that
-repeats at more than one site, even under different names, also moves to one owner.
-Fix a line your change contradicts in any doc, comment or changelog you touched;
-after a rename, `rg` the old name across the repository, generated files and changelogs included;
-a doc line naming a command names every sibling that reaches the same code path;
-debt is recorded only as the exact `Debt:` line; a test cites a criterion ID only once the ticket lists it.
-A parser or matcher change starts with decision-table rows for every input layout it can meet
-and a property check against `git show <base>:<file>`; a reviewer's new layout means you
-re-derive the layouts, not only that case.
+Run `node <plugin-root>/skills/handoff/scripts/guardrails-gate.mjs --worktree "<wt>" --out <evidence file>`.
+Move each `duplicate-helper` and `owner-duplicates` finding to one owner. The gate includes untracked files.
+A block that repeats at more than one site, even under different names, also moves to one owner.
+Fix a line your change contradicts in touched prose. After a rename, `rg` the old name across the repository, generated files and changelogs included.
+A doc line names every sibling that reaches the same code path. Record debt only as the exact `Debt:` line.
+A test cites a criterion ID only once the ticket lists it.
+A parser or matcher needs decision-table rows for every input layout it can meet and a property check against `git show <base>:<file>`.
+Cite them in the gate's `Parser layouts:` record. After a new case, re-derive the layouts, not only that case.
+Latch subscribed defaults on open. Trace named list order to its owner; test fixed values outside options.
+Before deleting tests, map surviving cases to their owners. Isolate storage before and after,
+exercise separate users and organizations, and perform the action named by each case.
 
 ## Tests: repair, don't author
 
