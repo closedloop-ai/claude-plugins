@@ -3,7 +3,7 @@
 
 import { vibeSkillPattern } from "../../../shared/plugin-roots.mjs";
 
-/** A writer brief: a Codex `$vibe` prompt or a Claude writer preamble that invokes `vibe:vibe` (or `vibe-generic:vibe`). */
+/** A writer brief: a Codex `$vibe` prompt or a Claude writer preamble invoking the vibe skill in either namespace. */
 export const WRITER_BRIEF = new RegExp(`^\\s*\\$vibe\\b|\\bInvoke ${vibeSkillPattern("vibe")} first\\b|^\\s*\\/${vibeSkillPattern("vibe")}\\b`, "m");
 const TRAILING_SPACE = /\s+$/;
 
