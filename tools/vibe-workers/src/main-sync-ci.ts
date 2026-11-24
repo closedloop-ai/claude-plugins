@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { spawnSync } from "node:child_process";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -83,7 +84,7 @@ function only<T>(items: T[]) {
   if (items.length !== 1) throw new MainSyncError("CI identity is missing or ambiguous");
   return items[0]!;
 }
-function apiJson(root: string, path: string): unknown { return JSON.parse(apiText(root, path)); }
+function apiJson(root: string, path: string): unknown { return capturedJson(apiText(root, path)); }
 function apiText(root: string, path: string, logs = false) {
   const result = spawnSync("gh", ["api", path, ...(logs ? ["--allow-escape-sequences"] : [])], {
     cwd: root, encoding: "utf8", timeout: 120000, maxBuffer: 16 * 1024 * 1024 });

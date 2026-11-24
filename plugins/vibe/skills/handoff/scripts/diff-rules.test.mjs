@@ -983,7 +983,7 @@ test("with no provider bound, only the generic rules run: no repository path rul
   assert.deepEqual(dropped("ISS-12", undefined), [["ticketed-comment", "p/a.ts"]]);
 });
 
-test("ISS-14394 a page composer is named by a whole file-name word, so a pager or pagination file is not one", () => {
+test("AC-26 ISS-14394 a page composer is named by a whole file-name word, so a pager or pagination file is not one", () => {
   const layouts = [
     ["packages/app/projects/projects-page.tsx", true],
     ["apps/app/page.tsx", true],

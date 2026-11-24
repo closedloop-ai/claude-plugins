@@ -375,7 +375,7 @@ test("the pull request opens in the repository origin names, against its default
   assert.throws(() => remoteless.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }), /not a GitHub repository/);
 });
 
-test("item 20: a PR opens with the body file the handoff gate checked, never a copy", (t) => {
+test("AC-25 item 20: a PR opens with the body file the handoff gate checked, never a copy", (t) => {
   const sha = "c".repeat(40);
   const gated = "/git/pr-body-gated.md";
   const witness = JSON.stringify({ evidence: { body: { path: gated } } });

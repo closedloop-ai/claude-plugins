@@ -1,3 +1,4 @@
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, sep } from "node:path";
@@ -6,7 +7,6 @@ import { z } from "zod";
 import { parse } from "yaml";
 import { MainSyncError, producerInputSchema } from "./main-sync-contracts.js";
 import { originTree } from "./main-sync-input-files.js";
-import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { digest } from "./main-sync-state.js";
 import { readProducerMetadata, verifyProducerHead } from "./main-sync-producer-read.js";
 import { mainSyncRecipe } from "./main-sync-recipe.js";
@@ -29,8 +29,8 @@ const workspaceSchema = z.object({ catalog: z.record(z.string()).optional(), cat
 export function producerFor(root: string, path: string) {
   return inputProducers(root).find((producer) => producer.roots.some((root) => path === root || path.startsWith(`${root}/`)));
 }
-export function presentProducers(root: string) {
-  return inputProducers(root).filter((producer) => producer.roots.some((path) => lstatSync(join(root, path), { throwIfNoEntry: false })));
+export function presentProducers(root: string, candidates = inputProducers(root)) {
+  return candidates.filter((producer) => producer.roots.some((path) => lstatSync(join(root, path), { throwIfNoEntry: false })));
 }
 export function producerFiles(root: string, producer: InputProducer, allowed?: ReadonlySet<string>) {
   return producer.roots.flatMap((path) => originTree(root, path, allowed));
@@ -115,15 +115,19 @@ export function verifyProducerInputsForOrigin(root: string, head: string, produc
   return readProducerMetadata(root, head);
 }
 
+/** Enumerate all untracked files under the active producer's canonical inputs. */
+export function producerInputProblems(producers: InputProducer[], files: string[]) {
+  const inputs = producers.flatMap(producer => producer.inputs);
+  return files.filter(file => inputs.some(input => file === input || file.startsWith(input + "/")))
+    .map(path => ({ path, reason: "Untracked canonical producer input cannot be consumed: " + path }));
+}
+
 function verifyProducerInputPaths(root: string, producers: InputProducer[], untracked?: string[]) {
-  const all = untracked ?? [...git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
-    ...git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0")].filter(Boolean);
+  const all = untracked ?? [...readGitInventory(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
+    ...readGitInventory(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0")].filter(Boolean);
+  const [problem] = producerInputProblems(producers, all);
+  if (problem) throw new MainSyncError(problem.reason, "NEEDS_CHANGE");
   for (const producer of producers) {
-    for (const file of all) {
-      if (producer.inputs.some((input) => file === input || file.startsWith(`${input}/`))) {
-        throw new MainSyncError(`Untracked canonical producer input cannot be consumed: ${file}`, "NEEDS_CHANGE");
-      }
-    }
     for (const input of producer.inputs) {
       if (!lstatSync(join(root, input), { throwIfNoEntry: false })) continue;
       if (realpathSync(join(root, input)) !== join(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");

@@ -16,6 +16,7 @@
 // audit-skeleton prints the audit table rows (criteria-audit.mjs) for the card's criteria, for the reviewer to fill in.
 // budget prints the justification report and always exits 0 on a readable card: it never blocks.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -229,7 +230,7 @@ function cardPath(worktree) {
 
 function changedFiles(worktree, base) {
   const lines = (output) => output.split("\n").filter(Boolean);
-  return [...new Set([...lines(git(worktree, ["diff", "--name-only", base])), ...lines(git(worktree, ["ls-files", "--others", "--exclude-standard"]))])];
+  return [...new Set([...lines(git(worktree, ["diff", "--name-only", base])), ...lines(readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard"]))])];
 }
 
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));

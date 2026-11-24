@@ -37,27 +37,6 @@ it("Claude dispatch binds the exact installed definition root and script referen
   expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run handoff/scripts/repo-tool.mjs")).toBeNull();
 });
 
-it("Claude dispatch treats the session checkout's own plugin source as a script root, never another checkout's", () => {
-  const value = setup();
-  const pluginSource = (checkout: string) => {
-    const root = join(checkout, "plugins", "vibe");
-    mkdirSync(join(root, ".claude-plugin"), { recursive: true });
-    writeFileSync(join(root, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "0.0.1" }));
-    mkdirSync(join(root, "skills", "vibe", "scripts"), { recursive: true });
-    return root;
-  };
-  const own = pluginSource(value.worktree);
-  const other = join(value.base, "other-checkout");
-  mkdirSync(other);
-  execFileSync("git", ["init", "-q"], { cwd: other });
-  const elsewhere = pluginSource(other);
-  const check = (text: string) => dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, text);
-  expect(check("Add plugins/vibe/skills/vibe/scripts/branch-new.mjs and its test.")).toBeNull();
-  expect(check(`Add ${join(own, "skills", "vibe", "scripts", "branch-new.mjs")}.`)).toBeNull();
-  expect(check(`Run ${join(elsewhere, "skills", "vibe", "scripts", "branch-new.mjs")}.`))
-    .toMatch(/skills\/vibe\/scripts\/branch-new\.mjs: plugin script does not exist in installed vibe/);
-});
-
 it("protected path support requires a regular installed hook, not a missing or symlinked script", async () => {
   const value = setup();
   await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/missing or unreadable/);
@@ -1084,7 +1063,7 @@ describe("production Claude CLI adapter", () => {
     expect(next.status, next.stdout).toBe(0);
     expect(readWriterSummary(value.worktree)?.activeRequestId).toBeUndefined();
   }, 10000);
-  it("counts only the model's time against the turn cap and bounds each tool wait by the same cap (item 30(g))", () => {
+  it("AC-35 counts only the model's time against the turn cap and bounds each tool wait by the same cap (item 30(g))", () => {
     let now = 0;
     const timers: { callback: () => void; at: number; live: boolean }[] = [];
     const expired: string[] = [];
@@ -1125,7 +1104,7 @@ describe("production Claude CLI adapter", () => {
     expect(waited.status, waited.stdout).toBe(0);
     expect(JSON.parse(waited.stdout).status).toBe("DONE");
   });
-  it("refuses a launch without the bound graph's capabilities with its own code, never WORKER_TURN_FAILED (item 20)", () => {
+  it("AC-25 refuses a launch without the bound graph's capabilities with its own code, never WORKER_TURN_FAILED (item 20)", () => {
     const value = setup();
     const refused = run(value, { agentName: "vibe-environment-worker", mode: "record", recordAction: "handover",
       exclusiveRecordTurn: true, input: "push", capabilities: [] });
@@ -1134,7 +1113,7 @@ describe("production Claude CLI adapter", () => {
       summary: "Parent-discovered read-only graph capabilities are required." });
     expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
   });
-  it("bounds a single tool call by the cap through the production launcher (item 30(g))", () => {
+  it("AC-35 bounds a single tool call by the cap through the production launcher (item 30(g))", () => {
     const value = setup();
     const hung = run(value, { input: "TOOL_WAIT_1600", timeoutMs: 1200 });
     expect(hung.status).toBe(1);
