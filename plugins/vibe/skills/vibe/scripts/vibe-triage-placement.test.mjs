@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { bindProviderInProcess } from "./test-fixtures.mjs";
+import { bindProviderInProcess, writeActiveTicketSnapshot } from "./test-fixtures.mjs";
 import { completedReceipt, gitFixtureResult, linkedCloudFixture, sourcedCloudRequest } from "./fixtures/vibe-triage-cloud.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -47,6 +47,7 @@ test('ISS-14476 cloud placement validates the actual import, dispatch request an
   const board = fileURLToPath(new URL('../../fleet-orchestrator/scripts/board.mjs', import.meta.url));
   const program = path.join(path.dirname(root), 'fleet', 'programs', 'fixture');
   mkdirSync(program, { recursive: true });
+  writeActiveTicketSnapshot(program, [request.ticket, 'ISS-9']);
   const run = (...args) => spawnSync(process.execPath, [board, program, ...args], { encoding: 'utf8' });
   for (const ticket of [request.ticket, 'ISS-9']) {
     const placed = run('placement', ticket, '--evidence', requestFile);

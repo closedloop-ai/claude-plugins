@@ -9,6 +9,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 > Read `../vibe/references/quality-loop-visual-qa.md` (block `when-to-capture`) before any screenshot capture or visual QA pass, in the loop or at handoff.
 
 <!-- block: qa-gate-rules -->
+- Give a visual critic the ticket's original criteria and the applicable operator rulings with the review brief. If a proposed fix contradicts either, return a QUESTION citing the conflict and keep it out of defect dispositions.
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
 - Use `board.mjs <program> hold-pr <writer> --reason <why>` to keep a fleet-owned PR draft while held. `merge-list-add <writer>` admits its verified ready head and marks it ready.
 > Provider `tickets` (block `unit-review` of `fleet/fleet-qa-gate.md`)

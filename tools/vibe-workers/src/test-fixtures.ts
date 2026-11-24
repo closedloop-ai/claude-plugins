@@ -4,6 +4,20 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Capability, TRACKER_SERVICE } from "./contracts.js";
+import { formatReviewContext } from "../../../plugins/vibe/lib/handoff/scripts/review-context.mjs";
+
+/** Include the fixture tracker's original read on review launches; other roles keep their original input. */
+export function withReviewCriteria(input: Record<string, unknown>, directory: string): Record<string, unknown> {
+  if (typeof input.input !== "string" || !/^vibe-(?:.*-reviewer|verify-worker)$/.test(String(input.agentName))) return input;
+  const slug = "TASK-71";
+  const read = { slug, latestVersion: 2, version: { version: 2, content: "## Acceptance criteria\n- [ ] Preserve the original label." } };
+  const ruling = "- Ruling 2026-01-03 (ticket: original): TASK-71 keeps the label on mobile.";
+  const snapshot = join(directory, "review-ticket.json");
+  writeFileSync(snapshot, JSON.stringify(read));
+  const program = join(directory, "rulings.md");
+  writeFileSync(program, ruling);
+  return { ...input, input: input.input + "\n\n" + formatReviewContext(slug, snapshot, program) };
+}
 
 export const graph: Capability[] = [{ name: "mcp__custom_graph__sync_status", service: "graph", operation: "sync_status", access: "read" }];
 export const liveReads: Capability[] = ["get_document", "get_me"].map((operation) => ({
@@ -149,6 +163,7 @@ process.stdin.on('end', () => {
     return;
   }
   let status = 'DONE';
+  if (payload.input.includes('PERSON_FIRST')) status = 'NEEDS_PERSON';
   if (payload.input.includes('PLAN_FIRST')) status = 'PLAN';
   if (payload.input.includes('STORIES_FIRST')) status = 'STORIES_READY';
   if (payload.input.includes('PLACEMENT_FIRST')) status = 'NEEDS_STORYBOOK';
@@ -196,6 +211,8 @@ process.stdin.on('end', () => {
     process.stdout.write(JSON.stringify({ type: 'assistant', session_id: id,
       message: { content: [{ type: 'tool_use', name: graphTool }] } }) + '\n');
     compact.data.findings = [];
+    if (payload.input.includes("REVIEW_CONFLICT")) compact.data.findings.push({
+      contradicts: "Preserve the original label.", question: "Should the label change?", blocking: true, id: "one", evidence: "Label differs." });
   }
   if (mainSyncResult) compact.data.mainSyncResult = mainSyncResult;
   if (discardReceipt) compact.data.discardReceipt = discardReceipt;

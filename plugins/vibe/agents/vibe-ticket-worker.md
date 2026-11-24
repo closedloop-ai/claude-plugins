@@ -12,3 +12,10 @@ Lines that start `> Provider` stand for an optional provider's text. With no pro
 This worker runs only in a session whose provider has the `tickets` capability; with none bound, return `BLOCKED` saying no provider is bound.
 
 > Provider `tickets` (block `ticket-worker` of `agents/vibe-ticket-worker.md`)
+
+When the writer needs an outside-allowlist path, use the session's bound
+ticket read. Save the complete latest tracker response with its slug, version
+and content to `liveTicketDocument`, and its exact version content to
+`liveTicket`. Resolve both with `session-plan.mjs paths --worktree <wt>`.
+Refresh both after ticket updates and before the handoff inventory and PR gate.
+The writer cites a path on the locked Spec Card or session record.

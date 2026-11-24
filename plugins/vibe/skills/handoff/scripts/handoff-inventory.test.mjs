@@ -59,6 +59,79 @@ function useMasterDefault({ home, checkout, origin, worktree }) {
 }
 
 const PATH_POLICY = "vibe-handoff-paths.json";
+test("AC-14 admits a cited root manifest and requires its exact disclosure in the PR body", (t) => {
+  const { home, worktree } = setup(t, "cited-manifest", { "package.json": "{}\n" });
+  const scripts = path.resolve(HERE, "../../vibe/scripts");
+  const ticket = "ISS-123";
+  const criterion = "Update the root `package.json` scripts.";
+  const body = "## Acceptance criteria\n- [ ] " + criterion + "\n";
+  assert.equal(runNode(SESSIONS, ["touch", "--worktree", worktree, "--live-ticket", ticket], home).status, 0);
+  const evidence = runNode(path.join(scripts, "session-plan.mjs"), ["paths", "--worktree", worktree], home).json;
+  mkdirSync(evidence.root, { recursive: true });
+  const document = evidence.liveTicketDocument;
+  const saveRead = (slug, content) => {
+    writeFileSync(document, JSON.stringify({ slug, latestVersion: 2, version: { version: 2, content } }));
+    writeFileSync(evidence.liveTicket, content);
+  };
+  saveRead(ticket, body);
+  write(worktree, "package.json", '{"scripts":{}}\n');
+  const inventory = (...args) => runNode(INVENTORY, ["--phase", "pull-request", "--worktree", worktree, ...args], home).json;
+  const rejected = () => assert.deepEqual(inventory().outsideAllowed.map(file => file.path), ["package.json"]);
+  rejected();
+  const input = path.join(home, "card.json");
+  const cite = { path: "package.json", cites: "AC-1" };
+  const card = { version: 1, criteria: [{ id: "AC-1", text: criterion, source: ticket, evidence: "test" }],
+    plan: { summary: "Deliver root scripts", ownerFiles: ["package.json"], justifications: [cite] } };
+  writeFileSync(input, JSON.stringify(card));
+  assert.equal(runNode(path.join(scripts, "spec-card.mjs"), ["save", "--stage", "locked", "--worktree", worktree, input], home).status, 0);
+  const accepted = inventory();
+  assert.deepEqual(accepted.outsideAllowed, []);
+  assert.equal(accepted.blocking.forbiddenPaths, true);
+  const [entry] = accepted.pathCitations;
+  assert.deepEqual([entry.ticket, entry.criterion, entry.path], [ticket, "AC-1", "package.json"]);
+  const prs = path.join(home, "prs.json");
+  writeFileSync(prs, "[]");
+  writeFileSync(evidence.prBody, "Change package scripts.\n");
+  const check = () => inventory("--body", evidence.prBody, "--prs-json", prs).prBodyProblems;
+  assert.ok(check().some(problem => problem.includes(entry.disclosure)));
+  writeFileSync(evidence.prBody, "<!--\n" + entry.disclosure + "\n-->\n");
+  assert.ok(check().some(problem => problem.includes(entry.disclosure)));
+  writeFileSync(evidence.prBody, entry.disclosure + "\n");
+  assert.ok(!check().some(problem => problem.includes(entry.disclosure)));
+  saveRead("ISS-124", body);
+  rejected();
+  saveRead(ticket, "## Acceptance criteria\n- [ ] A different criterion.\n");
+  rejected();
+  saveRead(ticket, "## Acceptance criteria\nNo criteria yet.\n");
+  rejected();
+  const citePath = (file, id) => runNode(SESSIONS, ["touch", "--worktree", worktree, "--cite-path", file, "--criterion", id], home);
+  const intake = (...paths) => runNode(path.join(scripts, "dist/scope-intake.mjs"), [
+    "--worktree", worktree, "--phase", "pull-request", ...paths.flatMap(file => ["--path", file]),
+  ], home).json;
+  assert.equal(citePath("package.json", "AC-5").status, 1);
+  saveRead(ticket, "## Acceptance criteria\n1. Edit package.json.\n1. Edit a different file.\n");
+  assert.equal(citePath("package.json", "AC-1").status, 1);
+  saveRead(ticket, "## Acceptance criteria\n<!--\n1. Edit package.json.\n-->\n");
+  assert.equal(citePath("package.json", "AC-1").status, 1);
+  for (const text of ["Use apps/package.json", "Use package.json.bak", "Use *.json",
+    "Use package.json*", "Use pnpm docker:ensure", "Use <package.json> as a placeholder"]) {
+    saveRead(ticket, "## Acceptance criteria\n1. " + text + "\n");
+    assert.equal(citePath("package.json", "AC-1").status, 1, text);
+  }
+  saveRead(ticket, "## Acceptance criteria\n1. Publish scripts from package.json.\n2. Edit AGENTS.md.\n");
+  assert.equal(citePath("package.json", "AC-1").status, 0);
+  assert.equal(citePath("AGENTS.md", "AC-2").status, 0);
+  const planned = intake("package.json", "AGENTS.md", "apps/app/page.tsx", "untouched.txt");
+  assert.deepEqual(planned.allowed, ["apps/app/page.tsx", "package.json"]);
+  assert.deepEqual(planned.forbidden, ["AGENTS.md"]);
+  assert.deepEqual(planned.outsideAllowed, ["untouched.txt"]);
+  const sessionCitation = inventory().pathCitations[0];
+  assert.equal(sessionCitation.source, "session");
+  assert.equal(sessionCitation.text, "Publish scripts from package.json.");
+  writeFileSync(evidence.liveTicket, "## Acceptance criteria\n1. Use different scripts.\n");
+  rejected();
+});
+
 const CLAUDE_PLUGIN_POLICY = readFileSync(path.resolve(HERE, "../../../../..", PATH_POLICY), "utf8");
 
 test("AC-019 build inventory reports when the table cannot advance to handoff", (t) => {

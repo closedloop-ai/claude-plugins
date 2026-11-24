@@ -35,6 +35,7 @@ type InventoryResult = {
   baseCommit?: string;
   ownedPrototype?: boolean;
   sessionSlug?: string | null;
+  pathCitations?: Array<{ path: string }>;
 };
 type PathClassification = { disposition: "allowed" | "forbidden" | "outside"; reason: string };
 type PathClassifier = (input: {
@@ -43,6 +44,7 @@ type PathClassifier = (input: {
   policy: PathPolicy;
   prototype: { owned: boolean; slug?: string | null };
   portableSurfaceAllowed: boolean;
+  pathCitations?: Array<{ path: string }>;
 }) => PathClassification;
 type IntakeScopeInput = {
   worktree: string;
@@ -74,6 +76,7 @@ async function intakeScope(input: IntakeScopeInput): Promise<IntakeScopeResult> 
     file: { path: file, status: plannedStatus(worktree, loaded.inventory.baseCommit as string, file) },
     phase: input.phase,
     policy: loaded.policy ?? defaultPolicy,
+    pathCitations: loaded.inventory.pathCitations,
     prototype: { owned: loaded.inventory.ownedPrototype === true, slug: loaded.inventory.sessionSlug },
     portableSurfaceAllowed: await portableSurfaceEditAllowed(worktree, loaded.inventory, file),
   }) })));

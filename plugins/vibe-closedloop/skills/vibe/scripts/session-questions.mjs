@@ -8,7 +8,7 @@
 // Usage:
 //   session-questions.mjs reset                                   (start of a new session)
 //   session-questions.mjs ask    --key <key> --question <text> --default <what you do without an answer> --deadline-minutes <n>
-//                                [--product --code-evidence <file:line>] [--worktree <path>]
+//                                [--product --code-evidence <file:line>] [--worktree <path>] [--ticket-record <tracker.json>] [--new-fact <specific words in question>]
 //   session-questions.mjs answer --key <key> --answer <text>   [--worktree <path>]
 //   session-questions.mjs list   [--worktree <path>]
 //
@@ -43,27 +43,28 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
+import { boundProgramRulings, currentTrackerBody } from "../../handoff/scripts/ruling-evidence.mjs";
+import { questionRulings } from "../../handoff/scripts/rulings-check.mjs";
+import { waitsForPerson } from "./question-wait-policy.mjs";
+import { sessionPlanEvidencePaths } from "./session-plan.mjs";
+
+export { waitsForPerson };
 
 const { escalation, isSandboxRefusal } = await vibeCore("lib/vibe/scripts/sandbox-refusal.mjs");
-const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { readSessionRecord, sessionLiveTicket, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { commandChat } = await vibeCore("lib/fleet-orchestrator/scripts/chat-binding.mjs");
 
 const KEY_PATTERN = /^[a-z0-9]+(?:[-:][a-z0-9]+)*$/;
 const MAX_TEXT = 4000;
 const ASKS_LEAVE = /\b(?:may|can|shall|should) i\b|\b(?:ok|okay|fine) (?:for me )?to\b|\bpermission\b|\bauthori[sz](?:e|ation)\b|\bapprov(?:e|al)\b|\bgo-?ahead\b/i;
 const IN_SCOPE_WORK = /\b(?:tests?|fixtures?|specs?|snapshots?|merge (?:main|the base)|main merge|rebase|push|commit|rerun|re-run|lint|typecheck|fix(?:es)?|repair)\b/i;
 const HUMAN_ONLY = /\b(?:flags?|feature flag|switch(?:es)?|toggles?|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|product|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
-const WAITS_FOR_PERSON = /\b(?:flags?|feature flag|switch(?:es)?|toggles?|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
 const MAX_DEADLINE_MINUTES = 30;
 const HOLDS_PR = /\b(?:hold(?:s|ing)?|block(?:s|ing)?|paus(?:e|es|ing)|park(?:ed|ing)?)\b[^.?!\n]{0,40}\b(?:auto-?merge|merge|pr|pull request|push)\b|\b(?:auto-?merge|merge|pr|pull request|push)\b[^.?!\n]{0,20}\b(?:on hold|held|until you answer|pending your answer)\b/i;
 
 /** In-scope engineering work asked as permission; it never waits for the person. */
 export function asksLeaveForInScopeWork(question) {
   return ASKS_LEAVE.test(question) && IN_SCOPE_WORK.test(question) && !HUMAN_ONLY.test(question);
-}
-
-/** A flag, copy, destructive, credential or scope-narrowing question: no default is ever applied without the person. */
-export function waitsForPerson(question) {
-  return WAITS_FOR_PERSON.test(question);
 }
 
 /** The line that ends a question message: what happens, and when, if nobody answers. */
@@ -77,7 +78,7 @@ export function startupFile(home = os.homedir()) {
 }
 
 /** Records a question once; a repeated key returns the existing entry instead. */
-export function askQuestion(questions, { key, question, product = false, codeEvidence, fallback, deadlineMinutes, now = new Date().toISOString() }) {
+export function askQuestion(questions, { key, question, product = false, codeEvidence, fallback, deadlineMinutes, newFact, rulings, ticketRecord, now = new Date().toISOString() }) {
   requireKey(key);
   requireText("--question", question);
   if (asksLeaveForInScopeWork(question)) {
@@ -101,6 +102,7 @@ export function askQuestion(questions, { key, question, product = false, codeEvi
   const deadlineAt = waits ? null : new Date(Date.parse(now) + minutes * 60_000).toISOString();
   const entry = {
     key, question, ...(product ? { product: true, codeEvidence } : {}),
+    ...(newFact ? { newFact, rulings } : {}), ...(ticketRecord ? { ticketRecord } : {}),
     ...(waits ? { waitsForPerson: true } : { default: fallback.trim(), deadlineAt, ifNoAnswer: ifNoAnswerLine(deadlineAt, fallback.trim()) }),
     askedAt: now, answer: null, answeredAt: null,
   };
@@ -186,6 +188,29 @@ function requireText(name, text) {
   }
 }
 
+/** Read only this chat's program and this checkout's recorded ticket. Both delivery paths use these sources. */
+export function checkQuestionRulings(question, { chat, cwd, home = os.homedir(), newFact, ticketRecord }) {
+  const program = boundProgramRulings(chat, home);
+  const records = program ? [program] : [];
+  if (cwd && existsSync(cwd)) {
+    const cached = sessionPlanEvidencePaths(cwd, home).liveTicket;
+    if (existsSync(cached)) records.push(readFileSync(cached, "utf8"));
+    else if (!ticketRecord && existsSync(path.join(cwd, ".git")) && sessionLiveTicket(readSessionRecord(cwd) ?? {})) {
+      throw new Error("Refresh this session's live ticket evidence or supply its full tracker response with --ticket-record before asking.");
+    }
+  }
+  if (ticketRecord) {
+    const snapshot = JSON.parse(readFileSync(ticketRecord, "utf8"));
+    const ticket = cwd && existsSync(path.join(cwd, ".git")) && sessionLiveTicket(readSessionRecord(cwd) ?? {});
+    const body = currentTrackerBody(snapshot, ticket);
+    if (!body) {
+      throw new Error("--ticket-record requires the full latest tracker response for the current ticket.");
+    }
+    records.push(body);
+  }
+  return questionRulings(question, records, newFact);
+}
+
 function run(argv, home = os.homedir()) {
   const { positionals, values } = parseArgs({
     args: argv,
@@ -197,6 +222,8 @@ function run(argv, home = os.homedir()) {
       answer: { type: "string" },
       product: { type: "boolean" },
       "code-evidence": { type: "string" },
+      "new-fact": { type: "string" },
+      "ticket-record": { type: "string" },
       default: { type: "string" },
       "deadline-minutes": { type: "string" },
     },
@@ -210,8 +237,14 @@ function run(argv, home = os.homedir()) {
       rmSync(startupFile(home), { force: true });
       return { questions: [] };
     case "ask": {
+      requireText("--question", values.question);
+      const newFact = values["new-fact"]?.trim();
+      const ticketRecord = values["ticket-record"] && path.resolve(values["ticket-record"]);
+      const { allowed, rulings } = checkQuestionRulings(values.question, { cwd: worktree ?? process.cwd(), home, chat: commandChat(), newFact, ticketRecord });
+      if (!allowed) return { ask: false, rulings, reason: "Apply the recorded ruling. Ask only if the question names a specific uncovered new fact." };
       const { questions, result } = askQuestion(load(worktree, home), {
         key: values.key, question: values.question, product: values.product, codeEvidence: values["code-evidence"],
+        newFact: rulings.length ? newFact : undefined, rulings, ticketRecord,
         fallback: values.default, deadlineMinutes: values["deadline-minutes"],
       });
       if (result.ask) {

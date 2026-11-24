@@ -54,6 +54,7 @@ export function sessionPlanEvidencePaths(worktree, home = os.homedir()) {
     planDocument: path.join(root, "vibe-live-plan-document.json"),
     childEvidence: path.join(root, "vibe-child-evidence.json"),
     liveTicket: path.join(root, "vibe-live-ticket.md"),
+    liveTicketDocument: path.join(root, "vibe-live-ticket-document.json"),
     users: path.join(root, "vibe-users"),
     flagSnapshot: path.join(root, "vibe-flag-snapshot.new.json"),
     dispatchInputs: path.join(root, "vibe-dispatch-inputs.json"),

@@ -16,6 +16,7 @@
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket <slug>]
 //                                     [--status active|handed-off] [--live-ticket <slug>]
 //                                     [--created-live-ticket] [--member-ticket <slug> ...]
+//                                     [--cite-path <literal file> --criterion <AC-n>]
 //                                     [--live-plan <plan slug>] [--live-plan-status DRAFT|APPROVED|EXECUTED]
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--environment-org <id>]
@@ -158,6 +159,8 @@ const { positionals, values } = parseArgs({
     "created-live-ticket": { type: "boolean", default: false },
     "handoff-ticket": { type: "string" },
     "member-ticket": { type: "string", multiple: true },
+    "cite-path": { type: "string" },
+    criterion: { type: "string" },
     "body-stale": { type: "string" },
     "body-refreshed": { type: "boolean", default: false },
     "live-plan": { type: "string" },
@@ -224,7 +227,7 @@ async function run(command) {
     case "prototype-result":
       return { session: savePrototypePublication(requireOption("worktree"), requireOption("file")) };
     case "touch":
-      return { session: worktreeCommands.touchSession() };
+      return { session: await worktreeCommands.touchSession() };
     case "flag-snapshot":
       return { session: saveFlagSnapshot() };
     case "desktop-auth":

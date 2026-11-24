@@ -8,6 +8,7 @@ import { APPENDED_SECTIONS, checkLiveTicket, parseSections, TICKET_SECTIONS, VIB
 import { renderRecordSections, vercelAliases } from "../../vibe/scripts/vibe-session-data.mjs";
 import { localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { bindProviderInProcess, PROVIDER_BINDING, git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { HUMAN_RULINGS, SETTLED_BY_ORCHESTRATOR, TRADE_TWIN } from "./settlement-test-fixture.mjs";
 
 // The live ticket exists only with a tracker bound, so these run bound to the ClosedLoop provider.
 bindProviderInProcess(after);
@@ -439,4 +440,59 @@ test("ISS-14116: a ticket vibe did not create is checked only for the sections v
   assert.deepEqual(checkLiveTicket(pendingGrading, { record: adopted }).problems,
     [{ section: "Grading", problem: "still has a Pending. marker" }]);
   assert.deepEqual(APPENDED_SECTIONS.filter((heading) => !TICKET_SECTIONS.includes(heading)), []);
+});
+
+test("ISS-14679: the handoff ticket check refuses an orchestrator's AC reading and accepted cost, and passes once each quotes a human ruling", (t) => {
+  const scope = (entries) => [
+    "- Scope: both lists",
+    "- Newest ruling: ISS-12592, 2026-10-15, \"tag editing stays on the list page\"",
+    "- Prior removal: none found (searched: fts_search tag editor remove)",
+    "- Acceptance criteria:",
+    "  - [ ] Select several rows and edit their tags",
+    ...HUMAN_RULINGS,
+    ...entries,
+  ].join("\n");
+  const settled = completeTicket({
+    "Scope and acceptance criteria": scope([`- ${SETTLED_BY_ORCHESTRATOR.optionC}`, `- ${SETTLED_BY_ORCHESTRATOR.acMet}`, `- ${SETTLED_BY_ORCHESTRATOR.lanes}`]),
+    "Engineering checklist": `- [ ] Open the pull request\n- ${TRADE_TWIN}`,
+  });
+  const refused = checkLiveTicket(settled);
+  assert.equal(refused.ok, false);
+  assert.deepEqual(refused.problems.map(({ section }) => section), ["Rulings", "Rulings", "Rulings"]);
+  assert.match(refused.problems[1].problem, /^"- Decision \(orchestrator\): ISS-13117 AC-3 .* reads an acceptance criterion with no cited human ruling.*NEEDS_PERSON \(behavior\)/);
+
+  const ruling = '- Ruling 2026-11-24 (designer): "a new saved view is fine for AC-3"; amends: AC-3';
+  const answered = completeTicket({
+    "Scope and acceptance criteria": scope([ruling, `- ${SETTLED_BY_ORCHESTRATOR.acMet} Per Ruling 2026-11-24 (designer): "a new saved view is fine for AC-3".`]),
+  });
+  assert.equal(checkLiveTicket(answered).ok, false, "the candidate cannot authenticate its own ruling");
+  assert.deepEqual(checkLiveTicket(answered, { rulingSources: [ruling] }), { ok: true, problems: [] });
+  const fromRecord = completeTicket({
+    "Scope and acceptance criteria": scope([`- ${SETTLED_BY_ORCHESTRATOR.acMet} Per "a new saved view is fine for AC-3".`]),
+  });
+  assert.equal(checkLiveTicket(fromRecord).ok, false, "a quote no ruling carries is refused");
+  assert.equal(checkLiveTicket(fromRecord, { rulingsText: ruling }).ok, false, "a private change-log entry cannot settle behavior");
+  assert.deepEqual(checkLiveTicket(fromRecord, { rulingSources: [ruling] }), { ok: true, problems: [] });
+  const { root, home, cleanup } = makeHome("settlement-authority-");
+  t.after(cleanup);
+  const file = path.join(root, "candidate.md");
+  writeFileSync(file, answered);
+  const chat = "settlement-operator";
+  const run = () => runNode(SCRIPT, ["--file", file], home, { CODEX_THREAD_ID: chat, CLAUDE_CODE_SESSION_ID: chat });
+  assert.equal(run().status, 1, "a ticket draft's self-citation fails at the CLI");
+  const program = path.join(home, "programs", "scope");
+  const binding = path.join(home, ".vibe-hook-scope", "fleet-binding");
+  mkdirSync(program, { recursive: true });
+  mkdirSync(binding, { recursive: true });
+  writeFileSync(path.join(binding, chat + ".json"), JSON.stringify({ chat, home, program: "scope" }));
+  writeFileSync(path.join(program, "rulings.md"), '- Ruling 2026-11-24 (operator message: transcript 8): "a new saved view is fine for AC-3"');
+  assert.equal(run().status, 0, "the same CLI accepts independently recorded program words");
+});
+
+test("ISS-14679: on an adopted ticket only the sections vibe appends are checked for settlements", () => {
+  const adopted = { liveTicketCreatedBySession: false, flagKeys: { surfaces: [] } };
+  const humanScope = PRD_CHILD_TICKET.replace("Reuse the existing owner chip.", `- ${SETTLED_BY_ORCHESTRATOR.acMet}`);
+  assert.deepEqual(checkLiveTicket(humanScope, { record: adopted }).problems, [], "a human-authored section is never vibe's to refuse");
+  const appended = PRD_CHILD_TICKET.replace("- Assumptions: None: no Spec Card", `- Assumptions: None: no Spec Card\n- ${SETTLED_BY_ORCHESTRATOR.acMet}`);
+  assert.deepEqual(checkLiveTicket(appended, { record: adopted }).problems.map(({ section }) => section), ["Rulings"]);
 });

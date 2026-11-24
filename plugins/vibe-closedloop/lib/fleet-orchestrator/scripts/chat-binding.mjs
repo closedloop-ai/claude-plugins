@@ -303,8 +303,9 @@ export function reclaimStaleLock(lock, seen, hooks = {}) {
     let removed = false;
     try {
       hooks.beforeRemove?.();
-      if (readFileSync(lock, "utf8") === seen) {
-        unlinkSync(lock);
+      if ((hooks.read ? hooks.read(lock) : readFileSync(lock, "utf8")) === seen) {
+        if (hooks.remove) hooks.remove(lock);
+        else unlinkSync(lock);
         removed = true;
       }
     } catch {}

@@ -97,10 +97,11 @@ var module = await vibeCore("lib/vibe/scripts/captured-json.mjs");
 var { capturedJson, capturedJsonDocuments } = module;
 
 // src/claude-worker.ts
-import { execFileSync as execFileSync2, spawn, spawnSync as spawnSync2 } from "node:child_process";
+import { execFileSync as execFileSync3, spawn, spawnSync as spawnSync2 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync, existsSync as existsSync9, openSync, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync3, writeFileSync as writeFileSync4, writeSync } from "node:fs";
-import { join as join10 } from "node:path";
+import { closeSync, openSync, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync3, writeFileSync as writeFileSync5, writeSync } from "node:fs";
+import { basename as basename3, join as join11 } from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 import { StringDecoder } from "node:string_decoder";
 
 // node_modules/zod/v3/external.js
@@ -5100,7 +5101,7 @@ function bindTakeoverWriter(worktree, binding) {
 
 // vibe-core:lib/handoff/scripts/review-receipts.mjs
 var module5 = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
-var { REVIEW_ROLES, captureNativeReviewReceipt, captureReviewReceipt, graphCalls, reviewReceiptProblems, reviewTraceFacts, verifiedReviewModel } = module5;
+var { REVIEW_ROLES, captureNativeReviewReceipt, captureReviewReceipt, graphCalls, nativeReviewResult, reviewReceiptProblems, reviewTraceFacts, verifiedReviewModel } = module5;
 
 // vibe-core:lib/vibe/scripts/plugin-script-references.mjs
 var module6 = await vibeCore("lib/vibe/scripts/plugin-script-references.mjs");
@@ -5232,7 +5233,7 @@ import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module9 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module9;
+var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, readSessionRecordFile, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module9;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
@@ -5905,12 +5906,53 @@ function mustStopForUsage(rateLimit, allowCredits) {
   return rateLimit.status === RATE_LIMIT_REJECTED || rateLimit.isUsingOverage === true;
 }
 
-// src/shared-host-guards.ts
-import { existsSync as existsSync8, readFileSync as readFileSync9 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+// src/worker-result-cap.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { existsSync as existsSync8, writeFileSync as writeFileSync4 } from "node:fs";
 import { join as join9 } from "node:path";
+var SUMMARY_LIMIT = 4096;
+var RESULT_LIMIT = 16 * 1024;
+var TRUNCATED = " [truncated by the launcher]";
+var DATA_DROPPED = " [data dropped by the launcher: over 16 KB; see the trace]";
+function capWorkerResult(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const result = { ...value };
+  const clip = (summary2, suffix) => summary2.length + suffix.length <= SUMMARY_LIMIT ? `${summary2}${suffix}` : `${summary2.slice(0, SUMMARY_LIMIT - suffix.length)}${suffix}`;
+  if (typeof result.summary === "string" && result.summary.length > SUMMARY_LIMIT) result.summary = clip(result.summary, TRUNCATED);
+  const originalBytes = JSON.stringify(result).length;
+  if (originalBytes > RESULT_LIMIT && "data" in result) {
+    result.status = "BLOCKED";
+    result.data = { launcher: { code: "WORKER_DATA_TOO_LARGE", originalBytes } };
+    if (typeof result.summary === "string") result.summary = clip(result.summary, DATA_DROPPED);
+  }
+  return result;
+}
+function capCheckpoint(root, gitDir, turnId) {
+  try {
+    const run = (args) => execFileSync2("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
+    const midMerge = existsSync8(join9(gitDir, "MERGE_HEAD"));
+    const diff = run(["diff", "--binary", "HEAD"]);
+    if (!diff) return { dirtyFiles, midMerge };
+    const patch = join9(gitDir, `vibe-cap-${turnId}.patch`);
+    writeFileSync4(patch, diff, { mode: 384, flag: "wx" });
+    return { dirtyFiles, midMerge, patch };
+  } catch {
+    return void 0;
+  }
+}
+
+// src/shared-host-guards.ts
+import { existsSync as existsSync9, readFileSync as readFileSync9 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join10 } from "node:path";
 function fleetSlotRoot(env = process.env, home = homedir2()) {
-  return env.SLOT_LOCK_DIR || join9(env.XDG_STATE_HOME || join9(home, ".local", "state"), "fleet-orchestrator", "locks");
+  return env.SLOT_LOCK_DIR || join10(env.XDG_STATE_HOME || join10(home, ".local", "state"), "fleet-orchestrator", "locks");
 }
 function sharedHostGuardProblem(settings, shared) {
   if (!shared) return null;
@@ -5931,15 +5973,15 @@ function sharedHostGuardProblem(settings, shared) {
   return off ? `${off[1].file} disables ${off[0]}, which carries vibe's guards on this shared fleet host; enable it before launching` : null;
 }
 function checkSharedHostGuards(worktree, { env = process.env, home = homedir2() } = {}) {
-  const files = [join9(home, ".claude", "settings.json"), join9(worktree, ".claude", "settings.json"), join9(worktree, ".claude", "settings.local.json")];
-  const settings = files.filter((file) => existsSync8(file)).map((file) => {
+  const files = [join10(home, ".claude", "settings.json"), join10(worktree, ".claude", "settings.json"), join10(worktree, ".claude", "settings.local.json")];
+  const settings = files.filter((file) => existsSync9(file)).map((file) => {
     try {
       return { file, value: JSON.parse(readFileSync9(file, "utf8")) };
     } catch {
       return { file, value: null };
     }
   });
-  const problem = sharedHostGuardProblem(settings, existsSync8(fleetSlotRoot(env, home)));
+  const problem = sharedHostGuardProblem(settings, existsSync9(fleetSlotRoot(env, home)));
   if (problem) throw new LaunchPrecheckError("GUARDS_DISABLED", problem);
 }
 
@@ -5992,6 +6034,10 @@ function signalFailure(pid, error) {
   }
   return new OwnedCleanupError("Unable to prove the owned process group stopped; writer lease retained", { cause: error });
 }
+
+// vibe-core:lib/handoff/scripts/review-context.mjs
+var module10 = await vibeCore("lib/handoff/scripts/review-context.mjs");
+var { boundReviewContext, formatReviewContext, reviewDoctrine, reviewQuestions } = module10;
 
 // src/claude-worker.ts
 var MAX_WORKER_TIMEOUT_MS = 30 * 60 * 1e3;
@@ -6050,6 +6096,7 @@ var structuredOutputTool = "StructuredOutput";
 var readerRoles = /* @__PURE__ */ new Set([
   "vibe-adversarial-reviewer",
   "vibe-guardrails-reviewer",
+  "vibe-consolidated-reviewer",
   "vibe-handoff-summarizer",
   "vibe-requirements-worker",
   "vibe-backend-worker",
@@ -6077,7 +6124,12 @@ function workerResultJsonSchemaFor(agentName) {
   schema.properties.data = {
     type: "object",
     additionalProperties: true,
-    properties: { findings: { type: "array", items: {
+    properties: { questions: { type: "array", items: {
+      type: "object",
+      additionalProperties: false,
+      properties: { kind: { const: "QUESTION" }, contradicts: { type: "string", minLength: 1 }, question: { type: "string", minLength: 1 } },
+      required: ["kind", "contradicts", "question"]
+    } }, findings: { type: "array", items: {
       type: "object",
       additionalProperties: true,
       properties: {
@@ -6230,7 +6282,7 @@ function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync
     "Environment DONE needs provider preview receipt and environment identity."
   );
   const args = [
-    realpathSync9(join10(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
+    realpathSync9(join11(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
     "--file",
     receipt,
     "--worktree",
@@ -6248,9 +6300,9 @@ function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync
   );
 }
 function reviewSourceIdentity(pluginRoot, worktree) {
-  return capturedJson(execFileSync2(
+  return capturedJson(execFileSync3(
     process.execPath,
-    [realpathSync9(join10(pluginRoot, "skills/vibe/scripts/tested-head.mjs")), "source", worktree],
+    [realpathSync9(join11(pluginRoot, "skills/vibe/scripts/tested-head.mjs")), "source", worktree],
     { encoding: "utf8" }
   ));
 }
@@ -6325,7 +6377,7 @@ function boundDefinition(definition, input) {
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${assembleProviderText(definition.prompt, binding)}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join10(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join11(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -6362,7 +6414,7 @@ async function runWorker(rawInput) {
   const unchangedUpgrade = upgrade?.provenNewer && upgrade.installedDigest === upgrade.recordedDigest;
   const compatible = upgrade && writerUpgradeCompatible(upgrade);
   if (upgrade && !compatible) {
-    const command = `node ${join10(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
+    const command = `node ${join11(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
     const message = upgrade.provenNewer || upgrade.observedDigest === null ? `Claude dispatch definition is from a stale installed plugin release; run ${command} with the recorded migration JSON on stdin` : "Writer definition mismatch has no proven installed release upgrade; retain the original writer";
     throw new AgentRootError("STALE_PLUGIN_ROOT", message);
   }
@@ -6385,6 +6437,15 @@ async function runWorker(rawInput) {
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
   const persistent = input.agentName === "vibe-change-worker";
+  const groundedReview = /^vibe-.*-reviewer$/.test(input.agentName) || input.agentName === "vibe-verify-worker";
+  let reviewCriteria;
+  if (groundedReview) {
+    try {
+      reviewCriteria = boundReviewContext(input.input ?? "", input.worktree);
+    } catch (error) {
+      throw new WorkerRefusal("REVIEW_CRITERIA_REQUIRED", error instanceof Error ? error.message : "Supply the review-ticket block.");
+    }
+  }
   if (!persistent) checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   checkSharedHostGuards(place.root);
@@ -6407,6 +6468,7 @@ async function runWorker(rawInput) {
   let lease;
   let resume = false;
   let turnInput = input.input ?? input.continuation ?? "";
+  if (reviewCriteria) turnInput += "\n\n" + reviewDoctrine;
   if (persistent) {
     if (takeover) bindTakeoverWriter(place.root, { prUrl: takeover.prUrl, headSha: takeover.headSha, sourceBranch: takeover.sourceBranch });
     const registered = registerWriter({
@@ -6433,8 +6495,8 @@ async function runWorker(rawInput) {
   else if (!input.input) throw new WorkerRefusal("REVIEWER_INPUT_REQUIRED", "A read-only role requires fresh input.");
   recordWorkerScope(workerId, place.root);
   const turnId = randomUUID3();
-  const definitionFile = join10(place.dir, `vibe-agent-${turnId}.json`);
-  const tracePath = join10(place.dir, `vibe-worker-${turnId}.jsonl`);
+  const definitionFile = join11(place.dir, `vibe-agent-${turnId}.json`);
+  const tracePath = join11(place.dir, `vibe-worker-${turnId}.jsonl`);
   let trace;
   let recordLock = false;
   let discardLock = false;
@@ -6470,14 +6532,14 @@ async function runWorker(rawInput) {
         };
         if (input.mainSyncCiRun) operationContext.mainSyncCiRun = input.mainSyncCiRun;
         if (input.mainSyncValidation) operationContext.mainSyncValidation = input.mainSyncValidation;
-        writeFileSync4(join10(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
+        writeFileSync5(join11(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
           context: operationContext,
           branch: place.branch,
           ...persistent && lease ? { primaryOwner: { workerId, lease } } : {}
         }), { mode: 384, flag: "wx" });
       }
     }
-    writeFileSync4(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 384, flag: "wx" });
+    writeFileSync5(definitionFile, JSON.stringify({ [definition.name]: bound.agent }), { mode: 384, flag: "wx" });
     trace = openSync(tracePath, "wx", 384);
     const timeoutMs = input.mainSyncValidation ? await deriveValidationEnvelope(operationContext, place.dir, place.branch, () => prelaunchCanceled) : input.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
     if (prelaunchCanceled) throw new Error("Owned worker turn canceled before Claude spawn");
@@ -6528,6 +6590,7 @@ async function runWorker(rawInput) {
     process.removeListener("SIGTERM", cancelBeforeLaunch);
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
+    if (reviewCriteria && output.data) output.data = reviewQuestions(output.data, reviewCriteria);
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
     const endingReviewSource = reviewSource ? reviewSourceIdentity(definition.root, place.root) : void 0;
     if (reviewSource && JSON.stringify(endingReviewSource) !== JSON.stringify(reviewSource)) {
@@ -6551,11 +6614,12 @@ async function runWorker(rawInput) {
       status: output.status,
       resultSummary: output.summary
     });
-    return {
+    const result = {
       ...output,
       runtime: "claude",
       agentName: input.agentName,
       ...reviewSource ? { source: reviewSource, worktree: realpathSync9(place.root) } : {},
+      ...reviewCriteria ? { reviewCriteria } : {},
       ...takeover ? { takeover } : {},
       graphToolIdentities: graphCapabilities.map((capability) => mcpToolIdentity(capability.name)),
       graphToolAliases,
@@ -6564,6 +6628,10 @@ async function runWorker(rawInput) {
       tracePath,
       writer: persistent ? readWriterSummary(input.worktree) : void 0
     };
+    if (input.agentName === "vibe-requirements-worker" && result.status === "DONE") {
+      writeSync(trace, JSON.stringify({ type: "requirements_completion", record: result }) + "\n");
+    }
+    return result;
   } catch (error) {
     cleanupBlocked = error instanceof OwnedCleanupError;
     let leaseRetained = persistent && Boolean(lease);
@@ -6606,8 +6674,8 @@ async function runWorker(rawInput) {
     process.removeListener("SIGINT", cancelBeforeLaunch);
     if (trace !== void 0) closeSync(trace);
     rmSync3(definitionFile, { force: true });
-    if (recordLock && !cleanupBlocked) rmSync3(join10(place.dir, "vibe-record-turn.lock"), { recursive: true });
-    if (discardLock && !cleanupBlocked && discardPlace) rmSync3(join10(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
+    if (recordLock && !cleanupBlocked) rmSync3(join11(place.dir, "vibe-record-turn.lock"), { recursive: true });
+    if (discardLock && !cleanupBlocked && discardPlace) rmSync3(join11(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
   }
 }
 async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTimeoutMs, trace, allowCredits, attach, excludeToolWait) {
@@ -6970,6 +7038,36 @@ async function main(argv) {
   }
   let input;
   try {
+    if (argv[0] === "check-analysis") {
+      if (argv.length !== 3) throw new Error("Usage: check-analysis <worktree> <request-id> < result.json");
+      const record = external_exports.object({
+        runtime: external_exports.literal("claude"),
+        agentName: external_exports.literal("vibe-requirements-worker"),
+        requestId: identifierSchema,
+        workerId: external_exports.string().uuid(),
+        sessionId: external_exports.string().uuid(),
+        tracePath: external_exports.string()
+      }).passthrough().parse(await readInput());
+      const file = basename3(record.tracePath);
+      const directory = checkoutLocation(argv[1]).dir;
+      const expected = join11(directory, file);
+      if (record.requestId !== argv[2] || record.sessionId !== record.workerId || !/^vibe-worker-[\da-f-]{36}\.jsonl$/i.test(file) || record.tracePath !== expected || realpathSync9(expected) !== join11(realpathSync9(directory), file)) {
+        throw new Error("Analysis identity differs from its request or checkout");
+      }
+      const events = readFileSync10(expected, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+      const completion = events.pop();
+      events.reverse();
+      const init = events.find((event) => initSchema.safeParse(event).success);
+      const terminal = resultSchema2.safeParse(events.find((event) => event.type === "result"));
+      if (completion?.type !== "requirements_completion" || !isDeepStrictEqual2(completion.record, record) || init?.session_id !== record.sessionId || !terminal.success || terminal.data.session_id !== record.sessionId || terminal.data.is_error) {
+        throw new Error("No matching requirements-worker completion in the launcher's private trace");
+      }
+      const data = terminal.data.structured_output ?? JSON.parse(terminal.data.result ?? "null");
+      const outcome = workerResultSchema.parse(capWorkerResult(data));
+      if (outcome.status !== "DONE" || record.status !== outcome.status || record.summary !== outcome.summary || !isDeepStrictEqual2(record.data, outcome.data)) throw new Error("Requirements analysis has no matching completed outcome");
+      process.stdout.write(JSON.stringify({ verified: true, requestId: record.requestId, workerId: record.workerId }) + "\n");
+      return 0;
+    }
     if (argv.length) throw new Error("Send the worker brief and capability metadata on stdin, never argv");
     input = await readInput();
     const result = await runWorker(input);
@@ -7004,49 +7102,13 @@ function referenceImagesFor(agentName, metadataDir) {
   return referenceImages.length ? { referenceImages } : {};
 }
 var TEST_REPAIR_MODES = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
-var SUMMARY_LIMIT = 4096;
-var RESULT_LIMIT = 16 * 1024;
-var TRUNCATED = " [truncated by the launcher]";
-var DATA_DROPPED = " [data dropped by the launcher: over 16 KB; see the trace]";
-function capWorkerResult(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const result = { ...value };
-  const clip = (summary2, suffix) => summary2.length + suffix.length <= SUMMARY_LIMIT ? `${summary2}${suffix}` : `${summary2.slice(0, SUMMARY_LIMIT - suffix.length)}${suffix}`;
-  if (typeof result.summary === "string" && result.summary.length > SUMMARY_LIMIT) result.summary = clip(result.summary, TRUNCATED);
-  const originalBytes = JSON.stringify(result).length;
-  if (originalBytes > RESULT_LIMIT && "data" in result) {
-    result.status = "BLOCKED";
-    result.data = { launcher: { code: "WORKER_DATA_TOO_LARGE", originalBytes } };
-    if (typeof result.summary === "string") result.summary = clip(result.summary, DATA_DROPPED);
-  }
-  return result;
-}
-function capCheckpoint(root, gitDir, turnId) {
-  try {
-    const run = (args) => execFileSync2("git", args, {
-      cwd: root,
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
-    const midMerge = existsSync9(join10(gitDir, "MERGE_HEAD"));
-    const diff = run(["diff", "--binary", "HEAD"]);
-    if (!diff) return { dirtyFiles, midMerge };
-    const patch = join10(gitDir, `vibe-cap-${turnId}.patch`);
-    writeFileSync4(patch, diff, { mode: 384, flag: "wx" });
-    return { dirtyFiles, midMerge, patch };
-  } catch {
-    return void 0;
-  }
-}
 runFromCanonicalEntry(import.meta.url, main);
 function workerSessionName(agentName, branch, requestId) {
   const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");
   return `vibe ${role} \xB7 ${branch.replace(/^vibe\//, "")} \xB7 ${requestId}`;
 }
 function checkoutHead(root) {
-  return execFileSync2("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  return execFileSync3("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 }
 export {
   DEFAULT_WORKER_TIMEOUT_MS,
@@ -7054,7 +7116,6 @@ export {
   armMcpInitWatchdog,
   boundDefinition,
   canStartWorkerAttempt,
-  capWorkerResult,
   checkPreviewResult,
   childMcpStartupWaitMs,
   createTurnCap,

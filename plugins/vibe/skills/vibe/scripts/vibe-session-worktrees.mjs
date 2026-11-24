@@ -287,7 +287,7 @@ function newSession(values, requireOption, { prototype = false } = {}) {
   return { worktree, ...record, ...(questions.length ? { questions } : {}) };
 }
 
-function touchSession(values, requireOption) {
+async function touchSession(values, requireOption) {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
   const orgId = values["environment-org"] ?? values["clerk-org-id"];
@@ -370,6 +370,14 @@ function touchSession(values, requireOption) {
   // A recorded scope change leaves the open pull request's body stale until env-ctl pr-update saves a refreshed one.
   if (values["body-stale"]) updated.prBodyStale = { reason: values["body-stale"].trim(), at: now };
   if (values["body-refreshed"]) delete updated.prBodyStale;
+  if (values["cite-path"] !== undefined || values.criterion !== undefined) {
+    const requested = { path: values["cite-path"], cites: values.criterion };
+    const { pathCitationAuthority } = await import("../../handoff/scripts/path-citations.mjs");
+    const verified = pathCitationAuthority(worktree, updated, { requested }).citations.find(entry => entry.source === "request");
+    if (!verified) throw new Error("The bound ticket needs a current criterion naming this exact repository file.");
+    const row = { ticket: verified.ticket, ...requested, text: verified.text };
+    updated.pathCitations = [...(record.pathCitations ?? []).filter(entry => entry.path !== row.path), row];
+  }
   writeVibeSessionRecord(worktree, updated);
   let retirementWarning;
   if (retirement) {

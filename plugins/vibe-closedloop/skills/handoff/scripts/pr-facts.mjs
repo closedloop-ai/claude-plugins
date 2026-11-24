@@ -20,12 +20,17 @@ import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/loca
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
 import { GENERIC_AREAS, isUiFile, sessionAreas } from "../../vibe/scripts/area-paths.mjs";
-import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, verifiedMainFailureEvidence } from "../../vibe/scripts/pre-pr-lanes.mjs";
+import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, readRecords, verifiedMainFailureEvidence } from "../../vibe/scripts/pre-pr-lanes.mjs";
+import { verifiedCredentialLimitation, engineeringBodyProblems } from "../../vibe/scripts/engineering-limitation.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { boundProbeCommit, requiredContainerIdentity, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { probeE2eCapability, remoteCapabilityProbe } from "./e2e-capability-probe.mjs";
+import { settlementSources } from "./ruling-evidence.mjs";
+import { settlementProblems } from "./rulings-check.mjs";
 import { currentPrTreeFacts, prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { surfaceFixProblems } from "./surface-fix-evidence.mjs";
+import { visibleMarkdownLines } from "./criteria-list.mjs";
+import { readTemplate, templateHeadingProblems } from "./pr-template.mjs";
 import { GRAPH_CHANGE_SELECTOR, GRAPH_SELECTOR, prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { QaImpact, qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
@@ -53,8 +58,6 @@ const SUFFIXES = ["", ".ts", ".tsx", ".js", ".mjs", "/index.ts", "/index.tsx"];
 const ASK = /[^.!?\n]*\b(?:say|state|explain|decide|justify)\b[^.!?\n]*\bin\s+the\s+(?:PR|pull request)\b[^.!?\n]*[.!?]?/gi;
 const CITATION = /(?<![\w/.-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z]{1,5}):(\d+)\b/g;
 const PR_NUMBER = /#(\d{3,6})\b/g;
-const TEMPLATE_PATHS = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
-const TEMPLATE_HEADING = /^#{1,6}\s+\S.*$/gm;
 export { assertionChanges };
 export const KNOWN_MAIN_FAILURES = "Known main failures";
 const CI_CHECK_PATH = /^(?:\.github\/(?:workflows|actions)\/|scripts\/)|(?:^|\/)(?:package\.json|turbo\.json|biome\.jsonc?)$|(?:^|\/)(?:lint|checks?|gates?)\//;
@@ -359,7 +362,7 @@ export function evidenceProblems(runsFile, changed, commit, worktree, rulingId =
   return requiredLanes(changed, runsFile.touchFlows, sessionAreas(worktree)).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit, prRules(worktree), worktree))).flatMap((lane) => {
     const runs = allRuns.filter((run) => run?.lane === lane && !carriedProof(run));
     if (runs.length === 0) return [`${lane}: no run recorded`];
-    return runs.flatMap((run) => follows.has(run) || RULING_HOST_LANES.includes(lane) && leftByRuling(run, rulingId, commit)
+    return runs.flatMap((run) => acceptsEngineeringLimitation(run, runsFile, worktree) ? [] : follows.has(run) || RULING_HOST_LANES.includes(lane) && leftByRuling(run, rulingId, commit)
       ? (run.command ? [] : [`${lane}: command missing`]) : [
       ...(passedOrMainPreexisting(run) ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
@@ -373,11 +376,13 @@ export function evidenceProblems(runsFile, changed, commit, worktree, rulingId =
 /** What a drafted body gets wrong against the facts. */
 export function bodyProblems(body, facts, files, prBase, template = "", runsFile = null, planPrefix = null) {
   const flat = body.replace(/\s+/g, " ");
+  const disclosures = new Set(facts.pathCitations?.length ? visibleMarkdownLines(body).map(line => line.replace(/^- /, "")) : []);
   const byPath = new Map(files.map((file) => [file.path, file]));
   const changedLine = (file, line) => file.hunks.some((hunk) => hunk.added.some((entry) => entry.line === line)
     || (hunk.newCount === 0 && (line === hunk.newStart || line === hunk.newStart + 1)));
   const mentioned = new Set([...body.matchAll(PR_NUMBER)].map((match) => Number(match[1])));
   return [
+    ...(facts.pathCitations ?? []).filter(entry => !disclosures.has(entry.disclosure)).map(entry => "PR body must include: " + entry.disclosure),
     ...[...body.matchAll(CITATION)].flatMap(([cited, file, line]) => (byPath.has(file) && byPath.get(file).status !== "D" && changedLine(byPath.get(file), Number(line))
       ? [] : [`${cited} is not a changed line of the diff`])),
     ...(facts.overlap === null ? ["open pull requests could not be read, so overlap is unchecked"] : facts.overlap
@@ -393,6 +398,7 @@ export function bodyProblems(body, facts, files, prBase, template = "", runsFile
     ...(prBase !== "main" && !flat.includes(STACKED_BASE_STATEMENT) ? [`base is ${prBase}; add verbatim: ${STACKED_BASE_STATEMENT}`] : []),
     ...pointerProblems(body, planPrefix).map(({ line, kind }) => `body line ${line}: ${kind}`),
     ...prBodyClaimProblems(body, runsFile, facts.tree),
+    ...engineeringBodyProblems(body, [runsFile?.runs, runsFile?.testRuns].flatMap(rows => Array.isArray(rows) ? rows : [])),
     ...templateHeadingProblems(body, template),
   ];
 }
@@ -426,7 +432,7 @@ export function loadOpenPrs(worktree) {
 }
 
 /** The facts for the inventory's JSON, with the gates when a body or a runs file is given. */
-export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, rulingsText, body, runs, commit, prBase = "main", requiredTests = [], template,
+export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, rulingsText, body, runs, commit, prBase = "main", requiredTests = [], pathCitations = [], template,
   probeCapability = currentCapabilityProbe }) {
   return withStableSource(worktree, current => {
     const binding = runs?.source === undefined ? { testedCommit: commit, problems: [] }
@@ -438,6 +444,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     const { contracts, refusals } = contractChanges(files, prRules(worktree).refusalPaths);
     const areas = sessionAreas(worktree);
     const facts = {
+      pathCitations,
       serverOnly: !changed.some((file) => isUiFile(file, areas)),
       requiredLanes: requiredLanes(changed, [], areas),
       assertionChanges: assertionChanges(files, {
@@ -454,6 +461,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     return {
       ...facts,
       ...(body === undefined ? {} : { prBodyProblems: [
+        ...settlementProblems(body, settlementSources(worktree)),
         ...bodyProblems(body, { ...facts, tree: currentPrTreeFacts(worktree, base, current.head) }, files, prBase, template ?? readTemplate(worktree, base), runs, sessionLocalPlanPrefix(worktree)),
         ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
         ...(/^\s*(?:[-*]\s+)?Fix surface:/m.test(body) ? surfaceFixProblems(body, files, {
@@ -635,17 +643,6 @@ function gh(args) {
 }
 
 /**
- * Every heading of the repo's pull request template is a line of the body.
- * A body edited by hand dropped a required heading twice and failed the
- * repo's required body check.
- */
-export function templateHeadingProblems(body, template) {
-  const lines = new Set(body.split("\n").map((line) => line.trim()));
-  return (template.match(TEMPLATE_HEADING) ?? []).map((heading) => heading.trim())
-    .filter((heading) => !lines.has(heading)).map((heading) => `template heading "${heading}" is missing`);
-}
-
-/**
  * Test selection over the whole branch diff (vibe-pr-evidence.json
  * `testSelection` and `testRuns`). Each changed source file needs an import
  * selection that returned tests (a graph test lookup), or the repo's related-test
@@ -785,7 +782,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree, receiptDir,
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command
         && (!impactKey || atHead(run) || run.laneKey === impactKey || recomputed?.allowedRuns?.some(record => isDeepStrictEqual(record, run)))
         && (!recomputed?.allowedRuns || recomputed.allowedRuns.some(record => isDeepStrictEqual(record, run)))
-        && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
+        && (passedOrMainPreexisting(run) || desktopLeftForCi(run) || acceptsEngineeringLimitation(run, runsFile, worktree)))) {
       problems.push(`lane ${lane.name}: no passing run of its lane command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238). A lane that fails on main too is recorded with pre-pr-lanes.mjs record --result main-preexisting; only a dated human targeted-tests ruling leaves it not run`);
     }
   }
@@ -874,6 +871,11 @@ function desktopLeftForCi(run) {
   return run?.status === "not-run" && isDesktopE2eLane(run.command ?? "") && text(run.reason);
 }
 
+function acceptsEngineeringLimitation(run, evidence, worktree) {
+  return Boolean(worktree && run?.engineeringCredential &&
+    verifiedCredentialLimitation(run, evidence.source, readRecords(worktree), worktree));
+}
+
 /**
  * Every main-preexisting run is named in the body under Known main failures,
  * so the reviewer sees what the pull request did not cause.
@@ -898,13 +900,6 @@ function finalFileHash(inventory, worktree, file) {
     catch { return undefined; }
   }
   return inventory.fileHashes?.[file];
-}
-
-/** Read the first existing base template; absence is optional, but Git failures still propagate. */
-function readTemplate(worktree, base) {
-  const present = new Set(readGitInventory(worktree, ["ls-tree", "-r", "--name-only", base, "--", ...TEMPLATE_PATHS]).trim().split("\n").filter(Boolean));
-  const file = TEMPLATE_PATHS.find((candidate) => present.has(candidate));
-  return file ? git(worktree, ["show", `${base}:${file}`]) : "";
 }
 
 function text(value) {

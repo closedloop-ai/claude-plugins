@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeActiveTicketSnapshot } from "../../vibe/scripts/test-fixtures.mjs";
 
 const BOARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'board.mjs');
 export const CODE_ONLY = { codeOnly: true, needsRunningApp: false, localEvidence: [] };
@@ -14,6 +15,7 @@ export const fixture = (t, operatorRuling) => {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const dir = path.join(home, 'programs', 'p1');
   mkdirSync(dir, { recursive: true });
+  writeActiveTicketSnapshot(dir, Array.from({ length: 9 }, (_, i) => 'ISS-' + (i + 1)));
   writeFileSync(path.join(home, 'current'), 'p1\n');
   const evidenceDir = mkdtempSync(path.join(os.tmpdir(), 'fleet-placement-evidence-'));
   t.after(() => rmSync(evidenceDir, { recursive: true, force: true }));

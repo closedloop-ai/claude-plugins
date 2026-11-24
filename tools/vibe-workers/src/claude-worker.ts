@@ -1,8 +1,9 @@
 import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { execFileSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { basename, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
 import { checkClaudeSignIn, checkClaudeSignInAsync, checkProtectedWriteSupportAsync, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
@@ -10,7 +11,7 @@ import { checkClaudeSignIn, checkClaudeSignInAsync, checkProtectedWriteSupportAs
 import { runFromCanonicalEntry } from "./cli.js";
 import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, requireSupportedCapabilities, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
-import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
+import { acquireRecordTurnAt, attachClaudeProcess, bindTakeoverWriter, changeWriter, checkoutLocation, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   readWriterUpgradeEvidence, registerWriter, writerUpgradeCompatible } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { graphCalls, reviewTraceFacts } from "../../../plugins/vibe/lib/handoff/scripts/review-receipts.mjs";
@@ -28,8 +29,10 @@ import { readReferenceImages } from "./reference-images.js";
 import { asksForUsage, claudeWorkerUsage } from "./usage.js";
 import { type ClaudeRateLimit, mustStopForUsage, rateLimitFromEvent } from "./claude-usage.js";
 import { WorkerRefusal } from "./worker-refusal.js";
+import { capCheckpoint, capWorkerResult, type CapCheckpoint } from "./worker-result-cap.js";
 import { checkSharedHostGuards } from "./shared-host-guards.js";
 import { escalateOwnedStop, finishOwnedGroup, OwnedCleanupError, OwnedSignalRefusal, signalOwnedChild } from "./owned-process.js";
+import { boundReviewContext, reviewDoctrine, reviewQuestions } from "../../../plugins/vibe/lib/handoff/scripts/review-context.mjs";
 
 export const MAX_WORKER_TIMEOUT_MS = 30 * 60 * 1000;
 export const DEFAULT_WORKER_TIMEOUT_MS = MAX_WORKER_TIMEOUT_MS;
@@ -67,7 +70,7 @@ const workerResultJsonSchema = { type: "object", additionalProperties: false,
     data: { type: "object", additionalProperties: true } }, required: ["status", "summary"] };
 const structuredOutputTool = "StructuredOutput";
 const readerRoles = new Set([
-  "vibe-adversarial-reviewer", "vibe-guardrails-reviewer", "vibe-handoff-summarizer",
+  "vibe-adversarial-reviewer", "vibe-guardrails-reviewer", "vibe-consolidated-reviewer", "vibe-handoff-summarizer",
   "vibe-requirements-worker", "vibe-backend-worker", "vibe-primitive-worker", "vibe-storybook-decomposer",
   "vibe-verify-worker",
 ]);
@@ -101,7 +104,9 @@ export function workerResultJsonSchemaFor(agentName: string) {
   const schema: Record<string, any> = structuredClone(workerResultJsonSchema);
   if (!receiptRoles.has(agentName)) return schema;
   schema.properties.data = { type: "object", additionalProperties: true,
-    properties: { findings: { type: "array", items: { type: "object", additionalProperties: true,
+    properties: { questions: { type: "array", items: { type: "object", additionalProperties: false,
+      properties: { kind: { const: "QUESTION" }, contradicts: { type: "string", minLength: 1 }, question: { type: "string", minLength: 1 } },
+      required: ["kind", "contradicts", "question"] } }, findings: { type: "array", items: { type: "object", additionalProperties: true,
       properties: { id: { type: "string", minLength: 1 }, blocking: { type: "boolean" }, evidence: { type: "string", minLength: 1 },
         browserCase: { type: "object", additionalProperties: false,
           properties: { name: { type: "string", minLength: 1 }, status: { type: "string", enum: ["queued", "available", "reproduced"] } },
@@ -413,6 +418,12 @@ export async function runWorker(rawInput: unknown) {
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
   const persistent = input.agentName === "vibe-change-worker";
+  const groundedReview = /^vibe-.*-reviewer$/.test(input.agentName) || input.agentName === "vibe-verify-worker";
+  let reviewCriteria;
+  if (groundedReview) {
+    try { reviewCriteria = boundReviewContext(input.input ?? "", input.worktree); }
+    catch (error) { throw new WorkerRefusal("REVIEW_CRITERIA_REQUIRED", error instanceof Error ? error.message : "Supply the review-ticket block."); }
+  }
   if (!persistent) checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   checkSharedHostGuards(place.root);
@@ -434,6 +445,7 @@ export async function runWorker(rawInput: unknown) {
   let lease: string | undefined;
   let resume = false;
   let turnInput = input.input ?? input.continuation ?? "";
+  if (reviewCriteria) turnInput += "\n\n" + reviewDoctrine;
   if (persistent) {
     if (takeover) bindTakeoverWriter(place.root, { prUrl: takeover.prUrl, headSha: takeover.headSha, sourceBranch: takeover.sourceBranch! });
     const registered = registerWriter({ worktree: input.worktree, runtime: "claude", agentRoot: definition.root,
@@ -514,6 +526,7 @@ export async function runWorker(rawInput: unknown) {
     process.removeListener("SIGTERM", cancelBeforeLaunch);
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
+    if (reviewCriteria && output.data) output.data = reviewQuestions(output.data, reviewCriteria);
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
     const endingReviewSource = reviewSource ? reviewSourceIdentity(definition.root, place.root) : undefined;
     if (reviewSource && JSON.stringify(endingReviewSource) !== JSON.stringify(reviewSource)) {
@@ -530,12 +543,18 @@ export async function runWorker(rawInput: unknown) {
     checkPreviewResult(input, output, definition.root, place.root);
     if (persistent && lease) changeWriter("finish", { worktree: input.worktree, workerId, requestId: input.requestId,
       lease, status: output.status, resultSummary: output.summary });
-    return { ...output, runtime: "claude", agentName: input.agentName, ...(reviewSource ? { source: reviewSource, worktree: realpathSync(place.root) } : {}),
+    const result = { ...output, runtime: "claude", agentName: input.agentName, ...(reviewSource ? { source: reviewSource, worktree: realpathSync(place.root) } : {}),
+      ...(reviewCriteria ? { reviewCriteria } : {}),
       ...(takeover ? { takeover } : {}),
       graphToolIdentities: graphCapabilities.map((capability) => mcpToolIdentity(capability.name)),
       graphToolAliases,
       workerId, requestId: input.requestId, tracePath,
       writer: persistent ? readWriterSummary(input.worktree) : undefined };
+    // Only the launcher writes this final line, after its child has exited and the session identity has matched.
+    if (input.agentName === "vibe-requirements-worker" && result.status === "DONE") {
+      writeSync(trace, JSON.stringify({ type: "requirements_completion", record: result }) + "\n");
+    }
+    return result;
   } catch (error) {
     cleanupBlocked = error instanceof OwnedCleanupError;
     let leaseRetained = persistent && Boolean(lease);
@@ -871,6 +890,35 @@ export async function main(argv: string[]): Promise<number> {
   }
   let input: unknown;
   try {
+    if (argv[0] === "check-analysis") {
+      if (argv.length !== 3) throw new Error("Usage: check-analysis <worktree> <request-id> < result.json");
+      const record = z.object({ runtime: z.literal("claude"), agentName: z.literal("vibe-requirements-worker"),
+        requestId: identifierSchema, workerId: z.string().uuid(), sessionId: z.string().uuid(), tracePath: z.string() })
+        .passthrough().parse(await readInput());
+      const file = basename(record.tracePath);
+      const directory = checkoutLocation(argv[1]!).dir;
+      const expected = join(directory, file);
+      if (record.requestId !== argv[2] || record.sessionId !== record.workerId
+        || !/^vibe-worker-[\da-f-]{36}\.jsonl$/i.test(file) || record.tracePath !== expected
+        || realpathSync(expected) !== join(realpathSync(directory), file)) {
+        throw new Error("Analysis identity differs from its request or checkout");
+      }
+      const events = readFileSync(expected, "utf8").trimEnd().split("\n").map(line => JSON.parse(line));
+      const completion = events.pop();
+      events.reverse();
+      const init = events.find(event => initSchema.safeParse(event).success);
+      const terminal = resultSchema.safeParse(events.find(event => event.type === "result"));
+      if (completion?.type !== "requirements_completion" || !isDeepStrictEqual(completion.record, record)
+        || init?.session_id !== record.sessionId || !terminal.success || terminal.data.session_id !== record.sessionId || terminal.data.is_error) {
+        throw new Error("No matching requirements-worker completion in the launcher's private trace");
+      }
+      const data = terminal.data.structured_output ?? JSON.parse(terminal.data.result ?? "null");
+      const outcome = workerResultSchema.parse(capWorkerResult(data));
+      if (outcome.status !== "DONE" || record.status !== outcome.status || record.summary !== outcome.summary ||
+          !isDeepStrictEqual(record.data, outcome.data)) throw new Error("Requirements analysis has no matching completed outcome");
+      process.stdout.write(JSON.stringify({ verified: true, requestId: record.requestId, workerId: record.workerId }) + "\n");
+      return 0;
+    }
     if (argv.length) throw new Error("Send the worker brief and capability metadata on stdin, never argv");
     input = await readInput();
     const result = await runWorker(input);
@@ -901,52 +949,6 @@ function referenceImagesFor(agentName: string, metadataDir: string) {
 
 /** Writer turns that may mechanically repair existing tests the session's change broke (operator ruling, 2026-10-13). */
 const TEST_REPAIR_MODES: ReadonlySet<string> = new Set(["request", "fix", "handoff", "pull-request"]);
-const SUMMARY_LIMIT = 4096;
-const RESULT_LIMIT = 16 * 1024;
-const TRUNCATED = " [truncated by the launcher]";
-const DATA_DROPPED = " [data dropped by the launcher: over 16 KB; see the trace]";
-
-/**
- * The launcher caps a result instead of rejecting it after the turn. A result
- * rejected for length left its request open, and the writer refused the next
- * request until a continuation nobody sent.
- */
-export function capWorkerResult(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const result = { ...(value as Record<string, unknown>) };
-  const clip = (summary: string, suffix: string) => summary.length + suffix.length <= SUMMARY_LIMIT ? `${summary}${suffix}`
-    : `${summary.slice(0, SUMMARY_LIMIT - suffix.length)}${suffix}`;
-  if (typeof result.summary === "string" && result.summary.length > SUMMARY_LIMIT) result.summary = clip(result.summary, TRUNCATED);
-  const originalBytes = JSON.stringify(result).length;
-  if (originalBytes > RESULT_LIMIT && "data" in result) {
-    result.status = "BLOCKED";
-    result.data = { launcher: { code: "WORKER_DATA_TOO_LARGE", originalBytes } };
-    if (typeof result.summary === "string") result.summary = clip(result.summary, DATA_DROPPED);
-  }
-  return result;
-}
-
-type CapCheckpoint = { dirtyFiles: number; midMerge: boolean; patch?: string };
-
-/**
- * A writer turn that hits its time cap leaves its edits uncommitted, twice
- * mid-merge, with no report (vibe-13007, 2026-10-23). Before the turn is
- * released, record what it left and save tracked changes as a patch in the
- * git dir; nothing is committed, reset or discarded.
- */
-function capCheckpoint(root: string, gitDir: string, turnId: string): CapCheckpoint | undefined {
-  try {
-    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"] });
-    const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
-    const midMerge = existsSync(join(gitDir, "MERGE_HEAD"));
-    const diff = run(["diff", "--binary", "HEAD"]);
-    if (!diff) return { dirtyFiles, midMerge };
-    const patch = join(gitDir, `vibe-cap-${turnId}.patch`);
-    writeFileSync(patch, diff, { mode: 0o600, flag: "wx" });
-    return { dirtyFiles, midMerge, patch };
-  } catch { return undefined; }
-}
 runFromCanonicalEntry(import.meta.url, main);
 
 /**
