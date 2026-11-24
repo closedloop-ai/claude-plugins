@@ -1,3 +1,5 @@
+import { buildsComposeImages } from "./docker-disk-admission.mjs";
+import { capturedJson } from "./captured-json.mjs";
 import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -7,14 +9,14 @@ import { pruneOwnedBuilder, recordBuiltTags, removeOwnedRunState, verifiedBuilde
 
 /** Reserve private service tags; only the child shim's selected waves can create them. */
 export function plannedLocalTags(docker, project, worktree, command, args = [], env = process.env) {
-  if (args.includes('--no-build') || ![command, ...args].some((word) => /(?:^|\/)run-containerized\.sh$/.test(word))) return [];
+  if (!buildsComposeImages(command, args)) return [];
   const composeArgs = ["compose", "-p", project, "-f", path.join(worktree, "e2e", "compose.yml")];
   const ghcr = env.E2E_GHCR_CONTENT_IMAGES === "1";
   if (ghcr) composeArgs.push("-f", path.join(worktree, "e2e", "compose.ghcr.yml"));
   composeArgs.push("--profile", "*", "config", "--format", "json");
   const result = spawnSync(docker, composeArgs, { encoding: "utf8", timeout: 30_000, env });
   if (result.error || result.status !== 0) throw new Error("Could not resolve local E2E build tags.");
-  const services = JSON.parse(result.stdout).services;
+  const services = capturedJson(result.stdout).services;
   if (!services || typeof services !== "object") throw new Error("Resolved Compose services are missing.");
   return Object.entries(services).filter(([, service]) => service.build)
     .map(([name]) => project + "-" + name);
@@ -51,7 +53,7 @@ function resourceWitness(kind, id, run) {
   if (kind.key === "containers" && !/^[a-f0-9]{64}$/.test(id)) throw new Error("Docker container needs a full container ID.");
   const raw = dockerOutput([kind.noun, "inspect", id], run, { missing: true });
   if (raw === null) return null;
-  const parsed = JSON.parse(raw);
+  const parsed = capturedJson(raw);
   const value = Array.isArray(parsed) ? parsed[0] : null;
   const labels = kind.key === "containers" ? value?.Config?.Labels : value?.Labels;
   const created = value?.Created ?? value?.CreatedAt;
@@ -132,7 +134,7 @@ function imageWitness(tag, run) {
     if (result.status === 1 && failure.startsWith(missing) && sameImageTag(tag, failure.slice(missing.length))) return null;
     throw new Error(`Docker image inspect failed: ${failure}`);
   }
-  const image = JSON.parse(String(result.stdout ?? ''))[0];
+  const image = capturedJson(String(result.stdout ?? ''))[0];
   if (!/^sha256:[a-f0-9]{64}$/i.test(image?.Id ?? '') || !Number.isFinite(Date.parse(image?.Created ?? ''))
     || !Array.isArray(image.RepoTags) || !image.RepoTags.some((value) => sameImageTag(tag, value))) {
     throw new Error('Image tag has no exact ID, creation or tag witness');
@@ -155,7 +157,7 @@ function projectResources(project, run) {
 
 function projectHasRunningContainers(resources, run) {
   for (const witness of resources.containers) {
-    const value = JSON.parse(dockerResult(['container', 'inspect', witness.id], run))[0];
+    const value = capturedJson(dockerResult(['container', 'inspect', witness.id], run))[0];
     if (typeof value?.State?.Running !== 'boolean' || value.State.Running) {
       throw new Error('E2E project container is running or has unreadable state');
     }
@@ -218,7 +220,7 @@ function inspectContainersForImage(image, project, run) {
     .split('\n').filter(Boolean);
   for (const id of ids) {
     const raw = dockerResult(['container', 'inspect', id], run);
-    const container = JSON.parse(raw)[0];
+    const container = capturedJson(raw)[0];
     if (container?.Image !== image.id) continue;
     if (container.Config?.Labels?.['com.docker.compose.project'] !== project || container.State?.Running === true) {
       throw new Error(`Image ${image.tag} is referenced by a foreign or live container`);

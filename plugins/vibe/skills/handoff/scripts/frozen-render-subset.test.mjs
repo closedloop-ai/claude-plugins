@@ -60,7 +60,7 @@ test("both checkouts build at once in one heavy slot, each from its own subset c
   const run = (command, args, options) => {
     calls.push({ command, args, options });
     const slot = args.findIndex((arg) => path.basename(arg) === "slot-lock.sh");
-    assert.deepEqual(args.slice(slot + 1, slot + 5), ["--slots", "1", "heavy", "frozen-render base head"]);
+    assert.deepEqual(args.slice(slot + 1, slot + 7), ["--slots", "1", "--wait-seconds", "1800", "heavy", "frozen-render base head"]);
     const script = args.indexOf("-c");
     assert.ok(script > slot && args[script - 1] === "bash", "one bash runs both builds inside the one slot");
     // After -c come the script, its $0, node and run-bounded, then one `<cwd> <count> <args...>` group per checkout.

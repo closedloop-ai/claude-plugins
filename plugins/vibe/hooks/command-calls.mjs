@@ -13,7 +13,7 @@ import { commandSegments } from "./command-segments.mjs";
 export const UNKNOWN_VALUE = Symbol("unknown value");
 
 const VARIABLE_WORD = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$/;
-const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)(\+?=)(.*)$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
@@ -26,6 +26,12 @@ const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * a `$NAME` is read only from the command line itself, never from `environment`.
  */
 export function commandCalls(command, initialCwd, { environment = process.env, expandEnvironment = true } = {}) {
+  return segmentCalls(commandSegments(command,{expandShellPayloads:true}),initialCwd,{environment,expandEnvironment});
+}
+
+/** Resolve already-tokenized execution segments with the same cwd, export and shell-scope semantics as commandCalls. */
+export function segmentCalls(input, initialCwd, { environment = process.env, expandEnvironment = true, resolveShellCwd = false } = {}) {
+  const segments = [...input];
   const base = expandEnvironment ? environment : Object.create(null);
   const states = new Map([['root', { cwd: initialCwd, uncertainCwd: false, unresolvedTarget: null,
     variables: Object.create(null), exported: Object.create(null), directoryStack: [], conditions: [], loopDepth: 0 }]]);
@@ -45,7 +51,6 @@ export function commandCalls(command, initialCwd, { environment = process.env, e
     if (visible) state.exported[name] = value ?? UNKNOWN_VALUE;
   };
   const calls = [];
-  const segments = commandSegments(command, { expandShellPayloads: true });
   let payloadCount = 0;
   for (let index = 0; index < segments.length; index += 1) {
     const { env, words, controls, remote, scope, evalPayload, wrapperPayload, substitutions,
@@ -71,9 +76,16 @@ export function commandCalls(command, initialCwd, { environment = process.env, e
       else if (['done', 'esac'].includes(control)) state.loopDepth = Math.max(0, state.loopDepth - 1);
     }
     if (state.conditions.includes(false)) continue;
+    const uncertainWrite = segments[index].conditional || segments[index].background || state.conditions.includes(null) || state.loopDepth > 0;
+    const {appended = [],scopeEntry,clearEnv,unset = []} = segments[index];
+    if (scopeEntry) {
+      const removed = clearEnv ? new Set([...Object.keys(environment), ...Object.keys(state.exported), ...unset]) : unset;
+      for (const key of removed) { state.exported[key] = null; state.variables[key] = null; }
+      Object.assign(state,commandCwd(state,chdir,resolveShellCwd ? chdirPayload : chdir ?? chdirPayload,base));
+    }
     if (words.length === 0) {
       for (const [name, value] of Object.entries(env)) {
-        assign(state, name, hasSubstitution ? literalSubstitutionOutput(substitutions) : value, false);
+        assign(state, name, uncertainWrite || appended.includes(name) ? null : hasSubstitution ? literalSubstitutionOutput(substitutions) : wordValue(value,state.variables,base), !!scopeEntry);
       }
       continue;
     }
@@ -96,8 +108,8 @@ export function commandCalls(command, initialCwd, { environment = process.env, e
     if (words[0] === "export" && words.length > 1) {
       for (const word of words.slice(1)) {
         const assignment = ASSIGNMENT.exec(word);
-        if (assignment) assign(state, assignment[1], hasSubstitution
-          ? literalSubstitutionOutput(substitutions) : assignment[2], true);
+        if (assignment) assign(state, assignment[1], uncertainWrite || assignment[2] === "+=" ? null : hasSubstitution
+          ? literalSubstitutionOutput(substitutions) : wordValue(assignment[3],state.variables,base), true);
         else if (NAME.test(word) && Object.hasOwn(state.variables, word)) assign(state, word, state.variables[word], true);
       }
       continue;
@@ -106,7 +118,7 @@ export function commandCalls(command, initialCwd, { environment = process.env, e
       if (!words.includes("-f")) {
         for (const name of words.slice(1).filter((word) => NAME.test(word))) {
           state.variables[name] = null;
-          state.exported[name] = null;
+          state.exported[name] = uncertainWrite ? UNKNOWN_VALUE : null;
         }
       }
       continue;
@@ -137,8 +149,10 @@ export function commandCalls(command, initialCwd, { environment = process.env, e
     const executable = variableValueFromWord(words[0], state.variables, base) ?? words[0];
     const variables = Object.assign(Object.create(null), state.variables);
     const exported = Object.assign(Object.create(null), state.exported);
+    for (const key of segments[index].unset ?? []) exported[key] = null;
+    if (segments[index].clearEnv) for (const key of [...Object.keys(environment),...Object.keys(exported)]) exported[key] = null;
     const value = (word) => wordValue(word, variables, base);
-    for (const [name, raw] of Object.entries(env)) exported[name] = hasSubstitution ? UNKNOWN_VALUE : value(raw) ?? UNKNOWN_VALUE;
+    for (const [name, raw] of Object.entries(env)) exported[name] = hasSubstitution || appended.includes(name) ? UNKNOWN_VALUE : value(raw) ?? UNKNOWN_VALUE;
     calls.push({ env, words: [executable, ...words.slice(1)], remote, substituted: substitutions.length > 0,
       exported, value, ...commandCwd(state, chdir, chdirPayload, base) });
   }

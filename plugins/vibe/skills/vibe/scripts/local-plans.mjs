@@ -15,6 +15,7 @@
 // --request-id) and `decisionTable` is `<decision tables>/<session slug>.md`.
 
 import { parseArgs } from "node:util";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -34,9 +35,11 @@ export function isLocalPlanPath(filePath, prefix) {
 }
 
 /** Plans already present in HEAD under `prefix`, which must block any further publication; none without one. */
-export function committedLocalPlans(runGit, prefix) {
+export function committedLocalPlans(worktreeOrRunGit, prefix) {
   if (!prefix) return [];
-  return runGit(["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", prefix.slice(0, -1)])
+  const worktree = typeof worktreeOrRunGit === "string" ? worktreeOrRunGit : ".";
+  const options = typeof worktreeOrRunGit === "function" ? { run: (_git, args) => worktreeOrRunGit(args.slice(2)) } : undefined;
+  return readGitInventory(worktree, ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", prefix.slice(0, -1)], options)
     .split("\0").filter((file) => file && isLocalPlanPath(file, prefix));
 }
 
@@ -49,7 +52,7 @@ if (isEntryPoint(import.meta.url)) {
       process.stdout.write(`${JSON.stringify({ ok: true, ...localPlanPaths(values.worktree, { requestId: values["request-id"] ?? null }) })}\n`);
     } else {
       const plans = knownLocalPlanPrefixes(sessionBinding(values.worktree))
-        .flatMap((prefix) => committedLocalPlans((args) => git(values.worktree, args), prefix));
+        .flatMap((prefix) => committedLocalPlans(values.worktree, prefix));
       process.stdout.write(`${JSON.stringify({ ok: plans.length === 0, committedLocalPlans: plans })}\n`);
       process.exitCode = plans.length ? 1 : 0;
     }

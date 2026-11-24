@@ -163,6 +163,7 @@ export function runNode(script, args, home, extraEnv = {}, input, { cwd = home }
   if (result.error) {
     throw result.error;
   }
+  if (!result.stdout.trim()) throw new Error(`${path.basename(script)} exited ${result.status} without JSON: ${result.stderr}`);
   return { status: result.status, json: JSON.parse(result.stdout), stderr: result.stderr };
 }
 
@@ -198,7 +199,8 @@ if (args[0] === 'exec' && args[1] === 'node') {
     const grant = { worktree, agentRoot: pluginRoot, agentName: primaryOwner ? "vibe-change-worker" : "vibe-environment-worker",
       workerId: primaryOwner?.workerId ?? `node-dispatch-helper-${++sequence}`,
       requestId: primaryOwner?.requestId ?? requestId ?? `node-dispatch-${sequence}`, mode: "record", recordAction: action,
-      exclusiveRecordTurn: true, ...(primaryOwner ? { primaryOwner: { workerId: primaryOwner.workerId, lease: primaryOwner.lease } } : {}),
+      exclusiveRecordTurn: true, ...(action === "create" ? { publicationPurpose: "build", publicationStep: "prepare" } : {}),
+      ...(primaryOwner ? { primaryOwner: { workerId: primaryOwner.workerId, lease: primaryOwner.lease } } : {}),
       ...(primaryOwner?.transactionId ? { mainSyncTransactionId: primaryOwner.transactionId } : {}),
       ...(continuations ? { mainSyncRequestContinuations: continuations } : {}) };
     if (!grant.mainSyncTransactionId && action !== "create") {
@@ -207,16 +209,18 @@ if (args[0] === 'exec' && args[1] === 'node') {
     const acquired = invoke(state, ["acquire-record"], grant);
     const context = { runtime: "codex", worktree, agentName: grant.agentName, workerId: grant.workerId,
       requestId: grant.requestId, mode: "record", recordAction: action, lease: acquired.lease,
+      ...(grant.publicationPurpose ? { publicationPurpose: grant.publicationPurpose } : {}),
       ...(grant.mainSyncTransactionId ? { mainSyncTransactionId: grant.mainSyncTransactionId } : {}),
       ...(continuations ? { mainSyncRequestContinuations: continuations } : {}) };
-    return { context, finish: () => invoke(state, ["release-record"], { ...grant, lease: acquired.lease,
-      stoppedTurn: { runtime: "codex", workerId: grant.workerId, requestId: grant.requestId, lease: acquired.lease, state: "completed" } }) };
+    return { context, finish: (result) => invoke(state, ["release-record"], { ...grant, lease: acquired.lease,
+      stoppedTurn: { runtime: "codex", workerId: grant.workerId, requestId: grant.requestId, lease: acquired.lease, state: "completed", result } }) };
   };
   const prepare = turn("create");
-  let transactionId;
-  try { transactionId = invoke(path.join(scripts, "commit-worktree.mjs"), ["--prepare-main-sync", "--worktree", worktree],
-    { context: prepare.context }).mainSync.transactionId; }
-  finally { prepare.finish(); }
+  let prepared;
+  try { prepared = invoke(path.join(scripts, "commit-worktree.mjs"), ["--prepare-main-sync", "--worktree", worktree],
+    { context: prepare.context }); }
+  finally { prepare.finish(prepared ? { status: "DONE", data: { mainSyncResult: prepared } } : { status: "BLOCKED" }); }
+  const { transactionId } = prepared.mainSync;
   const primary = { worktree, workerId: "node-dispatch-primary", requestId: "node-dispatch-validation" };
   invoke(state, ["register"], { worktree, workerId: primary.workerId, runtime: "codex", agentRoot: pluginRoot,
     agentName: "vibe-change-worker", capabilities: [] });
@@ -322,4 +326,11 @@ export function bindProviderInProcess(after) {
     fixture.cleanup();
   });
   return fixture;
+}
+
+/** Write a relative fixture path, creating its parent directories. */
+export function writeCheckoutFile(worktree, file, content) {
+  const absolute = path.join(worktree, file);
+  mkdirSync(path.dirname(absolute), { recursive: true });
+  writeFileSync(absolute, content);
 }

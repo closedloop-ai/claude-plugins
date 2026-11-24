@@ -57,8 +57,10 @@ def test_the_walk_result_is_the_evidence_and_only_ok_with_exit_0_passes() -> Non
 def test_the_walk_keeps_its_timeouts_and_assertions() -> None:
     rule = walk_rule()
     assert "keeps the walk's own timeouts and assertions" in rule
-    assert "never edit the walk, its specs or its limits to make a run pass" in rule
-    assert "A failing walk (`failures` listed) is a seed defect: fix the seed and run the walk again" in rule
+    assert "Fix seed defects in the seed" in rule
+    assert "seed-walk-guard.mjs --worktree <fix>" in rule
+    assert "Product files, FEATURE_MAP and wider contract changes are outside this work" in rule
+    assert "`CONTINUE` requires rerunning the full walk" in rule
 
 
 def test_a_refused_run_is_blocked_with_the_exact_message_and_never_worked_around() -> None:

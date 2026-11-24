@@ -33,6 +33,7 @@ import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { conversationSkill, hookRuntime, recordHookSkill } from "./hook-session-scope.mjs";
 import { loadedSkillEvidenceProblem, loadedSkillRequired } from "../lib/vibe/scripts/loaded-skill.mjs";
 import { pluginScriptProblems } from "../lib/vibe/scripts/plugin-script-references.mjs";
+import { providerProbeProblem } from "../lib/vibe/scripts/provider.mjs";
 import { VIBE_NAME_PATTERN, vibeSkillOf, vibeSkillPattern } from "../shared/plugin-roots.mjs";
 import { vibeRoot, vibeRootOrNull, vibeScriptPath, vibeSkill } from "../shared/vibe-install.mjs";
 import { existsSync } from "node:fs";
@@ -65,13 +66,16 @@ export function launchesWorker(command) {
 }
 
 /** The refusal for a worker launch in a conversation whose check blocks, or null. */
-export function versionProblem(conversation, home = os.homedir(), cwd = process.cwd()) {
+export function versionProblem(conversation, home = os.homedir(), cwd = process.cwd(), dispatch = false) {
   if (typeof conversation !== "string" || !CONVERSATION.test(conversation)) return null;
   const record = readStartupRecord(conversation, home);
   if (!record) return null;
+  const connection = providerProbeProblem(record.provider, { disconnected: dispatch });
   const problem = blockingProblem(record)
+    ?? connection
     ?? (loadedSkillRequired(record) ? loadedSkillEvidenceProblem(record.loadedSkill, { actorId: conversation, pluginRoot: vibeRoot(cwd) }) : null);
   if (!problem) return null;
+  if (connection && connection === problem) return connection;
   const script = vibeScriptPath(PLUGIN_VERSION_SCRIPT);
   return [
     `Plugin version check first: ${problem}.`,
@@ -131,6 +135,6 @@ export function pluginVersionGuard(event, home = os.homedir()) {
   if (!writerLaunch && tool !== "Agent" && tool !== "SendMessage") return null;
   if (!writerLaunch && !inVibeConversation(event, home)) return null;
   const cwd = eventCwd(event);
-  const problem = versionProblem(event?.session_id, home, cwd) ?? pluginScriptProblems(String(text ?? ""), vibeRoot(cwd), cwd).at(0);
+  const problem = versionProblem(event?.session_id, home, cwd, tool === "SendMessage") ?? pluginScriptProblems(String(text ?? ""), vibeRoot(cwd), cwd).at(0);
   return problem ? deny(problem) : null;
 }

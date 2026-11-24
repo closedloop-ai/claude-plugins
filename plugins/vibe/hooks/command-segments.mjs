@@ -29,10 +29,20 @@ const envSplit = value => {
 export function commandPrefix(words, start = 0) {
   const env = {};
   let chdir;
+  const unset = new Set();
+  const appended = new Set();
+  let clearEnv = false;
   let index = start;
   while (index < words.length) {
     const assignment = ENV_ASSIGN.exec(words[index]);
-    if (assignment) { env[assignment[1]] = assignment[3]; index += 1; continue; }
+    if (assignment) {
+      const [,name,operator,value] = assignment;
+      unset.delete(name);
+      if (operator === "+=") appended.add(name); else appended.delete(name);
+      env[name] = value;
+      index++;
+      continue;
+    }
     const wrapper = path.basename(words[index]);
     if (!WRAPPERS.has(wrapper)) break;
     // command -v/-V only inspect names; they never execute the argument.
@@ -55,11 +65,22 @@ export function commandPrefix(words, start = 0) {
         const split = envSplit(word.slice('--split-string='.length));
         words.splice(index, 1, ...split);
         break;
-      } else if (boolean.includes(word)) index += 1;
+      } else if (boolean.includes(word)) {
+        if (wrapper === "env" && ["-i","--ignore-environment"].includes(word) || wrapper === "exec" && word === "-c") {
+          clearEnv = true;
+          for (const key of Object.keys(env)) delete env[key];
+        }
+        index++;
+      }
       else if (valued.includes(word)) {
+        if (wrapper === "env" && ["-u","--unset"].includes(word)) {
+          unset.add(words[index + 1]); delete env[words[index + 1]];
+        }
         if (CHDIR_OPTIONS[wrapper]?.includes(word)) chdir = words[index + 1] ?? '';
         index += 2;
       } else if (valued.some(option => attachedValue(word, option) !== null)) {
+        const removed = wrapper === "env" ? attachedValue(word,"--unset") ?? attachedValue(word,"-u") : null;
+        if (removed) { unset.add(removed); delete env[removed]; }
         const option = CHDIR_OPTIONS[wrapper]?.find(name => attachedValue(word, name) !== null);
         if (option) chdir = attachedValue(word, option);
         index += 1;
@@ -67,7 +88,7 @@ export function commandPrefix(words, start = 0) {
       else break;
     }
   }
-  return chdir === undefined ? { env, index } : { env, index, chdir };
+  return { env, index, ...(appended.size ? {appended:[...appended]} : {}), ...(chdir === undefined ? {} : {chdir}), ...(clearEnv ? {clearEnv} : {}), ...(unset.size ? {unset:[...unset]} : {}) };
 }
 
 /** The value `word` attaches to `option` (`--chdir=dir`, `-Cdir`), or null. */
@@ -194,14 +215,14 @@ function splitCommandText(command) {
       index = substitution.end;
       continue;
     }
-    if (pair === '&&' || pair === '||') { finish(); events.push({ kind: 'separator' }); index += 1; continue; }
+    if (pair === '&&' || pair === '||') { finish(); events.push({ kind: 'conditional' }); index += 1; continue; }
     if (char === '(') { finish(); events.push({ kind: 'open' }); continue; }
     if (char === ')') { finish(); events.push({ kind: 'close' }); continue; }
     if (char === '|') { finish(); events.push({ kind: 'pipe' }); continue; }
     if (char === '&' && (command[index - 1] === '>' || command[index - 1] === '<')) {
       text += char; continue;
     }
-    if (';&\n'.includes(char)) { finish(); events.push({ kind: 'separator' }); continue; }
+    if (';&\n'.includes(char)) { finish(); events.push({ kind: char === '&' ? 'background' : 'separator' }); continue; }
     text += char;
   }
   finish();
@@ -371,7 +392,7 @@ function expandSegment(segment, depth, expandShellPayloads, remote, scope, child
   while (CONTROL.has(current[0])) controls.push(current.shift());
   const moved = prefix.chdir === undefined ? {} : { chdir: prefix.chdir };
   const entry = (extra = {}) => ({ env: prefix.env, words: current, globWords, controls, remote, scope, hasSubstitution,
-    substitutions, ...moved, ...extra });
+    substitutions, ...(prefix.appended ? {appended:prefix.appended} : {}), ...(prefix.clearEnv ? {clearEnv:true} : {}), ...(prefix.unset ? {unset:prefix.unset} : {}), ...moved, ...extra });
   if (current.length === 0) return controls.length || Object.keys(prefix.env).length
     ? [entry()] : [];
   if (!expandShellPayloads) return [entry()];
@@ -408,10 +429,14 @@ function expandSegment(segment, depth, expandShellPayloads, remote, scope, child
         || (!payload && substitutions.length)) {
         return [entry({ wrapperPayload: payload, wrapper: program })];
       }
-      // A shell started by env -C or sudo -D begins elsewhere; callers cannot prove a cwd inside it.
-      if (payload) return expandCommand(payload, depth + 1, true, remote,
-        childScope(scope), childScope, hasSubstitution, new Map(), [])
-        .map((nested) => prefix.chdir === undefined ? nested : { ...nested, chdirPayload: prefix.chdir });
+      if (payload) {
+        const inner = childScope(scope);
+        const nested = expandCommand(payload, depth + 1, true, remote, inner, childScope, hasSubstitution, new Map(), []);
+        if (prefix.clearEnv || prefix.unset || Object.keys(prefix.env).length || prefix.chdir !== undefined) {
+          return [entry({scope:inner,words:[],scopeEntry:true}), ...nested];
+        }
+        return nested;
+      }
     }
   }
   if (program === 'eval' && (current.length > 1 || substitutions.length)) {
@@ -529,8 +554,13 @@ function expandCommand(command, depth, expandShellPayloads, remote, rootScope, c
       segments.push(...expandCommand(payload, depth + 1, true, remote, childScope(scope), childScope,
         false, new Map(visibleFunctions), functionStack));
     }
-    segments.push(...expandSegment(event.text, depth, expandShellPayloads, remote, scope, childScope,
-      event.substitutions, inheritedSubstitution, visibleFunctions, functionStack));
+    const expanded = expandSegment(event.text, depth, expandShellPayloads, remote, scope, childScope,
+      event.substitutions, inheritedSubstitution, visibleFunctions, functionStack);
+    for (const entry of expanded) {
+      if (events[index + 1]?.kind === "background") entry.background = true;
+      if (events[index - 1]?.kind === "conditional") entry.conditional = true;
+      segments.push(entry);
+    }
   }
   return segments;
 }
