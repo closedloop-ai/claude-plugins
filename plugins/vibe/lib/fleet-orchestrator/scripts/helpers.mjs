@@ -69,7 +69,7 @@ import { promptProblems } from "./skill-freshness.mjs";
 import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
 import { vibeRoot } from "../../../shared/vibe-install.mjs";
 
-import { captureScratchLease, reconcileExpiredScratchHelpers, registerScratchProgram, runScratchStack,
+import { prepareScratchLease, reconcileExpiredScratchHelpers, registerScratchProgram, runScratchStack,
   scratchLeaseTerminal } from './scratch-cleanup.mjs';
 import { failScript } from "../../vibe/scripts/provider.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
@@ -455,7 +455,15 @@ function prepareReviewerStart(orchDir, values, readInput, rememberVersion) {
     ...(runtime === "codex" ? { briefEvidence: { path: briefPath, sha256: createHash("sha256").update(bytes).digest("hex") } } : {}) };
 }
 
-/** Prepare only filesystem-dependent inputs. The locked transition still checks the live registration. */
+/** A new helper may reserve a Compose project only if Docker reports no resources in it. */
+function requireEmptyProject(project) {
+  const existing = captureOwnedDockerResources({ project });
+  if (existing.containers.length || existing.volumes.length || existing.networks.length) {
+    throw new Error("The requested Docker project has existing resources; it is not this helper's.");
+  }
+}
+
+/** Prepare external inputs before hashing source. The locked transition checks the live registration. */
 function prepareTransition(action, entry, values, orchDir) {
   const versions = new Map();
   function rememberVersion(file) {
@@ -476,6 +484,7 @@ function prepareTransition(action, entry, values, orchDir) {
     return source;
   }
   let result;
+  let readLease;
   try {
     if (action === "final") {
       if (!entry?.startedAt || entry.stoppedAt || entry.finalizedAt || !entry.worktree || !entry.requiresFinal || !values.deliverable || !values.out
@@ -503,12 +512,15 @@ function prepareTransition(action, entry, values, orchDir) {
       result = readInput(reportFile).fingerprint;
     } else if (action === "start") {
       const reviewer = FINAL_KINDS.has(values.kind) ? prepareReviewerStart(orchDir, values, readInput, rememberVersion) : {};
+      if (values.project && values.worktree) requireEmptyProject(values.project);
+      if (values.kind === "scratch") readLease = prepareScratchLease(orchDir, values.owner, values.worktree);
       result = { ...reviewer, ...(values.worktree ? { worktree: path.resolve(values.worktree), source: readSource(values.worktree) } : {}) };
     }
   } catch (error) {
     return () => { throw error; };
   }
   return () => {
+    if (readLease) result.writerLease = readLease();
     // Recheck only the ref while holding the ledger lock. A full source scan belongs to preparation.
     if (revision && git(revision.worktree, ["rev-parse", "HEAD"], { timeout: 1000 }) !== revision.head) {
       throw new Error("helper HEAD changed during verification");
@@ -700,16 +712,13 @@ async function main(argv) {
       if (helperEntries(ledger).some(([other, helper]) => other !== name && helper.project === values.project && !helper.stoppedAt)) {
         throw new Error("The Docker project is already reserved by another helper.");
       }
-      const existing = captureOwnedDockerResources({ project: values.project });
-      if (existing.containers.length || existing.volumes.length || existing.networks.length) {
-        throw new Error("The requested Docker project has existing resources; it is not this helper's.");
-      }
+      if (!values.worktree) requireEmptyProject(values.project);
     }
+    const prepared = checkedInput();
     if (kind === 'scratch') registerScratchProgram(orchDir);
     ledger[name] = { name, kind, requiresFinal: FINAL_KINDS.has(kind), finalToken: randomUUID(), startedAt: at,
-      ...(kind === "scratch" ? { ownerToken: randomUUID(), expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
-        writerLease: captureScratchLease(orchDir, values.owner, values.worktree) } : {}),
-      ...checkedInput(),
+      ...(kind === "scratch" ? { ownerToken: randomUUID(), expiresAt: new Date(now + ttlSeconds * 1000).toISOString() } : {}),
+      ...prepared,
       ...(values.brief ? { brief: values.brief } : {}), ...(values.stack ? { stack: values.stack } : {}),
       ...(values.owner ? { owner: values.owner } : {}), ...(values.ticket ? { ticket: values.ticket } : {}),
       ...(values.repo ? { repo: values.repo } : {}), ...(values.pr ? { pr: values.pr } : {}),
