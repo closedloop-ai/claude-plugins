@@ -1094,3 +1094,16 @@ test("vibe and vibe-generic installed in one harness are reported by a code, eac
       ["vibe 1.1.89", "vibe-core 1.0.10", "vibe-generic 1.1.90"], order);
   }
 });
+
+test("a disconnected binding's setup block names the provider's connection keys, and an unknown connection name is refused with them", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53" }) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.0.53" }] });
+  const base = ["check", "--runtime", "claude", "--claude", claude.file, "--latest-base", main.url];
+  const unknown = await run(home, [...base, "--connection", "tracker=connected", "--connection", "bogus=connected"]);
+  assert.equal(unknown.result.status, "unknown", "an unknown connection name is never taken as a check result");
+  assert.match(unknown.result.reason, /unrecognized provider connection name\(s\): bogus\. Expected --connection tracker=<state> --connection graph=<state>/);
+  assert.match(unknown.result.block, /^Setup check\n/, "the refusal is shown in the setup block");
+  const disconnected = await run(home, [...base, "--connection", "tracker=not-connected", "--connection", "graph=not-connected"]);
+  assert.match(JSON.stringify(disconnected.result), /Report the connection checks with --connection tracker=<state> --connection graph=<state>/);
+});

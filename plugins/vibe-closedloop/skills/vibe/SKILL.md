@@ -216,6 +216,10 @@ explicitly installed and enabled.
   the Graph block is missing. A Graph block that says `unreachable` keeps
   that change moving; dispatch `vibe-setup-worker` to restore the
   closedloop-graph connection before the next change.
+Before creating an issue, read the tracker’s current-user record. Run `scripts/ticket-project.mjs ask --session <conversation>` for the saved backlog or existing question. For a new answer, read the project by URL, ID or slug, or read every project page for an exact name, then run `ask --answer <words>` with the same session. Use its exact project ID. Preferences live in `~/.codex/vibe/config.json` under the authenticated person's `ticketProjects` entry.
+
+At work start, read the ticket and all project pages. `ticket-project.mjs start --session <conversation> --ticket <slug>` supplies the single In Progress update with the current-week project and expected old status. Other edits do not move projects.
+
 - Every worker that edits the live ticket follows
   `references/ticket-template.md`. Say so in the brief and give the slug.
 - Images: a worker never sees what the person attached in chat. Save every
@@ -529,7 +533,7 @@ record turn (section 5, step 6). Then follow "Resuming" below.
    does not delay this line or the work. Use the work the person already described.
    Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. If they clearly want a mockup or an
-   exploration with made-up data, start the prototype session below yourself. The person only types `$vibe` and
+   exploration with made-up data, follow the repository's mockup path below. The person only types `$vibe` and
    `$handoff`; do not ask them to invoke `$prototype`. For a
    ticket, dispatch `vibe-requirements-worker`. For a description, dispatch
    the same worker with the description: it checks for an existing ticket

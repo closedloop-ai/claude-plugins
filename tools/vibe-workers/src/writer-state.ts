@@ -21,16 +21,16 @@ export async function main(argv: string[]): Promise<number> {
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");
   const input = await readInput();
   let result;
-  if (action === "register") result = registerWriter(withInstalledRoot(input));
-  else if (action === "migrate") {
-    result = migrateWriter(input, resolve(dirname(fileURLToPath(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
-  }
-  else if (action === "acquire-record") result = acquireNativeRecord(withInstalledRoot(input));
-  else if (action === "release-record") result = releaseNativeRecord(input);
-  else if (action === "take-input") result = takeWriterInput(input);
-  else if (action === "status") result = readWriterSummary(z.object({ worktree: z.string() }).strict().parse(input).worktree) ?? null;
-  else {
-    try {
+  try {
+    if (action === "register") result = registerWriter(withInstalledRoot(input));
+    else if (action === "migrate") {
+      result = migrateWriter(input, resolve(dirname(fileURLToPath(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
+    }
+    else if (action === "acquire-record") result = acquireNativeRecord(withInstalledRoot(input));
+    else if (action === "release-record") result = releaseNativeRecord(input);
+    else if (action === "take-input") result = takeWriterInput(input);
+    else if (action === "status") result = readWriterSummary(z.object({ worktree: z.string() }).strict().parse(input).worktree) ?? null;
+    else {
       if (action === "drop-pending") result = dropPendingWriter(input);
       else {
         const changed = changeWriter(action, input);
@@ -38,11 +38,11 @@ export async function main(argv: string[]): Promise<number> {
           turn: { id: changed.turn.id, lease: changed.turn.lease, status: changed.turn.status },
         } : {}) };
       }
-    } catch (error) {
-      if (!(error instanceof WorkerRefusal)) throw error;
-      process.stdout.write(`${JSON.stringify({ status: "BLOCKED", code: error.code, summary: error.summary })}\n`);
-      return 1;
     }
+  } catch (error) {
+    if (!(error instanceof WorkerRefusal)) throw error;
+    process.stdout.write(`${JSON.stringify({ status: "BLOCKED", code: error.code, summary: error.summary })}\n`);
+    return 1;
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return 0;

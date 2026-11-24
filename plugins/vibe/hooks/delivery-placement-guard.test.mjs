@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { deliveryPlacementProblem } from "../lib/fleet-orchestrator/scripts/delivery-placement.mjs";
+import { rememberBacklogProject, recordTicketProjectObservation } from "../../vibe/skills/vibe/scripts/ticket-project.mjs";
 import { bindProvider, makeHome } from "../../vibe/skills/vibe/scripts/test-fixtures.mjs";
 
 const STEP = fileURLToPath(new URL("./pre-tool-use.mjs", import.meta.url));
@@ -13,7 +14,7 @@ const BOARD = {
   writers: { current: { repo: "acme/widgets", pr: 42 } },
 };
 
-test("AC-020 the tracker issue tool requires a delivery destination or accounted unrelated work", (t) => {
+test("AC-020 the tracker issue tool requires a delivery destination or accounted unrelated work", async (t) => {
   const fixture = makeHome("issue-placement-guard-");
   const { root, home } = fixture;
   t.after(fixture.cleanup);
@@ -21,10 +22,14 @@ test("AC-020 the tracker issue tool requires a delivery destination or accounted
   writeFileSync(transcript, JSON.stringify({ type: "user", message: { content: "Base directory for this skill: /cache/vibe/1.0.85/skills/fleet-orchestrator" } }) + "\n");
   writeFileSync(path.join(root, "board.json"), JSON.stringify(BOARD));
   const conversation = "issue-placement-fixture";
+  const actor = { id: "a".repeat(8) + "-aaaa-aaaa-aaaa-" + "a".repeat(12), organizationId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" };
+  const project = { id: "cccccccc-cccc-cccc-cccc-cccccccccccc", organizationId: actor.organizationId, name: "Fixture backlog", slug: "PRO-9" };
+  await rememberBacklogProject(actor, project, home);
+  recordTicketProjectObservation(conversation, "identity", {}, actor, { home });
   const env = { ...process.env, HOME: home, FLEET_HOME: root, ...bindProvider(home, { conversation }) };
   const invoke = (content, type = "ISSUE") => {
     const event = { tool_name: "mcp__closedloop__create_document", cwd: root, transcript_path: transcript, session_id: conversation,
-      tool_input: { type, content, repositorySelection: { primary: { fullName: "acme/widgets" } } } };
+      tool_input: { type, content, projectId: project.id, repositorySelection: { primary: { fullName: "acme/widgets" } } } };
     const result = spawnSync(process.execPath, [STEP], { cwd: root, env, input: JSON.stringify(event), encoding: "utf8", timeout: 5000 });
     assert.equal(result.status, 0, result.error?.message ?? result.stderr);
     return result.stdout.trim() ? JSON.parse(result.stdout).hookSpecificOutput : null;

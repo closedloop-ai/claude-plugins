@@ -1,3 +1,4 @@
+import { releaseSuiteProblem } from "./board.mjs";
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -5,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { capturedFindings } from "../../vibe/scripts/fixtures/visual-qa-capture.mjs";
 import { recordUsageReading } from '../../codex-fleet-monitor/scripts/usage-state.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
@@ -651,7 +653,9 @@ test('a UI head is called ready only with dispositioned visual QA findings for t
   assert.match(ready('--visual-qa', findingsAt(dir, heads[0])).stderr, /ran on [0-9a-f]{40}, not the current source/, 'findings for an older head are stale');
   const open = [{ id: 'F1', summary: 'clipped', route: '/', viewport: '1280', selector: 'h1', touchedSurface: true }];
   assert.match(ready('--visual-qa', findingsAt(dir, head, open)).stderr, /F1: a finding on a touched surface needs disposition/);
-  const findings = findingsAt(dir, head, [{ ...open[0], disposition: `fixed: ${head}` }]);
+  const findings = path.join(dir, 'findings.json');
+  writeFileSync(findings, JSON.stringify(capturedFindings(dir, { head, findings: [{ ...open[0], disposition: `fixed: ${head}` }] },
+    ['apps/app/header.tsx', 'apps/app/footer.tsx'])));
   assert.equal(ready('--visual-qa', findings).status, 0);
   // The first commit is already on the PR branch, so only the ready head is checked for a push-ready declaration.
   const pushed = ['--pushed', `w=${heads[0]}`];
@@ -662,7 +666,7 @@ test('a UI head is called ready only with dispositioned visual QA findings for t
   assert.match(changed.stdout, /^VISUAL-QA-MISSING w head [0-9a-f]+: visual QA findings .* changed since the ready declaration/m);
   rmSync(findings);
   assert.match(run([dir, 'push-check', 'w', '--head', head, ...pushed]).stdout, /^VISUAL-QA-MISSING w head [0-9a-f]+: visual QA findings for ready head [0-9a-f]+ cannot be read/m);
-  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /w: ready [0-9a-f]+, visual QA covered \(2 changed file\(s\)/, 'the log says what the verdict was');
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /w: ready [0-9a-f]+, tickets ISS-1, visual QA covered \(2 changed file\(s\)/, 'the log says what the verdict was');
   assert.match(run([dir, 'status', ...pushed]).stdout, /^VISUAL-QA-MISSING w [0-9a-f]{40}: .*it is not ready/m);
 });
 
@@ -693,4 +697,90 @@ test('a ready head recorded before the visual QA check is not pushed until it is
   const check = run([dir, 'push-check', 'w', '--head', heads[0]]);
   assert.equal(check.status, 1);
   assert.match(check.stdout, /VISUAL-QA-MISSING w head [0-9a-f]+: no visual QA verdict for ready head/);
+});
+
+test("settled fleet watcher reports a locally completed writer with no remote branch after the grace period", t => {
+  const dir = tempDir(t);
+  const tree = path.join(dir, "checkout");
+  const remote = path.join(dir, "remote.git");
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["init", "-q", "-b", "topic", tree]);
+  execFileSync("git", ["-C", tree, "remote", "add", "origin", remote]);
+  writeFileSync(path.join(dir, "program.json"), JSON.stringify({ shape: "one-writer" }));
+  const done = run([dir, "writer", "w", "--tickets", "ISS-1", "--status", "DONE", "--worktree", tree,
+    "--now", "2026-11-20T10:00:00Z"]);
+  assert.equal(done.status, 0, done.stderr);
+  assert.doesNotMatch(run([dir, "watch-lines", "--now", "2026-11-20T10:01:00Z"]).stdout, /HANDOFF-MISSING/);
+  const late = run([dir, "watch-lines", "--now", "2026-11-20T11:00:00Z"]);
+  assert.match(late.stdout, /HANDOFF-MISSING w/);
+});
+
+test("a changed plugin version requires release suite evidence for the ready commit", () => {
+  const manifest = "plugins/example/.claude-plugin/plugin.json";
+  const git = (action, object) => action === "diff" ? manifest : JSON.stringify({ version: object.startsWith("base:") ? "1.0.0" : "1.0.1" });
+  assert.match(releaseSuiteProblem(git, "base", "head", null), /release-contract suite/);
+  assert.equal(releaseSuiteProblem(() => "", "base", "head", null), null);
+});
+
+test("a replacement pull request needs its own operator list admission",t=>{
+  const dir=tempDir(t),file=path.join(dir,"board.json");
+  assert.equal(run([dir,"writer","w1","--tickets","ISS-1","--pr","41","--repo","example/widgets"]).status,0);
+  const board=JSON.parse(readFileSync(file,"utf8"));board.writers.w1.mergeListed={head:"a".repeat(40),at:"previous"};
+  writeFileSync(file,JSON.stringify(board));
+  const result=run([dir,"writer","w1","--pr","42","--head","b".repeat(40)]);
+  assert.equal(result.status,0,result.stderr);
+  assert.ok(!JSON.parse(readFileSync(file,"utf8")).writers.w1.mergeListed);
+});
+
+test("a held pull remains bound to its original identity until verified terminal",t=>{
+  const dir=tempDir(t),file=path.join(dir,"board.json"),gh=path.join(dir,"gh-hold");
+  assert.equal(run([dir,"writer","w1","--tickets","ISS-1","--pr","41","--repo","example/widgets"]).status,0);
+  const board=JSON.parse(readFileSync(file,"utf8"));board.writers.w1.mergeHold={head:"a".repeat(40),reason:"operator QA"};
+  writeFileSync(file,JSON.stringify(board));
+  for(const state of ["OPEN","CLOSED"]){
+    writeFileSync(gh,"#!/bin/sh\n[ \"$3\" = 41 ] || exit 1\necho '"+JSON.stringify({number:41,url:"https://github.com/example/widgets/pull/41",state,isDraft:false})+"'\n");chmodSync(gh,0o700);
+    const result=run([dir,"writer","w1","--pr","42"],{BOARD_GH:gh}),row=JSON.parse(readFileSync(file,"utf8")).writers.w1;
+    assert.equal(result.status===0,state==="CLOSED",result.stderr);
+    assert.equal(String(row.pr),state==="OPEN"?"41":"42");
+    assert.equal(Boolean(row.mergeHold),state==="OPEN");
+  }
+});
+
+test("retiring a held writer verifies the original pull before recording retirement",t=>{
+  const dir=tempDir(t),file=path.join(dir,"board.json"),gh=path.join(dir,"gh-held-history");
+  assert.equal(run([dir,"writer","w1","--tickets","ISS-1","--pr","41","--repo","example/widgets"]).status,0);
+  const board=JSON.parse(readFileSync(file,"utf8"));board.writers.w1.mergeHold={reason:"QA"};writeFileSync(file,JSON.stringify(board));
+  for(const [state,number,allowed] of [["OPEN",41,false],["MERGED",42,false],["CLOSED",41,true]]){
+    writeFileSync(gh,"#!/bin/sh\necho '"+JSON.stringify({number,url:"https://github.com/example/widgets/pull/"+number,state})+"'\n");chmodSync(gh,0o700);
+    const result=run([dir,"retire","w1","--reason","operator requested retirement"],{BOARD_GH:gh});
+    assert.equal(result.status===0,allowed,result.stderr);
+    assert.equal(Boolean(JSON.parse(readFileSync(file,"utf8")).writers.w1.retiredAt),allowed);
+  }
+});
+
+test("hold-pr persists its reason and turns the exact fleet PR to draft, and merge-list-add refuses without a verified ready head",t=>{
+  const dir=tempDir(t),file=path.join(dir,"board.json"),gh=path.join(dir,"gh-transition"),draft=path.join(dir,"draft"),calls=path.join(dir,"gh-calls");
+  const head="c".repeat(40);
+  assert.equal(run([dir,"writer","w1","--tickets","ISS-1","--pr","41","--repo","example/widgets"]).status,0);
+  const board=JSON.parse(readFileSync(file,"utf8"));board.writers.w1.head=head;writeFileSync(file,JSON.stringify(board));
+  writeFileSync(draft,"false");
+  writeFileSync(gh,["#!/bin/sh",`echo "$*" >> '${calls}'`,
+    `if [ "$2" = ready ]; then case "$*" in *--undo*) echo true > '${draft}';; *) echo false > '${draft}';; esac; exit 0; fi`,
+    `[ "$3" = 41 ] || exit 1`,
+    `printf '{"number":41,"url":"https://github.com/example/widgets/pull/41","state":"OPEN","isDraft":%s,"headRefOid":"${head}"}\\n' "$(cat '${draft}')"`].join("\n")+"\n");
+  chmodSync(gh,0o700);
+  const noReason=run([dir,"hold-pr","w1"],{BOARD_GH:gh});
+  assert.notEqual(noReason.status,0);assert.match(noReason.stderr,/one-line --reason/);
+  const held=run([dir,"hold-pr","w1","--reason","operator QA"],{BOARD_GH:gh});
+  assert.equal(held.status,0,held.stderr);
+  const row=JSON.parse(readFileSync(file,"utf8")).writers.w1;
+  assert.deepEqual({reason:row.mergeHold.reason,head:row.mergeHold.head},{reason:"operator QA",head});
+  assert.equal(readFileSync(draft,"utf8").trim(),"true","GitHub draft state now protects the hold");
+  assert.match(readFileSync(calls,"utf8"),/pr ready 41 --repo example\/widgets --undo/);
+  const refused=run([dir,"merge-list-add","w1"],{BOARD_GH:gh});
+  assert.notEqual(refused.status,0);assert.match(refused.stderr,/pushed, verified ready head/);
+  assert.equal(readFileSync(draft,"utf8").trim(),"true","a refused promotion leaves the PR in draft");
+  assert.equal(Boolean(JSON.parse(readFileSync(file,"utf8")).writers.w1.mergeListed),false);
+  const other=run([dir,"hold-pr","w2","--reason","x"],{BOARD_GH:gh});
+  assert.notEqual(other.status,0);assert.match(other.stderr,/no active fleet-owned pull request/);
 });

@@ -109,6 +109,19 @@ test("the deadline stops the wait, blocked and never done; no deployment at all 
   assert.equal(none.reason, "no prototypes deployment for the SHA appeared");
 });
 
+test("a long preview wait relays one plain progress line each minute until it ends", async () => {
+  const time = clock();
+  const relayed = [];
+  const pending = await createPrototypeShare({ run: router(shareRoutes({ statuses: [{ state: "in_progress" }] })), ...time, write: () => {},
+    progress: (message) => relayed.push([time.now(), message]) }).share({ worktree: "/wt", pollSeconds: 15, deadlineMinutes: 3 });
+  assert.equal(pending.status, Status.Blocked);
+  const start = relayed[0]?.[0];
+  assert.deepEqual(relayed.map(([at, message]) => [at - start, message]), [0, 60_000, 120_000, 180_000].map((at) => [at, "I'm waiting for the preview to be ready."]));
+  const quick = [];
+  await createPrototypeShare({ run: router(shareRoutes()), ...clock(), write: () => {}, progress: (message) => quick.push(message) }).share({ worktree: "/wt" });
+  assert.deepEqual(quick, ["I'm waiting for the preview to be ready."], "a wait that ends at once relays only its first line");
+});
+
 test("a committed plan, a refused admission or a refused push stops before anything later runs", async () => {
   const calls = [];
   const plans = await createPrototypeShare({ run: router(shareRoutes({ extra: [["local-plans.mjs", ok({ ok: false, committedLocalPlans: [".closedloop-ai/vibe-plans/a.md"] })]] }), calls), ...clock() }).share({ worktree: "/wt" });
@@ -155,4 +168,20 @@ test("the deployments are read from the worktree's GitHub origin; an injected re
   const result = await createPrototypeShare({ run: router(routes, calls), ...clock() }).share({ worktree: "/wt" });
   assert.deepEqual(result, { status: Status.Blocked, error: "the worktree's origin is not a GitHub repository" });
   assert.ok(!calls.some((call) => call.line.includes("main-sync") || call.line.includes("local-plans")));
+});
+
+test("an already published preview returns its saved URL with the access the person must report, rechecking access when asked", async () => {
+  const saved = { previewUrl: "https://prototypes-abc123.preview.example.test/demo", deployedCommit: SHA, access: "vercel-team" };
+  const routes = (extra = []) => shareRoutes({ extra: [...extra, ["main-sync-share", ok({ ok: true, mainSync: { alreadyPublished: true } })],
+    ["vibe-sessions.mjs show", ok({ ok: true, session: { slug: "demo", prototype: saved } })]] });
+  const kept = await createPrototypeShare({ run: router(routes()), ...clock() }).share({ worktree: "/wt" });
+  assert.equal(kept.previewUrl, saved.previewUrl);
+  assert.equal(kept.access, "vercel-team");
+  assert.equal(kept.accessNote, "To open this preview, sign in to Vercel with the team's account. Ask the team for access if you don't have it.");
+  const rechecked = await createPrototypeShare({ run: router(routes()), ...clock(), checkAccess: async () => "unverified" }).share({ worktree: "/wt" });
+  assert.equal(rechecked.access, "unverified");
+  assert.equal(rechecked.accessNote, "I could not verify whether a teammate can open this preview. Check that they have access before sharing it.");
+  const open = await createPrototypeShare({ run: router(routes()), ...clock(), checkAccess: async () => "public" }).share({ worktree: "/wt" });
+  assert.equal(open.access, "public");
+  assert.equal(open.accessNote, undefined, "a public preview needs no access note");
 });

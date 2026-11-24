@@ -51,6 +51,27 @@ test('a single machine needs no config: local sessions use <orchDir>/sessions', 
   assert.ok(existsSync(join(f.orch, 'sessions')));
 });
 
+test('local turn, steer and reload send the target Codex installed root to skill-freshness and the session', TIMEOUT, () => {
+  const f = fixture();
+  const installed = join(f.root, 'installed');
+  mkdirSync(join(installed, '.codex-plugin'), { recursive: true });
+  mkdirSync(join(installed, 'skills', 'fleet-orchestrator'), { recursive: true });
+  writeFileSync(join(installed, '.codex-plugin', 'plugin.json'), readFileSync(join(PLUGIN_ROOT, '.codex-plugin', 'plugin.json')));
+  writeFileSync(join(installed, 'skills', 'fleet-orchestrator', 'SKILL.md'), readFileSync(join(PLUGIN_ROOT, 'skills', 'fleet-orchestrator', 'SKILL.md')));
+  writeFileSync(join(f.orch, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: loadEvidence('test', 'codex', installed), harnesses: [] }));
+  const env = { FAKE_REMOTE_PLUGIN_ROOT: installed };
+  for (const command of ['turn', 'steer', 'reload']) {
+    if (command !== 'turn') writeFileSync(join(f.orch, 'sessions', 'w1.json'), JSON.stringify({ threadId: 'T1', cwd: '/wt', ticket: 'ISS-1', loadedSkill: loadEvidence('T1', 'codex', installed), turns: [] }));
+    const result = f.run(['local', 'session', command, 'w1', '--prompt-file', f.prompt], env);
+    assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+    assert.deepEqual(f.argv(result).slice(1), [command, join(f.orch, 'sessions'), 'w1', '--prompt-file', f.prompt, '--plugin-root', installed]);
+  }
+  const unresolved = f.run(['local', 'session', 'reload', 'w1', '--prompt-file', f.prompt], { FAKE_REMOTE_PLUGIN_ROOT: join(f.root, 'missing') });
+  assert.equal(unresolved.status, 2);
+  assert.match(unresolved.stderr, /cannot verify the active Codex plugin/);
+  assert.deepEqual(f.argv(unresolved), []);
+});
+
 test('turn takes model and effort from config unless given; other commands get neither', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), `LOCAL_STATE_DIR=${f.root}/state\nCODEX_MODEL=main-model\nCODEX_EFFORT=high\n`);
@@ -681,7 +702,8 @@ test('deterministic runner and Dagger e-2-e build shapes get preflight; --no-bui
   assert.ok(f.argv(built).some((arg) => arg.endsWith('e2e-lock.mjs')));
   const reused = f.run(['local', 'slot', 'heavy', 'writer', f.root, 'node', 'e2e/run-containerized.sh', '--no-build']);
   assert.equal(reused.status, 0, reused.stderr);
-  assert.equal(f.argv(reused).some((arg) => arg.endsWith('e2e-lock.mjs')), false);
+  assert.ok(f.argv(reused).includes('run'), 'the machine stack lock covers image reuse');
+  assert.ok(!f.argv(reused).includes('check'), 'image reuse needs no disk probe');
 });
 
 test('ordinary heavy checks have no Docker admission preflight', TIMEOUT, () => {

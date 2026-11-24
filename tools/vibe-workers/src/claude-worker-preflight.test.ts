@@ -180,6 +180,16 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
     expect(proof).toHaveLength(1);
     expect(proof[0]?.args).toContain("--resume");
   });
+  it("keeps retrying a pending graph past three attempts while the shared startup deadline allows, under one identity", () => {
+    const value = setup();
+    const result = launch(value, { agentRoot: value.agentRoot, input: "Build it",
+      timeoutMs: 20000 }, { FAKE_CLAUDE_PENDING_TIMES: "3" });
+    expect(result.status, JSON.stringify(result.json)).toBe(0);
+    const starts = readFileSync(join(value.metadata, "fake-mcp-starts.jsonl"), "utf8").trim()
+      .split("\n").map((line) => JSON.parse(line) as { id: string; pending: boolean });
+    expect(starts.map((item) => item.pending)).toEqual([true, true, true, false]);
+    expect(new Set(starts.map((item) => item.id)).size).toBe(1);
+  });
   it("ISS-13563 refuses a graph that stays pending within the startup bound", () => {
     const value = setup();
     const result = launch(value, { agentRoot: value.agentRoot, input: "Build it",
