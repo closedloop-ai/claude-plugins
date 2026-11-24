@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -105,7 +107,7 @@ function currentCheckpointFingerprint(worktree) {
   const working = command(['diff', 'HEAD', '--binary', '--no-ext-diff']);
   const index = command(['diff', '--cached', '--binary', '--no-ext-diff']);
   const status = command(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
-  const paths = command(['ls-files', '--others', '--exclude-standard', '-z'])
+  const paths = readGitInventory(worktree, ['ls-files', '--others', '--exclude-standard', '-z'], { encoding: 'buffer' })
     .toString('utf8').split('\0').filter(Boolean);
   const untracked = paths.map((path) => {
     const absolute = resolve(worktree, path);
@@ -131,7 +133,7 @@ function verifyCutoverCheckpoint(pathValue, binding) {
   if (!pathValue) return null;
   const checkpoint = realpathSync(pathValue);
   const helper = resolve(dirname(fileURLToPath(import.meta.url)), 'checkpoint-worktree.mjs');
-  const verified = JSON.parse(execFileSync(process.execPath, [helper, 'verify', '--checkpoint', checkpoint], {
+  const verified = capturedJson(execFileSync(process.execPath, [helper, 'verify', '--checkpoint', checkpoint], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }));

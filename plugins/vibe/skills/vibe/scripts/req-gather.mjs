@@ -21,6 +21,7 @@
 // Exits 0 when every required query has a result, 3 when any is missing, 2 on
 // a usage error.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -94,7 +95,7 @@ export function gatherEvidence({ worktree, request, resultsDir, terms = [] }, de
   const run = deps.run ?? execCommand;
   const binding = deps.binding === undefined ? sessionBinding(worktree) : deps.binding;
   const required = requiredQueries(binding);
-  const tracked = new Set(stdoutOf(run("git", ["-C", worktree, "ls-files"]), "git ls-files").split("\n").filter(Boolean));
+  const tracked = new Set(stdoutOf(readGitInventory(worktree, ["ls-files"], { run }), "git ls-files").split("\n").filter(Boolean));
   const paths = pathsIn(request, tracked);
   const pack = (deps.graphPack ?? createGraphPack({ run, binding })).pack({ worktree, paths, terms });
   const queries = readResults(resultsDir, deps.fs, required);

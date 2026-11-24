@@ -98,7 +98,10 @@ def test_the_inventory_lists_repairs_and_rejects_authored_test_files() -> None:
     inventory = skill_split.read(INVENTORY)
     classifier = skill_split.read(PATH_CLASSIFIER)
     assert "testRepairs," in inventory
-    assert 'import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs"' in inventory
+    classifier_import = re.search(r'import\s*\{([^{}]*)\}\s*from\s*"\./path-classifier\.mjs"', inventory)
+    assert classifier_import is not None
+    names = {name.strip() for name in classifier_import.group(1).split(",")}
+    assert {"classifyHandoffPath", "DEFAULT_PATH_POLICY", "DEFAULT_POLICY_SOURCE", "PathDisposition"} <= names
     assert 'classifications.get(file.path)?.reason === "test-repair"' in inventory
     assert 'file.status === "M" && !isSnapshot(file.path) && testLocationAllowed' in classifier
     assert 'phase === "pull-request" && pullRequestTest' in classifier
